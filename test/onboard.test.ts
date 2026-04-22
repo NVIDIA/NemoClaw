@@ -4921,6 +4921,7 @@ const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 
 const commands = [];
+let hasExtraFileAtSpawn = false;
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -4941,7 +4942,15 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  const cmd = _n(args[1][1]);
+  commands.push({ command: cmd, env: args[2]?.env || null });
+  // Observe the staged build context state while the sandbox create is in
+  // flight — onboard deletes it once streamSandboxCreate resolves.
+  const fromMatch = cmd.match(/--from\s+(\S+)/);
+  if (fromMatch) {
+    const stagedDir = require("node:path").dirname(fromMatch[1]);
+    hasExtraFileAtSpawn = fs.existsSync(require("node:path").join(stagedDir, "extra.txt"));
+  }
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -4954,17 +4963,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
-  // Verify the staged build context contains the extra file from the custom dir
-  const createCmd = commands.find((e) => e.command.includes("sandbox create"));
-  const fromMatch = createCmd && createCmd.command.match(/--from\s+(\S+)/);
-  let stagedDir = null;
-  let hasExtraFile = false;
-  if (fromMatch) {
-    const dockerfilePath = fromMatch[1];
-    stagedDir = require("node:path").dirname(dockerfilePath);
-    hasExtraFile = fs.existsSync(require("node:path").join(stagedDir, "extra.txt"));
-  }
-  console.log(JSON.stringify({ sandboxName, hasExtraFile }));
+  console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);

@@ -13,7 +13,7 @@
     "format": "prettier --write 'bin/**/*.js' 'scripts/**/*.ts' 'test/**/*.{js,ts}'",
     "format:check": "prettier --check 'bin/**/*.js' 'scripts/**/*.ts' 'test/**/*.{js,ts}'",
     "typecheck": "tsc -p jsconfig.json",
-    "build:cli": "tsc -p tsconfig.src.json",
+    "build:cli": "tsc -p tsconfig.src.json && tsc -p nemoclaw-blueprint/tsconfig.json",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.ts",
     "migrate:js-to-ts": "tsx scripts/migrate-js-to-ts.ts",

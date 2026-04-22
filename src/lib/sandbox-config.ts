@@ -132,6 +132,24 @@ function setDotpath(obj: ConfigObject, dotpath: string, value: ConfigValue): voi
 }
 
 /**
+ * Return true when every segment in a dotpath is an own property on the
+ * current config object, which keeps config set constrained to recognized keys.
+ */
+function isRecognizedConfigPath(obj: unknown, dotpath: string): boolean {
+  if (!dotpath || typeof dotpath !== "string") return false;
+  const keys = dotpath.split(".");
+  if (keys.some((key) => !key)) return false;
+
+  let current: unknown = obj;
+  for (const key of keys) {
+    if (current == null || typeof current !== "object" || Array.isArray(current)) return false;
+    if (!Object.prototype.hasOwnProperty.call(current as Record<string, unknown>, key)) return false;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return true;
+}
+
+/**
  * Parse a config file's raw text according to its format.
  */
 function parseConfig(raw: string, format: string): ConfigObject {
@@ -328,6 +346,11 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
   if (opts.key.startsWith("gateway.") || opts.key === "gateway") {
     console.error("  Cannot modify the gateway section directly.");
     console.error("  Use `nemoclaw config rotate-token` for credential changes.");
+    process.exit(1);
+  }
+
+  if (!isRecognizedConfigPath(config, opts.key)) {
+    console.error(`  Key validation failed: "${opts.key}" is not a recognized ${target.agentName} config path.`);
     process.exit(1);
   }
 
@@ -591,6 +614,7 @@ export {
   resolveAgentConfig,
   extractDotpath,
   setDotpath,
+  isRecognizedConfigPath,
   validateUrlValue,
   readStdin,
 };

@@ -79,7 +79,11 @@ jobs:
           retention-days: 1
 
   test-e2e-sandbox:
-    runs-on: linux-amd64-cpu4
+    # Use GitHub-hosted runner — snapshot rollback test fails 100% on
+    # linux-amd64-cpu4 self-hosted runners due to a Docker storage/filesystem
+    # incompatibility (renameSync on overlayfs symlink dirs). Passes reliably
+    # on ubuntu-latest. See PR #2288 for diagnosis.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build-sandbox-images
     steps:

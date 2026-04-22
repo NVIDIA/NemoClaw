@@ -50,9 +50,10 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(nonRootBlock).toBeTruthy();
     const block = nonRootBlock[1];
 
-    // Only check top-level echo lines that are NOT inside { } > file redirects.
+    // Only check top-level echo lines that are NOT inside { } > file redirects
+    // or { } | helper piped redirects (e.g., emit_sandbox_sourced_file).
     // Filter out lines inside brace-group redirects (proxy-env.sh, etc.)
-    const braceStripped = block.replace(/\{[\s\S]*?\}\s*>\s*"[^"]*"/g, "");
+    const braceStripped = block.replace(/\{[\s\S]*?\}\s*(?:>\s*"[^"]*"|[|]\s*\w+[^\n]*)/g, "");
     const echoLines = braceStripped.match(/^\s*echo\s+.+$/gm) || [];
     expect(echoLines.length).toBeGreaterThan(0);
     for (const line of echoLines) {
@@ -510,11 +511,13 @@ describe("Slack token placeholder resolution (#2085)", () => {
     expect(fn[1]).toMatch(/\[ -n "\$\{SLACK_BOT_TOKEN:-\}" \] \|\| return 0/);
   });
 
-  it("only applies override in root mode", () => {
+  it("only applies override in root mode, fails fast when non-root and token is set", () => {
     const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
     expect(fn[1]).toMatch(/id -u.*-ne 0/);
-    expect(fn[1]).toContain("requires root");
+    expect(fn[1]).toContain("requires a root container");
+    // Non-root with SLACK_BOT_TOKEN set must return 1 (not silently skip)
+    expect(fn[1]).toMatch(/requires a root container[\s\S]*?return 1/);
   });
 
   it("guards against symlink attacks", () => {
@@ -568,13 +571,18 @@ describe("Slack token placeholder resolution (#2085)", () => {
   });
 
   it("fails fast when SLACK_BOT_TOKEN is set in non-root mode", () => {
+    // Fail-fast is now folded into apply_slack_token_override itself.
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    // Function must return 1 (not 0) when non-root and SLACK_BOT_TOKEN is set
+    expect(fn[1]).toMatch(/id -u.*-ne 0[\s\S]*?requires a root container[\s\S]*?return 1/);
+
+    // The non-root call site must not have a separate post-call SLACK_BOT_TOKEN check
     const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
     expect(nonRootBlock).toBeTruthy();
-    // After apply_slack_token_override (no-op without root) the non-root path must exit 1
-    expect(nonRootBlock[1]).toMatch(
-      /apply_slack_token_override[\s\S]*?SLACK_BOT_TOKEN[\s\S]*?exit 1/,
+    expect(nonRootBlock[1]).not.toMatch(
+      /apply_slack_token_override[\s\S]*?if \[ -n "\$\{SLACK_BOT_TOKEN/,
     );
-    expect(nonRootBlock[1]).toContain("requires a root container");
   });
 
   it("passes tokens via env prefix, not as positional args", () => {

@@ -92,28 +92,67 @@ $ nemoclaw <name> status
 
 Dynamic changes apply a policy update to a running sandbox without restarting it.
 
-### Create a Policy File
+> [!WARNING]
+> `openshell policy set` **replaces** the sandbox's live policy with the contents of the file you provide; it does not merge.
+> A running sandbox's live policy is the baseline from `openclaw-sandbox.yaml` plus every preset that was layered on during onboarding.
+> Applying a file that contains only the baseline (or only a single preset) silently drops every other preset that was in effect.
 
-Create a YAML file with the endpoints to add.
-Follow the same format as the baseline policy in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
-Add a top-level `version` field (for example, `version: 1`).
-OpenShell rejects policy YAML that omits this field.
+### Option 1: Drop a Preset File and Use `policy-add` (Recommended)
 
-### Apply the Policy
+This is the non-destructive path and the only flow NemoClaw supports out of the box for merging new entries into a running policy.
 
-Use the OpenShell CLI to apply the policy update:
+1. Create a preset-format YAML file under `nemoclaw-blueprint/policies/presets/`, for example `nemoclaw-blueprint/policies/presets/influxdb.yaml`:
+
+   ```yaml
+   preset:
+     name: influxdb
+     description: "InfluxDB time-series database"
+   network_policies:
+     influxdb:
+       name: influxdb
+       endpoints:
+         - host: influxdb.internal.example.com
+           port: 8086
+           protocol: rest
+           enforcement: enforce
+           tls: terminate
+           rules:
+             - allow: { method: GET, path: "/**" }
+             - allow: { method: POST, path: "/api/v2/write" }
+       binaries:
+         - { path: /usr/bin/curl }
+   ```
+
+2. Apply it to the running sandbox:
+
+   ```console
+   $ nemoclaw my-assistant policy-add
+   ```
+
+   NemoClaw reads the live policy via `openshell policy get --full`, structurally merges your preset's `network_policies` into it, and writes the merged result back.
+   Existing presets and the baseline remain in place.
+   The preset file under `presets/` also persists across sandbox recreations.
+
+### Option 2: Snapshot, Edit, and Set via OpenShell
+
+Use this path only when you cannot add a file under the NemoClaw source tree.
+You must start from the **live** policy, not from `openclaw-sandbox.yaml`, so the presets layered on at onboarding are preserved in the file you apply.
 
 ```console
-$ openshell policy set --policy <policy-file> <sandbox-name>
+$ openshell policy get --full my-assistant > live-policy.yaml
 ```
 
-The change takes effect immediately.
+Edit `live-policy.yaml` to add your entries under `network_policies:`, keeping the existing `version` field intact, then apply:
+
+```console
+$ openshell policy set --policy live-policy.yaml my-assistant
+```
 
 ### Scope of Dynamic Changes
 
 Dynamic changes apply only to the current session.
-When the sandbox stops, the running policy resets to the baseline defined in the policy file.
-To make changes permanent, update the static policy file and re-run setup.
+When the sandbox stops, the running policy resets to the baseline composed from `openclaw-sandbox.yaml` plus the presets recorded for the sandbox.
+To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above — the file under `presets/` persists) or edit `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
 
 ### Approve Requests Interactively
 

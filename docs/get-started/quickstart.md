@@ -153,6 +153,52 @@ For troubleshooting installation or onboarding issues, see the [Troubleshooting 
 - [Deploy to a remote GPU instance](../deployment/deploy-to-remote-gpu.md) for always-on operation.
 - [Monitor sandbox activity](../monitoring/monitor-sandbox-activity.md) through the OpenShell TUI.
 
+## Reconfigure or Recover
+
+Recover from a misconfigured sandbox without re-running the full onboard wizard or destroying workspace state.
+
+### Change inference model or API
+
+Change the active model or provider at runtime without rebuilding the sandbox:
+
+```console
+$ openshell inference set -g nemoclaw -m <model> -p <provider>
+```
+
+See [Switch inference providers](../inference/switch-inference-providers.md) for provider-specific model IDs and API compatibility notes.
+
+### Reset a stored credential
+
+If an API key was entered incorrectly during onboarding, clear the stored value and re-enter it on the next onboard run:
+
+```console
+$ nemoclaw credentials list           # see which keys are stored
+$ nemoclaw credentials reset <KEY>    # clear a single key, e.g. NVIDIA_API_KEY
+$ nemoclaw onboard                    # re-run to re-enter the cleared key
+```
+
+The credentials command is documented in full at [Commands &rarr; `nemoclaw credentials reset`](../reference/commands.md#nemoclaw-credentials-reset-key).
+
+### Rebuild a sandbox while preserving workspace state
+
+If you changed the underlying Dockerfile, upgraded OpenClaw, or want to pick up a new base image without losing your sandbox's workspace files, use `rebuild` instead of destroying and recreating:
+
+```console
+$ nemoclaw <sandbox-name> rebuild
+```
+
+Rebuild preserves the mounted workspace and registered policies while recreating the container. See [Commands &rarr; `nemoclaw <name> rebuild`](../reference/commands.md#nemoclaw-name-rebuild) for flag details.
+
+### Add a network preset after onboarding
+
+Apply an additional preset (e.g. Telegram, GitHub) to a running sandbox without re-onboarding:
+
+```console
+$ nemoclaw <sandbox-name> policy-add
+```
+
+See [Commands &rarr; `nemoclaw <name> policy-add`](../reference/commands.md#nemoclaw-name-policy-add) for usage details and flags.
+
 ## Troubleshooting
 
 If you run into issues during installation or onboarding, refer to the [Troubleshooting guide](../reference/troubleshooting.md) for common error messages and resolution steps.
