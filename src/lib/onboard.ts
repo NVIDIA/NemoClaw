@@ -3354,10 +3354,15 @@ async function createSandbox(
     "sandbox name",
   );
 
-  // Show a review summary and a Y/n gate before any destructive action
-  // (docker build, provider creation, credential persistence). Non-interactive
-  // runs opt out of the gate — they still see the summary for log clarity.
-  // See #2165.
+  // Show a review summary and a Y/n gate before the ~6-minute sandbox build.
+  // Scope note: credentials entered in earlier steps (Brave API key, messaging
+  // tokens, provider API keys) have already been persisted to
+  // ~/.nemoclaw/credentials.json by setupInference/setupMessagingChannels.
+  // The gate prevents the long destructive operations (docker build, provider
+  // creation on the gateway, sandbox registration) that the reporter of #2165
+  // wanted to guard. Users can clear persisted credentials with
+  // `nemoclaw credentials reset <KEY>` if they abort. Non-interactive runs
+  // opt out of the gate but still see the summary for log clarity.
   console.log(formatOnboardConfigSummary({
     provider, model, webSearchConfig, enabledChannels, sandboxName,
   }));
@@ -3367,6 +3372,12 @@ async function createSandbox(
       .toLowerCase();
     if (answer === "n" || answer === "no") {
       console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
+      console.log(
+        "  Credentials entered so far are stored in ~/.nemoclaw/credentials.json —",
+      );
+      console.log(
+        "  clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
+      );
       process.exit(0);
     }
   }
