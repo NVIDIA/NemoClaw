@@ -67,6 +67,7 @@ const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
 const { ensureOllamaAuthProxy } = require("./lib/onboard");
 const skillInstall = require("./lib/skill-install");
+const { sleepSeconds } = require("./lib/wait");
 const { parseSandboxPhase } = require("./lib/gateway-state");
 const {
   getActiveSandboxSessions,
@@ -332,7 +333,7 @@ function checkAndRecoverSandboxProcesses(sandboxName, { quiet = false } = {}) {
   const recovered = recoverSandboxProcesses(sandboxName);
   if (recovered) {
     // Wait for gateway to bind its HTTP port before declaring success
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
     if (isSandboxGatewayRunning(sandboxName) !== true) {
       // Gateway process started but HTTP endpoint never came up
       if (!quiet) {
@@ -2960,12 +2961,37 @@ const [cmd, ...args] = process.argv.slice(2);
   // Sandbox-scoped commands: nemoclaw <name> <action>
   // If the registry doesn't know this name but the action is a sandbox-scoped
   // command, attempt recovery — the sandbox may still be live with a stale registry.
-  if (
-    !registry.getSandbox(cmd) &&
-    ["connect", "skill", "shields", "config", "channels", ""].includes(args[0] || "")
-  ) {
+  const sandboxActions = [
+    "connect",
+    "status",
+    "logs",
+    "policy-add",
+    "policy-remove",
+    "policy-list",
+    "destroy",
+    "skill",
+    "rebuild",
+    "snapshot",
+    "shields",
+    "config",
+    "channels",
+    "",
+  ];
+  if (!registry.getSandbox(cmd) && sandboxActions.includes(args[0] || "")) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });
+    if (!registry.getSandbox(cmd)) {
+      console.error(`  Sandbox '${cmd}' does not exist.`);
+      const allNames = registry.listSandboxes().sandboxes.map((s) => s.name);
+      if (allNames.length > 0) {
+        console.error("");
+        console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
+        console.error(`  Run 'nemoclaw list' to see all sandboxes.`);
+      } else {
+        console.error(`  Run 'nemoclaw onboard' to create one.`);
+      }
+      process.exit(1);
+    }
   }
   const sandbox = registry.getSandbox(cmd);
   if (sandbox) {

@@ -6,6 +6,8 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { run, runCapture } = require("./runner");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { sleepSeconds } = require("./wait");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const nimImages = require("../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "./ports";
@@ -280,8 +282,7 @@ export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
     } catch {
       /* ignored */
     }
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require("child_process").spawnSync("sleep", [String(intervalSec)]);
+    sleepSeconds(intervalSec);
   }
   console.error(`  NIM did not become healthy within ${timeout}s.`);
   return false;
