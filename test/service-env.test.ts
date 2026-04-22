@@ -849,5 +849,78 @@ describe("service environment", () => {
       ).trim();
       expect(result).toBe("wsProxyFixedRequest");
     });
+
+    it("strips port from opts.host to avoid double-port CONNECT path", () => {
+      // When callers pass host:"gateway.discord.gg:443" instead of hostname,
+      // the CONNECT target must be "gateway.discord.gg:443" not
+      // "gateway.discord.gg:443:443".
+      const result = execFileSync(
+        "node",
+        [
+          "--require",
+          wsFixPath,
+          "-e",
+          `
+const https = require("https");
+const http = require("http");
+// Intercept http.request to capture the CONNECT path, then abort immediately
+http.request = function(opts) {
+  if (opts.method === "CONNECT") {
+    console.log(opts.path);
+    process.exit(0);
+  }
+  return http.__proto__.request.apply(this, arguments);
+};
+const req = https.request({
+  host: "gateway.discord.gg:443",
+  path: "/?v=10&encoding=json",
+  headers: { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Key": "dGVzdA==", "Sec-WebSocket-Version": "13" },
+});
+req.on("error", () => {});
+req.end();
+          `,
+        ],
+        {
+          encoding: "utf-8",
+          env: { ...process.env, HTTPS_PROXY: "http://10.200.0.1:3128" },
+        },
+      ).trim();
+      expect(result).toBe("gateway.discord.gg:443");
+      expect(result).not.toContain("443:443");
+    });
+
+    it("ignores non-Discord WebSocket upgrades", () => {
+      const result = execFileSync(
+        "node",
+        [
+          "--require",
+          wsFixPath,
+          "-e",
+          `
+const https = require("https");
+const http = require("http");
+let sawConnect = false;
+http.request = function(opts) {
+  if (opts.method === "CONNECT") sawConnect = true;
+  return http.__proto__.request.apply(this, arguments);
+};
+const req = https.request({
+  hostname: "echo.websocket.org",
+  path: "/",
+  headers: { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Key": "dGVzdA==", "Sec-WebSocket-Version": "13" },
+});
+req.on("error", () => {});
+req.destroy();
+console.log(sawConnect ? "CONNECT" : "NO_CONNECT");
+          `,
+        ],
+        {
+          encoding: "utf-8",
+          env: { ...process.env, HTTPS_PROXY: "http://10.200.0.1:3128" },
+        },
+      ).trim();
+      // Non-Discord host should NOT trigger the CONNECT tunnel
+      expect(result).toBe("NO_CONNECT");
+    });
   });
 });

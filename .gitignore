@@ -8,7 +8,6 @@ coverage/
 dist/
 docs/_build/
 node_modules/
-nemoclaw-blueprint/scripts/ws-proxy-fix.js
 
 # OS metadata
 .DS_Store
