@@ -201,6 +201,10 @@ describe("service environment", () => {
   });
 
   describe("proxy environment variables (issue #626)", () => {
+    // The proxy persistence block calls emit_sandbox_sourced_file from the
+    // shared library. Wrappers that execute the extracted block must source it.
+    const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;
+
     function extractToolRedirects() {
       const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
       const block = execFileSync("sed", ["-n", "/^_TOOL_REDIRECTS=/,/^done$/p", scriptPath], {
@@ -210,22 +214,6 @@ describe("service environment", () => {
         throw new Error(
           "Failed to extract _TOOL_REDIRECTS from scripts/nemoclaw-start.sh — " +
             "the array may have been moved or renamed",
-        );
-      }
-      return block.trimEnd();
-    }
-
-    function extractEmitHelper() {
-      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-      const block = execFileSync(
-        "sed",
-        ["-n", "/^emit_sandbox_sourced_file()/,/^}/p", scriptPath],
-        { encoding: "utf-8" },
-      );
-      if (!block.trim()) {
-        throw new Error(
-          "Failed to extract emit_sandbox_sourced_file from scripts/nemoclaw-start.sh — " +
-            "the function may have been moved or renamed",
         );
       }
       return block.trimEnd();
@@ -329,7 +317,7 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\$_PROXY_ENV_FILE/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
@@ -339,10 +327,9 @@ describe("service environment", () => {
           );
         }
         const toolRedirects = extractToolRedirects();
-        const emitHelper = extractEmitHelper();
         const wrapper = [
           "#!/usr/bin/env bash",
-          emitHelper,
+          sandboxInitSource,
           toolRedirects,
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
@@ -374,16 +361,11 @@ describe("service environment", () => {
         expect(envFile).toContain("GNUPGHOME=/tmp/.gnupg");
         expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
         expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
-        // SECURITY: file must be read-only (#2181)
-        // Use platform-appropriate stat format: -c '%a' on Linux, -f '%Lp' on macOS
-        const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
-        let stat;
-        try {
-          stat = execFileSync("stat", ["-c", "%a", proxyEnvPath], { encoding: "utf-8" }).trim();
-        } catch {
-          stat = execFileSync("stat", ["-f", "%Lp", proxyEnvPath], { encoding: "utf-8" }).trim();
-        }
-        expect(stat).toBe("444");
+        // Permission should be 444 (hardened via emit_sandbox_sourced_file)
+        const perms = execFileSync("stat", ["-f", "%Lp", join(fakeDataDir, "proxy-env.sh")], {
+          encoding: "utf-8",
+        }).trim();
+        expect(perms).toBe("444");
       } finally {
         try {
           unlinkSync(tmpFile);
@@ -406,7 +388,7 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\$_PROXY_ENV_FILE/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
@@ -416,10 +398,9 @@ describe("service environment", () => {
           );
         }
         const toolRedirects = extractToolRedirects();
-        const emitHelper = extractEmitHelper();
         const wrapper = [
           "#!/usr/bin/env bash",
-          emitHelper,
+          sandboxInitSource,
           toolRedirects,
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
@@ -462,7 +443,7 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\$_PROXY_ENV_FILE/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
@@ -472,16 +453,15 @@ describe("service environment", () => {
           );
         }
         const toolRedirects = extractToolRedirects();
-        const emitHelper = extractEmitHelper();
         const makeWrapper = (host) =>
           [
             "#!/usr/bin/env bash",
-            emitHelper,
+            sandboxInitSource,
             toolRedirects,
             `PROXY_HOST="${host}"`,
             'PROXY_PORT="3128"',
-            `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-            `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
+            '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+            '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
             persistBlock
               .trimEnd()
               .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
@@ -511,7 +491,7 @@ describe("service environment", () => {
       }
     });
 
-    it("emit_sandbox_sourced_file prevents symlink-following attack on proxy-env.sh", () => {
+    it("rm -f prevents symlink-following attack on proxy-env.sh", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-symlink-test-${process.pid}`);
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-symlink-write-test-${process.pid}.sh`);
@@ -519,7 +499,7 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\$_PROXY_ENV_FILE/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
@@ -533,10 +513,9 @@ describe("service environment", () => {
         const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
         execFileSync("ln", ["-sf", sensitiveFile, proxyEnvPath]);
         const toolRedirects = extractToolRedirects();
-        const emitHelper = extractEmitHelper();
         const wrapper = [
           "#!/usr/bin/env bash",
-          emitHelper,
+          sandboxInitSource,
           toolRedirects,
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
@@ -613,26 +592,25 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\$_PROXY_ENV_FILE/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
           throw new Error(
-            "sed anchors (_PROXY_ENV_FILE…emit_sandbox_sourced_file) not found in nemoclaw-start.sh — test cannot run",
+            "sed anchors (_PROXY_ENV_FILE=…emit_sandbox_sourced_file) not found in nemoclaw-start.sh — test cannot run",
           );
         }
-        const emitHelper = extractEmitHelper();
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          emitHelper,
-          `PROXY_HOST="10.200.0.1"`,
-          `PROXY_PORT="3128"`,
-          `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-          `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
-          `NODE_USE_ENV_PROXY=1`,
+          sandboxInitSource,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          'NODE_USE_ENV_PROXY=1',
+          '_TOOL_REDIRECTS=()',
           `_AXIOS_FIX_SCRIPT="${fakeFixScript}"`,
-          `_TOOL_REDIRECTS=()`,
           "set +u  # array expansion safe on macOS bash",
           persistBlock
             .trimEnd()
@@ -665,24 +643,23 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\$_PROXY_ENV_FILE/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
           throw new Error("sed anchors not found in nemoclaw-start.sh — test cannot run");
         }
-        const emitHelper = extractEmitHelper();
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          emitHelper,
-          `PROXY_HOST="10.200.0.1"`,
-          `PROXY_PORT="3128"`,
-          `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-          `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
+          sandboxInitSource,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
           // NODE_USE_ENV_PROXY intentionally NOT set
+          '_TOOL_REDIRECTS=()',
           `_AXIOS_FIX_SCRIPT="${fakeFixScript}"`,
-          `_TOOL_REDIRECTS=()`,
           "set +u  # array expansion safe on macOS bash",
           persistBlock
             .trimEnd()
