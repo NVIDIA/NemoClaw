@@ -197,6 +197,8 @@ Apply an additional preset (e.g. Telegram, GitHub) to a running sandbox without 
 $ nemoclaw <sandbox-name> policy-add
 ```
 
+See [Commands &rarr; `nemoclaw <name> policy-add`](../reference/commands.md#nemoclaw-name-policy-add) for usage details and flags.
+
 ## Troubleshooting
 
 If you run into issues during installation or onboarding, refer to the [Troubleshooting guide](../reference/troubleshooting.md) for common error messages and resolution steps.
