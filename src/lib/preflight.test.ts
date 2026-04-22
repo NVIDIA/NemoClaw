@@ -347,7 +347,7 @@ describe("assessHost", () => {
 });
 
 describe("planHostRemediation", () => {
-  it("recommends starting docker when installed but unreachable", () => {
+  it("recommends starting docker when installed but unreachable and service inactive", () => {
     const actions = planHostRemediation({
       platform: "linux",
       isWsl: false,
@@ -373,6 +373,38 @@ describe("planHostRemediation", () => {
     expect(actions[0].id).toBe("start_docker");
     expect(actions[0].blocking).toBe(true);
     expect(actions[0].commands).toContain("sudo systemctl start docker");
+  });
+
+  it("suggests usermod when docker service is active but daemon is unreachable", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "unknown",
+      packageManager: "apt",
+      systemctlAvailable: true,
+      dockerServiceActive: true,
+      dockerServiceEnabled: true,
+      dockerInstalled: true,
+      dockerRunning: false,
+      dockerReachable: false,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "unknown",
+      dockerDefaultCgroupnsMode: "unknown",
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: false,
+      notes: [],
+    });
+
+    expect(actions[0].id).toBe("docker_group_permission");
+    expect(actions[0].kind).toBe("sudo");
+    expect(actions[0].blocking).toBe(true);
+    expect(actions[0].commands[0]).toBe("sudo usermod -aG docker $USER");
+    expect(actions[0].commands[1]).toContain("newgrp docker");
+    expect(actions[0].commands[2]).toBe("nemoclaw onboard");
+    expect(actions[0].reason).toContain("docker group");
   });
 
   it("warns that podman is unsupported on macOS without blocking onboarding", () => {

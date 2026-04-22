@@ -1,0 +1,14 @@
+{
+  "renameTests": ["test/example.test.js"],
+  "moveRuntime": {
+    "bin/lib/example.js": "src/lib/example.ts"
+  },
+  "rewriteSourcePaths": {
+    "bin/lib/example.js": "src/lib/example.ts"
+  },
+  "shimStrategy": {
+    "bin/lib/example.js": "simple",
+    "bin/lib/runner.js": "cache-busting",
+    "bin/nemoclaw.js": "cli-launcher"
+  }
+}

@@ -14,10 +14,12 @@
 #
 #   1. Provider creation — openshell stores the real token
 #   2. Sandbox attachment — --provider flags wire providers to the sandbox
-#   3. Credential isolation — real tokens never appear in sandbox env
+#   3. Credential isolation — real tokens never appear in sandbox env,
+#      process list, or filesystem
 #   4. Config patching — openclaw.json channels use placeholder values
 #   5. Network reachability — Node.js can reach messaging APIs through proxy
-#   6. L7 proxy rewriting — placeholder is rewritten to real token at egress
+#   6. Native Discord gateway path — WebSocket path is probed separately from REST
+#   7. L7 proxy rewriting — placeholder is rewritten to real token at egress
 #
 # Uses fake tokens by default (no external accounts needed). With fake tokens,
 # the API returns 401 — proving the full chain worked (request reached the
@@ -41,6 +43,7 @@
 #   TELEGRAM_BOT_TOKEN_REAL                — optional: enables Phase 6 real round-trip
 #   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real round-trip
 #   TELEGRAM_CHAT_ID_E2E                   — optional: enables sendMessage test
+#   NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY    — fail instead of skip on known Discord gateway blockers
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
@@ -91,10 +94,31 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-msg-provider}"
 # Default to fake tokens if not provided
 TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
-TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789}"
+TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
 export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
+
+# Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
+sandbox_exec_stdin() {
+  local cmd="$1"
+  local ssh_config
+  ssh_config="$(mktemp)"
+  openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null
+
+  local result
+  result=$(timeout 60 ssh -F "$ssh_config" \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 \
+    -o LogLevel=ERROR \
+    "openshell-${SANDBOX_NAME}" \
+    "$cmd" \
+    2>/dev/null) || true
+
+  rm -f "$ssh_config"
+  echo "$result"
+}
 
 # Run a command inside the sandbox and capture output
 sandbox_exec() {
@@ -137,6 +161,7 @@ pass "Docker is running"
 info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
 info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
 info "Sandbox name: $SANDBOX_NAME"
+STRICT_DISCORD_GATEWAY="${NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY:-0}"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 1: Install NemoClaw (non-interactive mode)
@@ -274,6 +299,96 @@ else
   info "Subsequent phases that depend on placeholders will adapt"
 fi
 
+# M3/M4 verify the specific TELEGRAM_BOT_TOKEN / DISCORD_BOT_TOKEN
+# env vars hold placeholders. The checks below verify the real
+# host-side tokens do not appear on ANY observable surface inside
+# the sandbox: full environment, process list, or filesystem.
+
+sandbox_env_all=$(sandbox_exec "env 2>/dev/null" 2>/dev/null || true)
+sandbox_ps=$(openshell sandbox exec -n "$SANDBOX_NAME" -- \
+  sh -c 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\0" "\n"' 2>/dev/null || true)
+
+if [ -n "$sandbox_ps" ]; then
+  info "Process cmdlines captured ($(echo "$sandbox_ps" | wc -l | tr -d ' ') lines)"
+else
+  info "Process cmdline capture returned empty — M5b/M5f will skip"
+fi
+
+# M5a: Full environment dump must not contain the real Telegram token
+if [ -z "$sandbox_env_all" ]; then
+  skip "M5a: Environment variable list is empty"
+elif echo "$sandbox_env_all" | grep -qF "$TELEGRAM_TOKEN"; then
+  fail "M5a: Real Telegram token found in full sandbox environment dump"
+else
+  pass "M5a: Real Telegram token absent from full sandbox environment"
+fi
+
+# M5b: Process list must not contain the real Telegram token
+if [ -z "$sandbox_ps" ]; then
+  skip "M5b: Process list is empty"
+elif echo "$sandbox_ps" | grep -qF "$TELEGRAM_TOKEN"; then
+  fail "M5b: Real Telegram token found in sandbox process list"
+else
+  pass "M5b: Real Telegram token absent from sandbox process list"
+fi
+
+# M5c: Recursive filesystem search for the real Telegram token.
+# Covers /sandbox (workspace), /home, /etc, /tmp, /var.
+sandbox_fs_tg=$(printf '%s' "$TELEGRAM_TOKEN" | sandbox_exec_stdin "grep -rFlm1 -f - /sandbox /home /etc /tmp /var 2>/dev/null || true")
+if [ -n "$sandbox_fs_tg" ]; then
+  fail "M5c: Real Telegram token found on sandbox filesystem: ${sandbox_fs_tg}"
+else
+  pass "M5c: Real Telegram token absent from sandbox filesystem"
+fi
+
+# M5d: Placeholder string must be present in the sandbox environment
+if [ -n "$TELEGRAM_PLACEHOLDER" ]; then
+  if echo "$sandbox_env_all" | grep -qF "$TELEGRAM_PLACEHOLDER"; then
+    pass "M5d: Telegram placeholder confirmed present in sandbox environment"
+  else
+    fail "M5d: Telegram placeholder not found in sandbox environment"
+  fi
+else
+  skip "M5d: No Telegram placeholder to verify (provider-only mode)"
+fi
+
+# M5e: Full environment dump must not contain the real Discord token
+if [ -z "$sandbox_env_all" ]; then
+  skip "M5e: Environment variable list is empty"
+elif echo "$sandbox_env_all" | grep -qF "$DISCORD_TOKEN"; then
+  fail "M5e: Real Discord token found in full sandbox environment dump"
+else
+  pass "M5e: Real Discord token absent from full sandbox environment"
+fi
+
+# M5f: Process list must not contain the real Discord token
+if [ -z "$sandbox_ps" ]; then
+  skip "M5f: Process list is empty"
+elif echo "$sandbox_ps" | grep -qF "$DISCORD_TOKEN"; then
+  fail "M5f: Real Discord token found in sandbox process list"
+else
+  pass "M5f: Real Discord token absent from sandbox process list"
+fi
+
+# M5g: Recursive filesystem search for the real Discord token
+sandbox_fs_dc=$(printf '%s' "$DISCORD_TOKEN" | sandbox_exec_stdin "grep -rFlm1 -f - /sandbox /home /etc /tmp /var 2>/dev/null || true")
+if [ -n "$sandbox_fs_dc" ]; then
+  fail "M5g: Real Discord token found on sandbox filesystem: ${sandbox_fs_dc}"
+else
+  pass "M5g: Real Discord token absent from sandbox filesystem"
+fi
+
+# M5h: Discord placeholder must be present in the sandbox environment
+if [ -n "$DISCORD_PLACEHOLDER" ]; then
+  if echo "$sandbox_env_all" | grep -qF "$DISCORD_PLACEHOLDER"; then
+    pass "M5h: Discord placeholder confirmed present in sandbox environment"
+  else
+    fail "M5h: Discord placeholder not found in sandbox environment"
+  fi
+else
+  skip "M5h: No Discord placeholder to verify (provider-only mode)"
+fi
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 3: Config Patching — openclaw.json channels
 # ══════════════════════════════════════════════════════════════════
@@ -302,7 +417,9 @@ else
   tg_token=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print(d.get('telegram', {}).get('accounts', {}).get('main', {}).get('botToken', ''))
+accounts = d.get('telegram', {}).get('accounts', {})
+account = accounts.get('default') or accounts.get('main') or {}
+print(account.get('botToken', ''))
 " 2>/dev/null || true)
 
   if [ -n "$tg_token" ]; then
@@ -324,7 +441,9 @@ print(d.get('telegram', {}).get('accounts', {}).get('main', {}).get('botToken', 
   dc_token=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print(d.get('discord', {}).get('accounts', {}).get('main', {}).get('token', ''))
+accounts = d.get('discord', {}).get('accounts', {})
+account = accounts.get('default') or accounts.get('main') or {}
+print(account.get('token', ''))
 " 2>/dev/null || true)
 
   if [ -n "$dc_token" ]; then
@@ -346,7 +465,9 @@ print(d.get('discord', {}).get('accounts', {}).get('main', {}).get('token', ''))
   tg_enabled=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print(d.get('telegram', {}).get('accounts', {}).get('main', {}).get('enabled', False))
+accounts = d.get('telegram', {}).get('accounts', {})
+account = accounts.get('default') or accounts.get('main') or {}
+print(account.get('enabled', False))
 " 2>/dev/null || true)
 
   if [ "$tg_enabled" = "True" ]; then
@@ -359,7 +480,9 @@ print(d.get('telegram', {}).get('accounts', {}).get('main', {}).get('enabled', F
   dc_enabled=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print(d.get('discord', {}).get('accounts', {}).get('main', {}).get('enabled', False))
+accounts = d.get('discord', {}).get('accounts', {})
+account = accounts.get('default') or accounts.get('main') or {}
+print(account.get('enabled', False))
 " 2>/dev/null || true)
 
   if [ "$dc_enabled" = "True" ]; then
@@ -372,7 +495,9 @@ print(d.get('discord', {}).get('accounts', {}).get('main', {}).get('enabled', Fa
   tg_dm_policy=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print(d.get('telegram', {}).get('accounts', {}).get('main', {}).get('dmPolicy', ''))
+accounts = d.get('telegram', {}).get('accounts', {})
+account = accounts.get('default') or accounts.get('main') or {}
+print(account.get('dmPolicy', ''))
 " 2>/dev/null || true)
 
   if [ "$tg_dm_policy" = "allowlist" ]; then
@@ -387,27 +512,48 @@ print(d.get('telegram', {}).get('accounts', {}).get('main', {}).get('dmPolicy', 
   tg_allow_from=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-ids = d.get('telegram', {}).get('accounts', {}).get('main', {}).get('allowFrom', [])
+accounts = d.get('telegram', {}).get('accounts', {})
+account = accounts.get('default') or accounts.get('main') or {}
+ids = account.get('allowFrom', [])
 print(','.join(str(i) for i in ids))
 " 2>/dev/null || true)
 
   if [ -n "$tg_allow_from" ]; then
-    # Check that at least one of the configured IDs is present
+    # Check that all configured IDs are present
     IFS=',' read -ra expected_ids <<<"$TELEGRAM_IDS"
-    found_match=false
+    missing_ids=()
+    tg_allow_from_csv=",${tg_allow_from//[[:space:]]/},"
     for eid in "${expected_ids[@]}"; do
-      if echo "$tg_allow_from" | grep -qF "$eid"; then
-        found_match=true
-        break
+      eid="${eid//[[:space:]]/}"
+      [ -z "$eid" ] && continue
+      if [[ "$tg_allow_from_csv" != *",$eid,"* ]]; then
+        missing_ids+=("$eid")
       fi
     done
-    if [ "$found_match" = "true" ]; then
-      pass "M11c: Telegram allowFrom contains expected user ID(s): $tg_allow_from"
+    if [ ${#missing_ids[@]} -eq 0 ]; then
+      pass "M11c: Telegram allowFrom contains all expected user IDs: $tg_allow_from"
     else
-      fail "M11c: Telegram allowFrom ($tg_allow_from) does not contain any expected ID ($TELEGRAM_IDS)"
+      fail "M11c: Telegram allowFrom ($tg_allow_from) is missing IDs: ${missing_ids[*]} (expected all of: $TELEGRAM_IDS)"
     fi
   else
     skip "M11c: Telegram allowFrom not set (channel may not be configured)"
+  fi
+
+  # M11d: Telegram groupPolicy defaults to open so group chats are not silently dropped
+  tg_group_policy=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+accounts = d.get('telegram', {}).get('accounts', {})
+account = accounts.get('default') or accounts.get('main') or {}
+print(account.get('groupPolicy', ''))
+" 2>/dev/null || true)
+
+  if [ "$tg_group_policy" = "open" ]; then
+    pass "M11d: Telegram groupPolicy is 'open'"
+  elif [ -n "$tg_group_policy" ]; then
+    fail "M11d: Telegram groupPolicy is '$tg_group_policy' (expected 'open')"
+  else
+    skip "M11d: Telegram groupPolicy not set (channel may not be configured)"
   fi
 fi
 
@@ -452,6 +598,84 @@ elif echo "$dc_reach" | grep -q "TIMEOUT"; then
   skip "M13: discord.com timed out (network may be slow)"
 else
   fail "M13: Node.js could not reach discord.com (${dc_reach:0:200})"
+fi
+
+# M13b: Probe the native Discord gateway path separately from REST.
+# This catches failures where REST succeeds but the WebSocket path still fails
+# (for example EAI_AGAIN on gateway.discord.gg or proxy misuse returning 400).
+dc_gateway=$(sandbox_exec 'node -e "
+const url = \"wss://gateway.discord.gg/?v=10&encoding=json\";
+if (typeof WebSocket !== \"function\") {
+  console.log(\"UNSUPPORTED WebSocket\");
+  process.exit(0);
+}
+const ws = new WebSocket(url);
+const done = (msg) => {
+  console.log(msg);
+  try { ws.close(); } catch {}
+  setTimeout(() => process.exit(0), 50);
+};
+const timer = setTimeout(() => done(\"TIMEOUT\"), 15000);
+ws.addEventListener(\"open\", () => console.log(\"OPEN\"));
+ws.addEventListener(\"message\", (event) => {
+  clearTimeout(timer);
+  const body = String(event.data || \"\").slice(0, 200).replace(/\\s+/g, \" \");
+  done(\"MESSAGE \" + body);
+});
+ws.addEventListener(\"error\", (event) => {
+  clearTimeout(timer);
+  const msg = event?.message || event?.error?.message || \"websocket_error\";
+  done(\"ERROR \" + msg);
+});
+ws.addEventListener(\"close\", (event) => {
+  if (event.code && event.code !== 1000) console.log(\"CLOSE \" + event.code);
+});
+"' 2>/dev/null || true)
+
+info "Discord gateway probe: ${dc_gateway:0:300}"
+
+if echo "$dc_gateway" | grep -q "MESSAGE "; then
+  pass "M13b: Native Discord gateway returned a WebSocket message"
+elif echo "$dc_gateway" | grep -qiE "EAI_AGAIN|getaddrinfo"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13b: Native Discord gateway hit DNS resolution failure (${dc_gateway:0:200})"
+  else
+    skip "M13b: Native Discord gateway hit DNS resolution failure (${dc_gateway:0:200})"
+  fi
+elif echo "$dc_gateway" | grep -q "400"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13b: Native Discord gateway probe returned 400 (${dc_gateway:0:200})"
+  else
+    skip "M13b: Native Discord gateway probe returned 400 (${dc_gateway:0:200})"
+  fi
+elif echo "$dc_gateway" | grep -q "UNSUPPORTED"; then
+  skip "M13b: WebSocket runtime unsupported in sandbox Node.js"
+elif echo "$dc_gateway" | grep -q "TIMEOUT"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13b: Native Discord gateway probe timed out"
+  else
+    skip "M13b: Native Discord gateway probe timed out"
+  fi
+elif echo "$dc_gateway" | grep -q "ERROR"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13b: Native Discord gateway probe failed (${dc_gateway:0:200})"
+  else
+    skip "M13b: Native Discord gateway probe failed (${dc_gateway:0:200})"
+  fi
+elif echo "$dc_gateway" | grep -q "CLOSE"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13b: Native Discord gateway probe closed abnormally (${dc_gateway:0:200})"
+  else
+    skip "M13b: Native Discord gateway probe closed abnormally (${dc_gateway:0:200})"
+  fi
+elif echo "$dc_gateway" | grep -q "OPEN"; then
+  pass "M13b: Native Discord gateway opened a WebSocket session"
+else
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13b: Native Discord gateway probe returned an unclassified result (${dc_gateway:0:200})"
+  else
+    skip "M13b: Native Discord gateway probe returned an unclassified result (${dc_gateway:0:200})"
+  fi
 fi
 
 # M14 (negative): curl should be blocked by binary restriction

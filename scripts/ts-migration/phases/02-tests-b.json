@@ -1,0 +1,9 @@
+{
+  "renameTests": [
+    "test/platform.test.js",
+    "test/sandbox-build-context.test.js",
+    "test/resolve-openshell.test.js",
+    "test/presets-checkbox.test.js",
+    "test/usage-notice.test.js"
+  ]
+}

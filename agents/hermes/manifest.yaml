@@ -1,0 +1,104 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Agent manifest for Hermes Agent (Nous Research).
+# Declares the integration contract between NemoClaw and the sandboxed agent.
+
+name: hermes
+display_name: "Hermes Agent"
+description: "Self-improving AI agent with learning loop (Nous Research)"
+version_constraint: ">=0.8.0"
+language: python
+license: MIT
+homepage: "https://github.com/NousResearch/hermes-agent"
+
+# ── Binary & process ────────────────────────────────────────────
+install_method: curl  # curl install.sh | bash
+binary_path: /usr/local/bin/hermes
+version_command: "hermes --version"
+expected_version: "2026.4.8"
+gateway_command: "hermes gateway run"
+
+# ── Health probe ────────────────────────────────────────────────
+# The API server adapter listens on 8642 by default and exposes
+# GET /health -> {"status": "ok", "platform": "hermes-agent"}
+health_probe:
+  url: "http://localhost:8642/health"
+  port: 8642
+  timeout_seconds: 90
+
+# ── Dashboard / UI ──────────────────────────────────────────────
+# Hermes exposes an OpenAI-compatible API, not a web dashboard.
+# Any OpenAI-compatible frontend (Open WebUI, LobeChat, etc.) can
+# connect at http://localhost:8642/v1.
+forward_ports:
+  - 8642
+
+# ── Configuration ───────────────────────────────────────────────
+config:
+  immutable_dir: /sandbox/.hermes
+  writable_dir: /sandbox/.hermes-data
+  config_file: config.yaml        # relative to immutable_dir
+  env_file: .env                  # relative to immutable_dir — API keys
+  auth_file: auth.json            # OAuth tokens (Nous Portal, Codex, etc.)
+  format: yaml
+
+# ── State directories ──────────────────────────────────────────
+# Symlinked from immutable_dir -> writable_dir so the agent can
+# write state while the config directory stays Landlock read-only.
+state_dirs:
+  - memories
+  - sessions
+  - skills
+  - plugins
+  - cron
+  - logs
+  - skins
+  - plans
+  - workspace
+  - profiles
+  - cache
+  - pairing
+
+# ── Authentication ──────────────────────────────────────────────
+# Hermes does NOT have OpenClaw-style browser device pairing.
+# Web UI auth is Bearer token via API_SERVER_KEY env var.
+# DM pairing for messaging users: `hermes pairing approve <platform> <code>`
+device_pairing: false
+web_auth_method: bearer_token
+web_auth_env: API_SERVER_KEY
+
+# ── Messaging platforms ─────────────────────────────────────────
+# Hermes natively supports 14 platforms. We start with the 3 that
+# OpenShell already has L7 proxy support for.
+messaging_platforms:
+  supported:
+    - telegram
+    - discord
+    - slack
+  # Future: whatsapp, signal, matrix, mattermost, email, etc.
+  # Each needs a network policy entry before enabling.
+
+# ── Inference ───────────────────────────────────────────────────
+# Hermes supports custom OpenAI-compatible endpoints natively via
+# provider: "custom" + base_url in config.yaml. This is how we
+# route through OpenShell's inference.local proxy.
+inference:
+  provider_type: custom
+  base_url_config_key: "model.base_url"
+  model_config_key: "model.default"
+  proxy_support: implicit  # via httpx (OpenAI SDK dep)
+
+# ── Phone-home hosts ───────────────────────────────────────────
+# Agent-specific egress endpoints needed for updates, auth, etc.
+phone_home_hosts:
+  - nousresearch.com
+  - hermes-agent.nousresearch.com
+
+# ── Package registry ───────────────────────────────────────────
+# Hermes uses pip for plugin/skill installs (replaces npm for OpenClaw).
+package_registry:
+  hosts:
+    - pypi.org
+    - files.pythonhosted.org
+  binary: /usr/local/bin/pip3

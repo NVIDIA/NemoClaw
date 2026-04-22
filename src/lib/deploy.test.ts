@@ -60,6 +60,36 @@ describe("buildDeployEnvLines", () => {
     expect(envLines).toContain("NEMOCLAW_POLICY_MODE='suggested'");
     expect(envLines).toContain("NVIDIA_API_KEY='nvapi-test'");
   });
+
+  it("passes ALLOWED_CHAT_IDS through when Telegram is configured", () => {
+    const envLines = buildDeployEnvLines({
+      env: {},
+      sandboxName: "my-assistant",
+      provider: "build",
+      credentials: {
+        TELEGRAM_BOT_TOKEN: "123456:telegram-token",
+        ALLOWED_CHAT_IDS: "111,222",
+      },
+      shellQuote: (value: string) => `'${value}'`,
+    });
+
+    expect(envLines).toContain("TELEGRAM_BOT_TOKEN='123456:telegram-token'");
+    expect(envLines).toContain("ALLOWED_CHAT_IDS='111,222'");
+  });
+
+  it("omits ALLOWED_CHAT_IDS when Telegram is not configured", () => {
+    const envLines = buildDeployEnvLines({
+      env: {},
+      sandboxName: "my-assistant",
+      provider: "build",
+      credentials: {
+        ALLOWED_CHAT_IDS: "111,222",
+      },
+      shellQuote: (value: string) => `'${value}'`,
+    });
+
+    expect(envLines).not.toContain("ALLOWED_CHAT_IDS='111,222'");
+  });
 });
 
 describe("Brev status helpers", () => {

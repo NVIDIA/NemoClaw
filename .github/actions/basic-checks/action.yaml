@@ -38,6 +38,10 @@ runs:
       shell: bash
       run: npm run build:cli
 
+    - name: Validate config schemas
+      shell: bash
+      run: npm run validate:configs
+
     - name: Run checks
       shell: bash
       run: npx prek run --all-files --stage pre-push

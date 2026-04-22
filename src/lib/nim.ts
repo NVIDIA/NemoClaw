@@ -4,9 +4,11 @@
 // NIM container management — pull, start, stop, health-check NIM images.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { run, runCapture, shellQuote } = require("../../bin/lib/runner");
+const { run, runCapture } = require("./runner");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const nimImages = require("../../bin/lib/nim-images.json");
+
+import { VLLM_PORT } from "./ports";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier"];
 
@@ -60,7 +62,7 @@ export function detectGpu(): GpuDetection | null {
   // Try NVIDIA first — query VRAM
   try {
     const output = runCapture(
-      "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits",
+      ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
       { ignoreError: true },
     );
     if (output) {
@@ -86,7 +88,7 @@ export function detectGpu(): GpuDetection | null {
   // Fallback: unified-memory NVIDIA devices
   try {
     const nameOutput = runCapture(
-      "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
+      ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader,nounits"],
       { ignoreError: true },
     );
     const gpuNames = nameOutput
@@ -99,8 +101,14 @@ export function detectGpu(): GpuDetection | null {
     if (unifiedGpuNames.length > 0) {
       let totalMemoryMB = 0;
       try {
-        const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
-        if (memLine) totalMemoryMB = parseInt(memLine.trim(), 10) || 0;
+        const freeOut = runCapture(["free", "-m"], { ignoreError: true });
+        if (freeOut) {
+          const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+          if (memLine) {
+            const parts = memLine.split(/\s+/);
+            totalMemoryMB = parseInt(parts[1], 10) || 0;
+          }
+        }
       } catch {
         /* ignored */
       }
@@ -125,7 +133,7 @@ export function detectGpu(): GpuDetection | null {
   // macOS: detect Apple Silicon or discrete GPU
   if (process.platform === "darwin") {
     try {
-      const spOutput = runCapture("system_profiler SPDisplaysDataType 2>/dev/null", {
+      const spOutput = runCapture(["system_profiler", "SPDisplaysDataType"], {
         ignoreError: true,
       });
       if (spOutput) {
@@ -142,7 +150,7 @@ export function detectGpu(): GpuDetection | null {
             if (vramMatch[2].toUpperCase() === "GB") memoryMB *= 1024;
           } else {
             try {
-              const memBytes = runCapture("sysctl -n hw.memsize", { ignoreError: true });
+              const memBytes = runCapture(["sysctl", "-n", "hw.memsize"], { ignoreError: true });
               if (memBytes) memoryMB = Math.floor(parseInt(memBytes, 10) / 1024 / 1024);
             } catch {
               /* ignored */
@@ -175,33 +183,36 @@ export function pullNimImage(model: string): string {
     process.exit(1);
   }
   console.log(`  Pulling NIM image: ${image}`);
-  run(`docker pull ${shellQuote(image)}`);
+  run(["docker", "pull", image]);
   return image;
 }
 
-export function startNimContainer(sandboxName: string, model: string, port = 8000): string {
+export function startNimContainer(sandboxName: string, model: string, port = VLLM_PORT): string {
   const name = containerName(sandboxName);
   return startNimContainerByName(name, model, port);
 }
 
-export function startNimContainerByName(name: string, model: string, port = 8000): string {
+export function startNimContainerByName(name: string, model: string, port = VLLM_PORT): string {
   const image = getImageForModel(model);
   if (!image) {
     console.error(`  Unknown model: ${model}`);
     process.exit(1);
   }
 
-  const qn = shellQuote(name);
-  run(`docker rm -f ${qn} 2>/dev/null || true`, { ignoreError: true });
+  run(["docker", "rm", "-f", name], { ignoreError: true });
 
   console.log(`  Starting NIM container: ${name}`);
-  run(
-    `docker run -d --gpus all -p ${Number(port)}:8000 --name ${qn} --shm-size 16g ${shellQuote(image)}`,
-  );
+  run([
+    "docker", "run", "-d", "--gpus", "all",
+    "-p", `${Number(port)}:8000`,
+    "--name", name,
+    "--shm-size", "16g",
+    image,
+  ]);
   return name;
 }
 
-export function waitForNimHealth(port = 8000, timeout = 300): boolean {
+export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
   const start = Date.now();
   const intervalSec = 5;
   const hostPort = Number(port);
@@ -209,7 +220,7 @@ export function waitForNimHealth(port = 8000, timeout = 300): boolean {
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runCapture(`curl -sf http://localhost:${hostPort}/v1/models`, {
+      const result = runCapture(["curl", "-sf", `http://127.0.0.1:${hostPort}/v1/models`], {
         ignoreError: true,
       });
       if (result) {
@@ -232,10 +243,9 @@ export function stopNimContainer(sandboxName: string): void {
 }
 
 export function stopNimContainerByName(name: string): void {
-  const qn = shellQuote(name);
   console.log(`  Stopping NIM container: ${name}`);
-  run(`docker stop ${qn} 2>/dev/null || true`, { ignoreError: true });
-  run(`docker rm ${qn} 2>/dev/null || true`, { ignoreError: true });
+  run(["docker", "stop", name], { ignoreError: true });
+  run(["docker", "rm", name], { ignoreError: true });
 }
 
 export function nimStatus(sandboxName: string, port?: number): NimStatus {
@@ -245,9 +255,8 @@ export function nimStatus(sandboxName: string, port?: number): NimStatus {
 
 export function nimStatusByName(name: string, port?: number): NimStatus {
   try {
-    const qn = shellQuote(name);
     const state = runCapture(
-      `docker inspect --format '{{.State.Status}}' ${qn} 2>/dev/null`,
+      ["docker", "inspect", "--format", "{{.State.Status}}", name],
       { ignoreError: true },
     );
     if (!state) return { running: false, container: name };
@@ -256,14 +265,14 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
     if (state === "running") {
       let resolvedHostPort = port != null ? Number(port) : 0;
       if (!resolvedHostPort) {
-        const mapping = runCapture(`docker port ${qn} 8000 2>/dev/null`, {
+        const mapping = runCapture(["docker", "port", name, "8000"], {
           ignoreError: true,
         });
         const m = mapping && mapping.match(/:(\d+)\s*$/);
-        resolvedHostPort = m ? Number(m[1]) : 8000;
+        resolvedHostPort = m ? Number(m[1]) : VLLM_PORT;
       }
       const health = runCapture(
-        `curl -sf http://localhost:${resolvedHostPort}/v1/models 2>/dev/null`,
+        ["curl", "-sf", `http://127.0.0.1:${resolvedHostPort}/v1/models`],
         { ignoreError: true },
       );
       healthy = !!health;

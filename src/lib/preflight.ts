@@ -14,9 +14,11 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-// runner.js is CJS — use require so we don't pull it into the TS build.
+import { DASHBOARD_PORT } from "./ports";
+
+// runner.ts still uses CommonJS-style exports — use require here.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { runCapture } = require("../../bin/lib/runner");
+const { runCapture } = require("./runner");
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -352,19 +354,42 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
       blocking: true,
     });
   } else if (!assessment.dockerReachable) {
-    actions.push({
-      id: "start_docker",
-      title: "Start Docker",
-      kind: "manual",
-      reason: "Docker is installed but NemoClaw could not talk to the Docker daemon.",
-      commands:
-        assessment.platform === "darwin"
-          ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
-          : assessment.systemctlAvailable
-            ? ["sudo systemctl start docker", "nemoclaw onboard"]
-            : ["Start the Docker daemon, then rerun `nemoclaw onboard`."],
-      blocking: true,
-    });
+    // On Linux, if the systemd service is already active but the daemon is
+    // unreachable, the most likely cause is a permissions / docker-group issue
+    // rather than a stopped service.
+    const likelyGroupIssue =
+      assessment.platform === "linux" && assessment.dockerServiceActive === true;
+
+    if (likelyGroupIssue) {
+      actions.push({
+        id: "docker_group_permission",
+        title: "Add user to docker group",
+        kind: "sudo",
+        reason:
+          "Docker is installed and the service is running, but the current user cannot reach the daemon. " +
+          "This usually means your user is not in the docker group.",
+        commands: [
+          "sudo usermod -aG docker $USER",
+          "newgrp docker   # or log out and back in",
+          "nemoclaw onboard",
+        ],
+        blocking: true,
+      });
+    } else {
+      actions.push({
+        id: "start_docker",
+        title: "Start Docker",
+        kind: "manual",
+        reason: "Docker is installed but NemoClaw could not talk to the Docker daemon.",
+        commands:
+          assessment.platform === "darwin"
+            ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
+            : assessment.systemctlAvailable
+              ? ["sudo systemctl start docker", "nemoclaw onboard"]
+              : ["Start the Docker daemon, then rerun `nemoclaw onboard`."],
+        blocking: true,
+      });
+    }
   }
 
   if (assessment.isUnsupportedRuntime) {
@@ -483,7 +508,7 @@ export async function checkPortAvailable(
   port?: number,
   opts?: CheckPortOpts,
 ): Promise<PortProbeResult> {
-  const p = port ?? 18789;
+  const p = port ?? DASHBOARD_PORT;
   const o = opts || {};
 
   // ── lsof path ──────────────────────────────────────────────────

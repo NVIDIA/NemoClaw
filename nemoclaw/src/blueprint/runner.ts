@@ -15,12 +15,14 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { execa } from "execa";
 import YAML from "yaml";
 
 import { validateEndpointUrl } from "./ssrf.js";
+import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import { DASHBOARD_PORT } from "../lib/ports.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
@@ -68,6 +70,7 @@ interface InferenceProfile {
   model?: string;
   credential_env?: string;
   credential_default?: string;
+  timeout_secs?: number;
 }
 
 interface SandboxConfig {
@@ -130,13 +133,19 @@ async function resolveRunConfig(
 
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {
-    await validateEndpointUrl(endpointUrl);
-    inferenceCfg = { ...inferenceCfg, endpoint: endpointUrl };
+    const validated = await validateEndpointUrl(endpointUrl);
+    // Use DNS-pinned URL for HTTP (full SSRF/rebinding protection). For HTTPS,
+    // keep the original hostname — TLS certificate validation prevents rebinding
+    // since the attacker cannot present a valid cert for the target.
+    const safe = endpointUrl.startsWith("https:") ? validated.url : validated.pinnedUrl;
+    inferenceCfg = { ...inferenceCfg, endpoint: safe };
   }
 
   // Validate the final endpoint (whether from CLI override or blueprint profile)
   if (inferenceCfg.endpoint) {
-    await validateEndpointUrl(inferenceCfg.endpoint);
+    const validated = await validateEndpointUrl(inferenceCfg.endpoint);
+    const safe = inferenceCfg.endpoint.startsWith("https:") ? validated.url : validated.pinnedUrl;
+    inferenceCfg = { ...inferenceCfg, endpoint: safe };
   }
 
   const sandboxCfg = blueprint.components?.sandbox ?? {};
@@ -191,7 +200,7 @@ export async function actionPlan(
     sandbox: {
       image: sandboxCfg.image ?? "openclaw",
       name: sandboxCfg.name ?? "openclaw",
-      forward_ports: sandboxCfg.forward_ports ?? [18789],
+      forward_ports: sandboxCfg.forward_ports ?? [DASHBOARD_PORT],
     },
     inference: {
       provider_type: inferenceCfg.provider_type,
@@ -230,7 +239,7 @@ export async function actionApply(
 
   const sandboxName = sandboxCfg.name ?? "openclaw";
   const sandboxImage = sandboxCfg.image ?? "openclaw";
-  const forwardPorts = sandboxCfg.forward_ports ?? [18789];
+  const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
 
   progress(20, "Creating OpenClaw sandbox");
   const createArgs = [
@@ -292,13 +301,23 @@ export async function actionApply(
     reject: false,
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, ...credEnv },
+    env: buildSubprocessEnv(credEnv),
   });
 
   progress(70, "Setting inference route");
-  await runCmd(["openshell", "inference", "set", "--provider", providerName, "--model", model], {
-    reject: false,
-  });
+  const inferenceArgs = [
+    "openshell",
+    "inference",
+    "set",
+    "--provider",
+    providerName,
+    "--model",
+    model,
+  ];
+  if (inferenceCfg.timeout_secs !== undefined) {
+    inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
+  }
+  await runCmd(inferenceArgs, { reject: false });
 
   progress(85, "Saving run state");
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
@@ -329,13 +348,30 @@ export async function actionApply(
   log(`Inference: ${providerName} -> ${model} @ ${endpoint}`);
 }
 
+function validateRunId(rid: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(rid)) {
+    throw new Error(
+      `Invalid run ID: must contain only alphanumeric characters, hyphens, and underscores`,
+    );
+  }
+}
+
+function safeRunDir(runsDir: string, rid: string): string {
+  validateRunId(rid);
+  const resolved = join(runsDir, rid);
+  if (!resolved.startsWith(runsDir + sep)) {
+    throw new Error("Run ID resolves outside expected directory");
+  }
+  return resolved;
+}
+
 export function actionStatus(rid?: string): void {
   emitRunId();
   const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
 
   let runDir: string;
   if (rid) {
-    runDir = join(runsDir, rid);
+    runDir = safeRunDir(runsDir, rid);
   } else {
     let runs: string[];
     try {
@@ -362,7 +398,8 @@ export function actionStatus(rid?: string): void {
 export async function actionRollback(rid: string): Promise<void> {
   emitRunId();
 
-  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
+  const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
+  const stateDir = safeRunDir(runsDir, rid);
   try {
     readdirSync(stateDir);
   } catch {
