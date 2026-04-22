@@ -742,7 +742,18 @@ install_nodejs() {
   ensure_nvm_loaded --force
   nvm use 22 --silent
   nvm alias default 22 2>/dev/null || true
-  info "Node.js installed: $(node --version)"
+  local installed_version
+  installed_version="$(node --version)"
+  info "Node.js installed via nvm: ${installed_version} (default alias)"
+  # Surface the shell-reload requirement right next to the install line so the
+  # user isn't left thinking the new Node is already active in their terminal.
+  # install.sh runs as a subprocess; the parent shell's PATH genuinely cannot
+  # be mutated from here, so we print the truth and the exact command.
+  # See issue #2178.
+  warn "Your current shell may still resolve \`node\` to an older version until it's reloaded."
+  printf "        Open a new terminal, or run this in your existing shell:\n"
+  # shellcheck disable=SC2016  # intentional: user pastes this literally; their shell expands the vars
+  printf '          source "${NVM_DIR:-$HOME/.nvm}/nvm.sh" && nvm use 22\n'
 }
 
 # ---------------------------------------------------------------------------
@@ -1021,6 +1032,16 @@ install_nemoclaw() {
     spin "Building NemoClaw CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
     spin "Building NemoClaw plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm install --ignore-scripts && npm run build"
     spin "Linking NemoClaw CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
+
+    # Install/upgrade the OpenShell CLI on the GitHub-clone path (curl|bash).
+    # Without this, install.sh defers the openshell version gate entirely to
+    # `nemoclaw onboard`, so any later skip of onboard (preflight blocking,
+    # interrupted session) leaves openshell stale below blueprint's
+    # min_openshell_version even though the new NemoClaw declared a higher
+    # floor. The source-checkout branch intentionally skips this — a developer
+    # running ./scripts/install.sh manages their own openshell. The script is
+    # idempotent on the happy path. See #2272.
+    spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
   fi
 
   refresh_path
