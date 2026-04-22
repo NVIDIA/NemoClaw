@@ -60,11 +60,16 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64}
 
 WORKDIR /sandbox
-USER sandbox
 
-# Set up blueprint for local resolution
+# Set up blueprint for local resolution. Must run as root because the
+# sandbox user cannot read /opt/nemoclaw-blueprint/* — COPY preserves
+# restrictive source permissions and the build context produces files
+# the sandbox user has no access to (#2191). Blueprints stay root-owned
+# and world-readable, matching the OpenClaw Dockerfile's handling.
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
+
+USER sandbox
 
 # Generate Hermes config.yaml and .env from build args.
 # config.yaml is immutable at runtime (Landlock read-only on /sandbox/.hermes).
