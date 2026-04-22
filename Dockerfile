@@ -149,9 +149,10 @@ RUN set -eu; \
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Copy startup script
+# Copy startup script and shared sandbox initialisation library
+COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-RUN chmod 755 /usr/local/bin/nemoclaw-start
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.

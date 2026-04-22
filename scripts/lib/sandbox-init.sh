@@ -216,7 +216,13 @@ cleanup_on_signal() {
   echo "[gateway] received signal, forwarding to children..." >&2
   local primary_status=0
 
-  for pid in "${SANDBOX_CHILD_PIDS[@]}"; do
+  # ${arr[@]+...} guard prevents "unbound variable" under set -u when
+  # SANDBOX_CHILD_PIDS is empty or unset (bash 3.x / macOS compat).
+  local _pids=()
+  # shellcheck disable=SC2206
+  _pids=(${SANDBOX_CHILD_PIDS[@]+"${SANDBOX_CHILD_PIDS[@]}"})
+
+  for pid in "${_pids[@]+"${_pids[@]}"}"; do
     kill -TERM "$pid" 2>/dev/null || true
   done
 
@@ -225,7 +231,7 @@ cleanup_on_signal() {
   fi
 
   # Wait for remaining children (best-effort, don't fail on already-exited)
-  for pid in "${SANDBOX_CHILD_PIDS[@]}"; do
+  for pid in "${_pids[@]+"${_pids[@]}"}"; do
     [ "$pid" = "${SANDBOX_WAIT_PID:-}" ] && continue
     wait "$pid" 2>/dev/null || true
   done

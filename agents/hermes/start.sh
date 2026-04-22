@@ -19,9 +19,14 @@ set -euo pipefail
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
 # scripts/nemoclaw-start.sh (OpenClaw). Ref: #2277
-_SANDBOX_INIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib"
+# Installed location (container): /usr/local/lib/nemoclaw/sandbox-init.sh
+# Dev fallback: scripts/lib/sandbox-init.sh relative to this script.
+_SANDBOX_INIT="/usr/local/lib/nemoclaw/sandbox-init.sh"
+if [ ! -f "$_SANDBOX_INIT" ]; then
+  _SANDBOX_INIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/sandbox-init.sh"
+fi
 # shellcheck source=scripts/lib/sandbox-init.sh
-source "${_SANDBOX_INIT_DIR}/sandbox-init.sh"
+source "$_SANDBOX_INIT"
 
 # Harden: limit process count to prevent fork bombs
 if ! ulimit -Su 512 2>/dev/null; then

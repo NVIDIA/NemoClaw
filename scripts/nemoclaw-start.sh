@@ -34,9 +34,14 @@ set -euo pipefail
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
 # agents/hermes/start.sh. Ref: https://github.com/NVIDIA/NemoClaw/issues/2277
-_SANDBOX_INIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+# Installed location (container): /usr/local/lib/nemoclaw/sandbox-init.sh
+# Dev fallback: scripts/lib/sandbox-init.sh relative to this script.
+_SANDBOX_INIT="/usr/local/lib/nemoclaw/sandbox-init.sh"
+if [ ! -f "$_SANDBOX_INIT" ]; then
+  _SANDBOX_INIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/sandbox-init.sh"
+fi
 # shellcheck source=scripts/lib/sandbox-init.sh
-source "${_SANDBOX_INIT_DIR}/sandbox-init.sh"
+source "$_SANDBOX_INIT"
 
 # Harden: limit process count to prevent fork bombs (ref: #809)
 # Best-effort: some container runtimes (e.g., brev) restrict ulimit

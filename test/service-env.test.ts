@@ -362,9 +362,17 @@ describe("service environment", () => {
         expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
         expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
         // Permission should be 444 (hardened via emit_sandbox_sourced_file)
-        const perms = execFileSync("stat", ["-f", "%Lp", join(fakeDataDir, "proxy-env.sh")], {
-          encoding: "utf-8",
-        }).trim();
+        // Cross-platform: Linux uses stat -c '%a', macOS uses stat -f '%Lp'
+        let perms: string;
+        try {
+          perms = execFileSync("stat", ["-c", "%a", join(fakeDataDir, "proxy-env.sh")], {
+            encoding: "utf-8",
+          }).trim();
+        } catch {
+          perms = execFileSync("stat", ["-f", "%Lp", join(fakeDataDir, "proxy-env.sh")], {
+            encoding: "utf-8",
+          }).trim();
+        }
         expect(perms).toBe("444");
       } finally {
         try {

@@ -34,8 +34,9 @@ RUN chmod 755 /usr/local/bin/nemoclaw-decode-proxy
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 
 # Copy startup script
+COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
-RUN chmod 755 /usr/local/bin/nemoclaw-start
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
 
 # Build args for config that varies per deployment.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b

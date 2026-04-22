@@ -19,6 +19,17 @@ import { join } from "node:path";
 
 const SANDBOX_INIT = join(import.meta.dirname, "../scripts/lib/sandbox-init.sh");
 
+/** Cross-platform octal permission string (macOS uses -f, Linux uses -c). */
+function getOctalPerms(filePath: string): string {
+  try {
+    // Linux: stat -c '%a' file
+    return execFileSync("stat", ["-c", "%a", filePath], { encoding: "utf-8" }).trim();
+  } catch {
+    // macOS: stat -f '%Lp' file
+    return execFileSync("stat", ["-f", "%Lp", filePath], { encoding: "utf-8" }).trim();
+  }
+}
+
 /**
  * Run a bash snippet that sources sandbox-init.sh and executes the given body.
  * Returns { stdout, stderr } as trimmed strings.
@@ -80,7 +91,7 @@ describe("scripts/lib/sandbox-init.sh", () => {
       expect(content).toContain("export FOO=bar");
 
       // Check permissions — 444 in octal
-      const perms = execFileSync("stat", ["-f", "%Lp", target], { encoding: "utf-8" }).trim();
+      const perms = getOctalPerms(target);
       expect(perms).toBe("444");
     });
 
@@ -272,12 +283,8 @@ EOF
 
       runWithLib(`lock_rc_files ${JSON.stringify(workDir)}`);
 
-      const bashrcPerms = execFileSync("stat", ["-f", "%Lp", join(workDir, ".bashrc")], {
-        encoding: "utf-8",
-      }).trim();
-      const profilePerms = execFileSync("stat", ["-f", "%Lp", join(workDir, ".profile")], {
-        encoding: "utf-8",
-      }).trim();
+      const bashrcPerms = getOctalPerms(join(workDir, ".bashrc"));
+      const profilePerms = getOctalPerms(join(workDir, ".profile"));
       expect(bashrcPerms).toBe("444");
       expect(profilePerms).toBe("444");
     });
