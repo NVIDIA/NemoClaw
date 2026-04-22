@@ -79,7 +79,10 @@ jobs:
           retention-days: 1
 
   test-e2e-sandbox:
-    runs-on: linux-amd64-cpu4
+    # TEMP: switched from linux-amd64-cpu4 to ubuntu-latest to diagnose
+    # snapshot rollback failure (100% repro on self-hosted, 0% on GitHub-hosted).
+    # Revert once root cause is identified. See PR #2288 discussion.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build-sandbox-images
     steps:
