@@ -479,11 +479,11 @@ ensure_nvm_loaded() {
 # Resolve the active npm global bin without letting a host nvm install
 # override an already-working node/npm on PATH.
 resolve_npm_bin() {
-  if ! command -v npm > /dev/null 2>&1; then
+  if ! command -v npm >/dev/null 2>&1; then
     ensure_nvm_loaded
   fi
 
-  command -v npm > /dev/null 2>&1 || return 1
+  command -v npm >/dev/null 2>&1 || return 1
 
   local npm_prefix
   npm_prefix="$(npm config get prefix 2>/dev/null || true)"
