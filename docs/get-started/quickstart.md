@@ -116,20 +116,20 @@ Do not rely on restarting OpenShell containers directly.
 
 Check whether any sandbox is stale:
 
-```bash
-nemoclaw upgrade-sandboxes --check
+```console
+$ nemoclaw upgrade-sandboxes --check
 ```
 
 If stale sandboxes are reported, rebuild them in place while preserving workspace state:
 
-```bash
-nemoclaw upgrade-sandboxes
+```console
+$ nemoclaw upgrade-sandboxes
 ```
 
 If you prefer to upgrade a single sandbox explicitly:
 
-```bash
-nemoclaw <name> rebuild
+```console
+$ nemoclaw <name> rebuild
 ```
 
 :::{note}
