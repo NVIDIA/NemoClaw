@@ -73,7 +73,6 @@ interface HarnessResult {
   registry: any;
   sessionSandboxName: string | null | undefined;
   callLog: Array<string[]>;
-  statusCallsAfterSelect: number;
   selectCalls: number;
 }
 
@@ -257,7 +256,6 @@ function runCli(action: string, extraEnv: NodeJS.ProcessEnv = {}): HarnessResult
     registry,
     sessionSandboxName,
     callLog,
-    statusCallsAfterSelect: 0,
     selectCalls,
   };
 }
@@ -355,7 +353,7 @@ describe("Scenario 2: status — healthy nemoclaw active + sandbox NotFound trul
 });
 
 // ─── Scenario 3 ─── self-heal via gateway select succeeds ──────────────────
-describe("Scenario 3: connect — select succeeds, sandbox reappears, registry intact", () => {
+describe("Scenario 3: status — select succeeds, sandbox reappears, registry intact", () => {
   it(
     "attempts `gateway select nemoclaw`, re-queries, proceeds; registry preserved",
     { timeout: TIMEOUT_MS },
