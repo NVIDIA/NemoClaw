@@ -661,8 +661,10 @@ test_inf_09_compatible_endpoint() {
 
 # ── Teardown ─────────────────────────────────────────────────────────────────
 teardown() {
+  # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
+  # test/e2e/lib/sandbox-teardown.sh — the lock is PID-ownership-aware
+  # and onboard cleans up stale locks itself.
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
   nemoclaw "e2e-openai" destroy --yes 2>/dev/null || true
   nemoclaw "e2e-anthropic" destroy --yes 2>/dev/null || true

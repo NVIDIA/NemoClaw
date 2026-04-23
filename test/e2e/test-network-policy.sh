@@ -533,8 +533,12 @@ console.log(pass ? 'SSRF_PASS' : 'SSRF_FAIL');
 
 # ── Teardown ─────────────────────────────────────────────────────────────────
 teardown() {
+  # Do not unlink ~/.nemoclaw/onboard.lock: that lock is global and PID-
+  # ownership-aware in src/lib/onboard-session.ts (acquireOnboardLock
+  # verifies the holder's PID liveness and inode), so an unconditional rm
+  # here could yank a concurrent run's live lock. A crashed process leaves
+  # a stale lock that the next onboard cleans up automatically.
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
   set -e
 }
