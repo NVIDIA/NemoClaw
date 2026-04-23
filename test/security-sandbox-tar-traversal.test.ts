@@ -321,6 +321,65 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
       fs.rmSync(workDir, { recursive: true, force: true });
     }
   });
+
+  // Regression for #2268 — the sandbox base image places intra-sandbox
+  // symlinks like /sandbox/.openclaw → /sandbox/.openclaw-data. When the
+  // backup tar is extracted on the host, those absolute symlinks point
+  // OUTSIDE the extraction temp dir, but INSIDE the canonical sandbox
+  // root — which is where they'll be legitimately resolved on restore.
+  // Treating them as escape violations breaks every rebuild / snapshot
+  // create on v0.0.22.
+  it("allows symlinks whose target resolves within /sandbox (intra-sandbox layout)", async () => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-link-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      const tar = buildTar([
+        { path: "sandbox/.openclaw-data/", type: "5" },
+        {
+          path: "sandbox/.openclaw",
+          type: "2",
+          linkTarget: "/sandbox/.openclaw-data",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+
+      expect(result.success).toBe(true);
+      expect(result.error).toBeUndefined();
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  // Security guardrail: /sandbox/ is allowed, but a crafted symlink whose
+  // target *looks* absolute must not escape beyond the sandbox root.
+  // /sandbox/../etc/passwd resolves to /etc/passwd — still must be blocked.
+  it("blocks symlinks that escape /sandbox even with an absolute target", async () => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-escape-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      const tar = buildTar([
+        {
+          path: "evil-abs-link",
+          type: "2",
+          linkTarget: "/etc/passwd",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("symlink");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Fix: rejectHardLinks blocks hard-link entries at validation time", () => {

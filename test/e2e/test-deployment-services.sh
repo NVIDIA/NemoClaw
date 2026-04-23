@@ -22,28 +22,37 @@
 set -euo pipefail
 
 # ── Overall timeout ──────────────────────────────────────────────────────────
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
+TIMEOUT_CMD=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="gtimeout"
+fi
+
+if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ "${NEMOCLAW_E2E_TIMEOUT_WRAPPED:-0}" != "1" ]; then
   TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-3600}"
-  if command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
+  if [ -n "$TIMEOUT_CMD" ]; then
+    export NEMOCLAW_E2E_TIMEOUT_WRAPPED=1
+    exec "$TIMEOUT_CMD" -s TERM "$TIMEOUT_SECONDS" "$0" "$@"
+  else
+    echo "ERROR: 'timeout' not found. Install coreutils (macOS: 'brew install coreutils')" >&2
+    echo "       or bypass with NEMOCLAW_E2E_NO_TIMEOUT=1" >&2
+    exit 127
   fi
 fi
 
-# ── Config ───────────────────────────────────────────────────────────────────
-SANDBOX_NAME="e2e-deploy"
-LOG_FILE="test-deployment-services-$(date +%Y%m%d-%H%M%S).log"
-touch "$LOG_FILE"
-
-if command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="gtimeout"
-elif command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="timeout"
-else
-  TIMEOUT_CMD=""
-fi
+# Run with $TIMEOUT_CMD if set; run directly if empty (NEMOCLAW_E2E_NO_TIMEOUT bypass).
+# Avoids `$TIMEOUT_CMD 60 ssh …` becoming `60 ssh …` → "60: command not found".
+# Usage: run_with_timeout <seconds> <command> [args...]
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ -n "$TIMEOUT_CMD" ]; then
+    "$TIMEOUT_CMD" "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -167,7 +176,7 @@ sandbox_exec() {
     return 1
   fi
   local result ssh_exit=0
-  result=$(${TIMEOUT_CMD:+$TIMEOUT_CMD 120} ssh -F "$ssh_cfg" \
+  result=$(run_with_timeout 120 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" "$cmd" 2>&1) || ssh_exit=$?
@@ -185,7 +194,7 @@ onboard_sandbox() {
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="open" \
-    ${TIMEOUT_CMD:+$TIMEOUT_CMD 600} nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    run_with_timeout 600 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | tee -a "$LOG_FILE" || {
     log "FATAL: Onboard failed for '$name'"
     return 1
