@@ -31,26 +31,17 @@
 
 set -euo pipefail
 
-# ── /tmp trust boundary map ──────────────────────────────────────
-# Files in /tmp that cross user boundaries. Every file sourced by
-# .bashrc/.profile MUST be root-owned 444 in root mode.
-#
-# File                         Owner      Mode  Writer   Reader    Sourced?
-# /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (.bashrc/.profile)
-# /tmp/gateway.log             gateway    600   gateway  gateway   no
-# /tmp/auto-pair.log           sandbox    600   sandbox  sandbox   no
-# /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
-# /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
-# /tmp/.config/                sandbox    755   sandbox  sandbox   no (tool data)
-# /tmp/.gnupg/                 sandbox    700   sandbox  sandbox   no (key data)
-#
-# In non-root mode privilege separation is disabled — all files are
-# owned by sandbox. chmod 444 is best-effort (owner can chmod back).
-# This is an accepted limitation documented in the OpenShell security model.
-#
-# See also: https://github.com/NVIDIA/NemoClaw/issues/2181
-# Future: adopt s6-overlay fix-attrs.d/ for declarative enforcement.
-# ─────────────────────────────────────────────────────────────────
+# ── Source shared sandbox initialisation library ─────────────────
+# Single source of truth for security-sensitive primitives shared with
+# agents/hermes/start.sh. Ref: https://github.com/NVIDIA/NemoClaw/issues/2277
+# Installed location (container): /usr/local/lib/nemoclaw/sandbox-init.sh
+# Dev fallback: scripts/lib/sandbox-init.sh relative to this script.
+_SANDBOX_INIT="/usr/local/lib/nemoclaw/sandbox-init.sh"
+if [ ! -f "$_SANDBOX_INIT" ]; then
+  _SANDBOX_INIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/sandbox-init.sh"
+fi
+# shellcheck source=scripts/lib/sandbox-init.sh
+source "$_SANDBOX_INIT"
 
 # Harden: limit process count to prevent fork bombs (ref: #809)
 # Best-effort: some container runtimes (e.g., brev) restrict ulimit
@@ -115,99 +106,8 @@ else
   install -d -m 700 /tmp/.gnupg
 fi
 
-# ── Secure file helpers ──────────────────────────────────────────
-# Centralized primitives for creating files that cross trust boundaries
-# in /tmp. Using these helpers instead of ad-hoc chmod/chown ensures
-# consistent security posture and prevents the class of bug in #2181.
-#
-# Future: these map directly to s6-overlay fix-attrs.d/ entries when
-# the entrypoint is decomposed.
-
-# Write a file that the sandbox user can SOURCE but not MODIFY.
-# Reads content from stdin. Caller usage:
-#   emit_sandbox_sourced_file /path <<'EOF'
-#   export FOO="bar"
-#   EOF
-#
-# Root mode:  root:root 444 — sandbox cannot chmod (not owner).
-# Non-root:   sandbox:sandbox 444 — best-effort (owner can chmod back;
-#             accepted limitation since privilege separation is disabled).
-emit_sandbox_sourced_file() {
-  local path="$1"
-  # Remove any pre-existing file/symlink to prevent symlink-following attacks.
-  # rm -f works because: root can remove anything; in non-root mode the owner
-  # can remove their own file in sticky-bit /tmp.
-  rm -f "$path" 2>/dev/null || true
-  cat >"$path"
-  if [ "$(id -u)" -eq 0 ]; then
-    chown root:root "$path"
-  fi
-  chmod 444 "$path"
-}
-
-# Verify that trust-boundary files in /tmp have the expected permissions
-# BEFORE handing off to the sandbox user. Call this after all init work
-# and before launching services. Defence-in-depth: catches regressions
-# even if a new file is added without using the helper above.
-validate_tmp_permissions() {
-  local failed=0
-
-  # Files sourced by sandbox (.bashrc/.profile) — must not be writable.
-  # Single-entry loop is intentional — designed to grow as new sourced files
-  # are added (e.g., mediator config). See trust boundary map above.
-  # shellcheck disable=SC2043
-  for f in /tmp/nemoclaw-proxy-env.sh; do
-    [ -f "$f" ] || continue
-    local perms owner
-    perms="$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f" 2>/dev/null || echo "unknown")"
-    owner="$(stat -c '%U' "$f" 2>/dev/null || stat -f '%Su' "$f" 2>/dev/null || echo "unknown")"
-    if [ "$(id -u)" -eq 0 ] && { [ "$owner" != "root" ] || [ "$perms" != "444" ]; }; then
-      echo "[SECURITY] $f has unsafe permissions: owner=$owner mode=$perms (expected root:444)" >&2
-      failed=1
-    elif [ "$(id -u)" -ne 0 ] && [ "$perms" != "444" ]; then
-      echo "[SECURITY] $f has unsafe permissions: mode=$perms (expected 444)" >&2
-      failed=1
-    fi
-  done
-
-  # Restricted log files — must be 600
-  for f in /tmp/gateway.log /tmp/auto-pair.log; do
-    [ -f "$f" ] || continue
-    local perms
-    perms="$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f" 2>/dev/null || echo "unknown")"
-    if [ "$perms" != "600" ]; then
-      echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600)" >&2
-      failed=1
-    fi
-  done
-
-  return $failed
-}
-
-# ── Drop unnecessary Linux capabilities ──────────────────────────
-# CIS Docker Benchmark 5.3: containers should not run with default caps.
-# OpenShell manages the container runtime so we cannot pass --cap-drop=ALL
-# to docker run. Instead, drop dangerous capabilities from the bounding set
-# at startup using capsh. The bounding set limits what caps any child process
-# (gateway, sandbox, agent) can ever acquire.
-#
-# Kept: cap_chown, cap_setuid, cap_setgid, cap_fowner, cap_kill
-#   — required by the entrypoint for gosu privilege separation and chown.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/797
-if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] && command -v capsh >/dev/null 2>&1; then
-  # capsh --drop requires CAP_SETPCAP in the bounding set. OpenShell's
-  # sandbox runtime may strip it, so check before attempting the drop.
-  if capsh --has-p=cap_setpcap 2>/dev/null; then
-    export NEMOCLAW_CAPS_DROPPED=1
-    exec capsh \
-      --drop=cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
-      -- -c 'exec /usr/local/bin/nemoclaw-start "$@"' -- "$@"
-  else
-    echo "[SECURITY] CAP_SETPCAP not available — runtime already restricts capabilities" >&2
-  fi
-elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
-  echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
-fi
+# ── Drop unnecessary Linux capabilities (shared) ────────────────
+drop_capabilities /usr/local/bin/nemoclaw-start "$@"
 
 # Normalize the sandbox-create bootstrap wrapper. Onboard launches the
 # container as `env CHAT_UI_URL=... nemoclaw-start`, but this script is already
@@ -276,23 +176,8 @@ PUBLIC_PORT="$_DASHBOARD_PORT"
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 
-# ── Config integrity check ──────────────────────────────────────
-# The config hash was pinned at build time. If it doesn't match,
-# someone (or something) has tampered with the config.
-
-verify_config_integrity() {
-  local hash_file="/sandbox/.openclaw/.config-hash"
-  if [ ! -f "$hash_file" ]; then
-    echo "[SECURITY] Config hash file missing — refusing to start without integrity verification" >&2
-    return 1
-  fi
-  if ! (cd /sandbox/.openclaw && sha256sum -c "$hash_file" --status 2>/dev/null); then
-    echo "[SECURITY] openclaw.json integrity check FAILED — config may have been tampered with" >&2
-    echo "[SECURITY] Expected hash: $(cat "$hash_file")" >&2
-    echo "[SECURITY] Actual hash:   $(sha256sum /sandbox/.openclaw/openclaw.json)" >&2
-    return 1
-  fi
-}
+# ── Config integrity check (delegates to shared library) ────────
+# verify_config_integrity is provided by sandbox-init.sh (parameterized).
 
 # ── Runtime model/provider override ──────────────────────────────
 # Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
@@ -731,55 +616,17 @@ GUARD
   done
   # Final lock after all rc-file mutations (export_gateway_token + this
   # function) are complete so Landlock read_only enforcement holds.
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    [ -f "$rc_file" ] && chmod 444 "$rc_file"
-  done
+  lock_rc_files "$_SANDBOX_HOME"
 }
 
+# validate_openclaw_symlinks / harden_openclaw_symlinks — thin wrappers
+# around shared library functions for backward compatibility with callsites.
 validate_openclaw_symlinks() {
-  local entry name target expected
-  for entry in /sandbox/.openclaw/*; do
-    [ -L "$entry" ] || continue
-    name="$(basename "$entry")"
-    target="$(readlink -f "$entry" 2>/dev/null || true)"
-    expected="/sandbox/.openclaw-data/$name"
-    if [ "$target" != "$expected" ]; then
-      echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
-      return 1
-    fi
-  done
+  validate_config_symlinks /sandbox/.openclaw /sandbox/.openclaw-data
 }
 
 harden_openclaw_symlinks() {
-  local entry hardened failed
-  hardened=0
-  failed=0
-
-  if ! command -v chattr >/dev/null 2>&1; then
-    echo "[SECURITY] chattr not available — relying on DAC + Landlock for .openclaw hardening" >&2
-    return 0
-  fi
-
-  if chattr +i /sandbox/.openclaw 2>/dev/null; then
-    hardened=$((hardened + 1))
-  else
-    failed=$((failed + 1))
-  fi
-
-  for entry in /sandbox/.openclaw/*; do
-    [ -L "$entry" ] || continue
-    if chattr +i "$entry" 2>/dev/null; then
-      hardened=$((hardened + 1))
-    else
-      failed=$((failed + 1))
-    fi
-  done
-
-  if [ "$failed" -gt 0 ]; then
-    echo "[SECURITY] Immutable hardening applied to $hardened path(s); $failed path(s) could not be hardened — continuing with DAC + Landlock" >&2
-  elif [ "$hardened" -gt 0 ]; then
-    echo "[SECURITY] Immutable hardening applied to /sandbox/.openclaw and validated symlinks" >&2
-  fi
+  harden_config_symlinks /sandbox/.openclaw
 }
 
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
@@ -812,26 +659,7 @@ harden_auth_profiles() {
   fi
 }
 
-configure_messaging_channels() {
-  # Channel entries are baked into openclaw.json at image build time via
-  # NEMOCLAW_MESSAGING_CHANNELS_B64 (see Dockerfile).
-  #
-  # Telegram/Discord: placeholder tokens (openshell:resolve:env:*) flow through
-  # to API calls where the L7 proxy rewrites them with real secrets at egress.
-  # Real tokens are never visible inside the sandbox for these channels.
-  #
-  # Slack: apply_slack_token_override (runs before this function) resolves
-  # SLACK_BOT_TOKEN/SLACK_APP_TOKEN placeholders directly into openclaw.json so
-  # Bolt's in-process token validation passes. Both env vars are unset before the
-  # gateway starts (root path) so they do not leak into the sandbox process env.
-  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
-
-  echo "[channels] Messaging channels active (baked at build time):" >&2
-  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && echo "[channels]   telegram (native)" >&2
-  [ -n "${DISCORD_BOT_TOKEN:-}" ] && echo "[channels]   discord (native)" >&2
-  [ -n "${SLACK_BOT_TOKEN:-}" ] && echo "[channels]   slack (native)" >&2
-  return 0
-}
+# configure_messaging_channels is provided by sandbox-init.sh (shared).
 
 # Print the local and remote dashboard URLs, appending the auth token if available.
 print_dashboard_urls() {
@@ -973,6 +801,19 @@ if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT"
 fi
 
+# WebSocket CONNECT tunnel fix (NemoClaw#1570).
+# The `ws` library calls https.request() for wss:// WebSocket upgrades.
+# EnvHttpProxyAgent (NODE_USE_ENV_PROXY=1) sends a forward proxy request
+# instead of CONNECT — rejected by the L7 proxy with 400. Without
+# NODE_USE_ENV_PROXY, ws goes direct — blocked by sandbox netns.
+# The preload patches https.request() to inject a CONNECT tunnel agent for
+# WebSocket upgrade requests. Activates whenever HTTPS_PROXY is set (the
+# script itself guards on the env var).
+_WS_FIX_SCRIPT="/opt/nemoclaw-blueprint/scripts/ws-proxy-fix.js"
+if [ -f "$_WS_FIX_SCRIPT" ]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_WS_FIX_SCRIPT"
+fi
+
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns
 # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
@@ -1008,6 +849,10 @@ PROXYEOF
   if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT\""
   fi
+  # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
+  if [ -f "$_WS_FIX_SCRIPT" ]; then
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
+  fi
   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
   for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -1015,22 +860,10 @@ PROXYEOF
   done
 } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
 
-# Forward SIGTERM/SIGINT to child processes for graceful shutdown.
-# This script is PID 1 — without a trap, signals interrupt wait and
-# children are orphaned until Docker sends SIGKILL after the grace period.
-cleanup() {
-  echo "[gateway] received signal, forwarding to children..." >&2
-  local gateway_status=0
-  kill -TERM "$GATEWAY_PID" 2>/dev/null || true
-  if [ -n "${AUTO_PAIR_PID:-}" ]; then
-    kill -TERM "$AUTO_PAIR_PID" 2>/dev/null || true
-  fi
-  wait "$GATEWAY_PID" 2>/dev/null || gateway_status=$?
-  if [ -n "${AUTO_PAIR_PID:-}" ]; then
-    wait "$AUTO_PAIR_PID" 2>/dev/null || true
-  fi
-  exit "$gateway_status"
-}
+# cleanup_on_signal is provided by sandbox-init.sh. It reads
+# SANDBOX_CHILD_PIDS (array of all PIDs) and SANDBOX_WAIT_PID (the
+# primary process whose exit status is returned).
+# Each code path below sets these before registering the trap.
 # ── Main ─────────────────────────────────────────────────────────
 
 echo 'Setting up NemoClaw...' >&2
@@ -1049,7 +882,7 @@ fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
-  if ! verify_config_integrity; then
+  if ! verify_config_integrity /sandbox/.openclaw; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
@@ -1130,22 +963,32 @@ if [ "$(id -u)" -ne 0 ]; then
 
   # In non-root mode, detach gateway stdout/stderr from the sandbox-create
   # stream so openshell sandbox create can return once the container is ready.
+  # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
   touch /tmp/gateway.log
   chmod 600 /tmp/gateway.log
 
   # Separate log for auto-pair in non-root mode as well.
+  # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
   touch /tmp/auto-pair.log
   chmod 600 /tmp/auto-pair.log
 
   # Defence-in-depth: verify /tmp file permissions before launching services.
+  # shellcheck disable=SC2119
   validate_tmp_permissions
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
-  trap cleanup SIGTERM SIGINT
   start_auto_pair
+  # NOTE: PIDs are collected after launch; a signal arriving between trap
+  # registration and the final append is a small race window (same as before
+  # the shared-library refactor). Acceptable for entrypoint-level cleanup.
+  SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
+  [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
+  # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
+  SANDBOX_WAIT_PID="$GATEWAY_PID"
+  trap cleanup_on_signal SIGTERM SIGINT
   print_dashboard_urls
 
   wait "$GATEWAY_PID"
@@ -1155,7 +998,7 @@ fi
 # ── Root path (full privilege separation via gosu) ─────────────
 
 # Verify config integrity before starting anything
-verify_config_integrity
+verify_config_integrity /sandbox/.openclaw
 apply_model_override
 apply_cors_override
 apply_slack_token_override
@@ -1167,11 +1010,6 @@ install_configure_guard
 # BEFORE chattr +i (which locks the config permanently).
 configure_messaging_channels
 
-# SECURITY: Slack tokens were resolved into openclaw.json by apply_slack_token_override.
-# Unset here — before any gosu sandbox child — so neither the sandbox user nor
-# the gateway inherits them from the process environment.
-unset SLACK_BOT_TOKEN SLACK_APP_TOKEN
-
 # Write auth profile as sandbox user (needs writable .openclaw-data)
 # and recursively re-tighten any auth-profiles.json files under ~/.openclaw.
 gosu sandbox bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
@@ -1182,11 +1020,13 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
 fi
 
 # SECURITY: Protect gateway log from sandbox user tampering
+# TODO(#2277-P2): migrate to shared emit_restricted_log() helper
 touch /tmp/gateway.log
 chown gateway:gateway /tmp/gateway.log
 chmod 600 /tmp/gateway.log
 
 # Separate log for auto-pair so sandbox user can write to it
+# TODO(#2277-P2): migrate to shared emit_restricted_log() helper
 touch /tmp/auto-pair.log
 chown sandbox:sandbox /tmp/auto-pair.log
 chmod 600 /tmp/auto-pair.log
@@ -1203,6 +1043,7 @@ validate_openclaw_symlinks
 harden_openclaw_symlinks
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
+# shellcheck disable=SC2119
 validate_tmp_permissions
 
 # Start the gateway as the 'gateway' user.
@@ -1212,9 +1053,16 @@ validate_tmp_permissions
 nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
-trap cleanup SIGTERM SIGINT
 
 start_auto_pair
+# NOTE: PIDs are collected after launch; a signal arriving between trap
+# registration and the final append is a small race window (same as before
+# the shared-library refactor). Acceptable for entrypoint-level cleanup.
+SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
+[ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
+# shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
+SANDBOX_WAIT_PID="$GATEWAY_PID"
+trap cleanup_on_signal SIGTERM SIGINT
 print_dashboard_urls
 
 # Keep container running by waiting on the gateway process.
