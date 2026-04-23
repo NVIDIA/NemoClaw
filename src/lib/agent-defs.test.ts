@@ -84,6 +84,13 @@ describe("agent definitions", () => {
     );
   });
 
+  it("rejects non-object manifest payloads", () => {
+    const agentName = `invalid-top-level-manifest-${String(Date.now())}`;
+    writeTempAgentManifest(agentName, ["- not", "- an", "- object"].join("\n"));
+
+    expect(() => loadAgent(agentName)).toThrow(/YAML object/);
+  });
+
   it("rejects invalid forward_ports values in manifests", () => {
     const agentName = `invalid-forward-port-${String(Date.now())}`;
     writeTempAgentManifest(

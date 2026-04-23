@@ -9,7 +9,7 @@
 # Covers:
 #   TC-NET-01: Deny-by-default egress (blocked URL returns 403)
 #   TC-NET-02: Whitelisted endpoint access (PyPI reachable via pip)
-#   TC-NET-03: Live policy-add without restart (telegram preset)
+#   TC-NET-03: Live policy-add without restart (slack preset)
 #   TC-NET-04: policy-add --dry-run (no changes applied)
 #   TC-NET-05: Hot-reload (policy change without sandbox restart)
 #   TC-NET-06: Permissive policy mode (open all egress)
@@ -103,6 +103,7 @@ install_nemoclaw() {
     NVIDIA_API_KEY="${NVIDIA_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+    NEMOCLAW_POLICY_TIER="restricted" \
     bash "$REPO_ROOT/install.sh" --non-interactive --yes-i-accept-third-party-software \
     2>&1 | tee -a "$LOG_FILE"
   if [ -f "$HOME/.bashrc" ]; then
@@ -293,9 +294,9 @@ test_net_02_whitelist_access() {
 test_net_03_live_policy_add() {
   log "=== TC-NET-03: Live Policy-Add Without Restart ==="
 
-  local target_url="https://api.telegram.org/"
+  local target_url="https://slack.com/"
 
-  log "  Step 1: Verify api.telegram.org is blocked before policy-add..."
+  log "  Step 1: Verify slack.com is blocked before policy-add..."
   local before
   before=$(sandbox_exec "node -e \"
 fetch('$target_url', {signal: AbortSignal.timeout(15000)})
@@ -304,18 +305,18 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
 \"" 2>&1) || true
   log "  Before policy-add: $before"
 
-  if echo "$before" | grep -qE "STATUS_[2-4][0-9][0-9]"; then
-    skip "TC-NET-03" "api.telegram.org already reachable before policy-add (preset may be pre-applied)"
+  if echo "$before" | grep -qE "STATUS_[23][0-9][0-9]"; then
+    skip "TC-NET-03" "slack.com already reachable before policy-add (preset may be pre-applied)"
     return
   fi
 
-  log "  Step 2: Adding telegram preset (interactive mode)..."
+  log "  Step 2: Adding slack preset (interactive mode)..."
   local interactive_rc=0
-  apply_preset_interactive "telegram" || interactive_rc=$?
+  apply_preset_interactive "slack" || interactive_rc=$?
   if [[ $interactive_rc -eq 2 ]]; then
     log "  Interactive mode unavailable (expect missing) — falling back to non-interactive..."
-    if ! apply_preset "telegram"; then
-      fail "TC-NET-03: Setup" "Could not apply telegram preset"
+    if ! apply_preset "slack"; then
+      fail "TC-NET-03: Setup" "Could not apply slack preset"
       return
     fi
   elif [[ $interactive_rc -ne 0 ]]; then
@@ -325,7 +326,7 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
 
   sleep 5
 
-  log "  Step 3: Verify api.telegram.org is reachable after policy-add..."
+  log "  Step 3: Verify slack.com is reachable after policy-add..."
   local after
   after=$(sandbox_exec "node -e \"
 fetch('$target_url', {signal: AbortSignal.timeout(30000)})
@@ -337,7 +338,7 @@ fetch('$target_url', {signal: AbortSignal.timeout(30000)})
   if echo "$after" | grep -qE "STATUS_[2-4][0-9][0-9]"; then
     pass "TC-NET-03: Endpoint reachable after live policy-add ($after)"
   elif echo "$after" | grep -qE "ERROR_"; then
-    fail "TC-NET-03: Live policy-add" "api.telegram.org still proxy-blocked after policy-add ($after)"
+    fail "TC-NET-03: Live policy-add" "slack.com still proxy-blocked after policy-add ($after)"
   else
     fail "TC-NET-03: Live policy-add" "Unexpected response after policy-add ($after)"
   fi
@@ -349,9 +350,9 @@ fetch('$target_url', {signal: AbortSignal.timeout(30000)})
 test_net_04_dry_run() {
   log "=== TC-NET-04: Policy-Add --dry-run ==="
 
-  local target_url="https://slack.com/"
+  local target_url="https://api.atlassian.com/"
 
-  log "  Step 1: Verify slack.com is blocked..."
+  log "  Step 1: Verify api.atlassian.com is blocked..."
   local before
   before=$(sandbox_exec "node -e \"
 fetch('$target_url', {signal: AbortSignal.timeout(15000)})
@@ -360,18 +361,18 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
 \"" 2>&1) || true
   log "  Before dry-run: $before"
 
-  log "  Step 2: Running policy-add --dry-run slack..."
+  log "  Step 2: Running policy-add --dry-run jira..."
   local dry_output dry_rc=0
-  dry_output=$(nemoclaw "$SANDBOX_NAME" policy-add slack --dry-run 2>&1) || dry_rc=$?
+  dry_output=$(nemoclaw "$SANDBOX_NAME" policy-add jira --dry-run 2>&1) || dry_rc=$?
   log "  Dry-run output (exit $dry_rc): ${dry_output:0:300}"
 
-  if [[ $dry_rc -eq 0 ]] && echo "$dry_output" | grep -qiE "slack\.com|would be opened"; then
+  if [[ $dry_rc -eq 0 ]] && echo "$dry_output" | grep -qiE "atlassian|would be opened"; then
     pass "TC-NET-04: Dry-run printed endpoint info"
   else
     fail "TC-NET-04: Dry-run output" "Expected endpoint info in output: ${dry_output:0:200}"
   fi
 
-  log "  Step 3: Verify slack.com is still blocked after dry-run..."
+  log "  Step 3: Verify api.atlassian.com is still blocked after dry-run..."
   local after
   after=$(sandbox_exec "node -e \"
 fetch('$target_url', {signal: AbortSignal.timeout(15000)})
@@ -383,7 +384,7 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
   if echo "$after" | grep -qE "STATUS_403|ERROR_"; then
     pass "TC-NET-04: Policy unchanged after dry-run (blocked: $after)"
   elif echo "$after" | grep -qE "STATUS_[23]"; then
-    fail "TC-NET-04: Dry-run side effect" "slack.com reachable after dry-run (policy was modified)"
+    fail "TC-NET-04: Dry-run side effect" "api.atlassian.com reachable after dry-run (policy was modified)"
   else
     fail "TC-NET-04: Dry-run verification" "Unexpected response ($after)"
   fi
