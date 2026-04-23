@@ -361,6 +361,44 @@ $ nemoclaw <sandbox-name> policy-add
 
 Refer to [`nemoclaw <name> policy-add`](../reference/commands.md#nemoclaw-name-policy-add) for usage details and flags.
 
+## Update to the Latest Version
+
+When a new NemoClaw release becomes available, two things need to update: the `nemoclaw` CLI on your host, and the sandbox images your agents are running in.
+
+### Update the NemoClaw CLI
+
+Re-run the installer.
+Before it onboards anything, the installer calls [`nemoclaw backup-all`](../reference/commands.md#nemoclaw-backup-all) automatically, storing a snapshot of each running sandbox in `~/.nemoclaw/rebuild-backups/` as a safety net.
+
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+### Upgrade your sandboxes to the new image
+
+Re-running the installer updates the CLI, but existing sandboxes continue running on whatever base image you used to create them.
+Use [`nemoclaw upgrade-sandboxes`](../reference/commands.md#nemoclaw-upgrade-sandboxes) to rebuild any sandbox whose base image is older than the one currently pinned by NemoClaw:
+
+```console
+$ nemoclaw upgrade-sandboxes --check    # list stale sandboxes without rebuilding
+$ nemoclaw upgrade-sandboxes            # rebuild with confirmation prompt
+$ nemoclaw upgrade-sandboxes --auto     # rebuild without prompting
+```
+
+Each rebuild follows the same backup-and-restore flow as [`nemoclaw <name> rebuild`](../reference/commands.md#nemoclaw-name-rebuild). NemoClaw reapplies workspace files, credentials, and policy presets to the new sandbox automatically.
+See [Backup and Restore](../workspace/backup-restore.md) for the full state-preservation guarantees.
+
+:::{tip} Manual snapshot for major upgrades
+For releases that change schemas or break compatibility, take a manual snapshot first:
+
+```console
+$ nemoclaw my-assistant snapshot create
+```
+
+If the upgrade goes badly, roll back with `nemoclaw my-assistant snapshot restore`.
+See [Commands &rarr; `nemoclaw <name> snapshot create`](../reference/commands.md#nemoclaw-name-snapshot-create) for details.
+:::
+
 ## Uninstall
 
 To remove NemoClaw and all resources created during setup, run the CLI's built-in uninstall command:
