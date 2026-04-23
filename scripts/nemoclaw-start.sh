@@ -908,6 +908,134 @@ HTTP_PROXY_FIX_EOF
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT"
 fi
 
+# Nemotron inference parameter injection (NemoClaw#1193, NemoClaw#2051).
+# Nemotron models may return empty content (tool call instead of text) or
+# thinking-only blocks (stalls the conversation) when the model's chat
+# template produces an empty assistant turn. The vLLM / NIM chat template
+# kwarg `force_nonempty_content` prevents this by ensuring the template
+# always emits a non-empty content field.
+#
+# The preload wraps http.request() — the lowest common denominator every
+# HTTP client bottoms out at — buffers the JSON body for POST requests
+# to /v1/chat/completions, and injects the kwarg when the model ID
+# contains "nemotron". Backends that do not recognise the extra field
+# silently ignore it (OpenAI-compatible contract).
+#
+# Scoped strictly to Nemotron models: non-Nemotron requests pass through
+# completely untouched.
+_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
+emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <<'NEMOTRON_FIX_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// nemotron-inference-fix.js — inject chat_template_kwargs for Nemotron models.
+//
+// Problem (NemoClaw#1193, NemoClaw#2051):
+//   Nemotron models sometimes generate tool calls instead of text for simple
+//   queries, or return thinking-only blocks with stopReason "stop" that
+//   OpenClaw treats as end-of-turn, causing the conversation to stall.
+//   The root cause is the model's chat template producing empty assistant
+//   content when tool definitions are present.
+//
+// Fix:
+//   Inject `chat_template_kwargs: { force_nonempty_content: true }` into
+//   /v1/chat/completions request bodies when the model ID contains
+//   "nemotron". This tells the vLLM/NIM serving layer to force the chat
+//   template to always produce non-empty content alongside any tool calls
+//   or thinking blocks.
+//
+//   Scoped strictly to Nemotron models — all other requests pass through
+//   untouched. Backends that do not support chat_template_kwargs silently
+//   ignore the extra field per the OpenAI-compatible API contract.
+
+(function () {
+  'use strict';
+
+  var http = require('http');
+  var https = require('https');
+
+  var NEMOTRON_RE = /nemotron/i;
+  var COMPLETIONS_RE = /\/v1\/chat\/completions/;
+
+  function wrapModule(mod) {
+    var origRequest = mod.request;
+
+    mod.request = function (options, callback) {
+      // Only intercept object-form calls with a recognisable path.
+      if (typeof options === 'string' || !options) {
+        return origRequest.apply(mod, arguments);
+      }
+
+      var path = options.path || '';
+      if (options.method !== 'POST' || !COMPLETIONS_RE.test(path)) {
+        return origRequest.apply(mod, arguments);
+      }
+
+      // Create the real request, then intercept write/end to buffer the body.
+      var req = origRequest.apply(mod, arguments);
+      var origWrite = req.write;
+      var origEnd = req.end;
+      var chunks = [];
+      var intercepted = false;
+
+      req.write = function (chunk, encoding, cb) {
+        if (chunk != null) {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk);
+        }
+        // Buffer instead of sending — we flush in end().
+        if (typeof encoding === 'function') { encoding(); }
+        else if (typeof cb === 'function') { cb(); }
+        return true;
+      };
+
+      req.end = function (chunk, encoding, cb) {
+        if (chunk != null && typeof chunk !== 'function') {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk);
+        }
+        // Resolve the callback argument (end has multiple overload signatures).
+        var endCb = typeof chunk === 'function' ? chunk
+          : typeof encoding === 'function' ? encoding
+          : typeof cb === 'function' ? cb
+          : null;
+
+        var raw = Buffer.concat(chunks);
+        try {
+          var body = JSON.parse(raw.toString('utf-8'));
+          if (body && body.model && NEMOTRON_RE.test(body.model)) {
+            if (!body.chat_template_kwargs) {
+              body.chat_template_kwargs = {};
+            }
+            body.chat_template_kwargs.force_nonempty_content = true;
+            intercepted = true;
+            var modified = Buffer.from(JSON.stringify(body), 'utf-8');
+            // Update Content-Length so the proxy/server reads the full body.
+            if (req.getHeader && req.setHeader) {
+              req.removeHeader('content-length');
+              req.setHeader('Content-Length', modified.length);
+            }
+            origWrite.call(req, modified);
+          } else {
+            // Not a Nemotron model — send original bytes unmodified.
+            origWrite.call(req, raw);
+          }
+        } catch (_e) {
+          // JSON parse failed — forward original bytes.
+          origWrite.call(req, raw);
+        }
+
+        return endCb ? origEnd.call(req, endCb) : origEnd.call(req);
+      };
+
+      return req;
+    };
+  }
+
+  wrapModule(http);
+  wrapModule(https);
+})();
+NEMOTRON_FIX_EOF
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT"
+
 # WebSocket CONNECT tunnel fix (NemoClaw#1570).
 # The `ws` library calls https.request() for wss:// WebSocket upgrades.
 # EnvHttpProxyAgent (NODE_USE_ENV_PROXY=1) sends a forward proxy request
@@ -960,6 +1088,8 @@ PROXYEOF
   if [ -f "$_WS_FIX_SCRIPT" ]; then
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
   fi
+  # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
+  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
   for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -1083,7 +1213,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_PROXY_FIX_SCRIPT"
+  validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
@@ -1155,7 +1285,7 @@ harden_openclaw_symlinks
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_PROXY_FIX_SCRIPT"
+validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
