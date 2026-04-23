@@ -72,7 +72,7 @@ Availability is not limited to these entries, but untested configurations may ha
 | macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
 | DGX Spark | Docker | Tested | Use the standard installer and `nemoclaw onboard`. |
 | Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
-| Jetson (Orin Nano, Orin NX, AGX Orin, Xavier) | Docker | Tested | Run `sudo nemoclaw setup-jetson` before onboarding. See [commands reference](../reference/commands.md#nemoclaw-setup-jetson). |
+| Jetson (Orin Nano, Orin NX, AGX Orin, Xavier) | Docker | Tested | Run `sudo nemoclaw setup-jetson` before onboarding. See [commands reference](docs/reference/commands.md#nemoclaw-setup-jetson). |
 <!-- platform-matrix:end -->
 
 ### Install NemoClaw and Onboard OpenClaw Agent
