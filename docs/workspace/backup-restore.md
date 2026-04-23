@@ -136,68 +136,29 @@ USER.md
 memory/
 ```
 
-## Backing Up Multi-Agent Deployments
+## Multi-Agent Deployments
 
 When OpenClaw is configured with multiple named agents, each agent has its own
 workspace directory (`workspace-main/`, `workspace-support/`, `workspace-ops/`,
 and so on — see [Multi-Agent Deployments](workspace-files.md#multi-agent-deployments)).
 
-The built-in snapshot command and `scripts/backup-workspace.sh` currently target
-only the default `workspace/` path. Per-agent workspaces need to be backed up
-manually until multi-workspace support lands.
+`nemoclaw <name> snapshot create` automatically discovers every `workspace-*/`
+directory under the sandbox state tree and includes it in the snapshot bundle
+alongside the default `workspace/`. `snapshot restore` re-applies the full
+per-agent set. No manual per-workspace backup pattern is needed.
 
-### Manual per-agent backup
-
-Discover the active workspaces inside the sandbox and download each with
-`openshell sandbox download`:
-
-```console
-$ SANDBOX=my-assistant
-$ BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
-$ mkdir -p "$BACKUP_DIR"
-
-$ # List per-agent workspaces
-$ openshell sandbox exec "$SANDBOX" -- \
-    sh -c 'ls -d /sandbox/.openclaw/workspace-*/ 2>/dev/null'
-/sandbox/.openclaw/workspace-main/
-/sandbox/.openclaw/workspace-support/
-/sandbox/.openclaw/workspace-ops/
-
-$ # Download each agent's workspace tree
-$ for ws in workspace-main workspace-support workspace-ops; do
-    mkdir -p "$BACKUP_DIR/$ws"
-    for f in SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md; do
-      openshell sandbox download "$SANDBOX" \
-        "/sandbox/.openclaw/$ws/$f" "$BACKUP_DIR/$ws/" 2>/dev/null
-    done
-    openshell sandbox download "$SANDBOX" \
-      "/sandbox/.openclaw/$ws/memory/" "$BACKUP_DIR/$ws/memory/" 2>/dev/null
-  done
-```
-
-### Restore
-
-Upload each per-agent tree back into the same named workspace paths:
-
-```console
-$ for ws in workspace-main workspace-support workspace-ops; do
-    for f in "$BACKUP_DIR/$ws/"*.md; do
-      [ -f "$f" ] && openshell sandbox upload "$SANDBOX" "$f" \
-        "/sandbox/.openclaw/$ws/"
-    done
-    [ -d "$BACKUP_DIR/$ws/memory" ] && openshell sandbox upload "$SANDBOX" \
-      "$BACKUP_DIR/$ws/memory/" "/sandbox/.openclaw/$ws/memory/"
-  done
-```
+The sandbox entrypoint ensures every per-agent workspace is backed by the
+persistent `.openclaw-data/` tree (via a symlink from
+`.openclaw/workspace-<name>/`) so state also survives `openshell sandbox restart`.
 
 ### Shared files across agents
 
 Files that operators typically want consistent across every per-agent workspace
-(`AGENTS.md`, shared skills, common templates) are **not** synced automatically
-today. Each workspace is independent; changes in one don't propagate. Operators
-that need this either copy the shared files explicitly to each workspace after
-editing, or maintain a host-side sync layer. Tracking multi-workspace tooling
-(discovery, shared mount, `workspaces list` command) in
+(`AGENTS.md`, shared skills, common templates) are **not** synced automatically.
+Each workspace is independent; changes in one don't propagate. Operators that
+need this either copy the shared files explicitly to each workspace after
+editing, or maintain a host-side sync layer. Tracking shared-file tooling
+(shared mount, `workspaces list` command) in
 [#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
 
 ## Next Steps

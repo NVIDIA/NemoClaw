@@ -72,11 +72,18 @@ Each per-agent workspace contains the same Markdown file structure as the defaul
 Files are per-agent — changes in `workspace-main/AGENTS.md` are not visible to
 `workspace-support/`.
 
+Persistence and snapshots are handled automatically for per-agent workspaces:
+the sandbox entrypoint provisions each `workspace-<name>/` as a symlink into the
+writable `.openclaw-data/` tree so state survives sandbox restart, and
+`nemoclaw <name> snapshot create` discovers every `workspace-<name>/` directory
+and includes it in the snapshot bundle alongside the default `workspace/`.
+
 :::{note}
-The NemoClaw tooling — `nemoclaw <name> snapshot` and `scripts/backup-workspace.sh`
-— currently operates on the default `workspace/` directory only. Multi-agent
-deployments need a manual backup pattern; see
-[Backing Up Multi-Agent Deployments](backup-restore.md#backing-up-multi-agent-deployments).
+Files that operators typically want consistent across every agent workspace
+(`AGENTS.md`, shared skills, common templates) are not synced automatically.
+Each workspace is independent; changes in one don't propagate. Tracking
+shared-file tooling (shared mount, `workspaces list` command) in
+[#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
 :::
 
 ## Persistence Behavior
