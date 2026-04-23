@@ -548,7 +548,7 @@ When `dst` does not exist, it is auto-created by reusing the source sandbox's co
 
 ```console
 # restore latest snapshot in-place
-$ nemoclaw my-assistant snapshot restore                           
+$ nemoclaw my-assistant snapshot restore
 
 # restore by version
 $ nemoclaw my-assistant snapshot restore v3
