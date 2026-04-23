@@ -682,6 +682,7 @@ const {
   classifyValidationFailure,
   classifyApplyFailure,
   classifySandboxCreateFailure,
+  classifyGatewayStartFailure,
   validateNvidiaApiKeyValue,
   isSafeModelId,
   shouldSkipResponsesProbe,
@@ -1211,6 +1212,7 @@ function destroyGateway(
 
 type FinalGatewayStartFailureOptions = {
   retries: number;
+  dockerUnreachable?: boolean;
   collectDiagnostics?: () => string | null | undefined;
   cleanupGateway?: () => void;
   exitProcess?: (code: number) => never;
@@ -1219,6 +1221,7 @@ type FinalGatewayStartFailureOptions = {
 
 function handleFinalGatewayStartFailure({
   retries,
+  dockerUnreachable = false,
   collectDiagnostics = () =>
     runCaptureOpenshell(["doctor", "logs", "--name", GATEWAY_NAME], {
       ignoreError: true,
@@ -1228,6 +1231,20 @@ function handleFinalGatewayStartFailure({
   exitProcess = (code) => process.exit(code),
   printError = (message = "") => console.error(message),
 }: FinalGatewayStartFailureOptions): never {
+  if (dockerUnreachable) {
+    printError("  Docker daemon is not running — cannot start the gateway.");
+    printError("");
+    printError("  Start Docker, then rerun `nemoclaw onboard`:");
+    if (process.platform === "darwin") {
+      printError("    colima start            # or start Docker Desktop");
+    } else if (process.platform === "linux") {
+      printError("    sudo systemctl start docker");
+    } else {
+      printError("    Start the Docker daemon.");
+    }
+    return exitProcess(1);
+  }
+
   printError(`  Gateway failed to start after ${retries + 1} attempts.`);
   printError("  Gateway state preserved until diagnostics are collected.");
   printError("");
@@ -2453,6 +2470,7 @@ async function startGatewayWithOptions(
   // the second attempt benefit from cached images and cleaner cgroup state.
   // See: https://github.com/NVIDIA/OpenShell/issues/433
   const retries = exitOnFailure ? 2 : 0;
+  let dockerUnreachable = false;
   try {
     await pRetry(
       async () => {
@@ -2471,6 +2489,18 @@ async function startGatewayWithOptions(
             .map((l) => `    ${l}`);
           if (lines.length > 0) {
             console.log(`  Gateway start returned before healthy:\n${lines.join("\n")}`);
+          }
+          // Fast-fail when the underlying Docker daemon is unreachable
+          // (e.g. `colima stop` on macOS). Retrying the health poll against
+          // a dead socket wastes ~5–15 minutes and produces an unactionable
+          // error; short-circuit with a "start Docker" message instead.
+          // See NemoClaw #2347.
+          const failure = classifyGatewayStartFailure(startResult.output || "");
+          if (failure.kind === "docker_unreachable") {
+            dockerUnreachable = true;
+            throw new pRetry.AbortError(
+              "Docker daemon is not reachable (gateway cannot start).",
+            );
           }
         }
         console.log("  Waiting for gateway health...");
@@ -2531,7 +2561,7 @@ async function startGatewayWithOptions(
     );
   } catch {
     if (exitOnFailure) {
-      handleFinalGatewayStartFailure({ retries });
+      handleFinalGatewayStartFailure({ retries, dockerUnreachable });
     }
     throw new Error("Gateway failed to start");
   }

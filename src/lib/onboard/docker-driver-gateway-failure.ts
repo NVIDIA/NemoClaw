@@ -25,6 +25,7 @@
 import fs from "node:fs";
 
 import { redact } from "../security/redact";
+import { classifyGatewayStartFailure } from "../validation";
 
 import type { ChildExitState } from "./child-exit-tracker";
 
@@ -70,6 +71,18 @@ export function reportDockerDriverGatewayStartFailure(
   if (tail) {
     console.error("  Gateway log tail:");
     for (const line of tail.split("\n")) console.error(`    ${redact(line)}`);
+  }
+  if (classifyGatewayStartFailure(tail).kind === "docker_unreachable") {
+    console.error("  Docker daemon is not running — cannot start the gateway.");
+    console.error("");
+    console.error("  Start Docker, then rerun `nemoclaw onboard`:");
+    if (process.platform === "darwin") {
+      console.error("    colima start            # or start Docker Desktop");
+    } else if (process.platform === "linux") {
+      console.error("    sudo systemctl start docker");
+    } else {
+      console.error("    Start the Docker daemon.");
+    }
   }
   console.error("  Troubleshooting:");
   console.error(`    tail -100 ${logPath}`);

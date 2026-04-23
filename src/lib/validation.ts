@@ -17,6 +17,17 @@ export interface SandboxCreateFailure {
   uploadedToGateway: boolean;
 }
 
+export interface GatewayStartFailure {
+  /**
+   * - `docker_unreachable`: the underlying Docker daemon (Colima on macOS,
+   *   dockerd on Linux) is not responding. Retrying the openshell health
+   *   poll cannot recover from this — the user must start Docker first.
+   * - `unknown`: any other failure; callers should fall through to the
+   *   normal retry/health-wait behavior.
+   */
+  kind: "docker_unreachable" | "unknown";
+}
+
 export function classifyValidationFailure({
   httpStatus = 0,
   curlStatus = 0,
@@ -85,6 +96,34 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
     return { kind: "sandbox_create_incomplete", uploadedToGateway: true };
   }
   return { kind: "unknown", uploadedToGateway };
+}
+
+/**
+ * Classify a non-zero `openshell gateway start` result so the onboard retry
+ * loop can short-circuit on unrecoverable failures.
+ *
+ * The only case we special-case today is "Docker daemon not reachable" — on
+ * macOS this surfaces as `Socket not found: /var/run/docker.sock` (Colima
+ * stopped) and on Linux as `Cannot connect to the Docker daemon at
+ * unix:///var/run/docker.sock. Is the docker daemon running?`. Retrying the
+ * health poll against a stopped daemon wastes ~5–15 minutes and produces an
+ * unactionable error at the end; bailing out immediately with a clear
+ * "start Docker" message is strictly better UX. See NemoClaw #2347.
+ */
+export function classifyGatewayStartFailure(output = ""): GatewayStartFailure {
+  const text = String(output || "");
+  // Match both macOS (Colima / Docker Desktop) and Linux docker daemon-down
+  // signatures. The openshell CLI echoes these verbatim from the underlying
+  // Docker client error when the gateway controller starts.
+  if (
+    /Socket not found:\s*\/var\/run\/docker\.sock/i.test(text) ||
+    /Cannot connect to the Docker daemon/i.test(text) ||
+    /^\s*(?:Error:\s*)?Failed to create Docker client(?:[.:]|\b)/im.test(text) ||
+    /docker daemon.*(is not running|not responding|unreachable)/i.test(text)
+  ) {
+    return { kind: "docker_unreachable" };
+  }
+  return { kind: "unknown" };
 }
 
 export function validateNvidiaApiKeyValue(
