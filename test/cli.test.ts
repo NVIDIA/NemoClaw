@@ -174,6 +174,15 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
   });
 
+  it("resume rejection clarifies --resume semantics and points to onboard (#2281)", () => {
+    const r = run("onboard --resume --non-interactive --yes-i-accept-third-party-software");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
+    expect(r.out.includes("--resume only continues an interrupted onboarding run")).toBeTruthy();
+    expect(r.out.includes("To change configuration on an existing sandbox, rebuild it")).toBeTruthy();
+    expect(r.out.includes("nemoclaw onboard")).toBeTruthy();
+  });
+
   it("setup-spark --help exits 0 and shows onboard usage", () => {
     const r = run("setup-spark --help");
     expect(r.code).toBe(0);

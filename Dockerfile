@@ -166,6 +166,11 @@ ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_CONTEXT_WINDOW=131072
 ARG NEMOCLAW_MAX_TOKENS=4096
 ARG NEMOCLAW_REASONING=false
+# Per-request inference timeout (seconds) baked into agents.defaults.timeoutSeconds.
+# Increase for slow local inference (e.g., CPU Ollama). openclaw.json is
+# immutable at runtime (Landlock read-only), so this can only be changed by
+# rebuilding via `nemoclaw onboard`. Ref: issue #2281
+ARG NEMOCLAW_AGENT_TIMEOUT=600
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Base64-encoded JSON list of messaging channel names to pre-configure
 # (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
@@ -209,6 +214,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_CONTEXT_WINDOW=${NEMOCLAW_CONTEXT_WINDOW} \
     NEMOCLAW_MAX_TOKENS=${NEMOCLAW_MAX_TOKENS} \
     NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
+    NEMOCLAW_AGENT_TIMEOUT=${NEMOCLAW_AGENT_TIMEOUT} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
@@ -250,6 +256,8 @@ inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
 context_window = int(os.environ.get('NEMOCLAW_CONTEXT_WINDOW', '131072')); \
 max_tokens = int(os.environ.get('NEMOCLAW_MAX_TOKENS', '4096')); \
 reasoning = os.environ.get('NEMOCLAW_REASONING', 'false') == 'true'; \
+_raw_agent_timeout = os.environ.get('NEMOCLAW_AGENT_TIMEOUT', '600'); \
+agent_timeout = int(_raw_agent_timeout) if _raw_agent_timeout.isdigit() and int(_raw_agent_timeout) > 0 else (_ for _ in ()).throw(ValueError('NEMOCLAW_AGENT_TIMEOUT must be a positive integer')); \
 inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
 msg_channels = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_CHANNELS_B64', 'W10=') or 'W10=').decode('utf-8')); \
 _allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_ALLOWED_IDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
@@ -273,7 +281,7 @@ providers = { \
     } \
 }; \
 config = { \
-    'agents': {'defaults': {'model': {'primary': primary_model_ref}}}, \
+    'agents': {'defaults': {'model': {'primary': primary_model_ref}, 'timeoutSeconds': agent_timeout}}, \
     'models': {'mode': 'merge', 'providers': providers}, \
     'channels': {'defaults': {}, **_ch_cfg}, \
     'update': {'checkOnStart': False}, \
