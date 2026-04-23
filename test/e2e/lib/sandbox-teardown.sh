@@ -28,13 +28,18 @@ register_sandbox_for_teardown() {
 }
 
 _nemoclaw_sandbox_teardown() {
-  # Run on script EXIT — destroys every registered sandbox and clears the
-  # onboard.lock so a subsequent run starts clean even if this one crashed.
+  # Run on script EXIT — destroys every registered sandbox.
+  #
+  # Intentionally does NOT unlink ~/.nemoclaw/onboard.lock: that lock is
+  # global and ownership-aware (acquireOnboardLock in src/lib/onboard-session.ts
+  # verifies PID liveness and inode before cleaning up a stale lock), so an
+  # unconditional rm here could unlink a concurrent run's live lock on a
+  # shared machine. A crashed process leaves a stale lock that the next
+  # onboard cleans up automatically.
   if [[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]]; then
     return 0
   fi
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null
   local sbx
   for sbx in "${_NEMOCLAW_TEARDOWN_SANDBOXES[@]}"; do
     nemoclaw "$sbx" destroy --yes >/dev/null 2>&1
