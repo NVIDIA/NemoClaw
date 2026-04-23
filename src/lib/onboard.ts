@@ -490,29 +490,6 @@ function getInstalledOpenshellVersion(versionOutput = null) {
   ).trim();
   const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+)/i);
   if (match) return match[1];
-  // Fallback: read the sidecar version file written by install-openshell.sh for
-  // binaries that self-report an unparseable string (e.g. openshell 0.0.29 → "m-dev").
-  // Also applies when versionOutput is provided but unparseable (e.g. passed from
-  // runCaptureOpenshell at the blueprint version gate).
-  if (openshellBin) {
-    try {
-      const sidecar = path.join(path.dirname(openshellBin), ".openshell-installed-version");
-      // Invalidate the sidecar if the binary has been replaced since the sidecar
-      // was written (manual `cp openshell /usr/local/bin/openshell` without
-      // re-running install-openshell.sh). Stale sidecar + unsupported binary would
-      // otherwise bypass the min/max version gate silently.
-      const binaryMtime = fs.statSync(openshellBin).mtimeMs;
-      const sidecarMtime = fs.statSync(sidecar).mtimeMs;
-      if (binaryMtime > sidecarMtime) return null;
-      const sidecarMatch = fs
-        .readFileSync(sidecar, "utf-8")
-        .trim()
-        .match(/^([0-9]+\.[0-9]+\.[0-9]+)$/);
-      if (sidecarMatch) return sidecarMatch[1];
-    } catch {
-      // sidecar absent or unreadable — fall through
-    }
-  }
   return null;
 }
 
@@ -2217,6 +2194,7 @@ function getEffectiveProviderName(providerKey) {
     case "nim-local":
       return "nvidia-nim";
     case "ollama":
+    case "install-ollama":
       return "ollama-local";
     case "vllm":
       return "vllm-local";
@@ -2614,11 +2592,12 @@ function getNonInteractiveProvider() {
     "custom",
     "nim-local",
     "vllm",
+    "install-ollama",
   ]);
   if (!validProviders.has(normalized)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
     console.error(
-      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm",
+      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm, install-ollama",
     );
     process.exit(1);
   }
@@ -2689,7 +2668,7 @@ async function preflight() {
       // Source of truth: min_openshell_version in nemoclaw-blueprint/blueprint.yaml.
       // Fall back to the Landlock-enforcement floor (also MIN_VERSION in
       // scripts/install-openshell.sh) if the blueprint cannot be read.
-      const minOpenshellVersion = getBlueprintMinOpenshellVersion() ?? "0.0.29";
+      const minOpenshellVersion = getBlueprintMinOpenshellVersion() ?? "0.0.32";
       const needsUpgrade = !versionGte(currentVersion, minOpenshellVersion);
       if (needsUpgrade) {
         console.log(
@@ -4117,9 +4096,14 @@ async function setupNim(gpu) {
       label: "Local vLLM [experimental] — running",
     });
   }
-  // On macOS without Ollama, offer to install it
-  if (!hasOllama && process.platform === "darwin") {
-    options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
+  // Without Ollama, offer to install it so users always have a local fallback
+  // (e.g. when the NVIDIA API server is down and cloud keys are unavailable)
+  if (!hasOllama && !ollamaRunning) {
+    if (process.platform === "darwin") {
+      options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
+    } else if (process.platform === "linux") {
+      options.push({ key: "install-ollama", label: "Install Ollama (Linux)" });
+    }
   }
 
   if (options.length > 1) {
@@ -4130,10 +4114,17 @@ async function setupNim(gpu) {
         const providerKey = requestedProvider || "build";
         selected = options.find((o) => o.key === providerKey);
         if (!selected) {
-          console.error(
-            `  Requested provider '${providerKey}' is not available in this environment.`,
-          );
-          process.exit(1);
+          // install-ollama is valid even when Ollama is already installed —
+          // fall back to the existing ollama option silently
+          if (providerKey === "install-ollama") {
+            selected = options.find((o) => o.key === "ollama");
+          }
+          if (!selected) {
+            console.error(
+              `  Requested provider '${providerKey}' is not available in this environment.`,
+            );
+            process.exit(1);
+          }
         }
         note(`  [non-interactive] Provider: ${selected.key}`);
       } else {
@@ -4650,9 +4641,13 @@ async function setupNim(gpu) {
         }
         break;
       } else if (selected.key === "install-ollama") {
-        // macOS only — this option is gated by process.platform === "darwin" above
-        console.log("  Installing Ollama via Homebrew...");
-        run(["brew", "install", "ollama"], { ignoreError: true });
+        if (process.platform === "darwin") {
+          console.log("  Installing Ollama via Homebrew...");
+          run(["brew", "install", "ollama"], { ignoreError: true });
+        } else {
+          console.log("  Installing Ollama via official installer...");
+          run("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
+        }
         console.log("  Starting Ollama...");
         // Shell required: backgrounding (&), env var prefix, output redirection.
         run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
@@ -6270,7 +6265,9 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
       },
     });
   } else if (token) {
-    console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
+    console.log(
+      "  OpenClaw UI (tokenized URL; treat it like a password; save it now - it will not be printed again)",
+    );
     for (const line of guidanceLines) {
       console.log(`  ${line}`);
     }
