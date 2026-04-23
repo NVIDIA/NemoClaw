@@ -133,8 +133,9 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
 # Pre-create shell init files for the sandbox user.
 # The /sandbox home directory is Landlock read-only at runtime (#804), so these
 # files must exist at build time. Runtime proxy config is written by the
-# entrypoint to /tmp/nemoclaw-proxy-env.sh (root-owned, sticky-bit protected)
-# and sourced from here on every interactive session.
+# entrypoint to /tmp/nemoclaw-proxy-env.sh (root-owned, mode 444,
+# sticky-bit protected) and sourced from here on every interactive session.
+# Ref: #2181 — the file must not be writable by the sandbox user.
 # hadolint ignore=SC2028
 RUN printf '%s\n' \
         '# Source runtime proxy config (Landlock read-only home, #804)' \

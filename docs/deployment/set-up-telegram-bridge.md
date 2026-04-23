@@ -4,7 +4,7 @@ title:
   nav: "Set Up Telegram"
 description:
   main: "Connect Telegram to your sandboxed OpenClaw agent using OpenShell-managed channel messaging configured during onboarding."
-  agent: "Explains how Telegram reaches the sandboxed OpenClaw agent through OpenShell-managed processes and onboarding-time channel configuration. Use when setting up Telegram, a chat interface, or messaging integration without relying on nemoclaw start for bridges."
+  agent: "Explains how Telegram reaches the sandboxed OpenClaw agent through OpenShell-managed processes and onboarding-time channel configuration. Use when setting up Telegram, a chat interface, or messaging integration without relying on nemoclaw tunnel start for bridges."
 keywords: ["nemoclaw telegram", "telegram bot openclaw agent", "openshell channel messaging"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "telegram", "deployment", "nemoclaw"]
@@ -25,7 +25,7 @@ status: published
 Telegram, Discord, and Slack reach your agent through OpenShell-managed processes and gateway constructs.
 NemoClaw configures those channels during `nemoclaw onboard`. Tokens are registered with OpenShell providers, channel configuration is baked into the sandbox image, and runtime delivery stays under OpenShell control.
 
-`nemoclaw start` does not start Telegram (or other chat bridges). It only starts optional host services such as the cloudflared tunnel when that binary is present.
+`nemoclaw tunnel start` does not start Telegram (or other chat bridges). It only starts optional host services such as the cloudflared tunnel when that binary is present. (`nemoclaw start` is kept as a deprecated alias.)
 For details, refer to [Commands](../reference/commands.md).
 
 ## Prerequisites
@@ -86,17 +86,19 @@ For a full first-time flow, refer to [Quickstart](../get-started/quickstart.md).
 After the sandbox is running, send a message to your bot in Telegram.
 If something fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the Telegram API (see [Customize the Network Policy](../network-policy/customize-network-policy.md) and the `telegram` preset).
 
-## `nemoclaw start` (cloudflared Only)
+## `nemoclaw tunnel start` (cloudflared Only)
 
-`nemoclaw start` starts cloudflared when it is installed, which can expose the dashboard with a public URL.
-It does not affect Telegram connectivity.
+`nemoclaw tunnel start` starts cloudflared when it is installed, which can expose the dashboard with a public URL.
+It does not affect Telegram connectivity. The older `nemoclaw start` still works as a deprecated alias.
 
 ```console
-$ nemoclaw start
+$ nemoclaw tunnel start
 ```
+
+To pause the Telegram bridge without removing its credentials or destroying the sandbox, use `nemoclaw <name> channels stop telegram`. Re-enable it later with `nemoclaw <name> channels start telegram`.
 
 ## Related Topics
 
 - [Deploy NemoClaw to a Remote GPU Instance](deploy-to-remote-gpu.md) for remote deployment with messaging.
 - [Architecture](../reference/architecture.md) for how providers, the gateway, and the sandbox fit together.
-- [Commands](../reference/commands.md) for `start`, `stop`, and `status`.
+- [Commands](../reference/commands.md) for `tunnel start`, `tunnel stop`, `channels start`, `channels stop`, and `status`.

@@ -214,8 +214,9 @@ info "14. Entrypoint drops dangerous capabilities from bounding set"
 # Run capsh directly with the same --drop flags as the entrypoint, then
 # check CapBnd. This avoids running the full entrypoint which starts
 # gateway services that fail in CI without a running OpenShell environment.
-# Extract the --drop list from the entrypoint to stay in sync.
-DROP_LIST=$(run_as_root "grep -oP '(?<=--drop=)[^ \\\\]+' /usr/local/bin/nemoclaw-start")
+# Extract the --drop list from the shared sandbox-init library to stay in sync.
+# The drop_capabilities() function lives in sandbox-init.sh (not the entrypoint).
+DROP_LIST=$(run_as_root "grep -oP '(?<=--drop=)[^ \\\\]+' /usr/local/lib/nemoclaw/sandbox-init.sh")
 if [ -z "$DROP_LIST" ]; then
   fail "could not extract --drop list from entrypoint"
 else
@@ -367,13 +368,49 @@ else
   fail ".profile does not source from expected path: $OUT"
 fi
 
-# ── Test 25: Non-root mode executes without gosu ──────────────────
+# ── Test 25: proxy-env.sh is NOT writable by sandbox user (#2181) ──
+# The entrypoint writes /tmp/nemoclaw-proxy-env.sh via emit_sandbox_sourced_file()
+# which sets mode 444 and root ownership. The sandbox user must not be able to
+# modify this file, as .bashrc/.profile source it on every connect.
+# Since the E2E bypasses the entrypoint (--entrypoint ""), we simulate what the
+# entrypoint does: create the file as root with mode 444, then verify sandbox
+# cannot modify it.
+
+info "25. proxy-env.sh is not writable by sandbox user"
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
+  chown root:root /tmp/nemoclaw-proxy-env.sh
+  chmod 444 /tmp/nemoclaw-proxy-env.sh
+  gosu sandbox bash -c "echo test >> /tmp/nemoclaw-proxy-env.sh 2>&1; echo EXIT=\$?"
+' 2>&1)
+if echo "$OUT" | grep -q "EXIT=1\|Permission denied"; then
+  pass "sandbox user cannot write to /tmp/nemoclaw-proxy-env.sh"
+else
+  fail "sandbox user CAN write to proxy-env.sh: $OUT"
+fi
+
+# ── Test 26: proxy-env.sh has correct permissions (#2181) ─────────
+
+info "26. proxy-env.sh is read-only (mode 444, root-owned)"
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
+  chown root:root /tmp/nemoclaw-proxy-env.sh
+  chmod 444 /tmp/nemoclaw-proxy-env.sh
+  stat -c "%a %U" /tmp/nemoclaw-proxy-env.sh
+' 2>&1)
+if echo "$OUT" | grep -q "444 root"; then
+  pass "proxy-env.sh is 444 root-owned"
+else
+  fail "proxy-env.sh has unexpected permissions: $OUT"
+fi
+
+# ── Test 27: Non-root mode executes without gosu ──────────────────
 # The entrypoint detects uid != 0, skips gosu, and execs the command directly.
 # Use the image's actual sandbox uid/gid here: the system-assigned sandbox uid
 # is not guaranteed to be 1000 on every runner, and the non-root fallback is
 # designed to run as that sandbox user.
 
-info "25. Non-root mode executes command without gosu"
+info "27. Non-root mode executes command without gosu"
 OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" "$IMAGE" echo "NON_ROOT_EXEC_OK" 2>&1 || true)
 if echo "$OUT" | grep -q "NON_ROOT_EXEC_OK"; then
   pass "non-root mode executed command directly (no gosu)"
@@ -381,12 +418,12 @@ else
   fail "non-root command execution failed: $OUT"
 fi
 
-# ── Test 26: Model override patches openclaw.json at startup ─────
+# ── Test 28: Model override patches openclaw.json at startup ─────
 # NEMOCLAW_MODEL_OVERRIDE should patch agents.defaults.model.primary,
 # model id, and model name in openclaw.json before Landlock locks it.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/759
 
-info "26. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
+info "28. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
 OUT=$(docker run --rm -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
   --entrypoint "" "$IMAGE" bash -c '
   # Source the entrypoint functions without running the full startup
@@ -416,9 +453,9 @@ else
   fail "model override did not patch correctly: $OUT"
 fi
 
-# ── Test 27: Model override is a no-op when env var is unset ─────
+# ── Test 29: Model override is a no-op when env var is unset ─────
 
-info "27. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
+info "29. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   source <(sed -n "/^apply_model_override/,/^}/p" /usr/local/bin/nemoclaw-start)
   ORIGINAL=$(python3 -c "import json; print(json.load(open(\"/sandbox/.openclaw/openclaw.json\"))[\"agents\"][\"defaults\"][\"model\"][\"primary\"])")

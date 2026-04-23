@@ -149,9 +149,10 @@ RUN set -eu; \
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Copy startup script
+# Copy startup script and shared sandbox initialisation library
+COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-RUN chmod 755 /usr/local/bin/nemoclaw-start
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
@@ -225,6 +226,17 @@ USER sandbox
 # No runtime writes to openclaw.json are needed or possible.
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 # Auth token is generated per build so each image has a unique token.
+#
+# Temporary workaround for NemoClaw#1738: the OpenClaw Discord extension's
+# gateway uses `ws` (via @buape/carbon), which ignores HTTPS_PROXY/HTTP_PROXY
+# env vars and opens a direct TCP socket to gateway.discord.gg. Sandbox netns
+# blocks direct egress, so the WSS handshake never reaches Discord and the
+# bot loops on close-code 1006. Baking `accounts.default.proxy` into
+# openclaw.json feeds DiscordAccountConfig.proxy, which the gateway plugin
+# threads through to the `ws` `agent` option, routing the upgrade through
+# the OpenShell proxy. Mirror of the Telegram treatment immediately below.
+# Remove once OpenClaw lands an env-var-honouring fix for the Discord
+# gateway equivalent to openclaw/openclaw#62878 (Slack Socket Mode).
 RUN python3 -c "\
 import base64, json, os, secrets; \
 from urllib.parse import urlparse; \
@@ -244,7 +256,7 @@ _allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_AL
 _discord_guilds = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_DISCORD_GUILDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
 _token_keys = {'discord': 'token', 'telegram': 'botToken', 'slack': 'botToken'}; \
 _env_keys = {'discord': 'DISCORD_BOT_TOKEN', 'telegram': 'TELEGRAM_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
-_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'appToken': 'openshell:resolve:env:SLACK_APP_TOKEN'} if ch == 'slack' else {}), **({'proxy': proxy_url} if ch == 'telegram' else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
+_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'appToken': 'openshell:resolve:env:SLACK_APP_TOKEN'} if ch == 'slack' else {}), **({'proxy': proxy_url} if ch in ('telegram', 'discord') else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
 _ch_cfg['discord'].update({'groupPolicy': 'allowlist', 'guilds': _discord_guilds}) if 'discord' in _ch_cfg and _discord_guilds else None; \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \

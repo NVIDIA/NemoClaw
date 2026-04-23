@@ -3130,4 +3130,161 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.ok(payload.lines.some((line) => line.includes("tool-call-parser requires")));
   });
+
+  it("offers install-ollama option on Linux when Ollama is not installed", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-ollama-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "install-ollama-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+
+    // Fake curl binary that returns a successful response — needed because
+    // runCurlProbe and validateOllamaModel spawn real curl via child_process.
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"ok"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    // Simulate: no Ollama installed, no Ollama running, no vLLM — only cloud + install-ollama should appear.
+    // User picks install-ollama (option 7). The install command is mocked to succeed.
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+
+// Mock child_process.spawn so startOllamaAuthProxy doesn't try to spawn a real process.
+const child_process = require("child_process");
+const originalSpawn = child_process.spawn;
+child_process.spawn = (...args) => {
+  // Return a fake ChildProcess with a pid and unref()
+  return { pid: 99999, unref() {}, on() {} };
+};
+
+// Mock spawnSync for ollama pull (real ollama is not installed) and ps checks.
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  const cmdStr = [cmd, ...(args || [])].join(" ");
+  // ollama pull — pretend it succeeds
+  if (cmd === "ollama" && args && args[0] === "pull") {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  // ps check for isOllamaProxyProcess — pretend the proxy is running
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  // Everything else (curl for probes) — use real spawnSync so fake curl binary handles it
+  return originalSpawnSync(cmd, args, opts);
+};
+
+let promptCalls = 0;
+const messages = [];
+const updates = [];
+const runCommands = [];
+
+credentials.prompt = async (message) => {
+  promptCalls += 1;
+  messages.push(message);
+  // Select option 7 (install-ollama) on first prompt, default on model prompt
+  if (promptCalls === 1) return "7";
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  // No ollama installed
+  if (cmd.includes("command -v ollama")) return "";
+  // No ollama running
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  // No vLLM running
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  // After install, ollama list returns a model
+  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
+  // isOllamaProxyProcess — ps check for auth proxy
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  // validateOllamaModel probe via local-inference — return a valid JSON response
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+runner.run = (command, opts) => {
+  runCommands.push(typeof command === "string" ? command : command.join(" "));
+};
+registry.updateSandbox = (_name, update) => updates.push(update);
+
+// Force platform to linux for this test
+Object.defineProperty(process, 'platform', { value: 'linux' });
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("install-test", null);
+    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines, runCommands }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    // Should have shown the "Install Ollama (Linux)" option
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Install Ollama (Linux)")),
+      "Should show Install Ollama option on Linux"
+    );
+
+    // Should have selected ollama-local provider after install
+    assert.equal(payload.result.provider, "ollama-local");
+
+    // Should have run the curl installer (not brew)
+    assert.ok(
+      payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
+      "Should use curl installer on Linux"
+    );
+    assert.ok(
+      !payload.runCommands.some((cmd: string) => cmd.includes("brew install")),
+      "Should NOT use brew on Linux"
+    );
+  });
 });
