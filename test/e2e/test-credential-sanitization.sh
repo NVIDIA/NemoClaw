@@ -69,6 +69,10 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-test}"
 
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 # Run a command inside the sandbox and capture output.
 # Returns __PROBE_FAILED__ and exit 1 if SSH setup or execution fails,
 # so callers can distinguish "no output" from "probe never ran".

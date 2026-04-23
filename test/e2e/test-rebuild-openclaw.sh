@@ -28,6 +28,11 @@
 set -euo pipefail
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-rebuild-oc}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 OLD_OPENCLAW_VERSION="2026.3.11"
 MARKER_FILE="/sandbox/.openclaw-data/workspace/rebuild-marker.txt"
 MARKER_CONTENT="REBUILD_OC_E2E_$(date +%s)"

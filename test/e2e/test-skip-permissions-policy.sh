@@ -65,6 +65,11 @@ section() {
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-skip-perms}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 

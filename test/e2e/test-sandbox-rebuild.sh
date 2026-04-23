@@ -34,6 +34,11 @@ set -euo pipefail
 
 # ── Config ──────────────────────────────────────────────────────────
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-rebuild}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 TIMEOUT="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-1200}"
 MARKER_FILE="/sandbox/.openclaw-data/workspace/rebuild-marker.txt"
 MARKER_CONTENT="REBUILD_E2E_$(date +%s)"

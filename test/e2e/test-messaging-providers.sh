@@ -91,6 +91,10 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-msg-provider}"
 
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 # Default to fake tokens if not provided
 TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"

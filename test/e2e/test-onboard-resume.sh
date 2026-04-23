@@ -77,6 +77,11 @@ run_nemoclaw() {
 }
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-resume}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 RESTORE_API_KEY="${NVIDIA_API_KEY:-}"
