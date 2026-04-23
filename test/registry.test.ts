@@ -153,12 +153,71 @@ describe("registry", () => {
     });
   });
 
+  it("stores imageTag at registration time", () => {
+    registry.registerSandbox({
+      name: "tagged",
+      imageTag: "openshell/sandbox-from:1776766054",
+    });
+    const sb = registry.getSandbox("tagged");
+    expect(sb.imageTag).toBe("openshell/sandbox-from:1776766054");
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.tagged.imageTag).toBe("openshell/sandbox-from:1776766054");
+  });
+
+  it("imageTag defaults to null when not provided", () => {
+    registry.registerSandbox({ name: "no-tag" });
+    const sb = registry.getSandbox("no-tag");
+    expect(sb.imageTag).toBe(null);
+  });
+
+  it("imageTag can be updated via updateSandbox", () => {
+    registry.registerSandbox({ name: "updatable" });
+    registry.updateSandbox("updatable", { imageTag: "openshell/sandbox-from:9999" });
+    expect(registry.getSandbox("updatable").imageTag).toBe("openshell/sandbox-from:9999");
+  });
+
   it("handles corrupt registry file gracefully", () => {
     fs.mkdirSync(path.dirname(regFile), { recursive: true });
     fs.writeFileSync(regFile, "NOT JSON");
     // Should not throw, returns empty
     const { sandboxes } = registry.listSandboxes();
     expect(sandboxes.length).toBe(0);
+  });
+
+  it("setChannelDisabled toggles a channel on and off for a sandbox", () => {
+    registry.registerSandbox({ name: "s1" });
+    expect(registry.getDisabledChannels("s1")).toEqual([]);
+
+    expect(registry.setChannelDisabled("s1", "telegram", true)).toBe(true);
+    expect(registry.getDisabledChannels("s1")).toEqual(["telegram"]);
+
+    expect(registry.setChannelDisabled("s1", "discord", true)).toBe(true);
+    expect(registry.getDisabledChannels("s1")).toEqual(["discord", "telegram"]);
+
+    registry.setChannelDisabled("s1", "telegram", false);
+    expect(registry.getDisabledChannels("s1")).toEqual(["discord"]);
+  });
+
+  it("setChannelDisabled clears the disabledChannels field when empty", () => {
+    registry.registerSandbox({ name: "s1" });
+    registry.setChannelDisabled("s1", "telegram", true);
+    registry.setChannelDisabled("s1", "telegram", false);
+    const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(persisted.sandboxes.s1.disabledChannels).toBeUndefined();
+  });
+
+  it("setChannelDisabled returns false when sandbox is missing", () => {
+    expect(registry.setChannelDisabled("missing", "telegram", true)).toBe(false);
+  });
+
+  it("registerSandbox preserves disabledChannels when re-registering", () => {
+    registry.registerSandbox({ name: "s1" });
+    registry.setChannelDisabled("s1", "telegram", true);
+    registry.registerSandbox({
+      name: "s1",
+      disabledChannels: registry.getDisabledChannels("s1"),
+    });
+    expect(registry.getDisabledChannels("s1")).toEqual(["telegram"]);
   });
 });
 

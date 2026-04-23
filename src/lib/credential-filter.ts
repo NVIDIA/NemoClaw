@@ -72,6 +72,29 @@ export function isConfigObject(value: unknown): value is ConfigObject {
 }
 
 /**
+ * Narrow an unknown value to a JSON-like configuration value.
+ */
+export function isConfigValue(value: unknown): value is ConfigValue {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every((entry) => isConfigValue(entry));
+  }
+  if (!isConfigObject(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+
+  return Object.values(value).every((entry) => isConfigValue(entry));
+}
+
+/**
  * Recursively strip credential fields from a JSON-like object.
  * Returns a new object with sensitive values replaced by a placeholder.
  */

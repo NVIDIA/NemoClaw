@@ -14,7 +14,9 @@ import { DASHBOARD_PORT } from "./ports";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 
-type UnknownRecord = { [key: string]: unknown };
+type ManifestScalar = string | number | boolean | null | Date;
+type ManifestValue = ManifestScalar | ManifestRecord | ManifestValue[];
+type ManifestRecord = { [key: string]: ManifestValue };
 type StringMap = { [key: string]: string };
 
 export interface AgentHealthProbe {
@@ -59,7 +61,7 @@ export interface AgentDefinition {
   phone_home_hosts?: string[];
   forward_ports?: number[];
   health_probe?: AgentHealthProbe;
-  config?: UnknownRecord;
+  config?: ManifestRecord;
   state_dirs?: string[];
   messaging_platforms?: { supported?: string[] };
   _legacy_paths?: StringMap;
@@ -94,26 +96,46 @@ export interface AgentChoice {
 
 const _cache = new Map<string, AgentDefinition>();
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isManifestValue(value: unknown): value is ManifestValue {
+  if (value === null || value instanceof Date) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every((entry) => isManifestValue(entry));
+  }
+  return isManifestRecord(value);
 }
 
-function readString(record: UnknownRecord, key: string): string | undefined {
+function isManifestRecord(value: unknown): value is ManifestRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+
+  return Object.values(value).every((entry) => isManifestValue(entry));
+}
+
+function readString(record: ManifestRecord, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" ? value : undefined;
 }
 
-function readBoolean(record: UnknownRecord, key: string): boolean | undefined {
+function readBoolean(record: ManifestRecord, key: string): boolean | undefined {
   const value = record[key];
   return typeof value === "boolean" ? value : undefined;
 }
 
-function readObject(record: UnknownRecord, key: string): UnknownRecord | undefined {
+function readObject(record: ManifestRecord, key: string): ManifestRecord | undefined {
   const value = record[key];
-  return isRecord(value) ? value : undefined;
+  return isManifestRecord(value) ? value : undefined;
 }
 
-function readStringArray(record: UnknownRecord, key: string): string[] | undefined {
+function readStringArray(record: ManifestRecord, key: string): string[] | undefined {
   const value = record[key];
   if (!Array.isArray(value)) return undefined;
   return value.filter((entry): entry is string => typeof entry === "string");
@@ -123,7 +145,7 @@ function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
-function readPortArray(record: UnknownRecord, key: string): number[] | undefined {
+function readPortArray(record: ManifestRecord, key: string): number[] | undefined {
   const value = record[key];
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
@@ -142,7 +164,7 @@ function readPortArray(record: UnknownRecord, key: string): number[] | undefined
   return ports.length > 0 ? ports : undefined;
 }
 
-function readStringMap(record: UnknownRecord, key: string): StringMap | undefined {
+function readStringMap(record: ManifestRecord, key: string): StringMap | undefined {
   const value = readObject(record, key);
   if (!value) return undefined;
 
@@ -155,7 +177,7 @@ function readStringMap(record: UnknownRecord, key: string): StringMap | undefine
   return result;
 }
 
-function readHealthProbe(record: UnknownRecord): AgentHealthProbe | undefined {
+function readHealthProbe(record: ManifestRecord): AgentHealthProbe | undefined {
   const healthProbe = readObject(record, "health_probe");
   if (!healthProbe) return undefined;
 
@@ -185,7 +207,7 @@ function readHealthProbe(record: UnknownRecord): AgentHealthProbe | undefined {
   return undefined;
 }
 
-function readMessagingPlatforms(record: UnknownRecord): { supported?: string[] } | undefined {
+function readMessagingPlatforms(record: ManifestRecord): { supported?: string[] } | undefined {
   const messagingPlatforms = readObject(record, "messaging_platforms");
   if (!messagingPlatforms) return undefined;
 
@@ -193,9 +215,9 @@ function readMessagingPlatforms(record: UnknownRecord): { supported?: string[] }
   return supported ? { supported } : {};
 }
 
-function loadManifestRecord(manifestPath: string): UnknownRecord {
+function loadManifestRecord(manifestPath: string): ManifestRecord {
   const parsed = yaml.load(fs.readFileSync(manifestPath, "utf8"));
-  if (!isRecord(parsed)) {
+  if (!isManifestRecord(parsed)) {
     throw new Error(`Agent manifest must be a YAML object: ${manifestPath}`);
   }
   return parsed;

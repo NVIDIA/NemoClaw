@@ -60,7 +60,61 @@ configure_jetson_host() {
   case "$jetpack_version" in
     jp6)
       "${SUDO[@]}" update-alternatives --set iptables /usr/sbin/iptables-legacy
-      "${SUDO[@]}" sed -i '/"iptables": false,/d; /"bridge": "none"/d; s/"default-runtime": "nvidia",/"default-runtime": "nvidia"/' /etc/docker/daemon.json
+      # Patch /etc/docker/daemon.json using Python to avoid generating invalid JSON.
+      # The previous sed approach stripped the trailing comma from
+      # "default-runtime": "nvidia", which produced malformed JSON when
+      # "runtimes" was the next key. See: https://github.com/NVIDIA/NemoClaw/issues/1875
+      "${SUDO[@]}" python3 --version >/dev/null 2>&1 \
+        || error "python3 is required to patch /etc/docker/daemon.json but was not found on PATH"
+      "${SUDO[@]}" python3 - /etc/docker/daemon.json <<'PYEOF'
+import json, os, re, sys, tempfile
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except FileNotFoundError:
+    cfg = {}
+except json.JSONDecodeError:
+    # Attempt to repair the known missing-comma pattern introduced by the
+    # previous sed-based approach before re-parsing. If repair fails, abort
+    # rather than silently overwriting the file with an empty object.
+    with open(path) as f:
+        raw = f.read()
+    # Insert missing comma after "default-runtime": "nvidia" when followed
+    # by whitespace + a quoted key (next JSON member without comma separator).
+    repaired = re.sub(
+        r'("default-runtime"\s*:\s*"nvidia")([\s\n]+")',
+        r'\1,\2',
+        raw,
+    )
+    try:
+        cfg = json.loads(repaired)
+    except json.JSONDecodeError as e:
+        sys.exit(f'daemon.json is malformed and could not be repaired automatically: {e}')
+if not isinstance(cfg, dict):
+    sys.exit('daemon.json must contain a top-level JSON object')
+cfg.pop('iptables', None)
+cfg.pop('bridge', None)
+# Write atomically: dump to a temp file in the same directory, then replace.
+# Copy permissions from the original file (or use 0644 if missing) so the
+# replaced file is world-readable, matching the typical daemon.json mode.
+dirname = os.path.dirname(os.path.abspath(path))
+try:
+    orig_mode = os.stat(path).st_mode & 0o777
+except FileNotFoundError:
+    orig_mode = 0o644
+fd, tmp = tempfile.mkstemp(dir=dirname)
+try:
+    os.chmod(tmp, orig_mode)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(cfg, f, indent=4)
+        f.write('\n')
+    os.replace(tmp, path)
+    os.chmod(path, orig_mode)
+except Exception:
+    os.unlink(tmp)
+    raise
+PYEOF
       ;;
     jp7-r38)
       # JP7 R38 does not need iptables or Docker daemon.json changes.

@@ -33,12 +33,13 @@ esac
 
 info "Detected $OS_LABEL ($ARCH_LABEL)"
 
-# Minimum version required for sandbox persistence across gateway restarts
-# (deterministic k3s node name + workspace PVC: NVIDIA/OpenShell#739, #488)
-MIN_VERSION="0.0.24"
+# Minimum version required for Landlock filesystem policy enforcement
+# (NVIDIA/OpenShell#810 fixes the drop_privileges/Landlock ordering bug
+# that caused /sandbox to remain writable on 0.0.26).
+MIN_VERSION="0.0.32"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.26"
+MAX_VERSION="0.0.32"
 # Pin fresh installs to this version instead of pulling "latest".
 PIN_VERSION="$MAX_VERSION"
 
@@ -57,7 +58,8 @@ version_gte() {
 }
 
 if command -v openshell >/dev/null 2>&1; then
-  INSTALLED_VERSION="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '0.0.0')"
+  INSTALLED_VERSION="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+  [ -n "$INSTALLED_VERSION" ] || INSTALLED_VERSION="0.0.0"
   if version_gte "$INSTALLED_VERSION" "$MIN_VERSION"; then
     if ! version_gte "$MAX_VERSION" "$INSTALLED_VERSION"; then
       fail "openshell $INSTALLED_VERSION is above the maximum ($MAX_VERSION) supported by this NemoClaw release. Upgrade NemoClaw first."

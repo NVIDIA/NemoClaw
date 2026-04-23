@@ -234,6 +234,11 @@ $ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
 Select **Local NVIDIA NIM [experimental]** from the provider list.
 NemoClaw filters available models by GPU VRAM, pulls the NIM container image, starts it, and waits for it to become healthy before continuing.
 
+NIM container images are hosted on `nvcr.io` and require NGC registry authentication before `docker pull` succeeds.
+If Docker is not already logged in to `nvcr.io`, onboard prompts for an [NGC API key](https://org.ngc.nvidia.com/setup/api-key) and runs `docker login nvcr.io` over `--password-stdin` so the key is never written to disk or shell history.
+The prompt masks the key during input and retries once on a bad key before failing.
+In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run `docker login nvcr.io` yourself, then re-run `nemoclaw onboard --non-interactive`.
+
 :::{note}
 NIM uses vLLM internally.
 The same `chat/completions` API path restriction applies.

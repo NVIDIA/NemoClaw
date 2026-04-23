@@ -269,9 +269,19 @@ print_done() {
       printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
     fi
     printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
-    if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
-      printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
-    fi
+    local agent_cmd
+    case "$agent_name" in
+      hermes)
+        agent_cmd="hermes"
+        ;;
+      "" | openclaw)
+        agent_cmd="openclaw tui"
+        ;;
+      *)
+        agent_cmd="$agent_name"
+        ;;
+    esac
+    printf "  %ssandbox@%s$%s %s\n" "$C_GREEN" "$sandbox_name" "$C_RESET" "$agent_cmd"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     printf "  ${C_GREEN}NemoClaw CLI is installed.${C_RESET}\n"
     printf "  ${C_DIM}Onboarding has not run yet.${C_RESET}\n"
@@ -466,6 +476,22 @@ ensure_nvm_loaded() {
   fi
 }
 
+# Resolve the active npm global bin without letting a host nvm install
+# override an already-working node/npm on PATH.
+resolve_npm_bin() {
+  if ! command -v npm >/dev/null 2>&1; then
+    ensure_nvm_loaded
+  fi
+
+  command -v npm >/dev/null 2>&1 || return 1
+
+  local npm_prefix
+  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  [[ -n "$npm_prefix" ]] || return 1
+
+  printf '%s/bin\n' "$npm_prefix"
+}
+
 detect_shell_profile() {
   local profile="$HOME/.bashrc"
   case "$(basename "${SHELL:-}")" in
@@ -490,14 +516,39 @@ detect_shell_profile() {
   printf "%s" "$profile"
 }
 
+# Check whether npm link can write to the active prefix targets.
+npm_link_targets_writable() {
+  local npm_prefix="$1"
+  local npm_bin_dir npm_lib_dir
+
+  [ -n "$npm_prefix" ] || return 1
+
+  npm_bin_dir="$npm_prefix/bin"
+  npm_lib_dir="$npm_prefix/lib/node_modules"
+
+  if [ -d "$npm_bin_dir" ]; then
+    [ -w "$npm_bin_dir" ] || return 1
+  elif [ ! -w "$npm_prefix" ]; then
+    return 1
+  fi
+
+  if [ -d "$npm_lib_dir" ]; then
+    [ -w "$npm_lib_dir" ] || return 1
+  elif [ -d "$npm_prefix/lib" ]; then
+    [ -w "$npm_prefix/lib" ] || return 1
+  elif [ ! -w "$npm_prefix" ]; then
+    return 1
+  fi
+
+  return 0
+}
+
 # Refresh PATH so that npm global bin is discoverable.
 # After nvm installs Node.js the global bin lives under the nvm prefix,
 # which may not yet be on PATH in the current session.
 refresh_path() {
-  ensure_nvm_loaded
-
   local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
   if [[ -n "$npm_bin" && -d "$npm_bin" && ":$PATH:" != *":$npm_bin:"* ]]; then
     export PATH="$npm_bin:$PATH"
   fi
@@ -509,7 +560,7 @@ refresh_path() {
 
 ensure_nemoclaw_shim() {
   local npm_bin shim_path node_path node_dir cli_path
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw"
 
   if [[ -z "$npm_bin" || ! -x "$npm_bin/nemoclaw" ]]; then
@@ -691,7 +742,18 @@ install_nodejs() {
   ensure_nvm_loaded --force
   nvm use 22 --silent
   nvm alias default 22 2>/dev/null || true
-  info "Node.js installed: $(node --version)"
+  local installed_version
+  installed_version="$(node --version)"
+  info "Node.js installed via nvm: ${installed_version} (default alias)"
+  # Surface the shell-reload requirement right next to the install line so the
+  # user isn't left thinking the new Node is already active in their terminal.
+  # install.sh runs as a subprocess; the parent shell's PATH genuinely cannot
+  # be mutated from here, so we print the truth and the exact command.
+  # See issue #2178.
+  warn "Your current shell may still resolve \`node\` to an older version until it's reloaded."
+  printf "        Open a new terminal, or run this in your existing shell:\n"
+  # shellcheck disable=SC2016  # intentional: user pastes this literally; their shell expands the vars
+  printf '          source "${NVM_DIR:-$HOME/.nvm}/nvm.sh" && nvm use 22\n'
 }
 
 # ---------------------------------------------------------------------------
@@ -923,6 +985,9 @@ install_nemoclaw() {
   local repo_root package_json
   repo_root="$(resolve_repo_root)"
   package_json="${repo_root}/package.json"
+  # Tell prepare not to run npm link — the installer handles linking explicitly.
+  export NEMOCLAW_INSTALLING=1
+
   if is_source_checkout "$repo_root"; then
     info "NemoClaw package.json found in the selected source checkout — installing from source…"
     NEMOCLAW_SOURCE_ROOT="$repo_root"
@@ -967,6 +1032,16 @@ install_nemoclaw() {
     spin "Building NemoClaw CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
     spin "Building NemoClaw plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm install --ignore-scripts && npm run build"
     spin "Linking NemoClaw CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
+
+    # Install/upgrade the OpenShell CLI on the GitHub-clone path (curl|bash).
+    # Without this, install.sh defers the openshell version gate entirely to
+    # `nemoclaw onboard`, so any later skip of onboard (preflight blocking,
+    # interrupted session) leaves openshell stale below blueprint's
+    # min_openshell_version even though the new NemoClaw declared a higher
+    # floor. The source-checkout branch intentionally skips this — a developer
+    # running ./scripts/install.sh manages their own openshell. The script is
+    # idempotent on the happy path. See #2272.
+    spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
   fi
 
   refresh_path
@@ -1004,7 +1079,7 @@ verify_nemoclaw() {
   fi
 
   local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
 
   if [[ -n "$npm_bin" && -x "$npm_bin/nemoclaw" ]]; then
     if is_real_nemoclaw_cli "$npm_bin/nemoclaw"; then

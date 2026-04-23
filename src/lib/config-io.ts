@@ -80,7 +80,53 @@ export class ConfigPermissionError extends Error {
   }
 }
 
+/**
+ * Reject a path if it — or any ancestor up to the user's home — is a symlink.
+ * This prevents an attacker from planting e.g. ~/.nemoclaw as a symlink to an
+ * attacker-controlled directory, which would cause credentials to be written
+ * to the wrong location.
+ */
+function rejectSymlinksOnPath(dirPath: string): void {
+  const home = process.env.HOME || os.homedir();
+  const resolved = path.resolve(dirPath);
+  const resolvedHome = path.resolve(home);
+
+  // Only check the path components between HOME and dirPath — those are
+  // the user-controllable segments where a symlink attack could be planted.
+  // System-level symlinks above HOME (e.g. /var -> private/var on macOS)
+  // are legitimate and must not trigger rejection.
+  const relToHome = path.relative(resolvedHome, resolved);
+  if (relToHome === "" || relToHome.startsWith("..") || path.isAbsolute(relToHome)) {
+    // dirPath is not under HOME — nothing user-controllable to check.
+    return;
+  }
+
+  // Walk from dirPath up to (but not including) HOME.
+  let current = resolved;
+  while (current !== resolvedHome && current !== path.dirname(current)) {
+    try {
+      const stat = fs.lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        const target = fs.readlinkSync(current);
+        throw new Error(
+          `Refusing to use config directory: ${current} is a symbolic link ` +
+            `(target: ${target}). This may indicate a symlink attack. ` +
+            `Remove the symlink and retry: rm ${shellQuote(current)}`,
+        );
+      }
+    } catch (error) {
+      // ENOENT is fine — the directory doesn't exist yet; keep walking up
+      // to check ancestors that DO exist (an ancestor might be a symlink).
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    current = path.dirname(current);
+  }
+}
+
 export function ensureConfigDir(dirPath: string): void {
+  // SECURITY: Block symlink attacks before creating or writing to the directory.
+  rejectSymlinksOnPath(dirPath);
+
   try {
     fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
 

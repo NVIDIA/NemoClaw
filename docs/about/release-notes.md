@@ -4,7 +4,7 @@ title:
   nav: "Release Notes"
 description:
   main: "Changelog and feature history for NemoClaw releases."
-  agent: "Lists changelogs and feature history for NemoClaw releases. Use when checking what changed in a release, looking up version history, or reviewing the changelog."
+  agent: "Includes the NemoClaw release notes. Use when users ask about recent changes, the release cadence, or where to track versioned assets on GitHub."
 keywords: ["nemoclaw release notes", "nemoclaw changelog"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["nemoclaw", "releases"]

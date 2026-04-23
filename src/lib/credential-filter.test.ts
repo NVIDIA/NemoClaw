@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 
 import {
+  isConfigValue,
   isCredentialField,
   stripCredentials,
   sanitizeConfigFile,
   isSensitiveFile,
-  CREDENTIAL_SENSITIVE_BASENAMES,
 } from "./credential-filter.js";
 
 describe("isCredentialField", () => {
@@ -40,6 +40,20 @@ describe("isCredentialField", () => {
     expect(isCredentialField("provider")).toBe(false);
     expect(isCredentialField("endpoint")).toBe(false);
     expect(isCredentialField("version")).toBe(false);
+  });
+});
+
+describe("isConfigValue", () => {
+  it("accepts plain JSON-like configuration values", () => {
+    expect(isConfigValue(null)).toBe(true);
+    expect(isConfigValue("hello")).toBe(true);
+    expect(isConfigValue(42)).toBe(true);
+    expect(isConfigValue({ nested: [true, "value", { count: 1 }] })).toBe(true);
+  });
+
+  it("rejects non-JSON objects nested inside config values", () => {
+    expect(isConfigValue({ when: new Date() })).toBe(false);
+    expect(isConfigValue([new Map()])).toBe(false);
   });
 });
 
@@ -87,11 +101,14 @@ describe("sanitizeConfigFile", () => {
 
   it("strips credentials and removes gateway section", () => {
     const configPath = join(tmpDir, "openclaw.json");
-    writeFileSync(configPath, JSON.stringify({
-      model: "gpt-4",
-      apiKey: "sk-secret",
-      gateway: { port: 8080, authToken: "gw-token" },
-    }));
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        model: "gpt-4",
+        apiKey: "sk-secret",
+        gateway: { port: 8080, authToken: "gw-token" },
+      }),
+    );
 
     sanitizeConfigFile(configPath);
 
