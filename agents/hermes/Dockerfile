@@ -32,6 +32,8 @@ RUN chmod 755 /usr/local/bin/nemoclaw-decode-proxy
 
 # Copy blueprint (shared infrastructure)
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+# Ensure sandbox user can read blueprint files copied as root
+RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 
 # Copy startup script
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
