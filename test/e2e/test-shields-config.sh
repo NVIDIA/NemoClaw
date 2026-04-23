@@ -83,6 +83,11 @@ section() {
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-shields}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -560,7 +565,7 @@ pass "Cleanup: shields up"
 # ══════════════════════════════════════════════════════════════════
 section "Cleanup"
 
-nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
 pass "Sandbox destroyed"
 
 # ══════════════════════════════════════════════════════════════════

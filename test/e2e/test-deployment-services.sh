@@ -418,8 +418,10 @@ test_deploy_03_uninstall_keep_openshell() {
 
 # Clean up sandbox and services on exit.
 teardown() {
+  # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
+  # test/e2e/lib/sandbox-teardown.sh — the lock is PID-ownership-aware
+  # and onboard cleans up stale locks itself.
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   nemoclaw stop 2>/dev/null || true
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
   set -e

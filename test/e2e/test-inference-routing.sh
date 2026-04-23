@@ -220,11 +220,10 @@ test_inf_05_credential_isolation() {
     return
   fi
 
-  # Always recreate to avoid stale state hiding credential plumbing regressions
-  if nemoclaw list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
-    log "  Removing existing sandbox '$SANDBOX_NAME' to avoid stale state..."
-    nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
-  fi
+  # Always recreate to avoid stale state hiding credential plumbing regressions.
+  # Unconditional destroy catches not-ready sandboxes that `nemoclaw list` misses.
+  log "  Preflight: destroying any existing '$SANDBOX_NAME' sandbox..."
+  nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 
   log "  Onboarding sandbox '$SANDBOX_NAME' for credential test..."
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
@@ -449,10 +448,8 @@ test_inf_02_openai() {
   local model="${NEMOCLAW_OPENAI_MODEL:-gpt-4o-mini}"
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
 
-  if nemoclaw list 2>/dev/null | grep -q "$sbx_name"; then
-    log "  Removing existing sandbox '$sbx_name'..."
-    nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
-  fi
+  log "  Preflight: destroying any existing '$sbx_name' sandbox..."
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
 
   log "  Onboarding with OpenAI provider, model: $model"
   local onboard_exit=0
@@ -525,10 +522,8 @@ test_inf_03_anthropic() {
   local model="${NEMOCLAW_ANTHROPIC_MODEL:-claude-sonnet-4-6}"
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
 
-  if nemoclaw list 2>/dev/null | grep -q "$sbx_name"; then
-    log "  Removing existing sandbox '$sbx_name'..."
-    nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
-  fi
+  log "  Preflight: destroying any existing '$sbx_name' sandbox..."
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
 
   log "  Onboarding with Anthropic provider, model: $model"
   local onboard_exit=0
@@ -612,10 +607,8 @@ test_inf_09_compatible_endpoint() {
   local sbx_name="e2e-compat-ep"
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
 
-  if nemoclaw list 2>/dev/null | grep -q "$sbx_name"; then
-    log "  Removing existing sandbox '$sbx_name'..."
-    nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
-  fi
+  log "  Preflight: destroying any existing '$sbx_name' sandbox..."
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
 
   log "  Onboarding with compatible endpoint: $endpoint_url"
   log "  Model: $endpoint_model"
@@ -680,8 +673,10 @@ test_inf_09_compatible_endpoint() {
 
 # ── Teardown ─────────────────────────────────────────────────────────────────
 teardown() {
+  # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
+  # test/e2e/lib/sandbox-teardown.sh — the lock is PID-ownership-aware
+  # and onboard cleans up stale locks itself.
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
   nemoclaw "e2e-openai" destroy --yes 2>/dev/null || true
   nemoclaw "e2e-anthropic" destroy --yes 2>/dev/null || true

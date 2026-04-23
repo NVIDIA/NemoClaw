@@ -192,7 +192,6 @@ jobs:
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_POLICY_TIER: "open"
           NEMOCLAW_SANDBOX_NAME: "e2e-msg-provider"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
           GITHUB_TOKEN: ${{ github.token }}
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e"
           DISCORD_BOT_TOKEN: "test-fake-discord-token-e2e"
@@ -256,7 +255,6 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-survival"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-sandbox-survival.sh
 
@@ -318,7 +316,6 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-skip-perms"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
           NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS: "1"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-skip-permissions-policy.sh
@@ -405,6 +402,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_POLICY_TIER: "restricted"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
         run: bash test/e2e/test-network-policy.sh
 
       - name: Upload test log on failure
@@ -487,7 +485,6 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-snapshot"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-snapshot-commands.sh
 
@@ -516,7 +513,6 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-shields"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-shields-config.sh
 
@@ -545,7 +541,6 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-oc"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-rebuild-openclaw.sh
 
@@ -575,7 +570,6 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-upgrade-stale"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-upgrade-stale-sandbox.sh
 
@@ -605,7 +599,6 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-hm"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
           NEMOCLAW_AGENT: "hermes"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-rebuild-hermes.sh

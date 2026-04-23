@@ -666,7 +666,9 @@ teardown() {
   done
   # Clean up gateway if no sandboxes remain
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
+  # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
+  # test/e2e/lib/sandbox-teardown.sh — the lock is PID-ownership-aware
+  # and onboard cleans up stale locks itself.
   log "Teardown complete"
   set -e
 }

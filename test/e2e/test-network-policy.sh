@@ -228,10 +228,11 @@ setup_sandbox() {
     exit 1
   fi
 
-  if nemoclaw list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
-    log "Removing existing sandbox '$SANDBOX_NAME'..."
-    nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
-  fi
+  # Unconditional destroy — `nemoclaw list` does not always surface sandboxes
+  # stuck in a not-ready state, and a not-ready sandbox blocks onboard with
+  # "already exists but is not ready" before NEMOCLAW_RECREATE_SANDBOX=1 kicks in.
+  log "Preflight: destroying any existing '$SANDBOX_NAME' sandbox..."
+  nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 
   log "=== Onboarding sandbox '$SANDBOX_NAME' with restricted policy ==="
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
@@ -546,8 +547,12 @@ console.log(pass ? 'SSRF_PASS' : 'SSRF_FAIL');
 
 # ── Teardown ─────────────────────────────────────────────────────────────────
 teardown() {
+  # Do not unlink ~/.nemoclaw/onboard.lock: that lock is global and PID-
+  # ownership-aware in src/lib/onboard-session.ts (acquireOnboardLock
+  # verifies the holder's PID liveness and inode), so an unconditional rm
+  # here could yank a concurrent run's live lock. A crashed process leaves
+  # a stale lock that the next onboard cleans up automatically.
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
   set -e
 }
