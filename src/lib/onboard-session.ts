@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { WebSearchConfig } from "./web-search";
+import { redact } from "./runner";
 
 export const SESSION_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
@@ -207,16 +208,8 @@ function parseLockInfo(value: unknown): LockInfo | null {
 
 export function redactSensitiveText(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  return value
-    .replace(
-      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY)=\S+/gi,
-      "$1=<REDACTED>",
-    )
-    .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>")
-    .replace(/nvapi-[A-Za-z0-9_-]{10,}/g, "<REDACTED>")
-    .replace(/ghp_[A-Za-z0-9]{20,}/g, "<REDACTED>")
-    .replace(/sk-[A-Za-z0-9_-]{10,}/g, "<REDACTED>")
-    .slice(0, 240);
+  // Use central production-grade redaction patterns from runner.ts
+  return redact(value).slice(0, 500);
 }
 
 export function sanitizeFailure(

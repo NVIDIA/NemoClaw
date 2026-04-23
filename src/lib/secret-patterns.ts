@@ -18,12 +18,16 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
   /nvcf-[A-Za-z0-9_-]{10,}/g,
   /ghp_[A-Za-z0-9_-]{10,}/g,
   /(?:github_pat_)[A-Za-z0-9_]{30,}/g,
+  /xoxb-[A-Za-z0-9-]{10,}/g,
+  /xapp-[A-Za-z0-9-]{10,}/g,
+  /\d+:[A-Za-z0-9_-]{20,}/g,
 ];
 
 /** Context-anchored patterns (require a prefix like KEY=, Bearer, etc.). */
 export const CONTEXT_PATTERNS: RegExp[] = [
   /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/gi,
   /(?<=(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
+  /(?<=[A-Z0-9_]+_(?:KEY|TOKEN|SECRET)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
 ];
 
 /** All secret patterns combined. */
