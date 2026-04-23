@@ -525,15 +525,23 @@ export function backupSandboxState(
 
   const configFile = writeTempSshConfig(sshConfig);
   try {
-    // Build tar command that only includes existing directories
-    // First, check which state dirs actually exist in the sandbox
+    // Build tar command that only includes existing directories.
+    // First, check which declared state dirs actually exist in the sandbox,
+    // then additionally discover per-agent `workspace-*` directories produced
+    // by multi-agent OpenClaw deployments (see issue #1260) so they get
+    // snapshotted alongside the manifest-declared dirs. `awk '!seen[$0]++'`
+    // dedupes while preserving order.
     const existCheckCmd = stateDirs
       .map((d) => `[ -d "${writableDir}/${d}" ] && echo "${d}"`)
       .join("; ");
-    _log(`Checking existing dirs via SSH: ${existCheckCmd.substring(0, 100)}...`);
+    const workspaceGlobCmd =
+      `for d in ${writableDir}/workspace-*/; do [ -d "$d" ] && basename "$d"; done 2>/dev/null`;
+    const fullCheckCmd =
+      `{ ${existCheckCmd}; ${workspaceGlobCmd}; } 2>/dev/null | awk '!seen[$0]++'`;
+    _log(`Checking existing dirs via SSH: ${fullCheckCmd.substring(0, 100)}...`);
     const existResult = spawnSync(
       "ssh",
-      [...sshArgs(configFile, sandboxName), existCheckCmd],
+      [...sshArgs(configFile, sandboxName), fullCheckCmd],
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 30000 },
     );
     _log(`Dir check: exit=${existResult.status}, stdout=${(existResult.stdout || "").trim().substring(0, 200)}, stderr=${(existResult.stderr || "").trim().substring(0, 200)}`);
@@ -582,6 +590,19 @@ export function backupSandboxState(
 
   // SECURITY: Strip credentials from the local backup
   sanitizeBackupDirectory(backupPath);
+
+  // Record any discovered per-agent workspace-* directories in the manifest
+  // alongside the manifest-declared state dirs, so restoreSandboxState()
+  // finds them when filtering backupPath contents. Preserve declared order
+  // and append newly-discovered workspace-* names that weren't already in
+  // stateDirs. See issue #1260.
+  const discoveredWorkspaces = backedUpDirs.filter(
+    (d) => d.startsWith("workspace-") && !stateDirs.includes(d),
+  );
+  if (discoveredWorkspaces.length > 0) {
+    manifest.stateDirs = [...stateDirs, ...discoveredWorkspaces];
+    _log(`Manifest stateDirs extended with multi-agent workspaces: [${discoveredWorkspaces.join(",")}]`);
+  }
 
   writeManifest(backupPath, manifest);
   manifest.backupPath = backupPath;

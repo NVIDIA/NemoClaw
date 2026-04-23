@@ -1270,6 +1270,70 @@ touch /tmp/auto-pair.log
 chown sandbox:sandbox /tmp/auto-pair.log
 chmod 600 /tmp/auto-pair.log
 
+# Provision per-agent workspaces for multi-agent OpenClaw deployments.
+#
+# OpenClaw can be configured with multiple named agents (agents.defaults.workspace
+# + agents.list[*].workspace in openclaw.json), each producing its own
+# `/sandbox/.openclaw/workspace-<name>/` directory. Without intervention these
+# land as real directories under the root-owned immutable `.openclaw/` tree and
+# are lost on every sandbox restart.
+#
+# Mirror the default-workspace persistence pattern: any `workspace-<name>`
+# discovered under `.openclaw-data/` or `.openclaw/` gets (a) a writable backing
+# dir under `.openclaw-data/workspace-<name>/` and (b) a symlink from
+# `.openclaw/workspace-<name>/ → .openclaw-data/workspace-<name>/`. The symlinks
+# are then picked up by validate_openclaw_symlinks below.
+#
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1260
+provision_agent_workspaces() {
+  local data_dir="/sandbox/.openclaw-data"
+  local config_dir="/sandbox/.openclaw"
+  local names=""
+  local d name
+
+  # Discover existing workspace-* dirs in either location.
+  if [ -d "$data_dir" ]; then
+    for d in "$data_dir"/workspace-*/; do
+      [ -d "$d" ] || continue
+      name="$(basename "$d")"
+      names="${names} ${name}"
+    done
+  fi
+  if [ -d "$config_dir" ]; then
+    for d in "$config_dir"/workspace-*/; do
+      # Skip the glob-fell-through sentinel ('workspace-*/' itself) and
+      # any existing symlink (already provisioned).
+      [ -e "$d" ] || continue
+      [ -L "${d%/}" ] && continue
+      name="$(basename "$d")"
+      names="${names} ${name}"
+    done
+  fi
+
+  local seen=""
+  for name in $names; do
+    case " $seen " in *" $name "*) continue ;; esac
+    seen="${seen} ${name}"
+
+    local data_path="$data_dir/$name"
+    local link_path="$config_dir/$name"
+
+    mkdir -p "$data_path"
+    chown -R sandbox:sandbox "$data_path" 2>/dev/null || true
+
+    if [ -L "$link_path" ]; then
+      continue
+    fi
+    if [ -e "$link_path" ]; then
+      cp -a "$link_path/." "$data_path/" 2>/dev/null || true
+      rm -rf "$link_path"
+    fi
+    ln -s "$data_path" "$link_path"
+    echo "[setup] provisioned multi-agent workspace: $name → $data_path" >&2
+  done
+}
+provision_agent_workspaces
+
 # Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
 # Dynamic scan so future OpenClaw symlinks are covered automatically.
 validate_openclaw_symlinks
