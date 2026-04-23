@@ -526,15 +526,25 @@ except Exception as e:
 PYAUTHTEST
   ) || auth_result="network_error:python3_failed"
 
+  # Definitive auth failures that warrant disabling the channel. Transient
+  # or service-side errors (ratelimited, request_timeout, service_unavailable,
+  # internal_error, fatal_error) should NOT disable — the gateway may succeed
+  # if the issue resolves by the time it connects.
+  # Ref: https://docs.slack.dev/reference/methods/auth.test
+  local _fatal_auth_errors="account_inactive invalid_auth not_authed token_expired token_revoked missing_scope not_allowed_token_type"
+
   case "$auth_result" in
     ok)
       printf '[channels] Slack bot token validated successfully\n' >&2
       ;;
     error:*)
       local slack_error="${auth_result#error:}"
-      printf '[channels] [slack][default] provider failed to start: %s — channel disabled\n' "$slack_error" >&2
 
-      python3 - "$config_file" <<'PYSLACKDISABLE'
+      # shellcheck disable=SC2076  # we want literal match, not pattern
+      if [[ " $_fatal_auth_errors " =~ " $slack_error " ]]; then
+        printf '[channels] [slack][default] provider failed to start: %s — channel disabled\n' "$slack_error" >&2
+
+        python3 - "$config_file" <<'PYSLACKDISABLE'
 import json, sys
 
 config_file = sys.argv[1]
@@ -550,8 +560,11 @@ with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYSLACKDISABLE
 
-      (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
-      printf '[channels] Config hash recomputed after disabling Slack channel\n' >&2
+        (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
+        printf '[channels] Config hash recomputed after disabling Slack channel\n' >&2
+      else
+        printf '[channels] Slack auth.test returned transient error: %s — channel left enabled\n' "$slack_error" >&2
+      fi
       ;;
     network_error:*)
       printf '[channels] Could not reach Slack API for token validation (%s) — channel left enabled\n' "${auth_result#network_error:}" >&2

@@ -539,7 +539,27 @@ describe("Slack auth pre-validation (#2340)", () => {
     expect(fn[1]).toContain("Config hash recomputed after disabling Slack channel");
   });
 
-  it("does not disable the channel on network errors (transient failures)", () => {
+  it("only disables on definitive auth errors, not transient API errors", () => {
+    const fn = src.match(/validate_slack_auth\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    // Must define a list of fatal auth errors
+    expect(fn[1]).toContain("_fatal_auth_errors");
+    // Must include the key definitive errors from Slack docs
+    for (const err of [
+      "invalid_auth",
+      "token_expired",
+      "token_revoked",
+      "not_authed",
+      "account_inactive",
+    ]) {
+      expect(fn[1]).toContain(err);
+    }
+    // Transient errors must get a different log message and stay enabled
+    expect(fn[1]).toContain("transient error");
+    expect(fn[1]).toContain("channel left enabled");
+  });
+
+  it("does not disable the channel on network errors", () => {
     const fn = src.match(/validate_slack_auth\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
     expect(fn[1]).toContain("network_error:");
