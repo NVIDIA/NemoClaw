@@ -42,6 +42,10 @@
 #   TELEGRAM_ALLOWED_IDS                   — comma-separated Telegram user IDs for DM allowlisting
 #   TELEGRAM_BOT_TOKEN_REAL                — optional: enables Phase 6 real round-trip
 #   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real round-trip
+#   SLACK_BOT_TOKEN                        — defaults to fake token (xoxb-fake-...)
+#   SLACK_APP_TOKEN                        — defaults to fake token (xapp-fake-...)
+#   SLACK_BOT_TOKEN_REVOKED                — optional: revoked xoxb- token to test auth pre-validation (#2340)
+#   SLACK_APP_TOKEN_REVOKED                — optional: paired xapp- token for the revoked bot token
 #   TELEGRAM_CHAT_ID_E2E                   — optional: enables sendMessage test
 #   NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY    — fail instead of skip on known Discord gateway blockers
 #
@@ -94,9 +98,13 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-msg-provider}"
 # Default to fake tokens if not provided
 TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
+SLACK_TOKEN="${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}"
+SLACK_APP="${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}"
 TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
+export SLACK_BOT_TOKEN="$SLACK_TOKEN"
+export SLACK_APP_TOKEN="$SLACK_APP"
 export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
 
 # Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
@@ -160,6 +168,8 @@ pass "Docker is running"
 
 info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
 info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
+info "Slack bot token: ${SLACK_TOKEN:0:10}... (${#SLACK_TOKEN} chars)"
+info "Slack app token: ${SLACK_APP:0:10}... (${#SLACK_APP} chars)"
 info "Sandbox name: $SANDBOX_NAME"
 STRICT_DISCORD_GATEWAY="${NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY:-0}"
 
@@ -1039,9 +1049,137 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 7: Cleanup
+# Phase 7: Slack auth pre-validation (#2340)
+#
+# Validates that validate_slack_auth() correctly pre-validates tokens
+# and disables the Slack channel when auth fails, rather than letting
+# the gateway crash from an unhandled promise rejection.
+#
+# The sandbox was installed with fake Slack tokens (xoxb-fake-...) in
+# Phase 1. These tokens have the right prefix but are invalid, so
+# validate_slack_auth should have:
+#   1. Called Slack's auth.test API
+#   2. Received an auth error (invalid_auth or not_authed)
+#   3. Disabled the Slack channel in openclaw.json
+#   4. Logged the failure and continued starting the gateway
+#
+# The gateway should still be running (inference/chat/TUI alive).
 # ══════════════════════════════════════════════════════════════════
-section "Phase 7: Cleanup"
+section "Phase 7: Slack auth pre-validation (#2340)"
+
+# S1: Gateway process is still running (not crashed by Slack auth failure)
+gw_status=$(sandbox_exec "cat /proc/1/stat 2>/dev/null | awk '{print \$3}'" 2>/dev/null || true)
+if [ -n "$gw_status" ] && [ "$gw_status" != "Z" ]; then
+  pass "S1: Gateway process is alive (state: $gw_status) — Slack auth failure did not crash it"
+else
+  fail "S1: Gateway process is not running (state: ${gw_status:-unknown}) — may have crashed"
+fi
+
+# S2: Gateway log contains the pre-validation attempt
+gw_log=$(sandbox_exec "cat /tmp/gateway.log 2>/dev/null" 2>/dev/null || true)
+if echo "$gw_log" | grep -q "Validating Slack bot token"; then
+  pass "S2: Gateway log shows Slack token pre-validation was attempted"
+elif [ -z "$gw_log" ]; then
+  skip "S2: Could not read gateway log"
+else
+  # Validation may have run but logged to stderr (entrypoint, not gateway log).
+  # Check entrypoint output via docker logs as fallback.
+  container_log=$(docker logs "$(docker ps -qf "name=$SANDBOX_NAME" | head -1)" 2>&1 || true)
+  if echo "$container_log" | grep -q "Validating Slack bot token"; then
+    pass "S2: Container log shows Slack token pre-validation was attempted"
+  else
+    fail "S2: No evidence of Slack token pre-validation in gateway or container logs"
+  fi
+fi
+
+# S3: Slack channel is disabled in openclaw.json after auth failure
+slack_enabled=$(sandbox_exec "python3 -c \"
+import json
+try:
+    cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
+    acct = cfg.get('channels', {}).get('slack', {}).get('accounts', {}).get('default', {})
+    print(acct.get('enabled', 'MISSING'))
+except Exception as e:
+    print('ERROR: ' + str(e))
+\"" 2>/dev/null || true)
+
+if [ "$slack_enabled" = "False" ]; then
+  pass "S3: Slack channel is disabled in openclaw.json (auth failure handled correctly)"
+elif [ "$slack_enabled" = "True" ]; then
+  # Channel still enabled — validation may not have reached Slack API (network).
+  # Check if the log says it was a network error (acceptable) vs auth error (bug).
+  all_logs="${gw_log}${container_log:-}"
+  if echo "$all_logs" | grep -q "channel left enabled"; then
+    skip "S3: Slack channel left enabled (network error reaching Slack API during validation)"
+  else
+    fail "S3: Slack channel is still enabled — validate_slack_auth did not disable it on auth failure"
+  fi
+elif [ "$slack_enabled" = "MISSING" ]; then
+  skip "S3: No Slack channel in openclaw.json (Slack may not have been configured)"
+else
+  fail "S3: Unexpected Slack enabled state: ${slack_enabled:0:200}"
+fi
+
+# S4: Log contains the expected auth error message
+all_logs="${gw_log}${container_log:-}"
+if echo "$all_logs" | grep -q "provider failed to start:.*channel disabled"; then
+  pass "S4: Log confirms Slack channel was disabled due to auth failure"
+elif echo "$all_logs" | grep -q "channel left enabled"; then
+  skip "S4: Slack validation hit a transient/network error (channel left enabled)"
+elif echo "$all_logs" | grep -q "Slack bot token validated successfully"; then
+  skip "S4: Slack token unexpectedly passed validation (token may be valid)"
+else
+  fail "S4: No Slack auth validation result found in logs"
+fi
+
+# S5: Optional — test with a known-revoked token if provided
+if [ -n "${SLACK_BOT_TOKEN_REVOKED:-}" ]; then
+  info "Re-onboarding with revoked Slack token to verify auth pre-validation..."
+
+  # Destroy and re-onboard with the revoked token
+  nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
+  openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
+
+  export SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN_REVOKED"
+  export SLACK_APP_TOKEN="${SLACK_APP_TOKEN_REVOKED:-$SLACK_APP}"
+  export NEMOCLAW_RECREATE_SANDBOX=1
+
+  REVOKED_LOG="/tmp/nemoclaw-e2e-revoked-slack.log"
+  bash install.sh --non-interactive >"$REVOKED_LOG" 2>&1 || true
+
+  # Read the gateway log from the new sandbox
+  revoked_gw_log=$(sandbox_exec "cat /tmp/gateway.log 2>/dev/null" 2>/dev/null || true)
+  revoked_container_log=$(docker logs "$(docker ps -qf "name=$SANDBOX_NAME" | head -1)" 2>&1 || true)
+  revoked_all_logs="${revoked_gw_log}${revoked_container_log}"
+
+  # S5a: Revoked token should trigger auth failure
+  if echo "$revoked_all_logs" | grep -q "provider failed to start:.*channel disabled"; then
+    pass "S5: Revoked Slack token correctly detected and channel disabled"
+  elif echo "$revoked_all_logs" | grep -q "channel left enabled"; then
+    skip "S5: Could not reach Slack API to validate revoked token (network)"
+  else
+    fail "S5: Revoked Slack token was not caught by validate_slack_auth"
+  fi
+
+  # S5b: Gateway should still be running
+  revoked_gw_status=$(sandbox_exec "cat /proc/1/stat 2>/dev/null | awk '{print \$3}'" 2>/dev/null || true)
+  if [ -n "$revoked_gw_status" ] && [ "$revoked_gw_status" != "Z" ]; then
+    pass "S5b: Gateway survived revoked Slack token (process alive)"
+  else
+    fail "S5b: Gateway crashed with revoked Slack token"
+  fi
+
+  # Restore original tokens for cleanup
+  export SLACK_BOT_TOKEN="$SLACK_TOKEN"
+  export SLACK_APP_TOKEN="$SLACK_APP"
+else
+  skip "S5: SLACK_BOT_TOKEN_REVOKED not set — skipping revoked-token test"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 8: Cleanup
+# ══════════════════════════════════════════════════════════════════
+section "Phase 8: Cleanup"
 
 info "Destroying sandbox '$SANDBOX_NAME'..."
 nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
