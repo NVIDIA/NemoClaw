@@ -1126,6 +1126,17 @@ describe("CLI dispatch", () => {
         "  echo 'Error: status: NotFound, message: \"sandbox not found\"' >&2",
         "  exit 1",
         "fi",
+        // Simulate a healthy, active `nemoclaw` named gateway so the
+        // lifecycle guard confirms healthy_named and the registry removal
+        // path fires. Without this, the guard preserves the entry (#2276).
+        'if [ "$1" = "status" ]; then',
+        "  printf 'Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  printf 'Gateway: nemoclaw\\n'",
+        "  exit 0",
+        "fi",
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },

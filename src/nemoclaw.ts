@@ -524,18 +524,43 @@ function getNamedGatewayLifecycleState() {
     cleanStatus,
   );
   if (connected && activeGateway === "nemoclaw" && named) {
-    return { state: "healthy_named", status: status.output, gatewayInfo: gatewayInfo.output };
+    return {
+      state: "healthy_named",
+      status: status.output,
+      gatewayInfo: gatewayInfo.output,
+      activeGateway,
+    };
   }
   if (activeGateway === "nemoclaw" && named && refusing) {
-    return { state: "named_unreachable", status: status.output, gatewayInfo: gatewayInfo.output };
+    return {
+      state: "named_unreachable",
+      status: status.output,
+      gatewayInfo: gatewayInfo.output,
+      activeGateway,
+    };
   }
   if (activeGateway === "nemoclaw" && named) {
-    return { state: "named_unhealthy", status: status.output, gatewayInfo: gatewayInfo.output };
+    return {
+      state: "named_unhealthy",
+      status: status.output,
+      gatewayInfo: gatewayInfo.output,
+      activeGateway,
+    };
   }
   if (connected) {
-    return { state: "connected_other", status: status.output, gatewayInfo: gatewayInfo.output };
+    return {
+      state: "connected_other",
+      status: status.output,
+      gatewayInfo: gatewayInfo.output,
+      activeGateway,
+    };
   }
-  return { state: "missing_named", status: status.output, gatewayInfo: gatewayInfo.output };
+  return {
+    state: "missing_named",
+    status: status.output,
+    gatewayInfo: gatewayInfo.output,
+    activeGateway,
+  };
 }
 
 /** Attempt to recover the named NemoClaw gateway after a restart or connectivity loss. */
@@ -632,6 +657,59 @@ function getSandboxGatewayState(sandboxName) {
   return { state: "unknown_error", output };
 }
 
+/**
+ * Reconcile a NotFound sandbox lookup against the named NemoClaw gateway state.
+ * When the active OpenShell gateway has drifted off nemoclaw, a NotFound is
+ * ambiguous: the sandbox may actually be registered against the nemoclaw
+ * gateway but invisible because some other gateway is currently active. This
+ * helper self-heals by attempting `openshell gateway select nemoclaw` and
+ * re-queries, or returns a `wrong_gateway_active` state so callers can surface
+ * actionable guidance instead of destroying the registry entry.
+ */
+function reconcileMissingAgainstNamedGateway(sandboxName, missingLookup) {
+  const lifecycle = getNamedGatewayLifecycleState();
+  if (lifecycle.state === "connected_other") {
+    runOpenshell(["gateway", "select", "nemoclaw"], { ignoreError: true });
+    const retry = getSandboxGatewayState(sandboxName);
+    if (retry.state === "present") {
+      return { ...retry, recoveredGateway: true, recoveryVia: "select" };
+    }
+    if (retry.state === "missing") {
+      const after = getNamedGatewayLifecycleState();
+      if (after.state === "healthy_named") {
+        return retry;
+      }
+    }
+    return {
+      state: "wrong_gateway_active",
+      activeGateway: lifecycle.activeGateway,
+      output: lifecycle.status,
+    };
+  }
+  if (lifecycle.state === "missing_named") {
+    return { state: "gateway_missing_after_restart", output: lifecycle.status };
+  }
+  if (lifecycle.state === "named_unreachable" || lifecycle.state === "named_unhealthy") {
+    return { state: "gateway_unreachable_after_restart", output: lifecycle.status };
+  }
+  return missingLookup;
+}
+
+/**
+ * Print actionable guidance when the nemoclaw gateway exists but another
+ * OpenShell gateway is currently active. Emphasizes that the sandbox has NOT
+ * been removed and how to switch gateways before retrying. (#2276)
+ */
+function printWrongGatewayActiveGuidance(sandboxName, activeGateway, writer = console.error) {
+  const other = activeGateway && activeGateway !== "nemoclaw" ? activeGateway : "another gateway";
+  writer(
+    `  Sandbox '${sandboxName}' is registered against the NemoClaw gateway, but the currently active OpenShell gateway is '${other}'. Your sandbox has NOT been removed.`,
+  );
+  writer("  Switch gateways and retry:");
+  writer("      openshell gateway select nemoclaw");
+  writer(`  Then re-run: nemoclaw ${sandboxName} connect`);
+}
+
 /** Print troubleshooting hints based on gateway lifecycle state in the output. */
 function printGatewayLifecycleHint(output = "", sandboxName = "", writer = console.error) {
   const cleanOutput = stripAnsi(output);
@@ -692,7 +770,7 @@ async function getReconciledSandboxGatewayState(sandboxName) {
     return lookup;
   }
   if (lookup.state === "missing") {
-    return lookup;
+    return reconcileMissingAgainstNamedGateway(sandboxName, lookup);
   }
 
   if (lookup.state === "gateway_error") {
@@ -762,6 +840,19 @@ async function ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase = false
     return lookup;
   }
   if (lookup.state === "missing") {
+    // Belt-and-suspenders: only destroy registry state if the nemoclaw gateway
+    // is demonstrably the healthy active gateway. The reconciler should have
+    // already routed drift cases to `wrong_gateway_active`, but this guards
+    // against future regressions.
+    const guard = getNamedGatewayLifecycleState();
+    if (guard.state !== "healthy_named") {
+      if (guard.state === "connected_other") {
+        printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.error);
+      } else {
+        printGatewayLifecycleHint(guard.status || "", sandboxName, console.error);
+      }
+      process.exit(1);
+    }
     registry.removeSandbox(sandboxName);
     const session = onboardSession.loadSession();
     if (session && session.sandboxName === sandboxName) {
@@ -775,6 +866,10 @@ async function ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase = false
     console.error(
       "  Run `nemoclaw list` to confirm the remaining sandboxes, or `nemoclaw onboard` to create a new one.",
     );
+    process.exit(1);
+  }
+  if (lookup.state === "wrong_gateway_active") {
+    printWrongGatewayActiveGuidance(sandboxName, lookup.activeGateway, console.error);
     process.exit(1);
   }
   if (lookup.state === "identity_drift") {
@@ -1490,18 +1585,34 @@ async function sandboxStatus(sandboxName) {
         `  Run \`nemoclaw ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
       );
     }
-  } else if (lookup.state === "missing") {
-    registry.removeSandbox(sandboxName);
-    const session = onboardSession.loadSession();
-    if (session && session.sandboxName === sandboxName) {
-      onboardSession.updateSession((s) => {
-        s.sandboxName = null;
-        return s;
-      });
-    }
+  } else if (lookup.state === "wrong_gateway_active") {
     console.log("");
-    console.log(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
-    console.log("  Removed stale local registry entry.");
+    printWrongGatewayActiveGuidance(sandboxName, lookup.activeGateway, console.log);
+  } else if (lookup.state === "missing") {
+    // Belt-and-suspenders: only destroy registry state if the nemoclaw gateway
+    // is demonstrably the healthy active gateway. Guards against regressions
+    // in the reconciler.
+    const guard = getNamedGatewayLifecycleState();
+    if (guard.state !== "healthy_named") {
+      console.log("");
+      if (guard.state === "connected_other") {
+        printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.log);
+      } else {
+        printGatewayLifecycleHint(guard.status || "", sandboxName, console.log);
+      }
+    } else {
+      registry.removeSandbox(sandboxName);
+      const session = onboardSession.loadSession();
+      if (session && session.sandboxName === sandboxName) {
+        onboardSession.updateSession((s) => {
+          s.sandboxName = null;
+          return s;
+        });
+      }
+      console.log("");
+      console.log(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
+      console.log("  Removed stale local registry entry.");
+    }
   } else if (lookup.state === "identity_drift") {
     console.log("");
     console.log(
