@@ -309,8 +309,10 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 6: Final cleanup"
 
-run_nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
-run_nemoclaw "$OTHER_SANDBOX_NAME" destroy 2>/dev/null || true
+if [[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" != "1" ]]; then
+  run_nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
+  run_nemoclaw "$OTHER_SANDBOX_NAME" destroy 2>/dev/null || true
+fi
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 openshell sandbox delete "$OTHER_SANDBOX_NAME" 2>/dev/null || true
 openshell forward stop 18789 2>/dev/null || true

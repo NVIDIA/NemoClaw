@@ -1048,7 +1048,7 @@ fi
 section "Phase 7: Cleanup"
 
 info "Destroying sandbox '$SANDBOX_NAME'..."
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 
 # Verify cleanup

@@ -338,7 +338,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 5: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 registry_file="${HOME}/.nemoclaw/sandboxes.json"

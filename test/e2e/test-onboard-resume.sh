@@ -316,7 +316,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 4: Final cleanup"
 
-run_nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || run_nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 openshell forward stop 18789 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true

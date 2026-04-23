@@ -380,7 +380,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 6: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 # Verify against the registry file directly.  `nemoclaw list` triggers

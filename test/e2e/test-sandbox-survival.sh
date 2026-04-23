@@ -565,7 +565,7 @@ if ! setup_ssh; then
 
   # Jump to cleanup
   section "Phase 11: Cleanup"
-  nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+  [[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
   echo ""
   echo "========================================"
@@ -700,7 +700,7 @@ cleanup_ssh
 # ══════════════════════════════════════════════════════════════════
 section "Phase 11: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 if [ -f "$REGISTRY" ] && grep -Fq "\"${SANDBOX_NAME}\"" "$REGISTRY"; then

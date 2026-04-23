@@ -543,7 +543,7 @@ pass "Cleanup: shields up"
 # ══════════════════════════════════════════════════════════════════
 section "Cleanup"
 
-nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
 pass "Sandbox destroyed"
 
 # ══════════════════════════════════════════════════════════════════
