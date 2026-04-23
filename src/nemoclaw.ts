@@ -2801,6 +2801,9 @@ async function autoCreateSandboxFromSource(srcName, dstName, srcEntry) {
     name: dstName,
     createdAt: new Date().toISOString(),
     policies: [],
+    // dst has its own lifecycle; don't inherit src's local NIM container
+    // reference, or destroying dst would stop src's NIM.
+    nimContainer: null,
   });
 
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
@@ -2961,23 +2964,23 @@ async function sandboxSnapshot(sandboxName, subArgs) {
         console.log(
           `  Applying ${presets.length} policy preset(s) to '${targetSandbox}': ${presets.join(", ")}`,
         );
+        // `applyPreset` returns false on "can't load preset" / "missing
+        // network_policies" paths and throws on gateway errors. Track both
+        // so failures don't silently appear as successes. It also writes
+        // successfully-applied presets into the target's registry entry
+        // itself, so we don't need an outer registry update here.
         const failed = [];
         for (const preset of presets) {
           try {
-            policies.applyPreset(targetSandbox, preset);
+            if (!policies.applyPreset(targetSandbox, preset)) {
+              failed.push(preset);
+            }
           } catch (err) {
             failed.push(`${preset} (${err.message})`);
           }
         }
         if (failed.length > 0) {
           console.warn(`  Warning: could not apply preset(s): ${failed.join("; ")}`);
-        }
-        const existing = registry.getSandbox(targetSandbox);
-        if (existing) {
-          registry.registerSandbox({
-            ...existing,
-            policies: presets,
-          });
         }
       }
       break;
