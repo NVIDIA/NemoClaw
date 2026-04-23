@@ -257,8 +257,7 @@ context_window = int(os.environ.get('NEMOCLAW_CONTEXT_WINDOW', '131072')); \
 max_tokens = int(os.environ.get('NEMOCLAW_MAX_TOKENS', '4096')); \
 reasoning = os.environ.get('NEMOCLAW_REASONING', 'false') == 'true'; \
 _raw_agent_timeout = os.environ.get('NEMOCLAW_AGENT_TIMEOUT', '600'); \
-assert _raw_agent_timeout.isdigit() and int(_raw_agent_timeout) > 0, 'NEMOCLAW_AGENT_TIMEOUT must be a positive integer'; \
-agent_timeout = int(_raw_agent_timeout); \
+agent_timeout = int(_raw_agent_timeout) if _raw_agent_timeout.isdigit() and int(_raw_agent_timeout) > 0 else (_ for _ in ()).throw(ValueError('NEMOCLAW_AGENT_TIMEOUT must be a positive integer')); \
 inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
 msg_channels = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_CHANNELS_B64', 'W10=') or 'W10=').decode('utf-8')); \
 _allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_ALLOWED_IDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
