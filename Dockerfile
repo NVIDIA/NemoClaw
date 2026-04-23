@@ -283,7 +283,7 @@ providers = { \
 config = { \
     'agents': {'defaults': {'model': {'primary': primary_model_ref}, 'timeoutSeconds': agent_timeout}}, \
     'models': {'mode': 'merge', 'providers': providers}, \
-    'channels': dict({'defaults': {'configWrites': False}}, **_ch_cfg), \
+    'channels': {'defaults': {}, **_ch_cfg}, \
     'update': {'checkOnStart': False}, \
     'gateway': { \
         'mode': 'local', \

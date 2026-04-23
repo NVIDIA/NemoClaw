@@ -25,37 +25,10 @@
 set -euo pipefail
 
 # ── Overall timeout ──────────────────────────────────────────────────────────
-TIMEOUT_CMD=""
-if command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="gtimeout"
-fi
-
-if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ "${NEMOCLAW_E2E_TIMEOUT_WRAPPED:-0}" != "1" ]; then
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-3600}"
-  if [ -n "$TIMEOUT_CMD" ]; then
-    export NEMOCLAW_E2E_TIMEOUT_WRAPPED=1
-    exec "$TIMEOUT_CMD" -s TERM "$TIMEOUT_SECONDS" "$0" "$@"
-  else
-    echo "ERROR: 'timeout' not found. Install coreutils (macOS: 'brew install coreutils')" >&2
-    echo "       or bypass with NEMOCLAW_E2E_NO_TIMEOUT=1" >&2
-    exit 127
-  fi
-fi
-
-# Run with $TIMEOUT_CMD if set; run directly if empty (NEMOCLAW_E2E_NO_TIMEOUT bypass).
-# Avoids `$TIMEOUT_CMD 60 ssh …` becoming `60 ssh …` → "60: command not found".
-# Usage: run_with_timeout <seconds> <command> [args...]
-run_with_timeout() {
-  local seconds="$1"
-  shift
-  if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ -n "$TIMEOUT_CMD" ]; then
-    "$TIMEOUT_CMD" "$seconds" "$@"
-  else
-    "$@"
-  fi
-}
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=3600
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 # ── Config ───────────────────────────────────────────────────────────────────
 SANDBOX_NAME="e2e-net-policy"
@@ -228,10 +201,11 @@ setup_sandbox() {
     exit 1
   fi
 
-  if nemoclaw list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
-    log "Removing existing sandbox '$SANDBOX_NAME'..."
-    nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
-  fi
+  # Unconditional destroy — `nemoclaw list` does not always surface sandboxes
+  # stuck in a not-ready state, and a not-ready sandbox blocks onboard with
+  # "already exists but is not ready" before NEMOCLAW_RECREATE_SANDBOX=1 kicks in.
+  log "Preflight: destroying any existing '$SANDBOX_NAME' sandbox..."
+  nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 
   log "=== Onboarding sandbox '$SANDBOX_NAME' with restricted policy ==="
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
@@ -239,6 +213,7 @@ setup_sandbox() {
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="restricted" \
+    NEMOCLAW_RECREATE_SANDBOX=1 \
     run_with_timeout 600 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | tee -a "$LOG_FILE" || {
     log "FATAL: Onboard failed"
@@ -546,8 +521,12 @@ console.log(pass ? 'SSRF_PASS' : 'SSRF_FAIL');
 
 # ── Teardown ─────────────────────────────────────────────────────────────────
 teardown() {
+  # Do not unlink ~/.nemoclaw/onboard.lock: that lock is global and PID-
+  # ownership-aware in src/lib/onboard-session.ts (acquireOnboardLock
+  # verifies the holder's PID liveness and inode), so an unconditional rm
+  # here could yank a concurrent run's live lock. A crashed process leaves
+  # a stale lock that the next onboard cleans up automatically.
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
   set -e
 }
