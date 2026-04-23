@@ -10,10 +10,13 @@ import path from "node:path";
 import { shellQuote } from "./shell-quote";
 
 function buildRemediation(): string {
-  const home = process.env.HOME || os.homedir();
+  const home = process.env.HOME ?? os.homedir();
   const nemoclawDir = path.join(home, ".nemoclaw");
-  const backupDir = `${nemoclawDir}.backup.${process.pid}`;
-  const recoveryHome = path.join(os.tmpdir(), `nemoclaw-home-${process.getuid?.() ?? "user"}`);
+  const backupDir = `${nemoclawDir}.backup.${String(process.pid)}`;
+  const recoveryHome = path.join(
+    os.tmpdir(),
+    `nemoclaw-home-${String(process.getuid?.() ?? "user")}`,
+  );
 
   return [
     "  To fix, try one of these recovery paths:",
@@ -36,13 +39,20 @@ function buildRemediation(): string {
   ].join("\n");
 }
 
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
 function isPermissionError(error: unknown): error is NodeJS.ErrnoException {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error.code === "EACCES" || error.code === "EPERM"),
-  );
+  return isErrnoException(error) && (error.code === "EACCES" || error.code === "EPERM");
+}
+
+function cleanupTempFile(filePath: string): void {
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    // Best effort — cleanup only.
+  }
 }
 
 export class ConfigPermissionError extends Error {
@@ -134,21 +144,21 @@ export function ensureConfigDir(dirPath: string): void {
     if ((stat.mode & 0o077) !== 0) {
       fs.chmodSync(dirPath, 0o700);
     }
-  } catch (error) {
+  } catch (error: unknown) {
     if (isPermissionError(error)) {
-      throw new ConfigPermissionError(`Cannot create config directory: ${dirPath}`, dirPath, error as Error);
+      throw new ConfigPermissionError(`Cannot create config directory: ${dirPath}`, dirPath, error);
     }
     throw error;
   }
 
   try {
     fs.accessSync(dirPath, fs.constants.W_OK);
-  } catch (error) {
+  } catch (error: unknown) {
     if (isPermissionError(error)) {
       throw new ConfigPermissionError(
         `Config directory exists but is not writable: ${dirPath}`,
         dirPath,
-        error as Error,
+        error,
       );
     }
     throw error;
@@ -157,12 +167,13 @@ export function ensureConfigDir(dirPath: string): void {
 
 export function readConfigFile<T>(filePath: string, fallback: T): T {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
-  } catch (error) {
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return parsed as T;
+  } catch (error: unknown) {
     if (isPermissionError(error)) {
-      throw new ConfigPermissionError(`Cannot read config file: ${filePath}`, filePath, error as Error);
+      throw new ConfigPermissionError(`Cannot read config file: ${filePath}`, filePath, error);
     }
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isErrnoException(error) && error.code === "ENOENT") {
       return fallback;
     }
     return fallback;
@@ -173,18 +184,14 @@ export function writeConfigFile(filePath: string, data: unknown): void {
   const dirPath = path.dirname(filePath);
   ensureConfigDir(dirPath);
 
-  const tmpFile = `${filePath}.tmp.${process.pid}`;
+  const tmpFile = `${filePath}.tmp.${String(process.pid)}`;
   try {
     fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), { mode: 0o600 });
     fs.renameSync(tmpFile, filePath);
-  } catch (error) {
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      /* best effort */
-    }
+  } catch (error: unknown) {
+    cleanupTempFile(tmpFile);
     if (isPermissionError(error)) {
-      throw new ConfigPermissionError(`Cannot write config file: ${filePath}`, filePath, error as Error);
+      throw new ConfigPermissionError(`Cannot write config file: ${filePath}`, filePath, error);
     }
     throw error;
   }
