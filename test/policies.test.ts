@@ -607,6 +607,14 @@ describe("policies", () => {
       }
     });
 
+    it("outlook preset allows PATCH on graph.microsoft.com", () => {
+      // Microsoft Graph API uses PATCH for common email and calendar operations:
+      // marking messages as read, updating drafts, modifying calendar events.
+      const content = policies.loadPreset("outlook");
+      const graphSection = content.split("host: graph.microsoft.com")[1]?.split("- host:")[0] ?? "";
+      expect(graphSection).toContain("method: PATCH");
+    });
+
     it("messaging WebSocket presets keep tls: skip on gateway endpoints", () => {
       const cases = [
         { preset: "discord", pattern: /host:\s*gateway\.discord\.gg[\s\S]*?tls:\s*skip/ },

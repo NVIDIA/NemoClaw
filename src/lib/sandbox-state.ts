@@ -180,9 +180,19 @@ export function validateTarEntries(
 
 /**
  * Walk a directory and return violations for any symlinks whose
- * resolved targets escape rootPath.
+ * resolved targets don't land within any of the allowed roots.
+ *
+ * `allowedRoots` always includes the extraction directory (the local host
+ * path). Callers pass additional roots — notably `/sandbox` — to permit
+ * legitimate intra-sandbox symlinks baked into the sandbox base image
+ * (e.g. `/sandbox/.openclaw` → `/sandbox/.openclaw-data`). Those look
+ * like "escapes" relative to the extraction temp dir on the host, but
+ * are intra-sandbox once the backup is restored. See issue #2268.
  */
-function auditExtractedSymlinks(dirPath: string, rootPath: string): string[] {
+function auditExtractedSymlinks(
+  dirPath: string,
+  allowedRoots: string[],
+): string[] {
   const violations: string[] = [];
   if (!existsSync(dirPath)) return violations;
 
@@ -194,7 +204,10 @@ function auditExtractedSymlinks(dirPath: string, rootPath: string): string[] {
         if (stat.isSymbolicLink()) {
           const linkTarget = readlinkSync(fullPath);
           const resolvedTarget = path.resolve(path.dirname(fullPath), linkTarget);
-          if (!isWithinRoot(resolvedTarget, rootPath)) {
+          const inAnyAllowedRoot = allowedRoots.some((root) =>
+            isWithinRoot(resolvedTarget, root),
+          );
+          if (!inAnyAllowedRoot) {
             violations.push(`symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedTarget})`);
           }
         } else if (stat.isDirectory()) {
@@ -282,8 +295,11 @@ export function safeTarExtract(
   }
 
   // Phase 3: Post-extraction symlink audit (symlink targets are not
-  // visible in `tar -tf` output, so we must check after extraction)
-  const symlinkViolations = auditExtractedSymlinks(targetDir, targetDir);
+  // visible in `tar -tf` output, so we must check after extraction).
+  // Allow targets inside either the host extraction dir OR the canonical
+  // sandbox root (/sandbox) — the latter covers legitimate intra-sandbox
+  // symlinks baked into the base image (see #2268).
+  const symlinkViolations = auditExtractedSymlinks(targetDir, [targetDir, "/sandbox"]);
   if (symlinkViolations.length > 0) {
     // Nuke the extraction — do not leave attacker-controlled symlinks on host
     try {

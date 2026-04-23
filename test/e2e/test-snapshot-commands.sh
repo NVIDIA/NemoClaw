@@ -25,6 +25,11 @@
 set -euo pipefail
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-snapshot}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 MARKER_FILE="/sandbox/.openclaw-data/workspace/snapshot-marker.txt"
 MARKER_CONTENT="SNAPSHOT_E2E_$(date +%s)"
 SECOND_MARKER="/sandbox/.openclaw-data/workspace/snapshot-marker-2.txt"
@@ -104,7 +109,10 @@ info "Phase 3: Creating snapshot..."
 SNAPSHOT_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot create 2>&1)
 echo "$SNAPSHOT_OUTPUT"
 
-if echo "$SNAPSHOT_OUTPUT" | grep -q "Snapshot created"; then
+# The success marker is `✓ Snapshot v<N> created (<count> directories)` — the
+# version token between "Snapshot" and "created" broke the old literal grep
+# for "Snapshot created". Use a regex that tolerates the version field.
+if echo "$SNAPSHOT_OUTPUT" | grep -qE "Snapshot v[0-9]+.*created"; then
   pass "snapshot create succeeded"
 else
   fail "snapshot create did not report success: ${SNAPSHOT_OUTPUT}"
@@ -209,7 +217,7 @@ fi
 
 # ── Cleanup ─────────────────────────────────────────────────────────
 info "Cleaning up..."
-nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}Snapshot commands E2E passed.${NC}"
