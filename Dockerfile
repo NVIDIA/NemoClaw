@@ -169,7 +169,7 @@ ARG NEMOCLAW_REASONING=false
 # Per-request inference timeout (seconds) baked into agents.defaults.timeoutSeconds.
 # Increase for slow local inference (e.g., CPU Ollama). openclaw.json is
 # immutable at runtime (Landlock read-only), so this can only be changed by
-# rebuilding via `nemoclaw onboard`. Ref: https://github.com/NVIDIA/NemoClaw/issues/2281
+# rebuilding via `nemoclaw onboard`. Ref: issue #2281
 ARG NEMOCLAW_AGENT_TIMEOUT=600
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Base64-encoded JSON list of messaging channel names to pre-configure

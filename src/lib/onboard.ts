@@ -1397,7 +1397,7 @@ function patchStagedDockerfile(
   }
   // NEMOCLAW_AGENT_TIMEOUT — override agents.defaults.timeoutSeconds at build
   // time. Lets users increase the per-request inference timeout without
-  // editing the Dockerfile. Ref: https://github.com/NVIDIA/NemoClaw/issues/2281
+  // editing the Dockerfile. Ref: issue #2281
   const agentTimeout = process.env.NEMOCLAW_AGENT_TIMEOUT;
   if (agentTimeout && POSITIVE_INT_RE.test(agentTimeout)) {
     dockerfile = dockerfile.replace(
