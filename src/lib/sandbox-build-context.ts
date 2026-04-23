@@ -63,6 +63,12 @@ function stageOptimizedSandboxBuildContext(rootDir, tmpDir = os.tmpdir()) {
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
+  // Shared sandbox initialisation library sourced by the entrypoint (#2277)
+  fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "sandbox-init.sh"),
+    path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
+  );
 
   return { buildCtx, stagedDockerfile };
 }
