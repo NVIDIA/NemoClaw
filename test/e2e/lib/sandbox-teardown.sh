@@ -15,6 +15,9 @@
 #   register_sandbox_for_teardown "$SANDBOX_NAME"
 #
 # Multiple sandboxes: call register_sandbox_for_teardown once per sandbox.
+#
+# Local-dev escape hatch: set NEMOCLAW_E2E_KEEP_SANDBOX=1 to skip the destroy
+# on exit so the sandbox survives for post-mortem inspection.
 
 _NEMOCLAW_TEARDOWN_SANDBOXES=()
 
@@ -27,6 +30,9 @@ register_sandbox_for_teardown() {
 _nemoclaw_sandbox_teardown() {
   # Run on script EXIT — destroys every registered sandbox and clears the
   # onboard.lock so a subsequent run starts clean even if this one crashed.
+  if [[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]]; then
+    return 0
+  fi
   set +e
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null
   local sbx
