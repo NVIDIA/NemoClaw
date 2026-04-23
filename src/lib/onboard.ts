@@ -2691,7 +2691,7 @@ async function preflight() {
       // Source of truth: min_openshell_version in nemoclaw-blueprint/blueprint.yaml.
       // Fall back to the Landlock-enforcement floor (also MIN_VERSION in
       // scripts/install-openshell.sh) if the blueprint cannot be read.
-      const minOpenshellVersion = getBlueprintMinOpenshellVersion() ?? "0.0.29";
+      const minOpenshellVersion = getBlueprintMinOpenshellVersion() ?? "0.0.32";
       const needsUpgrade = !versionGte(currentVersion, minOpenshellVersion);
       if (needsUpgrade) {
         console.log(

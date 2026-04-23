@@ -30,9 +30,19 @@ $ nemoclaw my-assistant snapshot list
 $ nemoclaw my-assistant snapshot restore
 ```
 
-To restore a specific snapshot instead of the latest, pass a timestamp or prefix:
+`snapshot list` prints a table of version, name, timestamp, and path. Versions (`v1`, `v2`, ..., `vN`) are computed from the timestamp order, so `vN` is always the newest snapshot.
+
+To tag a snapshot with a human-readable label, pass `--name`:
 
 ```console
+$ nemoclaw my-assistant snapshot create --name before-upgrade
+```
+
+To restore a specific snapshot instead of the latest, pass a version, name, or timestamp prefix:
+
+```console
+$ nemoclaw my-assistant snapshot restore v3
+$ nemoclaw my-assistant snapshot restore before-upgrade
 $ nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
