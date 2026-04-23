@@ -168,8 +168,8 @@ pass "Docker is running"
 
 info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
 info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
-info "Slack bot token: ${SLACK_TOKEN:0:10}... (${#SLACK_TOKEN} chars)"
-info "Slack app token: ${SLACK_APP:0:10}... (${#SLACK_APP} chars)"
+info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
+info "Slack app token: configured (${#SLACK_APP} chars)"
 info "Sandbox name: $SANDBOX_NAME"
 STRICT_DISCORD_GATEWAY="${NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY:-0}"
 
@@ -1067,12 +1067,20 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 7: Slack auth pre-validation (#2340)"
 
-# S1: Gateway process is still running (not crashed by Slack auth failure)
-gw_status=$(sandbox_exec "cat /proc/1/stat 2>/dev/null | awk '{print \$3}'" 2>/dev/null || true)
-if [ -n "$gw_status" ] && [ "$gw_status" != "Z" ]; then
-  pass "S1: Gateway process is alive (state: $gw_status) — Slack auth failure did not crash it"
+# S1: Gateway is serving on port 18789 (not crashed by Slack auth failure)
+# Probing the port is more accurate than checking PID 1 — the entrypoint can
+# survive even if the gateway child process dies (#2340).
+gw_port=$(sandbox_exec 'node -e "
+const net = require(\"net\");
+const sock = net.connect(18789, \"127.0.0.1\");
+sock.on(\"connect\", () => { console.log(\"OPEN\"); sock.end(); });
+sock.on(\"error\", () => console.log(\"CLOSED\"));
+setTimeout(() => { console.log(\"TIMEOUT\"); sock.destroy(); }, 5000);
+"' 2>/dev/null || true)
+if echo "$gw_port" | grep -q "OPEN"; then
+  pass "S1: Gateway is serving on port 18789 — Slack auth failure did not take it down"
 else
-  fail "S1: Gateway process is not running (state: ${gw_status:-unknown}) — may have crashed"
+  fail "S1: Gateway is not serving on port 18789 (${gw_port:0:200})"
 fi
 
 # S2: Gateway log contains the pre-validation attempt
@@ -1097,7 +1105,8 @@ slack_enabled=$(sandbox_exec "python3 -c \"
 import json
 try:
     cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
-    acct = cfg.get('channels', {}).get('slack', {}).get('accounts', {}).get('default', {})
+    accounts = cfg.get('channels', {}).get('slack', {}).get('accounts', {})
+    acct = accounts.get('default') or accounts.get('main') or next((v for v in accounts.values() if isinstance(v, dict)), {})
     print(acct.get('enabled', 'MISSING'))
 except Exception as e:
     print('ERROR: ' + str(e))
@@ -1161,12 +1170,18 @@ if [ -n "${SLACK_BOT_TOKEN_REVOKED:-}" ]; then
     fail "S5: Revoked Slack token was not caught by validate_slack_auth"
   fi
 
-  # S5b: Gateway should still be running
-  revoked_gw_status=$(sandbox_exec "cat /proc/1/stat 2>/dev/null | awk '{print \$3}'" 2>/dev/null || true)
-  if [ -n "$revoked_gw_status" ] && [ "$revoked_gw_status" != "Z" ]; then
-    pass "S5b: Gateway survived revoked Slack token (process alive)"
+  # S5b: Gateway should still be serving
+  revoked_gw_port=$(sandbox_exec 'node -e "
+const net = require(\"net\");
+const sock = net.connect(18789, \"127.0.0.1\");
+sock.on(\"connect\", () => { console.log(\"OPEN\"); sock.end(); });
+sock.on(\"error\", () => console.log(\"CLOSED\"));
+setTimeout(() => { console.log(\"TIMEOUT\"); sock.destroy(); }, 5000);
+"' 2>/dev/null || true)
+  if echo "$revoked_gw_port" | grep -q "OPEN"; then
+    pass "S5b: Gateway survived revoked Slack token (port 18789 open)"
   else
-    fail "S5b: Gateway crashed with revoked Slack token"
+    fail "S5b: Gateway not serving after revoked Slack token (${revoked_gw_port:0:200})"
   fi
 
   # Restore original tokens for cleanup
