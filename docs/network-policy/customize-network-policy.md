@@ -182,6 +182,7 @@ Available presets:
 | `github` | GitHub and GitHub REST API |
 | `huggingface` | Hugging Face Hub (download-only) and inference router |
 | `jira` | Atlassian Jira API |
+| `mnemo-cortex` | Mnemo Cortex memory coprocessor (host-local, plain HTTP) |
 | `npm` | npm and Yarn registries |
 | `outlook` | Microsoft 365 and Outlook |
 | `pypi` | Python Package Index |

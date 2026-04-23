@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Mnemo Cortex memory coprocessor access preset.
+#
+# Mnemo Cortex (https://github.com/GuyMannDude/mnemo-cortex) is a local-first,
+# multi-agent memory layer for OpenClaw. It runs on the host at port 50001 as a
+# plain-HTTP service and exposes session memory, recall/search, and the
+# Developer's Passport user-working-style APIs via REST (and via an MCP bridge
+# that node subprocesses inside the sandbox typically consume).
+#
+# This preset is opt-in; it is not included in any policy tier. Apply with:
+#
+#     nemoclaw <sandbox-name> policy-add mnemo-cortex
+#
+# For a remote Mnemo deployment (not host-local), write a custom policy using
+# this file as a template and substitute the host/port for your deployment.
+
+preset:
+  name: mnemo-cortex
+  description: "Mnemo Cortex memory coprocessor access via host gateway"
+
+network_policies:
+  mnemo_cortex:
+    name: mnemo_cortex
+    endpoints:
+      - host: host.openshell.internal
+        port: 50001
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
