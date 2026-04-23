@@ -32,6 +32,38 @@ All workspace files reside inside the sandbox filesystem:
     └── 2026-03-19.md
 ```
 
+## Multi-Agent Deployments
+
+A single NemoClaw sandbox can host more than one OpenClaw agent.
+When OpenClaw is configured with multiple named agents (e.g., a shared `main` agent
+plus per-user agents for a Teams-integrated deployment), each agent gets its own
+workspace directory alongside the default `workspace/`:
+
+```text
+/sandbox/.openclaw/
+├── workspace/           # default agent (single-agent deployments)
+├── workspace-main/      # named agent "main"
+├── workspace-support/   # named agent "support"
+└── workspace-ops/       # named agent "ops"
+```
+
+Each per-agent workspace contains the same Markdown file structure as the default
+(`SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, `MEMORY.md`, `memory/`).
+Files are per-agent — changes in `workspace-main/AGENTS.md` are not visible to
+`workspace-support/`.
+
+Persistence and snapshots are handled automatically for per-agent workspaces:
+the sandbox entrypoint provisions each `workspace-<name>/` as a symlink into the
+writable `.openclaw-data/` tree so state survives sandbox restart, and
+`nemoclaw <name> snapshot create` discovers every `workspace-<name>/` directory
+and includes it in the snapshot bundle alongside the default `workspace/`.
+
+> **Note:** Files that operators typically want consistent across every agent workspace
+> (`AGENTS.md`, shared skills, common templates) are not synced automatically.
+> Each workspace is independent; changes in one don't propagate. Tracking
+> shared-file tooling (shared mount, `workspaces list` command) in
+> [#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
+
 ## Persistence Behavior
 
 Understanding when these files persist and when they are lost is critical.
