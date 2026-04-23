@@ -620,6 +620,7 @@ describe("service environment", () => {
           "_TOOL_REDIRECTS=()",
           `_PROXY_FIX_SCRIPT="${fakeFixPath}"`,
           `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
+          `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
           "set +u  # array expansion safe on macOS bash",
           persistBlock
             .trimEnd()
@@ -671,6 +672,7 @@ describe("service environment", () => {
           "_TOOL_REDIRECTS=()",
           `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
           `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
+          `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
           "set +u  # array expansion safe on macOS bash",
           persistBlock
             .trimEnd()
@@ -680,11 +682,12 @@ describe("service environment", () => {
         execFileSync("bash", [tmpFile], { encoding: "utf-8" });
 
         const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-        // NODE_OPTIONS preload should NOT be injected when NODE_USE_ENV_PROXY is not 1
-        // and ws fix script does not exist
-        expect(envFile).not.toContain("--require");
+        // Proxy and ws fix preloads should NOT be injected when NODE_USE_ENV_PROXY
+        // is not 1 and ws fix script does not exist. The Nemotron inference fix is
+        // unconditional (always needed regardless of proxy config).
         expect(envFile).not.toContain("http-proxy-fix");
         expect(envFile).not.toContain("ws-proxy-fix");
+        expect(envFile).toContain("nemotron-inference-fix");
       } finally {
         try {
           execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
@@ -721,6 +724,7 @@ describe("service environment", () => {
           `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
           `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
           `_WS_FIX_SCRIPT="${fakeWsFixScript}"`,
+          `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
           `_TOOL_REDIRECTS=()`,
           "set +u  # array expansion safe on macOS bash",
           persistBlock
@@ -768,6 +772,7 @@ describe("service environment", () => {
           `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
           `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
           `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
+          `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
           `_TOOL_REDIRECTS=()`,
           "set +u  # array expansion safe on macOS bash",
           persistBlock
