@@ -1602,7 +1602,7 @@ function sandboxLogs(sandboxName, follow) {
 }
 
 function buildSandboxLogsArgs(sandboxName, follow) {
-  const args = ["sandbox", "connect", sandboxName, "--", "tail", "-n", "200"];
+  const args = ["sandbox", "exec", "-n", sandboxName, "--", "tail", "-n", "200"];
   if (follow) {
     args.push("-f");
   }

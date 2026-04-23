@@ -261,7 +261,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
   });
 
-  it("routes logs to sandbox connect tailing the gateway log", () => {
+  it("routes logs to sandbox exec tailing the gateway log", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -303,7 +303,8 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(readRecordedArgs(markerFile)).toEqual([
       "sandbox",
-      "connect",
+      "exec",
+      "-n",
       "alpha",
       "--",
       "tail",
@@ -314,7 +315,7 @@ describe("CLI dispatch", () => {
     expect(readRecordedArgs(markerFile)).not.toContain("-f");
   });
 
-  it("passes --follow through to tail inside sandbox connect", () => {
+  it("passes --follow through to tail inside sandbox exec", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -360,7 +361,8 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(readRecordedArgs(markerFile)).toEqual([
       "sandbox",
-      "connect",
+      "exec",
+      "-n",
       "alpha",
       "--",
       "tail",
@@ -862,7 +864,8 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(readRecordedArgs(markerFile)).toEqual([
       "sandbox",
-      "connect",
+      "exec",
+      "-n",
       "alpha",
       "--",
       "tail",
