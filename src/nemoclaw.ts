@@ -65,6 +65,7 @@ const { buildVersionedUninstallUrl, runUninstallCommand } = require("./lib/unins
 const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
+const { parseRestoreArgs } = sandboxState;
 const { ensureOllamaAuthProxy } = require("./lib/onboard");
 const skillInstall = require("./lib/skill-install");
 const { sleepSeconds } = require("./lib/wait");
@@ -2660,7 +2661,122 @@ function renderSnapshotTable(backups) {
   }
 }
 
-function sandboxSnapshot(sandboxName, subArgs) {
+// Query the running src pod's image reference via `kubectl` inside the
+// gateway container. Returns null on any failure.
+function resolveSrcPodImage(srcName) {
+  const gatewayContainer = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
+  try {
+    const result = spawnSync(
+      "docker",
+      [
+        "exec",
+        gatewayContainer,
+        "kubectl",
+        "get",
+        "pod",
+        srcName,
+        "-n",
+        "openshell",
+        "-o",
+        'jsonpath={.spec.containers[?(@.name=="agent")].image}',
+      ],
+      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 },
+    );
+    if (result.status !== 0) return null;
+    const img = (result.stdout || "").trim().split(/\s+/)[0];
+    return img || null;
+  } catch {
+    return null;
+  }
+}
+
+// Auto-create a sandbox that clones the image of an existing one.
+// Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
+// the source's baked image so the user does not have to re-run onboarding.
+// Returns true on success; on failure, logs and calls process.exit(1).
+async function autoCreateSandboxFromSource(srcName, dstName, srcEntry) {
+  const sandboxCreateStream = require("./lib/sandbox-create-stream");
+  const { isSandboxReady } = require("./lib/gateway-state");
+  const basePolicy = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+  const openshellBin = getOpenshellBinary();
+
+  const fromImage = resolveSrcPodImage(srcName);
+  if (!fromImage) {
+    console.error(
+      `  Cannot auto-create '${dstName}': could not resolve '${srcName}' pod image.`,
+    );
+    console.error(`  Create '${dstName}' manually with 'nemoclaw onboard'.`);
+    process.exit(1);
+  }
+
+  const cmdParts = [
+    openshellBin,
+    "sandbox",
+    "create",
+    "--name",
+    dstName,
+    "--from",
+    fromImage,
+    "--policy",
+    basePolicy,
+    "--auto-providers",
+    "--",
+    "nemoclaw-start",
+  ].map((p) => shellQuote(p));
+  const command = `${cmdParts.join(" ")} 2>&1`;
+
+  console.log(
+    `  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`,
+  );
+
+  const createResult = await sandboxCreateStream.streamSandboxCreate(command, process.env, {
+    // Use a pre-built image, so skip build+push and jump to pod creation.
+    initialPhase: "create",
+    // Wait until the sandbox actually reaches Ready state, not just appears in the list.
+    readyCheck: () => {
+      const list = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+      if (list.status !== 0) return false;
+      return isSandboxReady(list.output || "", dstName);
+    },
+  });
+
+  if (createResult.status !== 0 && !createResult.forcedReady) {
+    console.error(`  Failed to create sandbox '${dstName}' (exit ${createResult.status}).`);
+    const tail = (createResult.output || "").slice(-600);
+    if (tail) console.error(tail);
+    process.exit(1);
+  }
+
+  // Double-check Ready after stream exit.
+  const verify = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  if (verify.status !== 0 || !isSandboxReady(verify.output || "", dstName)) {
+    console.error(`  Sandbox '${dstName}' did not reach Ready state after create.`);
+    process.exit(1);
+  }
+
+  // Set up DNS proxy in the new pod (same step onboard runs after sandbox create).
+  const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
+  if (fs.existsSync(dnsScript)) {
+    run(["bash", dnsScript, NEMOCLAW_GATEWAY_NAME, dstName], { ignoreError: true });
+  }
+
+  // Register dst in the NemoClaw registry, cloning most fields from src.
+  // Policies are cleared here — the caller replays them from the snapshot
+  // manifest after the restore succeeds and writes them back into this entry.
+  registry.registerSandbox({
+    ...srcEntry,
+    name: dstName,
+    createdAt: new Date().toISOString(),
+    policies: [],
+    // dst has its own lifecycle; don't inherit src's local NIM container
+    // reference, or destroying dst would stop src's NIM.
+    nimContainer: null,
+  });
+
+  console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
+}
+
+async function sandboxSnapshot(sandboxName, subArgs) {
   const subcommand = subArgs[0] || "help";
   switch (subcommand) {
     case "create": {
@@ -2718,18 +2834,48 @@ function sandboxSnapshot(sandboxName, subArgs) {
       break;
     }
     case "restore": {
+      // `--to <dst>` restores the snapshot from sandboxName into a different
+      // sandbox. If `dst` is not yet live, it is auto-created by cloning the
+      // source sandbox's baked image. Without `--to`, restore targets
+      // sandboxName itself
+      const parsed = parseRestoreArgs(sandboxName, subArgs);
+      if (!parsed.ok) {
+        console.error(`  ${parsed.error}`);
+        process.exit(1);
+      }
+      const targetSandbox =
+        parsed.targetSandbox === sandboxName
+          ? sandboxName
+          : validateName(parsed.targetSandbox, "target sandbox name");
       const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       if (isLive.status !== 0) {
         console.error("  Failed to query live sandbox state from OpenShell.");
         process.exit(1);
       }
       const liveNames = parseLiveSandboxNames(isLive.output || "");
-      if (!liveNames.has(sandboxName)) {
-        console.error(`  Sandbox '${sandboxName}' is not running. Cannot restore snapshot.`);
-        process.exit(1);
+      if (!liveNames.has(targetSandbox)) {
+        // Self-restore: cannot auto-create, there is no source to clone from.
+        if (targetSandbox === sandboxName) {
+          console.error(`  Sandbox '${targetSandbox}' is not running. Cannot restore snapshot.`);
+          process.exit(1);
+        }
+        // Cross-sandbox restore into a sandbox that doesn't exist yet:
+        // auto-create it by cloning the source's running pod image. The
+        // source must exist so we can probe its image via kubectl; the
+        // registry entry is used to seed dst's agent/model/provider fields.
+        if (!liveNames.has(sandboxName)) {
+          console.error(
+            `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' not found.`,
+          );
+          console.error(`  Create '${targetSandbox}' manually with 'nemoclaw onboard'.`);
+          process.exit(1);
+        }
+        const srcEntry = registry.getSandbox(sandboxName) || { name: sandboxName };
+        await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry);
       }
-      const selector = subArgs[1] || null;
+      const selector = parsed.selector;
       let backupPath;
+      let resolvedSnapshot = null;
       if (selector) {
         const { match } = sandboxState.findBackup(sandboxName, selector);
         if (!match) {
@@ -2739,6 +2885,7 @@ function sandboxSnapshot(sandboxName, subArgs) {
           process.exit(1);
         }
         backupPath = match.backupPath;
+        resolvedSnapshot = match;
         const v = formatSnapshotVersion(match);
         const nameSuffix = match.name ? ` name=${match.name}` : "";
         console.log(`  Using snapshot ${v}${nameSuffix} (${match.timestamp})`);
@@ -2749,12 +2896,17 @@ function sandboxSnapshot(sandboxName, subArgs) {
           process.exit(1);
         }
         backupPath = latest.backupPath;
+        resolvedSnapshot = latest;
         const v = formatSnapshotVersion(latest);
         const nameSuffix = latest.name ? ` name=${latest.name}` : "";
         console.log(`  Using latest snapshot ${v}${nameSuffix} (${latest.timestamp})`);
       }
-      console.log(`  Restoring snapshot into '${sandboxName}'...`);
-      const result = sandboxState.restoreSandboxState(sandboxName, backupPath);
+      if (targetSandbox !== sandboxName) {
+        console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
+      } else {
+        console.log(`  Restoring snapshot into '${sandboxName}'...`);
+      }
+      const result = sandboxState.restoreSandboxState(targetSandbox, backupPath);
       if (result.success) {
         console.log(`  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories`);
       } else {
@@ -2767,6 +2919,52 @@ function sandboxSnapshot(sandboxName, subArgs) {
         }
         process.exit(1);
       }
+      // Reconcile the target's policy presets to match the snapshot manifest
+      // exactly — add anything the snapshot recorded but the target is
+      // missing, and remove anything the target has that the snapshot did
+      // not. This mirrors how stateDirs are restored (full replacement, not
+      // additive) so the command's semantics are consistent.
+      //
+      // When the snapshot predates the `policyPresets` field (undefined),
+      // skip the reconcile entirely — we have no recorded state to match.
+      if (resolvedSnapshot && Array.isArray(resolvedSnapshot.policyPresets)) {
+        const snapshotPresets = resolvedSnapshot.policyPresets;
+        const currentPresets = policies.getAppliedPresets(targetSandbox);
+        const toRemove = currentPresets.filter((p) => !snapshotPresets.includes(p));
+        const toAdd = snapshotPresets.filter((p) => !currentPresets.includes(p));
+
+        if (toRemove.length > 0 || toAdd.length > 0) {
+          const summary = [];
+          if (toAdd.length > 0) summary.push(`add ${toAdd.join(", ")}`);
+          if (toRemove.length > 0) summary.push(`remove ${toRemove.join(", ")}`);
+          console.log(
+            `  Reconciling policy presets on '${targetSandbox}': ${summary.join("; ")}`,
+          );
+
+          const failed = [];
+          for (const preset of toRemove) {
+            try {
+              if (!policies.removePreset(targetSandbox, preset)) {
+                failed.push(`${preset} (remove failed)`);
+              }
+            } catch (err) {
+              failed.push(`${preset} (remove: ${err.message})`);
+            }
+          }
+          for (const preset of toAdd) {
+            try {
+              if (!policies.applyPreset(targetSandbox, preset)) {
+                failed.push(`${preset} (apply failed)`);
+              }
+            } catch (err) {
+              failed.push(`${preset} (apply: ${err.message})`);
+            }
+          }
+          if (failed.length > 0) {
+            console.warn(`  Warning: could not reconcile preset(s): ${failed.join("; ")}`);
+          }
+        }
+      }
       break;
     }
     default:
@@ -2774,9 +2972,10 @@ function sandboxSnapshot(sandboxName, subArgs) {
       console.log(`    nemoclaw ${sandboxName} snapshot create [--name <name>]`);
       console.log(`                                             Create a snapshot (auto-versioned v1, v2, ...)`);
       console.log(`    nemoclaw ${sandboxName} snapshot list            List available snapshots`);
-      console.log(`    nemoclaw ${sandboxName} snapshot restore [selector]`);
+      console.log(`    nemoclaw ${sandboxName} snapshot restore [selector] [--to <dst>]`);
       console.log(`                                             Restore by version (v1), name, or timestamp.`);
-      console.log(`                                             Omit to restore the most recent.`);
+      console.log(`                                             Omit selector to restore the most recent.`);
+      console.log(`                                             Use --to to restore into another sandbox; <dst> is auto-created if missing.`);
       break;
   }
 }
@@ -2943,7 +3142,7 @@ function help() {
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
     nemoclaw <name> snapshot create   Create a snapshot of sandbox state ${D}([--name <label>] to tag it)${R}
     nemoclaw <name> snapshot list     List available snapshots
-    nemoclaw <name> snapshot restore  Restore state from a snapshot ${D}([v<N>|name|timestamp], omit for latest)${R}
+    nemoclaw <name> snapshot restore  Restore state from a snapshot ${D}([v<N>|name|timestamp], omit for latest; --to <dst> clones into another sandbox, auto-created from this sandbox's image if missing)${R}
     nemoclaw <name> rebuild          Upgrade sandbox to current agent version ${D}(--yes to skip prompt)${R}
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
 
@@ -3167,7 +3366,7 @@ const [cmd, ...args] = process.argv.slice(2);
         await sandboxRebuild(cmd, actionArgs);
         break;
       case "snapshot":
-        sandboxSnapshot(cmd, actionArgs);
+        await sandboxSnapshot(cmd, actionArgs);
         break;
       case "shields": {
         const shieldsSub = actionArgs[0];

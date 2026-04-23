@@ -812,3 +812,45 @@ export function findBackup(
 
   return { match: null };
 }
+
+// ── CLI argv parser ────────────────────────────────────────────────
+//
+// Argument parser for `nemoclaw <name> snapshot restore [selector] [--to <dst>]`.
+export interface RestoreArgs {
+  ok: true;
+  targetSandbox: string;
+  selector: string | null;
+}
+
+export interface RestoreArgsError {
+  ok: false;
+  error: string;
+}
+
+export type RestoreArgsResult = RestoreArgs | RestoreArgsError;
+
+export function parseRestoreArgs(
+  sandboxName: string,
+  subArgs: readonly string[],
+): RestoreArgsResult {
+  const positional: string[] = [];
+  let targetSandbox = sandboxName;
+  for (let i = 1; i < subArgs.length; i++) {
+    const token = subArgs[i];
+    if (token === "--to") {
+      const value = subArgs[i + 1];
+      if (!value || value.startsWith("--")) {
+        return { ok: false, error: "--to requires a target sandbox name." };
+      }
+      targetSandbox = value;
+      i++;
+    } else {
+      positional.push(token);
+    }
+  }
+  return {
+    ok: true,
+    targetSandbox,
+    selector: positional[0] ?? null,
+  };
+}
