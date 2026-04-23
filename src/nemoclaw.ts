@@ -2952,35 +2952,50 @@ async function sandboxSnapshot(sandboxName, subArgs) {
         }
         process.exit(1);
       }
-      // Replay the policy presets recorded in the snapshot manifest into the
-      // target so the restored agent state runs with matching network access.
-      // Applies to both self-restore and cross-sandbox restore.
-      if (
-        resolvedSnapshot &&
-        Array.isArray(resolvedSnapshot.policyPresets) &&
-        resolvedSnapshot.policyPresets.length > 0
-      ) {
-        const presets = resolvedSnapshot.policyPresets;
-        console.log(
-          `  Applying ${presets.length} policy preset(s) to '${targetSandbox}': ${presets.join(", ")}`,
-        );
-        // `applyPreset` returns false on "can't load preset" / "missing
-        // network_policies" paths and throws on gateway errors. Track both
-        // so failures don't silently appear as successes. It also writes
-        // successfully-applied presets into the target's registry entry
-        // itself, so we don't need an outer registry update here.
-        const failed = [];
-        for (const preset of presets) {
-          try {
-            if (!policies.applyPreset(targetSandbox, preset)) {
-              failed.push(preset);
+      // Reconcile the target's policy presets to match the snapshot manifest
+      // exactly — add anything the snapshot recorded but the target is
+      // missing, and remove anything the target has that the snapshot did
+      // not. This mirrors how stateDirs are restored (full replacement, not
+      // additive) so the command's semantics are consistent.
+      //
+      // When the snapshot predates the `policyPresets` field (undefined),
+      // skip the reconcile entirely — we have no recorded state to match.
+      if (resolvedSnapshot && Array.isArray(resolvedSnapshot.policyPresets)) {
+        const snapshotPresets = resolvedSnapshot.policyPresets;
+        const currentPresets = policies.getAppliedPresets(targetSandbox);
+        const toRemove = currentPresets.filter((p) => !snapshotPresets.includes(p));
+        const toAdd = snapshotPresets.filter((p) => !currentPresets.includes(p));
+
+        if (toRemove.length > 0 || toAdd.length > 0) {
+          const summary = [];
+          if (toAdd.length > 0) summary.push(`add ${toAdd.join(", ")}`);
+          if (toRemove.length > 0) summary.push(`remove ${toRemove.join(", ")}`);
+          console.log(
+            `  Reconciling policy presets on '${targetSandbox}': ${summary.join("; ")}`,
+          );
+
+          const failed = [];
+          for (const preset of toRemove) {
+            try {
+              if (!policies.removePreset(targetSandbox, preset)) {
+                failed.push(`${preset} (remove failed)`);
+              }
+            } catch (err) {
+              failed.push(`${preset} (remove: ${err.message})`);
             }
-          } catch (err) {
-            failed.push(`${preset} (${err.message})`);
           }
-        }
-        if (failed.length > 0) {
-          console.warn(`  Warning: could not apply preset(s): ${failed.join("; ")}`);
+          for (const preset of toAdd) {
+            try {
+              if (!policies.applyPreset(targetSandbox, preset)) {
+                failed.push(`${preset} (apply failed)`);
+              }
+            } catch (err) {
+              failed.push(`${preset} (apply: ${err.message})`);
+            }
+          }
+          if (failed.length > 0) {
+            console.warn(`  Warning: could not reconcile preset(s): ${failed.join("; ")}`);
+          }
         }
       }
       break;
