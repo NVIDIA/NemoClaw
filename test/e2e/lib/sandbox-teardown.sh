@@ -1,9 +1,9 @@
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# shellcheck shell=bash
 #
-# Shared sandbox-teardown helper for e2e test scripts. Meant to be sourced
-# (not executed directly), so no shebang.
+# Shared sandbox-teardown helper for e2e test scripts. Meant to be sourced;
+# the shebang and executable bit satisfy repo shell-file conventions.
 #
 # Why: the nightly Brev launchable is reused across runs, and any test that
 # exits before cleaning up its sandbox leaves a dangling k8s pod + netns +

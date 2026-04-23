@@ -63,6 +63,13 @@ run_nemoclaw() {
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-repair}"
 OTHER_SANDBOX_NAME="${NEMOCLAW_OTHER_SANDBOX_NAME:-e2e-other}"
 
+# Shim so the teardown helper's trap can call `nemoclaw destroy` even when
+# this repo-local test run has no globally-installed `nemoclaw` on PATH (it
+# drives the CLI via `node "$REPO/bin/nemoclaw.js"` via run_nemoclaw).
+if ! command -v nemoclaw >/dev/null 2>&1; then
+  nemoclaw() { node "$REPO/bin/nemoclaw.js" "$@"; }
+fi
+
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
