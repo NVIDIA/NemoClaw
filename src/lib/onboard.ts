@@ -6270,7 +6270,9 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
       },
     });
   } else if (token) {
-    console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
+    console.log(
+      "  OpenClaw UI (tokenized URL; treat it like a password; save it now - it will not be printed again)",
+    );
     for (const line of guidanceLines) {
       console.log(`  ${line}`);
     }
