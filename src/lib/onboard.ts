@@ -1869,7 +1869,14 @@ async function validateCustomOpenAiLikeSelection(
   console.error(`  ${label} endpoint validation failed.`);
   console.error(`  ${probe.message}`);
   if (isNonInteractive()) {
-    process.exit(1);
+    // Non-interactive mode (e.g. `nemoclaw start` scripted, GitHub Copilot
+    // routing) has no user to prompt for a different provider. Falling back
+    // to the chat-completions API is safe for OpenAI-like endpoints; the
+    // runtime still surfaces real errors on the first request.
+    console.warn(
+      `  [non-interactive] probe failed — falling back to chat-completions API for ${label}.`,
+    );
+    return { ok: true, api: "chat-completions" };
   }
   const retry = await promptValidationRecovery(
     label,
