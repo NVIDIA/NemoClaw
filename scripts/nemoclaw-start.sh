@@ -465,6 +465,100 @@ PYSLACK
   printf '[channels] Config hash recomputed after Slack token override\n' >&2
 }
 
+# ── Slack auth pre-validation ────────────────────────────────────
+# Pre-validates the resolved Slack bot token against the Slack auth.test
+# API before launching the gateway. If the token is invalid (e.g., revoked
+# or expired), the Slack channel is disabled in openclaw.json so the
+# gateway starts without it — preventing an unhandled promise rejection
+# from @slack/web-api that would crash the entire gateway process.
+# Node v22 treats unhandled rejections as fatal, taking down inference,
+# chat, and TUI along with the failed channel.
+#
+# Network errors (proxy not ready, Slack API unreachable) are treated as
+# transient: the channel is left enabled and the gateway is allowed to
+# retry on its own. Only a definitive auth failure disables the channel.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
+
+validate_slack_auth() {
+  [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
+
+  # Only validate tokens with the correct prefix — if the prefix is wrong,
+  # apply_slack_token_override already skipped placeholder resolution and
+  # Bolt's synchronous format check will reject the token without an
+  # unhandled promise rejection.
+  case "${SLACK_BOT_TOKEN}" in
+    xoxb-*) ;;
+    *) return 0 ;;
+  esac
+
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+
+  # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing Slack auth validation — config or hash path is a symlink\n' >&2
+    return 1
+  fi
+
+  printf '[channels] Validating Slack bot token against auth.test...\n' >&2
+
+  local auth_result
+  auth_result=$(
+    SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" python3 <<'PYAUTHTEST'
+import json, os, sys, urllib.request
+
+token = os.environ["SLACK_BOT_TOKEN"]
+try:
+    req = urllib.request.Request(
+        "https://slack.com/api/auth.test",
+        headers={"Authorization": "Bearer " + token,
+                 "Content-Type": "application/x-www-form-urlencoded"},
+        data=b"",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read())
+    if data.get("ok"):
+        print("ok")
+    else:
+        print("error:" + data.get("error", "unknown"))
+except Exception as e:
+    print("network_error:" + str(e)[:200])
+PYAUTHTEST
+  ) || auth_result="network_error:python3_failed"
+
+  case "$auth_result" in
+    ok)
+      printf '[channels] Slack bot token validated successfully\n' >&2
+      ;;
+    error:*)
+      local slack_error="${auth_result#error:}"
+      printf '[channels] [slack][default] provider failed to start: %s — channel disabled\n' "$slack_error" >&2
+
+      python3 - "$config_file" <<'PYSLACKDISABLE'
+import json, sys
+
+config_file = sys.argv[1]
+with open(config_file) as f:
+    cfg = json.load(f)
+
+slack = cfg.get("channels", {}).get("slack", {})
+for acct in slack.get("accounts", {}).values():
+    if isinstance(acct, dict):
+        acct["enabled"] = False
+
+with open(config_file, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYSLACKDISABLE
+
+      (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
+      printf '[channels] Config hash recomputed after disabling Slack channel\n' >&2
+      ;;
+    network_error:*)
+      printf '[channels] Could not reach Slack API for token validation (%s) — channel left enabled\n' "${auth_result#network_error:}" >&2
+      ;;
+  esac
+}
+
 _read_gateway_token() {
   python3 - <<'PYTOKEN'
 import json
@@ -996,6 +1090,7 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_model_override
   apply_cors_override
   apply_slack_token_override
+  validate_slack_auth
   export_gateway_token
   install_configure_guard
   configure_messaging_channels
@@ -1111,6 +1206,7 @@ verify_config_integrity /sandbox/.openclaw
 apply_model_override
 apply_cors_override
 apply_slack_token_override
+validate_slack_auth
 export_gateway_token
 install_configure_guard
 
