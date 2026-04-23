@@ -929,13 +929,13 @@ describe("onboard helpers", () => {
       path.join(blueprintDir, "blueprint.yaml"),
       [
         'version: "0.1.0"',
-        'min_openshell_version: "0.0.29"',
-        'max_openshell_version: "0.0.29"',
+        'min_openshell_version: "0.0.32"',
+        'max_openshell_version: "0.0.32"',
         'min_openclaw_version: "2026.3.0"',
       ].join("\n"),
     );
     try {
-      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe("0.0.29");
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe("0.0.32");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
