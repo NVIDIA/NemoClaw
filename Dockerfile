@@ -152,7 +152,7 @@ RUN set -eu; \
     # Scoped to install-safe-path + install-package-dir only. \
     isp_file="$(grep -RIlE --include='*.js' 'const baseLstat = await fs\.lstat\(baseDir\)' "$OC_DIST/install-safe-path-"*.js)"; \
     test -n "$isp_file" || { echo "ERROR: install-safe-path baseLstat pattern not found" >&2; exit 1; }; \
-    sed -i 's/await fs\.lstat(/await fs.stat(/g' "$isp_file"; \
+    sed -i 's/const baseLstat = await fs\.lstat(baseDir)/const baseLstat = await fs.stat(baseDir)/' "$isp_file"; \
     if grep -q 'fs\.lstat(' "$isp_file"; then echo "ERROR: Patch 3a (install-safe-path) left lstat calls" >&2; exit 1; fi; \
     ipd_file="$(grep -RIlE --include='*.js' 'assertInstallBaseStable' "$OC_DIST/install-package-dir-"*.js)"; \
     test -n "$ipd_file" || { echo "ERROR: install-package-dir assertInstallBaseStable not found" >&2; exit 1; }; \
@@ -166,11 +166,10 @@ RUN set -eu; \
     # patch wraps the writeConfigFile call inside replaceConfigFile to catch \
     # EACCES when OPENSHELL_SANDBOX=1 and emit a warning instead of crashing. \
     # Plugins still load via auto-discovery from the extensions directory. \
-    rcf_file="$OC_DIST/config-CJQx-9zo.js"; \
-    test -f "$rcf_file" || { echo "ERROR: config module not found: $rcf_file" >&2; exit 1; }; \
-    grep -q 'async function replaceConfigFile(params)' "$rcf_file" || { echo "ERROR: replaceConfigFile not found in config module" >&2; exit 1; }; \
+    rcf_file="$(grep -RIlE --include='*.js' 'async function replaceConfigFile\(params\)' "$OC_DIST" | head -n 1)"; \
+    test -n "$rcf_file" || { echo "ERROR: replaceConfigFile function not found in OpenClaw dist" >&2; exit 1; }; \
     python3 -c "import sys; p=sys.argv[1]; f=open(p); src=f.read(); f.close(); old='\tawait writeConfigFile(params.nextConfig, {\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t});'; new='\ttry { await writeConfigFile(params.nextConfig, {\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t}); } catch(_rcfErr) { if (process.env.OPENSHELL_SANDBOX === \"1\" && _rcfErr.code === \"EACCES\") { console.error(\"[nemoclaw] Config is read-only in sandbox \\u2014 plugin metadata not persisted (plugins auto-load from extensions/)\"); } else { throw _rcfErr; } }'; assert old in src, 'writeConfigFile(params.nextConfig) pattern not found'; f=open(p,'w'); f.write(src.replace(old,new,1)); f.close()" "$rcf_file"; \
-    grep -q 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }
+    grep -REq --include='*.js' 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
