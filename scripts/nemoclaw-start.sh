@@ -789,16 +789,123 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
-# axios + NODE_USE_ENV_PROXY double-proxy fix (NemoClaw#2109).
+# HTTP library + NODE_USE_ENV_PROXY double-proxy fix (NemoClaw#2109).
 # Node.js 22 sets NODE_USE_ENV_PROXY=1 in the OpenShell base image, which
-# intercepts all https.request() calls and handles proxy via CONNECT tunnel.
-# axios also reads HTTPS_PROXY, causing a double-proxy conflict that produces
-# malformed URLs (https://host:3128/) rejected by the L7 proxy.
-# The preload script disables axios's own proxy handling so NODE_USE_ENV_PROXY
-# takes over — the correct path for all other Node.js HTTP clients.
-_AXIOS_FIX_SCRIPT="/opt/nemoclaw-blueprint/scripts/axios-proxy-fix.js"
-if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT"
+# intercepts https.request() calls and handles proxying via CONNECT tunnel.
+# HTTP libraries (axios, follow-redirects, proxy-from-env) also read
+# HTTPS_PROXY and configure HTTP FORWARD mode, double-processing the
+# request — the L7 proxy rejects with "FORWARD rejected: HTTPS requires
+# CONNECT".
+#
+# The preload wraps http.request() — the lowest common denominator every
+# HTTP client bottoms out at — and rewrites FORWARD-mode requests back to
+# https.request() so NODE_USE_ENV_PROXY can handle the CONNECT tunnel.
+#
+# Earlier PR #2110 intercepted require('axios') via a Module._load hook;
+# that could not catch follow-redirects + proxy-from-env bundled as ESM
+# in OpenClaw's dist/ (no require() calls to intercept).
+#
+# The JS is embedded inline rather than copied from
+# nemoclaw-blueprint/scripts/http-proxy-fix.js because the blueprint
+# scripts/ directory is intentionally excluded from the optimized sandbox
+# build context — adding it cache-busts the `COPY nemoclaw-blueprint/`
+# Dockerfile layer and hangs npm ci in k3s Docker-in-Docker. See
+# src/lib/sandbox-build-context.ts. A sync test enforces that the
+# embedded copy is byte-identical to the canonical file.
+_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"
+if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+  emit_sandbox_sourced_file "$_PROXY_FIX_SCRIPT" <<'HTTP_PROXY_FIX_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// http-proxy-fix.js — http.request() wrapper resolving the double-proxy
+// conflict between NODE_USE_ENV_PROXY=1 (Node.js 22+) and HTTP libraries
+// that independently read HTTPS_PROXY (axios, follow-redirects,
+// proxy-from-env). See NemoClaw#2109.
+//
+// Problem:
+//   Node.js 22 with NODE_USE_ENV_PROXY=1 (baked into the OpenShell base
+//   image) intercepts https.request() calls and handles proxying via a
+//   CONNECT tunnel. HTTP libraries also read HTTPS_PROXY and configure
+//   HTTP FORWARD mode, so the request is processed twice and the L7 proxy
+//   rejects it with "FORWARD rejected: HTTPS requires CONNECT".
+//
+// Fix:
+//   Wrap http.request() — the lowest common denominator every HTTP client
+//   bottoms out at. Detect FORWARD-mode requests (hostname = proxy IP,
+//   path = full https:// URL) and rewrite them as https.request() against
+//   the real target host, letting NODE_USE_ENV_PROXY handle the CONNECT
+//   tunnel correctly.
+//
+// Earlier PR #2110 tried a Module._load hook intercepting require('axios').
+// That could not catch follow-redirects + proxy-from-env bundled as ESM in
+// OpenClaw's dist/ — there are no require() calls to intercept. The
+// http.request wrapper sits below all libraries and catches every path.
+//
+// This file is the canonical source for review and tests. At sandbox boot
+// nemoclaw-start.sh writes an identical copy to /tmp/nemoclaw-http-proxy-fix.js
+// and loads it via NODE_OPTIONS=--require. A sync test enforces byte-for-byte
+// equality. The content cannot be baked into /opt/nemoclaw-blueprint/scripts/
+// because adding files to the optimized sandbox build context cache-busts the
+// `COPY nemoclaw-blueprint/` Dockerfile layer and hangs npm ci in k3s
+// Docker-in-Docker — see src/lib/sandbox-build-context.ts.
+
+(function () {
+  'use strict';
+  if (process.env.NODE_USE_ENV_PROXY !== '1') return;
+
+  var http = require('http');
+  var origRequest = http.request;
+
+  var proxyUrl =
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy ||
+    '';
+  var proxyHost = '';
+  try {
+    proxyHost = new URL(proxyUrl).hostname;
+  } catch (_e) {
+    /* no usable proxy configured */
+  }
+  if (!proxyHost) return;
+
+  http.request = function (options, callback) {
+    if (typeof options === 'string' || !options) {
+      return origRequest.apply(http, arguments);
+    }
+    if (
+      options.hostname === proxyHost &&
+      options.path &&
+      options.path.startsWith('https://')
+    ) {
+      var target;
+      try {
+        target = new URL(options.path);
+      } catch (_e) {
+        return origRequest.apply(http, arguments);
+      }
+      var https = require('https');
+      // Clone caller's options and overwrite only the proxy-specific
+      // routing fields. Preserves signal (AbortController), lookup,
+      // TLS fields (ca/cert/key/rejectUnauthorized), auth, timeout,
+      // and any other per-request setting the caller supplied.
+      var rewritten = Object.assign({}, options, {
+        method: options.method || 'GET',
+        hostname: target.hostname,
+        host: target.hostname,
+        port: target.port || 443,
+        path: target.pathname + target.search,
+        protocol: 'https:',
+      });
+      return https.request(rewritten, callback);
+    }
+    return origRequest.apply(http, arguments);
+  };
+})();
+HTTP_PROXY_FIX_EOF
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT"
 fi
 
 # WebSocket CONNECT tunnel fix (NemoClaw#1570).
@@ -843,11 +950,11 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
-  # axios double-proxy fix: also expose NODE_OPTIONS in connect sessions so that
-  # interactive shells and user commands started via `openshell sandbox connect`
-  # also benefit from the preload. (NemoClaw#2109)
-  if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT\""
+  # HTTP library double-proxy fix: also expose NODE_OPTIONS in connect
+  # sessions so interactive shells and user commands started via
+  # `openshell sandbox connect` benefit from the preload. (NemoClaw#2109)
+  if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT\""
   fi
   # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
   if [ -f "$_WS_FIX_SCRIPT" ]; then
@@ -973,8 +1080,10 @@ if [ "$(id -u)" -ne 0 ]; then
   chmod 600 /tmp/auto-pair.log
 
   # Defence-in-depth: verify /tmp file permissions before launching services.
-  # shellcheck disable=SC2119
-  validate_tmp_permissions
+  # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
+  # (both are trust-boundary files; tampering would let the sandbox user
+  # inject code into any Node process via NODE_OPTIONS).
+  validate_tmp_permissions "$_PROXY_FIX_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
@@ -1043,8 +1152,10 @@ validate_openclaw_symlinks
 harden_openclaw_symlinks
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
-# shellcheck disable=SC2119
-validate_tmp_permissions
+# Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
+# (both are trust-boundary files; tampering would let the sandbox user
+# inject code into any Node process via NODE_OPTIONS).
+validate_tmp_permissions "$_PROXY_FIX_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
