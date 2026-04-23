@@ -41,10 +41,27 @@ fail() {
   echo -e "${YELLOW}[DIAG]${NC} --- Failure diagnostics ---" >&2
   echo -e "${YELLOW}[DIAG]${NC} Sandboxes: $(openshell sandbox list 2>&1 || echo 'unavailable')" >&2
   echo -e "${YELLOW}[DIAG]${NC} Backup dir: $(ls -la "$HOME/.nemoclaw/rebuild-backups/${SANDBOX_NAME}/" 2>&1 || echo 'not found')" >&2
+  echo -e "${YELLOW}[DIAG]${NC} Registry: $(cat "$HOME/.nemoclaw/sandboxes.json" 2>&1 || echo 'not found')" >&2
+  echo -e "${YELLOW}[DIAG]${NC} Registry lock: $(ls -la "$HOME/.nemoclaw/sandboxes.json.lock" 2>&1 || echo 'no lock')" >&2
+  echo -e "${YELLOW}[DIAG]${NC} Docker ps: $(docker ps --format '{{.Names}} {{.Status}}' 2>&1 || echo 'unavailable')" >&2
+  echo -e "${YELLOW}[DIAG]${NC} nemoclaw path: $(command -v nemoclaw 2>&1 || echo 'not found')" >&2
+  echo -e "${YELLOW}[DIAG]${NC} node version: $(node --version 2>&1 || echo 'not found')" >&2
   echo -e "${YELLOW}[DIAG]${NC} --- End diagnostics ---" >&2
   exit 1
 }
 info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
+
+# Run a command, capture its output and exit code without set -e killing us.
+# Usage: run_capture VAR_NAME command [args...]
+#   Sets $VAR_NAME to the combined stdout+stderr and $_CAPTURE_RC to the exit code.
+_CAPTURE_RC=0
+run_capture() {
+  local _var_name="$1"; shift
+  _CAPTURE_RC=0
+  local _output
+  _output=$("$@" 2>&1) || _CAPTURE_RC=$?
+  eval "${_var_name}=\${_output}"
+}
 
 # ── Preflight ───────────────────────────────────────────────────────
 [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY is required"
@@ -98,13 +115,36 @@ VERIFY=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}"
 
 pass "Marker file written"
 
+# ── Phase 2b: Pre-snapshot diagnostics ─────────────────────────────
+# Collect state that helps diagnose Phase 3 failures (see #2350).
+info "Phase 2b: Pre-snapshot diagnostics..."
+echo -e "${YELLOW}[DIAG]${NC} nemoclaw binary: $(command -v nemoclaw)"
+echo -e "${YELLOW}[DIAG]${NC} nemoclaw version: $(nemoclaw --version 2>&1 || echo 'failed')"
+echo -e "${YELLOW}[DIAG]${NC} openshell sandbox list:"
+openshell sandbox list 2>&1 || echo "(openshell sandbox list failed)"
+echo -e "${YELLOW}[DIAG]${NC} Registry file:"
+cat "$HOME/.nemoclaw/sandboxes.json" 2>&1 || echo "(registry not found)"
+echo -e "${YELLOW}[DIAG]${NC} Registry lock:"
+ls -la "$HOME/.nemoclaw/sandboxes.json.lock" 2>&1 || echo "(no stale lock)"
+echo -e "${YELLOW}[DIAG]${NC} Config dir:"
+ls -la "$HOME/.nemoclaw/" 2>&1 || echo "(config dir not found)"
+echo -e "${YELLOW}[DIAG]${NC} Docker containers:"
+docker ps --format '{{.Names}} {{.Status}}' 2>&1 || echo "(docker ps failed)"
+
 # ── Phase 3: snapshot create ────────────────────────────────────────
 info "Phase 3: Creating snapshot..."
 
-SNAPSHOT_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot create 2>&1)
+# Use run_capture to prevent set -e from swallowing error output.
+# Previously, $(nemoclaw ... 2>&1) would exit the script immediately on
+# failure, hiding the actual error message. See #2350.
+run_capture SNAPSHOT_OUTPUT nemoclaw "${SANDBOX_NAME}" snapshot create
 echo "$SNAPSHOT_OUTPUT"
 
-if echo "$SNAPSHOT_OUTPUT" | grep -q "Snapshot created"; then
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "snapshot create exited with code $_CAPTURE_RC: ${SNAPSHOT_OUTPUT}"
+fi
+
+if echo "$SNAPSHOT_OUTPUT" | grep -q "Snapshot.*created"; then
   pass "snapshot create succeeded"
 else
   fail "snapshot create did not report success: ${SNAPSHOT_OUTPUT}"
@@ -117,8 +157,12 @@ info "Snapshot path: ${SNAPSHOT_PATH:-unknown}"
 # ── Phase 4: snapshot list ──────────────────────────────────────────
 info "Phase 4: Listing snapshots..."
 
-LIST_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot list 2>&1)
+run_capture LIST_OUTPUT nemoclaw "${SANDBOX_NAME}" snapshot list
 echo "$LIST_OUTPUT"
+
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "snapshot list exited with code $_CAPTURE_RC: ${LIST_OUTPUT}"
+fi
 
 if echo "$LIST_OUTPUT" | grep -q "snapshot(s)"; then
   pass "snapshot list shows snapshots"
@@ -142,7 +186,10 @@ openshell sandbox exec --name "${SANDBOX_NAME}" -- \
 GONE=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}" 2>/dev/null || echo "GONE")
 [ "$GONE" = "GONE" ] || fail "First marker should be deleted but got: ${GONE}"
 
-nemoclaw "${SANDBOX_NAME}" snapshot create >/dev/null 2>&1 || fail "Second snapshot create failed"
+run_capture _SECOND_SNAP nemoclaw "${SANDBOX_NAME}" snapshot create
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "Second snapshot create failed (code $_CAPTURE_RC): ${_SECOND_SNAP}"
+fi
 pass "State modified, second snapshot created"
 
 # Perturb workspace so restore has to do real work
@@ -153,11 +200,15 @@ openshell sandbox exec --name "${SANDBOX_NAME}" -- \
 # ── Phase 6: snapshot restore (latest) ──────────────────────────────
 info "Phase 6: Restoring latest snapshot..."
 
-RESTORE_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot restore 2>&1)
+run_capture RESTORE_OUTPUT nemoclaw "${SANDBOX_NAME}" snapshot restore
 echo "$RESTORE_OUTPUT"
 
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "snapshot restore exited with code $_CAPTURE_RC: ${RESTORE_OUTPUT}"
+fi
+
 if ! echo "$RESTORE_OUTPUT" | grep -q "Restored"; then
-  fail "snapshot restore failed: ${RESTORE_OUTPUT}"
+  fail "snapshot restore did not report success: ${RESTORE_OUTPUT}"
 fi
 
 SECOND_CHECK=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${SECOND_MARKER}" 2>/dev/null || echo "MISSING")
@@ -167,11 +218,15 @@ pass "Latest snapshot restored expected state"
 # ── Phase 7: snapshot restore with timestamp (first snapshot) ───────
 info "Phase 7: Restoring first snapshot by timestamp..."
 
-TARGETED_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot restore "${SNAPSHOT_TIMESTAMP}" 2>&1)
+run_capture TARGETED_OUTPUT nemoclaw "${SANDBOX_NAME}" snapshot restore "${SNAPSHOT_TIMESTAMP}"
 echo "$TARGETED_OUTPUT"
 
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "targeted snapshot restore exited with code $_CAPTURE_RC: ${TARGETED_OUTPUT}"
+fi
+
 if ! echo "$TARGETED_OUTPUT" | grep -q "Restored"; then
-  fail "Targeted snapshot restore failed: ${TARGETED_OUTPUT}"
+  fail "targeted snapshot restore did not report success: ${TARGETED_OUTPUT}"
 fi
 
 FIRST_CHECK=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}" 2>/dev/null || echo "MISSING")
@@ -198,7 +253,10 @@ fi
 # ── Phase 9: snapshot help ──────────────────────────────────────────
 info "Phase 9: Verifying snapshot help output..."
 
-HELP_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot 2>&1)
+run_capture HELP_OUTPUT nemoclaw "${SANDBOX_NAME}" snapshot
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "snapshot help exited with code $_CAPTURE_RC: ${HELP_OUTPUT}"
+fi
 if echo "$HELP_OUTPUT" | grep -q "snapshot create" \
   && echo "$HELP_OUTPUT" | grep -q "snapshot list" \
   && echo "$HELP_OUTPUT" | grep -q "snapshot restore"; then

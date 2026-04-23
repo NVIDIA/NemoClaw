@@ -87,6 +87,10 @@ skip() {
   echo -e "${YELLOW}  SKIP${NC} $1 — $2" | tee -a "$LOG_FILE"
 }
 
+# ── Config ───────────────────────────────────────────────────────────────────
+SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-deploy-svc}"
+LOG_FILE="test-deployment-services-$(date +%Y%m%d-%H%M%S).log"
+
 # ── Resolve repo root ────────────────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
@@ -194,6 +198,7 @@ onboard_sandbox() {
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="open" \
+    NEMOCLAW_RECREATE_SANDBOX=1 \
     run_with_timeout 600 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | tee -a "$LOG_FILE" || {
     log "FATAL: Onboard failed for '$name'"
