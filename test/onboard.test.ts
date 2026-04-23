@@ -753,6 +753,92 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("#2281: bakes NEMOCLAW_AGENT_TIMEOUT env into the staged Dockerfile", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-timeout-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_AGENT_TIMEOUT=600",
+      ].join("\n"),
+    );
+
+    const priorTimeout = process.env.NEMOCLAW_AGENT_TIMEOUT;
+    process.env.NEMOCLAW_AGENT_TIMEOUT = "1800";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-timeout",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_AGENT_TIMEOUT=1800$/m);
+    } finally {
+      if (priorTimeout === undefined) {
+        delete process.env.NEMOCLAW_AGENT_TIMEOUT;
+      } else {
+        process.env.NEMOCLAW_AGENT_TIMEOUT = priorTimeout;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#2281: rejects malformed NEMOCLAW_AGENT_TIMEOUT and keeps default", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-timeout-default-"),
+    );
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_AGENT_TIMEOUT=600",
+      ].join("\n"),
+    );
+
+    const priorTimeout = process.env.NEMOCLAW_AGENT_TIMEOUT;
+    // Malformed: not a positive integer. Should be rejected, default kept.
+    process.env.NEMOCLAW_AGENT_TIMEOUT = "not-a-number\nRUN rm -rf /";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-timeout-bad",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_AGENT_TIMEOUT=600$/m);
+      assert.doesNotMatch(patched, /RUN rm -rf/);
+    } finally {
+      if (priorTimeout === undefined) {
+        delete process.env.NEMOCLAW_AGENT_TIMEOUT;
+      } else {
+        process.env.NEMOCLAW_AGENT_TIMEOUT = priorTimeout;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("patches the staged Dockerfile with Brave Search config when enabled", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-web-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
