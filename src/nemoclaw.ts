@@ -2711,7 +2711,7 @@ function resolveSrcPodImage(srcName) {
         "-n",
         "openshell",
         "-o",
-        "jsonpath={.spec.containers[*].image}",
+        'jsonpath={.spec.containers[?(@.name=="agent")].image}',
       ],
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 },
     );
