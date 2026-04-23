@@ -133,8 +133,9 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
 # Pre-create shell init files for the sandbox user.
 # The /sandbox home directory is Landlock read-only at runtime (#804), so these
 # files must exist at build time. Runtime proxy config is written by the
-# entrypoint to /tmp/nemoclaw-proxy-env.sh (root-owned, sticky-bit protected)
-# and sourced from here on every interactive session.
+# entrypoint to /tmp/nemoclaw-proxy-env.sh (root-owned, mode 444,
+# sticky-bit protected) and sourced from here on every interactive session.
+# Ref: #2181 — the file must not be writable by the sandbox user.
 # hadolint ignore=SC2028
 RUN printf '%s\n' \
         '# Source runtime proxy config (Landlock read-only home, #804)' \
@@ -154,10 +155,14 @@ ARG OPENCLAW_VERSION=2026.4.2
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# OpenClaw rejects symlink writes for exec approvals, but NemoClaw keeps
+# /sandbox/.openclaw immutable and redirects writable state to .openclaw-data.
+# Patch OpenClaw dist defaults so approvals write directly to .openclaw-data.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1785
 RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/blueprint.yaml \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
     || { echo "Error: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)."; exit 1; }; \
-    OPENCLAW_MIN_VERSION=$(grep 'min_openclaw_version' /tmp/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
+    OPENCLAW_MIN_VERSION=$(grep -m 1 'min_openclaw_version' /tmp/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
     [ -n "$OPENCLAW_MIN_VERSION" ] \
     || { echo "Error: Could not parse min_openclaw_version from nemoclaw-blueprint/blueprint.yaml"; exit 1; }; \
     if [ "$(printf '%s\n%s' "$OPENCLAW_MIN_VERSION" "$OPENCLAW_VERSION" | sort -V | head -n1)" != "$OPENCLAW_MIN_VERSION" ]; then \
@@ -169,4 +174,27 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         echo "Hint: Check available versions with: npm view openclaw versions"; exit 1; \
     fi; \
     npm install -g "openclaw@${OPENCLAW_VERSION}" \
+    && OPENCLAW_DIST_DIR="$(npm root -g)/openclaw/dist" \
+    && if [ ! -d "$OPENCLAW_DIST_DIR" ]; then \
+        echo "Error: OpenClaw dist directory not found: $OPENCLAW_DIST_DIR"; \
+        exit 1; \
+    fi \
+    && LEGACY_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw/exec-approvals.json')" \
+    && DATA_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw-data/exec-approvals.json')" \
+    && files_with_old_path="$(grep -R --include='*.js' -l "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR" || true)" \
+    && if [ -n "$files_with_old_path" ]; then \
+        files_with_old_path_file="$(mktemp)"; \
+        printf '%s\n' "$files_with_old_path" > "$files_with_old_path_file"; \
+        while IFS= read -r file; do \
+            sed -i "s#${LEGACY_EXEC_APPROVALS_PATH}#${DATA_EXEC_APPROVALS_PATH}#g" "$file"; \
+        done < "$files_with_old_path_file"; \
+        rm -f "$files_with_old_path_file"; \
+    elif ! grep -R --include='*.js' -q "$DATA_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
+        echo "Error: Unable to verify OpenClaw exec approvals path in dist"; \
+        exit 1; \
+    fi \
+    && if grep -R --include='*.js' -n "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
+        echo "Error: OpenClaw exec approvals path patch failed"; \
+        exit 1; \
+    fi \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"

@@ -47,7 +47,7 @@ Running `nemoclaw <name> destroy` **deletes the sandbox and its PVC**.
 All workspace files are permanently lost unless you back them up first.
 
 > **Warning:** Always back up your workspace files before running `nemoclaw <name> destroy`.
-> See Backup and Restore (see the `nemoclaw-user-workspace` skill) for instructions.
+> See Backup and Restore (use the `nemoclaw-user-workspace` skill) for instructions.
 
 ## Editing Workspace Files
 
@@ -59,5 +59,5 @@ You can edit them in two ways:
 
 ## Next Steps
 
-- Backup and Restore workspace files (see the `nemoclaw-user-workspace` skill)
-- Commands reference (see the `nemoclaw-user-reference` skill)
+- Backup and Restore workspace files (use the `nemoclaw-user-workspace` skill)
+- Commands reference (use the `nemoclaw-user-reference` skill)

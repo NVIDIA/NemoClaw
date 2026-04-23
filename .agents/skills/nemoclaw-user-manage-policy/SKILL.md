@@ -1,14 +1,12 @@
 ---
 name: "nemoclaw-user-manage-policy"
-description: "Reviews and approves blocked agent network requests in the TUI. Use when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI. Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access."
+description: "Reviews and approves blocked agent network requests in the TUI. Use when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI. Trigger keywords - nemoclaw approve network requests, sandbox egress approval tui, customize nemoclaw network policy, sandbox egress policy configuration."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw User Manage Policy
-
-Reviews and approves blocked agent network requests in the TUI. Use when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI.
+# Approve or Deny NemoClaw Agent Network Requests
 
 ## Prerequisites
 
@@ -30,7 +28,7 @@ $ openshell term
 For a remote sandbox, pass the instance name:
 
 ```console
-$ ssh my-gpu-box 'cd /home/ubuntu/nemoclaw && . .env && openshell term'
+$ ssh my-gpu-box 'cd ~/nemoclaw && . .env && openshell term'
 ```
 
 The TUI displays the sandbox state, active inference provider, and a live feed of network activity.
@@ -127,26 +125,67 @@ $ nemoclaw <name> status
 
 Dynamic changes apply a policy update to a running sandbox without restarting it.
 
-### Create a Policy File
+> [!WARNING]
+> `openshell policy set` **replaces** the sandbox's live policy with the contents of the file you provide; it does not merge.
+> A running sandbox's live policy is the baseline from `openclaw-sandbox.yaml` plus every preset that was layered on during onboarding.
+> Applying a file that contains only the baseline (or only a single preset) silently drops every other preset that was in effect.
 
-Create a YAML file with the endpoints to add.
-Follow the same format as the baseline policy in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
+### Option 1: Drop a Preset File and Use `policy-add` (Recommended)
 
-### Apply the Policy
+This is the non-destructive path and the only flow NemoClaw supports out of the box for merging new entries into a running policy.
 
-Use the OpenShell CLI to apply the policy update:
+1. Create a preset-format YAML file under `nemoclaw-blueprint/policies/presets/`, for example `nemoclaw-blueprint/policies/presets/influxdb.yaml`:
+
+   ```yaml
+   preset:
+     name: influxdb
+     description: "InfluxDB time-series database"
+   network_policies:
+     influxdb:
+       name: influxdb
+       endpoints:
+         - host: influxdb.internal.example.com
+           port: 8086
+           protocol: rest
+           enforcement: enforce
+           tls: terminate
+           rules:
+             - allow: { method: GET, path: "/**" }
+             - allow: { method: POST, path: "/api/v2/write" }
+       binaries:
+         - { path: /usr/bin/curl }
+   ```
+
+2. Apply it to the running sandbox:
+
+   ```console
+   $ nemoclaw my-assistant policy-add
+   ```
+
+   NemoClaw reads the live policy via `openshell policy get --full`, structurally merges your preset's `network_policies` into it, and writes the merged result back.
+   Existing presets and the baseline remain in place.
+   The preset file under `presets/` also persists across sandbox recreations.
+
+### Option 2: Snapshot, Edit, and Set via OpenShell
+
+Use this path only when you cannot add a file under the NemoClaw source tree.
+You must start from the **live** policy, not from `openclaw-sandbox.yaml`, so the presets layered on at onboarding are preserved in the file you apply.
 
 ```console
-$ openshell policy set --policy <policy-file> <sandbox-name>
+$ openshell policy get --full my-assistant > live-policy.yaml
 ```
 
-The change takes effect immediately.
+Edit `live-policy.yaml` to add your entries under `network_policies:`, keeping the existing `version` field intact, then apply:
+
+```console
+$ openshell policy set --policy live-policy.yaml my-assistant
+```
 
 ### Scope of Dynamic Changes
 
 Dynamic changes apply only to the current session.
-When the sandbox stops, the running policy resets to the baseline defined in the policy file.
-To make changes permanent, update the static policy file and re-run setup.
+When the sandbox stops, the running policy resets to the baseline composed from `openclaw-sandbox.yaml` plus the presets recorded for the sandbox.
+To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above — the file under `presets/` persists) or edit `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
 
 ### Approve Requests Interactively
 
@@ -163,7 +202,7 @@ This is useful when you want to test a destination before deciding whether it be
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
 
-During onboarding, the policy tier (see the `nemoclaw-user-reference` skill) you select determines which presets are enabled by default.
+During onboarding, the policy tier (use the `nemoclaw-user-reference` skill) you select determines which presets are enabled by default.
 You can add or remove individual presets in the interactive preset screen that follows tier selection.
 
 Available presets:
@@ -182,17 +221,47 @@ Available presets:
 | `slack` | Slack API and webhooks |
 | `telegram` | Telegram Bot API |
 
-To apply a preset to a running sandbox, pass it as a policy file:
+To apply a preset to a running sandbox:
 
 ```console
-$ openshell policy set --policy nemoclaw-blueprint/policies/presets/pypi.yaml my-assistant
+$ nemoclaw <name> policy-add
+```
+
+> **Note:** Preset selection is interactive.
+> Positional preset arguments are ignored.
+
+For example, to interactively add PyPI access to a running sandbox:
+
+```console
+$ nemoclaw my-assistant policy-add
+```
+
+To list which presets are applied to a sandbox:
+
+```console
+$ nemoclaw <name> policy-list
 ```
 
 To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
 
+> **Note:** The `openshell policy set --policy <file> <sandbox-name>` command operates on raw policy files and does not
+> accept the `preset:` metadata block used in preset YAML files. Use `nemoclaw <name> policy-add` for
+> presets.
+For scripted workflows, `policy-add` and `policy-remove` accept the preset name as a positional argument:
+
+```console
+$ nemoclaw my-assistant policy-add pypi --yes
+$ nemoclaw my-assistant policy-remove pypi --yes
+```
+
+Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to drive the same flow from an environment variable.
+See Commands (use the `nemoclaw-user-reference` skill) for the full flag reference.
+
+`nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
+
 ## Related Skills
 
-- `nemoclaw-user-reference` — Network Policies for the full baseline policy reference
-- `nemoclaw-user-monitor-sandbox` — Monitor Sandbox Activity for general sandbox monitoring
+- `nemoclaw-user-reference` — Network Policies (use the `nemoclaw-user-reference` skill) for the full baseline policy reference
+- `nemoclaw-user-monitor-sandbox` — Monitor Sandbox Activity (use the `nemoclaw-user-monitor-sandbox` skill) for general sandbox monitoring
 - OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
 - OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.

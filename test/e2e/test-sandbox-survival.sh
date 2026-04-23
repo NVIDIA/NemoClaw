@@ -40,15 +40,10 @@
 
 set -uo pipefail
 
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-900}"
-  if command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  fi
-fi
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=900
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 PASS=0
 FAIL=0
@@ -98,6 +93,11 @@ version_gte() {
 }
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-survival}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -105,7 +105,7 @@ MIN_OPENSHELL="0.0.24"
 MODEL="nvidia/nemotron-3-super-120b-a12b"
 
 # SSH helper — sets up SSH config and common options for sandbox access
-# Sets: ssh_config, SSH_OPTS, SSH_TARGET, TIMEOUT_CMD
+# Sets: ssh_config, SSH_OPTS, SSH_TARGET
 setup_ssh() {
   ssh_config="$(mktemp)"
   if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
@@ -115,9 +115,6 @@ setup_ssh() {
   fi
   SSH_OPTS=(-F "$ssh_config" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o LogLevel=ERROR)
   SSH_TARGET="openshell-${SANDBOX_NAME}"
-  TIMEOUT_CMD=""
-  command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 90"
-  command -v gtimeout >/dev/null 2>&1 && TIMEOUT_CMD="gtimeout 90"
   return 0
 }
 
@@ -314,21 +311,39 @@ fi
 # 4b: Live inference through sandbox
 info "[LIVE] Baseline inference: user → sandbox → gateway → NVIDIA Endpoints..."
 # shellcheck disable=SC2029  # client-side expansion is intentional
-baseline_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+baseline_response=$(run_with_timeout 90 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
   "curl -s --max-time 60 https://inference.local/v1/chat/completions \
     -H 'Content-Type: application/json' \
     -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
   2>&1) || true
 
+# Retry baseline inference up to 3 times — live models are not deterministic
+# and the gateway proxy can return unexpected responses on first attempt. (#1969)
 baseline_content=""
-if [ -n "$baseline_response" ]; then
-  baseline_content=$(echo "$baseline_response" | parse_chat_content 2>/dev/null) || true
-fi
-
-if grep -qi "PONG" <<<"$baseline_content"; then
+pong_ok=false
+for pong_attempt in 1 2 3; do
+  baseline_content=""
+  if [ -n "$baseline_response" ]; then
+    baseline_content=$(echo "$baseline_response" | parse_chat_content 2>/dev/null) || true
+  fi
+  if grep -qi "PONG" <<<"$baseline_content"; then
+    pong_ok=true
+    break
+  fi
+  info "Baseline attempt ${pong_attempt}/3: got '${baseline_content:0:80}', retrying in 5s..."
+  [ "$pong_attempt" -lt 3 ] || break
+  sleep 5
+  # shellcheck disable=SC2029
+  baseline_response=$(run_with_timeout 90 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+    "curl -s --max-time 60 https://inference.local/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+    2>&1) || true
+done
+if $pong_ok; then
   pass "[LIVE] Baseline: model responded with PONG through sandbox"
 else
-  fail "[LIVE] Baseline: expected PONG, got: ${baseline_content:0:200}"
+  fail "[LIVE] Baseline: expected PONG after 3 attempts, got: ${baseline_content:0:200}"
   info "Raw response: ${baseline_response:0:300}"
   info "Cannot establish baseline — aborting (survival test meaningless without it)"
   cleanup_ssh
@@ -536,7 +551,7 @@ if ! setup_ssh; then
 
   # Jump to cleanup
   section "Phase 11: Cleanup"
-  nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+  [[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
   echo ""
   echo "========================================"
@@ -627,23 +642,40 @@ section "Phase 10: Live inference after restart (THE definitive test)"
 
 info "[LIVE] Post-restart inference: user → sandbox → gateway → NVIDIA Endpoints..."
 # shellcheck disable=SC2029
-post_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+post_response=$(run_with_timeout 90 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
   "curl -s --max-time 60 https://inference.local/v1/chat/completions \
     -H 'Content-Type: application/json' \
     -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
   2>&1) || true
 
+# Retry post-restart inference up to 3 times. (#1969)
 post_content=""
-if [ -n "$post_response" ]; then
-  post_content=$(echo "$post_response" | parse_chat_content 2>/dev/null) || true
-fi
-
-if grep -qi "PONG" <<<"$post_content"; then
+pong_ok=false
+for pong_attempt in 1 2 3; do
+  post_content=""
+  if [ -n "$post_response" ]; then
+    post_content=$(echo "$post_response" | parse_chat_content 2>/dev/null) || true
+  fi
+  if grep -qi "PONG" <<<"$post_content"; then
+    pong_ok=true
+    break
+  fi
+  info "Post-restart attempt ${pong_attempt}/3: got '${post_content:0:80}', retrying in 5s..."
+  [ "$pong_attempt" -lt 3 ] || break
+  sleep 5
+  # shellcheck disable=SC2029
+  post_response=$(run_with_timeout 90 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+    "curl -s --max-time 60 https://inference.local/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+    2>&1) || true
+done
+if $pong_ok; then
   pass "[LIVE] Post-restart: model responded with PONG through sandbox"
   info "Full path proven: user → sandbox → openshell gateway (resumed) → NVIDIA Endpoints → response"
   info "This proves #859's ask: reliable non-destructive gateway lifecycle with working inference"
 else
-  fail "[LIVE] Post-restart: expected PONG, got: ${post_content:0:200}"
+  fail "[LIVE] Post-restart: expected PONG after 3 attempts, got: ${post_content:0:200}"
   info "Raw response: ${post_response:0:300}"
 fi
 
@@ -654,7 +686,7 @@ cleanup_ssh
 # ══════════════════════════════════════════════════════════════════
 section "Phase 11: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 if [ -f "$REGISTRY" ] && grep -Fq "\"${SANDBOX_NAME}\"" "$REGISTRY"; then

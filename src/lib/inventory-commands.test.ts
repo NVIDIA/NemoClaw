@@ -159,6 +159,66 @@ describe("inventory commands", () => {
     ).toBe(true);
   });
 
+  it("surfaces Hermes gateway log when messaging is degraded", () => {
+    const lines: string[] = [];
+    const checkMessagingBridgeHealth = vi.fn().mockReturnValue([
+      { channel: "telegram", conflicts: 3 },
+    ]);
+    const readGatewayLog = vi.fn().mockReturnValue(
+      "2026-04-17 getUpdates conflict: terminated by other getUpdates\n" +
+      "2026-04-17 retrying in 5s",
+    );
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "m",
+            messagingChannels: ["telegram"],
+            agent: "hermes",
+          },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      checkMessagingBridgeHealth,
+      readGatewayLog,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(readGatewayLog).toHaveBeenCalledWith("alpha");
+    expect(lines.some((l) => l.includes("Messaging gateway log (last 10 lines):"))).toBe(true);
+    expect(lines.some((l) => l.includes("getUpdates conflict"))).toBe(true);
+  });
+
+  it("does not show gateway log for non-Hermes sandboxes", () => {
+    const lines: string[] = [];
+    const checkMessagingBridgeHealth = vi.fn().mockReturnValue([
+      { channel: "telegram", conflicts: 3 },
+    ]);
+    const readGatewayLog = vi.fn();
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "m",
+            messagingChannels: ["telegram"],
+          },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      checkMessagingBridgeHealth,
+      readGatewayLog,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(readGatewayLog).not.toHaveBeenCalled();
+  });
+
   it("prints stored sandbox models in status and delegates service status", () => {
     const lines: string[] = [];
     const showServiceStatus = vi.fn();

@@ -34,15 +34,10 @@
 
 set -uo pipefail
 
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-900}"
-  if command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  fi
-fi
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=900
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 PASS=0
 FAIL=0
@@ -65,6 +60,11 @@ section() {
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-skip-perms}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -233,6 +233,58 @@ else
   fail "nemoclaw status failed: ${status_output:0:200}"
 fi
 
+# 3d: shields status must show DOWN (permanent)
+info "Checking shields status..."
+shields_output=$(nemoclaw "$SANDBOX_NAME" shields status 2>&1)
+echo "$shields_output" | while IFS= read -r line; do info "  $line"; done
+
+if echo "$shields_output" | grep -q "Shields: DOWN"; then
+  pass "shields status reports DOWN"
+else
+  fail "shields status should show DOWN when --dangerously-skip-permissions is active"
+fi
+
+if echo "$shields_output" | grep -qi "permanent"; then
+  pass "shields status shows permanent mode"
+else
+  fail "shields status should show permanent mode"
+fi
+
+# 3e: Config file permissions must be sandbox:sandbox 0600 (doctor-aligned)
+info "Checking config file permissions inside sandbox..."
+PERMS_OUTPUT=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json 2>/dev/null || true)
+info "Config perms: ${PERMS_OUTPUT}"
+
+if [ "$(echo "$PERMS_OUTPUT" | awk '{print $1}')" = "600" ]; then
+  pass "Config file mode is 600 (matches openclaw doctor expectations)"
+else
+  fail "Config file mode should be 600 (got: ${PERMS_OUTPUT})"
+fi
+
+if [ "$(echo "$PERMS_OUTPUT" | awk '{print $2}')" = "sandbox:sandbox" ]; then
+  pass "Config file owned by sandbox:sandbox"
+else
+  fail "Config file should be owned by sandbox:sandbox (got: ${PERMS_OUTPUT})"
+fi
+
+# 3f: Config directory permissions must be sandbox:sandbox 0700
+DIR_PERMS=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)
+info "Config dir perms: ${DIR_PERMS}"
+
+if [ "$(echo "$DIR_PERMS" | awk '{print $1}')" = "700" ]; then
+  pass "Config directory mode is 700"
+else
+  fail "Config directory mode should be 700 (got: ${DIR_PERMS})"
+fi
+
+if [ "$(echo "$DIR_PERMS" | awk '{print $2}')" = "sandbox:sandbox" ]; then
+  pass "Config directory owned by sandbox:sandbox"
+else
+  fail "Config directory should be owned by sandbox:sandbox (got: ${DIR_PERMS})"
+fi
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 4: Verify outbound HTTPS from inside sandbox
 # ══════════════════════════════════════════════════════════════════
@@ -281,7 +333,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 5: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 registry_file="${HOME}/.nemoclaw/sandboxes.json"

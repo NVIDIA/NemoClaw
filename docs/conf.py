@@ -139,5 +139,9 @@ html_baseurl = "https://docs.nvidia.com/nemoclaw/latest/"
 
 # Keep project.json in sync with the resolved release version so the
 # static copy served alongside the docs always reports the correct version.
+# Write only when the contents change so sphinx-autobuild does not detect
+# a self-induced source change and rebuild in an infinite loop.
 _project_json = Path(__file__).parent / "project.json"
-_project_json.write_text(json.dumps({"name": "nemoclaw", "version": release}) + "\n")
+_project_json_contents = json.dumps({"name": "nemoclaw", "version": release}) + "\n"
+if not _project_json.exists() or _project_json.read_text() != _project_json_contents:
+    _project_json.write_text(_project_json_contents)

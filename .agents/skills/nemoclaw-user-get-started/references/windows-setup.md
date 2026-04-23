@@ -3,7 +3,7 @@
 # Windows Prerequisites
 
 NemoClaw runs inside Windows Subsystem for Linux (WSL 2) on Windows.
-Complete these steps before following the Quickstart (see the `nemoclaw-user-get-started` skill).
+Complete these steps before following the Quickstart (use the `nemoclaw-user-get-started` skill).
 Linux and macOS users do not need this page and can go directly to the Quickstart.
 
 > **Note:** This guide has been tested on x86-64.
@@ -13,7 +13,7 @@ Linux and macOS users do not need this page and can go directly to the Quickstar
 Verify the following before you begin:
 
 - Windows 10 (build 19041 or later) or Windows 11.
-- Hardware requirements are the same as the Quickstart (see the `nemoclaw-user-get-started` skill).
+- Hardware requirements are the same as the Quickstart (use the `nemoclaw-user-get-started` skill).
 
 ## Enable WSL 2
 
@@ -87,10 +87,10 @@ You can also start it yourself beforehand with `ollama serve`.
 ## Next Step
 
 Your Windows environment is ready.
-Open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with the Quickstart (see the `nemoclaw-user-get-started` skill) to install NemoClaw and launch your first sandbox.
+Open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with the Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and launch your first sandbox.
 
 All NemoClaw commands run inside WSL, not in PowerShell.
 
 ## Troubleshooting
 
-For Windows-specific troubleshooting, see the Windows Subsystem for Linux section (see the `nemoclaw-user-reference` skill) in the Troubleshooting guide.
+For Windows-specific troubleshooting, see the Windows Subsystem for Linux section (use the `nemoclaw-user-reference` skill) in the Troubleshooting guide.

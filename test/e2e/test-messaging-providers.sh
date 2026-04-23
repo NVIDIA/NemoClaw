@@ -91,6 +91,10 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-msg-provider}"
 
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 # Default to fake tokens if not provided
 TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
@@ -678,6 +682,204 @@ else
   fi
 fi
 
+# M13c: Full Discord gateway handshake via ws-proxy-fix CONNECT tunnel (#1570).
+# The `ws` library opens WebSocket connections via https.request() with an
+# Upgrade: websocket header.  The preload patches https.request() to issue a
+# CONNECT tunnel for Discord gateway hosts.
+#
+# This test exercises the real Discord gateway protocol end-to-end:
+#   1. https.request with Upgrade: websocket → CONNECT tunnel via proxy
+#   2. Receive Discord Hello (opcode 10) with heartbeat_interval
+#   3. Send a Heartbeat (opcode 1) back to the gateway
+#   4. Receive Heartbeat ACK (opcode 11)
+#   5. Send close frame and disconnect cleanly
+#
+# If the CONNECT tunnel is broken the connection never upgrades (400 from L7
+# proxy) and none of the protocol steps succeed.
+dc_ws_tunnel=$(sandbox_exec 'node -e "
+const https = require(\"https\");
+const crypto = require(\"crypto\");
+
+// --- Minimal WebSocket framing (no ws dependency) ---
+function unmaskFrame(buf) {
+  if (buf.length < 2) return null;
+  const fin = (buf[0] & 0x80) !== 0;
+  const opcode = buf[0] & 0x0f;
+  const masked = (buf[1] & 0x80) !== 0;
+  let payloadLen = buf[1] & 0x7f;
+  let offset = 2;
+  if (payloadLen === 126) {
+    if (buf.length < 4) return null;
+    payloadLen = buf.readUInt16BE(2);
+    offset = 4;
+  } else if (payloadLen === 127) {
+    if (buf.length < 10) return null;
+    payloadLen = Number(buf.readBigUInt64BE(2));
+    offset = 10;
+  }
+  if (masked) offset += 4;
+  if (buf.length < offset + payloadLen) return null;
+  const data = buf.slice(offset, offset + payloadLen);
+  return { fin, opcode, data, totalLen: offset + payloadLen };
+}
+
+function makeFrame(opcode, payload) {
+  const buf = Buffer.from(payload);
+  const mask = crypto.randomBytes(4);
+  const masked = Buffer.alloc(buf.length);
+  for (let i = 0; i < buf.length; i++) masked[i] = buf[i] ^ mask[i % 4];
+  let header;
+  if (buf.length < 126) {
+    header = Buffer.alloc(6);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | buf.length;
+    mask.copy(header, 2);
+  } else {
+    header = Buffer.alloc(8);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(buf.length, 2);
+    mask.copy(header, 4);
+  }
+  return Buffer.concat([header, masked]);
+}
+
+function makeCloseFrame(code) {
+  const payload = Buffer.alloc(2);
+  payload.writeUInt16BE(code, 0);
+  return makeFrame(8, payload);
+}
+
+// --- Handshake ---
+const results = [];
+const done = () => {
+  console.log(results.join(\"\\n\"));
+  process.exit(0);
+};
+const timer = setTimeout(() => { results.push(\"TIMEOUT\"); done(); }, 20000);
+
+const key = crypto.randomBytes(16).toString(\"base64\");
+const req = https.request({
+  hostname: \"gateway.discord.gg\",
+  port: 443,
+  path: \"/?v=10&encoding=json\",
+  method: \"GET\",
+  headers: {
+    \"Connection\": \"Upgrade\",
+    \"Upgrade\": \"websocket\",
+    \"Sec-WebSocket-Key\": key,
+    \"Sec-WebSocket-Version\": \"13\",
+  },
+});
+
+req.on(\"upgrade\", (_res, socket, head) => {
+  results.push(\"UPGRADED\");
+  let pending = head && head.length ? Buffer.from(head) : Buffer.alloc(0);
+
+  socket.on(\"data\", (chunk) => {
+    pending = Buffer.concat([pending, chunk]);
+    while (true) {
+      const frame = unmaskFrame(pending);
+      if (!frame) break;
+      pending = pending.slice(frame.totalLen);
+
+      if (frame.opcode === 1) {
+        let msg;
+        try { msg = JSON.parse(frame.data.toString()); } catch { continue; }
+
+        if (msg.op === 10) {
+          const hbInterval = msg.d && msg.d.heartbeat_interval;
+          results.push(\"HELLO op=10 heartbeat_interval=\" + hbInterval);
+
+          // Send Heartbeat (opcode 1, d: null)
+          const hb = JSON.stringify({ op: 1, d: null });
+          socket.write(makeFrame(1, hb));
+          results.push(\"SENT_HEARTBEAT op=1\");
+        } else if (msg.op === 11) {
+          results.push(\"HEARTBEAT_ACK op=11\");
+          // Full round-trip complete — close cleanly
+          socket.write(makeCloseFrame(1000));
+          setTimeout(() => { socket.destroy(); clearTimeout(timer); done(); }, 500);
+        }
+      } else if (frame.opcode === 8) {
+        results.push(\"CLOSE_FRAME code=\" + (frame.data.length >= 2 ? frame.data.readUInt16BE(0) : \"none\"));
+        socket.destroy();
+        clearTimeout(timer);
+        done();
+      }
+    }
+  });
+
+  socket.on(\"error\", (e) => { results.push(\"SOCKET_ERROR \" + e.message); });
+  socket.on(\"close\", () => { clearTimeout(timer); done(); });
+});
+
+req.on(\"response\", (res) => {
+  results.push(\"HTTP_\" + res.statusCode);
+  res.resume();
+  res.on(\"end\", () => { clearTimeout(timer); done(); });
+});
+req.on(\"error\", (e) => {
+  results.push(\"ERROR \" + e.message);
+  clearTimeout(timer);
+  done();
+});
+req.end();
+"' 2>/dev/null || true)
+
+info "Discord ws-proxy-fix probe: ${dc_ws_tunnel:0:500}"
+
+# Check each step of the handshake independently
+if echo "$dc_ws_tunnel" | grep -q "UPGRADED"; then
+  pass "M13c: WebSocket upgrade succeeded via CONNECT tunnel (#1570)"
+elif echo "$dc_ws_tunnel" | grep -q "HTTP_400"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway got 400 — CONNECT tunnel not working"
+  else
+    skip "M13c: Discord gateway got 400 — ws-proxy-fix may not be active"
+  fi
+elif echo "$dc_ws_tunnel" | grep -qiE "EAI_AGAIN|getaddrinfo"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway DNS failure (${dc_ws_tunnel:0:200})"
+  else
+    skip "M13c: Discord gateway DNS failure (${dc_ws_tunnel:0:200})"
+  fi
+elif echo "$dc_ws_tunnel" | grep -q "TIMEOUT"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway CONNECT tunnel timed out"
+  else
+    skip "M13c: Discord gateway CONNECT tunnel timed out"
+  fi
+elif echo "$dc_ws_tunnel" | grep -q "ERROR"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway CONNECT tunnel failed (${dc_ws_tunnel:0:200})"
+  else
+    skip "M13c: Discord gateway CONNECT tunnel failed (${dc_ws_tunnel:0:200})"
+  fi
+else
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway returned unclassified result (${dc_ws_tunnel:0:200})"
+  else
+    skip "M13c: Discord gateway returned unclassified result (${dc_ws_tunnel:0:200})"
+  fi
+fi
+
+if echo "$dc_ws_tunnel" | grep -q "HELLO op=10"; then
+  pass "M13d: Received Discord Hello (opcode 10) with heartbeat interval"
+elif echo "$dc_ws_tunnel" | grep -q "UPGRADED"; then
+  fail "M13d: Upgraded but never received Discord Hello"
+else
+  skip "M13d: WebSocket upgrade did not complete"
+fi
+
+if echo "$dc_ws_tunnel" | grep -q "HEARTBEAT_ACK op=11"; then
+  pass "M13e: Sent Heartbeat, received ACK (opcode 11) — full round-trip verified"
+elif echo "$dc_ws_tunnel" | grep -q "SENT_HEARTBEAT"; then
+  fail "M13e: Sent Heartbeat but never received ACK"
+else
+  skip "M13e: Heartbeat exchange did not occur"
+fi
+
 # M14 (negative): curl should be blocked by binary restriction
 curl_reach=$(sandbox_exec "curl -s --max-time 10 https://api.telegram.org/ 2>&1" 2>/dev/null || true)
 if echo "$curl_reach" | grep -qiE "(blocked|denied|forbidden|refused|not found|no such)"; then
@@ -846,7 +1048,7 @@ fi
 section "Phase 7: Cleanup"
 
 info "Destroying sandbox '$SANDBOX_NAME'..."
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 
 # Verify cleanup

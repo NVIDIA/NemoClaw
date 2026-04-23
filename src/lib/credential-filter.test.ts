@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 
 import {
+  isConfigValue,
   isCredentialField,
   stripCredentials,
   sanitizeConfigFile,
   isSensitiveFile,
-  CREDENTIAL_SENSITIVE_BASENAMES,
 } from "./credential-filter.js";
 
 describe("isCredentialField", () => {
@@ -43,10 +43,24 @@ describe("isCredentialField", () => {
   });
 });
 
+describe("isConfigValue", () => {
+  it("accepts plain JSON-like configuration values", () => {
+    expect(isConfigValue(null)).toBe(true);
+    expect(isConfigValue("hello")).toBe(true);
+    expect(isConfigValue(42)).toBe(true);
+    expect(isConfigValue({ nested: [true, "value", { count: 1 }] })).toBe(true);
+  });
+
+  it("rejects non-JSON objects nested inside config values", () => {
+    expect(isConfigValue({ when: new Date() })).toBe(false);
+    expect(isConfigValue([new Map()])).toBe(false);
+  });
+});
+
 describe("stripCredentials", () => {
   it("strips top-level credential fields", () => {
     const input = { model: "gpt-4", apiKey: "sk-123", name: "test" };
-    const result = stripCredentials(input) as Record<string, unknown>;
+    const result = stripCredentials(input);
     expect(result.model).toBe("gpt-4");
     expect(result.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
     expect(result.name).toBe("test");
@@ -54,19 +68,16 @@ describe("stripCredentials", () => {
 
   it("strips nested credential fields", () => {
     const input = { providers: { openai: { apiKey: "sk-123", model: "gpt-4" } } };
-    const result = stripCredentials(input) as Record<string, unknown>;
-    const providers = result.providers as Record<string, unknown>;
-    const openai = providers.openai as Record<string, unknown>;
-    expect(openai.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
-    expect(openai.model).toBe("gpt-4");
+    const result = stripCredentials(input);
+    expect(result.providers.openai.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
+    expect(result.providers.openai.model).toBe("gpt-4");
   });
 
   it("strips credentials in arrays", () => {
     const input = { items: [{ token: "abc" }, { name: "safe" }] };
-    const result = stripCredentials(input) as Record<string, unknown>;
-    const items = result.items as Array<Record<string, unknown>>;
-    expect(items[0].token).toBe("[STRIPPED_BY_MIGRATION]");
-    expect(items[1].name).toBe("safe");
+    const result = stripCredentials(input);
+    expect(result.items[0].token).toBe("[STRIPPED_BY_MIGRATION]");
+    expect(result.items[1].name).toBe("safe");
   });
 
   it("handles null and primitives", () => {
@@ -90,11 +101,14 @@ describe("sanitizeConfigFile", () => {
 
   it("strips credentials and removes gateway section", () => {
     const configPath = join(tmpDir, "openclaw.json");
-    writeFileSync(configPath, JSON.stringify({
-      model: "gpt-4",
-      apiKey: "sk-secret",
-      gateway: { port: 8080, authToken: "gw-token" },
-    }));
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        model: "gpt-4",
+        apiKey: "sk-secret",
+        gateway: { port: 8080, authToken: "gw-token" },
+      }),
+    );
 
     sanitizeConfigFile(configPath);
 

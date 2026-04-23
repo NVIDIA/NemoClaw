@@ -32,6 +32,18 @@ export function classifyValidationFailure({
   if (httpStatus === 401 || httpStatus === 403) {
     return { kind: "credential", retry: "credential" };
   }
+  // Credential-bearing error messages take precedence over the HTTP 400
+  // "model" default because some providers (notably Google Gemini) return
+  // HTTP 400 with "API key expired. Please renew the API key." — without
+  // this check the onboard flow skips the key re-entry prompt and loops
+  // back to provider selection. See #1942.
+  if (
+    /api key (expired|not valid)|api[_ ]key[_ ]invalid|unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(
+      normalized,
+    )
+  ) {
+    return { kind: "credential", retry: "credential" };
+  }
   if (httpStatus === 400) {
     return { kind: "model", retry: "model" };
   }
@@ -40,9 +52,6 @@ export function classifyValidationFailure({
   }
   if (httpStatus === 404 || httpStatus === 405) {
     return { kind: "endpoint", retry: "selection" };
-  }
-  if (/unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(normalized)) {
-    return { kind: "credential", retry: "credential" };
   }
   return { kind: "unknown", retry: "selection" };
 }
@@ -121,12 +130,13 @@ export function nvcfFunctionNotFoundMessage(model: string): string {
  * Whether the wizard should skip probing the OpenAI Responses API entirely
  * for the given inference provider. NVIDIA Build does not expose
  * `/v1/responses` for any model — every probe to that path returns
- * "404 page not found". Skipping the probe removes wasted round-trips and
- * stops the failure-message noise from leaking into chat-completions errors.
- * See issue #1601 (Bug 1).
+ * "404 page not found". Google Gemini also does not support the Responses
+ * API. Skipping the probe removes wasted round-trips and stops the
+ * failure-message noise from leaking into chat-completions errors.
+ * See issue #1601 (Bug 1) and issue #1960.
  */
 export function shouldSkipResponsesProbe(provider: string): boolean {
-  return provider === "nvidia-prod";
+  return provider === "nvidia-prod" || provider === "gemini-api";
 }
 
 /**

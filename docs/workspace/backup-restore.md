@@ -2,7 +2,9 @@
 title:
   page: "Backup and Restore Workspace Files"
   nav: "Backup & Restore"
-description: "How to back up and restore OpenClaw workspace files before destructive operations."
+description:
+  main: "How to back up and restore OpenClaw workspace files before destructive operations."
+  agent: "Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds. Use when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds."
 keywords: ["nemoclaw backup", "nemoclaw restore", "workspace backup", "openshell sandbox download upload"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "workspace", "backup"]
@@ -42,9 +44,19 @@ $ nemoclaw my-assistant snapshot list
 $ nemoclaw my-assistant snapshot restore
 ```
 
-To restore a specific snapshot instead of the latest, pass a timestamp or prefix:
+`snapshot list` prints a table of version, name, timestamp, and path. Versions (`v1`, `v2`, ..., `vN`) are computed from the timestamp order, so `vN` is always the newest snapshot.
+
+To tag a snapshot with a human-readable label, pass `--name`:
 
 ```console
+$ nemoclaw my-assistant snapshot create --name before-upgrade
+```
+
+To restore a specific snapshot instead of the latest, pass a version, name, or timestamp prefix:
+
+```console
+$ nemoclaw my-assistant snapshot restore v3
+$ nemoclaw my-assistant snapshot restore before-upgrade
 $ nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
