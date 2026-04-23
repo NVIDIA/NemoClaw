@@ -90,7 +90,7 @@ def _get_sandbox_info():
     }
 
 
-def _handle_status(tool_input, context):
+def _handle_status(tool_input=None, context=None, **_kwargs):
     """Handle the nemoclaw_status tool call."""
     info = _get_sandbox_info()
     lines = [
@@ -106,8 +106,8 @@ def _handle_status(tool_input, context):
     return "\n".join(lines)
 
 
-def _handle_info(tool_input, context):
-    """Handle the nemoclaw_info tool call \u2014 returns structured JSON."""
+def _handle_info(tool_input=None, context=None, **_kwargs):
+    """Handle the nemoclaw_info tool call — returns structured JSON."""
     return json.dumps(_get_sandbox_info(), indent=2)
 
 
@@ -133,7 +133,7 @@ def _reload_skills():
         return None
 
 
-def _handle_reload_skills(tool_input, context):
+def _handle_reload_skills(tool_input=None, context=None, **_kwargs):
     """Handle the nemoclaw_reload_skills tool call."""
     commands = _reload_skills()
     if commands is None:
