@@ -44,7 +44,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--dangerously-skip-permissions] [--yes-i-accept-third-party-software]
 ```
 
 > **Warning:** For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
@@ -151,6 +151,28 @@ $ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_FROM_DOCKERFILE=path/to/Dockerfile nemocla
 ```
 
 If a `--resume` is attempted with a different `--from` path than the original session, onboarding exits with a conflict error rather than silently building from the wrong image.
+
+#### `--dangerously-skip-permissions`
+
+> **Warning:** For development and testing only. This flag disables the sandbox's network policy and filesystem permission restrictions, so the OpenClaw agent inside the sandbox can reach any host and write anywhere in its home directory. Do not use this flag with production credentials or on hosts where other agents run.
+
+Replace the default balanced sandbox policy with the permissive policy bundled at `nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml`. Concretely, this means:
+
+- **Network:** all known endpoints open with no HTTP method or path filtering.
+- **Filesystem:** the sandbox home directory is writable (normally Landlock-restricted).
+- **Messaging / inference:** unchanged — still gated by the provider credentials you supply.
+
+```console
+$ nemoclaw onboard --dangerously-skip-permissions
+```
+
+Onboarding prints an explicit warning at start so the reduced security posture is visible in logs. The flag is also honored via `NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS=1` for non-interactive runs:
+
+```console
+$ NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS=1 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+The flag is persisted on the sandbox registry entry, so `nemoclaw <sandbox> status` surfaces `Permissions: dangerously-skip-permissions (shields permanently down)` for sandboxes created this way. To tighten a sandbox after the fact, re-run `nemoclaw onboard` without the flag.
 
 ### `nemoclaw list`
 
@@ -356,6 +378,32 @@ As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` skips the rebuild prompt an
 
 Host-side removal is the supported path because `/sandbox/.openclaw/openclaw.json` is read-only at runtime; `openclaw channels remove` cannot modify the baked config from inside the sandbox.
 
+### `nemoclaw <name> channels stop <channel>`
+
+Pause a single messaging bridge (`telegram`, `discord`, or `slack`) without clearing its credentials. The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway. Credentials stay in `~/.nemoclaw/credentials.json`, so a later `channels start` brings the bridge back without re-entering tokens.
+
+```console
+$ nemoclaw my-assistant channels stop telegram
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Report the channel that would be disabled without updating the registry or rebuilding |
+
+Use `channels stop` instead of `channels remove` when you want to pause a bridge temporarily. `channels remove` is destructive to credentials; `channels stop` is not.
+
+### `nemoclaw <name> channels start <channel>`
+
+Re-enable a channel previously paused with `channels stop`. The channel is removed from the disabled list, the sandbox is rebuilt, and the bridge registers with the gateway again using the stored credentials.
+
+```console
+$ nemoclaw my-assistant channels start telegram
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Report the channel that would be re-enabled without updating the registry or rebuilding |
+
 ### `nemoclaw <name> skill install <path>`
 
 Deploy a skill directory to a running sandbox.
@@ -435,24 +483,42 @@ Snapshots are stored in `~/.nemoclaw/rebuild-backups/<name>/`.
 $ nemoclaw my-assistant snapshot create
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--name <label>` | Attach a human-readable label to the snapshot so you can restore by name later |
+
+Names must be 1 to 63 characters from `[A-Za-z0-9._-]`, start with an alphanumeric character, and cannot look like a version selector (`v1`, `v2`, ...). Duplicate names per sandbox are rejected; pick a different name or delete the existing snapshot first.
+
+```console
+$ nemoclaw my-assistant snapshot create --name before-upgrade
+```
+
 ### `nemoclaw <name> snapshot list`
 
-List available snapshots for a sandbox with timestamps and item counts.
+List available snapshots for a sandbox as a table of version, name, timestamp, and path.
+Versions (`v1`, `v2`, ...) are computed on read from timestamp-ascending order, so `v1` is the oldest snapshot and `vN` is the newest. Snapshots created before this feature landed are numbered retroactively.
 
 ```console
 $ nemoclaw my-assistant snapshot list
 ```
 
-### `nemoclaw <name> snapshot restore [timestamp]`
+### `nemoclaw <name> snapshot restore [selector]`
 
 Restore sandbox state from a snapshot.
 The sandbox must be running before you restore.
-If no timestamp is provided, the latest snapshot is used.
-Partial timestamp prefixes are accepted if they match exactly one snapshot.
+If no selector is provided, the latest snapshot is used.
 Restore performs a clean replacement of each state directory, removing files that were added after the snapshot was taken.
+
+The selector accepts any of:
+
+- A version (`v1`, `v2`, ..., `vN`) from `snapshot list`.
+- An exact name passed to `snapshot create --name`.
+- An exact or prefix timestamp (partial prefixes are accepted when they match exactly one snapshot).
 
 ```console
 $ nemoclaw my-assistant snapshot restore
+$ nemoclaw my-assistant snapshot restore v3
+$ nemoclaw my-assistant snapshot restore before-upgrade
 $ nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
@@ -467,21 +533,25 @@ $ openshell term
 
 For a remote Brev instance, SSH to the instance and run `openshell term` there, or use a port-forward to the gateway.
 
-### `nemoclaw start`
+### `nemoclaw tunnel start`
 
 Start optional host auxiliary services. This is the cloudflared tunnel when `cloudflared` is installed (for a public URL to the dashboard). Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `nemoclaw onboard` and runs through OpenShell-managed constructs.
 
 ```console
-$ nemoclaw start
+$ nemoclaw tunnel start
 ```
 
-### `nemoclaw stop`
+`nemoclaw start` remains as a deprecated alias that prints a warning and delegates to `tunnel start`.
 
-Stop host auxiliary services started by `nemoclaw start` (for example cloudflared).
+### `nemoclaw tunnel stop`
+
+Stop host auxiliary services started by `nemoclaw tunnel start` (for example cloudflared). This does not affect messaging channels running inside the sandbox; use `nemoclaw <name> channels stop <channel>` to pause a specific bridge without destroying the sandbox.
 
 ```console
-$ nemoclaw stop
+$ nemoclaw tunnel stop
 ```
+
+`nemoclaw stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
 
 ### `nemoclaw status`
 
