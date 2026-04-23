@@ -52,6 +52,33 @@ All workspace files reside inside the sandbox filesystem:
     └── 2026-03-19.md
 ```
 
+## Multi-Agent Deployments
+
+A single NemoClaw sandbox can host more than one OpenClaw agent.
+When OpenClaw is configured with multiple named agents (e.g., a shared `main` agent
+plus per-user agents for a Teams-integrated deployment), each agent gets its own
+workspace directory alongside the default `workspace/`:
+
+```text
+/sandbox/.openclaw/
+├── workspace/           # default agent (single-agent deployments)
+├── workspace-main/      # named agent "main"
+├── workspace-support/   # named agent "support"
+└── workspace-ops/       # named agent "ops"
+```
+
+Each per-agent workspace contains the same Markdown file structure as the default
+(`SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, `MEMORY.md`, `memory/`).
+Files are per-agent — changes in `workspace-main/AGENTS.md` are not visible to
+`workspace-support/`.
+
+:::{note}
+The NemoClaw tooling — `nemoclaw <name> snapshot` and `scripts/backup-workspace.sh`
+— currently operates on the default `workspace/` directory only. Multi-agent
+deployments need a manual backup pattern; see
+[Backing Up Multi-Agent Deployments](backup-restore.md#backing-up-multi-agent-deployments).
+:::
+
 ## Persistence Behavior
 
 Understanding when these files persist and when they are lost is critical.
