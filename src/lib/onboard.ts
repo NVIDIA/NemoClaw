@@ -105,7 +105,7 @@ const sandboxState = require("./sandbox-state");
 const validation = require("./validation");
 const urlUtils = require("./url-utils");
 const buildContext = require("./build-context");
-const dashboard = require("./dashboard");
+const dashboardContract = require("./dashboard-contract");
 const httpProbe = require("./http-probe");
 const modelPrompts = require("./model-prompts");
 const providerModels = require("./provider-models");
@@ -6387,9 +6387,8 @@ function syncPresetSelection(
 
 const CONTROL_UI_PORT = DASHBOARD_PORT;
 
-// Dashboard helpers — delegated to src/lib/dashboard.ts
-// isLoopbackHostname — see urlUtils import above
-const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
+// Dashboard helpers — delegated to src/lib/dashboard-contract.ts
+const { buildChain, buildControlUiUrls } = dashboardContract;
 
 // Parses `openshell forward list` output and returns the sandbox currently
 // owning `portToStop`, or null. Exported for unit testing — see #2169.
@@ -6407,8 +6406,9 @@ function findDashboardForwardOwner(forwardListOutput, portToStop) {
 }
 
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
-  const portToStop = getDashboardForwardPort(chatUiUrl);
-  const forwardTarget = getDashboardForwardTarget(chatUiUrl);
+  const chain = buildChain({ chatUiUrl, isWsl: isWsl() });
+  const portToStop = String(chain.port);
+  const forwardTarget = chain.forwardTarget;
   // Detect port already claimed by a different sandbox and fail fast with an
   // actionable message rather than silently stealing that sandbox's forward.
   // (Same sandbox is always allowed — covers reconnect and resume paths.)
@@ -6547,98 +6547,6 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
   }
 }
 
-// buildControlUiUrls — see dashboard import above
-
-function getDashboardForwardPort(
-  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-) {
-  const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
-  return forwardTarget.includes(":")
-    ? (forwardTarget.split(":").pop() ?? String(CONTROL_UI_PORT))
-    : forwardTarget;
-}
-
-function getDashboardForwardTarget(
-  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-  options = {},
-) {
-  const port = getDashboardForwardPort(chatUiUrl);
-  return isWsl(options) ? `0.0.0.0:${port}` : resolveDashboardForwardTarget(chatUiUrl);
-}
-
-function getDashboardForwardStartCommand(sandboxName, options = {}) {
-  const chatUiUrl =
-    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const forwardTarget = getDashboardForwardTarget(chatUiUrl, options);
-  return `${openshellShellCommand(
-    ["forward", "start", "--background", forwardTarget, sandboxName],
-    options,
-  )}`;
-}
-
-function buildAuthenticatedDashboardUrl(baseUrl, token = null) {
-  if (!token) return baseUrl;
-  return `${baseUrl}#token=${encodeURIComponent(token)}`;
-}
-
-function getWslHostAddress(options = {}) {
-  if (options.wslHostAddress) {
-    return options.wslHostAddress;
-  }
-  if (!isWsl(options)) {
-    return null;
-  }
-  const runCaptureFn = options.runCapture || runCapture;
-  const output = runCaptureFn("hostname -I 2>/dev/null", { ignoreError: true });
-  const candidates = String(output || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  return candidates[0] || null;
-}
-
-function getDashboardAccessInfo(sandboxName, options = {}) {
-  const token = Object.prototype.hasOwnProperty.call(options, "token")
-    ? options.token
-    : fetchGatewayAuthTokenFromSandbox(sandboxName);
-  const chatUiUrl =
-    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const dashboardPort = Number(getDashboardForwardPort(chatUiUrl));
-  const dashboardAccess = buildControlUiUrls(token, dashboardPort).map((url, index) => ({
-    label: index === 0 ? "Dashboard" : `Alt ${index}`,
-    url: buildAuthenticatedDashboardUrl(url, null),
-  }));
-
-  const wslHostAddress = getWslHostAddress(options);
-  if (wslHostAddress) {
-    const wslUrl = buildAuthenticatedDashboardUrl(
-      `http://${wslHostAddress}:${dashboardPort}/`,
-      token,
-    );
-    if (!dashboardAccess.some((access) => access.url === wslUrl)) {
-      dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
-    }
-  }
-
-  return dashboardAccess;
-}
-
-function getDashboardGuidanceLines(dashboardAccess = [], options = {}) {
-  const dashboardPort = getDashboardForwardPort(
-    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-  );
-  const guidance = [`Port ${dashboardPort} must be forwarded before opening these URLs.`];
-  if (isWsl(options)) {
-    guidance.push(
-      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
-    );
-  }
-  if (dashboardAccess.length === 0) {
-    guidance.push("No dashboard URLs were generated.");
-  }
-  return guidance;
-}
-
 /** Print the post-onboard dashboard with sandbox status and reconfiguration hints. */
 function printDashboard(sandboxName, model, provider, nimContainer = null, agent = null) {
   const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
@@ -6656,8 +6564,23 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
   const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
-  const dashboardAccess = getDashboardAccessInfo(sandboxName, { token });
-  const guidanceLines = getDashboardGuidanceLines(dashboardAccess);
+  const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const wslAddr = isWsl() ? (String(runCapture("hostname -I 2>/dev/null", { ignoreError: true }) || "").trim().split(/\s+/)[0] || null) : null;
+  const chain = buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: wslAddr });
+
+  // Build access info inline — uses chain instead of re-deriving from env
+  const dashboardAccess = buildControlUiUrls(token, chain.port, chain.accessUrl).map(
+    (url, i) => ({ label: i === 0 ? "Dashboard" : `Alt ${i}`, url }),
+  );
+  if (wslAddr) {
+    const wslUrl = `http://${wslAddr}:${chain.port}/${token ? `#token=${encodeURIComponent(token)}` : ""}`;
+    const existing = dashboardAccess.find((a) => a.url === wslUrl);
+    if (existing) existing.label = "VS Code/WSL";
+    else dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
+  }
+  const guidanceLines = [`Port ${chain.port} must be forwarded before opening these URLs.`];
+  if (isWsl()) guidanceLines.push("WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.");
+  if (dashboardAccess.length === 0) guidanceLines.push("No dashboard URLs were generated.");
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
@@ -6674,18 +6597,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
     agentOnboard.printDashboardUi(sandboxName, token, agent, {
       note,
       buildControlUiUrls: (tokenValue, port) => {
-        const urls = buildControlUiUrls(tokenValue, port);
-        const wslHostAddress = getWslHostAddress();
-        if (wslHostAddress) {
-          const wslUrl = buildAuthenticatedDashboardUrl(
-            `http://${wslHostAddress}:${port}/`,
-            tokenValue,
-          );
-          if (!urls.includes(wslUrl)) {
-            urls.push(wslUrl);
-          }
-        }
-        return urls;
+        return buildControlUiUrls(tokenValue, port, chain.accessUrl);
       },
     });
   } else if (token) {
@@ -7324,13 +7236,10 @@ module.exports = {
   pruneStaleSandboxEntry,
   repairRecordedSandbox,
   recoverGatewayRuntime,
-  resolveDashboardForwardTarget,
+  buildChain,
+  buildControlUiUrls,
+
   startGateway,
-  buildAuthenticatedDashboardUrl,
-  getDashboardAccessInfo,
-  getDashboardForwardPort,
-  getDashboardForwardStartCommand,
-  getDashboardGuidanceLines,
   findDashboardForwardOwner,
   startGatewayForRecovery,
   runCaptureOpenshell,
