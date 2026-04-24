@@ -3,6 +3,8 @@
 //
 // Policy preset management — list, load, merge, and apply presets.
 
+import type { JsonValue, JsonObject } from "./json-types";
+
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -20,9 +22,9 @@ type PresetInfo = {
   description: string;
 };
 
-type PolicyScalar = string | number | boolean | null | undefined;
-type PolicyValue = PolicyScalar | PolicyObject | PolicyValue[];
-type PolicyObject = { [key: string]: PolicyValue };
+// Re-use shared JSON types under policy-domain names.
+type PolicyValue = JsonValue;
+type PolicyObject = JsonObject;
 
 type PolicyDocument = PolicyObject & {
   version?: number;

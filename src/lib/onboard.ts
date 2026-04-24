@@ -27,6 +27,8 @@ const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runFile, shellQuote, validateName } = runner;
+const errnoUtils: typeof import("./errno") = require("./errno");
+const { isErrnoException } = errnoUtils;
 
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
@@ -36,10 +38,6 @@ type RunnerOptions = {
   timeout?: number;
   openshellBinary?: string;
 };
-
-function isErrnoException(error: object | null): error is NodeJS.ErrnoException {
-  return error !== null && "code" in error;
-}
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -237,9 +235,9 @@ type RemoteProviderConfigEntry = {
   skipVerify?: boolean;
 };
 
-type LooseScalar = string | number | boolean | null | undefined;
-type LooseValue = LooseScalar | LooseObject | LooseValue[];
-type LooseObject = { [key: string]: LooseValue };
+// Re-export shared JSON types under the names used throughout this module.
+// See src/lib/json-types.ts for the canonical definitions.
+import type { JsonScalar as LooseScalar, JsonValue as LooseValue, JsonObject as LooseObject } from "./json-types";
 
 type OnboardOptions = {
   nonInteractive?: boolean;

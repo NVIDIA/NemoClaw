@@ -174,6 +174,9 @@ const _PATCHED = Symbol.for("nemoclaw.wsProxyFix");
             host = opts.host.replace(/:\d+$/, "");
         }
         if (isDiscordWsUpgrade(host, opts.headers)) {
+            // Guard: if isDiscordWsUpgrade matched but host resolved to
+            // undefined, we cannot construct a CONNECT tunnel (no target).
+            // Fall through to the original https.request unchanged.
             if (!host) {
                 return callOriginalRequest(input, options, callback);
             }
