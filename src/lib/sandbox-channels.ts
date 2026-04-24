@@ -20,6 +20,10 @@ export interface ChannelDef {
   serverIdLabel?: string;
   requireMentionEnvKey?: string;
   requireMentionHelp?: string;
+  tokenFormat?: RegExp;
+  tokenFormatHint?: string;
+  appTokenFormat?: RegExp;
+  appTokenFormatHint?: string;
 }
 
 export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
@@ -56,9 +60,13 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     description: "Slack bot messaging",
     help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
     label: "Slack Bot Token",
+    tokenFormat: /^xoxb-[A-Za-z0-9_-]+$/,
+    tokenFormatHint: "Slack bot tokens start with 'xoxb-' (e.g. xoxb-1234-5678-abcdef).",
     appTokenEnvKey: "SLACK_APP_TOKEN",
     appTokenHelp: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
     appTokenLabel: "Slack App Token (Socket Mode)",
+    appTokenFormat: /^xapp-[A-Za-z0-9_-]+$/,
+    appTokenFormatHint: "Slack app tokens start with 'xapp-' (e.g. xapp-1-A0000-12345-abcdef).",
   },
 };
 

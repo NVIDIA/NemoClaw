@@ -5781,6 +5781,12 @@ async function setupMessagingChannels(): Promise<string[]> {
       console.log("");
       console.log(`  ${ch.help}`);
       const token = normalizeCredentialValue(await prompt(`  ${ch.label}: `, { secret: true }));
+      if (token && ch.tokenFormat && !ch.tokenFormat.test(token)) {
+        console.log(`  ✗ Invalid format. ${ch.tokenFormatHint || "Check the token and try again."}`);
+        console.log(`  Skipped ${ch.name} (invalid token format)`);
+        enabled.delete(ch.name);
+        continue;
+      }
       if (token) {
         saveCredential(ch.envKey, token);
         process.env[ch.envKey] = token;
@@ -5801,6 +5807,14 @@ async function setupMessagingChannels(): Promise<string[]> {
         const appToken = normalizeCredentialValue(
           await prompt(`  ${ch.appTokenLabel}: `, { secret: true }),
         );
+        if (appToken && ch.appTokenFormat && !ch.appTokenFormat.test(appToken)) {
+          console.log(
+            `  ✗ Invalid format. ${ch.appTokenFormatHint || "Check the token and try again."}`,
+          );
+          console.log(`  Skipped ${ch.name} app token (invalid token format)`);
+          enabled.delete(ch.name);
+          continue;
+        }
         if (appToken) {
           saveCredential(ch.appTokenEnvKey, appToken);
           process.env[ch.appTokenEnvKey] = appToken;
@@ -7871,6 +7885,7 @@ module.exports = {
   runCaptureOpenshell,
   setupInference,
   setupMessagingChannels,
+  MESSAGING_CHANNELS,
   setupNim,
   formatOnboardConfigSummary,
   isInferenceRouteReady,
