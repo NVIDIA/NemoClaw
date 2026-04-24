@@ -42,6 +42,10 @@
 #   TELEGRAM_ALLOWED_IDS                   — comma-separated Telegram user IDs for DM allowlisting
 #   TELEGRAM_BOT_TOKEN_REAL                — optional: enables Phase 6 real round-trip
 #   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real round-trip
+#   SLACK_BOT_TOKEN                        — defaults to fake token (xoxb-fake-...)
+#   SLACK_APP_TOKEN                        — defaults to fake token (xapp-fake-...)
+#   SLACK_BOT_TOKEN_REVOKED                — optional: revoked xoxb- token to test auth pre-validation (#2340)
+#   SLACK_APP_TOKEN_REVOKED                — optional: paired xapp- token for the revoked bot token
 #   TELEGRAM_CHAT_ID_E2E                   — optional: enables sendMessage test
 #   NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY    — fail instead of skip on known Discord gateway blockers
 #
@@ -98,9 +102,13 @@ register_sandbox_for_teardown "$SANDBOX_NAME"
 # Default to fake tokens if not provided
 TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
+SLACK_TOKEN="${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}"
+SLACK_APP="${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}"
 TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
+export SLACK_BOT_TOKEN="$SLACK_TOKEN"
+export SLACK_APP_TOKEN="$SLACK_APP"
 export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
 
 # Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
@@ -164,6 +172,8 @@ pass "Docker is running"
 
 info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
 info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
+info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
+info "Slack app token: configured (${#SLACK_APP} chars)"
 info "Sandbox name: $SANDBOX_NAME"
 STRICT_DISCORD_GATEWAY="${NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY:-0}"
 
@@ -558,6 +568,37 @@ print(account.get('groupPolicy', ''))
     fail "M11d: Telegram groupPolicy is '$tg_group_policy' (expected 'open')"
   else
     skip "M11d: Telegram groupPolicy not set (channel may not be configured)"
+  fi
+
+  # M11e: Slack channel configured — gateway must survive auth failure (#2340)
+  # The Slack channel has placeholder tokens that will fail auth. The channel
+  # guard preload (NODE_OPTIONS --require) should catch the error. We can't
+  # verify the guard file via SSH (different container), but we CAN check the
+  # gateway port from here. This is tested more thoroughly in Phase 7.
+  slack_configured=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print('yes' if 'slack' in d else 'no')
+" 2>/dev/null || true)
+  if [ "$slack_configured" = "yes" ]; then
+    pass "M11e: Slack channel configured with placeholder tokens (guard needed)"
+
+    # Diagnostics: check if the guard was installed and what NODE_OPTIONS looks like
+    info "Checking guard installation diagnostics (via openshell exec as root):"
+    guard_exists=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ls -la /tmp/nemoclaw-slack-channel-guard.js 2>/dev/null || echo "EXEC_FAILED")
+    info "  Guard file: $guard_exists"
+    node_opts=$(openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c 'echo "$NODE_OPTIONS"' 2>/dev/null || echo "EXEC_FAILED")
+    info "  NODE_OPTIONS: $node_opts"
+    proxy_fix=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ls -la /tmp/nemoclaw-http-proxy-fix.js 2>/dev/null || echo "EXEC_FAILED")
+    info "  Proxy fix file: $proxy_fix"
+    # Check what processes are running
+    procs=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ps aux 2>/dev/null | head -10 || echo "EXEC_FAILED")
+    info "  Processes:"
+    echo "$procs" | while IFS= read -r line; do
+      info "    $line"
+    done
+  else
+    skip "M11e: No Slack channel in config"
   fi
 fi
 
@@ -1043,9 +1084,56 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 7: Cleanup
+# Phase 7: Slack channel guard (#2340)
+#
+# The sandbox was installed with fake Slack tokens. The channel guard
+# preload (NODE_OPTIONS --require) should catch the unhandled rejection
+# from @slack/web-api and keep the gateway alive.
 # ══════════════════════════════════════════════════════════════════
-section "Phase 7: Cleanup"
+section "Phase 7: Slack channel guard (#2340)"
+
+# S1: Gateway is serving on port 18789 — the guard caught the Slack rejection
+gw_port=$(sandbox_exec 'node -e "
+const net = require(\"net\");
+const sock = net.connect(18789, \"127.0.0.1\");
+sock.on(\"connect\", () => { console.log(\"OPEN\"); sock.end(); });
+sock.on(\"error\", () => console.log(\"CLOSED\"));
+setTimeout(() => { console.log(\"TIMEOUT\"); sock.destroy(); }, 5000);
+"' 2>/dev/null || true)
+if echo "$gw_port" | grep -q "OPEN"; then
+  pass "S1: Gateway is serving on port 18789 — Slack auth failure did not crash it"
+else
+  fail "S1: Gateway is not serving on port 18789 (${gw_port:0:200})"
+fi
+
+# S2: Dump gateway.log for diagnostics (must use openshell exec — SSH user
+# cannot read the file because it's 600 gateway:gateway).
+gw_log=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/gateway.log 2>/dev/null || true)
+if [ -z "$gw_log" ]; then
+  # Container may have already exited
+  gw_log=$(nemoclaw "$SANDBOX_NAME" logs 2>&1 | tail -200 || true)
+fi
+
+info "Gateway log (last 30 lines):"
+echo "$gw_log" | tail -30 | while IFS= read -r line; do
+  info "  $line"
+done
+
+if echo "$gw_log" | grep -q "provider failed to start:.*gateway continues"; then
+  pass "S2: Gateway log shows Slack rejection was caught by channel guard"
+elif echo "$gw_log" | grep -qi "slack"; then
+  info "Slack-related lines: $(echo "$gw_log" | grep -i slack | head -5)"
+  skip "S2: Gateway log has Slack output but not the guard catch message"
+elif [ -z "$gw_log" ]; then
+  skip "S2: Could not read gateway log (container may have exited)"
+else
+  skip "S2: No Slack-related output in gateway log"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 8: Cleanup
+# ══════════════════════════════════════════════════════════════════
+section "Phase 8: Cleanup"
 
 info "Destroying sandbox '$SANDBOX_NAME'..."
 [[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
