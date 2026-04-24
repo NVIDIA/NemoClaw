@@ -180,9 +180,19 @@ export function validateTarEntries(
 
 /**
  * Walk a directory and return violations for any symlinks whose
- * resolved targets escape rootPath.
+ * resolved targets don't land within any of the allowed roots.
+ *
+ * `allowedRoots` always includes the extraction directory (the local host
+ * path). Callers pass additional roots — notably `/sandbox` — to permit
+ * legitimate intra-sandbox symlinks baked into the sandbox base image
+ * (e.g. `/sandbox/.openclaw` → `/sandbox/.openclaw-data`). Those look
+ * like "escapes" relative to the extraction temp dir on the host, but
+ * are intra-sandbox once the backup is restored. See issue #2268.
  */
-function auditExtractedSymlinks(dirPath: string, rootPath: string): string[] {
+function auditExtractedSymlinks(
+  dirPath: string,
+  allowedRoots: string[],
+): string[] {
   const violations: string[] = [];
   if (!existsSync(dirPath)) return violations;
 
@@ -194,7 +204,10 @@ function auditExtractedSymlinks(dirPath: string, rootPath: string): string[] {
         if (stat.isSymbolicLink()) {
           const linkTarget = readlinkSync(fullPath);
           const resolvedTarget = path.resolve(path.dirname(fullPath), linkTarget);
-          if (!isWithinRoot(resolvedTarget, rootPath)) {
+          const inAnyAllowedRoot = allowedRoots.some((root) =>
+            isWithinRoot(resolvedTarget, root),
+          );
+          if (!inAnyAllowedRoot) {
             violations.push(`symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedTarget})`);
           }
         } else if (stat.isDirectory()) {
@@ -282,8 +295,11 @@ export function safeTarExtract(
   }
 
   // Phase 3: Post-extraction symlink audit (symlink targets are not
-  // visible in `tar -tf` output, so we must check after extraction)
-  const symlinkViolations = auditExtractedSymlinks(targetDir, targetDir);
+  // visible in `tar -tf` output, so we must check after extraction).
+  // Allow targets inside either the host extraction dir OR the canonical
+  // sandbox root (/sandbox) — the latter covers legitimate intra-sandbox
+  // symlinks baked into the base image (see #2268).
+  const symlinkViolations = auditExtractedSymlinks(targetDir, [targetDir, "/sandbox"]);
   if (symlinkViolations.length > 0) {
     // Nuke the extraction — do not leave attacker-controlled symlinks on host
     try {
@@ -509,15 +525,23 @@ export function backupSandboxState(
 
   const configFile = writeTempSshConfig(sshConfig);
   try {
-    // Build tar command that only includes existing directories
-    // First, check which state dirs actually exist in the sandbox
+    // Build tar command that only includes existing directories.
+    // First, check which declared state dirs actually exist in the sandbox,
+    // then additionally discover per-agent `workspace-*` directories produced
+    // by multi-agent OpenClaw deployments (see issue #1260) so they get
+    // snapshotted alongside the manifest-declared dirs. `awk '!seen[$0]++'`
+    // dedupes while preserving order.
     const existCheckCmd = stateDirs
       .map((d) => `[ -d "${writableDir}/${d}" ] && echo "${d}"`)
       .join("; ");
-    _log(`Checking existing dirs via SSH: ${existCheckCmd.substring(0, 100)}...`);
+    const workspaceGlobCmd =
+      `for d in ${writableDir}/workspace-*/; do [ -d "$d" ] && basename "$d"; done 2>/dev/null`;
+    const fullCheckCmd =
+      `{ ${existCheckCmd}; ${workspaceGlobCmd}; } 2>/dev/null | awk '!seen[$0]++'`;
+    _log(`Checking existing dirs via SSH: ${fullCheckCmd.substring(0, 100)}...`);
     const existResult = spawnSync(
       "ssh",
-      [...sshArgs(configFile, sandboxName), existCheckCmd],
+      [...sshArgs(configFile, sandboxName), fullCheckCmd],
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 30000 },
     );
     _log(`Dir check: exit=${existResult.status}, stdout=${(existResult.stdout || "").trim().substring(0, 200)}, stderr=${(existResult.stderr || "").trim().substring(0, 200)}`);
@@ -566,6 +590,19 @@ export function backupSandboxState(
 
   // SECURITY: Strip credentials from the local backup
   sanitizeBackupDirectory(backupPath);
+
+  // Record any discovered per-agent workspace-* directories in the manifest
+  // alongside the manifest-declared state dirs, so restoreSandboxState()
+  // finds them when filtering backupPath contents. Preserve declared order
+  // and append newly-discovered workspace-* names that weren't already in
+  // stateDirs. See issue #1260.
+  const discoveredWorkspaces = backedUpDirs.filter(
+    (d) => d.startsWith("workspace-") && !stateDirs.includes(d),
+  );
+  if (discoveredWorkspaces.length > 0) {
+    manifest.stateDirs = [...stateDirs, ...discoveredWorkspaces];
+    _log(`Manifest stateDirs extended with multi-agent workspaces: [${discoveredWorkspaces.join(",")}]`);
+  }
 
   writeManifest(backupPath, manifest);
   manifest.backupPath = backupPath;
@@ -774,4 +811,46 @@ export function findBackup(
   if (byExactTimestamp) return { match: byExactTimestamp };
 
   return { match: null };
+}
+
+// ── CLI argv parser ────────────────────────────────────────────────
+//
+// Argument parser for `nemoclaw <name> snapshot restore [selector] [--to <dst>]`.
+export interface RestoreArgs {
+  ok: true;
+  targetSandbox: string;
+  selector: string | null;
+}
+
+export interface RestoreArgsError {
+  ok: false;
+  error: string;
+}
+
+export type RestoreArgsResult = RestoreArgs | RestoreArgsError;
+
+export function parseRestoreArgs(
+  sandboxName: string,
+  subArgs: readonly string[],
+): RestoreArgsResult {
+  const positional: string[] = [];
+  let targetSandbox = sandboxName;
+  for (let i = 1; i < subArgs.length; i++) {
+    const token = subArgs[i];
+    if (token === "--to") {
+      const value = subArgs[i + 1];
+      if (!value || value.startsWith("--")) {
+        return { ok: false, error: "--to requires a target sandbox name." };
+      }
+      targetSandbox = value;
+      i++;
+    } else {
+      positional.push(token);
+    }
+  }
+  return {
+    ok: true,
+    targetSandbox,
+    selector: positional[0] ?? null,
+  };
 }

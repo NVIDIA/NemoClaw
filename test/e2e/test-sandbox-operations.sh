@@ -20,30 +20,15 @@
 set -euo pipefail
 
 # ── Overall timeout (prevents hung CI jobs) ──────────────────────────────────
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-1800}"
-  if command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  fi
-fi
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1800
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 # ── Config ───────────────────────────────────────────────────────────────────
 SANDBOX_A="test-sbx-a"
 SANDBOX_B="test-sbx-b"
 LOG_FILE="test-sandbox-operations-$(date +%Y%m%d-%H%M%S).log"
-
-# macOS uses gtimeout (from coreutils); Linux uses timeout
-if command -v gtimeout &>/dev/null; then
-  TIMEOUT_CMD="gtimeout"
-elif command -v timeout &>/dev/null; then
-  TIMEOUT_CMD="timeout"
-else
-  echo "ERROR: Neither timeout nor gtimeout found. Install coreutils: brew install coreutils"
-  exit 1
-fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -104,7 +89,7 @@ sandbox_exec_for() {
     return 1
   fi
   local result exit_code=0
-  result=$($TIMEOUT_CMD 60 ssh -F "$ssh_cfg" \
+  result=$(run_with_timeout 60 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${name}" "$cmd" 2>&1) || exit_code=$?
@@ -332,7 +317,7 @@ test_sbx_04_log_streaming() {
   require_sandbox "$SANDBOX_A" "TC-SBX-04" || return
 
   local output logs_exit=0
-  output=$($TIMEOUT_CMD 10 nemoclaw "$SANDBOX_A" logs 2>&1) || logs_exit=$?
+  output=$(run_with_timeout 10 nemoclaw "$SANDBOX_A" logs 2>&1) || logs_exit=$?
 
   if [[ $logs_exit -ne 0 ]]; then
     fail "TC-SBX-04: Log Streaming" "nemoclaw logs exited with code $logs_exit"
@@ -342,7 +327,7 @@ test_sbx_04_log_streaming() {
     fail "TC-SBX-04: Log Streaming" "nemoclaw logs succeeded but produced no output"
   fi
 
-  $TIMEOUT_CMD 5 nemoclaw "$SANDBOX_A" logs --follow &>/dev/null &
+  run_with_timeout 5 nemoclaw "$SANDBOX_A" logs --follow &>/dev/null &
   local pid=$!
   sleep 3
 
@@ -379,7 +364,7 @@ test_sbx_07_registry_rebuild() {
   rm -f "$registry"
 
   local output
-  output=$($TIMEOUT_CMD 60 nemoclaw list 2>&1) || true
+  output=$(run_with_timeout 60 nemoclaw list 2>&1) || true
 
   if echo "$output" | grep -q "$SANDBOX_A"; then
     pass "TC-SBX-07: Registry rebuilt — '$SANDBOX_A' found after deletion"
@@ -408,7 +393,7 @@ test_sbx_08_process_recovery() {
 
   log "  Running nemoclaw status (expect process recovery)..."
   local status_output status_exit=0
-  status_output=$($TIMEOUT_CMD 120 nemoclaw "$SANDBOX_A" status 2>&1) || status_exit=$?
+  status_output=$(run_with_timeout 120 nemoclaw "$SANDBOX_A" status 2>&1) || status_exit=$?
 
   if [[ $status_exit -ne 0 ]]; then
     fail "TC-SBX-08: Process Recovery (status)" "nemoclaw status exited with code $status_exit"
@@ -654,7 +639,9 @@ teardown() {
   done
   # Clean up gateway if no sandboxes remain
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
+  # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
+  # test/e2e/lib/sandbox-teardown.sh — the lock is PID-ownership-aware
+  # and onboard cleans up stale locks itself.
   log "Teardown complete"
   set -e
 }

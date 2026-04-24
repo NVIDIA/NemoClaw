@@ -40,15 +40,10 @@
 
 set -uo pipefail
 
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-900}"
-  if command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  fi
-fi
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=900
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 PASS=0
 FAIL=0
@@ -98,6 +93,11 @@ version_gte() {
 }
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-survival}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -105,7 +105,7 @@ MIN_OPENSHELL="0.0.24"
 MODEL="nvidia/nemotron-3-super-120b-a12b"
 
 # SSH helper — sets up SSH config and common options for sandbox access
-# Sets: ssh_config, SSH_OPTS, SSH_TARGET, TIMEOUT_CMD
+# Sets: ssh_config, SSH_OPTS, SSH_TARGET
 setup_ssh() {
   ssh_config="$(mktemp)"
   if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
@@ -115,9 +115,6 @@ setup_ssh() {
   fi
   SSH_OPTS=(-F "$ssh_config" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o LogLevel=ERROR)
   SSH_TARGET="openshell-${SANDBOX_NAME}"
-  TIMEOUT_CMD=""
-  command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 90"
-  command -v gtimeout >/dev/null 2>&1 && TIMEOUT_CMD="gtimeout 90"
   return 0
 }
 
@@ -248,12 +245,6 @@ if ! command -v openshell >/dev/null 2>&1; then
 fi
 
 OPENSHELL_VERSION=$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-# Fallback: some OpenShell builds (e.g. 0.0.29) report "m-dev" instead of a
-# parseable semver. Read the sidecar file written by install-openshell.sh.
-if [ -z "$OPENSHELL_VERSION" ]; then
-  _SIDECAR="$(dirname "$(command -v openshell)")/.openshell-installed-version"
-  OPENSHELL_VERSION=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' "$_SIDECAR" 2>/dev/null | head -1 || true)
-fi
 if version_gte "$OPENSHELL_VERSION" "$MIN_OPENSHELL"; then
   pass "openshell $OPENSHELL_VERSION >= $MIN_OPENSHELL (gateway resume + SSH secret + state persistence)"
 else
@@ -320,7 +311,7 @@ fi
 # 4b: Live inference through sandbox
 info "[LIVE] Baseline inference: user → sandbox → gateway → NVIDIA Endpoints..."
 # shellcheck disable=SC2029  # client-side expansion is intentional
-baseline_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+baseline_response=$(run_with_timeout 90 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
   "curl -s --max-time 60 https://inference.local/v1/chat/completions \
     -H 'Content-Type: application/json' \
     -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
@@ -343,7 +334,7 @@ for pong_attempt in 1 2 3; do
   [ "$pong_attempt" -lt 3 ] || break
   sleep 5
   # shellcheck disable=SC2029
-  baseline_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+  baseline_response=$(run_with_timeout 90 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
     "curl -s --max-time 60 https://inference.local/v1/chat/completions \
       -H 'Content-Type: application/json' \
       -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
@@ -366,16 +357,19 @@ section "Phase 5: Plant state markers in sandbox"
 
 MARKER_VALUE="nemoclaw-survival-$(date +%s)"
 
-# 5a: Workspace file in /sandbox/
+# 5a: Workspace file in writable agent state directory.
+# /sandbox/ is read-only by policy (openclaw-sandbox.yaml); writable state
+# lives under /sandbox/.openclaw-data/. OpenShell ≥0.0.36 correctly enforces
+# this (NVIDIA/OpenShell#910), so markers must target the writable path.
 # shellcheck disable=SC2029
-if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo ${MARKER_VALUE} > /sandbox/.survival-marker" 2>/dev/null; then
-  pass "Planted workspace marker: /sandbox/.survival-marker"
+if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo ${MARKER_VALUE} > /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null; then
+  pass "Planted workspace marker: /sandbox/.openclaw-data/.survival-marker-workspace"
 else
   fail "Could not plant workspace marker"
 fi
 
 # Verify read-back before restart
-readback=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.survival-marker" 2>/dev/null)
+readback=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null)
 if [ "$readback" = "$MARKER_VALUE" ]; then
   pass "Workspace marker verified before restart"
 else
@@ -410,11 +404,12 @@ if [ -n "$agent_files_before" ]; then
 fi
 
 # 5d: Record a deeper workspace file to test nested persistence
+# Uses writable .openclaw-data path — /sandbox/ is read-only by policy.
 # shellcheck disable=SC2029
 if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "mkdir -p /sandbox/test-data && echo ${MARKER_VALUE} > /sandbox/test-data/nested-marker.txt" \
+  "mkdir -p /sandbox/.openclaw-data/test-data && echo ${MARKER_VALUE} > /sandbox/.openclaw-data/test-data/nested-marker.txt" \
   2>/dev/null; then
-  pass "Planted nested marker: /sandbox/test-data/nested-marker.txt"
+  pass "Planted nested marker: /sandbox/.openclaw-data/test-data/nested-marker.txt"
 else
   fail "Could not plant nested workspace marker"
 fi
@@ -560,7 +555,7 @@ if ! setup_ssh; then
 
   # Jump to cleanup
   section "Phase 11: Cleanup"
-  nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+  [[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
   echo ""
   echo "========================================"
@@ -604,7 +599,7 @@ fi
 section "Phase 9: Verify state persisted across restart"
 
 # 9a: Workspace marker
-post_restart_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.survival-marker" 2>/dev/null)
+post_restart_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null)
 if [ "$post_restart_marker" = "$MARKER_VALUE" ]; then
   pass "Workspace marker survived restart: $MARKER_VALUE"
 else
@@ -622,7 +617,7 @@ if [ "$agent_data_exists" = "yes" ]; then
 fi
 
 # 9c: Nested workspace file
-nested_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/test-data/nested-marker.txt" 2>/dev/null)
+nested_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/test-data/nested-marker.txt" 2>/dev/null)
 if [ "$nested_marker" = "$MARKER_VALUE" ]; then
   pass "Nested workspace marker survived restart"
 else
@@ -651,7 +646,7 @@ section "Phase 10: Live inference after restart (THE definitive test)"
 
 info "[LIVE] Post-restart inference: user → sandbox → gateway → NVIDIA Endpoints..."
 # shellcheck disable=SC2029
-post_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+post_response=$(run_with_timeout 90 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
   "curl -s --max-time 60 https://inference.local/v1/chat/completions \
     -H 'Content-Type: application/json' \
     -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
@@ -673,7 +668,7 @@ for pong_attempt in 1 2 3; do
   [ "$pong_attempt" -lt 3 ] || break
   sleep 5
   # shellcheck disable=SC2029
-  post_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+  post_response=$(run_with_timeout 90 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
     "curl -s --max-time 60 https://inference.local/v1/chat/completions \
       -H 'Content-Type: application/json' \
       -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
@@ -695,7 +690,7 @@ cleanup_ssh
 # ══════════════════════════════════════════════════════════════════
 section "Phase 11: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 if [ -f "$REGISTRY" ] && grep -Fq "\"${SANDBOX_NAME}\"" "$REGISTRY"; then

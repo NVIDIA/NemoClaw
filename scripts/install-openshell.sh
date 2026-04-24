@@ -36,10 +36,10 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 # Minimum version required for Landlock filesystem policy enforcement
 # (NVIDIA/OpenShell#810 fixes the drop_privileges/Landlock ordering bug
 # that caused /sandbox to remain writable on 0.0.26).
-MIN_VERSION="0.0.29"
+MIN_VERSION="0.0.32"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.29"
+MAX_VERSION="0.0.36"
 # Pin fresh installs to this version instead of pulling "latest".
 PIN_VERSION="$MAX_VERSION"
 
@@ -59,12 +59,6 @@ version_gte() {
 
 if command -v openshell >/dev/null 2>&1; then
   INSTALLED_VERSION="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-  if [ -z "$INSTALLED_VERSION" ]; then
-    # Fallback: read the sidecar written by a previous install for builds that
-    # self-report an unparseable version string (e.g. openshell 0.0.29 → "m-dev").
-    _SIDECAR="$(dirname "$(command -v openshell)")/.openshell-installed-version"
-    INSTALLED_VERSION="$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' "$_SIDECAR" 2>/dev/null | head -1 || true)"
-  fi
   [ -n "$INSTALLED_VERSION" ] || INSTALLED_VERSION="0.0.0"
   if version_gte "$INSTALLED_VERSION" "$MIN_VERSION"; then
     if ! version_gte "$MAX_VERSION" "$INSTALLED_VERSION"; then
@@ -127,26 +121,17 @@ tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
 
 target_dir="/usr/local/bin"
 
-# Record the pinned version so that binaries with unparseable --version output
-# (e.g. openshell 0.0.29 self-reports "m-dev") can still pass the version gate
-# on subsequent runs without triggering a redundant re-download. The sidecar
-# is written inside each install branch so that the sudo path writes it with
-# elevated privileges; under `set -e` any write failure aborts rather than
-# silently missing the sidecar.
 if [ -w "$target_dir" ]; then
   install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
-  printf '%s\n' "$PIN_VERSION" >"$target_dir/.openshell-installed-version"
 elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
   target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
   mkdir -p "$target_dir"
   install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
-  printf '%s\n' "$PIN_VERSION" >"$target_dir/.openshell-installed-version"
   warn "Installed openshell to $target_dir/openshell (user-local path)"
   warn "For future shells, run: export PATH=\"$target_dir:\$PATH\""
   warn "Add that export to your shell profile, or open a new shell before using openshell directly."
 else
   sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
-  printf '%s\n' "$PIN_VERSION" | sudo tee "$target_dir/.openshell-installed-version" >/dev/null
 fi
 
 info "$("$target_dir/openshell" --version 2>&1 || echo openshell) installed"

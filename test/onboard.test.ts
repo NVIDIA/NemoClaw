@@ -50,6 +50,8 @@ import {
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
+  findDashboardForwardOwner,
+  formatOnboardConfigSummary,
 } from "../dist/lib/onboard";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
@@ -753,6 +755,92 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("#2281: bakes NEMOCLAW_AGENT_TIMEOUT env into the staged Dockerfile", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-timeout-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_AGENT_TIMEOUT=600",
+      ].join("\n"),
+    );
+
+    const priorTimeout = process.env.NEMOCLAW_AGENT_TIMEOUT;
+    process.env.NEMOCLAW_AGENT_TIMEOUT = "1800";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-timeout",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_AGENT_TIMEOUT=1800$/m);
+    } finally {
+      if (priorTimeout === undefined) {
+        delete process.env.NEMOCLAW_AGENT_TIMEOUT;
+      } else {
+        process.env.NEMOCLAW_AGENT_TIMEOUT = priorTimeout;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#2281: rejects malformed NEMOCLAW_AGENT_TIMEOUT and keeps default", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-timeout-default-"),
+    );
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_AGENT_TIMEOUT=600",
+      ].join("\n"),
+    );
+
+    const priorTimeout = process.env.NEMOCLAW_AGENT_TIMEOUT;
+    // Malformed: not a positive integer. Should be rejected, default kept.
+    process.env.NEMOCLAW_AGENT_TIMEOUT = "not-a-number\nRUN rm -rf /";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-timeout-bad",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_AGENT_TIMEOUT=600$/m);
+      assert.doesNotMatch(patched, /RUN rm -rf/);
+    } finally {
+      if (priorTimeout === undefined) {
+        delete process.env.NEMOCLAW_AGENT_TIMEOUT;
+      } else {
+        process.env.NEMOCLAW_AGENT_TIMEOUT = priorTimeout;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("patches the staged Dockerfile with Brave Search config when enabled", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-web-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
@@ -929,13 +1017,13 @@ describe("onboard helpers", () => {
       path.join(blueprintDir, "blueprint.yaml"),
       [
         'version: "0.1.0"',
-        'min_openshell_version: "0.0.29"',
-        'max_openshell_version: "0.0.29"',
+        'min_openshell_version: "0.0.32"',
+        'max_openshell_version: "0.0.32"',
         'min_openclaw_version: "2026.3.0"',
       ].join("\n"),
     );
     try {
-      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe("0.0.29");
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe("0.0.32");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -988,55 +1076,6 @@ describe("onboard helpers", () => {
       "ghcr.io/nvidia/openshell/cluster:0.0.13",
     );
     expect(getStableGatewayImageRef("bogus")).toBe(null);
-  });
-
-  it("bypasses stale .openshell-installed-version when the binary is newer", () => {
-    // A manual binary swap (e.g. cp openshell /usr/local/bin/openshell without
-    // rerunning install-openshell.sh) must not be silently accepted via the
-    // previous install's sidecar. When binary mtime > sidecar mtime, return
-    // null so the caller re-runs the install / version gate.
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sidecar-stale-"));
-    const binPath = path.join(tmp, "openshell");
-    const sidecarPath = path.join(tmp, ".openshell-installed-version");
-    const originalPath = process.env.PATH;
-    try {
-      fs.writeFileSync(binPath, "#!/bin/sh\necho 'openshell m-dev'\n", { mode: 0o755 });
-      fs.writeFileSync(sidecarPath, "0.0.29\n");
-      const past = new Date(Date.now() - 60_000);
-      const now = new Date();
-      fs.utimesSync(sidecarPath, past, past);
-      fs.utimesSync(binPath, now, now);
-      // Prepend tmp so `command -v openshell` in resolveOpenshell finds our fake.
-      process.env.PATH = `${tmp}:${originalPath}`;
-      // Unparseable versionOutput → falls through to the sidecar branch.
-      expect(getInstalledOpenshellVersion("openshell m-dev")).toBe(null);
-    } finally {
-      process.env.PATH = originalPath;
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("accepts .openshell-installed-version when the sidecar is not older than the binary", () => {
-    // Happy path: install-openshell.sh writes the sidecar immediately after
-    // installing the binary, so sidecar mtime >= binary mtime. Sidecar value
-    // is returned for binaries that self-report unparseable versions (m-dev).
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sidecar-fresh-"));
-    const binPath = path.join(tmp, "openshell");
-    const sidecarPath = path.join(tmp, ".openshell-installed-version");
-    const originalPath = process.env.PATH;
-    try {
-      fs.writeFileSync(binPath, "#!/bin/sh\necho 'openshell m-dev'\n", { mode: 0o755 });
-      fs.writeFileSync(sidecarPath, "0.0.29\n");
-      const past = new Date(Date.now() - 60_000);
-      const now = new Date();
-      fs.utimesSync(binPath, past, past);
-      fs.utimesSync(sidecarPath, now, now);
-      process.env.PATH = `${tmp}:${originalPath}`;
-      expect(getInstalledOpenshellVersion("openshell m-dev")).toBe("0.0.29");
-    } finally {
-      process.env.PATH = originalPath;
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
   });
 
   it("treats the gateway as healthy only when nemoclaw is running and connected", () => {
@@ -4921,6 +4960,7 @@ const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 
 const commands = [];
+let hasExtraFileAtSpawn = false;
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -4941,7 +4981,15 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  const cmd = _n(args[1][1]);
+  commands.push({ command: cmd, env: args[2]?.env || null });
+  // Observe the staged build context state while the sandbox create is in
+  // flight — onboard deletes it once streamSandboxCreate resolves.
+  const fromMatch = cmd.match(/--from\s+(\S+)/);
+  if (fromMatch) {
+    const stagedDir = require("node:path").dirname(fromMatch[1]);
+    hasExtraFileAtSpawn = fs.existsSync(require("node:path").join(stagedDir, "extra.txt"));
+  }
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -4954,17 +5002,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
-  // Verify the staged build context contains the extra file from the custom dir
-  const createCmd = commands.find((e) => e.command.includes("sandbox create"));
-  const fromMatch = createCmd && createCmd.command.match(/--from\s+(\S+)/);
-  let stagedDir = null;
-  let hasExtraFile = false;
-  if (fromMatch) {
-    const dockerfilePath = fromMatch[1];
-    stagedDir = require("node:path").dirname(dockerfilePath);
-    hasExtraFile = fs.existsSync(require("node:path").join(stagedDir, "extra.txt"));
-  }
-  console.log(JSON.stringify({ sandboxName, hasExtraFile }));
+  console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -5363,5 +5401,95 @@ const { createSandbox } = require(${onboardPath});
       patchPos > pullPos,
       "pullAndResolveBaseImageDigest must be called BEFORE patchStagedDockerfile — regression #1904",
     );
+  });
+
+  it("findDashboardForwardOwner parses openshell forward list column format (#2169)", () => {
+    // Canonical openshell forward list output: SANDBOX  BIND  PORT  PID  STATUS
+    const forwardList = [
+      "SANDBOX     BIND             PORT   PID     STATUS",
+      "test21      127.0.0.1        18789  42101   active",
+      "other       127.0.0.1        18790  42102   active",
+    ].join("\n");
+
+    // Port in use by another sandbox → return that sandbox's name
+    assert.equal(findDashboardForwardOwner(forwardList, "18789"), "test21");
+    assert.equal(findDashboardForwardOwner(forwardList, "18790"), "other");
+    // Port not in the list → null
+    assert.equal(findDashboardForwardOwner(forwardList, "18791"), null);
+    // Empty / missing input → null (no false positives)
+    assert.equal(findDashboardForwardOwner("", "18789"), null);
+    assert.equal(findDashboardForwardOwner(null, "18789"), null);
+    assert.equal(findDashboardForwardOwner(undefined, "18789"), null);
+    // Port string appearing as a substring somewhere other than column 2 must NOT
+    // match — guard against false-positive substring matches.
+    const falsePositive = "sandbox18789 127.0.0.1 42001 9999 active";
+    assert.equal(findDashboardForwardOwner(falsePositive, "18789"), null);
+  });
+
+  it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {
+    const summary = formatOnboardConfigSummary({
+      provider: "gemini-api",
+      model: "gemini-2.5-flash",
+      credentialEnv: "GEMINI_API_KEY",
+      webSearchConfig: { fetchEnabled: true },
+      enabledChannels: ["telegram", "slack"],
+      sandboxName: "my-assistant",
+      notes: ["Sandbox build takes ~6 minutes on this host."],
+    });
+
+    assert.ok(summary.includes("Review configuration"), "summary has review heading");
+    assert.ok(summary.includes("gemini-api"), "summary includes provider");
+    assert.ok(summary.includes("gemini-2.5-flash"), "summary includes model");
+    assert.ok(
+      summary.includes("GEMINI_API_KEY (stored in ~/.nemoclaw/credentials.json)"),
+      "summary shows API key env var + storage location",
+    );
+    assert.ok(summary.includes("enabled"), "summary includes web-search enabled");
+    assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");
+    assert.ok(summary.includes("my-assistant"), "summary shows sandbox name");
+    assert.ok(
+      summary.includes("Note:          Sandbox build takes ~6 minutes on this host."),
+      "summary renders notes under sandbox name",
+    );
+
+    // No messaging, no web search → "none" / "disabled"
+    const bareSummary = formatOnboardConfigSummary({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      credentialEnv: "NVIDIA_API_KEY",
+      webSearchConfig: null,
+      enabledChannels: [],
+      sandboxName: "test",
+    });
+    assert.ok(bareSummary.includes("Messaging:     none"), "empty channels renders as 'none'");
+    assert.ok(
+      bareSummary.includes("Web search:    disabled"),
+      "null webSearch renders as 'disabled'",
+    );
+
+    // No credentialEnv → "(not required for <provider>)" placeholder
+    const localSummary = formatOnboardConfigSummary({
+      provider: "ollama-local",
+      model: "llama3:8b",
+      credentialEnv: null,
+      webSearchConfig: null,
+      enabledChannels: [],
+      sandboxName: "local",
+    });
+    assert.ok(
+      localSummary.includes("(not required for ollama-local)"),
+      "null credentialEnv falls back to a provider-specific message",
+    );
+
+    // Missing provider/model → "(unset)" placeholder, not "undefined"
+    const orphanSummary = formatOnboardConfigSummary({
+      provider: null,
+      model: null,
+      webSearchConfig: null,
+      enabledChannels: null,
+      sandboxName: "orphan",
+    });
+    assert.ok(!orphanSummary.includes("undefined"), "null fields never render as 'undefined'");
+    assert.ok(orphanSummary.includes("(unset)"), "null fields fall back to '(unset)'");
   });
 });

@@ -59,10 +59,10 @@ exit 1`,
 }
 
 describe("install-openshell.sh version check", () => {
-  it("exits cleanly when openshell 0.0.29 is already installed", () => {
-    const result = runWithInstalledVersion("0.0.29");
+  it("exits cleanly when openshell 0.0.32 is already installed", () => {
+    const result = runWithInstalledVersion("0.0.32");
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/already installed.*0\.0\.29/);
+    expect(result.stdout).toMatch(/already installed.*0\.0\.32/);
   });
 
   it("triggers upgrade when openshell 0.0.28 is installed (below MIN_VERSION)", () => {
@@ -85,7 +85,7 @@ describe("install-openshell.sh version check", () => {
   });
 
   it("fails with a clear error when openshell is above MAX_VERSION", () => {
-    const result = runWithInstalledVersion("0.0.30");
+    const result = runWithInstalledVersion("0.0.37");
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/above the maximum/);
   });
@@ -94,70 +94,6 @@ describe("install-openshell.sh version check", () => {
     const result = runWithInstalledVersion("0.1.0");
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/above the maximum/);
-  });
-
-  it("exits cleanly when openshell reports m-dev but sidecar records 0.0.29", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-mdev-"));
-    try {
-      const fakeBin = path.join(tmp, "bin");
-      fs.mkdirSync(fakeBin);
-
-      // Fake openshell that reports "m-dev" (as openshell 0.0.29 does in practice)
-      writeExecutable(
-        path.join(fakeBin, "openshell"),
-        `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then echo "openshell m-dev"; exit 0; fi
-exit 99`,
-      );
-
-      // Sidecar file written by a previous install
-      fs.writeFileSync(path.join(fakeBin, ".openshell-installed-version"), "0.0.29\n");
-
-      writeExecutable(path.join(fakeBin, "curl"), `#!/usr/bin/env bash\nexit 1`);
-      writeExecutable(path.join(fakeBin, "gh"), `#!/usr/bin/env bash\nexit 1`);
-
-      const result = spawnSync("bash", [SCRIPT], {
-        env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
-        encoding: "utf8",
-      });
-      expect(result.status).toBe(0);
-      expect(result.stdout).toMatch(/already installed.*0\.0\.29/);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("triggers upgrade when openshell reports m-dev and sidecar records 0.0.26", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-mdev-old-"));
-    try {
-      const fakeBin = path.join(tmp, "bin");
-      fs.mkdirSync(fakeBin);
-
-      writeExecutable(
-        path.join(fakeBin, "openshell"),
-        `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then echo "openshell m-dev"; exit 0; fi
-exit 99`,
-      );
-
-      // Sidecar from an older install that pre-dates the Landlock fix
-      fs.writeFileSync(path.join(fakeBin, ".openshell-installed-version"), "0.0.26\n");
-
-      writeExecutable(
-        path.join(fakeBin, "curl"),
-        `#!/usr/bin/env bash\necho "curl stub" >&2\nexit 1`,
-      );
-      writeExecutable(path.join(fakeBin, "gh"), `#!/usr/bin/env bash\nexit 1`);
-
-      const result = spawnSync("bash", [SCRIPT], {
-        env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
-        encoding: "utf8",
-      });
-      expect(result.status).not.toBe(0);
-      expect(result.stdout).toMatch(/below minimum.*upgrading/);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
   });
 
   it("proceeds to install when openshell is not present", () => {

@@ -338,13 +338,13 @@ Follow these steps to reconnect.
 
 1. Start host auxiliary services (if needed).
 
-   If you use the cloudflared tunnel started by `nemoclaw start`, start it again:
+   If you use the cloudflared tunnel started by `nemoclaw tunnel start`, start it again:
 
    ```console
-   $ nemoclaw start
+   $ nemoclaw tunnel start
    ```
 
-   Telegram, Discord, and Slack are handled by OpenShell-managed channel messaging configured at onboarding, not by a separate bridge process from `nemoclaw start`.
+   Telegram, Discord, and Slack are handled by OpenShell-managed channel messaging configured at onboarding, not by a separate bridge process from `nemoclaw tunnel start`. To pause a single bridge without destroying the sandbox, use `nemoclaw <name> channels stop <channel>`.
 
 :::{admonition} If the sandbox does not recover
 :class: warning

@@ -42,6 +42,10 @@
 #   TELEGRAM_ALLOWED_IDS                   — comma-separated Telegram user IDs for DM allowlisting
 #   TELEGRAM_BOT_TOKEN_REAL                — optional: enables Phase 6 real round-trip
 #   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real round-trip
+#   SLACK_BOT_TOKEN                        — defaults to fake token (xoxb-fake-...)
+#   SLACK_APP_TOKEN                        — defaults to fake token (xapp-fake-...)
+#   SLACK_BOT_TOKEN_REVOKED                — optional: revoked xoxb- token to test auth pre-validation (#2340)
+#   SLACK_APP_TOKEN_REVOKED                — optional: paired xapp- token for the revoked bot token
 #   TELEGRAM_CHAT_ID_E2E                   — optional: enables sendMessage test
 #   NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY    — fail instead of skip on known Discord gateway blockers
 #
@@ -91,12 +95,20 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-msg-provider}"
 
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 # Default to fake tokens if not provided
 TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
+SLACK_TOKEN="${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}"
+SLACK_APP="${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}"
 TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
+export SLACK_BOT_TOKEN="$SLACK_TOKEN"
+export SLACK_APP_TOKEN="$SLACK_APP"
 export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
 
 # Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
@@ -160,6 +172,8 @@ pass "Docker is running"
 
 info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
 info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
+info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
+info "Slack app token: configured (${#SLACK_APP} chars)"
 info "Sandbox name: $SANDBOX_NAME"
 STRICT_DISCORD_GATEWAY="${NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY:-0}"
 
@@ -180,6 +194,83 @@ if command -v openshell >/dev/null 2>&1; then
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
 fi
 pass "Pre-cleanup complete"
+
+# Pre-merge Slack policy into the base sandbox policy.
+#
+# The base policy (openclaw-sandbox.yaml) includes Telegram and Discord
+# network rules but NOT Slack — Slack access normally comes from the
+# slack.yaml preset, applied in onboard Step 8. However, the sandbox
+# container starts in Step 6, so the gateway boots without Slack access.
+# The Slack SDK's connection attempt hangs or gets a CONNECT 403 before
+# the preset is applied, preventing the gateway from serving on 18789.
+#
+# By appending the Slack rules to the base policy BEFORE install.sh, the
+# sandbox is created with Slack access from the start. The Slack SDK gets
+# a fast "invalid_auth" response, the channel guard catches it, and the
+# gateway continues serving.
+# Ref: #2340
+BASE_POLICY="$REPO/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
+SLACK_PRESET="$REPO/nemoclaw-blueprint/policies/presets/slack.yaml"
+if [ -f "$BASE_POLICY" ] && [ -f "$SLACK_PRESET" ] && ! grep -q "api.slack.com" "$BASE_POLICY"; then
+  BASE_POLICY_BAK="$(mktemp)"
+  cp "$BASE_POLICY" "$BASE_POLICY_BAK"
+  trap 'cp "$BASE_POLICY_BAK" "$BASE_POLICY" 2>/dev/null || true; rm -f "$BASE_POLICY_BAK"' EXIT
+  info "Pre-merging Slack network policy into base sandbox policy..."
+  cat >>"$BASE_POLICY" <<'SLACK_POLICY_EOF'
+
+  # ── Slack — pre-merged for messaging E2E (#2340) ──────────────
+  # Normally applied as a preset in onboard Step 8, but the sandbox
+  # container starts before presets are applied. Inline here so the
+  # gateway has Slack access from first boot.
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: hooks.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: wss-primary.slack.com
+        port: 443
+        access: full
+        tls: skip
+      - host: wss-backup.slack.com
+        port: 443
+        access: full
+        tls: skip
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+SLACK_POLICY_EOF
+  if ! grep -q "api.slack.com" "$BASE_POLICY"; then
+    fail "Failed to append Slack policy to base sandbox policy"
+    exit 1
+  fi
+  pass "Slack network policy pre-merged into base policy"
+else
+  if grep -q "api.slack.com" "$BASE_POLICY" 2>/dev/null; then
+    info "Slack policy already present in base policy — skipping pre-merge"
+  else
+    fail "Cannot pre-merge Slack policy: missing base policy or preset file"
+    exit 1
+  fi
+fi
 
 # Run install.sh --non-interactive which installs Node.js, openshell,
 # NemoClaw, and runs onboard. Messaging tokens are already exported so
@@ -555,6 +646,37 @@ print(account.get('groupPolicy', ''))
   else
     skip "M11d: Telegram groupPolicy not set (channel may not be configured)"
   fi
+
+  # M11e: Slack channel configured — gateway must survive auth failure (#2340)
+  # The Slack channel has placeholder tokens that will fail auth. The channel
+  # guard preload (NODE_OPTIONS --require) should catch the error. We can't
+  # verify the guard file via SSH (different container), but we CAN check the
+  # gateway port from here. This is tested more thoroughly in Phase 7.
+  slack_configured=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print('yes' if 'slack' in d else 'no')
+" 2>/dev/null || true)
+  if [ "$slack_configured" = "yes" ]; then
+    pass "M11e: Slack channel configured with placeholder tokens (guard needed)"
+
+    # Diagnostics: check if the guard was installed and what NODE_OPTIONS looks like
+    info "Checking guard installation diagnostics (via openshell exec as root):"
+    guard_exists=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ls -la /tmp/nemoclaw-slack-channel-guard.js 2>/dev/null || echo "EXEC_FAILED")
+    info "  Guard file: $guard_exists"
+    node_opts=$(openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c 'echo "$NODE_OPTIONS"' 2>/dev/null || echo "EXEC_FAILED")
+    info "  NODE_OPTIONS: $node_opts"
+    proxy_fix=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ls -la /tmp/nemoclaw-http-proxy-fix.js 2>/dev/null || echo "EXEC_FAILED")
+    info "  Proxy fix file: $proxy_fix"
+    # Check what processes are running
+    procs=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ps aux 2>/dev/null | head -10 || echo "EXEC_FAILED")
+    info "  Processes:"
+    echo "$procs" | while IFS= read -r line; do
+      info "    $line"
+    done
+  else
+    skip "M11e: No Slack channel in config"
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -676,6 +798,204 @@ else
   else
     skip "M13b: Native Discord gateway probe returned an unclassified result (${dc_gateway:0:200})"
   fi
+fi
+
+# M13c: Full Discord gateway handshake via ws-proxy-fix CONNECT tunnel (#1570).
+# The `ws` library opens WebSocket connections via https.request() with an
+# Upgrade: websocket header.  The preload patches https.request() to issue a
+# CONNECT tunnel for Discord gateway hosts.
+#
+# This test exercises the real Discord gateway protocol end-to-end:
+#   1. https.request with Upgrade: websocket → CONNECT tunnel via proxy
+#   2. Receive Discord Hello (opcode 10) with heartbeat_interval
+#   3. Send a Heartbeat (opcode 1) back to the gateway
+#   4. Receive Heartbeat ACK (opcode 11)
+#   5. Send close frame and disconnect cleanly
+#
+# If the CONNECT tunnel is broken the connection never upgrades (400 from L7
+# proxy) and none of the protocol steps succeed.
+dc_ws_tunnel=$(sandbox_exec 'node -e "
+const https = require(\"https\");
+const crypto = require(\"crypto\");
+
+// --- Minimal WebSocket framing (no ws dependency) ---
+function unmaskFrame(buf) {
+  if (buf.length < 2) return null;
+  const fin = (buf[0] & 0x80) !== 0;
+  const opcode = buf[0] & 0x0f;
+  const masked = (buf[1] & 0x80) !== 0;
+  let payloadLen = buf[1] & 0x7f;
+  let offset = 2;
+  if (payloadLen === 126) {
+    if (buf.length < 4) return null;
+    payloadLen = buf.readUInt16BE(2);
+    offset = 4;
+  } else if (payloadLen === 127) {
+    if (buf.length < 10) return null;
+    payloadLen = Number(buf.readBigUInt64BE(2));
+    offset = 10;
+  }
+  if (masked) offset += 4;
+  if (buf.length < offset + payloadLen) return null;
+  const data = buf.slice(offset, offset + payloadLen);
+  return { fin, opcode, data, totalLen: offset + payloadLen };
+}
+
+function makeFrame(opcode, payload) {
+  const buf = Buffer.from(payload);
+  const mask = crypto.randomBytes(4);
+  const masked = Buffer.alloc(buf.length);
+  for (let i = 0; i < buf.length; i++) masked[i] = buf[i] ^ mask[i % 4];
+  let header;
+  if (buf.length < 126) {
+    header = Buffer.alloc(6);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | buf.length;
+    mask.copy(header, 2);
+  } else {
+    header = Buffer.alloc(8);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(buf.length, 2);
+    mask.copy(header, 4);
+  }
+  return Buffer.concat([header, masked]);
+}
+
+function makeCloseFrame(code) {
+  const payload = Buffer.alloc(2);
+  payload.writeUInt16BE(code, 0);
+  return makeFrame(8, payload);
+}
+
+// --- Handshake ---
+const results = [];
+const done = () => {
+  console.log(results.join(\"\\n\"));
+  process.exit(0);
+};
+const timer = setTimeout(() => { results.push(\"TIMEOUT\"); done(); }, 20000);
+
+const key = crypto.randomBytes(16).toString(\"base64\");
+const req = https.request({
+  hostname: \"gateway.discord.gg\",
+  port: 443,
+  path: \"/?v=10&encoding=json\",
+  method: \"GET\",
+  headers: {
+    \"Connection\": \"Upgrade\",
+    \"Upgrade\": \"websocket\",
+    \"Sec-WebSocket-Key\": key,
+    \"Sec-WebSocket-Version\": \"13\",
+  },
+});
+
+req.on(\"upgrade\", (_res, socket, head) => {
+  results.push(\"UPGRADED\");
+  let pending = head && head.length ? Buffer.from(head) : Buffer.alloc(0);
+
+  socket.on(\"data\", (chunk) => {
+    pending = Buffer.concat([pending, chunk]);
+    while (true) {
+      const frame = unmaskFrame(pending);
+      if (!frame) break;
+      pending = pending.slice(frame.totalLen);
+
+      if (frame.opcode === 1) {
+        let msg;
+        try { msg = JSON.parse(frame.data.toString()); } catch { continue; }
+
+        if (msg.op === 10) {
+          const hbInterval = msg.d && msg.d.heartbeat_interval;
+          results.push(\"HELLO op=10 heartbeat_interval=\" + hbInterval);
+
+          // Send Heartbeat (opcode 1, d: null)
+          const hb = JSON.stringify({ op: 1, d: null });
+          socket.write(makeFrame(1, hb));
+          results.push(\"SENT_HEARTBEAT op=1\");
+        } else if (msg.op === 11) {
+          results.push(\"HEARTBEAT_ACK op=11\");
+          // Full round-trip complete — close cleanly
+          socket.write(makeCloseFrame(1000));
+          setTimeout(() => { socket.destroy(); clearTimeout(timer); done(); }, 500);
+        }
+      } else if (frame.opcode === 8) {
+        results.push(\"CLOSE_FRAME code=\" + (frame.data.length >= 2 ? frame.data.readUInt16BE(0) : \"none\"));
+        socket.destroy();
+        clearTimeout(timer);
+        done();
+      }
+    }
+  });
+
+  socket.on(\"error\", (e) => { results.push(\"SOCKET_ERROR \" + e.message); });
+  socket.on(\"close\", () => { clearTimeout(timer); done(); });
+});
+
+req.on(\"response\", (res) => {
+  results.push(\"HTTP_\" + res.statusCode);
+  res.resume();
+  res.on(\"end\", () => { clearTimeout(timer); done(); });
+});
+req.on(\"error\", (e) => {
+  results.push(\"ERROR \" + e.message);
+  clearTimeout(timer);
+  done();
+});
+req.end();
+"' 2>/dev/null || true)
+
+info "Discord ws-proxy-fix probe: ${dc_ws_tunnel:0:500}"
+
+# Check each step of the handshake independently
+if echo "$dc_ws_tunnel" | grep -q "UPGRADED"; then
+  pass "M13c: WebSocket upgrade succeeded via CONNECT tunnel (#1570)"
+elif echo "$dc_ws_tunnel" | grep -q "HTTP_400"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway got 400 — CONNECT tunnel not working"
+  else
+    skip "M13c: Discord gateway got 400 — ws-proxy-fix may not be active"
+  fi
+elif echo "$dc_ws_tunnel" | grep -qiE "EAI_AGAIN|getaddrinfo"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway DNS failure (${dc_ws_tunnel:0:200})"
+  else
+    skip "M13c: Discord gateway DNS failure (${dc_ws_tunnel:0:200})"
+  fi
+elif echo "$dc_ws_tunnel" | grep -q "TIMEOUT"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway CONNECT tunnel timed out"
+  else
+    skip "M13c: Discord gateway CONNECT tunnel timed out"
+  fi
+elif echo "$dc_ws_tunnel" | grep -q "ERROR"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway CONNECT tunnel failed (${dc_ws_tunnel:0:200})"
+  else
+    skip "M13c: Discord gateway CONNECT tunnel failed (${dc_ws_tunnel:0:200})"
+  fi
+else
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway returned unclassified result (${dc_ws_tunnel:0:200})"
+  else
+    skip "M13c: Discord gateway returned unclassified result (${dc_ws_tunnel:0:200})"
+  fi
+fi
+
+if echo "$dc_ws_tunnel" | grep -q "HELLO op=10"; then
+  pass "M13d: Received Discord Hello (opcode 10) with heartbeat interval"
+elif echo "$dc_ws_tunnel" | grep -q "UPGRADED"; then
+  fail "M13d: Upgraded but never received Discord Hello"
+else
+  skip "M13d: WebSocket upgrade did not complete"
+fi
+
+if echo "$dc_ws_tunnel" | grep -q "HEARTBEAT_ACK op=11"; then
+  pass "M13e: Sent Heartbeat, received ACK (opcode 11) — full round-trip verified"
+elif echo "$dc_ws_tunnel" | grep -q "SENT_HEARTBEAT"; then
+  fail "M13e: Sent Heartbeat but never received ACK"
+else
+  skip "M13e: Heartbeat exchange did not occur"
 fi
 
 # M14 (negative): curl should be blocked by binary restriction
@@ -841,12 +1161,59 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 7: Cleanup
+# Phase 7: Slack channel guard (#2340)
+#
+# The sandbox was installed with fake Slack tokens. The channel guard
+# preload (NODE_OPTIONS --require) should catch the unhandled rejection
+# from @slack/web-api and keep the gateway alive.
 # ══════════════════════════════════════════════════════════════════
-section "Phase 7: Cleanup"
+section "Phase 7: Slack channel guard (#2340)"
+
+# S1: Gateway is serving on port 18789 — the guard caught the Slack rejection
+gw_port=$(sandbox_exec 'node -e "
+const net = require(\"net\");
+const sock = net.connect(18789, \"127.0.0.1\");
+sock.on(\"connect\", () => { console.log(\"OPEN\"); sock.end(); });
+sock.on(\"error\", () => console.log(\"CLOSED\"));
+setTimeout(() => { console.log(\"TIMEOUT\"); sock.destroy(); }, 5000);
+"' 2>/dev/null || true)
+if echo "$gw_port" | grep -q "OPEN"; then
+  pass "S1: Gateway is serving on port 18789 — Slack auth failure did not crash it"
+else
+  fail "S1: Gateway is not serving on port 18789 (${gw_port:0:200})"
+fi
+
+# S2: Dump gateway.log for diagnostics (must use openshell exec — SSH user
+# cannot read the file because it's 600 gateway:gateway).
+gw_log=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/gateway.log 2>/dev/null || true)
+if [ -z "$gw_log" ]; then
+  # Container may have already exited
+  gw_log=$(nemoclaw "$SANDBOX_NAME" logs 2>&1 | tail -200 || true)
+fi
+
+info "Gateway log (last 30 lines):"
+echo "$gw_log" | tail -30 | while IFS= read -r line; do
+  info "  $line"
+done
+
+if echo "$gw_log" | grep -q "provider failed to start:.*gateway continues"; then
+  pass "S2: Gateway log shows Slack rejection was caught by channel guard"
+elif echo "$gw_log" | grep -qi "slack"; then
+  info "Slack-related lines: $(echo "$gw_log" | grep -i slack | head -5)"
+  skip "S2: Gateway log has Slack output but not the guard catch message"
+elif [ -z "$gw_log" ]; then
+  skip "S2: Could not read gateway log (container may have exited)"
+else
+  skip "S2: No Slack-related output in gateway log"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 8: Cleanup
+# ══════════════════════════════════════════════════════════════════
+section "Phase 8: Cleanup"
 
 info "Destroying sandbox '$SANDBOX_NAME'..."
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 
 # Verify cleanup
