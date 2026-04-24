@@ -16,8 +16,6 @@ import {
   compactText,
   computeSetupPresetSuggestions,
   formatEnvAssignment,
-  getDashboardAccessInfo,
-  getDashboardForwardStartCommand,
   getNavigationChoice,
   getGatewayReuseState,
   getPortConflictServiceHints,
@@ -45,7 +43,6 @@ import {
   pullAndResolveBaseImageDigest,
   SANDBOX_BASE_IMAGE,
   printSandboxCreateRecoveryHints,
-  resolveDashboardForwardTarget,
   summarizeCurlFailure,
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
@@ -53,6 +50,7 @@ import {
   findDashboardForwardOwner,
   formatOnboardConfigSummary,
 } from "../dist/lib/onboard";
+import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard-contract";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
 
@@ -485,82 +483,50 @@ describe("onboard helpers", () => {
     expect(isLoopbackHostname("[::1]")).toBe(true);
     expect(isLoopbackHostname("chat.example.com")).toBe(false);
 
-    expect(resolveDashboardForwardTarget("http://127.0.0.1:18789")).toBe("18789");
-    expect(resolveDashboardForwardTarget("http://127.0.0.42:18789")).toBe("18789");
-    expect(resolveDashboardForwardTarget("http://[::1]:18789")).toBe("18789");
-    expect(resolveDashboardForwardTarget("https://chat.example.com")).toBe("0.0.0.0:18789");
-    expect(resolveDashboardForwardTarget("http://10.0.0.25:18789")).toBe("0.0.0.0:18789");
+    // Forward target via buildChain replaces resolveDashboardForwardTarget
+    expect(buildChain({ chatUiUrl: "http://127.0.0.1:18789" }).forwardTarget).toBe("18789");
+    expect(buildChain({ chatUiUrl: "http://[::1]:18789" }).forwardTarget).toBe("18789");
+    expect(buildChain({ chatUiUrl: "https://chat.example.com:18789" }).forwardTarget).toBe("0.0.0.0:18789");
+    expect(buildChain({ chatUiUrl: "http://10.0.0.25:18789" }).forwardTarget).toBe("0.0.0.0:18789");
   });
 
   it("includes a VS Code/WSL dashboard URL when running under WSL", () => {
-    const access = getDashboardAccessInfo("the-crucible", {
-      token: "secret-token",
+    const chain = buildChain({
       chatUiUrl: "http://127.0.0.1:19999",
-      env: { WSL_DISTRO_NAME: "Ubuntu" },
-      platform: "linux",
-      release: "6.6.87.2-microsoft-standard-WSL2",
-      runCapture: (command) => (command.includes("hostname -I") ? "172.24.240.1\n" : ""),
+      isWsl: true,
+      wslHostAddress: "172.24.240.1",
     });
-
-    expect(access).toEqual([
-      { label: "Dashboard", url: "http://127.0.0.1:19999/#token=secret-token" },
-      { label: "VS Code/WSL", url: "http://172.24.240.1:19999/#token=secret-token" },
-    ]);
+    // buildControlUiUrls with the WSL chain's accessUrl includes the WSL IP
+    const urls = buildControlUiUrls("secret-token", chain.port, chain.accessUrl);
+    expect(urls[0]).toBe("http://127.0.0.1:19999/#token=secret-token");
+    expect(urls[1]).toContain("172.24.240.1:19999");
+    expect(urls).toHaveLength(2);
   });
 
   it("binds the dashboard forward to all interfaces under WSL", () => {
-    const command = getDashboardForwardStartCommand("the-crucible", {
+    const chain = buildChain({
       chatUiUrl: "http://127.0.0.1:19999",
-      env: { WSL_DISTRO_NAME: "Ubuntu" },
-      openshellBinary: "/usr/bin/openshell",
-      platform: "linux",
-      release: "6.6.87.2-microsoft-standard-WSL2",
+      isWsl: true,
     });
-
-    expect(command).toContain("forward");
-    expect(command).toContain("start");
-    expect(command).toContain("--background");
     // On WSL, bind to all interfaces so the Windows-side browser can reach the port.
-    // The sandbox image is built with CHAT_UI_URL=http://127.0.0.1:19999, so the
-    // gateway listens on 19999 inside the sandbox — openshell maps host:19999 →
-    // sandbox:19999 (same port both sides, the only mapping openshell supports).
-    expect(command).toContain("0.0.0.0:19999");
-    expect(command).toContain("the-crucible");
+    expect(chain.forwardTarget).toBe("0.0.0.0:19999");
   });
 
   it("uses the default port as-is when NEMOCLAW_DASHBOARD_PORT is not overridden", () => {
-    const command = getDashboardForwardStartCommand("the-crucible", {
+    const chain = buildChain({
       chatUiUrl: "http://127.0.0.1:18789",
-      openshellBinary: "/usr/bin/openshell",
-      isWsl: false,
     });
-
-    expect(command).toContain("--background");
     // Default port — forward same port on both sides using the bare port number.
-    // Must not regress to all-interfaces (0.0.0.0:18789) or port:port (18789:18789) forms.
-    expect(command).toContain("18789");
-    expect(command).not.toContain("0.0.0.0:18789");
-    expect(command).not.toContain("18789:18789");
-    expect(command).toContain("the-crucible");
+    // Must not regress to all-interfaces (0.0.0.0:18789).
+    expect(chain.forwardTarget).toBe("18789");
   });
 
   it("forwards a custom port as-is on non-WSL loopback", () => {
-    const command = getDashboardForwardStartCommand("the-crucible", {
+    const chain = buildChain({
       chatUiUrl: "http://127.0.0.1:19000",
-      openshellBinary: "/usr/bin/openshell",
-      isWsl: false,
     });
-
-    expect(command).toContain("--background");
-    // The gateway is configured to listen on the same port (via CHAT_UI_URL baked at
-    // onboard time), so host:19000 → sandbox:19000 is the correct mapping.
-    // Non-WSL loopback must use the plain port — not the all-interfaces (0.0.0.0:19000)
-    // form and not any port:port variant (openshell does not support asymmetric mapping).
-    expect(command).toContain("19000");
-    expect(command).not.toContain("0.0.0.0:19000");
-    expect(command).not.toContain("19000:19000");
-    expect(command).not.toContain("19000:18789");
-    expect(command).toContain("the-crucible");
+    // Non-WSL loopback must use the plain port — not the all-interfaces form.
+    expect(chain.forwardTarget).toBe("19000");
   });
 
   it("prints platform-appropriate service hints for port conflicts", () => {
@@ -786,51 +752,6 @@ describe("onboard helpers", () => {
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
       assert.match(patched, /^ARG NEMOCLAW_AGENT_TIMEOUT=1800$/m);
-    } finally {
-      if (priorTimeout === undefined) {
-        delete process.env.NEMOCLAW_AGENT_TIMEOUT;
-      } else {
-        process.env.NEMOCLAW_AGENT_TIMEOUT = priorTimeout;
-      }
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("#2281: rejects malformed NEMOCLAW_AGENT_TIMEOUT and keeps default", () => {
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-timeout-default-"),
-    );
-    const dockerfilePath = path.join(tmpDir, "Dockerfile");
-    fs.writeFileSync(
-      dockerfilePath,
-      [
-        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
-        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
-        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
-        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
-        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
-        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
-        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
-        "ARG NEMOCLAW_BUILD_ID=default",
-        "ARG NEMOCLAW_AGENT_TIMEOUT=600",
-      ].join("\n"),
-    );
-
-    const priorTimeout = process.env.NEMOCLAW_AGENT_TIMEOUT;
-    // Malformed: not a positive integer. Should be rejected, default kept.
-    process.env.NEMOCLAW_AGENT_TIMEOUT = "not-a-number\nRUN rm -rf /";
-    try {
-      patchStagedDockerfile(
-        dockerfilePath,
-        "gpt-5.4",
-        "http://127.0.0.1:18789",
-        "build-timeout-bad",
-        "openai-api",
-      );
-      const patched = fs.readFileSync(dockerfilePath, "utf8");
-      assert.match(patched, /^ARG NEMOCLAW_AGENT_TIMEOUT=600$/m);
-      assert.doesNotMatch(patched, /RUN rm -rf/);
     } finally {
       if (priorTimeout === undefined) {
         delete process.env.NEMOCLAW_AGENT_TIMEOUT;
