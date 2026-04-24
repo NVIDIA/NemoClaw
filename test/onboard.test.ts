@@ -5066,7 +5066,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
         input: "\n",
       });
       assert.equal(introspect.status, 0, introspect.stderr);
-      const introspectOut = JSON.parse(introspect.stdout.trim().split("\n").pop());
+      const introspectOut = JSON.parse(introspect.stdout.trim().split("\n").pop()!);
       const slackIdx = introspectOut.slackIndex1Based;
       assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
 
@@ -5085,14 +5085,14 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const out = JSON.parse(result.stdout.trim().split("\n").pop());
+      const out = JSON.parse(result.stdout.trim().split("\n").pop()!);
 
       assert.ok(
         !out.result.includes("slack"),
         `slack should have been dropped after invalid token; got ${JSON.stringify(out.result)}`,
       );
       assert.ok(
-        !out.saveCalls.some((c) => c.key === "SLACK_BOT_TOKEN"),
+        !out.saveCalls.some((c: { key: string }) => c.key === "SLACK_BOT_TOKEN"),
         `SLACK_BOT_TOKEN should NOT have been persisted; saveCalls=${JSON.stringify(out.saveCalls)}`,
       );
       assert.ok(
@@ -5177,7 +5177,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       });
       assert.equal(introspect.status, 0, introspect.stderr);
       const slackIdx = JSON.parse(
-        introspect.stdout.trim().split("\n").pop(),
+        introspect.stdout.trim().split("\n").pop()!,
       ).slackIndex1Based;
       assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
 
@@ -5195,7 +5195,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const out = JSON.parse(result.stdout.trim().split("\n").pop());
+      const out = JSON.parse(result.stdout.trim().split("\n").pop()!);
 
       assert.ok(
         !out.result.includes("slack"),
@@ -5205,11 +5205,11 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       // user can retry later and the pre-saved bot token will light up as
       // "already configured" on the next onboard.
       assert.ok(
-        out.saveCalls.some((c) => c.key === "SLACK_BOT_TOKEN"),
+        out.saveCalls.some((c: { key: string }) => c.key === "SLACK_BOT_TOKEN"),
         `SLACK_BOT_TOKEN should have been persisted (valid format); saveCalls=${JSON.stringify(out.saveCalls)}`,
       );
       assert.ok(
-        !out.saveCalls.some((c) => c.key === "SLACK_APP_TOKEN"),
+        !out.saveCalls.some((c: { key: string }) => c.key === "SLACK_APP_TOKEN"),
         `SLACK_APP_TOKEN should NOT have been persisted (invalid format); saveCalls=${JSON.stringify(out.saveCalls)}`,
       );
       assert.ok(
@@ -5225,7 +5225,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
     // Cache-bust the dynamic import so repeated test runs pick up rebuilds.
     const onboardUrl = `${pathToFileURL(onboardPath).href}?update=${Date.now()}`;
     const { MESSAGING_CHANNELS } = await import(onboardUrl);
-    const slack = MESSAGING_CHANNELS.find((c) => c.name === "slack");
+    const slack = MESSAGING_CHANNELS.find((c: { name: string }) => c.name === "slack");
 
     assert.ok(slack, "slack messaging channel definition present");
     assert.ok(slack.tokenFormat instanceof RegExp, "slack.tokenFormat is a regex");
