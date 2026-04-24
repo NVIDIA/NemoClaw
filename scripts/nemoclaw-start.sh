@@ -588,6 +588,15 @@ install_slack_channel_guard() {
       return true;
     }
 
+    // Check for proxy/network errors targeting Slack domains.
+    // When the network policy blocks or rejects connections to Slack
+    // servers, the error comes from the HTTP client (CONNECT tunnel
+    // failure), not from @slack/ code. The stack won't contain @slack/
+    // but the error message or URL may reference the Slack hostname.
+    if (msg.indexOf('slack.com') !== -1) {
+      return true;
+    }
+
     return false;
   }
 

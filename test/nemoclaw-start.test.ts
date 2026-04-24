@@ -645,13 +645,15 @@ describe("Slack channel guard — unhandled-rejection safety net (#2340)", () =>
     expect(fn[1]).toContain("process.exit(1)");
   });
 
-  it("detects Slack errors by error code, message, and stack trace", () => {
+  it("detects Slack errors by error code, message, stack trace, and domain", () => {
     const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
     expect(fn[1]).toContain("slack_webapi_platform_error");
     expect(fn[1]).toContain("invalid_auth");
     expect(fn[1]).toContain("token_revoked");
     expect(fn[1]).toContain("@slack/");
+    // Proxy/network errors targeting Slack domains (CONNECT tunnel failures)
+    expect(fn[1]).toMatch(/msg\.indexOf\('slack\.com'\)\s*!==\s*-1/);
   });
 
   it("logs caught Slack errors as warnings instead of crashing", () => {
