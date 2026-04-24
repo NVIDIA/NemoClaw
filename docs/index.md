@@ -296,8 +296,8 @@ Release Notes <about/release-notes>
 :caption: Get Started
 :hidden:
 
+Prerequisites <get-started/prerequisites>
 Quickstart <get-started/quickstart>
-Windows Prerequisites <get-started/windows-setup>
 ```
 
 ```{toctree}

@@ -32,8 +32,10 @@ TABLES = [
         "platform-matrix",
         "platforms",
         [
+            # README.md is the patch target. docs/get-started/platform-setup/
+            # index.md pulls the same table in via Sphinx `{include}` so the
+            # generator does not need a second target there.
             REPO_ROOT / "README.md",
-            REPO_ROOT / "docs" / "get-started" / "quickstart.md",
         ],
     ),
     (
