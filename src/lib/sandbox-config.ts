@@ -435,7 +435,8 @@ function collectHttpUrls(value: ConfigValue): string[] {
 
     if (typeof current === "string") {
       const trimmed = current.trim();
-      if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      const lower = trimmed.toLowerCase();
+      if (lower.startsWith("http://") || lower.startsWith("https://")) {
         urls.push(trimmed);
       }
       continue;

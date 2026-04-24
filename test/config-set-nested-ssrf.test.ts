@@ -233,4 +233,79 @@ describe("config set nested URL SSRF enforcement", () => {
       else delete requireCache[shieldsAuditPath];
     }
   });
+
+  it("recognizes mixed-case http and https schemes in nested values", async () => {
+    const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config");
+    const openshellPath = require.resolve("../dist/lib/openshell");
+    const shieldsAuditPath = require.resolve("../dist/lib/shields-audit");
+
+    const priorSandboxConfig = require.cache[sandboxConfigPath];
+    const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
+
+    const childProcess = require("node:child_process");
+    const originalExecFileSync = childProcess.execFileSync;
+    const execSpy = vi.fn();
+    childProcess.execFileSync = execSpy;
+
+    delete require.cache[sandboxConfigPath];
+    requireCache[openshellPath] = {
+      id: openshellPath,
+      filename: openshellPath,
+      loaded: true,
+      exports: {
+        captureOpenshellCommand: () => ({
+          status: 0,
+          output: JSON.stringify({
+            inference: { endpoints: {} },
+          }),
+        }),
+        runOpenshellCommand: () => ({ status: 0 }),
+      },
+    } as any;
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry: () => {} },
+    } as any;
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? 0}`);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const { configSet } = require("../dist/lib/sandbox-config");
+      const nestedValue = JSON.stringify({
+        primary: "HTTP://93.184.216.34/v1",
+        fallback: ["HtTpS://93.184.216.35/v2", { backup: "hTtP://93.184.216.36/v3" }],
+      });
+
+      await expect(
+        configSet("sandbox-ssrf-test", {
+          key: "inference.endpoints",
+          value: nestedValue,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(execSpy).toHaveBeenCalled();
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      logSpy.mockRestore();
+      childProcess.execFileSync = originalExecFileSync;
+
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
+      else delete requireCache[sandboxConfigPath];
+
+      if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
+      else delete requireCache[openshellPath];
+
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
+    }
+  });
 });
