@@ -5909,10 +5909,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
       process.exit(1);
     }
     note(`  [resume] Reapplying policy presets: ${chosen.join(", ")}`);
-    for (const name of chosen) {
-      if (applied.includes(name)) continue;
-      policies.applyPreset(sandboxName, name);
-    }
+    syncPresetSelection(sandboxName, applied, chosen);
     return chosen;
   }
 
@@ -5963,20 +5960,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
       process.exit(1);
     }
     note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
-    for (const name of chosen) {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-          policies.applyPreset(sandboxName, name);
-          break;
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (!message.includes("sandbox not found") || attempt === 2) {
-            throw err;
-          }
-          sleep(2);
-        }
-      }
-    }
+    syncPresetSelection(sandboxName, applied, chosen);
     return chosen;
   }
 
@@ -6000,8 +5984,40 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 
   const accessByName = {};
   for (const p of resolvedPresets) accessByName[p.name] = p.access;
-  const newlySelected = interactiveChoice.filter((name) => !applied.includes(name));
-  const deselected = applied.filter((name) => !interactiveChoice.includes(name));
+  syncPresetSelection(sandboxName, applied, interactiveChoice, accessByName);
+  return interactiveChoice;
+}
+
+/**
+ * Reconcile the sandbox's currently-applied preset list with the user's
+ * target selection:
+ *   - remove presets in `applied` but not in `target` (narrow)
+ *   - apply presets in `target` but not in `applied` (widen)
+ *   - leave unchanged presets untouched (no wasteful re-apply)
+ *
+ * Shared between the interactive and non-interactive paths so "narrow the
+ * selection" works identically in both. Fixes #2177 (non-interactive path
+ * was apply-only, so deselected presets lingered).
+ *
+ * @param {string} sandboxName  Target sandbox.
+ * @param {string[]} applied    Preset names currently applied to the sandbox.
+ * @param {string[]} target     Preset names the user wants applied after this call.
+ * @param {Object<string, string>|null} [accessByName=null]
+ *   Optional map of preset name → access mode ("read" | "read-write").
+ *   When provided, applyPreset receives the mode per preset so the gateway
+ *   can distinguish read vs read-write installs.
+ * @returns {void}
+ */
+function syncPresetSelection(
+  sandboxName: string,
+  applied: string[],
+  target: string[],
+  accessByName: Record<string, string> | null = null,
+): void {
+  const targetSet = new Set(target);
+  const appliedSet = new Set(applied);
+  const deselected = applied.filter((name) => !targetSet.has(name));
+  const newlySelected = target.filter((name) => !appliedSet.has(name));
 
   for (const name of deselected) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -6021,11 +6037,16 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   }
 
   for (const name of newlySelected) {
+    const options = accessByName ? { access: accessByName[name] } : undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        // Pass access mode so applyPreset can distinguish read vs read-write
-        // when preset infrastructure supports it.
-        policies.applyPreset(sandboxName, name, { access: accessByName[name] });
+        // applyPreset returns false (without throwing) on some error paths —
+        // e.g. unknown preset, malformed YAML. Treat that as a failure so
+        // setupPoliciesWithSelection doesn't silently report success on a
+        // preset that never got applied.
+        if (!policies.applyPreset(sandboxName, name, options)) {
+          throw new Error(`Failed to apply preset '${name}'.`);
+        }
         break;
       } catch (err) {
         const message = err && err.message ? err.message : String(err);
@@ -6036,7 +6057,6 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
       }
     }
   }
-  return interactiveChoice;
 }
 
 // ── Dashboard ────────────────────────────────────────────────────
