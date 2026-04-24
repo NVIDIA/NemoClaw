@@ -788,3 +788,177 @@ export function ensureSwap(minTotalMB?: number, opts: EnsureSwapOpts = {}): Swap
 
   return createSwapfile(mem);
 }
+
+// ── Container DNS probe (#2101) ───────────────────────────────────
+// The sandbox build's `npm ci` step resolves `registry.npmjs.org` from inside
+// a docker container. Networks that block outbound UDP:53 to public resolvers
+// (common in corporate environments that force DNS-over-TLS on the host) leave
+// the container unable to resolve anything — npm retries for ~15 min and then
+// prints the cryptic `Exit handler never called`. This probe catches that
+// state in a few seconds so the user gets a targeted error up front.
+
+export interface DnsProbeResult {
+  ok: boolean;
+  reason?:
+    | "no_output"
+    | "resolution_failed"
+    | "servers_unreachable"
+    | "image_pull_failed"
+    | "error";
+  details?: string;
+}
+
+export interface ProbeContainerDnsOpts {
+  /** Override the docker run command. */
+  command?: string;
+  /** Inject captured output (bypasses shell). */
+  outputOverride?: string | null;
+  /** Override runCapture. */
+  runCaptureImpl?: (
+    command: string,
+    opts?: { ignoreError?: boolean; timeout?: number },
+  ) => string | null;
+}
+
+/**
+ * Hard ceiling on the DNS probe: Node kills the child after this many
+ * milliseconds. 20 s is roughly 1.3× busybox nslookup's own retry budget
+ * (3 × 5 s), which leaves headroom for image pull on a cold cache without
+ * letting a wedged docker daemon stall preflight forever.
+ */
+const PROBE_TIMEOUT_MS = 20_000;
+
+/**
+ * Discover the IPv4 gateway address of docker's default bridge network.
+ * Returns null if docker isn't running, the inspect command fails, or the
+ * output doesn't parse. Callers use this to tailor DNS remediation hints
+ * to the user's actual bridge IP instead of assuming the conventional
+ * `172.17.0.1`.
+ */
+export function getDockerBridgeGatewayIp(
+  runCaptureImpl: (command: string, opts?: { ignoreError?: boolean }) => string | null = (
+    cmd,
+    o,
+  ) => runCapture(cmd, { ignoreError: o?.ignoreError ?? false }),
+): string | null {
+  let raw: string | null;
+  try {
+    raw = runCaptureImpl(
+      "docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null",
+      { ignoreError: true },
+    );
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  // Dual-stack bridges have multiple entries in .IPAM.Config, and the
+  // `{{range}}` template concatenates their gateways with no separator —
+  // e.g., "172.17.0.1fd00:abcd::1" for an IPv4+IPv6 bridge. Word-boundary
+  // anchors don't help here because the boundary between "1" and "f" is
+  // absent (both are word chars) and a trailing IPv6 that ends in a digit
+  // ("...::1") eats the would-be start anchor of the IPv4. Scan for the
+  // first dotted-quad anywhere in the output and validate the octets.
+  const match = trimmed.match(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
+  if (!match) return null;
+  const octets = match[0].split(".").map((s) => Number(s));
+  if (octets.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) return null;
+  return match[0];
+}
+
+/**
+ * Probe whether DNS resolution works from inside a docker container.
+ * Returns `{ ok: true }` when a busybox test container resolves
+ * `registry.npmjs.org`; otherwise returns a structured `reason` +
+ * truncated `details` so callers can tailor the error message:
+ *
+ * - `image_pull_failed` — the busybox image couldn't be pulled (docker
+ *   daemon can't reach the registry). Distinct from DNS-inside-container.
+ * - `servers_unreachable` — resolver was unreachable (UDP:53 dropped).
+ *   The typical #2101 signature on corp-firewalled hosts.
+ * - `resolution_failed` — resolver answered but lookup failed (NXDOMAIN
+ *   or similar). Unusual.
+ * - `no_output` / `error` — probe couldn't run at all.
+ */
+export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeResult {
+  // Cap the whole probe via Node's spawn-level timeout (works on every
+  // platform Node supports — no dependency on a host-side `timeout`
+  // binary). Child process is killed, runCapture returns "" under
+  // ignoreError, and we fall through to the `no_output` branch.
+  const command =
+    opts.command ??
+    "docker run --rm --pull=missing busybox:latest " +
+      "nslookup registry.npmjs.org 2>&1";
+
+  let output: string | null | undefined = opts.outputOverride;
+  if (output === undefined) {
+    try {
+      const runCaptureImpl =
+        opts.runCaptureImpl ??
+        ((cmd: string, o?: { ignoreError?: boolean; timeout?: number }) =>
+          runCapture(cmd, {
+            ignoreError: o?.ignoreError ?? false,
+            timeout: o?.timeout,
+          }));
+      output = runCaptureImpl(command, {
+        ignoreError: true,
+        timeout: PROBE_TIMEOUT_MS,
+      });
+    } catch (e) {
+      return {
+        ok: false,
+        reason: "error",
+        details: String((e as Error)?.message ?? e),
+      };
+    }
+  }
+
+  // Treat whitespace-only output (e.g., bare newlines left by a killed
+  // child) the same as empty — otherwise the subsequent regex checks all
+  // miss and we'd mis-report it as `resolution_failed`.
+  if (!output || !output.trim()) {
+    return {
+      ok: false,
+      reason: "no_output",
+      details: "docker run produced no output (timed out or failed to start)",
+    };
+  }
+
+  // Success: busybox nslookup prints "Name:" and "Address:" lines.
+  if (/\bName:\s*registry\.npmjs\.org\b/.test(output) && /\bAddress:\s*\d/.test(output)) {
+    return { ok: true };
+  }
+
+  // Docker image-pull failure — the probe never got to run nslookup, so
+  // framing this as a DNS problem would mislead. Signatures from
+  // `docker run --pull=missing` when the daemon can't fetch the image.
+  if (
+    /Error response from daemon:.*(pull|manifest|not found)|pull access denied|manifest.*unknown|unauthorized: authentication required|Head.*https?:\/\/.*: dial/i.test(
+      output,
+    )
+  ) {
+    return {
+      ok: false,
+      reason: "image_pull_failed",
+      details: output.slice(-400),
+    };
+  }
+
+  // UDP:53 egress blocked — the #2101 signature. nslookup gave up after
+  // its retry budget without getting any DNS response.
+  if (/no servers could be reached|connection timed out/i.test(output)) {
+    return {
+      ok: false,
+      reason: "servers_unreachable",
+      details: output.slice(-400),
+    };
+  }
+
+  // Something else — resolver responded but couldn't answer.
+  return {
+    ok: false,
+    reason: "resolution_failed",
+    details: output.slice(-400),
+  };
+}
