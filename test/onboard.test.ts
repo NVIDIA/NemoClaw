@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -4835,8 +4836,9 @@ const { setupMessagingChannels } = require(${onboardPath});
   it("Slack bot token format regex rejects obvious bogus tokens and accepts valid ones (#1912)", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const onboardPath = path.join(repoRoot, "dist", "lib", "onboard.js");
-    delete require.cache[onboardPath];
-    const { MESSAGING_CHANNELS } = require(onboardPath);
+    // Cache-bust the dynamic import so repeated test runs pick up rebuilds.
+    const onboardUrl = `${pathToFileURL(onboardPath).href}?update=${Date.now()}`;
+    const { MESSAGING_CHANNELS } = await import(onboardUrl);
     const slack = MESSAGING_CHANNELS.find((c) => c.name === "slack");
 
     assert.ok(slack, "slack messaging channel definition present");
