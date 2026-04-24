@@ -52,6 +52,7 @@ const {
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
+  validateOllamaPortConfiguration,
   validateOllamaModel,
   validateLocalProvider,
 } = require("./local-inference");
@@ -4167,6 +4168,20 @@ async function setupNim(gpu) {
     }
   }
 
+  function checkOllamaPortsOrWarn(): boolean {
+    const portValidation = validateOllamaPortConfiguration();
+    if (!portValidation.ok) {
+      console.error(`  ${portValidation.message}`);
+      if (isNonInteractive()) {
+        process.exit(1);
+      }
+      console.log("  Choose a different local inference provider or fix the port settings.");
+      console.log("");
+      return false;
+    }
+    return true;
+  }
+
   if (options.length > 1) {
     selectionLoop: while (true) {
       let selected;
@@ -4636,6 +4651,7 @@ async function setupNim(gpu) {
         }
         break;
       } else if (selected.key === "ollama") {
+        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
         if (!ollamaRunning) {
           console.log("  Starting Ollama...");
           // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
@@ -4708,6 +4724,7 @@ async function setupNim(gpu) {
         }
         break;
       } else if (selected.key === "install-ollama") {
+        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
         if (process.platform === "darwin") {
           console.log("  Installing Ollama via Homebrew...");
           run(["brew", "install", "ollama"], { ignoreError: true });

@@ -701,8 +701,11 @@ All ports must be non-privileged integers between 1024 and 65535.
 | `NEMOCLAW_DASHBOARD_PORT` | 18789 | Dashboard UI |
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
+| `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
+On non-WSL hosts, `NEMOCLAW_OLLAMA_PORT` and `NEMOCLAW_OLLAMA_PROXY_PORT` must be different.
+If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another free port before onboarding.
 
 ```console
 $ export NEMOCLAW_DASHBOARD_PORT=19000
