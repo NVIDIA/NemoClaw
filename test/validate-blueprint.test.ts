@@ -309,6 +309,59 @@ describe("base sandbox policy", () => {
     expect(serialized).not.toContain("/usr/local/bin/claude");
   });
 
+  it("regression #2180: base policy does not silently grant Telegram access", () => {
+    // Until #1705 (later regressed by #1700 and re-surfaced in #2180),
+    // `api.telegram.org` plus a /usr/local/bin/node binary lived in the
+    // base network_policies, so every sandbox could call the Telegram
+    // Bot API regardless of whether the user selected the telegram
+    // messaging channel or policy preset. The fix keeps Telegram access
+    // inside `presets/telegram.yaml`. This assertion blocks a regression
+    // where someone re-adds a telegram entry to the base policy and
+    // silently re-grants every sandbox unscoped Telegram access.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "telegram" in np).toBe(false);
+
+    const telegramHosts = findEndpoints((h) => h === "api.telegram.org");
+    expect(telegramHosts).toEqual([]);
+  });
+
+  it("regression #2180: base policy does not silently grant Discord access", () => {
+    // Parallel to the Telegram regression above. Discord (discord.com,
+    // gateway.discord.gg, cdn.discordapp.com, media.discordapp.net) is
+    // the opt-in preset path, not baseline. Re-adding these endpoints
+    // to the base policy lets any sandbox reach Discord without the
+    // user having selected the discord messaging channel or preset.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "discord" in np).toBe(false);
+
+    const discordHosts = findEndpoints(
+      (h) =>
+        h === "discord.com" ||
+        h === "gateway.discord.gg" ||
+        h === "cdn.discordapp.com" ||
+        h === "media.discordapp.net",
+    );
+    expect(discordHosts).toEqual([]);
+  });
+
+  it("regression #2180: base policy does not silently grant Slack access", () => {
+    // Slack was never in the baseline, but guard against it being added
+    // in the same merge-conflict-resolution pattern that re-added
+    // Telegram and Discord after #1705. Slack access is in
+    // presets/slack.yaml only.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "slack" in np).toBe(false);
+
+    const slackHosts = findEndpoints(
+      (h) =>
+        h === "slack.com" ||
+        h.endsWith(".slack.com") ||
+        h === "wss-primary.slack.com" ||
+        h === "wss-backup.slack.com",
+    );
+    expect(slackHosts).toEqual([]);
+  });
+
   it("regression #1458: baseline npm_registry must not include npm or node binaries", () => {
     const np = policy.network_policies ?? {};
     const npmRegistry = np.npm_registry;

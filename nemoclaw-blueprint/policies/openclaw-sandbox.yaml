@@ -172,46 +172,10 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
 
-  # ── Messaging — pre-allowed for OpenClaw agent notifications ────
-  # Restricted to node processes to prevent arbitrary data exfiltration
-  # via curl, wget, python, etc. (See: #272)
-  telegram:
-    name: telegram
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/bot*/**" }
-          - allow: { method: POST, path: "/bot*/**" }
-          - allow: { method: GET, path: "/file/bot*/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-
-  discord:
-    name: discord
-    endpoints:
-      - host: discord.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      # WebSocket gateway — pure L4 CONNECT tunnel. OpenShell v0.0.15+
-      # auto-terminates TLS unconditionally (NVIDIA/OpenShell#544), which
-      # also applies to WSS. tls: skip restores the pre-v0.0.15 pass-
-      # through behaviour needed here. Matches presets/discord.yaml.
-      - host: gateway.discord.gg
-        port: 443
-        access: full
-        tls: skip
-      - host: cdn.discordapp.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
+  # Messaging endpoints (telegram, discord, slack) are intentionally NOT in
+  # the baseline — #1705 removed them so every sandbox does not silently
+  # egress to third-party IM platforms without user opt-in. The messaging
+  # presets (presets/{telegram,discord,slack}.yaml) are the opt-in path:
+  # users enable a channel in step [5/8] of onboard and the matching preset
+  # is applied on top of this baseline. Keep this comment so the entries
+  # are not casually re-added during a merge-conflict resolution. See #2180.
