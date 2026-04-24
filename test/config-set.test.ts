@@ -11,6 +11,7 @@ const {
   isRecognizedConfigPath,
   setDotpath,
   validateUrlValue,
+  validateUrlValueWithDns,
   resolveAgentConfig,
 } = require("../dist/lib/sandbox-config");
 
@@ -174,6 +175,62 @@ describe("config set helpers", () => {
 
     it("rejects IPv6 loopback", () => {
       expect(() => validateUrlValue("http://[::1]:8080")).toThrow(/private/i);
+    });
+
+    it("rejects localhost subdomains", () => {
+      expect(() => validateUrlValue("http://api.localhost:8080")).toThrow(/private/i);
+    });
+  });
+
+  describe("validateUrlValueWithDns", () => {
+    it("rejects hostname resolving to private IPv4", async () => {
+      const lookup = async () => [{ address: "169.254.169.254", family: 4 }];
+      await expect(validateUrlValueWithDns("https://example.com/v1", lookup)).rejects.toThrow(
+        /private\/internal/i,
+      );
+    });
+
+    it("rejects hostname resolving to private IPv6", async () => {
+      const lookup = async () => [{ address: "fd00::1", family: 6 }];
+      await expect(validateUrlValueWithDns("https://example.com/v1", lookup)).rejects.toThrow(
+        /private\/internal/i,
+      );
+    });
+
+    it("rejects hostname when any resolved address is private", async () => {
+      const lookup = async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "::ffff:127.0.0.1", family: 6 },
+      ];
+      await expect(validateUrlValueWithDns("https://example.com/v1", lookup)).rejects.toThrow(
+        /private\/internal/i,
+      );
+    });
+
+    it("allows hostname when all resolved addresses are public", async () => {
+      const lookup = async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "2607:f8b0:4004:800::200e", family: 6 },
+      ];
+      await expect(validateUrlValueWithDns("https://example.com/v1", lookup)).resolves.toBe(
+        undefined,
+      );
+    });
+
+    it("fails closed when DNS lookup errors", async () => {
+      const lookup = async () => {
+        throw new Error("NXDOMAIN");
+      };
+      await expect(validateUrlValueWithDns("https://missing.example/v1", lookup)).rejects.toThrow(
+        /Cannot resolve hostname/i,
+      );
+    });
+
+    it("fails closed when DNS lookup returns no addresses", async () => {
+      const lookup = async () => [];
+      await expect(validateUrlValueWithDns("https://empty.example/v1", lookup)).rejects.toThrow(
+        /no addresses returned/i,
+      );
     });
   });
 });

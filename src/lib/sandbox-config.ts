@@ -16,6 +16,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
+const { promises: dnsPromises } = require("node:dns");
+const { isIPv4, isIPv6 } = require("node:net");
 const { validateName } = require("./runner");
 const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue } = credentialFilter;
@@ -51,6 +53,18 @@ interface AgentConfigTarget {
   /** Config file basename */
   configFile: string;
 }
+
+interface CidrRange {
+  network: Uint8Array;
+  prefixLen: number;
+}
+
+interface LookupAddress {
+  address: string;
+  family: number;
+}
+
+type LookupFn = (hostname: string, options: { all: true }) => Promise<LookupAddress[]>;
 
 const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   agentName: "openclaw",
@@ -218,40 +232,226 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
 }
 
 // ---------------------------------------------------------------------------
-// URL validation (lightweight SSRF check for config set)
+// URL validation (strict SSRF checks for config set)
 // ---------------------------------------------------------------------------
 
-const PRIVATE_IP_PREFIXES = ["127.", "10.", "0.", "169.254.", "192.168."];
+const PRIVATE_NETWORKS: CidrRange[] = [
+  cidr("0.0.0.0", 8), // RFC 1122 "This network"
+  cidr("127.0.0.0", 8),
+  cidr("10.0.0.0", 8),
+  cidr("172.16.0.0", 12),
+  cidr("192.168.0.0", 16),
+  cidr("169.254.0.0", 16),
+  cidr("100.64.0.0", 10), // RFC 6598 CGNAT
+  cidr("198.18.0.0", 15), // RFC 2544 benchmark range
+  cidr6("::1", 128),
+  cidr6("::", 128),
+  cidr6("fc00::", 7),
+  cidr6("fe80::", 10),
+  cidr6("ff00::", 8),
+];
 
-const PRIVATE_IP_172_RE = /^172\.(1[6-9]|2[0-9]|3[01])\./;
+function parseIPv4(addr: string): Uint8Array {
+  const parts = addr.split(".");
+  return new Uint8Array(parts.map(Number));
+}
 
-function isPrivateIp(hostname: string): boolean {
-  if (hostname === "localhost" || hostname === "[::1]") return true;
-  for (const prefix of PRIVATE_IP_PREFIXES) {
-    if (hostname.startsWith(prefix)) return true;
+function parseIPv6(addr: string): Uint8Array {
+  // Handle IPv4-mapped notation (e.g., ::ffff:127.0.0.1)
+  const lastColon = addr.lastIndexOf(":");
+  const tail = addr.slice(lastColon + 1);
+  if (tail.includes(".")) {
+    const ipv4Parts = tail.split(".").map(Number);
+    const hi = ((ipv4Parts[0] << 8) | ipv4Parts[1]).toString(16);
+    const lo = ((ipv4Parts[2] << 8) | ipv4Parts[3]).toString(16);
+    return parseIPv6(addr.slice(0, lastColon + 1) + hi + ":" + lo);
   }
-  if (PRIVATE_IP_172_RE.test(hostname)) return true;
+
+  let groups: string[];
+  if (addr.includes("::")) {
+    const [left, right] = addr.split("::");
+    const leftGroups = left ? left.split(":") : [];
+    const rightGroups = right ? right.split(":") : [];
+    const missing = 8 - leftGroups.length - rightGroups.length;
+    groups = [...leftGroups, ...Array<string>(missing).fill("0"), ...rightGroups];
+  } else {
+    groups = addr.split(":");
+  }
+
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 8; i++) {
+    const val = parseInt(groups[i], 16);
+    bytes[i * 2] = (val >> 8) & 0xff;
+    bytes[i * 2 + 1] = val & 0xff;
+  }
+  return bytes;
+}
+
+function cidr(addr: string, prefixLen: number): CidrRange {
+  return { network: parseIPv4(addr), prefixLen };
+}
+
+function cidr6(addr: string, prefixLen: number): CidrRange {
+  return { network: parseIPv6(addr), prefixLen };
+}
+
+function ipInCidr(ipBytes: Uint8Array, range: CidrRange): boolean {
+  if (ipBytes.length !== range.network.length) return false;
+
+  const fullBytes = Math.floor(range.prefixLen / 8);
+  const remainingBits = range.prefixLen % 8;
+
+  for (let i = 0; i < fullBytes; i++) {
+    if (ipBytes[i] !== range.network[i]) return false;
+  }
+
+  if (remainingBits > 0) {
+    const mask = 0xff << (8 - remainingBits);
+    if ((ipBytes[fullBytes] & mask) !== (range.network[fullBytes] & mask)) return false;
+  }
+
+  return true;
+}
+
+function isIPv4Mapped(bytes: Uint8Array): boolean {
+  return (
+    bytes.length === 16 &&
+    bytes[10] === 0xff &&
+    bytes[11] === 0xff &&
+    bytes.slice(0, 10).every((b) => b === 0)
+  );
+}
+
+function normalizeHostname(hostname: string): string {
+  return String(hostname || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname.endsWith(".localhost");
+}
+
+function isPrivateIpAddress(addr: string): boolean {
+  const normalized = normalizeHostname(addr);
+
+  if (isIPv4(normalized)) {
+    const ipBytes = parseIPv4(normalized);
+    return PRIVATE_NETWORKS.some((range) => ipInCidr(ipBytes, range));
+  }
+
+  if (isIPv6(normalized)) {
+    const ipBytes = parseIPv6(normalized);
+    if (isIPv4Mapped(ipBytes)) {
+      const ipv4Bytes = ipBytes.slice(12);
+      return PRIVATE_NETWORKS.some((range) => ipInCidr(ipv4Bytes, range));
+    }
+    return PRIVATE_NETWORKS.some((range) => ipInCidr(ipBytes, range));
+  }
+
   return false;
 }
 
-function validateUrlValue(value: string): void {
+function parseHttpUrl(value: string): URL | null {
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    return; // Not a URL — skip validation
+    return null; // Not a URL — skip validation
   }
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`URL scheme "${parsed.protocol}" is not allowed. Use http: or https:.`);
   }
 
-  if (isPrivateIp(parsed.hostname)) {
+  if (!parsed.hostname) {
+    throw new Error(`No hostname found in URL "${value}".`);
+  }
+
+  return parsed;
+}
+
+function assertPublicHost(hostname: string): void {
+  if (isLoopbackHostname(hostname) || isPrivateIpAddress(hostname)) {
     throw new Error(
-      `URL points to private/internal address "${parsed.hostname}". ` +
+      `URL points to private/internal address "${hostname}". ` +
         `This could expose internal services to the sandbox.`,
     );
   }
+}
+
+function validateUrlValue(value: string): void {
+  const parsed = parseHttpUrl(value);
+  if (!parsed) return;
+  assertPublicHost(normalizeHostname(parsed.hostname));
+}
+
+async function validateUrlValueWithDns(
+  value: string,
+  lookup: LookupFn = dnsPromises.lookup as LookupFn,
+): Promise<void> {
+  const parsed = parseHttpUrl(value);
+  if (!parsed) return;
+
+  const hostname = normalizeHostname(parsed.hostname);
+  assertPublicHost(hostname);
+
+  // Direct IP literal already validated above.
+  if (isIPv4(hostname) || isIPv6(hostname)) {
+    return;
+  }
+
+  let addresses: LookupAddress[];
+  try {
+    addresses = await lookup(hostname, { all: true });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Cannot resolve hostname "${hostname}": ${message}`);
+  }
+
+  if (!Array.isArray(addresses) || addresses.length === 0) {
+    throw new Error(`Cannot resolve hostname "${hostname}": no addresses returned.`);
+  }
+
+  for (const { address } of addresses) {
+    if (isPrivateIpAddress(address)) {
+      throw new Error(
+        `URL hostname "${hostname}" resolves to private/internal address "${address}". ` +
+          `This could expose internal services to the sandbox.`,
+      );
+    }
+  }
+}
+
+function collectHttpUrls(value: ConfigValue): string[] {
+  const urls: string[] = [];
+  const stack: ConfigValue[] = [value];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current == null) continue;
+
+    if (typeof current === "string") {
+      const trimmed = current.trim();
+      if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        urls.push(trimmed);
+      }
+      continue;
+    }
+
+    if (Array.isArray(current)) {
+      stack.push(...current);
+      continue;
+    }
+
+    if (isConfigObject(current)) {
+      stack.push(...Object.values(current));
+    }
+  }
+
+  return urls;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +504,7 @@ interface ConfigSetOpts {
   restart?: boolean;
 }
 
-function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
+async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise<void> {
   validateName(sandboxName, "sandbox name");
 
   if (!opts.key) {
@@ -328,16 +528,14 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
   // 2. Parse and validate value
   const parsedValue = parseCliConfigValue(opts.value);
 
-  // 3. Validate URLs for SSRF
-  if (
-    typeof parsedValue === "string" &&
-    (parsedValue.startsWith("http://") || parsedValue.startsWith("https://"))
-  ) {
+  // 3. Validate URLs for SSRF (supports nested object/array values)
+  const urlsToValidate = collectHttpUrls(parsedValue);
+  for (const urlValue of urlsToValidate) {
     try {
-      validateUrlValue(parsedValue);
+      await validateUrlValueWithDns(urlValue);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`  URL validation failed: ${message}`);
+      console.error(`  URL validation failed for ${JSON.stringify(urlValue)}: ${message}`);
       process.exit(1);
     }
   }
@@ -616,5 +814,6 @@ export {
   setDotpath,
   isRecognizedConfigPath,
   validateUrlValue,
+  validateUrlValueWithDns,
   readStdin,
 };

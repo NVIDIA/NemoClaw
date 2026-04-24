@@ -3695,7 +3695,7 @@ const [cmd, ...args] = process.argv.slice(2);
               else if (actionArgs[i] === "--value") setOpts.value = actionArgs[++i];
               else if (actionArgs[i] === "--restart") setOpts.restart = true;
             }
-            sandboxConfig.configSet(cmd, setOpts);
+            await sandboxConfig.configSet(cmd, setOpts);
             break;
           }
           case "rotate-token": {
