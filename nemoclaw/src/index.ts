@@ -20,6 +20,37 @@ import {
 } from "./onboard/config.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
 
+import os from 'os';
+
+// [PATCH] OpenShell/Sandbox Compatibility
+// Sandbox environments block uv_interface_addresses. We catch this and mock a loopback.
+const originalNetworkInterfaces = os.networkInterfaces;
+
+os.networkInterfaces = function () {
+  try {
+    return originalNetworkInterfaces.apply(this, arguments);
+  } catch (error: any) {
+    console.warn(
+      '\n[Sandbox Compatibility] Restricted network access detected (Likely Docker/OpenShell).' +
+      '\nos.networkInterfaces() failed. Falling back to loopback interface (127.0.0.1) to prevent crash.\n'
+    );
+    
+    // Return a mocked loopback interface so dependencies like `ciao` don't crash
+    return {
+      lo:[
+        {
+          address: '127.0.0.1',
+          netmask: '255.0.0.0',
+          family: 'IPv4',
+          mac: '00:00:00:00:00:00',
+          internal: true,
+          cidr: '127.0.0.1/8'
+        }
+      ]
+    };
+  }
+};
+
 // Resolve live inference config from OpenShell as a fallback when the
 // onboard config file is not available (e.g. when running inside the
 // sandbox). Returns empty strings if the probe fails.
