@@ -30,25 +30,10 @@
 set -euo pipefail
 
 # ── Overall timeout ──────────────────────────────────────────────────────────
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-1200}"
-  if command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  fi
-fi
-
-# macOS uses gtimeout (from coreutils); Linux uses timeout
-if command -v gtimeout &>/dev/null; then
-  TIMEOUT_CMD="gtimeout"
-elif command -v timeout &>/dev/null; then
-  TIMEOUT_CMD="timeout"
-else
-  echo "ERROR: Neither timeout nor gtimeout found. Install coreutils: brew install coreutils"
-  exit 1
-fi
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1200
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -183,7 +168,7 @@ sandbox_exec() {
     return 1
   fi
   local result ssh_exit=0
-  result=$($TIMEOUT_CMD 60 ssh -F "$ssh_cfg" \
+  result=$(run_with_timeout 60 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" "$cmd" 2>&1) || ssh_exit=$?
@@ -208,11 +193,10 @@ test_inf_05_credential_isolation() {
     return
   fi
 
-  # Always recreate to avoid stale state hiding credential plumbing regressions
-  if nemoclaw list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
-    log "  Removing existing sandbox '$SANDBOX_NAME' to avoid stale state..."
-    nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
-  fi
+  # Always recreate to avoid stale state hiding credential plumbing regressions.
+  # Unconditional destroy catches not-ready sandboxes that `nemoclaw list` misses.
+  log "  Preflight: destroying any existing '$SANDBOX_NAME' sandbox..."
+  nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 
   log "  Onboarding sandbox '$SANDBOX_NAME' for credential test..."
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
@@ -318,7 +302,7 @@ test_inf_06_invalid_api_key() {
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_SANDBOX_NAME="e2e-invalid-key" \
-    $TIMEOUT_CMD 120 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    run_with_timeout 120 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1) || exit_code=$?
 
   # 1. Exit code should be non-zero (onboard should fail)
@@ -382,7 +366,7 @@ test_inf_07_unreachable_endpoint() {
     NEMOCLAW_ENDPOINT_URL="https://nemoclaw-e2e.invalid/v1" \
     NEMOCLAW_MODEL="test-model" \
     COMPATIBLE_API_KEY="fake-key-for-unreachable-test" \
-    $TIMEOUT_CMD 120 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    run_with_timeout 120 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1) || exit_code=$?
 
   # 1. Exit code should be non-zero
@@ -437,10 +421,8 @@ test_inf_02_openai() {
   local model="${NEMOCLAW_OPENAI_MODEL:-gpt-4o-mini}"
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
 
-  if nemoclaw list 2>/dev/null | grep -q "$sbx_name"; then
-    log "  Removing existing sandbox '$sbx_name'..."
-    nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
-  fi
+  log "  Preflight: destroying any existing '$sbx_name' sandbox..."
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
 
   log "  Onboarding with OpenAI provider, model: $model"
   local onboard_exit=0
@@ -451,7 +433,7 @@ test_inf_02_openai() {
     NEMOCLAW_PROVIDER="openai" \
     NEMOCLAW_MODEL="$model" \
     OPENAI_API_KEY="$api_key" \
-    $TIMEOUT_CMD 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    run_with_timeout 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | redact_stream "$api_key" | tee -a "$LOG_FILE" || onboard_exit=$?
 
   if [[ $onboard_exit -ne 0 ]]; then
@@ -470,7 +452,7 @@ test_inf_02_openai() {
 
   log "  Sending test prompt through sandbox inference proxy..."
   local response
-  response=$($TIMEOUT_CMD 90 ssh -F "$ssh_cfg" \
+  response=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${sbx_name}" \
@@ -513,10 +495,8 @@ test_inf_03_anthropic() {
   local model="${NEMOCLAW_ANTHROPIC_MODEL:-claude-sonnet-4-6}"
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
 
-  if nemoclaw list 2>/dev/null | grep -q "$sbx_name"; then
-    log "  Removing existing sandbox '$sbx_name'..."
-    nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
-  fi
+  log "  Preflight: destroying any existing '$sbx_name' sandbox..."
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
 
   log "  Onboarding with Anthropic provider, model: $model"
   local onboard_exit=0
@@ -527,7 +507,7 @@ test_inf_03_anthropic() {
     NEMOCLAW_PROVIDER="anthropic" \
     NEMOCLAW_MODEL="$model" \
     ANTHROPIC_API_KEY="$api_key" \
-    $TIMEOUT_CMD 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    run_with_timeout 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | redact_stream "$api_key" | tee -a "$LOG_FILE" || onboard_exit=$?
 
   if [[ $onboard_exit -ne 0 ]]; then
@@ -546,7 +526,7 @@ test_inf_03_anthropic() {
 
   log "  Sending test prompt through sandbox inference proxy (Anthropic Messages API)..."
   local response
-  response=$($TIMEOUT_CMD 90 ssh -F "$ssh_cfg" \
+  response=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${sbx_name}" \
@@ -600,10 +580,8 @@ test_inf_09_compatible_endpoint() {
   local sbx_name="e2e-compat-ep"
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
 
-  if nemoclaw list 2>/dev/null | grep -q "$sbx_name"; then
-    log "  Removing existing sandbox '$sbx_name'..."
-    nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
-  fi
+  log "  Preflight: destroying any existing '$sbx_name' sandbox..."
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
 
   log "  Onboarding with compatible endpoint: $endpoint_url"
   log "  Model: $endpoint_model"
@@ -616,7 +594,7 @@ test_inf_09_compatible_endpoint() {
     NEMOCLAW_ENDPOINT_URL="$endpoint_url" \
     NEMOCLAW_MODEL="$endpoint_model" \
     COMPATIBLE_API_KEY="$endpoint_key" \
-    $TIMEOUT_CMD 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    run_with_timeout 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | redact_stream "$endpoint_key" | tee -a "$LOG_FILE" || onboard_exit=$?
 
   if [[ $onboard_exit -ne 0 ]]; then
@@ -637,7 +615,7 @@ test_inf_09_compatible_endpoint() {
   # Send a prompt through the inference proxy inside the sandbox
   log "  Sending test prompt through sandbox inference proxy..."
   local response
-  response=$($TIMEOUT_CMD 90 ssh -F "$ssh_cfg" \
+  response=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${sbx_name}" \
@@ -668,8 +646,10 @@ test_inf_09_compatible_endpoint() {
 
 # ── Teardown ─────────────────────────────────────────────────────────────────
 teardown() {
+  # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
+  # test/e2e/lib/sandbox-teardown.sh — the lock is PID-ownership-aware
+  # and onboard cleans up stale locks itself.
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
   nemoclaw "e2e-openai" destroy --yes 2>/dev/null || true
   nemoclaw "e2e-anthropic" destroy --yes 2>/dev/null || true

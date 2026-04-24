@@ -10,7 +10,7 @@ const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawn, spawnSync } = require("child_process");
+const { execFileSync, spawn, spawnSync } = require("child_process");
 const pRetry = require("p-retry");
 
 /** Parse a numeric env var, returning `fallback` when unset or non-finite. */
@@ -52,6 +52,7 @@ const {
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
+  validateOllamaPortConfiguration,
   validateOllamaModel,
   validateLocalProvider,
 } = require("./local-inference");
@@ -490,29 +491,6 @@ function getInstalledOpenshellVersion(versionOutput = null) {
   ).trim();
   const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+)/i);
   if (match) return match[1];
-  // Fallback: read the sidecar version file written by install-openshell.sh for
-  // binaries that self-report an unparseable string (e.g. openshell 0.0.29 → "m-dev").
-  // Also applies when versionOutput is provided but unparseable (e.g. passed from
-  // runCaptureOpenshell at the blueprint version gate).
-  if (openshellBin) {
-    try {
-      const sidecar = path.join(path.dirname(openshellBin), ".openshell-installed-version");
-      // Invalidate the sidecar if the binary has been replaced since the sidecar
-      // was written (manual `cp openshell /usr/local/bin/openshell` without
-      // re-running install-openshell.sh). Stale sidecar + unsupported binary would
-      // otherwise bypass the min/max version gate silently.
-      const binaryMtime = fs.statSync(openshellBin).mtimeMs;
-      const sidecarMtime = fs.statSync(sidecar).mtimeMs;
-      if (binaryMtime > sidecarMtime) return null;
-      const sidecarMatch = fs
-        .readFileSync(sidecar, "utf-8")
-        .trim()
-        .match(/^([0-9]+\.[0-9]+\.[0-9]+)$/);
-      if (sidecarMatch) return sidecarMatch[1];
-    } catch {
-      // sidecar absent or unreadable — fall through
-    }
-  }
   return null;
 }
 
@@ -1422,6 +1400,16 @@ function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_REASONING=.*$/m,
       `ARG NEMOCLAW_REASONING=${reasoning}`,
+    );
+  }
+  // NEMOCLAW_AGENT_TIMEOUT — override agents.defaults.timeoutSeconds at build
+  // time. Lets users increase the per-request inference timeout without
+  // editing the Dockerfile. Ref: issue #2281
+  const agentTimeout = process.env.NEMOCLAW_AGENT_TIMEOUT;
+  if (agentTimeout && POSITIVE_INT_RE.test(agentTimeout)) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_AGENT_TIMEOUT=.*$/m,
+      `ARG NEMOCLAW_AGENT_TIMEOUT=${agentTimeout}`,
     );
   }
   // Honor NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT exported in the host
@@ -3399,6 +3387,55 @@ async function promptValidatedSandboxName() {
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
+/**
+ * Render the configuration summary shown before the destructive sandbox build.
+ * Extracted from confirmOnboardConfiguration() for direct unit testing — see #2165.
+ *
+ * Fields:
+ * - credentialEnv:    env-var name of the API key (e.g. "NVIDIA_API_KEY").
+ *                     Rendered with the fixed credentials.json location so
+ *                     users can see where the key was stored.
+ * - notes:            additional bullet lines shown under the summary
+ *                     (e.g. "~6 minutes on this host"). Each note rendered
+ *                     as "Note: <text>" so it's visually distinct.
+ */
+function formatOnboardConfigSummary({
+  provider,
+  model,
+  credentialEnv = null,
+  webSearchConfig,
+  enabledChannels,
+  sandboxName,
+  notes = [],
+}) {
+  const bar = `  ${"─".repeat(50)}`;
+  const messaging =
+    Array.isArray(enabledChannels) && enabledChannels.length > 0
+      ? enabledChannels.join(", ")
+      : "none";
+  const webSearch = webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
+  const apiKeyLine = credentialEnv
+    ? `  API key:       ${credentialEnv} (stored in ~/.nemoclaw/credentials.json)`
+    : `  API key:       (not required for ${provider ?? "this provider"})`;
+  const noteLines = (Array.isArray(notes) ? notes : [])
+    .filter((n) => typeof n === "string" && n.length > 0)
+    .map((n) => `  Note:          ${n}`);
+  return [
+    "",
+    bar,
+    "  Review configuration",
+    bar,
+    `  Provider:      ${provider ?? "(unset)"}`,
+    `  Model:         ${model ?? "(unset)"}`,
+    apiKeyLine,
+    `  Web search:    ${webSearch}`,
+    `  Messaging:     ${messaging}`,
+    `  Sandbox name:  ${sandboxName}`,
+    ...noteLines,
+    bar,
+  ].join("\n");
+}
+
 // eslint-disable-next-line complexity
 async function createSandbox(
   gpu,
@@ -3418,6 +3455,7 @@ async function createSandbox(
     sandboxNameOverride ?? (await promptValidatedSandboxName()),
     "sandbox name",
   );
+
   const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${effectivePort}`;
 
@@ -4223,6 +4261,20 @@ async function setupNim(gpu) {
     }
   }
 
+  function checkOllamaPortsOrWarn(): boolean {
+    const portValidation = validateOllamaPortConfiguration();
+    if (!portValidation.ok) {
+      console.error(`  ${portValidation.message}`);
+      if (isNonInteractive()) {
+        process.exit(1);
+      }
+      console.log("  Choose a different local inference provider or fix the port settings.");
+      console.log("");
+      return false;
+    }
+    return true;
+  }
+
   if (options.length > 1) {
     selectionLoop: while (true) {
       let selected;
@@ -4335,6 +4387,12 @@ async function setupNim(gpu) {
             continue selectionLoop;
           }
         }
+
+        // Hydrate from saved credentials (~/.nemoclaw/credentials.json)
+        // before checking env, so rebuild and other non-interactive callers
+        // can resolve keys stored during the original interactive onboard.
+        // See #2273.
+        hydrateCredentialEnv(credentialEnv);
 
         if (selected.key === "build") {
           // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_API_KEY
@@ -4686,6 +4744,7 @@ async function setupNim(gpu) {
         }
         break;
       } else if (selected.key === "ollama") {
+        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
         if (!ollamaRunning) {
           console.log("  Starting Ollama...");
           // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
@@ -4758,6 +4817,7 @@ async function setupNim(gpu) {
         }
         break;
       } else if (selected.key === "install-ollama") {
+        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
         if (process.platform === "darwin") {
           console.log("  Installing Ollama via Homebrew...");
           run(["brew", "install", "ollama"], { ignoreError: true });
@@ -6010,10 +6070,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
       process.exit(1);
     }
     note(`  [resume] Reapplying policy presets: ${chosen.join(", ")}`);
-    for (const name of chosen) {
-      if (applied.includes(name)) continue;
-      policies.applyPreset(sandboxName, name);
-    }
+    syncPresetSelection(sandboxName, applied, chosen);
     return chosen;
   }
 
@@ -6064,20 +6121,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
       process.exit(1);
     }
     note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
-    for (const name of chosen) {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-          policies.applyPreset(sandboxName, name);
-          break;
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (!message.includes("sandbox not found") || attempt === 2) {
-            throw err;
-          }
-          sleep(2);
-        }
-      }
-    }
+    syncPresetSelection(sandboxName, applied, chosen);
     return chosen;
   }
 
@@ -6101,8 +6145,40 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 
   const accessByName = {};
   for (const p of resolvedPresets) accessByName[p.name] = p.access;
-  const newlySelected = interactiveChoice.filter((name) => !applied.includes(name));
-  const deselected = applied.filter((name) => !interactiveChoice.includes(name));
+  syncPresetSelection(sandboxName, applied, interactiveChoice, accessByName);
+  return interactiveChoice;
+}
+
+/**
+ * Reconcile the sandbox's currently-applied preset list with the user's
+ * target selection:
+ *   - remove presets in `applied` but not in `target` (narrow)
+ *   - apply presets in `target` but not in `applied` (widen)
+ *   - leave unchanged presets untouched (no wasteful re-apply)
+ *
+ * Shared between the interactive and non-interactive paths so "narrow the
+ * selection" works identically in both. Fixes #2177 (non-interactive path
+ * was apply-only, so deselected presets lingered).
+ *
+ * @param {string} sandboxName  Target sandbox.
+ * @param {string[]} applied    Preset names currently applied to the sandbox.
+ * @param {string[]} target     Preset names the user wants applied after this call.
+ * @param {Object<string, string>|null} [accessByName=null]
+ *   Optional map of preset name → access mode ("read" | "read-write").
+ *   When provided, applyPreset receives the mode per preset so the gateway
+ *   can distinguish read vs read-write installs.
+ * @returns {void}
+ */
+function syncPresetSelection(
+  sandboxName: string,
+  applied: string[],
+  target: string[],
+  accessByName: Record<string, string> | null = null,
+): void {
+  const targetSet = new Set(target);
+  const appliedSet = new Set(applied);
+  const deselected = applied.filter((name) => !targetSet.has(name));
+  const newlySelected = target.filter((name) => !appliedSet.has(name));
 
   for (const name of deselected) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -6122,11 +6198,16 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   }
 
   for (const name of newlySelected) {
+    const options = accessByName ? { access: accessByName[name] } : undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        // Pass access mode so applyPreset can distinguish read vs read-write
-        // when preset infrastructure supports it.
-        policies.applyPreset(sandboxName, name, { access: accessByName[name] });
+        // applyPreset returns false (without throwing) on some error paths —
+        // e.g. unknown preset, malformed YAML. Treat that as a failure so
+        // setupPoliciesWithSelection doesn't silently report success on a
+        // preset that never got applied.
+        if (!policies.applyPreset(sandboxName, name, options)) {
+          throw new Error(`Failed to apply preset '${name}'.`);
+        }
         break;
       } catch (err) {
         const message = err && err.message ? err.message : String(err);
@@ -6137,7 +6218,6 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
       }
     }
   }
-  return interactiveChoice;
 }
 
 // ── Dashboard ────────────────────────────────────────────────────
@@ -6148,6 +6228,21 @@ const CONTROL_UI_PORT = DASHBOARD_PORT;
 // isLoopbackHostname — see urlUtils import above
 const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 
+// Parses `openshell forward list` output and returns the sandbox currently
+// owning `portToStop`, or null. Exported for unit testing — see #2169.
+// Columns: SANDBOX  BIND  PORT  PID  STATUS (whitespace-separated).
+function findDashboardForwardOwner(forwardListOutput, portToStop) {
+  if (!forwardListOutput) return null;
+  const portLine = forwardListOutput
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => {
+      const parts = l.split(/\s+/);
+      return parts[2] === portToStop;
+    });
+  return portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
+}
+
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
   const portToStop = getDashboardForwardPort(chatUiUrl);
   const forwardTarget = getDashboardForwardTarget(chatUiUrl);
@@ -6155,23 +6250,19 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
   // actionable message rather than silently stealing that sandbox's forward.
   // (Same sandbox is always allowed — covers reconnect and resume paths.)
   const existingForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
-  // Parse line-by-line to avoid false positives from substring matches.
-  // openshell forward list columns: SANDBOX  BIND  PORT  PID  STATUS
-  // Port is at column index 2; sandbox name is at column index 0.
-  const portLine = existingForwards
-    ?.split("\n")
-    .map((l) => l.trim())
-    .find((l) => {
-      const parts = l.split(/\s+/);
-      return parts[2] === portToStop;
-    });
-  const portOwner = portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
+  const portOwner = findDashboardForwardOwner(existingForwards, portToStop);
   if (portOwner !== null && portOwner !== sandboxName) {
-    throw new Error(
-      `Port ${portToStop} is already forwarded for sandbox '${portOwner}'. ` +
-        `Set CHAT_UI_URL to a different local port (e.g. http://127.0.0.1:18790) ` +
-        `before onboarding a second sandbox.`,
+    // Match the preflight pattern (printed error + exit) instead of throwing,
+    // so the user sees a clean message rather than a raw Node stack trace
+    // from the top-level IIFE's unhandled rejection. See #2169.
+    console.error(
+      `  Port ${portToStop} is already forwarded for sandbox '${portOwner}'.`,
     );
+    console.error(
+      `  Set CHAT_UI_URL to a different local port (e.g. http://127.0.0.1:18790)`,
+    );
+    console.error(`  before onboarding a second sandbox.`);
+    process.exit(1);
   }
   runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
@@ -6196,6 +6287,21 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
   }
 }
 
+function findFileRecursive(dir, filename) {
+  if (!fs.existsSync(dir)) return null;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const found = findFileRecursive(p, filename);
+      if (found) return found;
+    } else if (e.name === filename) {
+      return p;
+    }
+  }
+  return null;
+}
+
 function findOpenclawJsonPath(dir) {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -6212,13 +6318,51 @@ function findOpenclawJsonPath(dir) {
 }
 
 /**
- * Pull gateway.auth.token from the sandbox image via openshell sandbox download
- * so onboard can print copy-paste Control UI URLs with #token= (same idea as nemoclaw-start.sh).
+ * Pull gateway auth token from the sandbox.
+ *
+ * Tries three retrieval paths in order:
+ *  1. kubectl exec cat /run/nemoclaw/gateway-token  (root mode — gateway:gateway 0400)
+ *  2. sandbox download /tmp/.runtime/nemoclaw/gateway-token  (non-root mode — sandbox:sandbox 0400)
+ *  3. sandbox download openclaw.json → gateway.auth.token  (pre-externalization images)
+ *
+ * Path 1 uses the same kubectl-via-K3s pattern as shields.ts — it runs as
+ * root inside the pod so it can read gateway-owned files.
+ * Path 2 works because sandbox download runs as the sandbox user, which owns
+ * the non-root token file.
  */
 function fetchGatewayAuthTokenFromSandbox(sandboxName) {
+  // 1. Root mode: kubectl exec reads gateway:gateway 0400 file (same as shields.ts)
+  try {
+    const K3S_CONTAINER = "openshell-cluster-nemoclaw";
+    const result = execFileSync("docker", [
+      "exec", K3S_CONTAINER,
+      "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
+      "cat", "/run/nemoclaw/gateway-token",
+    ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 });
+    const token = result.toString().trim();
+    if (token.length > 0) return token;
+  } catch {
+    // kubectl exec not available or file absent — fall through
+  }
+
+  // 2. Non-root mode: token at $XDG_RUNTIME_DIR/nemoclaw/gateway-token
+  // (sandbox-owned, downloadable via openshell sandbox download)
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
   try {
     const destDir = `${tmpDir}${path.sep}`;
+    const nonRootResult = runOpenshell(
+      ["sandbox", "download", sandboxName, "/tmp/.runtime/nemoclaw/gateway-token", destDir],
+      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
+    );
+    if (nonRootResult.status === 0) {
+      const tokenPath = findFileRecursive(tmpDir, "gateway-token");
+      if (tokenPath) {
+        const token = fs.readFileSync(tokenPath, "utf-8").trim();
+        if (token.length > 0) return token;
+      }
+    }
+
+    // 3. Legacy: openclaw.json (pre-externalization images)
     const result = runOpenshell(
       ["sandbox", "download", sandboxName, "/sandbox/.openclaw/openclaw.json", destDir],
       { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
@@ -6401,7 +6545,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
       console.log(`  ${entry.label}: ${entry.url}`);
     }
     console.log(
-      `  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
+      `  Token:       see /tmp/gateway.log inside the sandbox, or re-run onboard.`,
     );
     console.log(
       `               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`,
@@ -6410,7 +6554,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
   console.log(`  ${"─".repeat(50)}`);
   console.log("");
   console.log("  To change settings later:");
-  console.log(`    Model:       openshell inference set -g nemoclaw -m <model> -p <provider>`);
+  console.log(`    Model:       openshell inference set -g nemoclaw --model <model> --provider <provider>`);
   console.log(`    Policies:    nemoclaw ${sandboxName} policy-add`);
   console.log("    Credentials: nemoclaw credentials reset <KEY>  then  nemoclaw onboard");
   console.log("");
@@ -6522,7 +6666,9 @@ async function onboard(opts = {}) {
       session = onboardSession.loadSession();
       if (!session || session.resumable === false) {
         console.error("  No resumable onboarding session was found.");
-        console.error("  Run: nemoclaw onboard");
+        console.error("  --resume only continues an interrupted onboarding run.");
+        console.error("  To change configuration on an existing sandbox, rebuild it:");
+        console.error("    nemoclaw onboard");
         process.exit(1);
       }
       const sessionFrom = session?.metadata?.fromDockerfile || null;
@@ -6731,6 +6877,43 @@ async function onboard(opts = {}) {
           nimContainer,
         });
         break;
+      }
+
+      // Prompt for the sandbox name and show the review gate BEFORE
+      // setupInference runs upsertProvider / `inference set` on the gateway.
+      // On retry (inferenceResult.retry === "selection") the user is re-prompted
+      // for provider/model above and sees this gate again with the new config.
+      // See #2221 (CodeRabbit).
+      if (!sandboxName) {
+        sandboxName = await promptValidatedSandboxName();
+      }
+      console.log(
+        formatOnboardConfigSummary({
+          provider,
+          model,
+          credentialEnv,
+          webSearchConfig,
+          enabledChannels:
+            selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
+          sandboxName,
+          notes: ["Sandbox build takes ~6 minutes on this host."],
+        }),
+      );
+      console.log("  Web search and messaging channels will be prompted next.");
+      if (!isNonInteractive() && !dangerouslySkipPermissions) {
+        const answer = (await promptOrDefault("  Apply this configuration? [Y/n]: ", null, "y"))
+          .trim()
+          .toLowerCase();
+        if (answer === "n" || answer === "no") {
+          console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
+          console.log(
+            "  Credentials entered so far are stored in ~/.nemoclaw/credentials.json —",
+          );
+          console.log(
+            "  clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
+          );
+          process.exit(0);
+        }
       }
 
       startRecordedStep("inference", { sandboxName, provider, model });
@@ -6986,11 +7169,13 @@ module.exports = {
   getDashboardForwardPort,
   getDashboardForwardStartCommand,
   getDashboardGuidanceLines,
+  findDashboardForwardOwner,
   startGatewayForRecovery,
   runCaptureOpenshell,
   setupInference,
   setupMessagingChannels,
   setupNim,
+  formatOnboardConfigSummary,
   isInferenceRouteReady,
   isNonInteractive,
   isOpenclawReady,

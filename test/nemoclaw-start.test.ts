@@ -99,13 +99,6 @@ describe("nemoclaw-start _SANDBOX_HOME variable (#1609)", () => {
     }
   });
 
-  it("uses _SANDBOX_HOME for rc file paths in export_gateway_token", () => {
-    const exportFn = src.match(/export_gateway_token\(\) \{([\s\S]*?)^\}/m);
-    expect(exportFn).toBeTruthy();
-    expect(exportFn[1]).toContain("${_SANDBOX_HOME}/.bashrc");
-    expect(exportFn[1]).toContain("${_SANDBOX_HOME}/.profile");
-  });
-
   it("uses _SANDBOX_HOME for rc file paths in install_configure_guard", () => {
     const guardFn = src.match(
       /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
@@ -116,50 +109,174 @@ describe("nemoclaw-start _SANDBOX_HOME variable (#1609)", () => {
   });
 });
 
-describe("nemoclaw-start gateway token export (#1114)", () => {
+describe("nemoclaw-start externalized gateway token", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("defines _read_gateway_token helper used by both export and dashboard", () => {
-    expect(src).toMatch(/_read_gateway_token\(\) \{/);
-    // export_gateway_token calls the helper
-    expect(src).toMatch(/token="\$\(_read_gateway_token\)"/);
-    // print_dashboard_urls also calls the helper
+  it("defines generate_gateway_token that writes to GATEWAY_TOKEN_FILE", () => {
+    const fn = src.match(/generate_gateway_token\(\) \{([\s\S]*?)^\}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("GATEWAY_TOKEN_FILE");
+    expect(fn[1]).toContain("secrets.token_hex(32)");
+    expect(fn[1]).toContain("chown gateway:gateway");
+    expect(fn[1]).toContain("chmod 400");
+  });
+
+  it("defines GATEWAY_TOKEN_FILE at /run/nemoclaw/gateway-token", () => {
+    expect(src).toContain('GATEWAY_TOKEN_FILE="${GATEWAY_TOKEN_DIR}/gateway-token"');
+    expect(src).toContain('GATEWAY_TOKEN_DIR="/run/nemoclaw"');
+  });
+
+  it("defines _read_gateway_token that reads from the token file", () => {
+    const fn = src.match(/_read_gateway_token\(\) \{([\s\S]*?)^\}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("GATEWAY_TOKEN_FILE");
+  });
+
+  it("passes OPENCLAW_GATEWAY_TOKEN env var only on gateway launch line", () => {
+    expect(src).toMatch(
+      /OPENCLAW_GATEWAY_TOKEN="\$\(_read_gateway_token\)"[\s\\]*\n\s*nohup gosu gateway/,
+    );
+  });
+
+  it("does not export token to sandbox user shell env", () => {
+    // export_gateway_token must not exist — token must never reach .bashrc
+    expect(src).not.toMatch(/^export_gateway_token\(\)/m);
+  });
+
+  it("print_dashboard_urls uses _read_gateway_token", () => {
     const dashboardFn = src.match(/print_dashboard_urls\(\) \{([\s\S]*?)^\}/m);
     expect(dashboardFn).toBeTruthy();
     expect(dashboardFn[1]).toContain("_read_gateway_token");
   });
 
-  it("uses with-open context manager in the Python snippet", () => {
-    const helperFn = src.match(/_read_gateway_token\(\) \{([\s\S]*?)^\}/m);
-    expect(helperFn).toBeTruthy();
-    expect(helperFn[1]).toContain("with open(");
+  it("calls generate_gateway_token in root path", () => {
+    const rootBlock = src.match(
+      /# ── Root path[\s\S]*?generate_gateway_token/,
+    );
+    expect(rootBlock).toBeTruthy();
   });
 
-  it("unsets stale OPENCLAW_GATEWAY_TOKEN when token is empty", () => {
-    const exportFn = src.match(/export_gateway_token\(\) \{([\s\S]*?)^\}/m);
-    expect(exportFn).toBeTruthy();
-    const body = exportFn[1];
-    // Must unset before returning on empty token
-    const unsetPos = body.indexOf("unset OPENCLAW_GATEWAY_TOKEN");
-    const returnPos = body.indexOf("return");
-    expect(unsetPos).toBeGreaterThan(-1);
-    expect(returnPos).toBeGreaterThan(-1);
-    expect(unsetPos).toBeLessThan(returnPos);
+  it("generates a token in non-root mode for gateway auth", () => {
+    // The non-root path generates a token for the gateway
+    expect(src).toContain("_NONROOT_GATEWAY_TOKEN");
+    expect(src).toContain('OPENCLAW_GATEWAY_TOKEN="$_NONROOT_GATEWAY_TOKEN"');
   });
 
-  it("shell-escapes the token before embedding in rc snippet", () => {
-    const exportFn = src.match(/export_gateway_token\(\) \{([\s\S]*?)^\}/m);
-    expect(exportFn).toBeTruthy();
-    const body = exportFn[1];
-    // Must use single quotes around the escaped token value
-    expect(body).toContain("escaped_token");
-    expect(body).toMatch(/export OPENCLAW_GATEWAY_TOKEN='\$\{escaped_token\}'/);
+  it("writes non-root token file with restrictive permissions", () => {
+    // Non-root token file uses XDG_RUNTIME_DIR, not /run
+    expect(src).toContain('_NONROOT_TOKEN_DIR="${XDG_RUNTIME_DIR:-/tmp}/nemoclaw"');
+    // File must be locked down to 0400
+    expect(src).toContain('chmod 0400 "$_NONROOT_TOKEN_FILE"');
   });
 
-  it("calls export_gateway_token in both root and non-root paths", () => {
-    const calls = src.match(/export_gateway_token/g) || [];
-    // definition + 2 call sites
-    expect(calls.length).toBeGreaterThanOrEqual(3);
+  it("does not export token to sandbox shell env", () => {
+    expect(src).not.toMatch(/export OPENCLAW_GATEWAY_TOKEN/);
+  });
+});
+
+describe("Dockerfile gateway token externalization", () => {
+  const dockerfile = fs.readFileSync(
+    path.join(import.meta.dirname, "..", "Dockerfile"),
+    "utf-8",
+  );
+
+  it("writes empty token in initial openclaw.json config", () => {
+    expect(dockerfile).toContain("'auth': {'token': ''}");
+  });
+
+  it("clears any auto-generated token after openclaw doctor/plugins", () => {
+    // openclaw doctor --fix may auto-generate a gateway token when it finds
+    // an empty one. A post-doctor step must re-clear it so the token is never
+    // baked into the image. Verify the clearing step comes AFTER doctor.
+    const doctorIdx = dockerfile.indexOf("openclaw doctor --fix");
+    const clearIdx = dockerfile.indexOf("cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''");
+    expect(doctorIdx).toBeGreaterThan(-1);
+    expect(clearIdx).toBeGreaterThan(-1);
+    expect(clearIdx).toBeGreaterThan(doctorIdx);
+  });
+
+  it("pins config hash after token is cleared", () => {
+    const clearIdx = dockerfile.indexOf("['token'] = ''");
+    const hashIdx = dockerfile.indexOf("sha256sum /sandbox/.openclaw/openclaw.json");
+    // Both must exist and hash must come after the clear step
+    expect(clearIdx).toBeGreaterThan(-1);
+    expect(hashIdx).toBeGreaterThan(-1);
+    expect(hashIdx).toBeGreaterThan(clearIdx);
+  });
+});
+
+describe("gateway token security regression tests", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const dockerfile = fs.readFileSync(
+    path.join(import.meta.dirname, "..", "Dockerfile"),
+    "utf-8",
+  );
+
+  it("openclaw.json never contains a non-empty gateway auth token at build time", () => {
+    // The Dockerfile must write an empty token, clear after doctor, then pin hash.
+    // At no point should a real token survive into the final image layer.
+    expect(dockerfile).toContain("'auth': {'token': ''}");
+    // Post-doctor clearing step exists
+    expect(dockerfile).toContain("cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''");
+  });
+
+  it("gateway process runs under a distinct uid via gosu in root mode", () => {
+    // The gateway must run as the 'gateway' user, not as sandbox or root.
+    // This ensures /proc/<pid>/environ is uid-gated from the sandbox user.
+    expect(src).toMatch(/gosu gateway.*gateway run/);
+  });
+
+  it("sandbox shell env and rc files never receive the gateway token", () => {
+    // No global export of OPENCLAW_GATEWAY_TOKEN
+    expect(src).not.toMatch(/export OPENCLAW_GATEWAY_TOKEN/);
+    // Old export_gateway_token function must not exist (wrote to .bashrc/.profile)
+    expect(src).not.toMatch(/^export_gateway_token\(\)/m);
+    // No marker blocks for token in rc files
+    expect(src).not.toContain("nemoclaw-gateway-token begin");
+  });
+
+  it("non-root token file uses restrictive permissions (0400)", () => {
+    expect(src).toContain('chmod 0400 "$_NONROOT_TOKEN_FILE"');
+  });
+
+  it("non-root token file is removed before rewrite to prevent stale reads", () => {
+    // rm -f before write prevents reading a stale token from a previous start
+    const rmIdx = src.indexOf('rm -f "$_NONROOT_TOKEN_FILE"');
+    const writeIdx = src.indexOf('printf \'%s\' "$_NONROOT_GATEWAY_TOKEN" >"$_NONROOT_TOKEN_FILE"');
+    expect(rmIdx).toBeGreaterThan(-1);
+    expect(writeIdx).toBeGreaterThan(-1);
+    expect(writeIdx).toBeGreaterThan(rmIdx);
+  });
+
+  it("host-side token retrieval tries three paths in the correct order", () => {
+    const onboardSrc = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const fn = onboardSrc.match(
+      /function fetchGatewayAuthTokenFromSandbox[\s\S]*?^}/m,
+    );
+    expect(fn).toBeTruthy();
+    const body = fn[0];
+    // Path 1: kubectl exec for root-mode token
+    const kubectlIdx = body.indexOf("/run/nemoclaw/gateway-token");
+    // Path 2: sandbox download for non-root token
+    const nonRootIdx = body.indexOf("/tmp/.runtime/nemoclaw/gateway-token");
+    // Path 3: legacy openclaw.json fallback
+    const legacyIdx = body.indexOf("openclaw.json");
+    expect(kubectlIdx).toBeGreaterThan(-1);
+    expect(nonRootIdx).toBeGreaterThan(-1);
+    expect(legacyIdx).toBeGreaterThan(-1);
+    // Correct order: kubectl → non-root download → legacy
+    expect(nonRootIdx).toBeGreaterThan(kubectlIdx);
+    expect(legacyIdx).toBeGreaterThan(nonRootIdx);
+  });
+
+  it("entrypoint documents both root and non-root token paths", () => {
+    // Root mode path documented
+    expect(src).toContain("Root mode:     /run/nemoclaw/gateway-token");
+    // Non-root mode path documented
+    expect(src).toContain("Non-root mode: $XDG_RUNTIME_DIR/nemoclaw/gateway-token");
   });
 });
 
@@ -304,12 +421,12 @@ describe("runtime model override (#759)", () => {
     const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
     expect(nonRootBlock).toBeTruthy();
     expect(nonRootBlock[1]).toMatch(
-      /verify_config_integrity[\s\S]*?apply_model_override[\s\S]*?export_gateway_token/,
+      /verify_config_integrity[\s\S]*?apply_model_override/,
     );
 
-    // Root path: verify_config_integrity → apply_model_override → apply_cors_override
+    // Root path: verify_config_integrity → apply_model_override → apply_cors_override → generate_gateway_token
     const rootBlock = src.match(
-      /# ── Root path[\s\S]*?verify_config_integrity[\s\S]*?apply_model_override[\s\S]*?apply_cors_override[\s\S]*?export_gateway_token/,
+      /# ── Root path[\s\S]*?verify_config_integrity[\s\S]*?apply_model_override[\s\S]*?apply_cors_override[\s\S]*?generate_gateway_token/,
     );
     expect(rootBlock).toBeTruthy();
   });
@@ -426,11 +543,11 @@ describe("runtime CORS origin override (#719)", () => {
     const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
     expect(nonRootBlock).toBeTruthy();
     expect(nonRootBlock[1]).toMatch(
-      /apply_model_override[\s\S]*?apply_cors_override[\s\S]*?apply_slack_token_override[\s\S]*?export_gateway_token/,
+      /apply_model_override[\s\S]*?apply_cors_override[\s\S]*?apply_slack_token_override/,
     );
 
     const rootBlock = src.match(
-      /# ── Root path[\s\S]*?apply_model_override\n\s*apply_cors_override\n\s*apply_slack_token_override\n\s*export_gateway_token/,
+      /# ── Root path[\s\S]*?apply_model_override\n\s*apply_cors_override\n\s*apply_slack_token_override\n\s*generate_gateway_token/,
     );
     expect(rootBlock).toBeTruthy();
   });
@@ -472,6 +589,78 @@ describe("runtime CORS origin override (#719)", () => {
     const fn = src.match(/apply_cors_override\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
     expect(fn[1]).toContain("control characters");
+  });
+});
+
+describe("Slack channel guard — unhandled-rejection safety net (#2340)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines install_slack_channel_guard function", () => {
+    expect(src).toMatch(/install_slack_channel_guard\(\) \{/);
+  });
+
+  it("calls install_slack_channel_guard after configure_messaging_channels in both paths", () => {
+    const nonRootBlock = src.match(
+      /if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/,
+    );
+    expect(nonRootBlock).toBeTruthy();
+    expect(nonRootBlock[1]).toMatch(
+      /configure_messaging_channels[\s\S]*?install_slack_channel_guard/,
+    );
+
+    const rootBlock = src.match(
+      /# ── Root path[\s\S]*?configure_messaging_channels[\s\S]*?install_slack_channel_guard/,
+    );
+    expect(rootBlock).toBeTruthy();
+  });
+
+  it("is a no-op when no Slack channel is configured", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain('grep -q \'"slack"\'');
+    expect(fn[1]).toContain("return 0");
+  });
+
+  it("installs a Node.js preload script via NODE_OPTIONS", () => {
+    expect(src).toContain('export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT"');
+  });
+
+  it("catches unhandled promise rejections from Slack", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("unhandledRejection");
+    expect(fn[1]).toContain("isSlackRejection");
+  });
+
+  it("catches uncaught exceptions from Slack (sync throws)", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("uncaughtException");
+  });
+
+  it("re-throws non-Slack rejections to preserve default behavior", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("throw reason");
+    expect(fn[1]).toContain("process.exit(1)");
+  });
+
+  it("detects Slack errors by error code, message, stack trace, and domain", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("slack_webapi_platform_error");
+    expect(fn[1]).toContain("invalid_auth");
+    expect(fn[1]).toContain("token_revoked");
+    expect(fn[1]).toContain("@slack/");
+    // Proxy/network errors targeting Slack domains (CONNECT tunnel failures)
+    expect(fn[1]).toMatch(/msg\.indexOf\('slack\.com'\)\s*!==\s*-1/);
+  });
+
+  it("logs caught Slack errors as warnings instead of crashing", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("provider failed to start");
+    expect(fn[1]).toContain("caught by safety net, gateway continues");
   });
 });
 
