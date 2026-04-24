@@ -102,14 +102,12 @@ describe("image cleanup: registry stores imageTag (#2086)", () => {
 
 describe("image cleanup: gc command exists (#2086)", () => {
   const nemoclawSrc = fs.readFileSync(path.join(ROOT, "src/nemoclaw.ts"), "utf-8");
+  const registrySrc = fs.readFileSync(path.join(ROOT, "src/lib/command-registry.ts"), "utf-8");
 
   it("gc is a global command", () => {
-    const globalBlock = nemoclawSrc.match(/GLOBAL_COMMANDS\s*=\s*new Set\(\[[\s\S]*?\]\)/);
-    expect(globalBlock).toBeTruthy();
-    if (!globalBlock) {
-      throw new Error("Expected GLOBAL_COMMANDS definition in src/nemoclaw.ts");
-    }
-    expect(globalBlock[0]).toContain('"gc"');
+    // GLOBAL_COMMANDS is now derived from the command registry.
+    expect(registrySrc).toContain('"nemoclaw gc"');
+    expect(nemoclawSrc).toContain("globalCommandTokens()");
   });
 
   it("gc command is dispatched in the CLI switch", () => {
@@ -135,12 +133,8 @@ describe("image cleanup: gc command exists (#2086)", () => {
     expect(gcBody).toContain("--yes");
   });
 
-  it("gc appears in help text", () => {
-    const helpMatch = nemoclawSrc.match(/function help\(\)[\s\S]*?^}/m);
-    expect(helpMatch).toBeTruthy();
-    if (!helpMatch) {
-      throw new Error("Expected help() in src/nemoclaw.ts");
-    }
-    expect(helpMatch[0]).toContain("nemoclaw gc");
+  it("gc appears in help text via registry", () => {
+    expect(registrySrc).toContain('"nemoclaw gc"');
+    expect(nemoclawSrc).toContain("registryCommandsByGroup");
   });
 });

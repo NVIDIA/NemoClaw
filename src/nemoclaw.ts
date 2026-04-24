@@ -80,6 +80,12 @@ const {
   createSystemDeps: createSessionDeps,
 } = require("./lib/sandbox-session-state");
 
+const {
+  commandsByGroup: registryCommandsByGroup,
+  canonicalUsageList,
+  globalCommandTokens,
+  sandboxActionTokens,
+} = require("./lib/command-registry");
 import {
   KNOWN_CHANNELS,
   clearChannelTokens,
@@ -89,30 +95,9 @@ import {
   persistChannelTokens,
 } from "./lib/sandbox-channels";
 
-// ── Global commands ──────────────────────────────────────────────
+// ── Global commands (derived from command registry) ──────────────
 
-const GLOBAL_COMMANDS = new Set([
-  "onboard",
-  "list",
-  "deploy",
-  "setup",
-  "setup-spark",
-  "start",
-  "stop",
-  "tunnel",
-  "status",
-  "debug",
-  "uninstall",
-  "credentials",
-  "backup-all",
-  "upgrade-sandboxes",
-  "gc",
-  "help",
-  "--help",
-  "-h",
-  "--version",
-  "-v",
-]);
+const GLOBAL_COMMANDS = globalCommandTokens();
 
 type CommandArgs = string[];
 type RunnerOptions = {
@@ -3571,94 +3556,69 @@ async function garbageCollectImages(args: string[] = []): Promise<void> {
 
 /** Print CLI usage with all commands, flags, and reconfiguration guidance. */
 function help() {
-  console.log(`
-  ${B}${G}NemoClaw${R}  ${D}v${getVersion()}${R}
-  ${D}Deploy more secure, always-on AI assistants with a single command.${R}
+  const PAD = 38; // column width for usage strings before description
+  const grouped = registryCommandsByGroup();
+  const lines = [];
 
-  ${G}Getting Started:${R}
-    ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
-    nemoclaw onboard ${D}--from <Dockerfile>${R}  Use a custom Dockerfile for the sandbox image
-                                    ${D}(non-interactive: ${NOTICE_ACCEPT_FLAG} or ${NOTICE_ACCEPT_ENV}=1)${R}
+  lines.push("");
+  lines.push(`  ${B}${G}NemoClaw${R}  ${D}v${getVersion()}${R}`);
+  lines.push(`  ${D}Deploy more secure, always-on AI assistants with a single command.${R}`);
 
-  ${G}Sandbox Management:${R}
-    ${B}nemoclaw list${R}                    List all sandboxes
-    nemoclaw <name> connect          Shell into a running sandbox
-    nemoclaw <name> status           Sandbox health + NIM status
-    nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
-    nemoclaw <name> snapshot create   Create a snapshot of sandbox state ${D}([--name <label>] to tag it)${R}
-    nemoclaw <name> snapshot list     List available snapshots
-    nemoclaw <name> snapshot restore  Restore state from a snapshot ${D}([v<N>|name|timestamp], omit for latest; --to <dst> clones into another sandbox, auto-created from this sandbox's image if missing)${R}
-    nemoclaw <name> rebuild          Upgrade sandbox to current agent version ${D}(--yes to skip prompt)${R}
-    nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
+  for (const [group, cmds] of grouped) {
+    lines.push("");
+    lines.push(`  ${G}${group}:${R}`);
 
-  ${G}Skills:${R}
-    nemoclaw <name> skill install <path>  Deploy a skill directory to the sandbox
+    let isFirstInGroup = true;
+    for (const cmd of cmds) {
+      const usage = cmd.usage;
+      const desc = cmd.description;
+      const flags = cmd.flags ? ` ${D}${cmd.flags}${R}` : "";
 
-  ${G}Policy Presets:${R}
-    nemoclaw <name> policy-add [preset]    Add a network or filesystem policy preset ${D}(--yes, --dry-run)${R}
-    nemoclaw <name> policy-remove [preset] Remove an applied policy preset ${D}(--yes, --dry-run)${R}
-    nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
+      // Bold the first command in each group
+      const prefix = isFirstInGroup ? B : "";
+      const suffix = isFirstInGroup ? R : "";
 
-  ${G}Messaging Channels:${R}
-    nemoclaw <name> channels list             List supported messaging channels
-    nemoclaw <name> channels add <channel>    Save credentials and rebuild ${D}(telegram|discord|slack)${R}
-    nemoclaw <name> channels remove <channel> Clear credentials and rebuild
-    nemoclaw <name> channels stop <channel>   Disable channel (keeps credentials)
-    nemoclaw <name> channels start <channel>  Re-enable a previously stopped channel
+      // Deprecated commands get dim styling
+      const dPrefix = cmd.deprecated ? D : "";
+      const dSuffix = cmd.deprecated ? R : "";
 
-  ${G}Compatibility Commands:${R}
-    nemoclaw setup                   Deprecated alias for ${B}nemoclaw onboard${R}
-    nemoclaw setup-spark             Deprecated alias for ${B}nemoclaw onboard${R}
-    nemoclaw deploy <instance>       Deprecated Brev-specific bootstrap path
+      const displayUsage = `${dPrefix}${prefix}${usage}${suffix}${dSuffix}`;
+      const displayDesc = cmd.deprecated ? `${D}${desc}${R}` : desc;
 
-  ${G}Services:${R}
-    nemoclaw tunnel start            Start the cloudflared public-URL tunnel
-    nemoclaw tunnel stop             Stop the cloudflared public-URL tunnel
-    nemoclaw start                   ${D}Deprecated alias for 'tunnel start'${R}
-    nemoclaw stop                    ${D}Deprecated alias for 'tunnel stop'${R}
-    nemoclaw status                  Show sandbox list and service status
+      // Calculate plain-text length for padding (strip ANSI)
+      const padding = Math.max(1, PAD - usage.length);
+      lines.push(`    ${displayUsage}${" ".repeat(padding)}${displayDesc}${flags}`);
 
-  Troubleshooting:
-    nemoclaw debug [--quick] [--sandbox NAME]
-                                     Collect diagnostics for bug reports
-    nemoclaw debug --output FILE     Save diagnostics tarball for GitHub issues
+      isFirstInGroup = false;
+    }
+  }
 
-  ${G}Credentials:${R}
-    nemoclaw credentials list        List stored credential keys
-    nemoclaw credentials reset <KEY> Remove a stored credential so onboard re-prompts
+  // ── Uninstall flags (static, not in registry) ──
+  lines.push("");
+  lines.push(`  ${G}Uninstall flags:${R}`);
+  lines.push(`    --yes${" ".repeat(29)}Skip the confirmation prompt`);
+  lines.push(`    --keep-openshell${" ".repeat(18)}Leave the openshell binary installed`);
+  lines.push(`    --delete-models${" ".repeat(19)}Remove NemoClaw-pulled Ollama models`);
 
-  ${G}Backup:${R}
-    nemoclaw backup-all              Back up all sandbox state before upgrade
+  // ── Reconfiguration (no nemoclaw-prefixed lines to avoid parser phantoms) ──
+  lines.push("");
+  lines.push(`  ${G}Reconfiguration (after onboard):${R}`);
+  lines.push(
+    `    ${D}• Change inference model:  openshell inference set -g nemoclaw --model <model> --provider <provider>${R}`,
+  );
+  lines.push(`    ${D}• Add network presets:     use the policy-add command on your sandbox${R}`);
+  lines.push(`    ${D}• Change credentials:      credentials reset <KEY>, then re-run onboard${R}`);
+  lines.push(`    ${D}• openclaw.json is read-only inside the sandbox (Landlock enforced).${R}`);
+  lines.push(`    ${D}  To change OpenClaw settings, re-run onboard to rebuild the sandbox.${R}`);
 
-  ${G}Upgrade:${R}
-    nemoclaw upgrade-sandboxes       Detect and rebuild stale sandboxes ${D}(--check, --auto)${R}
+  // ── Footer ──
+  lines.push("");
+  lines.push(`  ${D}Powered by NVIDIA OpenShell · Nemotron · Agent Toolkit`);
+  lines.push(`  Credentials saved in ~/.nemoclaw/credentials.json (mode 600)${R}`);
+  lines.push(`  ${D}https://www.nvidia.com/nemoclaw${R}`);
+  lines.push("");
 
-  ${G}Cleanup:${R}
-    nemoclaw gc                      Remove orphaned sandbox Docker images ${D}(--yes|--force, --dry-run)${R}
-    nemoclaw uninstall [flags]       Run uninstall.sh (local only; no remote fallback)
-
-  ${G}Uninstall flags:${R}
-    --yes                            Skip the confirmation prompt
-    --keep-openshell                 Leave the openshell binary installed
-    --delete-models                  Remove NemoClaw-pulled Ollama models
-
-  ${G}Reconfiguration (after onboard):${R}
-    ${D}Change inference model at runtime (no re-onboard needed):${R}
-      openshell inference set -g nemoclaw --model <model> --provider <provider>
-
-    ${D}Add network presets (e.g. Telegram, GitHub) to a running sandbox:${R}
-      nemoclaw <name> policy-add
-
-    ${D}Change credentials, messaging channels, or sandbox image settings:${R}
-      nemoclaw credentials reset <KEY>   ${D}then${R}   nemoclaw onboard
-
-    ${D}openclaw.json is read-only inside the sandbox (Landlock enforced).${R}
-    ${D}To change OpenClaw settings, re-run nemoclaw onboard to rebuild the sandbox.${R}
-
-  ${D}Powered by NVIDIA OpenShell · Nemotron · Agent Toolkit
-  Credentials saved in ~/.nemoclaw/credentials.json (mode 600)${R}
-  ${D}https://www.nvidia.com/nemoclaw${R}
-`);
+  console.log(lines.join("\n"));
 }
 
 // ── Dispatch ─────────────────────────────────────────────────────
@@ -3670,6 +3630,12 @@ const [cmd, ...args] = process.argv.slice(2);
   // No command → help
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     help();
+    return;
+  }
+
+  // Internal developer flag — dump canonical command list for check-docs.sh parity checks
+  if (cmd === "--dump-commands") {
+    canonicalUsageList().forEach((c: string) => console.log(c));
     return;
   }
 
@@ -3742,22 +3708,8 @@ const [cmd, ...args] = process.argv.slice(2);
   // Sandbox-scoped commands: nemoclaw <name> <action>
   // If the registry doesn't know this name but the action is a sandbox-scoped
   // command, attempt recovery — the sandbox may still be live with a stale registry.
-  const sandboxActions = [
-    "connect",
-    "status",
-    "logs",
-    "policy-add",
-    "policy-remove",
-    "policy-list",
-    "destroy",
-    "skill",
-    "rebuild",
-    "snapshot",
-    "shields",
-    "config",
-    "channels",
-    "",
-  ];
+  // Derived from command registry — single source of truth
+  const sandboxActions = sandboxActionTokens();
   if (!registry.getSandbox(cmd) && sandboxActions.includes(args[0] || "")) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });
