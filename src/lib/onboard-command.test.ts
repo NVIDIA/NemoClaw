@@ -9,6 +9,14 @@ import {
   runOnboardCommand,
 } from "./onboard-command";
 
+function exitWithCode(code: number): never {
+  throw new Error(String(code));
+}
+
+function exitWithPrefixedCode(code: number): never {
+  throw new Error(`exit:${code}`);
+}
+
 describe("onboard command", () => {
   it("parses onboard flags", () => {
     expect(
@@ -19,9 +27,7 @@ describe("onboard command", () => {
         {
           env: {},
           error: () => {},
-          exit: ((code: number) => {
-            throw new Error(String(code));
-          }) as never,
+          exit: exitWithCode,
         },
       ),
     ).toEqual({
@@ -44,9 +50,7 @@ describe("onboard command", () => {
         {
           env: { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" },
           error: () => {},
-          exit: ((code: number) => {
-            throw new Error(String(code));
-          }) as never,
+          exit: exitWithCode,
         },
       ),
     ).toEqual({
@@ -69,9 +73,7 @@ describe("onboard command", () => {
       env: {},
       runOnboard,
       error: () => {},
-      exit: ((code: number) => {
-        throw new Error(String(code));
-      }) as never,
+      exit: exitWithCode,
     });
     expect(runOnboard).toHaveBeenCalledWith({
       nonInteractive: false,
@@ -95,9 +97,7 @@ describe("onboard command", () => {
       runOnboard,
       log: (message = "") => lines.push(message),
       error: () => {},
-      exit: ((code: number) => {
-        throw new Error(String(code));
-      }) as never,
+      exit: exitWithCode,
     });
     expect(runOnboard).not.toHaveBeenCalled();
     expect(lines.join("\n")).toContain("Usage: nemoclaw onboard");
@@ -115,9 +115,7 @@ describe("onboard command", () => {
         {
           env: {},
           error: () => {},
-          exit: ((code: number) => {
-            throw new Error(String(code));
-          }) as never,
+          exit: exitWithCode,
         },
       ),
     ).toEqual({
@@ -140,9 +138,7 @@ describe("onboard command", () => {
         {
           env: {},
           error: () => {},
-          exit: ((code: number) => {
-            throw new Error(`exit:${code}`);
-          }) as never,
+          exit: exitWithPrefixedCode,
         },
       ),
     ).toThrow("exit:1");
@@ -158,9 +154,7 @@ describe("onboard command", () => {
         {
           env: {},
           error: (message = "") => errors.push(message),
-          exit: ((code: number) => {
-            throw new Error(`exit:${code}`);
-          }) as never,
+          exit: exitWithPrefixedCode,
         },
       ),
     ).toThrow("exit:1");
@@ -178,9 +172,7 @@ describe("onboard command", () => {
           env: {},
           listAgents: () => ["openclaw", "hermes"],
           error: () => {},
-          exit: ((code: number) => {
-            throw new Error(String(code));
-          }) as never,
+          exit: exitWithCode,
         },
       ),
     ).toEqual({
@@ -205,9 +197,7 @@ describe("onboard command", () => {
           env: {},
           listAgents: () => ["openclaw", "hermes"],
           error: (message = "") => errors.push(message),
-          exit: ((code: number) => {
-            throw new Error(`exit:${code}`);
-          }) as never,
+          exit: exitWithPrefixedCode,
         },
       ),
     ).toThrow("exit:1");
@@ -227,9 +217,7 @@ describe("onboard command", () => {
       runOnboard,
       log: (message = "") => lines.push(message),
       error: () => {},
-      exit: ((code: number) => {
-        throw new Error(String(code));
-      }) as never,
+      exit: exitWithCode,
     });
     expect(lines.join("\n")).toContain("setup-spark` is deprecated");
     expect(lines.join("\n")).toContain("Use `nemoclaw onboard` instead");
@@ -257,9 +245,7 @@ describe("onboard command", () => {
       runOnboard,
       log: (message = "") => lines.push(message),
       error: () => {},
-      exit: ((code: number) => {
-        throw new Error(String(code));
-      }) as never,
+      exit: exitWithCode,
     });
     expect(lines.join("\n")).toContain("`nemoclaw setup` is deprecated");
     expect(lines.join("\n")).toContain("Use `nemoclaw onboard` instead");

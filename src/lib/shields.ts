@@ -37,19 +37,45 @@ const STATE_DIR = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state");
 const K3S_CONTAINER = "openshell-cluster-nemoclaw";
 
 function kubectlExec(sandboxName: string, cmd: string[]): void {
-  execFileSync("docker", [
-    "exec", K3S_CONTAINER,
-    "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
-    ...cmd,
-  ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 });
+  execFileSync(
+    "docker",
+    [
+      "exec",
+      K3S_CONTAINER,
+      "kubectl",
+      "exec",
+      "-n",
+      "openshell",
+      sandboxName,
+      "-c",
+      "agent",
+      "--",
+      ...cmd,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+  );
 }
 
 function kubectlExecCapture(sandboxName: string, cmd: string[]): string {
-  return execFileSync("docker", [
-    "exec", K3S_CONTAINER,
-    "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
-    ...cmd,
-  ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 }).toString().trim();
+  return execFileSync(
+    "docker",
+    [
+      "exec",
+      K3S_CONTAINER,
+      "kubectl",
+      "exec",
+      "-n",
+      "openshell",
+      sandboxName,
+      "-c",
+      "agent",
+      "--",
+      ...cmd,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+  )
+    .toString()
+    .trim();
 }
 
 // Re-export for tests and external consumers
@@ -79,7 +105,8 @@ function loadShieldsState(sandboxName: string): ShieldsState {
   const filePath = stateFilePath(sandboxName);
   if (!fs.existsSync(filePath)) return {};
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as ShieldsState;
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return isShieldsState(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -104,6 +131,58 @@ interface TimerMarker {
   restoreAt: string;
 }
 
+type UnknownRecord = { [key: string]: unknown };
+
+function isObjectRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
+function isOptionalNumber(value: unknown): value is number | undefined {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalNullableString(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+function isOptionalNullableNumber(value: unknown): value is number | null | undefined {
+  return (
+    value === undefined || value === null || (typeof value === "number" && Number.isFinite(value))
+  );
+}
+
+function isShieldsState(value: unknown): value is ShieldsState {
+  return (
+    isObjectRecord(value) &&
+    isOptionalBoolean(value.shieldsDown) &&
+    isOptionalNullableString(value.shieldsDownAt) &&
+    isOptionalNullableNumber(value.shieldsDownTimeout) &&
+    isOptionalNullableString(value.shieldsDownReason) &&
+    isOptionalNullableString(value.shieldsDownPolicy) &&
+    isOptionalNullableString(value.shieldsPolicySnapshotPath) &&
+    isOptionalBoolean(value.permanent) &&
+    isOptionalString(value.updatedAt)
+  );
+}
+
+function isTimerMarker(value: unknown): value is TimerMarker {
+  return (
+    isObjectRecord(value) &&
+    typeof value.pid === "number" &&
+    typeof value.sandboxName === "string" &&
+    typeof value.snapshotPath === "string" &&
+    typeof value.restoreAt === "string"
+  );
+}
+
 function timerMarkerPath(sandboxName: string): string {
   return path.join(STATE_DIR, `shields-timer-${sandboxName}.json`);
 }
@@ -112,7 +191,8 @@ function readTimerMarker(sandboxName: string): TimerMarker | null {
   const p = timerMarkerPath(sandboxName);
   if (!fs.existsSync(p)) return null;
   try {
-    return JSON.parse(fs.readFileSync(p, "utf-8")) as TimerMarker;
+    const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
+    return isTimerMarker(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -147,15 +227,40 @@ function killTimer(sandboxName: string): void {
 // read_only) + chown/chmod below.
 // ---------------------------------------------------------------------------
 
-function unlockAgentConfig(sandboxName: string, target: { configPath: string; configDir: string }): void {
+function unlockAgentConfig(
+  sandboxName: string,
+  target: { configPath: string; configDir: string },
+): void {
   const errors: string[] = [];
-  try { kubectlExec(sandboxName, ["chattr", "-i", target.configPath]); } catch { errors.push("chattr -i"); }
-  try { kubectlExec(sandboxName, ["chown", "sandbox:sandbox", target.configPath]); } catch { errors.push("chown config file"); }
-  try { kubectlExec(sandboxName, ["chmod", "600", target.configPath]); } catch { errors.push("chmod 600 config file"); }
-  try { kubectlExec(sandboxName, ["chown", "sandbox:sandbox", target.configDir]); } catch { errors.push("chown config dir"); }
-  try { kubectlExec(sandboxName, ["chmod", "700", target.configDir]); } catch { errors.push("chmod 700 config dir"); }
+  try {
+    kubectlExec(sandboxName, ["chattr", "-i", target.configPath]);
+  } catch {
+    errors.push("chattr -i");
+  }
+  try {
+    kubectlExec(sandboxName, ["chown", "sandbox:sandbox", target.configPath]);
+  } catch {
+    errors.push("chown config file");
+  }
+  try {
+    kubectlExec(sandboxName, ["chmod", "600", target.configPath]);
+  } catch {
+    errors.push("chmod 600 config file");
+  }
+  try {
+    kubectlExec(sandboxName, ["chown", "sandbox:sandbox", target.configDir]);
+  } catch {
+    errors.push("chown config dir");
+  }
+  try {
+    kubectlExec(sandboxName, ["chmod", "700", target.configDir]);
+  } catch {
+    errors.push("chmod 700 config dir");
+  }
   if (errors.length > 0) {
-    console.error(`  Warning: Some unlock operations failed: ${errors.join(", ")}. Config may remain read-only.`);
+    console.error(
+      `  Warning: Some unlock operations failed: ${errors.join(", ")}. Config may remain read-only.`,
+    );
   }
 }
 
@@ -179,28 +284,44 @@ function unlockAgentConfig(sandboxName: string, target: { configPath: string; co
 // runtime environment supports it.
 // ---------------------------------------------------------------------------
 
-function lockAgentConfig(sandboxName: string, target: { configPath: string; configDir: string }): void {
+function lockAgentConfig(
+  sandboxName: string,
+  target: { configPath: string; configDir: string },
+): void {
   const errors: string[] = [];
 
-  try { kubectlExec(sandboxName, ["chmod", "444", target.configPath]); }
-  catch { errors.push("chmod 444 config file"); }
+  try {
+    kubectlExec(sandboxName, ["chmod", "444", target.configPath]);
+  } catch {
+    errors.push("chmod 444 config file");
+  }
 
-  try { kubectlExec(sandboxName, ["chown", "root:root", target.configPath]); }
-  catch { errors.push("chown root:root config file"); }
+  try {
+    kubectlExec(sandboxName, ["chown", "root:root", target.configPath]);
+  } catch {
+    errors.push("chown root:root config file");
+  }
 
-  try { kubectlExec(sandboxName, ["chmod", "755", target.configDir]); }
-  catch { errors.push("chmod 755 config dir"); }
+  try {
+    kubectlExec(sandboxName, ["chmod", "755", target.configDir]);
+  } catch {
+    errors.push("chmod 755 config dir");
+  }
 
-  try { kubectlExec(sandboxName, ["chown", "root:root", target.configDir]); }
-  catch { errors.push("chown root:root config dir"); }
+  try {
+    kubectlExec(sandboxName, ["chown", "root:root", target.configDir]);
+  } catch {
+    errors.push("chown root:root config dir");
+  }
 
   // Best-effort: the config file was never chattr +i'd by the entrypoint
   // (only the directory and symlinks were). kubectl exec may also lack
   // CAP_LINUX_IMMUTABLE. Track the result so verification doesn't require
   // something that was never there.
   let chattrSucceeded = true;
-  try { kubectlExec(sandboxName, ["chattr", "+i", target.configPath]); }
-  catch {
+  try {
+    kubectlExec(sandboxName, ["chattr", "+i", target.configPath]);
+  } catch {
     chattrSucceeded = false;
   }
 
@@ -217,7 +338,7 @@ function lockAgentConfig(sandboxName: string, target: { configPath: string; conf
     const [mode, owner] = perms.split(" ");
     if (!/^4[0-4][0-4]$/.test(mode)) issues.push(`file mode=${mode} (expected 444)`);
     if (owner !== "root:root") issues.push(`file owner=${owner} (expected root:root)`);
-  } catch (err: unknown) {
+  } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     issues.push(`file stat failed: ${msg}`);
   }
@@ -227,7 +348,7 @@ function lockAgentConfig(sandboxName: string, target: { configPath: string; conf
     const [dirMode, dirOwner] = dirPerms.split(" ");
     if (dirMode !== "755") issues.push(`dir mode=${dirMode} (expected 755)`);
     if (dirOwner !== "root:root") issues.push(`dir owner=${dirOwner} (expected root:root)`);
-  } catch (err: unknown) {
+  } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     issues.push(`dir stat failed: ${msg}`);
   }
@@ -355,10 +476,14 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   const actualScript = fs.existsSync(timerScriptJs) ? timerScriptJs : timerScript;
 
   try {
-    const child = fork(actualScript, [sandboxName, snapshotPath, restoreAt.toISOString(), target.configPath, target.configDir], {
-      detached: true,
-      stdio: ["ignore", "ignore", "ignore", "ipc"],
-    });
+    const child = fork(
+      actualScript,
+      [sandboxName, snapshotPath, restoreAt.toISOString(), target.configPath, target.configDir],
+      {
+        detached: true,
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      },
+    );
     child.disconnect();
     child.unref();
 
@@ -374,11 +499,13 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
       }),
       { mode: 0o600 },
     );
-  } catch (err: unknown) {
+  } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`  Cannot start auto-restore timer: ${message}`);
     console.error("  Rolling back — restoring policy from snapshot...");
-    const rollbackResult = run(buildPolicySetCommand(snapshotPath, sandboxName), { ignoreError: true });
+    const rollbackResult = run(buildPolicySetCommand(snapshotPath, sandboxName), {
+      ignoreError: true,
+    });
     let rollbackLocked = false;
     if (rollbackResult.status === 0) {
       try {
@@ -402,7 +529,9 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
     } else {
       // Leave state as shieldsDown: true — don't lie about protection level
       console.error("  Shields remain DOWN — manual intervention required.");
-      console.error(`  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`);
+      console.error(
+        `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
+      );
     }
     process.exit(1);
   }
@@ -472,11 +601,13 @@ function shieldsUp(sandboxName: string): void {
   console.log(`  Locking ${target.agentName} config (${target.configPath})...`);
   try {
     lockAgentConfig(sandboxName, target);
-  } catch (err: unknown) {
+  } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`  ERROR: ${message}`);
     console.error("  Shields remain DOWN — manual intervention required.");
-    console.error(`  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`);
+    console.error(
+      `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
+    );
     process.exit(1);
   }
 
@@ -511,7 +642,9 @@ function shieldsUp(sandboxName: string): void {
   const mins = Math.floor(durationSeconds / 60);
   const secs = durationSeconds % 60;
   console.log(`  Shields UP for ${sandboxName}`);
-  console.log(`  Duration: ${mins}m ${secs}s | Reason: ${state.shieldsDownReason ?? "not specified"}`);
+  console.log(
+    `  Duration: ${mins}m ${secs}s | Reason: ${state.shieldsDownReason ?? "not specified"}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +658,9 @@ function shieldsStatus(sandboxName: string): void {
 
   if (!state.shieldsDown) {
     console.log("  Shields: UP");
-    console.log(`  Policy:  default${state.shieldsPolicySnapshotPath ? " (last snapshot preserved)" : ""}`);
+    console.log(
+      `  Policy:  default${state.shieldsPolicySnapshotPath ? " (last snapshot preserved)" : ""}`,
+    );
     if (state.shieldsDownAt) {
       console.log(`  Last lowered: ${state.shieldsDownAt}`);
     }
@@ -535,9 +670,7 @@ function shieldsStatus(sandboxName: string): void {
   const downSince = state.shieldsDownAt ? new Date(state.shieldsDownAt) : null;
   const elapsed = downSince ? Math.floor((Date.now() - downSince.getTime()) / 1000) : 0;
   const remaining =
-    state.shieldsDownTimeout != null
-      ? Math.max(0, state.shieldsDownTimeout - elapsed)
-      : null;
+    state.shieldsDownTimeout != null ? Math.max(0, state.shieldsDownTimeout - elapsed) : null;
 
   console.log(`  Shields: DOWN${state.permanent ? " (permanent)" : ""}`);
   console.log(`  Since:   ${state.shieldsDownAt ?? "unknown"}`);

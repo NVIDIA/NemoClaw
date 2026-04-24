@@ -11,6 +11,14 @@ import { readConfigFile, writeConfigFile } from "./config-io";
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
 
+type ErrnoLike = Error | { code?: string | number } | null;
+
+function isErrnoException(error: ErrnoLike): error is NodeJS.ErrnoException {
+  return error !== null && typeof error === "object" && "code" in error;
+}
+
+type CredentialInput = string | null | undefined;
+
 export function resolveHomeDir(): string {
   const raw = process.env.HOME || os.homedir();
   if (!raw) {
@@ -31,7 +39,12 @@ export function resolveHomeDir(): string {
       );
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (
+      !(typeof error === "object" && error !== null && isErrnoException(error)) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
   }
   if (UNSAFE_HOME_PATHS.has(home)) {
     throw new Error(
@@ -68,12 +81,12 @@ export function loadCredentials(): Record<string, string> {
   return readConfigFile<Record<string, string>>(getCredsFile(), {});
 }
 
-export function normalizeCredentialValue(value: unknown): string {
+export function normalizeCredentialValue(value: CredentialInput): string {
   if (typeof value !== "string") return "";
   return value.replace(/\r/g, "").trim();
 }
 
-export function saveCredential(key: string, value: unknown): void {
+export function saveCredential(key: string, value: CredentialInput): void {
   const creds = loadCredentials();
   creds[key] = normalizeCredentialValue(value);
   writeConfigFile(getCredsFile(), creds);
@@ -118,12 +131,20 @@ export function promptSecret(question: string): Promise<string> {
       }
     }
 
-    function finish(fn: (value: string | Error) => void, value: string | Error) {
+    function resolvePrompt(value: string) {
       if (finished) return;
       finished = true;
       cleanup();
       output.write("\n");
-      fn(value);
+      resolve(value);
+    }
+
+    function rejectPrompt(error: Error) {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      output.write("\n");
+      reject(error);
     }
 
     function onData(chunk: Buffer | string) {
@@ -132,15 +153,12 @@ export function promptSecret(question: string): Promise<string> {
         const ch = text[i];
 
         if (ch === "\u0003") {
-          finish(
-            reject as (value: string | Error) => void,
-            Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }),
-          );
+          rejectPrompt(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
           return;
         }
 
         if (ch === "\r" || ch === "\n") {
-          finish(resolve as (value: string | Error) => void, answer.trim());
+          resolvePrompt(answer.trim());
           return;
         }
 
@@ -200,9 +218,8 @@ export function prompt(question: string, opts: { secret?: boolean } = {}): Promi
     }
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     let finished = false;
-    function finish(fn: (value: string | Error) => void, value: string | Error) {
-      if (finished) return;
-      finished = true;
+
+    function cleanup() {
       rl.close();
       if (!process.stdin.isTTY) {
         if (typeof process.stdin.pause === "function") {
@@ -212,15 +229,29 @@ export function prompt(question: string, opts: { secret?: boolean } = {}): Promi
           process.stdin.unref();
         }
       }
-      fn(value);
     }
+
+    function resolvePrompt(value: string) {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      resolve(value);
+    }
+
+    function rejectPrompt(error: Error) {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      reject(error);
+    }
+
     rl.on("SIGINT", () => {
       const error = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
-      finish(reject as (value: string | Error) => void, error);
+      rejectPrompt(error);
       process.kill(process.pid, "SIGINT");
     });
     rl.question(question, (answer) => {
-      finish(resolve as (value: string | Error) => void, answer.trim());
+      resolvePrompt(answer.trim());
     });
   });
 }

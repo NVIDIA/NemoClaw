@@ -6,8 +6,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const yaml: { load(input: string): unknown } = require("js-yaml");
 
 import { ROOT } from "./runner";
 import { DASHBOARD_PORT } from "./ports";
@@ -18,6 +16,9 @@ type ManifestScalar = string | number | boolean | null | Date;
 type ManifestValue = ManifestScalar | ManifestRecord | ManifestValue[];
 type ManifestRecord = { [key: string]: ManifestValue };
 type StringMap = { [key: string]: string };
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const yaml: { load(input: string): unknown } = require("js-yaml");
 
 export interface AgentHealthProbe {
   url: string;
@@ -85,7 +86,6 @@ export interface AgentDefinition {
   readonly policyPermissivePath: string | null;
   readonly pluginDir: string | null;
   readonly legacyPaths: AgentLegacyPaths | null;
-  [key: string]: unknown;
 }
 
 export interface AgentChoice {
@@ -305,7 +305,7 @@ export function loadAgent(name: string): AgentDefinition {
     },
 
     get dashboard(): AgentDashboard {
-      const d = (raw.dashboard as Partial<AgentDashboard>) || {};
+      const d = readObject(raw, "dashboard") ?? {};
       const kind: AgentDashboardKind = d.kind === "api" ? "api" : "ui";
       const defaultLabel = kind === "api" ? "API" : "UI";
       const normalizedLabel = typeof d.label === "string" ? d.label.trim() : "";

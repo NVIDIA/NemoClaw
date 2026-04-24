@@ -6,6 +6,12 @@ import path from "node:path";
 
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 
+type ErrnoLike = Error | { code?: string | number } | null;
+
+function isErrnoException(error: ErrnoLike): error is NodeJS.ErrnoException {
+  return error !== null && typeof error === "object" && "code" in error;
+}
+
 export interface SandboxEntry {
   name: string;
   createdAt?: string;
@@ -67,8 +73,12 @@ export function acquireLock(): void {
       }
       return;
     } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code !== "EEXIST") throw err;
+      if (
+        !(typeof error === "object" && error !== null && isErrnoException(error)) ||
+        error.code !== "EEXIST"
+      ) {
+        throw error;
+      }
       let ownerChecked = false;
       try {
         const ownerPid = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
@@ -79,7 +89,10 @@ export function acquireLock(): void {
             process.kill(ownerPid, 0);
             alive = true;
           } catch (killErr) {
-            alive = (killErr as NodeJS.ErrnoException).code === "EPERM";
+            alive =
+              typeof killErr === "object" && killErr !== null && isErrnoException(killErr)
+                ? killErr.code === "EPERM"
+                : false;
           }
           if (!alive) {
             const recheck = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
@@ -113,12 +126,22 @@ export function releaseLock(): void {
   try {
     fs.unlinkSync(LOCK_OWNER);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (
+      !(typeof error === "object" && error !== null && isErrnoException(error)) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
   }
   try {
     fs.rmSync(LOCK_DIR, { recursive: true, force: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (
+      !(typeof error === "object" && error !== null && isErrnoException(error)) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
   }
 }
 
@@ -166,8 +189,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
       agent: entry.agent || null,
-      dangerouslySkipPermissions:
-        entry.dangerouslySkipPermissions === true ? true : undefined,
+      dangerouslySkipPermissions: entry.dangerouslySkipPermissions === true ? true : undefined,
       agentVersion: entry.agentVersion || null,
       imageTag: entry.imageTag || null,
       providerCredentialHashes: entry.providerCredentialHashes || undefined,

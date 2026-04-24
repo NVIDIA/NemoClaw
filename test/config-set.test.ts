@@ -14,6 +14,11 @@ const {
   resolveAgentConfig,
 } = require("../dist/lib/sandbox-config");
 
+type MutableScalar = string | number | boolean | null | undefined;
+type MutableValue = MutableScalar | MutableMap | MutableValue[];
+type MutableMap = { [key: string]: MutableValue };
+type NestedConfig = { a?: { b?: { c?: number } } };
+
 describe("resolveAgentConfig", () => {
   it("returns openclaw defaults for unknown sandbox", () => {
     const target = resolveAgentConfig("nonexistent-sandbox");
@@ -58,31 +63,31 @@ describe("config set helpers", () => {
 
   describe("setDotpath", () => {
     it("sets a top-level key", () => {
-      const obj: Record<string, unknown> = { foo: "old" };
+      const obj: MutableMap = { foo: "old" };
       setDotpath(obj, "foo", "new");
       expect(obj.foo).toBe("new");
     });
 
     it("sets a nested key", () => {
-      const obj: Record<string, unknown> = { a: { b: { c: 1 } } };
+      const obj: NestedConfig = { a: { b: { c: 1 } } };
       setDotpath(obj, "a.b.c", 99);
-      expect((obj.a as Record<string, unknown>).b).toEqual({ c: 99 });
+      expect(obj.a?.b).toEqual({ c: 99 });
     });
 
     it("creates intermediate objects if missing", () => {
-      const obj: Record<string, unknown> = {};
+      const obj: MutableMap = {};
       setDotpath(obj, "a.b.c", "deep");
       expect(obj).toEqual({ a: { b: { c: "deep" } } });
     });
 
     it("overwrites non-object intermediate with empty object", () => {
-      const obj: Record<string, unknown> = { a: "string" };
+      const obj: MutableMap = { a: "string" };
       setDotpath(obj, "a.b", "val");
       expect(obj).toEqual({ a: { b: "val" } });
     });
 
     it("adds a new key to existing object", () => {
-      const obj: Record<string, unknown> = { a: { existing: true } };
+      const obj: MutableMap = { a: { existing: true } };
       setDotpath(obj, "a.newKey", "added");
       expect(obj.a).toEqual({ existing: true, newKey: "added" });
     });
@@ -103,7 +108,9 @@ describe("config set helpers", () => {
     });
 
     it("accepts existing keys whose value is null", () => {
-      expect(isRecognizedConfigPath({ provider: { endpoint: null } }, "provider.endpoint")).toBe(true);
+      expect(isRecognizedConfigPath({ provider: { endpoint: null } }, "provider.endpoint")).toBe(
+        true,
+      );
     });
 
     it("rejects an unknown top-level key", () => {

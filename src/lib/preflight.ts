@@ -74,12 +74,7 @@ export interface EnsureSwapOpts {
   getMemoryInfoImpl?: (opts: GetMemoryInfoOpts) => MemoryInfo | null;
 }
 
-export type ContainerRuntime =
-  | "docker"
-  | "docker-desktop"
-  | "colima"
-  | "podman"
-  | "unknown";
+export type ContainerRuntime = "docker" | "docker-desktop" | "colima" | "podman" | "unknown";
 
 export type PackageManager = "apt" | "dnf" | "yum" | "brew" | "pacman" | "unknown";
 
@@ -188,16 +183,13 @@ function parseDockerInfoSummary(info = ""): string | undefined {
 function readDockerDefaultCgroupnsMode(
   readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
 ): "host" | "private" | "unknown" {
-  const paths = [
-    "/etc/docker/daemon.json",
-    "/home/rootless/.config/docker/daemon.json",
-  ];
+  const paths = ["/etc/docker/daemon.json", "/home/rootless/.config/docker/daemon.json"];
   for (const filePath of paths) {
     try {
       const raw = readFileImpl(filePath, "utf-8");
-      const parsed = JSON.parse(raw) as {
-        ["default-cgroupns-mode"]?: unknown;
-      };
+      const parsed: {
+        ["default-cgroupns-mode"]?: string;
+      } = JSON.parse(raw);
       const mode = parsed["default-cgroupns-mode"];
       if (mode === "host" || mode === "private") return mode;
     } catch {
@@ -232,7 +224,9 @@ function detectPackageManager(
 }
 
 function parseSystemctlState(value = ""): boolean | null {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   if (!normalized) return null;
   if (normalized === "active" || normalized === "enabled") return true;
   if (
@@ -443,7 +437,8 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
       id: "headless_remote_hint",
       title: "Review remote/headless UI settings",
       kind: "info",
-      reason: "Headless Linux hosts often need explicit remote UI handling if you want browser access.",
+      reason:
+        "Headless Linux hosts often need explicit remote UI handling if you want browser access.",
       commands: ["Set `CHAT_UI_URL` when remote browser access matters."],
       blocking: false,
     });
@@ -603,7 +598,10 @@ export function getMemoryInfo(opts?: GetMemoryInfoOpts): MemoryInfo | null {
 
   if (platform === "darwin") {
     try {
-      const memBytes = parseInt(runCapture(["sysctl", "-n", "hw.memsize"], { ignoreError: true }), 10);
+      const memBytes = parseInt(
+        runCapture(["sysctl", "-n", "hw.memsize"], { ignoreError: true }),
+        10,
+      );
       if (!memBytes || isNaN(memBytes)) return null;
       const totalRamMB = Math.floor(memBytes / 1024 / 1024);
       // macOS does not use traditional swap files in the same way
@@ -652,7 +650,7 @@ function getExistingSwapResult(mem: MemoryInfo): SwapResult | null {
   try {
     runCapture(["sudo", "swapon", "/swapfile"], { ignoreError: false });
     return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
-  } catch (err: unknown) {
+  } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
@@ -705,9 +703,12 @@ function cleanupPartialSwap(): void {
 
 function createSwapfile(mem: MemoryInfo): SwapResult {
   try {
-    runCapture(["sudo", "dd", "if=/dev/zero", "of=/swapfile", "bs=1M", "count=4096", "status=none"], {
-      ignoreError: false,
-    });
+    runCapture(
+      ["sudo", "dd", "if=/dev/zero", "of=/swapfile", "bs=1M", "count=4096", "status=none"],
+      {
+        ignoreError: false,
+      },
+    );
     runCapture(["sudo", "chmod", "600", "/swapfile"], { ignoreError: false });
     runCapture(["sudo", "mkswap", "/swapfile"], { ignoreError: false });
     runCapture(["sudo", "swapon", "/swapfile"], { ignoreError: false });
@@ -719,7 +720,7 @@ function createSwapfile(mem: MemoryInfo): SwapResult {
     writeManagedSwapMarker();
 
     return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
-  } catch (err: unknown) {
+  } catch (err) {
     cleanupPartialSwap();
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -740,9 +741,16 @@ function createSwapfile(mem: MemoryInfo): SwapResult {
  * image push.
  */
 export function ensureSwap(minTotalMB?: number, opts: EnsureSwapOpts = {}): SwapResult {
-  const o = {
-    platform: process.platform as NodeJS.Platform,
-    memoryInfo: null as MemoryInfo | null,
+  const o: {
+    platform: NodeJS.Platform;
+    memoryInfo: MemoryInfo | null;
+    swapfileExists: boolean;
+    dryRun: boolean;
+    interactive: boolean;
+    getMemoryInfoImpl: (opts: GetMemoryInfoOpts) => MemoryInfo | null;
+  } = {
+    platform: process.platform,
+    memoryInfo: null,
     swapfileExists: fs.existsSync("/swapfile"),
     dryRun: false,
     interactive: process.stdout.isTTY && !process.env.NEMOCLAW_NON_INTERACTIVE,
