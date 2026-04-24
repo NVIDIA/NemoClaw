@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -34,7 +33,16 @@ creds.prompt = (msg) =>
     });
   });
 
-runner.run = () => {};
+const successfulRunResult = {
+  pid: 0,
+  output: [null, "", ""],
+  stdout: "",
+  stderr: "",
+  status: 0,
+  signal: null,
+};
+
+runner.run = () => successfulRunResult;
 runner.runCapture = () => "";
 
 registry.getSandbox = () => ({ name: "test-sb", model: null, provider: null });
@@ -42,7 +50,11 @@ registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 
 // ── Run ────────────────────────────────────────────────────────────────────
-const { selectPolicyTier, selectTierPresetsAndAccess } = require("../dist/lib/onboard.js");
+const onboard = /** @type {{
+ *   selectPolicyTier: () => Promise<string>;
+ *   selectTierPresetsAndAccess: (tierName: string, allPresets: unknown[]) => Promise<unknown>;
+ * }} */ (require("../dist/lib/onboard.js"));
+const { selectPolicyTier, selectTierPresetsAndAccess } = onboard;
 const policies = require("../dist/lib/policies.js");
 
 (async () => {

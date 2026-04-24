@@ -7,7 +7,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { analyzeTypeSafetyHotspots, renderTextReport } from "../scripts/type-safety-hotspots";
+import {
+  analyzeTypeSafetyHotspots,
+  parseArgs,
+  renderTextReport,
+} from "../scripts/type-safety-hotspots";
 
 const tempDirs: string[] = [];
 
@@ -168,5 +172,13 @@ export const configB = normalizeConfig("{}");
     expect(report.themes.map((theme) => theme.id)).toContain("parse-boundaries");
     expect(textReport).toContain("src/config.ts");
     expect(textReport).toContain("normalizeConfig");
+  });
+
+  it("rejects another flag in place of a --root value", () => {
+    expect(() => parseArgs(["--root", "--json"])).toThrow(/Missing value for --root/);
+  });
+
+  it("rejects another flag in place of a --project value", () => {
+    expect(() => parseArgs(["--project", "--json"])).toThrow(/Missing value for --project/);
   });
 });

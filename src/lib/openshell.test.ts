@@ -1,16 +1,47 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SpawnSyncReturns } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
 import {
   captureOpenshellCommand,
   getInstalledOpenshellVersion,
+  type OpenshellSpawnSync,
   parseVersionFromText,
   runOpenshellCommand,
   stripAnsi,
   versionGte,
 } from "./openshell";
+
+interface SpawnResultSpec {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+  signal?: NodeJS.Signals | null;
+}
+
+function makeSpawnResult(spec: SpawnResultSpec): SpawnSyncReturns<string> {
+  return {
+    pid: 123,
+    output: [spec.stdout, spec.stderr],
+    stdout: spec.stdout,
+    stderr: spec.stderr,
+    status: spec.status,
+    signal: spec.signal ?? null,
+    error: spec.error,
+  };
+}
+
+function stubSpawnSync(spec: SpawnResultSpec): OpenshellSpawnSync {
+  return () => makeSpawnResult(spec);
+}
+
+function exitWithCode(code: number): never {
+  throw new Error(`exit:${code}`);
+}
 
 describe("openshell helpers", () => {
   it("strips ANSI sequences", () => {
@@ -31,11 +62,11 @@ describe("openshell helpers", () => {
 
   it("captures stdout and stderr like the legacy helper", () => {
     const result = captureOpenshellCommand("openshell", ["status"], {
-      spawnSyncImpl: (() => ({
+      spawnSyncImpl: stubSpawnSync({
         status: 1,
         stdout: "hello\n",
         stderr: "boom\n",
-      })) as never,
+      }),
     });
     expect(result).toEqual({ status: 1, output: "hello\nboom" });
   });
@@ -43,22 +74,22 @@ describe("openshell helpers", () => {
   it("omits stderr from capture output when ignoreError is set", () => {
     const result = captureOpenshellCommand("openshell", ["status"], {
       ignoreError: true,
-      spawnSyncImpl: (() => ({
+      spawnSyncImpl: stubSpawnSync({
         status: 1,
         stdout: "hello\n",
         stderr: "boom\n",
-      })) as never,
+      }),
     });
     expect(result).toEqual({ status: 1, output: "hello" });
   });
 
   it("returns the spawn result when the command succeeds", () => {
     const result = runOpenshellCommand("openshell", ["status"], {
-      spawnSyncImpl: (() => ({
+      spawnSyncImpl: stubSpawnSync({
         status: 0,
         stdout: "ok\n",
         stderr: "",
-      })) as never,
+      }),
     });
     expect(result.status).toBe(0);
   });
@@ -66,15 +97,13 @@ describe("openshell helpers", () => {
   it("uses the injected exit handler on failure", () => {
     expect(() =>
       runOpenshellCommand("openshell", ["status"], {
-        spawnSyncImpl: (() => ({
+        spawnSyncImpl: stubSpawnSync({
           status: 17,
           stdout: "",
           stderr: "bad\n",
-        })) as never,
+        }),
         errorLine: () => {},
-        exit: ((code: number) => {
-          throw new Error(`exit:${code}`);
-        }) as never,
+        exit: exitWithCode,
       }),
     ).toThrow("exit:17");
   });
@@ -83,16 +112,14 @@ describe("openshell helpers", () => {
     const errors: string[] = [];
     expect(() =>
       runOpenshellCommand("openshell", ["status"], {
-        spawnSyncImpl: (() => ({
+        spawnSyncImpl: stubSpawnSync({
           status: null,
           stdout: "",
           stderr: "",
           error: new Error("spawn EACCES"),
-        })) as never,
+        }),
         errorLine: (message) => errors.push(message),
-        exit: ((code: number) => {
-          throw new Error(`exit:${code}`);
-        }) as never,
+        exit: exitWithCode,
       }),
     ).toThrow("exit:1");
     expect(errors).toEqual(["  Failed to start openshell status: spawn EACCES"]);
@@ -102,16 +129,14 @@ describe("openshell helpers", () => {
     const errors: string[] = [];
     expect(() =>
       captureOpenshellCommand("openshell", ["status"], {
-        spawnSyncImpl: (() => ({
+        spawnSyncImpl: stubSpawnSync({
           status: null,
           stdout: "",
           stderr: "",
           error: new Error("spawn ENOENT"),
-        })) as never,
+        }),
         errorLine: (message) => errors.push(message),
-        exit: ((code: number) => {
-          throw new Error(`exit:${code}`);
-        }) as never,
+        exit: exitWithCode,
       }),
     ).toThrow("exit:1");
     expect(errors).toEqual(["  Failed to start openshell status: spawn ENOENT"]);
@@ -119,11 +144,11 @@ describe("openshell helpers", () => {
 
   it("reads the installed openshell version through the capture helper", () => {
     const version = getInstalledOpenshellVersion("openshell", {
-      spawnSyncImpl: (() => ({
+      spawnSyncImpl: stubSpawnSync({
         status: 0,
         stdout: "openshell 0.0.11\n",
         stderr: "",
-      })) as never,
+      }),
     });
     expect(version).toBe("0.0.11");
   });

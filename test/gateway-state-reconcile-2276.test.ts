@@ -198,7 +198,7 @@ process.exit(0);
   fs.writeFileSync(openshellPath, stub, { mode: 0o755 });
 }
 
-function runCli(action: string, extraEnv: NodeJS.ProcessEnv = {}): HarnessResult {
+function runCli(action: string, extraEnv: Record<string, string | undefined> = {}): HarnessResult {
   const repoRoot = path.join(import.meta.dirname, "..");
   const result = spawnSync(
     process.execPath,
@@ -244,9 +244,7 @@ function runCli(action: string, extraEnv: NodeJS.ProcessEnv = {}): HarnessResult
       }
     });
 
-  const selectCalls = callLog.filter(
-    (c) => c[0] === "gateway" && c[1] === "select",
-  ).length;
+  const selectCalls = callLog.filter((c) => c[0] === "gateway" && c[1] === "select").length;
 
   return {
     status: result.status,
@@ -290,34 +288,30 @@ afterEach(() => {
 
 // ─── Scenario 1 ─── destructive path preserved for `connect` ───────────────
 describe("Scenario 1: connect — healthy nemoclaw active + sandbox NotFound truly gone", () => {
-  it(
-    "removes the registry entry, clears session, and exits 1",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "", exit: 0 },
-        selectFlipsActive: false,
-      });
+  it("removes the registry entry, clears session, and exits 1", { timeout: TIMEOUT_MS }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "", exit: 0 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("connect");
+    const r = runCli("connect");
 
-      assert.equal(r.status, 1, `expected exit 1, got ${r.status}\n${r.stderr}`);
-      assert.equal(
-        registrySandboxPresent(r),
-        false,
-        `expected registry entry removed, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(
-        r.sessionSandboxName === null || r.sessionSandboxName === undefined,
-        true,
-        `expected session sandboxName cleared, got: ${r.sessionSandboxName}`,
-      );
-      assert.match(r.stderr, /Removed stale local registry entry/);
-    },
-  );
+    assert.equal(r.status, 1, `expected exit 1, got ${r.status}\n${r.stderr}`);
+    assert.equal(
+      registrySandboxPresent(r),
+      false,
+      `expected registry entry removed, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(
+      r.sessionSandboxName === null || r.sessionSandboxName === undefined,
+      true,
+      `expected session sandboxName cleared, got: ${r.sessionSandboxName}`,
+    );
+    assert.match(r.stderr, /Removed stale local registry entry/);
+  });
 });
 
 // ─── Scenario 2 ─── destructive path preserved for `status` ────────────────
@@ -381,11 +375,7 @@ describe("Scenario 3: status — select succeeds, sandbox reappears, registry in
         true,
         `expected registry preserved, got: ${JSON.stringify(r.registry)}`,
       );
-      assert.equal(
-        r.sessionSandboxName,
-        SANDBOX_NAME,
-        "expected session sandboxName preserved",
-      );
+      assert.equal(r.sessionSandboxName, SANDBOX_NAME, "expected session sandboxName preserved");
       // gateway select nemoclaw should have been invoked.
       assert.ok(r.selectCalls >= 1, `expected ≥1 gateway select calls, got ${r.selectCalls}`);
     },
@@ -418,11 +408,7 @@ describe("Scenario 4: connect — select fails, sandbox still NotFound", () => {
         true,
         `registry must be preserved, got: ${JSON.stringify(r.registry)}`,
       );
-      assert.equal(
-        r.sessionSandboxName,
-        SANDBOX_NAME,
-        "session sandboxName must be preserved",
-      );
+      assert.equal(r.sessionSandboxName, SANDBOX_NAME, "session sandboxName must be preserved");
       // User-facing guidance.
       assert.match(r.stderr, /NOT been removed/);
       assert.match(r.stderr, /openshell gateway select nemoclaw/);
@@ -694,13 +680,7 @@ describe("Scenario 12: skill install — wrong gateway active yields guidance, n
       const repoRoot = path.join(import.meta.dirname, "..");
       const result = spawnSync(
         process.execPath,
-        [
-          path.join(repoRoot, "bin", "nemoclaw.js"),
-          SANDBOX_NAME,
-          "skill",
-          "install",
-          skillDir,
-        ],
+        [path.join(repoRoot, "bin", "nemoclaw.js"), SANDBOX_NAME, "skill", "install", skillDir],
         {
           cwd: repoRoot,
           encoding: "utf-8",

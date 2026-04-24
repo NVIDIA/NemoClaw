@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -11,8 +10,8 @@ describe("exec approvals path regression guard", () => {
     const dockerfileBase = path.join(import.meta.dirname, "..", "Dockerfile.base");
     const src = fs.readFileSync(dockerfileBase, "utf-8");
 
-    expect(src).toContain('LEGACY_EXEC_APPROVALS_PATH="$(printf \'%b\'');
-    expect(src).toContain('DATA_EXEC_APPROVALS_PATH="$(printf \'%b\'');
+    expect(src).toContain("LEGACY_EXEC_APPROVALS_PATH=\"$(printf '%b'");
+    expect(src).toContain("DATA_EXEC_APPROVALS_PATH=\"$(printf '%b'");
     expect(src).toContain('files_with_old_path_file="$(mktemp)"');
     expect(src).toContain("--include='*.js'");
     expect(src).toContain("OpenClaw dist directory not found:");
@@ -27,8 +26,8 @@ describe("exec approvals path regression guard", () => {
     expect(src).toContain("mkdir -p /sandbox/.openclaw-data");
     expect(src).toContain("chown sandbox:sandbox /sandbox/.openclaw-data");
     expect(src).toContain("chmod 755 /sandbox/.openclaw-data");
-    expect(src).toContain('LEGACY_EXEC_APPROVALS_PATH="$(printf \'%b\'');
-    expect(src).toContain('DATA_EXEC_APPROVALS_PATH="$(printf \'%b\'');
+    expect(src).toContain("LEGACY_EXEC_APPROVALS_PATH=\"$(printf '%b'");
+    expect(src).toContain("DATA_EXEC_APPROVALS_PATH=\"$(printf '%b'");
     expect(src).toContain('files_with_old_path_file="$(mktemp)"');
     expect(src).toContain("--include='*.js'");
     expect(src).toContain("Unable to verify OpenClaw exec approvals path in dist");

@@ -41,7 +41,7 @@ function writeExecutable(target: string, contents: string): void {
 function runInstallerFunction(
   bashSnippet: string,
   fakeBin: string,
-  extraEnv: NodeJS.ProcessEnv = {},
+  extraEnv: Record<string, string | undefined> = {},
   cwd?: string,
   /** When true, bashSnippet is run verbatim (caller handles sourcing). */
   rawSnippet = false,
@@ -65,7 +65,9 @@ function runInstallerFunction(
  * drop privileges for permission-sensitive assertions.
  */
 function isLinuxRoot(): boolean {
-  return typeof process.getuid === "function" && process.getuid() === 0 && process.platform === "linux";
+  return (
+    typeof process.getuid === "function" && process.getuid() === 0 && process.platform === "linux"
+  );
 }
 
 describe("installer npm resolution", () => {
@@ -186,7 +188,8 @@ exit 98
     fs.chmodSync(prefixBin, needsDrop ? 0o777 : 0o755);
     fs.chmodSync(prefixLib, 0o555);
 
-    const innerSnippet = 'if npm_link_targets_writable "$TARGET_PREFIX"; then echo WRITABLE; else echo BLOCKED; fi';
+    const innerSnippet =
+      'if npm_link_targets_writable "$TARGET_PREFIX"; then echo WRITABLE; else echo BLOCKED; fi';
 
     let result;
     if (needsDrop) {
@@ -196,12 +199,17 @@ exit 98
       const localPayload = path.join(tmp, "install.sh");
       fs.copyFileSync(INSTALLER_PAYLOAD, localPayload);
       fs.chmodSync(localPayload, 0o644);
-      const wrapped =
-        `su -s /bin/bash nobody -c 'source "${localPayload}" >/dev/null 2>&1; ${innerSnippet}'`;
-      result = runInstallerFunction(wrapped, fakeBin, {
-        HOME: tmp,
-        TARGET_PREFIX: prefix,
-      }, tmp, true);
+      const wrapped = `su -s /bin/bash nobody -c 'source "${localPayload}" >/dev/null 2>&1; ${innerSnippet}'`;
+      result = runInstallerFunction(
+        wrapped,
+        fakeBin,
+        {
+          HOME: tmp,
+          TARGET_PREFIX: prefix,
+        },
+        tmp,
+        true,
+      );
     } else {
       result = runInstallerFunction(innerSnippet, fakeBin, {
         HOME: tmp,

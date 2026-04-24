@@ -6,21 +6,52 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vites
 import { printDashboardUi } from "../../dist/lib/agent-onboard";
 import type { AgentDefinition } from "./agent-defs";
 
-// Test fixtures — only the fields printDashboardUi reads are populated.
-// Cast via unknown to avoid requiring the full AgentDefinition shape.
-const apiAgent = {
+function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
+  return {
+    name: "agent",
+    displayName: "Agent",
+    healthProbe: { url: "http://127.0.0.1:19000/", port: 19000, timeout_seconds: 5 },
+    forwardPort: 19000,
+    dashboard: { kind: "ui", label: "UI", path: "/" },
+    configPaths: {
+      immutableDir: "/tmp/agent/immutable",
+      writableDir: "/tmp/agent/writable",
+      configFile: "/tmp/agent/config.yaml",
+      envFile: null,
+      format: "yaml",
+    },
+    stateDirs: [],
+    versionCommand: "agent --version",
+    expectedVersion: null,
+    hasDevicePairing: false,
+    phoneHomeHosts: [],
+    messagingPlatforms: [],
+    dockerfileBasePath: null,
+    dockerfilePath: null,
+    startScriptPath: null,
+    policyAdditionsPath: null,
+    policyPermissivePath: null,
+    pluginDir: null,
+    legacyPaths: null,
+    agentDir: "/tmp/agent",
+    manifestPath: "/tmp/agent/manifest.yaml",
+    ...overrides,
+  };
+}
+
+const apiAgent = makeAgent({
   name: "hermes",
   displayName: "Hermes Agent",
   forwardPort: 8642,
   dashboard: { kind: "api", label: "OpenAI-compatible API", path: "/v1" },
-} as unknown as AgentDefinition;
+});
 
-const uiAgent = {
+const uiAgent = makeAgent({
   name: "ficticious-ui",
   displayName: "Ficticious",
   forwardPort: 19000,
   dashboard: { kind: "ui", label: "UI", path: "/" },
-} as unknown as AgentDefinition;
+});
 
 // Regression fixture for issue #2078 — matches the text a user sees when
 // no token is available and prevents the wording from regressing to

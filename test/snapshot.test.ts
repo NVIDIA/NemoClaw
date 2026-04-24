@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -10,6 +9,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it, expect, afterAll, beforeEach } from "vitest";
 
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
@@ -21,12 +21,41 @@ const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snap-naming-"))
 process.env.HOME = TMP_HOME;
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const sandboxState = await import(path.join(REPO_ROOT, "dist", "lib", "sandbox-state.js"));
+
+type BackupScalar = string | number | boolean | null | undefined;
+type BackupValue = BackupScalar | BackupManifestOverrides | BackupValue[];
+
+type SandboxStateModule = typeof import("../dist/lib/sandbox-state.js");
+type SandboxStateModuleCandidate = Partial<SandboxStateModule> | null;
+
+function isSandboxStateModule(value: SandboxStateModuleCandidate): value is SandboxStateModule {
+  return (
+    value !== null &&
+    typeof value.listBackups === "function" &&
+    typeof value.findBackup === "function" &&
+    typeof value.validateSnapshotName === "function" &&
+    typeof value.parseRestoreArgs === "function"
+  );
+}
+
+const loadedSandboxState = await import(
+  pathToFileURL(path.join(REPO_ROOT, "dist", "lib", "sandbox-state.js")).href
+);
+if (!isSandboxStateModule(loadedSandboxState)) {
+  throw new Error("Expected sandbox-state module exports to be available");
+}
+const sandboxState = loadedSandboxState;
 const { parseRestoreArgs } = sandboxState;
 
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
 
-function writeBackup(sandboxName, dirName, overrides = {}) {
+type BackupManifestOverrides = { [key: string]: BackupValue };
+
+function writeBackup(
+  sandboxName: string,
+  dirName: string,
+  overrides: BackupManifestOverrides = {},
+): BackupManifestOverrides {
   const dir = path.join(BACKUPS_ROOT, sandboxName, dirName);
   fs.mkdirSync(dir, { recursive: true });
   const manifest = {
@@ -42,10 +71,7 @@ function writeBackup(sandboxName, dirName, overrides = {}) {
     blueprintDigest: null,
     ...overrides,
   };
-  fs.writeFileSync(
-    path.join(dir, "rebuild-manifest.json"),
-    JSON.stringify(manifest, null, 2),
-  );
+  fs.writeFileSync(path.join(dir, "rebuild-manifest.json"), JSON.stringify(manifest, null, 2));
   return manifest;
 }
 
@@ -114,6 +140,52 @@ describe("listBackups computes virtual versions", () => {
     const [entry] = sandboxState.listBackups("test-sandbox");
     expect(entry.name).toBe("before-upgrade");
     expect(entry.snapshotVersion).toBe(1);
+  });
+
+  it("preserves legacy manifests created before blueprintDigest existed", () => {
+    const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T13-59-00-000Z");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "rebuild-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        sandboxName: "test-sandbox",
+        timestamp: "2026-04-21T13-59-00-000Z",
+        agentType: "openclaw",
+        agentVersion: null,
+        expectedVersion: null,
+        stateDirs: [],
+        writableDir: "/sandbox/.openclaw-data",
+        backupPath: dir,
+      }),
+    );
+
+    const [entry] = sandboxState.listBackups("test-sandbox");
+    expect(entry?.timestamp).toBe("2026-04-21T13-59-00-000Z");
+    expect(entry?.blueprintDigest).toBeNull();
+  });
+
+  it("ignores rebuild manifests with invalid typed fields", () => {
+    const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T14-00-00-000Z");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "rebuild-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        sandboxName: "test-sandbox",
+        timestamp: "2026-04-21T14-00-00-000Z",
+        agentType: "openclaw",
+        agentVersion: null,
+        expectedVersion: null,
+        stateDirs: [],
+        writableDir: "/sandbox/.openclaw-data",
+        backupPath: dir,
+        blueprintDigest: null,
+        policyPresets: [1],
+      }),
+    );
+
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
 });
 
@@ -221,23 +293,21 @@ describe("parseRestoreArgs", () => {
   });
 
   it("preserves timestamp-shaped selectors alongside --to", () => {
-    expect(
-      parseRestoreArgs("src", [
-        "restore",
-        "2026-04-21T14-00-00-000Z",
-        "--to",
-        "dst",
-      ]),
-    ).toEqual({
-      ok: true,
-      targetSandbox: "dst",
-      selector: "2026-04-21T14-00-00-000Z",
-    });
+    expect(parseRestoreArgs("src", ["restore", "2026-04-21T14-00-00-000Z", "--to", "dst"])).toEqual(
+      {
+        ok: true,
+        targetSandbox: "dst",
+        selector: "2026-04-21T14-00-00-000Z",
+      },
+    );
   });
 
   it("rejects --to at end-of-args with no value", () => {
     const result = parseRestoreArgs("src", ["restore", "--to"]);
     expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected parseRestoreArgs() to reject a trailing --to flag");
+    }
     expect(result.error).toMatch(/--to requires a target sandbox name/);
   });
 
@@ -246,6 +316,9 @@ describe("parseRestoreArgs", () => {
     // name and confuse validateName with an error about a weird name.
     const result = parseRestoreArgs("src", ["restore", "--to", "--other"]);
     expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected parseRestoreArgs() to reject --to without a target name");
+    }
     expect(result.error).toMatch(/--to requires a target sandbox name/);
   });
 

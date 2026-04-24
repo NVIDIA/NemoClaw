@@ -10,6 +10,9 @@ import {
   findChannelConflicts,
 } from "./messaging-conflict";
 
+type ConflictProbe = Parameters<typeof backfillMessagingChannels>[1];
+type ProviderExists = ConflictProbe["providerExists"];
+
 function makeRegistry(sandboxes: SandboxEntry[]) {
   const store = new Map(sandboxes.map((s) => [s.name, { ...s }]));
   return {
@@ -90,10 +93,10 @@ describe("findAllOverlaps", () => {
 describe("backfillMessagingChannels", () => {
   it("fills in missing messagingChannels by probing OpenShell", () => {
     const registry = makeRegistry([{ name: "alice" }]);
-    const probe = {
-      providerExists: vi.fn((name: string) =>
+    const probe: ConflictProbe = {
+      providerExists: vi.fn<ProviderExists>((name) =>
         name === "alice-telegram-bridge" ? "present" : "absent",
-      ) as (name: string) => "present" | "absent" | "error",
+      ),
     };
     backfillMessagingChannels(registry, probe);
     expect(registry.updateSandbox).toHaveBeenCalledWith("alice", {
@@ -105,11 +108,9 @@ describe("backfillMessagingChannels", () => {
   });
 
   it("leaves entries with existing messagingChannels alone", () => {
-    const registry = makeRegistry([
-      { name: "alice", messagingChannels: ["telegram"] },
-    ]);
-    const probe = {
-      providerExists: vi.fn(() => "present") as (name: string) => "present" | "absent" | "error",
+    const registry = makeRegistry([{ name: "alice", messagingChannels: ["telegram"] }]);
+    const probe: ConflictProbe = {
+      providerExists: vi.fn<ProviderExists>(() => "present"),
     };
     backfillMessagingChannels(registry, probe);
     expect(registry.updateSandbox).not.toHaveBeenCalled();
@@ -118,8 +119,8 @@ describe("backfillMessagingChannels", () => {
 
   it("writes an empty array when all probes return absent", () => {
     const registry = makeRegistry([{ name: "alice" }]);
-    const probe = {
-      providerExists: vi.fn(() => "absent") as (name: string) => "present" | "absent" | "error",
+    const probe: ConflictProbe = {
+      providerExists: vi.fn<ProviderExists>(() => "absent"),
     };
     backfillMessagingChannels(registry, probe);
     expect(registry.updateSandbox).toHaveBeenCalledWith("alice", { messagingChannels: [] });
@@ -130,11 +131,11 @@ describe("backfillMessagingChannels", () => {
     // be collapsed into "provider not attached" and persisted, because that
     // would prevent all future backfill retries and hide real overlaps.
     const registry = makeRegistry([{ name: "alice" }]);
-    const probe = {
-      providerExists: vi.fn((name: string) => {
+    const probe: ConflictProbe = {
+      providerExists: vi.fn<ProviderExists>((name) => {
         if (name.endsWith("-telegram-bridge")) return "error";
         return name.endsWith("-discord-bridge") ? "present" : "absent";
-      }) as (name: string) => "present" | "absent" | "error",
+      }),
     };
     backfillMessagingChannels(registry, probe);
     expect(registry.updateSandbox).not.toHaveBeenCalled();
@@ -142,10 +143,10 @@ describe("backfillMessagingChannels", () => {
 
   it("also treats a thrown probe as error (defensive; callers should return 'error' instead)", () => {
     const registry = makeRegistry([{ name: "alice" }]);
-    const probe = {
-      providerExists: vi.fn(() => {
+    const probe: ConflictProbe = {
+      providerExists: vi.fn<ProviderExists>(() => {
         throw new Error("unexpected");
-      }) as (name: string) => "present" | "absent" | "error",
+      }),
     };
     backfillMessagingChannels(registry, probe);
     expect(registry.updateSandbox).not.toHaveBeenCalled();
@@ -154,14 +155,14 @@ describe("backfillMessagingChannels", () => {
   it("re-attempts backfill on a subsequent call after a prior error", () => {
     const registry = makeRegistry([{ name: "alice" }]);
     let firstPass = true;
-    const probe = {
-      providerExists: vi.fn((name: string) => {
+    const probe: ConflictProbe = {
+      providerExists: vi.fn<ProviderExists>((name) => {
         if (name.endsWith("-telegram-bridge") && firstPass) {
           firstPass = false;
           return "error";
         }
         return name === "alice-telegram-bridge" ? "present" : "absent";
-      }) as (name: string) => "present" | "absent" | "error",
+      }),
     };
     backfillMessagingChannels(registry, probe);
     expect(registry.updateSandbox).not.toHaveBeenCalled();

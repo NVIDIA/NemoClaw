@@ -1,6 +1,12 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+import type {
+  ExecSyncOptionsWithStringEncoding,
+  SpawnSyncOptions,
+  SpawnSyncOptionsWithStringEncoding,
+  SpawnSyncReturns,
+} from "node:child_process";
 
 const { execSync, spawnSync } = require("child_process");
 const path = require("path");
@@ -9,12 +15,29 @@ const { detectDockerHost } = require("./platform");
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
 
+type RunnerScalar = string | number | boolean | null | undefined;
+
+type RunnerOptions = SpawnSyncOptions & {
+  ignoreError?: boolean;
+  suppressOutput?: boolean;
+};
+
+type CaptureOptions = Omit<ExecSyncOptionsWithStringEncoding, "encoding"> & {
+  ignoreError?: boolean;
+};
+
+type ArrayCaptureOptions = Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> & {
+  ignoreError?: boolean;
+};
+
+type SpawnResult = SpawnSyncReturns<string | Buffer>;
+
 const dockerHost = detectDockerHost();
 if (dockerHost) {
   process.env.DOCKER_HOST = dockerHost.dockerHost;
 }
 
-function logOpenshellRuntimeHint(file, renderedCommand = "") {
+function logOpenshellRuntimeHint(file: string, renderedCommand = ""): void {
   if (
     file === "openshell" ||
     file?.endsWith("/openshell") ||
@@ -29,7 +52,13 @@ function logOpenshellRuntimeHint(file, renderedCommand = "") {
  * Spawn a command, streaming stdout/stderr (redacted) to the terminal.
  * Exits the process on failure unless opts.ignoreError is true.
  */
-function spawnAndHandle(file, args, opts = {}, stdio, renderedCommand) {
+function spawnAndHandle(
+  file: string,
+  args: readonly string[],
+  opts: RunnerOptions = {},
+  stdio: RunnerOptions["stdio"],
+  renderedCommand: string,
+): SpawnResult {
   const result = spawnSync(file, args, {
     ...opts,
     stdio,
@@ -66,19 +95,20 @@ function spawnAndHandle(file, args, opts = {}, stdio, renderedCommand) {
  * When an argv array is passed, the shell option is forbidden to prevent
  * callers from accidentally re-enabling shell interpretation.
  */
-function run(cmd, opts = {}) {
+function run(cmd: string | readonly string[], opts: RunnerOptions = {}): SpawnResult {
   if (Array.isArray(cmd)) {
     return runArrayCmd(cmd, opts);
   }
+  const shellCmd = String(cmd);
   const stdio = opts.stdio ?? ["ignore", "pipe", "pipe"];
-  return spawnAndHandle("bash", ["-c", cmd], opts, stdio, cmd);
+  return spawnAndHandle("bash", ["-c", shellCmd], opts, stdio, shellCmd);
 }
 
 /**
  * Internal: execute an argv array via spawnSync with no shell.
  * Shared by run() and kept separate for clarity.
  */
-function runArrayCmd(cmd, opts = {}) {
+function runArrayCmd(cmd: readonly string[], opts: RunnerOptions = {}): SpawnResult {
   if (cmd.length === 0) {
     throw new Error("run: argv array must not be empty");
   }
@@ -123,7 +153,7 @@ function runArrayCmd(cmd, opts = {}) {
  * Run a shell command interactively (stdin inherited) while capturing and redacting stdout/stderr.
  * Exits the process on failure unless opts.ignoreError is true.
  */
-function runInteractive(cmd, opts = {}) {
+function runInteractive(cmd: string, opts: RunnerOptions = {}): SpawnResult {
   const stdio = opts.stdio ?? ["inherit", "pipe", "pipe"];
   return spawnAndHandle("bash", ["-c", cmd], opts, stdio, cmd);
 }
@@ -132,7 +162,11 @@ function runInteractive(cmd, opts = {}) {
  * Run a program directly with argv-style arguments, bypassing shell parsing.
  * Exits the process on failure unless opts.ignoreError is true.
  */
-function runFile(file, args = [], opts = {}) {
+function runFile(
+  file: string,
+  args: readonly (string | number | boolean)[] = [],
+  opts: RunnerOptions = {},
+): SpawnResult {
   if (opts.shell) {
     throw new Error("runFile does not allow opts.shell=true");
   }
@@ -153,12 +187,13 @@ function runFile(file, args = [], opts = {}) {
  * When an argv array is passed, the shell option is forbidden to prevent
  * callers from accidentally re-enabling shell interpretation.
  */
-function runCapture(cmd, opts = {}) {
+function runCapture(cmd: string | readonly string[], opts: CaptureOptions = {}): string {
   if (Array.isArray(cmd)) {
     return runArrayCapture(cmd, opts);
   }
+  const shellCmd = String(cmd);
   try {
-    return execSync(cmd, {
+    return execSync(shellCmd, {
       ...opts,
       encoding: "utf-8",
       cwd: ROOT,
@@ -175,14 +210,14 @@ function runCapture(cmd, opts = {}) {
  * Internal: capture stdout from an argv array via spawnSync with no shell.
  * Shared by runCapture() and kept separate for clarity.
  */
-function runArrayCapture(cmd, opts = {}) {
+function runArrayCapture(cmd: readonly string[], opts: ArrayCaptureOptions = {}): string {
   if (cmd.length === 0) {
     throw new Error("runCapture: argv array must not be empty");
   }
 
   const exe = cmd[0];
   const args = cmd.slice(1);
-  const { ignoreError, env: extraEnv, stdio: _stdio, encoding: _encoding, ...spawnOpts } = opts;
+  const { ignoreError, env: extraEnv, stdio: _stdio, ...spawnOpts } = opts;
 
   // Guard: re-enabling shell interpretation defeats the purpose of argv arrays.
   if (spawnOpts.shell) {
@@ -224,7 +259,7 @@ const { redact, redactError, writeRedactedResult } = require("./redact");
  * Shell-quote a value for safe interpolation into bash -c strings.
  * Wraps in single quotes and escapes embedded single quotes.
  */
-function shellQuote(value) {
+function shellQuote(value: RunnerScalar): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
@@ -232,7 +267,7 @@ function shellQuote(value) {
  * Validate a name (sandbox, instance, container) against RFC 1123 label rules.
  * Rejects shell metacharacters, path traversal, and empty/overlength names.
  */
-function validateName(name, label = "name") {
+function validateName(name: string, label = "name"): string {
   if (!name || typeof name !== "string") {
     throw new Error(`${label} is required`);
   }

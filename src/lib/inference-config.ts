@@ -42,8 +42,8 @@ export function getProviderSelectionConfig(
   provider: string,
   model?: string,
 ): ProviderSelectionConfig | null {
-  const base = {
-    endpointType: "custom" as const,
+  const base: Omit<ProviderSelectionConfig, "model" | "credentialEnv" | "providerLabel"> = {
+    endpointType: "custom",
     endpointUrl: INFERENCE_ROUTE_URL,
     ncpPartner: null,
     profile: DEFAULT_ROUTE_PROFILE,

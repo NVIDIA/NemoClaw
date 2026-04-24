@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -15,6 +14,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 
+type ManifestWithOptionalPresets = {
+  version: number;
+  sandboxName: string;
+  timestamp: string;
+  agentType: string;
+  agentVersion: string | null;
+  expectedVersion: string | null;
+  stateDirs: string[];
+  writableDir: string;
+  backupPath: string;
+  blueprintDigest: string | null;
+  policyPresets?: string[] | null;
+};
+
 // Import compiled modules from dist/
 const sandboxState = await import(path.join(REPO_ROOT, "dist", "lib", "sandbox-state.js"));
 
@@ -22,7 +35,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
   describe("RebuildManifest policyPresets field", () => {
     it("manifest interface accepts policyPresets array", () => {
       // Verify the manifest structure supports policyPresets
-      const manifest = {
+      const manifest: ManifestWithOptionalPresets = {
         version: 1,
         sandboxName: "test",
         timestamp: "2026-04-17",
@@ -39,7 +52,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
     });
 
     it("manifest policyPresets defaults to undefined when not set", () => {
-      const manifest = {
+      const manifest: ManifestWithOptionalPresets = {
         version: 1,
         sandboxName: "test",
         timestamp: "2026-04-17",
@@ -55,7 +68,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
     });
 
     it("manifest policyPresets can be an empty array", () => {
-      const manifest = {
+      const manifest: ManifestWithOptionalPresets = {
         version: 1,
         sandboxName: "test",
         timestamp: "2026-04-17",
@@ -73,7 +86,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
   });
 
   describe("manifest serialization round-trip", () => {
-    let tmpDir;
+    let tmpDir: string;
 
     beforeEach(() => {
       tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-manifest-test-"));
@@ -84,7 +97,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
     });
 
     it("policyPresets survives JSON write and read", () => {
-      const manifest = {
+      const manifest: ManifestWithOptionalPresets = {
         version: 1,
         sandboxName: "test-sandbox",
         timestamp: "2026-04-17T10-00-00-000Z",
@@ -107,7 +120,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
 
     it("older manifests without policyPresets read as undefined", () => {
       // Simulate a manifest from before the fix
-      const oldManifest = {
+      const oldManifest: ManifestWithOptionalPresets = {
         version: 1,
         sandboxName: "test-sandbox",
         timestamp: "2026-04-01T10-00-00-000Z",

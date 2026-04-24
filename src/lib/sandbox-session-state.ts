@@ -64,11 +64,14 @@ export interface ForwardEntry {
  * The first line may be a header row — we skip lines where "SANDBOX" appears
  * literally in the first column.
  */
-export function parseForwardList(output: string): ForwardEntry[] {
+export function parseForwardList(output: string | null | undefined): ForwardEntry[] {
   if (!output || typeof output !== "string") return [];
 
   const entries: ForwardEntry[] = [];
-  const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = output
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
 
   for (const line of lines) {
     // Skip header row
@@ -97,7 +100,10 @@ export function parseForwardList(output: string): ForwardEntry[] {
  * Input format: one line per process — `<PID> <full command line>`
  * (compatible with both `pgrep -a` on Linux and `ps -axo pid,command`)
  */
-export function parseSshProcesses(pgrepOutput: string, sandboxName: string): SandboxSession[] {
+export function parseSshProcesses(
+  pgrepOutput: string | null | undefined,
+  sandboxName: string,
+): SandboxSession[] {
   if (!pgrepOutput || typeof pgrepOutput !== "string") return [];
   if (!sandboxName) return [];
 
@@ -134,15 +140,16 @@ function escapeRegExp(value: string): string {
  * Active forwards (status includes "running") indicate an active connection.
  */
 export function hasActiveForwards(entries: ForwardEntry[], sandboxName: string): boolean {
-  return entries.some(
-    (e) => e.sandboxName === sandboxName && e.status.includes("running"),
-  );
+  return entries.some((e) => e.sandboxName === sandboxName && e.status.includes("running"));
 }
 
 /**
  * Get forward entries for a specific sandbox.
  */
-export function getForwardsForSandbox(entries: ForwardEntry[], sandboxName: string): ForwardEntry[] {
+export function getForwardsForSandbox(
+  entries: ForwardEntry[],
+  sandboxName: string,
+): ForwardEntry[] {
   return entries.filter((e) => e.sandboxName === sandboxName);
 }
 
@@ -174,8 +181,8 @@ export function classifySessionState(
 ): SessionClassification {
   const sources: string[] = [];
 
-  const activeForwards = getForwardsForSandbox(forwardEntries, sandboxName).filter(
-    (e) => e.status.includes("running"),
+  const activeForwards = getForwardsForSandbox(forwardEntries, sandboxName).filter((e) =>
+    e.status.includes("running"),
   );
   if (activeForwards.length > 0) {
     sources.push("forward");

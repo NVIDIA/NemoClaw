@@ -17,15 +17,61 @@ const BASE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
 );
-const REQUIRED_PROFILE_FIELDS = ["provider_type", "endpoint"] as const;
+const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
+  "provider_type",
+  "endpoint",
+];
 
-const bp = YAML.parse(readFileSync(BLUEPRINT_PATH, "utf-8")) as Record<string, unknown>;
-const declared = Array.isArray(bp?.profiles) ? (bp.profiles as string[]) : [];
-const defined =
-  (bp?.components as Record<string, unknown> | undefined)?.inference != null
-    ? ((bp.components as Record<string, unknown>).inference as Record<string, unknown>).profiles as
-        Record<string, Record<string, unknown>> | undefined
-    : undefined;
+type BlueprintProfile = {
+  provider_type?: string;
+  endpoint?: string;
+  dynamic_endpoint?: boolean;
+};
+
+type Blueprint = {
+  version?: string;
+  digest?: string;
+  profiles?: string[];
+  components?: {
+    sandbox?: { image?: string | null };
+    inference?: { profiles?: Record<string, BlueprintProfile> };
+  };
+};
+
+type Rule = { allow?: { method?: string; path?: string } };
+type Endpoint = {
+  host?: string;
+  port?: number;
+  protocol?: string;
+  enforcement?: string;
+  access?: string;
+  rules?: Rule[];
+  binaries?: Array<{ path: string }>;
+};
+
+type PolicyEntry = {
+  name?: string;
+  endpoints?: Endpoint[];
+  binaries?: Array<{ path: string }>;
+};
+
+type SandboxPolicy = {
+  version?: number;
+  network_policies?: Record<string, PolicyEntry>;
+};
+
+type PolicyPreset = {
+  preset?: { name?: string; description?: string };
+  network_policies?: Record<string, PolicyEntry>;
+};
+
+function loadYaml<T>(path: URL): T {
+  return YAML.parse(readFileSync(path, "utf-8"));
+}
+
+const bp = loadYaml<Blueprint>(BLUEPRINT_PATH);
+const declared = Array.isArray(bp.profiles) ? bp.profiles : [];
+const defined = bp.components?.inference?.profiles;
 
 describe("blueprint.yaml", () => {
   it("parses as a YAML mapping", () => {
@@ -38,7 +84,7 @@ describe("blueprint.yaml", () => {
 
   it("has a non-empty components.inference.profiles mapping", () => {
     expect(defined).toBeDefined();
-    expect(Object.keys(defined!).length).toBeGreaterThan(0);
+    expect(Object.keys(defined ?? {}).length).toBeGreaterThan(0);
   });
 
   it("regression #1438: sandbox image is pinned by digest, not by mutable tag", () => {
@@ -46,9 +92,7 @@ describe("blueprint.yaml", () => {
     // ":latest" — a registry compromise or accidental force-push could
     // silently swap the image. Pin via @sha256:... so the image cannot
     // change without a corresponding blueprint update.
-    const sandbox = (bp.components as Record<string, unknown> | undefined)?.sandbox as
-      | { image?: unknown }
-      | undefined;
+    const sandbox = bp.components?.sandbox;
     const image = typeof sandbox?.image === "string" ? sandbox.image : "";
     expect(image.length).toBeGreaterThan(0);
     expect(image).toContain("@sha256:");
@@ -73,9 +117,7 @@ describe("blueprint.yaml", () => {
     // Must be a sha256:<64-hex> string.
     expect(topLevelDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
 
-    const sandbox = (bp.components as Record<string, unknown> | undefined)?.sandbox as
-      | { image?: unknown }
-      | undefined;
+    const sandbox = bp.components?.sandbox;
     const image = typeof sandbox?.image === "string" ? sandbox.image : "";
     const imageDigestMatch = image.match(/@sha256:([0-9a-f]{64})$/);
     expect(imageDigestMatch).not.toBeNull();
@@ -90,7 +132,7 @@ describe("blueprint.yaml", () => {
     describe(`profile '${name}'`, () => {
       it("has a definition", () => {
         expect(defined).toBeDefined();
-        expect(name in defined!).toBe(true);
+        expect(name in (defined ?? {})).toBe(true);
       });
 
       for (const field of REQUIRED_PROFILE_FIELDS) {
@@ -115,7 +157,7 @@ describe("blueprint.yaml", () => {
 });
 
 describe("base sandbox policy", () => {
-  const policy = YAML.parse(readFileSync(BASE_POLICY_PATH, "utf-8")) as Record<string, unknown>;
+  const policy = loadYaml<SandboxPolicy>(BASE_POLICY_PATH);
 
   it("parses as a YAML mapping", () => {
     expect(policy).toEqual(expect.objectContaining({}));
@@ -130,13 +172,13 @@ describe("base sandbox policy", () => {
   });
 
   it("no endpoint rule uses wildcard method", () => {
-    const np = policy.network_policies as Record<string, Record<string, unknown>>;
+    const np = policy.network_policies ?? {};
     const violations: string[] = [];
     for (const [policyName, cfg] of Object.entries(np)) {
-      const endpoints = cfg.endpoints as Array<Record<string, unknown>> | undefined;
+      const endpoints = cfg.endpoints;
       if (!endpoints) continue;
       for (const ep of endpoints) {
-        const rules = ep.rules as Array<Record<string, Record<string, string>>> | undefined;
+        const rules = ep.rules;
         if (!rules) continue;
         for (const rule of rules) {
           const method = rule.allow?.method;
@@ -150,10 +192,10 @@ describe("base sandbox policy", () => {
   });
 
   it("every endpoint with rules has protocol: rest and enforcement: enforce", () => {
-    const np = policy.network_policies as Record<string, Record<string, unknown>>;
+    const np = policy.network_policies ?? {};
     const violations: string[] = [];
     for (const [policyName, cfg] of Object.entries(np)) {
-      const endpoints = cfg.endpoints as Array<Record<string, unknown>> | undefined;
+      const endpoints = cfg.endpoints;
       if (!endpoints) continue;
       for (const ep of endpoints) {
         if (!ep.rules) continue;
@@ -169,17 +211,13 @@ describe("base sandbox policy", () => {
   });
 
   it("allows NVIDIA embeddings on both NVIDIA inference hosts", () => {
-    const np = policy.network_policies as Record<string, Record<string, unknown>>;
-    const endpoints =
-      np.nvidia?.endpoints as
-        | Array<{ host?: string; rules?: Array<{ allow?: { method?: string; path?: string } }> }>
-        | undefined;
+    const np = policy.network_policies ?? {};
+    const endpoints = np.nvidia?.endpoints;
     const missingHosts: string[] = [];
     for (const host of ["integrate.api.nvidia.com", "inference-api.nvidia.com"]) {
       const endpoint = endpoints?.find((entry) => entry.host === host);
       const hasEmbeddingsRule = endpoint?.rules?.some(
-        (rule) =>
-          rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",
+        (rule) => rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",
       );
       if (!hasEmbeddingsRule) {
         missingHosts.push(host);
@@ -190,21 +228,16 @@ describe("base sandbox policy", () => {
 
   // Walk every endpoint in every network_policies entry and return the
   // entries whose host matches `hostMatcher`. Used by the regressions below.
-  type Rule = { allow?: { method?: string; path?: string } };
-  type Endpoint = { host?: string; rules?: Rule[] };
   function findEndpoints(hostMatcher: (h: string) => boolean): Endpoint[] {
     const out: Endpoint[] = [];
-    const np = (policy as Record<string, unknown>).network_policies;
-    if (!np || typeof np !== "object") return out;
-    for (const value of Object.values(np as Record<string, unknown>)) {
-      if (!value || typeof value !== "object") continue;
-      const endpoints = (value as { endpoints?: unknown }).endpoints;
+    const np = policy.network_policies;
+    if (!np) return out;
+    for (const value of Object.values(np)) {
+      const endpoints = value.endpoints;
       if (!Array.isArray(endpoints)) continue;
       for (const ep of endpoints) {
-        if (ep && typeof ep === "object" && typeof (ep as Endpoint).host === "string") {
-          if (hostMatcher((ep as Endpoint).host as string)) {
-            out.push(ep as Endpoint);
-          }
+        if (typeof ep.host === "string" && hostMatcher(ep.host)) {
+          out.push(ep);
         }
       }
     }
@@ -217,7 +250,11 @@ describe("base sandbox policy", () => {
     for (const ep of sentryEndpoints) {
       const rules = Array.isArray(ep.rules) ? ep.rules : [];
       const hasPost = rules.some(
-        (r) => r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "POST",
+        (r) =>
+          r &&
+          r.allow &&
+          typeof r.allow.method === "string" &&
+          r.allow.method.toUpperCase() === "POST",
       );
       expect(hasPost).toBe(false);
     }
@@ -228,7 +265,11 @@ describe("base sandbox policy", () => {
     for (const ep of sentryEndpoints) {
       const rules = Array.isArray(ep.rules) ? ep.rules : [];
       const hasGet = rules.some(
-        (r) => r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "GET",
+        (r) =>
+          r &&
+          r.allow &&
+          typeof r.allow.method === "string" &&
+          r.allow.method.toUpperCase() === "GET",
       );
       expect(hasGet).toBe(true);
     }
@@ -242,23 +283,21 @@ describe("base sandbox policy", () => {
     // assertion blocks the regression where someone re-adds a github
     // entry to the base policy and silently re-grants every sandbox
     // unscoped GitHub access.
-    const np = policy.network_policies as Record<string, unknown> | undefined;
-    expect(np && typeof np === "object" && "github" in np).toBe(false);
+    const np = policy.network_policies;
+    expect(np && "github" in np).toBe(false);
 
     // Belt and braces: also assert no endpoint in any base-policy
     // entry references github.com or api.github.com, so the
     // regression can't be smuggled in under a renamed key.
-    const githubHosts = findEndpoints(
-      (h) => h === "github.com" || h === "api.github.com",
-    );
+    const githubHosts = findEndpoints((h) => h === "github.com" || h === "api.github.com");
     expect(githubHosts).toEqual([]);
   });
 
   it("regression #1458: baseline npm_registry must not include npm or node binaries", () => {
-    const np = policy.network_policies as Record<string, Record<string, unknown>>;
+    const np = policy.network_policies ?? {};
     const npmRegistry = np.npm_registry;
     expect(npmRegistry).toBeDefined();
-    const binaries = npmRegistry.binaries as Array<{ path: string }> | undefined;
+    const binaries = npmRegistry?.binaries;
     expect(Array.isArray(binaries)).toBe(true);
     const paths = (binaries ?? []).map((b) => b.path).sort();
     // Only openclaw CLI should reach the npm registry by default.
@@ -278,12 +317,11 @@ describe("github preset", () => {
   );
 
   it("regression #1583: github preset file exists and parses", () => {
-    const raw = readFileSync(PRESET_PATH, "utf-8");
-    const parsed = YAML.parse(raw) as Record<string, unknown>;
+    const parsed = loadYaml<PolicyPreset>(PRESET_PATH);
     expect(parsed).toEqual(expect.objectContaining({}));
-    const meta = parsed.preset as { name?: unknown } | undefined;
+    const meta = parsed.preset;
     expect(meta?.name).toBe("github");
-    const np = parsed.network_policies as Record<string, unknown> | undefined;
+    const np = parsed.network_policies;
     expect(np && "github" in np).toBe(true);
   });
 });
@@ -302,18 +340,13 @@ describe("huggingface preset", () => {
     "../nemoclaw-blueprint/policies/presets/huggingface.yaml",
     import.meta.url,
   );
-  const huggingfacePreset = YAML.parse(
-    readFileSync(HUGGINGFACE_PRESET_PATH, "utf-8"),
-  ) as Record<string, unknown>;
-
-  type Rule = { allow?: { method?: string; path?: string } };
-  type Endpoint = { host?: string; rules?: Rule[] };
+  const huggingfacePreset = loadYaml<PolicyPreset>(HUGGINGFACE_PRESET_PATH);
 
   function presetEndpoints(): Endpoint[] {
-    const np = huggingfacePreset.network_policies as Record<string, unknown> | undefined;
+    const np = huggingfacePreset.network_policies;
     if (!np) return [];
-    const hf = np.huggingface as { endpoints?: unknown } | undefined;
-    return Array.isArray(hf?.endpoints) ? (hf!.endpoints as Endpoint[]) : [];
+    const hf = np.huggingface;
+    return Array.isArray(hf?.endpoints) ? hf.endpoints : [];
   }
 
   it("regression #1432: huggingface.co has no POST allow rule", () => {
@@ -323,7 +356,10 @@ describe("huggingface preset", () => {
       const rules = Array.isArray(ep.rules) ? ep.rules : [];
       const hasPost = rules.some(
         (r) =>
-          r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "POST",
+          r &&
+          r.allow &&
+          typeof r.allow.method === "string" &&
+          r.allow.method.toUpperCase() === "POST",
       );
       expect(hasPost).toBe(false);
     }
@@ -335,7 +371,10 @@ describe("huggingface preset", () => {
       const rules = Array.isArray(ep.rules) ? ep.rules : [];
       const hasGet = rules.some(
         (r) =>
-          r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "GET",
+          r &&
+          r.allow &&
+          typeof r.allow.method === "string" &&
+          r.allow.method.toUpperCase() === "GET",
       );
       expect(hasGet).toBe(true);
     }

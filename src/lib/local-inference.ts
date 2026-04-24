@@ -262,7 +262,7 @@ export function validateLocalProvider(
   }
 }
 
-export function parseOllamaList(output: unknown): string[] {
+export function parseOllamaList(output: string | null | undefined): string[] {
   return String(output || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -272,7 +272,7 @@ export function parseOllamaList(output: unknown): string[] {
     .filter(Boolean);
 }
 
-export function parseOllamaTags(output: unknown): string[] {
+export function parseOllamaTags(output: string | null | undefined): string[] {
   try {
     const parsed = JSON.parse(String(output || ""));
     return Array.isArray(parsed?.models)

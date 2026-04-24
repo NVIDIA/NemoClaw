@@ -100,6 +100,34 @@ describe("blueprint/state", () => {
       expect(loaded.shieldsDownPolicy).toBeNull();
       expect(loaded.shieldsPolicySnapshotPath).toBeNull();
     });
+
+    it("falls back to blank defaults when the persisted JSON root is not an object", () => {
+      store.set(STATE_PATH, JSON.stringify(["not", "an", "object"]));
+      const loaded = loadState();
+      expect(loaded.lastRunId).toBeNull();
+      expect(loaded.shieldsDown).toBe(false);
+    });
+
+    it("ignores malformed persisted field types while preserving valid partial state", () => {
+      store.set(
+        STATE_PATH,
+        JSON.stringify({
+          lastRunId: "run-1",
+          sandboxName: "sb",
+          updatedAt: {},
+          shieldsDown: "false",
+          shieldsDownTimeout: "300",
+          shieldsDownReason: ["bad"],
+        }),
+      );
+      const loaded = loadState();
+      expect(loaded.lastRunId).toBe("run-1");
+      expect(loaded.sandboxName).toBe("sb");
+      expect(typeof loaded.updatedAt).toBe("string");
+      expect(loaded.shieldsDown).toBe(false);
+      expect(loaded.shieldsDownTimeout).toBeNull();
+      expect(loaded.shieldsDownReason).toBeNull();
+    });
   });
 
   describe("saveState", () => {

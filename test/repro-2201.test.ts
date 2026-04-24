@@ -32,12 +32,16 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const NODE_BIN = path.dirname(process.execPath);   // need node on PATH for shebangs
+const NODE_BIN = path.dirname(process.execPath); // need node on PATH for shebangs
 const tmpFixtures: string[] = [];
 
 afterEach(() => {
   for (const dir of tmpFixtures.splice(0)) {
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* */ }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* */
+    }
   }
 });
 
@@ -73,13 +77,19 @@ function createFixture({
       defaultSandbox: rebuildTarget.name,
       sandboxes: {
         [rebuildTarget.name]: {
-          name: rebuildTarget.name, model: "m", provider: "p",
-          gpuEnabled: false, policies: [],
+          name: rebuildTarget.name,
+          model: "m",
+          provider: "p",
+          gpuEnabled: false,
+          policies: [],
           agent: rebuildTarget.agent,
         },
         [lastOnboarded.name]: {
-          name: lastOnboarded.name, model: "m", provider: "p",
-          gpuEnabled: false, policies: [],
+          name: lastOnboarded.name,
+          model: "m",
+          provider: "p",
+          gpuEnabled: false,
+          policies: [],
           agent: lastOnboarded.agent,
         },
       },
@@ -91,23 +101,37 @@ function createFixture({
   fs.writeFileSync(
     path.join(nemoclawDir, "onboard-session.json"),
     JSON.stringify({
-      version: 1, sessionId: "s", resumable: true, status: "complete",
-      mode: "interactive", startedAt: "2026-01-01", updatedAt: "2026-01-01",
-      lastStepStarted: null, lastCompletedStep: "inference", failure: null,
-      agent: lastOnboarded.agent, sandboxName: lastOnboarded.name,
-      provider: "p", model: "m", endpointUrl: null, credentialEnv: null,
-      preferredInferenceApi: null, nimContainer: null, webSearchConfig: null,
-      policyPresets: [], messagingChannels: null,
+      version: 1,
+      sessionId: "s",
+      resumable: true,
+      status: "complete",
+      mode: "interactive",
+      startedAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+      lastStepStarted: null,
+      lastCompletedStep: "inference",
+      failure: null,
+      agent: lastOnboarded.agent,
+      sandboxName: lastOnboarded.name,
+      provider: "p",
+      model: "m",
+      endpointUrl: null,
+      credentialEnv: null,
+      preferredInferenceApi: null,
+      nimContainer: null,
+      webSearchConfig: null,
+      policyPresets: [],
+      messagingChannels: null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile },
       steps: {
-        preflight:  { status: "complete", startedAt: null, completedAt: null, error: null },
-        gateway:    { status: "complete", startedAt: null, completedAt: null, error: null },
-        sandbox:    { status: "complete", startedAt: null, completedAt: null, error: null },
+        preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+        gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
         provider_selection: { status: "complete", startedAt: null, completedAt: null, error: null },
-        inference:  { status: "complete", startedAt: null, completedAt: null, error: null },
-        openclaw:   { status: "pending", startedAt: null, completedAt: null, error: null },
-        agent_setup:{ status: "pending", startedAt: null, completedAt: null, error: null },
-        policies:   { status: "pending", startedAt: null, completedAt: null, error: null },
+        inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+        openclaw: { status: "pending", startedAt: null, completedAt: null, error: null },
+        agent_setup: { status: "pending", startedAt: null, completedAt: null, error: null },
+        policies: { status: "pending", startedAt: null, completedAt: null, error: null },
       },
     }),
     { mode: 0o600 },
@@ -190,46 +214,56 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
   );
 }
 
-function readSession(fixture: ReturnType<typeof createFixture>): Record<string, unknown> {
+type SessionFixture = { agent?: string | null };
+
+function readSession(fixture: ReturnType<typeof createFixture>): SessionFixture {
   const p = path.join(fixture.nemoclawDir, "onboard-session.json");
   return JSON.parse(fs.readFileSync(p, "utf-8"));
 }
 
-function readSessionAgent(fixture: ReturnType<typeof createFixture>): unknown {
+function readSessionAgent(fixture: ReturnType<typeof createFixture>): string | null | undefined {
   return readSession(fixture).agent;
 }
 
 describe("Issue #2201: rebuild syncs agent from registry, not stale session", () => {
-  it("rebuild openclaw after hermes was onboarded last (reporter scenario)",
-    { timeout: 60_000 }, () => {
+  it(
+    "rebuild openclaw after hermes was onboarded last (reporter scenario)",
+    { timeout: 60_000 },
+    () => {
       // Exact scenario from the bug report: user has openclaw + hermes,
       // hermes was onboarded last, then runs `nemoclaw openclaw rebuild`.
       const f = createFixture({
         rebuildTarget: { name: "openclaw", agent: null },
-        lastOnboarded: { name: "hermes",   agent: "hermes" },
+        lastOnboarded: { name: "hermes", agent: "hermes" },
       });
       runRebuild(f);
       // With fix: session.agent = null (synced from openclaw registry entry)
       // Without fix: session.agent stays "hermes" (from hermes onboard)
       expect(readSessionAgent(f)).toBeNull();
-    });
+    },
+  );
 
-  it("rebuild hermes after openclaw was onboarded last (reverse scenario)",
-    { timeout: 60_000 }, () => {
+  it(
+    "rebuild hermes after openclaw was onboarded last (reverse scenario)",
+    { timeout: 60_000 },
+    () => {
       const f = createFixture({
-        rebuildTarget: { name: "hermes",   agent: "hermes" },
+        rebuildTarget: { name: "hermes", agent: "hermes" },
         lastOnboarded: { name: "openclaw", agent: null },
       });
       runRebuild(f);
       // With fix: session.agent = "hermes" (synced from hermes registry entry)
       // Without fix: session.agent stays null (from openclaw onboard)
       expect(readSessionAgent(f)).toBe("hermes");
-    });
+    },
+  );
 });
 
 describe("Issue #2301: rebuild forwards stored --from Dockerfile to onboard", () => {
-  it("rebuild does not hit fromDockerfile conflict when session has a stored --from path",
-    { timeout: 60_000 }, () => {
+  it(
+    "rebuild does not hit fromDockerfile conflict when session has a stored --from path",
+    { timeout: 60_000 },
+    () => {
       // Scenario: user onboarded with --from /path/to/Dockerfile, then
       // runs rebuild.  Without the fix, onboard's conflict check sees
       // requestedFrom=null vs recordedFrom="/path/to/Dockerfile" and
@@ -244,5 +278,6 @@ describe("Issue #2301: rebuild forwards stored --from Dockerfile to onboard", ()
       // With fix: rebuild proceeds past conflict check (may still fail
       // later in the fake-env backup step — that's expected with stubs).
       expect(result.stderr).not.toMatch(/Session was started with --from/);
-    });
+    },
+  );
 });

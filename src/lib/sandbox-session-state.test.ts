@@ -17,8 +17,8 @@ import {
 describe("parseForwardList", () => {
   it("returns empty array for empty/null input", () => {
     expect(parseForwardList("")).toEqual([]);
-    expect(parseForwardList(null as unknown as string)).toEqual([]);
-    expect(parseForwardList(undefined as unknown as string)).toEqual([]);
+    expect(parseForwardList(null)).toEqual([]);
+    expect(parseForwardList(undefined)).toEqual([]);
   });
 
   it("skips header row", () => {
@@ -70,7 +70,7 @@ sandbox-1  127.0.0.1  11434  101  stopped`;
 describe("parseSshProcesses", () => {
   it("returns empty array for empty input", () => {
     expect(parseSshProcesses("", "my-sandbox")).toEqual([]);
-    expect(parseSshProcesses(null as unknown as string, "my-sandbox")).toEqual([]);
+    expect(parseSshProcesses(null, "my-sandbox")).toEqual([]);
   });
 
   it("returns empty array for empty sandbox name", () => {

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -21,7 +20,7 @@ const {
 describe("usage notice", () => {
   const originalIsTTY = process.stdin.isTTY;
   const originalHome = process.env.HOME;
-  let testHome = null;
+  let testHome: string | null = null;
 
   beforeEach(() => {
     testHome = fs.mkdtempSync(path.join(import.meta.dirname, "usage-notice-home-"));
@@ -54,11 +53,11 @@ describe("usage notice", () => {
   });
 
   it("requires the non-interactive acceptance flag", async () => {
-    const lines = [];
+    const lines: string[] = [];
     const ok = await ensureUsageNoticeConsent({
       nonInteractive: true,
       acceptedByFlag: false,
-      writeLine: (line) => lines.push(line),
+      writeLine: (line: string) => lines.push(line),
     });
 
     expect(ok).toBe(false);
@@ -78,11 +77,11 @@ describe("usage notice", () => {
   });
 
   it("cancels interactive onboarding unless the user types yes", async () => {
-    const lines = [];
+    const lines: string[] = [];
     const ok = await ensureUsageNoticeConsent({
       nonInteractive: false,
       promptFn: async () => "no",
-      writeLine: (line) => lines.push(line),
+      writeLine: (line: string) => lines.push(line),
     });
 
     expect(ok).toBe(false);
@@ -102,7 +101,7 @@ describe("usage notice", () => {
   });
 
   it("fails interactive mode without a tty", async () => {
-    const lines = [];
+    const lines: string[] = [];
     Object.defineProperty(process.stdin, "isTTY", {
       configurable: true,
       value: false,
@@ -111,7 +110,7 @@ describe("usage notice", () => {
     const ok = await ensureUsageNoticeConsent({
       nonInteractive: false,
       promptFn: async () => "yes",
-      writeLine: (line) => lines.push(line),
+      writeLine: (line: string) => lines.push(line),
     });
 
     expect(ok).toBe(false);
@@ -119,7 +118,7 @@ describe("usage notice", () => {
   });
 
   it("renders url lines as terminal hyperlinks when tty output is available", () => {
-    const lines = [];
+    const lines: string[] = [];
     const originalStdoutIsTTY = process.stdout.isTTY;
     const originalStderrIsTTY = process.stderr.isTTY;
     const originalNoColor = process.env.NO_COLOR;
@@ -136,7 +135,7 @@ describe("usage notice", () => {
       delete process.env.NO_COLOR;
       process.env.TERM = "xterm-256color";
 
-      printUsageNotice(loadUsageNoticeConfig(), (line) => lines.push(line));
+      printUsageNotice(loadUsageNoticeConfig(), (line: string) => lines.push(line));
     } finally {
       Object.defineProperty(process.stdout, "isTTY", {
         configurable: true,

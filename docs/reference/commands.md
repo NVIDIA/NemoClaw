@@ -563,7 +563,7 @@ $ nemoclaw my-assistant snapshot restore 2026-04-21T07-35-55-987Z
 $ nemoclaw my-assistant snapshot restore v3 --to my-assistant-clone
 ```
 
-### `openshell term`
+## `openshell term`
 
 Open the OpenShell TUI to monitor sandbox activity and approve network egress requests.
 Run this on the host where the sandbox is running.

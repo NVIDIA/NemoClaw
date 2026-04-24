@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -8,16 +7,30 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-async function importCredentialsModule(home) {
+type CredentialsModule = typeof import("../dist/lib/credentials.js");
+
+function isCredentialsModule(value: object | null): value is CredentialsModule {
+  return (
+    value !== null &&
+    typeof Reflect.get(value, "loadCredentials") === "function" &&
+    typeof Reflect.get(value, "getCredential") === "function" &&
+    typeof Reflect.get(value, "saveCredential") === "function"
+  );
+}
+
+async function importCredentialsModule(home: string): Promise<CredentialsModule> {
   vi.resetModules();
   vi.doUnmock("fs");
   vi.doUnmock("child_process");
   vi.doUnmock("readline");
   vi.stubEnv("HOME", home);
   const module = await import("../dist/lib/credentials.js");
-  /** @type {any} */
-  const resolved = module.default ?? module;
-  return resolved;
+  const loaded = "default" in module ? module.default : module;
+  const moduleObject = typeof loaded === "object" && loaded !== null ? loaded : null;
+  if (!isCredentialsModule(moduleObject)) {
+    throw new Error("Expected credentials module exports to be available");
+  }
+  return moduleObject;
 }
 
 afterEach(() => {

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,8 +9,12 @@ import os from "node:os";
 // Test the audit entry format and JSONL structure using the same logic
 // as the production module but with a controllable output path.
 
-let tmpDir;
-let auditPath;
+type AuditScalar = string | number | boolean | null | undefined;
+type AuditValue = AuditScalar | AuditRecord | AuditValue[];
+type AuditRecord = { [key: string]: AuditValue };
+
+let tmpDir: string;
+let auditPath: string;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-audit-test-"));
@@ -26,7 +29,7 @@ afterEach(() => {
  * Inline audit append — mirrors the production appendAuditEntry() but writes
  * to our test-controlled path instead of ~/.nemoclaw/state/.
  */
-function appendAuditEntry(entry) {
+function appendAuditEntry(entry: AuditRecord) {
   fs.appendFileSync(auditPath, JSON.stringify(entry) + "\n", { mode: 0o600 });
 }
 

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -36,6 +35,22 @@ function getOctalPerms(filePath: string): string {
  * Run a bash snippet that sources sandbox-init.sh and executes the given body.
  * Returns { stdout, stderr } as trimmed strings.
  */
+type ExecFailureShape = { stdout?: string | Buffer; stderr?: string | Buffer };
+
+function readExecFileSyncOutput(error: ExecFailureShape | null, key: "stdout" | "stderr"): string {
+  if (error === null) {
+    return "";
+  }
+  const value = Reflect.get(error, key);
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (Buffer.isBuffer(value)) {
+    return value.toString().trim();
+  }
+  return "";
+}
+
 function runWithLib(
   body: string,
   opts: { env?: Record<string, string>; expectFail?: boolean } = {},
@@ -55,11 +70,12 @@ function runWithLib(
       stdio: ["pipe", "pipe", "pipe"],
     });
     return { stdout: result.trim(), stderr: "" };
-  } catch (e: any) {
+  } catch (e) {
     if (opts.expectFail) {
+      const errorObject: ExecFailureShape | null = typeof e === "object" && e !== null ? e : null;
       return {
-        stdout: (e.stdout || "").toString().trim(),
-        stderr: (e.stderr || "").toString().trim(),
+        stdout: readExecFileSyncOutput(errorObject, "stdout"),
+        stderr: readExecFileSyncOutput(errorObject, "stderr"),
       };
     }
     throw e;
@@ -179,11 +195,7 @@ EOF
   describe("validate_tmp_permissions", () => {
     let workDir: string;
     let tmpBackups: Record<string, string>;
-    const TMP_ARTIFACTS = [
-      "/tmp/nemoclaw-proxy-env.sh",
-      "/tmp/gateway.log",
-      "/tmp/auto-pair.log",
-    ];
+    const TMP_ARTIFACTS = ["/tmp/nemoclaw-proxy-env.sh", "/tmp/gateway.log", "/tmp/auto-pair.log"];
 
     beforeEach(() => {
       workDir = mkdtempSync(join(tmpdir(), "sandbox-init-validate-"));
@@ -209,10 +221,9 @@ EOF
       writeFileSync(testFile, "# bad permissions");
       chmodSync(testFile, 0o644); // writable — should fail
 
-      const { stderr } = runWithLib(
-        `validate_tmp_permissions ${JSON.stringify(testFile)}`,
-        { expectFail: true },
-      );
+      const { stderr } = runWithLib(`validate_tmp_permissions ${JSON.stringify(testFile)}`, {
+        expectFail: true,
+      });
       expect(stderr).toContain("unsafe permissions");
     });
 
@@ -240,10 +251,9 @@ EOF
     });
 
     it("fails when hash file is missing", () => {
-      const { stderr } = runWithLib(
-        `verify_config_integrity ${JSON.stringify(workDir)}`,
-        { expectFail: true },
-      );
+      const { stderr } = runWithLib(`verify_config_integrity ${JSON.stringify(workDir)}`, {
+        expectFail: true,
+      });
       expect(stderr).toContain("Config hash file missing");
     });
 
@@ -272,10 +282,9 @@ EOF
       // Tamper with config
       writeFileSync(configFile, '{"test": false, "injected": "malicious"}');
 
-      const { stderr } = runWithLib(
-        `verify_config_integrity ${JSON.stringify(workDir)}`,
-        { expectFail: true },
-      );
+      const { stderr } = runWithLib(`verify_config_integrity ${JSON.stringify(workDir)}`, {
+        expectFail: true,
+      });
       expect(stderr).toContain("integrity check FAILED");
     });
   });
@@ -451,36 +460,24 @@ EOF
 
   describe("both entrypoints source the shared library", () => {
     it("nemoclaw-start.sh sources sandbox-init.sh", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../scripts/nemoclaw-start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../scripts/nemoclaw-start.sh"), "utf-8");
       expect(src).toContain("source");
       expect(src).toContain("sandbox-init.sh");
     });
 
     it("hermes start.sh sources sandbox-init.sh", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../agents/hermes/start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain("source");
       expect(src).toContain("sandbox-init.sh");
     });
 
     it("hermes start.sh calls lock_rc_files (vulnerability fix)", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../agents/hermes/start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain("lock_rc_files");
     });
 
     it("hermes start.sh uses emit_sandbox_sourced_file for proxy config", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../agents/hermes/start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain("emit_sandbox_sourced_file");
       // Should NOT contain the old inline _write_proxy_snippet pattern
       expect(src).not.toContain("_write_proxy_snippet");
@@ -488,28 +485,19 @@ EOF
     });
 
     it("hermes start.sh calls validate_tmp_permissions", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../agents/hermes/start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain("validate_tmp_permissions");
     });
 
     it("nemoclaw-start.sh uses emit_sandbox_sourced_file for proxy-env.sh", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../scripts/nemoclaw-start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../scripts/nemoclaw-start.sh"), "utf-8");
       expect(src).toContain("emit_sandbox_sourced_file");
       // Should NOT contain old chmod 644 for proxy-env
       expect(src).not.toMatch(/chmod 644.*\$_PROXY_ENV_FILE/);
     });
 
     it("nemoclaw-start.sh uses parameterized verify_config_integrity", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../scripts/nemoclaw-start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../scripts/nemoclaw-start.sh"), "utf-8");
       expect(src).toContain("verify_config_integrity /sandbox/.openclaw");
     });
   });

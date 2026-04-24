@@ -5,6 +5,16 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+type PackageInfo = { version?: string };
+
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+function isPackageInfo(value: PackageInfo | null): value is { version: string } {
+  return typeof value?.version === "string";
+}
+
 export interface VersionOptions {
   /** Override the repo root directory. */
   rootDir?: string;
@@ -41,6 +51,9 @@ export function getVersion(opts: VersionOptions = {}): string {
 
   // 3. Fallback to package.json
   const raw = readFileSync(join(root, "package.json"), "utf-8");
-  const pkg = JSON.parse(raw) as { version: string };
+  const pkg = parseJson<PackageInfo>(raw);
+  if (!isPackageInfo(pkg)) {
+    throw new Error(`package.json at ${root} is missing a string version field`);
+  }
   return pkg.version;
 }

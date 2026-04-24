@@ -199,6 +199,23 @@ export interface BlueprintSnapshotManifest {
   path: string;
 }
 
+type SnapshotManifestJson = {
+  timestamp?: string;
+  source?: string;
+  file_count?: number;
+  contents?: Array<string | null>;
+};
+
+function isSnapshotManifestJson(value: object | null): value is SnapshotManifestJson {
+  return value !== null && !Array.isArray(value);
+}
+
+function readStringArray(value: SnapshotManifestJson["contents"]): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
 export function listSnapshots(): BlueprintSnapshotManifest[] {
   let entries: Dirent[];
   try {
@@ -212,15 +229,14 @@ export function listSnapshots(): BlueprintSnapshotManifest[] {
     if (!entry.isDirectory()) continue;
     const snapDir = join(SNAPSHOTS_DIR, entry.name);
     try {
-      const raw: unknown = JSON.parse(readFileSync(join(snapDir, "snapshot.json"), "utf-8"));
-      if (typeof raw !== "object" || raw === null) continue;
-      const obj = raw as Record<string, unknown>;
-      if (typeof obj.timestamp !== "string") continue;
+      const parsed: unknown = JSON.parse(readFileSync(join(snapDir, "snapshot.json"), "utf-8"));
+      const raw = typeof parsed === "object" && parsed !== null ? parsed : null;
+      if (!isSnapshotManifestJson(raw) || typeof raw.timestamp !== "string") continue;
       snapshots.push({
-        timestamp: obj.timestamp,
-        source: typeof obj.source === "string" ? obj.source : "",
-        file_count: typeof obj.file_count === "number" ? obj.file_count : 0,
-        contents: Array.isArray(obj.contents) ? (obj.contents as string[]) : [],
+        timestamp: raw.timestamp,
+        source: typeof raw.source === "string" ? raw.source : "",
+        file_count: typeof raw.file_count === "number" ? raw.file_count : 0,
+        contents: readStringArray(raw.contents),
         path: snapDir,
       });
     } catch {

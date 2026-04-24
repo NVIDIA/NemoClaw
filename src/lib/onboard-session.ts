@@ -17,11 +17,20 @@ export const SESSION_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
-const STEP_STATES = ["pending", "in_progress", "complete", "failed", "skipped"] as const;
-const VALID_STEP_STATES = new Set<string>(STEP_STATES);
 
-type UnknownRecord = { [key: string]: unknown };
-type StepStatus = (typeof STEP_STATES)[number];
+type SessionJsonPrimitive = string | number | boolean | null;
+type SessionJsonValue = SessionJsonPrimitive | UnknownRecord | SessionJsonValue[];
+type UnknownRecord = { [key: string]: SessionJsonValue };
+type StepStatus = "pending" | "in_progress" | "complete" | "failed" | "skipped";
+
+const STEP_STATES: readonly StepStatus[] = [
+  "pending",
+  "in_progress",
+  "complete",
+  "failed",
+  "skipped",
+];
+const VALID_STEP_STATES: ReadonlySet<string> = new Set(STEP_STATES);
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -151,33 +160,35 @@ export function isObject(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
+type ErrnoLike = Error | { code?: string | number } | null;
+
+function isErrnoException(error: ErrnoLike): error is NodeJS.ErrnoException {
+  return error !== null && error instanceof Error && "code" in error;
 }
 
-function readString(value: unknown): string | null {
+function readString(value: SessionJsonValue | undefined): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function readStringArray(value: unknown): string[] | null {
+function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
-function readStepStatus(value: unknown): StepStatus | null {
-  if (value === "pending") return value;
-  if (value === "in_progress") return value;
-  if (value === "complete") return value;
-  if (value === "failed") return value;
-  if (value === "skipped") return value;
-  return null;
+function isStepStatus(value: string): value is StepStatus {
+  return VALID_STEP_STATES.has(value);
 }
 
-function parseWebSearchConfig(value: unknown): WebSearchConfig | null {
+function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null {
+  if (typeof value !== "string") return null;
+  return isStepStatus(value) ? value : null;
+}
+
+function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
   return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
 }
 
-function parseSessionMetadata(value: unknown): SessionMetadata | undefined {
+function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
@@ -185,7 +196,7 @@ function parseSessionMetadata(value: unknown): SessionMetadata | undefined {
   };
 }
 
-function parseStepState(value: unknown): StepState | null {
+function parseStepState(value: SessionJsonValue | undefined): StepState | null {
   if (!isObject(value)) return null;
   const status = readStepStatus(value.status);
   if (!status) return null;
@@ -197,7 +208,7 @@ function parseStepState(value: unknown): StepState | null {
   };
 }
 
-function parseLockInfo(value: unknown): LockInfo | null {
+function parseLockInfo(value: SessionJsonValue | undefined): LockInfo | null {
   if (!isObject(value) || typeof value.pid !== "number") return null;
   return {
     pid: value.pid,
@@ -210,7 +221,10 @@ function parseLockInfo(value: unknown): LockInfo | null {
 export { redactSensitiveText, redactUrl };
 
 export function sanitizeFailure(
-  input: { step?: unknown; message?: unknown; recordedAt?: unknown } | null | undefined,
+  input:
+    | { step?: SessionJsonValue; message?: SessionJsonValue; recordedAt?: SessionJsonValue }
+    | null
+    | undefined,
 ): SessionFailure | null {
   if (!input) return null;
   const step = readString(input.step);
@@ -219,7 +233,7 @@ export function sanitizeFailure(
   return step || message ? { step, message, recordedAt } : null;
 }
 
-export function validateStep(step: unknown): boolean {
+export function validateStep(step: SessionJsonValue | undefined): boolean {
   return parseStepState(step) !== null;
 }
 
@@ -246,7 +260,8 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
     nimContainer: overrides.nimContainer ?? null,
-    webSearchConfig: parseWebSearchConfig(overrides.webSearchConfig),
+    webSearchConfig:
+      overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
     metadata: {
@@ -261,7 +276,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
 }
 
 // eslint-disable-next-line complexity
-export function normalizeSession(data: unknown): Session | null {
+export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
 
   const normalized = createSession({
@@ -350,8 +365,8 @@ function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch (error: unknown) {
-    return isErrnoException(error) && error.code === "EPERM";
+  } catch (error) {
+    return error instanceof Error && isErrnoException(error) && error.code === "EPERM";
   }
 }
 
@@ -390,8 +405,8 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
       // releaseOnboardLock() can later confirm the on-disk path still
       // resolves to the same file we created (fstat ino vs stat ino).
       fd = fs.openSync(LOCK_FILE, "wx", 0o600);
-    } catch (error: unknown) {
-      if (!isErrnoException(error) || error.code !== "EEXIST") {
+    } catch (error) {
+      if (!(error instanceof Error && isErrnoException(error)) || error.code !== "EEXIST") {
         throw error;
       }
 
@@ -407,8 +422,12 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         const stat = fs.statSync(LOCK_FILE, { bigint: true });
         staleInode = stat.ino;
         existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
-      } catch (readError: unknown) {
-        if (isErrnoException(readError) && readError.code === "ENOENT") {
+      } catch (readError) {
+        if (
+          readError instanceof Error &&
+          isErrnoException(readError) &&
+          readError.code === "ENOENT"
+        ) {
           continue;
         }
         throw readError;
@@ -485,16 +504,22 @@ function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): v
       // Someone else replaced the file. Leave it alone.
       return;
     }
-  } catch (statError: unknown) {
-    if (isErrnoException(statError) && statError.code === "ENOENT") {
+  } catch (statError) {
+    if (statError instanceof Error && isErrnoException(statError) && statError.code === "ENOENT") {
       return;
     }
     throw statError;
   }
   try {
     fs.unlinkSync(filePath);
-  } catch (unlinkError: unknown) {
-    if (!isErrnoException(unlinkError) || unlinkError.code !== "ENOENT") {
+  } catch (unlinkError) {
+    if (
+      !(
+        unlinkError instanceof Error &&
+        isErrnoException(unlinkError) &&
+        unlinkError.code === "ENOENT"
+      )
+    ) {
       throw unlinkError;
     }
   }
@@ -514,16 +539,22 @@ export function releaseOnboardLock(): void {
       try {
         const pathStat = fs.statSync(LOCK_FILE, { bigint: true });
         pathInode = pathStat.ino;
-      } catch (error: unknown) {
-        if (!isErrnoException(error) || error.code !== "ENOENT") {
+      } catch (error) {
+        if (!(error instanceof Error && isErrnoException(error) && error.code === "ENOENT")) {
           // Unexpected — fall through to closing the fd.
         }
       }
       if (pathInode !== null && pathInode === fdStat.ino) {
         try {
           fs.unlinkSync(LOCK_FILE);
-        } catch (unlinkError: unknown) {
-          if (!isErrnoException(unlinkError) || unlinkError.code !== "ENOENT") {
+        } catch (unlinkError) {
+          if (
+            !(
+              unlinkError instanceof Error &&
+              isErrnoException(unlinkError) &&
+              unlinkError.code === "ENOENT"
+            )
+          ) {
             // Best effort — surfacing this would mask the real error.
           }
         }
@@ -550,8 +581,8 @@ export function releaseOnboardLock(): void {
     let existing: LockInfo | null = null;
     try {
       existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
-    } catch (error: unknown) {
-      if (isErrnoException(error) && error.code === "ENOENT") return;
+    } catch (error) {
+      if (error instanceof Error && isErrnoException(error) && error.code === "ENOENT") return;
       throw error;
     }
     if (!existing) return;

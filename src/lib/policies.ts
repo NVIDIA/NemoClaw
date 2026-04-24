@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -15,12 +14,35 @@ const { loadAgent } = require("./agent-defs");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
-function listPresets() {
+type PresetInfo = {
+  file: string;
+  name: string;
+  description: string;
+};
+
+type PolicyScalar = string | number | boolean | null | undefined;
+type PolicyValue = PolicyScalar | PolicyObject | PolicyValue[];
+type PolicyObject = { [key: string]: PolicyValue };
+
+type PolicyDocument = PolicyObject & {
+  version?: number;
+  network_policies?: PolicyObject;
+};
+
+type SelectionOptions = {
+  applied?: string[];
+};
+
+function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function listPresets(): PresetInfo[] {
   if (!fs.existsSync(PRESETS_DIR)) return [];
   return fs
     .readdirSync(PRESETS_DIR)
-    .filter((f) => f.endsWith(".yaml"))
-    .map((f) => {
+    .filter((f: string) => f.endsWith(".yaml"))
+    .map((f: string) => {
       const content = fs.readFileSync(path.join(PRESETS_DIR, f), "utf-8");
       const nameMatch = content.match(/^\s*name:\s*(.+)$/m);
       const descMatch = content.match(/^\s*description:\s*"?([^"]*)"?$/m);
@@ -32,7 +54,7 @@ function listPresets() {
     });
 }
 
-function loadPreset(name) {
+function loadPreset(name: string): string | null {
   const file = path.resolve(PRESETS_DIR, `${name}.yaml`);
   if (!file.startsWith(PRESETS_DIR + path.sep) && file !== PRESETS_DIR) {
     console.error(`  Invalid preset name: ${name}`);
@@ -45,8 +67,8 @@ function loadPreset(name) {
   return fs.readFileSync(file, "utf-8");
 }
 
-function getPresetEndpoints(content) {
-  const hosts = [];
+function getPresetEndpoints(content: string): string[] {
+  const hosts: string[] = [];
   const regex = /host:\s*([^\s,}]+)/g;
   let match;
   while ((match = regex.exec(content)) !== null) {
@@ -60,7 +82,7 @@ function getPresetEndpoints(content) {
  * the `network_policies:` key) from a preset file, stripping the
  * `preset:` metadata header.
  */
-function extractPresetEntries(presetContent) {
+function extractPresetEntries(presetContent: string | null | undefined): string | null {
   if (!presetContent) return null;
   const npMatch = presetContent.match(/^network_policies:\n([\s\S]*)$/m);
   if (!npMatch) return null;
@@ -71,7 +93,7 @@ function extractPresetEntries(presetContent) {
  * Parse the output of `openshell policy get --full` which has a metadata
  * header (Version, Hash, etc.) followed by `---` and then the actual YAML.
  */
-function parseCurrentPolicy(raw) {
+function parseCurrentPolicy(raw: string | null | undefined): string {
   if (!raw) return "";
   const sep = raw.indexOf("---");
   const candidate = (sep === -1 ? raw : raw.slice(sep + 3)).trim();
@@ -96,7 +118,7 @@ function parseCurrentPolicy(raw) {
 /**
  * Build the openshell policy set command as an argv array.
  */
-function buildPolicySetCommand(policyFile, sandboxName) {
+function buildPolicySetCommand(policyFile: string, sandboxName: string): string[] {
   const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
   return [binary, "policy", "set", "--policy", policyFile, "--wait", sandboxName];
 }
@@ -104,7 +126,7 @@ function buildPolicySetCommand(policyFile, sandboxName) {
 /**
  * Build the openshell policy get command as an argv array.
  */
-function buildPolicyGetCommand(sandboxName) {
+function buildPolicyGetCommand(sandboxName: string): string[] {
   const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
   return [binary, "policy", "get", "--full", sandboxName];
 }
@@ -113,7 +135,7 @@ function buildPolicyGetCommand(sandboxName) {
  * Text-based fallback for merging preset entries into policy YAML.
  * Used when preset entries cannot be parsed as structured YAML.
  */
-function textBasedMerge(currentPolicy, presetEntries) {
+function textBasedMerge(currentPolicy: string, presetEntries: string): string {
   if (!currentPolicy) {
     return "version: 1\n\nnetwork_policies:\n" + presetEntries;
   }
@@ -160,7 +182,7 @@ function textBasedMerge(currentPolicy, presetEntries) {
  * @param {string} presetEntries - Indented network_policies entries from preset
  * @returns {string} Merged YAML
  */
-function mergePresetIntoPolicy(currentPolicy, presetEntries) {
+function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): string {
   const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
   if (!presetEntries) {
     return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
@@ -188,14 +210,13 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
   }
 
   // Parse the current policy as structured YAML
-  let current;
+  let current: PolicyDocument | null;
   try {
-    current = YAML.parse(normalizedCurrentPolicy);
+    const parsed = YAML.parse(normalizedCurrentPolicy);
+    current = isPolicyDocument(parsed) ? parsed : {};
   } catch {
     return textBasedMerge(normalizedCurrentPolicy, presetEntries);
   }
-
-  if (!current || typeof current !== "object") current = {};
 
   // Structured merge: preset entries override existing on name collision.
   // Guard: network_policies may be an array in legacy policies — only
@@ -208,7 +229,7 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
     mergedNp = presetPolicies;
   }
 
-  const output = { version: current.version || 1 };
+  const output: PolicyDocument = { version: Number(current.version) || 1 };
   for (const [key, val] of Object.entries(current)) {
     if (key !== "version" && key !== "network_policies") output[key] = val;
   }
@@ -223,10 +244,13 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
  * removes them, and returns the resulting YAML.
  *
  * @param {string} currentPolicy - Existing policy YAML
- * @param {string} presetEntries - Indented network_policies entries from preset
+ * @param {string | null | undefined} presetEntries - Indented network_policies entries from preset
  * @returns {string} Policy YAML with the preset's entries removed
  */
-function removePresetFromPolicy(currentPolicy, presetEntries) {
+function removePresetFromPolicy(
+  currentPolicy: string,
+  presetEntries: string | null | undefined,
+): string {
   const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
   if (!presetEntries) {
     return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
@@ -237,13 +261,11 @@ function removePresetFromPolicy(currentPolicy, presetEntries) {
   // Parse preset entries to extract the network_policies key names.
   // They come as indented content under network_policies:,
   // so we wrap them to make valid YAML for parsing.
-  let presetKeys;
+  let presetKeys: string[];
   try {
     const wrapped = "network_policies:\n" + presetEntries;
     const parsed = YAML.parse(wrapped);
-    presetKeys = parsed?.network_policies
-      ? Object.keys(parsed.network_policies)
-      : [];
+    presetKeys = parsed?.network_policies ? Object.keys(parsed.network_policies) : [];
   } catch {
     presetKeys = [];
   }
@@ -251,14 +273,15 @@ function removePresetFromPolicy(currentPolicy, presetEntries) {
   if (presetKeys.length === 0) return normalizedCurrentPolicy;
 
   // Parse the current policy as structured YAML
-  let current;
+  let current: PolicyDocument | null;
   try {
-    current = YAML.parse(normalizedCurrentPolicy);
+    const parsed = YAML.parse(normalizedCurrentPolicy);
+    current = isPolicyDocument(parsed) ? parsed : null;
   } catch {
     return normalizedCurrentPolicy;
   }
 
-  if (!current || typeof current !== "object") return normalizedCurrentPolicy;
+  if (!current) return normalizedCurrentPolicy;
 
   // Guard: network_policies may be an array in legacy policies — only
   // delete keys when it is a plain object.
@@ -275,7 +298,7 @@ function removePresetFromPolicy(currentPolicy, presetEntries) {
   return YAML.stringify(current);
 }
 
-function removePreset(sandboxName, presetName) {
+function removePreset(sandboxName: string, presetName: string): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
@@ -346,15 +369,18 @@ function removePreset(sandboxName, presetName) {
 
   const sandbox = registry.getSandbox(sandboxName);
   if (sandbox) {
-    const pols = (sandbox.policies || []).filter((p) => p !== presetName);
+    const pols = (sandbox.policies || []).filter((p: string) => p !== presetName);
     registry.updateSandbox(sandboxName, { policies: pols });
   }
 
   return true;
 }
 
-function selectForRemoval(items, { applied = [] } = {}) {
-  return new Promise((resolve) => {
+function selectForRemoval(
+  items: PresetInfo[],
+  { applied = [] }: SelectionOptions = {},
+): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
     const appliedItems = items.filter((item) => applied.includes(item.name));
     if (appliedItems.length === 0) {
       process.stderr.write("\n  No presets are currently applied.\n\n");
@@ -369,7 +395,7 @@ function selectForRemoval(items, { applied = [] } = {}) {
     process.stderr.write("\n");
     const question = "  Choose preset to remove: ";
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, (answer) => {
+    rl.question(question, (answer: string) => {
       rl.close();
       if (!process.stdin.isTTY) {
         if (typeof process.stdin.pause === "function") process.stdin.pause();
@@ -397,7 +423,7 @@ function selectForRemoval(items, { applied = [] } = {}) {
   });
 }
 
-function applyPreset(sandboxName, presetName, _options = {}) {
+function applyPreset(sandboxName: string, presetName: string, _options = {}): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
@@ -469,7 +495,7 @@ function applyPreset(sandboxName, presetName, _options = {}) {
   return true;
 }
 
-function getAppliedPresets(sandboxName) {
+function getAppliedPresets(sandboxName: string): string[] {
   const sandbox = registry.getSandbox(sandboxName);
   return sandbox ? sandbox.policies || [] : [];
 }
@@ -485,7 +511,7 @@ function getAppliedPresets(sandboxName) {
  * `null` to distinguish "gateway unreachable" from "gateway has no
  * matching presets" (`[]`).
  */
-function getGatewayPresets(sandboxName) {
+function getGatewayPresets(sandboxName: string): string[] | null {
   let rawPolicy = "";
   try {
     rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
@@ -543,8 +569,11 @@ function getGatewayPresets(sandboxName) {
   return matched;
 }
 
-function selectFromList(items, { applied = [] } = {}) {
-  return new Promise((resolve) => {
+function selectFromList(
+  items: PresetInfo[],
+  { applied = [] }: SelectionOptions = {},
+): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
     process.stderr.write("\n  Available presets:\n");
     items.forEach((item, i) => {
       const marker = applied.includes(item.name) ? "●" : "○";
@@ -556,7 +585,7 @@ function selectFromList(items, { applied = [] } = {}) {
     const defaultNum = defaultIdx >= 0 ? defaultIdx + 1 : null;
     const question = defaultNum ? `  Choose preset [${defaultNum}]: ` : "  Choose preset: ";
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, (answer) => {
+    rl.question(question, (answer: string) => {
       rl.close();
       if (!process.stdin.isTTY) {
         if (typeof process.stdin.pause === "function") process.stdin.pause();
@@ -597,7 +626,7 @@ const PERMISSIVE_POLICY_PATH = path.join(
   "openclaw-sandbox-permissive.yaml",
 );
 
-function resolvePermissivePolicyPath(sandboxName) {
+function resolvePermissivePolicyPath(sandboxName: string): string {
   // Use agent-specific permissive policy if the sandbox has an agent with one.
   try {
     const sandbox = registry.getSandbox(sandboxName);
@@ -615,7 +644,7 @@ function resolvePermissivePolicyPath(sandboxName) {
   return PERMISSIVE_POLICY_PATH;
 }
 
-function applyPermissivePolicy(sandboxName) {
+function applyPermissivePolicy(sandboxName: string): void {
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
   if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
     throw new Error(

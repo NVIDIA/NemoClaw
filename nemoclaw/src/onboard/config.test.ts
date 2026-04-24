@@ -149,6 +149,12 @@ describe("onboard/config", () => {
       store.set(configPath, JSON.stringify(config));
       expect(loadOnboardConfig()).toEqual(config);
     });
+
+    it("returns null when the parsed JSON root is not a valid onboard config", () => {
+      const configPath = `${homedir()}/.nemoclaw/config.json`;
+      store.set(configPath, JSON.stringify({ endpointType: "bogus" }));
+      expect(loadOnboardConfig()).toBeNull();
+    });
   });
 
   describe("saveOnboardConfig", () => {

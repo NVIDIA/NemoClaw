@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, vi } from "vitest";
-import { recoverDashboardChain } from "../../dist/lib/dashboard-recover";
-import { buildChain } from "../../dist/lib/dashboard-contract";
+import { recoverDashboardChain } from "../../dist/lib/dashboard-recover.js";
+import { buildChain } from "../../dist/lib/dashboard-contract.js";
 
 const chain = buildChain();
 

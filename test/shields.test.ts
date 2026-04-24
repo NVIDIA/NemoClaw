@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -21,9 +20,15 @@ vi.mock("../../src/lib/runner", () => ({
 
 vi.mock("../../src/lib/policies", () => ({
   buildPolicyGetCommand: vi.fn((name) => ["openshell", "policy", "get", "--full", name]),
-  buildPolicySetCommand: vi.fn(
-    (file, name) => ["openshell", "policy", "set", "--policy", file, "--wait", name],
-  ),
+  buildPolicySetCommand: vi.fn((file, name) => [
+    "openshell",
+    "policy",
+    "set",
+    "--policy",
+    file,
+    "--wait",
+    name,
+  ]),
   parseCurrentPolicy: vi.fn((raw) => raw || ""),
   PERMISSIVE_POLICY_PATH: "/mock/permissive.yaml",
 }));
@@ -47,7 +52,7 @@ vi.mock("child_process", () => ({
   execFileSync: vi.fn(),
 }));
 
-let tmpDir;
+let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-test-"));
@@ -106,8 +111,14 @@ describe("shields — unit logic", () => {
       // Write state for two different sandboxes
       const alphaState = { shieldsDown: true, updatedAt: new Date().toISOString() };
       const betaState = { shieldsDown: false, updatedAt: new Date().toISOString() };
-      fs.writeFileSync(path.join(stateDir, "shields-alpha.json"), JSON.stringify(alphaState, null, 2));
-      fs.writeFileSync(path.join(stateDir, "shields-beta.json"), JSON.stringify(betaState, null, 2));
+      fs.writeFileSync(
+        path.join(stateDir, "shields-alpha.json"),
+        JSON.stringify(alphaState, null, 2),
+      );
+      fs.writeFileSync(
+        path.join(stateDir, "shields-beta.json"),
+        JSON.stringify(betaState, null, 2),
+      );
 
       const alpha = JSON.parse(fs.readFileSync(path.join(stateDir, "shields-alpha.json"), "utf-8"));
       const beta = JSON.parse(fs.readFileSync(path.join(stateDir, "shields-beta.json"), "utf-8"));
@@ -134,9 +145,14 @@ describe("shields — unit logic", () => {
         shieldsPolicySnapshotPath: snapshotPath,
         updatedAt: new Date().toISOString(),
       };
-      fs.writeFileSync(path.join(stateDir, "shields-openclaw.json"), JSON.stringify(state, null, 2));
+      fs.writeFileSync(
+        path.join(stateDir, "shields-openclaw.json"),
+        JSON.stringify(state, null, 2),
+      );
 
-      const loaded = JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8"));
+      const loaded = JSON.parse(
+        fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8"),
+      );
       expect(loaded.shieldsDown).toBe(true);
       expect(loaded.shieldsDownTimeout).toBe(300);
       expect(loaded.shieldsDownPolicy).toBe("permissive");
@@ -159,7 +175,10 @@ describe("shields — unit logic", () => {
         shieldsPolicySnapshotPath: snapshotPath,
         updatedAt: new Date().toISOString(),
       };
-      fs.writeFileSync(path.join(stateDir, "shields-openclaw.json"), JSON.stringify(downState, null, 2));
+      fs.writeFileSync(
+        path.join(stateDir, "shields-openclaw.json"),
+        JSON.stringify(downState, null, 2),
+      );
 
       const cleared = {
         ...downState,
@@ -170,9 +189,14 @@ describe("shields — unit logic", () => {
         shieldsDownPolicy: null,
         updatedAt: new Date().toISOString(),
       };
-      fs.writeFileSync(path.join(stateDir, "shields-openclaw.json"), JSON.stringify(cleared, null, 2));
+      fs.writeFileSync(
+        path.join(stateDir, "shields-openclaw.json"),
+        JSON.stringify(cleared, null, 2),
+      );
 
-      const loaded = JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8"));
+      const loaded = JSON.parse(
+        fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8"),
+      );
       expect(loaded.shieldsDown).toBe(false);
       expect(loaded.shieldsDownAt).toBeNull();
       expect(loaded.shieldsPolicySnapshotPath).toBe(snapshotPath);
