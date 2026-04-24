@@ -207,6 +207,26 @@ export const COMMANDS: readonly CommandDef[] = [
     group: "Policy Presets",
     scope: "sandbox",
   },
+  {
+    usage: "nemoclaw <name> hosts-add",
+    description: "Add a sandbox /etc/hosts alias",
+    flags: "(--dry-run)",
+    group: "Policy Presets",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> hosts-list",
+    description: "List sandbox host aliases",
+    group: "Policy Presets",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> hosts-remove",
+    description: "Remove a sandbox host alias",
+    flags: "(--dry-run)",
+    group: "Policy Presets",
+    scope: "sandbox",
+  },
 
   // ── Messaging Channels ──
   {
@@ -420,7 +440,6 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "global",
     hidden: true,
   },
-
 ] as const;
 
 /** All global-scope commands. */

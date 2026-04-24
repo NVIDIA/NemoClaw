@@ -428,6 +428,41 @@ If the preset is unknown or not currently applied, the command exits non-zero wi
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
 
+### `nemoclaw <name> hosts-add`
+
+Add a host alias to the sandbox pod template.
+Use this when a sandbox needs a stable LAN-only name, such as a local SearXNG or internal model endpoint, without dropping to `docker exec` and `kubectl patch`.
+
+```console
+$ nemoclaw my-assistant hosts-add searxng.local 192.168.1.105
+```
+
+The command validates the hostname and IP address, rejects duplicate hostnames, and patches `spec.podTemplate.spec.hostAliases` on the sandbox resource.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Print the resulting `hostAliases` list without applying it |
+
+### `nemoclaw <name> hosts-list`
+
+List host aliases configured on the sandbox resource.
+
+```console
+$ nemoclaw my-assistant hosts-list
+```
+
+### `nemoclaw <name> hosts-remove`
+
+Remove a hostname from the sandbox `hostAliases` list.
+
+```console
+$ nemoclaw my-assistant hosts-remove searxng.local
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Print the resulting `hostAliases` list without applying it |
+
 ### `nemoclaw <name> channels list`
 
 List the messaging channels NemoClaw knows about (`telegram`, `discord`, `slack`) with a short description.

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const { execFileSync, spawn, spawnSync } = require("child_process");
+const net = require("net");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -138,6 +139,23 @@ type RecoveredSandboxMetadata = Partial<
 > & {
   policyPresets?: string[] | null;
 };
+type HostAlias = {
+  ip: string;
+  hostnames: string[];
+};
+type SandboxResource = {
+  metadata?: {
+    resourceVersion?: string;
+  };
+  spec?: {
+    podTemplate?: {
+      spec?: {
+        hostAliases?: unknown;
+      };
+    };
+  };
+};
+type BuildHostAliases = (resource: SandboxResource) => HostAlias[];
 
 const REMOTE_UNINSTALL_URL = buildVersionedUninstallUrl(getVersion());
 let OPENSHELL_BIN: string | null = null;
@@ -145,6 +163,8 @@ const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 const DEFAULT_LOGS_PROBE_TIMEOUT_MS = 5000;
 const LOGS_PROBE_TIMEOUT_ENV = "NEMOCLAW_LOGS_PROBE_TIMEOUT_MS";
+const K3S_CONTAINER = "openshell-cluster-nemoclaw";
+const HOST_ALIAS_KUBECTL_TIMEOUT_MS = 10_000;
 
 function getOpenshellBinary(): string {
   if (!OPENSHELL_BIN) {
@@ -2930,6 +2950,254 @@ async function sandboxPolicyRemove(sandboxName: string, args: string[] = []): Pr
   }
 }
 
+function validateHostAliasHostname(hostname: string): boolean {
+  if (!hostname || hostname.length > 253) return false;
+  return hostname.split(".").every((label: string) => {
+    return /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(label);
+  });
+}
+
+function normalizeHostAliasHostname(hostname: string): string {
+  return String(hostname || "").toLowerCase();
+}
+
+function runKubectlInClusterRaw(args: string[]): string {
+  return execFileSync("docker", ["exec", K3S_CONTAINER, "kubectl", "-n", "openshell", ...args], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: HOST_ALIAS_KUBECTL_TIMEOUT_MS,
+  });
+}
+
+function throwKubectlError(action: string, error: unknown): never {
+  const err = error as { stderr?: unknown; stdout?: unknown; message?: unknown; status?: number };
+  const detail = String(err?.stderr || err?.stdout || err?.message || "").trim();
+  console.error(`  Failed to ${action}.${detail ? ` ${detail}` : ""}`);
+  process.exit(err?.status || 1);
+}
+
+function runKubectlInCluster(args: string[], action: string): string {
+  try {
+    return runKubectlInClusterRaw(args);
+  } catch (error) {
+    throwKubectlError(action, error);
+  }
+}
+
+function rejectUnknownHostAliasFlags(args: string[], usage: string): void {
+  const unknownFlags = args.filter((arg) => arg.startsWith("-") && arg !== "--dry-run");
+  if (unknownFlags.length > 0) {
+    console.error(`  Unknown flag: ${unknownFlags.join(", ")}`);
+    console.error(`  Usage: ${usage}`);
+    process.exit(1);
+  }
+}
+
+function getSandboxResource(sandboxName: string): SandboxResource {
+  const raw = runKubectlInCluster(
+    ["get", "sandbox", sandboxName, "-o", "json"],
+    "read host aliases",
+  );
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Failed to parse sandbox resource: ${message}`);
+    process.exit(1);
+  }
+}
+
+function getHostAliases(resource: SandboxResource): unknown[] {
+  const aliases = resource?.spec?.podTemplate?.spec?.hostAliases;
+  return Array.isArray(aliases) ? aliases : [];
+}
+
+function normalizeHostAliases(resource: SandboxResource): HostAlias[] {
+  return getHostAliases(resource).map((alias): HostAlias => {
+    const entry = alias as { ip?: unknown; hostnames?: unknown };
+    return {
+      ip: typeof entry.ip === "string" ? entry.ip : "",
+      hostnames: Array.isArray(entry.hostnames)
+        ? entry.hostnames.map((hostname) => normalizeHostAliasHostname(String(hostname)))
+        : [],
+    };
+  });
+}
+
+function buildHostAliasesPatch(resource: SandboxResource, hostAliases: HostAlias[]) {
+  const patch: Array<{ op: string; path: string; value: unknown }> = [];
+  const resourceVersion = resource?.metadata?.resourceVersion;
+  if (resourceVersion) {
+    patch.push({
+      op: "test",
+      path: "/metadata/resourceVersion",
+      value: resourceVersion,
+    });
+  }
+  patch.push({
+    op: Array.isArray(resource?.spec?.podTemplate?.spec?.hostAliases) ? "replace" : "add",
+    path: "/spec/podTemplate/spec/hostAliases",
+    value: hostAliases,
+  });
+  return patch;
+}
+
+function isHostAliasPatchConflict(error: unknown): boolean {
+  const err = error as { stderr?: unknown; stdout?: unknown; message?: unknown; status?: number };
+  const detail = String(err?.stderr || err?.stdout || err?.message || "").toLowerCase();
+  return (
+    err?.status === 409 ||
+    detail.includes("conflict") ||
+    detail.includes("resourceversion") ||
+    detail.includes("object has been modified") ||
+    detail.includes("test operation failed")
+  );
+}
+
+function patchHostAliases(
+  sandboxName: string,
+  resource: SandboxResource,
+  hostAliases: HostAlias[],
+): void {
+  runKubectlInClusterRaw([
+    "patch",
+    "sandbox",
+    sandboxName,
+    "--type=json",
+    "-p",
+    JSON.stringify(buildHostAliasesPatch(resource, hostAliases)),
+  ]);
+}
+
+function patchHostAliasesWithRetry(
+  sandboxName: string,
+  buildAliases: BuildHostAliases,
+  initialResource: SandboxResource,
+  initialAliases: HostAlias[],
+): void {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const resource = attempt === 1 ? initialResource : getSandboxResource(sandboxName);
+    const aliases = attempt === 1 ? initialAliases : buildAliases(resource);
+    try {
+      patchHostAliases(sandboxName, resource, aliases);
+      return;
+    } catch (error) {
+      if (!isHostAliasPatchConflict(error) || attempt === maxAttempts) {
+        throwKubectlError("update host aliases", error);
+      }
+    }
+  }
+}
+
+function sandboxHostsList(sandboxName: string): void {
+  const aliases = getHostAliases(getSandboxResource(sandboxName));
+  if (aliases.length === 0) {
+    console.log(`  No host aliases configured for '${sandboxName}'.`);
+    return;
+  }
+
+  console.log(`  Host aliases for '${sandboxName}':`);
+  for (const alias of aliases) {
+    const entry = alias as { ip?: unknown; hostnames?: unknown };
+    const ip = typeof entry.ip === "string" ? entry.ip : "";
+    const hostnames = Array.isArray(entry.hostnames) ? entry.hostnames : [];
+    if (ip && hostnames.length > 0) {
+      console.log(`    ${ip}  ${hostnames.join(", ")}`);
+    }
+  }
+}
+
+function sandboxHostsAdd(sandboxName: string, args: string[] = []): void {
+  rejectUnknownHostAliasFlags(args, "nemoclaw <sandbox> hosts-add <hostname> <ip> [--dry-run]");
+  const dryRun = args.includes("--dry-run");
+  const values = args.filter((arg) => !arg.startsWith("-"));
+  const [rawHostname, ip] = values;
+  if (!rawHostname || !ip || values.length !== 2) {
+    console.error("  Usage: nemoclaw <sandbox> hosts-add <hostname> <ip> [--dry-run]");
+    process.exit(1);
+  }
+  const hostname = normalizeHostAliasHostname(rawHostname);
+  if (!validateHostAliasHostname(hostname)) {
+    console.error(`  Invalid hostname '${hostname}'.`);
+    process.exit(1);
+  }
+  if (net.isIP(ip) === 0) {
+    console.error(`  Invalid IP address '${ip}'.`);
+    process.exit(1);
+  }
+
+  const resource = getSandboxResource(sandboxName);
+  const buildAliases: BuildHostAliases = (currentResource) => {
+    const aliases = normalizeHostAliases(currentResource);
+    if (aliases.some((alias) => alias.hostnames.includes(hostname))) {
+      console.error(`  Host alias '${hostname}' already exists.`);
+      process.exit(1);
+    }
+
+    const existing = aliases.find((alias) => alias.ip === ip);
+    if (existing) {
+      existing.hostnames.push(hostname);
+    } else {
+      aliases.push({ ip, hostnames: [hostname] });
+    }
+    return aliases;
+  };
+  const aliases = buildAliases(resource);
+
+  if (dryRun) {
+    console.log(JSON.stringify(buildHostAliasesPatch(resource, aliases), null, 2));
+    return;
+  }
+  patchHostAliasesWithRetry(sandboxName, buildAliases, resource, aliases);
+  console.log(`  ${G}✓${R} Added host alias ${hostname} -> ${ip}`);
+}
+
+function sandboxHostsRemove(sandboxName: string, args: string[] = []): void {
+  rejectUnknownHostAliasFlags(args, "nemoclaw <sandbox> hosts-remove <hostname> [--dry-run]");
+  const dryRun = args.includes("--dry-run");
+  const values = args.filter((arg) => !arg.startsWith("-"));
+  const [rawHostname] = values;
+  if (!rawHostname || values.length !== 1) {
+    console.error("  Usage: nemoclaw <sandbox> hosts-remove <hostname> [--dry-run]");
+    process.exit(1);
+  }
+  const hostname = normalizeHostAliasHostname(rawHostname);
+  if (!validateHostAliasHostname(hostname)) {
+    console.error(`  Invalid hostname '${hostname}'.`);
+    process.exit(1);
+  }
+
+  const resource = getSandboxResource(sandboxName);
+  const buildAliases: BuildHostAliases = (currentResource) => {
+    const original = normalizeHostAliases(currentResource);
+    const aliases = original
+      .map(
+        (alias): HostAlias => ({
+          ip: alias.ip,
+          hostnames: alias.hostnames.filter((name: string) => name !== hostname),
+        }),
+      )
+      .filter((alias) => alias.ip && alias.hostnames.length > 0);
+
+    const existed = original.some(
+      (alias) => Array.isArray(alias?.hostnames) && alias.hostnames.includes(hostname),
+    );
+    if (!existed) {
+      console.error(`  Host alias '${hostname}' is not configured.`);
+      process.exit(1);
+    }
+    return aliases;
+  };
+  const aliases = buildAliases(resource);
+
+  if (dryRun) {
+    console.log(JSON.stringify(buildHostAliasesPatch(resource, aliases), null, 2));
+    return;
+  }
+  patchHostAliasesWithRetry(sandboxName, buildAliases, resource, aliases);
+  console.log(`  ${G}✓${R} Removed host alias ${hostname}`);
+}
 function cleanupSandboxServices(
   sandboxName: string,
   { stopHostServices = false }: { stopHostServices?: boolean } = {},
@@ -4494,6 +4762,15 @@ const [cmd, ...args] = process.argv.slice(2);
       case "policy-list":
         sandboxPolicyList(cmd);
         break;
+      case "hosts-add":
+        sandboxHostsAdd(cmd, actionArgs);
+        break;
+      case "hosts-list":
+        sandboxHostsList(cmd);
+        break;
+      case "hosts-remove":
+        sandboxHostsRemove(cmd, actionArgs);
+        break;
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
@@ -4676,7 +4953,7 @@ const [cmd, ...args] = process.argv.slice(2);
       default:
         console.error(`  Unknown action: ${action}`);
         console.error(
-          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, share, rebuild, shields, config, channels, gateway-token, destroy`,
+          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, hosts-add, hosts-list, hosts-remove, skill, snapshot, share, rebuild, shields, config, channels, gateway-token, destroy`,
         );
         process.exit(1);
     }
