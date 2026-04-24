@@ -5628,18 +5628,23 @@ async function _setupPolicies(sandboxName, options = {}) {
     }
     note(`  [non-interactive] Applying policy presets: ${selectedPresets.join(", ")}`);
     for (const name of selectedPresets) {
-      waitUntil(() => {
+      let lastErr: Error | null = null;
+      const success = waitUntil(() => {
         try {
           policies.applyPreset(sandboxName, name);
           return true;
         } catch (err) {
-          const message = err && err.message ? err.message : String(err);
+          lastErr = err as Error;
+          const message = err && (err as any).message ? (err as any).message : String(err);
           if (!message.includes("sandbox not found")) {
             throw err;
           }
           return false;
         }
       }, 10, 2000);
+      if (!success && lastErr) {
+        throw lastErr;
+      }
     }
   } else {
     console.log("");
@@ -6295,25 +6300,31 @@ function syncPresetSelection(
   const newlySelected = target.filter((name) => !appliedSet.has(name));
 
   for (const name of deselected) {
-    waitUntil(() => {
+    let lastErr: Error | null = null;
+    const success = waitUntil(() => {
       try {
         if (!policies.removePreset(sandboxName, name)) {
           throw new Error(`Failed to remove preset '${name}'.`);
         }
         return true;
       } catch (err) {
-        const message = err && err.message ? err.message : String(err);
+        lastErr = err as Error;
+        const message = err && (err as any).message ? (err as any).message : String(err);
         if (!message.includes("sandbox not found")) {
           throw err;
         }
         return false;
       }
     }, 10, 2000);
+    if (!success && lastErr) {
+      throw lastErr;
+    }
   }
 
   for (const name of newlySelected) {
     const options = accessByName ? { access: accessByName[name] } : undefined;
-    waitUntil(() => {
+    let lastErr: Error | null = null;
+    const success = waitUntil(() => {
       try {
         // applyPreset returns false (without throwing) on some error paths —
         // e.g. unknown preset, malformed YAML. Treat that as a failure so
@@ -6324,13 +6335,17 @@ function syncPresetSelection(
         }
         return true;
       } catch (err) {
-        const message = err && err.message ? err.message : String(err);
+        lastErr = err as Error;
+        const message = err && (err as any).message ? (err as any).message : String(err);
         if (!message.includes("sandbox not found")) {
           throw err;
         }
         return false;
       }
     }, 10, 2000);
+    if (!success && lastErr) {
+      throw lastErr;
+    }
   }
 }
 
