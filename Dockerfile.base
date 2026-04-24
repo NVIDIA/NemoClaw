@@ -87,7 +87,9 @@ RUN arch="$(dpkg --print-architecture)" \
 RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
     && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
     && mkdir -p /sandbox/.nemoclaw \
-    && chown -R sandbox:sandbox /sandbox
+    && chown root:root /sandbox \
+    && chmod 755 /sandbox \
+    && chown sandbox:sandbox /sandbox/.nemoclaw
 
 # Split .openclaw into immutable config dir + writable state dir.
 # The policy makes /sandbox/.openclaw read-only via Landlock, so the agent

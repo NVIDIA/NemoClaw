@@ -371,6 +371,9 @@ os.chmod(path, 0o600)"
 # hadolint ignore=DL3002
 USER root
 
+RUN chown root:root /sandbox \
+    && chmod 755 /sandbox
+
 # Ensure .openclaw-data subdirs and symlinks exist for logs, credentials,
 # sandbox, and plugin-runtime-deps. These are defined in Dockerfile.base but
 # the GHCR base image may not have been rebuilt yet. Idempotent — harmless
