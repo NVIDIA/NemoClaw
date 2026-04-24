@@ -238,3 +238,22 @@ export function getAgentDisplayName(agent: AgentDefinition | null): string {
 export function getGatewayCommand(agent: AgentDefinition | null): string {
   return agent?.gateway_command || "openclaw gateway run";
 }
+
+/**
+ * Build a single copy-pasteable command that starts the agent gateway as a
+ * backgrounded, persistent process — the manual equivalent of
+ * {@link buildRecoveryScript}. Shown to the user when automatic recovery
+ * fails.
+ *
+ * The raw `gateway_command` (e.g. `hermes gateway run`) is a foreground
+ * debugging command; it does not survive a disconnect and lacks the port
+ * flag and agent-specific env vars that the sandbox boot sequence sets.
+ * This helper mirrors what nemoclaw-start.sh and buildRecoveryScript do:
+ * agent-specific env vars → nohup → gateway_command → --port → log redirect
+ * → backgrounded.
+ */
+export function buildManualRecoveryCommand(agent: AgentDefinition | null, port: number): string {
+  const gatewayCmd = getGatewayCommand(agent);
+  const envPrefix = agent?.name === "hermes" ? "HERMES_HOME=/sandbox/.hermes-data " : "";
+  return `${envPrefix}nohup ${gatewayCmd} --port ${port} >/tmp/gateway.log 2>&1 &`;
+}

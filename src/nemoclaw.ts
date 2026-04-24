@@ -458,8 +458,13 @@ function checkAndRecoverSandboxProcesses(
     // recovered process can be alive before the OpenAI-compatible API is ready.
     if (!waitForRecoveredSandboxGateway(sandboxName)) {
       if (!quiet) {
+        const _recoveryPort = _recoveryAgent?.forwardPort ?? DASHBOARD_PORT;
         console.error("  Gateway process started but is not responding.");
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
+        console.error("  Connect to the sandbox and run manually:");
+        console.error(
+          `    ${agentRuntime.buildManualRecoveryCommand(_recoveryAgent, _recoveryPort)}`,
+        );
       }
       return { checked: true, wasRunning: false, recovered: false };
     }
@@ -471,11 +476,14 @@ function checkAndRecoverSandboxProcesses(
       console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
     }
   } else if (!quiet) {
+    const _recoveryPort = _recoveryAgent?.forwardPort ?? DASHBOARD_PORT;
     console.error(
       `  Could not restart ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway automatically.`,
     );
     console.error("  Connect to the sandbox and run manually:");
-    console.error(`    ${agentRuntime.getGatewayCommand(_recoveryAgent)}`);
+    console.error(
+      `    ${agentRuntime.buildManualRecoveryCommand(_recoveryAgent, _recoveryPort)}`,
+    );
   }
 
   return { checked: true, wasRunning: false, recovered };
