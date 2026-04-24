@@ -20,13 +20,12 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
   // GitHub
   /ghp_[A-Za-z0-9_-]{10,}/g,
   /(?:github_pat_)[A-Za-z0-9_]{30,}/g,
-  // OpenAI
+  // OpenAI (sk-proj- before sk- so the more specific prefix matches first)
   /sk-proj-[A-Za-z0-9_-]{10,}/g,
+  /sk-ant-[A-Za-z0-9_-]{10,}/g,
   /sk-[A-Za-z0-9_-]{20,}/g,
-  // Slack
-  /xoxb-[A-Za-z0-9_-]{10,}/g,
-  /xoxp-[A-Za-z0-9_-]{10,}/g,
-  /xoxe\.xoxp-[A-Za-z0-9_-]{10,}/g,
+  // Slack (consolidated class covers xoxb-, xoxp-, xoxa-, xoxs-, xapp-)
+  /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/g,
   // AWS access key IDs (AKIA = long-term, ASIA = temporary/session)
   /A(?:K|S)IA[A-Z0-9]{16}/g,
   // HuggingFace
@@ -37,8 +36,11 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
   /gsk_[A-Za-z0-9]{10,}/g,
   // PyPI
   /pypi-[A-Za-z0-9_-]{10,}/g,
-  // Anthropic
-  /sk-ant-[A-Za-z0-9_-]{10,}/g,
+  // Telegram bot tokens (8-10 digit bot ID + 35-char secret)
+  /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/g,
+  /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/g,
+  // Discord bot tokens (base64 user ID . timestamp . HMAC)
+  /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/g,
 ];
 
 /** Context-anchored patterns (require a prefix like KEY=, Bearer, etc.). */
@@ -63,15 +65,15 @@ export const EXPECTED_SHELL_PREFIXES = [
   "ghp_",
   "github_pat_",
   "sk-proj-",
+  "sk-ant-",
   "sk-",
-  "xoxb-",
-  "xoxp-",
-  "xoxe.xoxp-",
+  "xox",
+  "xapp",
   "AKIA",
   "ASIA",
   "hf_",
   "glpat-",
   "gsk_",
   "pypi-",
-  "sk-ant-",
+  "bot",
 ];
