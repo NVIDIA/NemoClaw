@@ -68,6 +68,9 @@ const {
 const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
 const {
   sleepSeconds,
+  waitForPort,
+  waitForHttp,
+  waitUntil,
 } = require("./wait");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
@@ -2058,7 +2061,7 @@ function startOllamaAuthProxy(): boolean {
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
   const pid = spawnOllamaAuthProxy(ollamaProxyToken);
-  sleep(1);
+  waitForPort(OLLAMA_PROXY_PORT, 2);
   if (!isOllamaProxyProcess(pid)) {
     console.error(`  Error: Ollama auth proxy failed to start on :${OLLAMA_PROXY_PORT}`);
     console.error(`  Containers will not be able to reach Ollama without the proxy.`);
@@ -2089,7 +2092,7 @@ function ensureOllamaAuthProxy(): void {
   killStaleProxy();
   ollamaProxyToken = token;
   spawnOllamaAuthProxy(token);
-  sleep(1);
+  waitForPort(OLLAMA_PROXY_PORT, 2);
 }
 
 function getOllamaProxyToken(): string | null {
@@ -3329,7 +3332,10 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
       ignoreError: true,
     });
   }
-  sleep(5);
+  waitUntil(() => {
+    const check = runCaptureOpenshell(["doctor", "exec", "--", "kubectl", "get", "pods", "-n", "kube-system"], { ignoreError: true });
+    return check.includes("coredns");
+  }, 10);
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
@@ -4853,7 +4859,7 @@ async function setupNim(gpu) {
           // Shell required: backgrounding (&), env var prefix, output redirection.
           const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
           run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
-          sleep(2);
+          waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10);
           if (!isWsl()) printOllamaExposureWarning();
         }
         if (isWsl()) {
@@ -4930,7 +4936,7 @@ async function setupNim(gpu) {
         run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
           ignoreError: true,
         });
-        sleep(2);
+        waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10);
         if (!startOllamaAuthProxy()) {
           process.exit(1);
         }
@@ -5622,18 +5628,18 @@ async function _setupPolicies(sandboxName, options = {}) {
     }
     note(`  [non-interactive] Applying policy presets: ${selectedPresets.join(", ")}`);
     for (const name of selectedPresets) {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
+      waitUntil(() => {
         try {
           policies.applyPreset(sandboxName, name);
-          break;
+          return true;
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
-          if (!message.includes("sandbox not found") || attempt === 2) {
+          if (!message.includes("sandbox not found")) {
             throw err;
           }
-          sleep(2);
+          return false;
         }
-      }
+      }, 10, 2000);
     }
   } else {
     console.log("");
@@ -6289,25 +6295,25 @@ function syncPresetSelection(
   const newlySelected = target.filter((name) => !appliedSet.has(name));
 
   for (const name of deselected) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    waitUntil(() => {
       try {
         if (!policies.removePreset(sandboxName, name)) {
           throw new Error(`Failed to remove preset '${name}'.`);
         }
-        break;
+        return true;
       } catch (err) {
         const message = err && err.message ? err.message : String(err);
-        if (!message.includes("sandbox not found") || attempt === 2) {
+        if (!message.includes("sandbox not found")) {
           throw err;
         }
-        sleep(2);
+        return false;
       }
-    }
+    }, 10, 2000);
   }
 
   for (const name of newlySelected) {
     const options = accessByName ? { access: accessByName[name] } : undefined;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    waitUntil(() => {
       try {
         // applyPreset returns false (without throwing) on some error paths —
         // e.g. unknown preset, malformed YAML. Treat that as a failure so
@@ -6316,15 +6322,15 @@ function syncPresetSelection(
         if (!policies.applyPreset(sandboxName, name, options)) {
           throw new Error(`Failed to apply preset '${name}'.`);
         }
-        break;
+        return true;
       } catch (err) {
         const message = err && err.message ? err.message : String(err);
-        if (!message.includes("sandbox not found") || attempt === 2) {
+        if (!message.includes("sandbox not found")) {
           throw err;
         }
-        sleep(2);
+        return false;
       }
-    }
+    }, 10, 2000);
   }
 }
 
