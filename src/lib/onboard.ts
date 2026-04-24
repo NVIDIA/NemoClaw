@@ -6341,7 +6341,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
   console.log(`  ${"─".repeat(50)}`);
   console.log("");
   console.log("  To change settings later:");
-  console.log(`    Model:       openshell inference set -g nemoclaw -m <model> -p <provider>`);
+  console.log(`    Model:       openshell inference set -g nemoclaw --model <model> --provider <provider>`);
   console.log(`    Policies:    nemoclaw ${sandboxName} policy-add`);
   console.log("    Credentials: nemoclaw credentials reset <KEY>  then  nemoclaw onboard");
   console.log("");

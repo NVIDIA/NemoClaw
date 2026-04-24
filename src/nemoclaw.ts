@@ -3426,7 +3426,7 @@ function help() {
 
   ${G}Reconfiguration (after onboard):${R}
     ${D}Change inference model at runtime (no re-onboard needed):${R}
-      openshell inference set -g nemoclaw -m <model> -p <provider>
+      openshell inference set -g nemoclaw --model <model> --provider <provider>
 
     ${D}Add network presets (e.g. Telegram, GitHub) to a running sandbox:${R}
       nemoclaw <name> policy-add
