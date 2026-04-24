@@ -10,7 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { TOKEN_PREFIX_PATTERNS } from "./secret-patterns";
+import { redactSensitiveText, redactUrl } from "./redact";
 import type { WebSearchConfig } from "./web-search";
 
 export const SESSION_VERSION = 1;
@@ -206,25 +206,8 @@ function parseLockInfo(value: unknown): LockInfo | null {
   };
 }
 
-export function redactSensitiveText(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-
-  // Context-anchored patterns: preserve the key name for debuggability.
-  let result = value
-    .replace(
-      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN)=\S+/gi,
-      "$1=<REDACTED>",
-    )
-    .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>");
-
-  // Standalone token patterns — delegate to the canonical source of truth
-  // (secret-patterns.ts) instead of maintaining a duplicate regex list.
-  for (const pattern of TOKEN_PREFIX_PATTERNS) {
-    result = result.replace(pattern, "<REDACTED>");
-  }
-
-  return result.slice(0, 240);
-}
+// redactSensitiveText and redactUrl imported from ./redact (#2381).
+export { redactSensitiveText, redactUrl };
 
 export function sanitizeFailure(
   input: { step?: unknown; message?: unknown; recordedAt?: unknown } | null | undefined,
@@ -238,26 +221,6 @@ export function sanitizeFailure(
 
 export function validateStep(step: unknown): boolean {
   return parseStepState(step) !== null;
-}
-
-export function redactUrl(value: unknown): string | null {
-  if (typeof value !== "string" || value.length === 0) return null;
-  try {
-    const url = new URL(value);
-    if (url.username || url.password) {
-      url.username = "";
-      url.password = "";
-    }
-    for (const key of [...url.searchParams.keys()]) {
-      if (/(^|[-_])(?:signature|sig|token|auth|access_token)$/i.test(key)) {
-        url.searchParams.set(key, "<REDACTED>");
-      }
-    }
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return redactSensitiveText(value);
-  }
 }
 
 // ── Session CRUD ─────────────────────────────────────────────────

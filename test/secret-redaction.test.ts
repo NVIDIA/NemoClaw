@@ -81,37 +81,29 @@ describe("secret redaction consistency (#1736)", () => {
     }
   });
 
-  describe("runner.ts imports from secret-patterns.ts", () => {
+  describe("runner.ts imports from the unified redact module (#2381)", () => {
     it("uses the shared module", () => {
-      expect(RUNNER_TS).toContain("secret-patterns");
+      expect(RUNNER_TS).toContain("./redact");
     });
   });
 
-  describe("debug.ts imports from secret-patterns.ts", () => {
+  describe("debug.ts imports from the unified redact module (#2381)", () => {
     it("uses the shared module", () => {
-      expect(DEBUG_TS).toContain("secret-patterns");
+      expect(DEBUG_TS).toContain("./redact");
     });
   });
 
-  describe("debug.sh includes all token prefixes", () => {
+  describe("debug.sh delegates to node when available (#2381)", () => {
+    it("references the compiled redact module", () => {
+      expect(DEBUG_SH).toContain("dist/lib/redact.js");
+      expect(DEBUG_SH).toContain("redactFull");
+    });
+  });
+
+  describe("debug.sh sed fallback includes essential prefixes", () => {
     for (const prefix of EXPECTED_SHELL_PREFIXES) {
       it(`includes ${prefix} pattern`, () => {
         expect(DEBUG_SH).toContain(prefix);
-      });
-    }
-  });
-
-  describe("debug.sh redact() function handles all token types", () => {
-    for (const { name, token } of LITERAL_PREFIX_TOKENS) {
-      it(`redacts ${name}`, () => {
-        // Extract the redact function's sed patterns and verify they match
-        const redactFn = DEBUG_SH.match(
-          /redact\(\) \{[\s\S]*?^\}/m,
-        );
-        expect(redactFn).toBeTruthy();
-        // The token prefix should appear in a sed expression
-        const prefix = token.split(/[A-Za-z0-9]{10}/)[0];
-        expect(redactFn![0]).toContain(prefix);
       });
     }
   });
