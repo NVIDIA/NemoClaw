@@ -20,6 +20,7 @@ const { validateName } = require("./runner");
 const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue } = credentialFilter;
 const { appendAuditEntry } = require("./shields-audit");
+const { isPrivateHostname } = require("./private-networks");
 
 type ConfigObject = import("./credential-filter").ConfigObject;
 type ConfigValue = import("./credential-filter").ConfigValue;
@@ -218,21 +219,13 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
 }
 
 // ---------------------------------------------------------------------------
-// URL validation (lightweight SSRF check for config set)
+// URL validation (literal-IP SSRF check for config set)
+//
+// isPrivateHostname is defined in ./private-networks alongside the shared
+// BlockList built from nemoclaw-blueprint/private-networks.yaml. DNS
+// rebinding (TOCTOU) protection is out of scope — the plugin's
+// validateEndpointUrl handles that via async DNS resolution and pinning.
 // ---------------------------------------------------------------------------
-
-const PRIVATE_IP_PREFIXES = ["127.", "10.", "0.", "169.254.", "192.168."];
-
-const PRIVATE_IP_172_RE = /^172\.(1[6-9]|2[0-9]|3[01])\./;
-
-function isPrivateIp(hostname: string): boolean {
-  if (hostname === "localhost" || hostname === "[::1]") return true;
-  for (const prefix of PRIVATE_IP_PREFIXES) {
-    if (hostname.startsWith(prefix)) return true;
-  }
-  if (PRIVATE_IP_172_RE.test(hostname)) return true;
-  return false;
-}
 
 function validateUrlValue(value: string): void {
   let parsed: URL;
@@ -246,7 +239,7 @@ function validateUrlValue(value: string): void {
     throw new Error(`URL scheme "${parsed.protocol}" is not allowed. Use http: or https:.`);
   }
 
-  if (isPrivateIp(parsed.hostname)) {
+  if (isPrivateHostname(parsed.hostname)) {
     throw new Error(
       `URL points to private/internal address "${parsed.hostname}". ` +
         `This could expose internal services to the sandbox.`,
@@ -328,13 +321,12 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
   // 2. Parse and validate value
   const parsedValue = parseCliConfigValue(opts.value);
 
-  // 3. Validate URLs for SSRF
-  if (
-    typeof parsedValue === "string" &&
-    (parsedValue.startsWith("http://") || parsedValue.startsWith("https://"))
-  ) {
+  // 3. Validate URLs for SSRF. validateUrlValue no-ops on non-URL input,
+  // so run it for every string to avoid bypasses via mixed-case schemes
+  // ("HTTP://127.0.0.1") or leading whitespace.
+  if (typeof parsedValue === "string") {
     try {
-      validateUrlValue(parsedValue);
+      validateUrlValue(parsedValue.trim());
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`  URL validation failed: ${message}`);
