@@ -104,6 +104,16 @@ echo "unexpected npm invocation: $*" >&2; exit 98`,
 // ---------------------------------------------------------------------------
 
 describe("installer runtime preflight", () => {
+  // install.sh sources scripts/install.sh (1374-line payload), which runs
+  // resolve_installer_version() → resolve_repo_root() → git describe at source
+  // time. In isolation this takes ~0.9s. Under vitest's default parallelism on
+  // macOS (up to 14 workers), fork()/execve() serializes and each subprocess
+  // spawn balloons 50-200× (200-500ms instead of 1-10ms). With 5-6 subprocess
+  // spawns per installer run, total can reach 5-7s, blowing past the default
+  // 5000ms testTimeout. The default is correct for every other test here; this
+  // one has a legitimately different workload (real bash + real subprocesses).
+  const INSTALLER_TEST_TIMEOUT = 15_000;
+
   it("attempts nvm upgrade when system Node.js is below minimum version", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-preflight-"));
     const fakeBin = path.join(tmp, "bin");
@@ -156,7 +166,7 @@ exit 1
     expect(output).toMatch(/v18\.19\.1.*found but NemoClaw requires/);
     expect(output).toMatch(/upgrading via nvm/);
     expect(output).toMatch(/Failed to download nvm installer/);
-  });
+  }, INSTALLER_TEST_TIMEOUT);
 
   it("treats the installer script's checkout as the source root even when cwd is elsewhere", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-fallback-"));
