@@ -3293,6 +3293,55 @@ async function promptValidatedSandboxName() {
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
+/**
+ * Render the configuration summary shown before the destructive sandbox build.
+ * Extracted from confirmOnboardConfiguration() for direct unit testing — see #2165.
+ *
+ * Fields:
+ * - credentialEnv:    env-var name of the API key (e.g. "NVIDIA_API_KEY").
+ *                     Rendered with the fixed credentials.json location so
+ *                     users can see where the key was stored.
+ * - notes:            additional bullet lines shown under the summary
+ *                     (e.g. "~6 minutes on this host"). Each note rendered
+ *                     as "Note: <text>" so it's visually distinct.
+ */
+function formatOnboardConfigSummary({
+  provider,
+  model,
+  credentialEnv = null,
+  webSearchConfig,
+  enabledChannels,
+  sandboxName,
+  notes = [],
+}) {
+  const bar = `  ${"─".repeat(50)}`;
+  const messaging =
+    Array.isArray(enabledChannels) && enabledChannels.length > 0
+      ? enabledChannels.join(", ")
+      : "none";
+  const webSearch = webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
+  const apiKeyLine = credentialEnv
+    ? `  API key:       ${credentialEnv} (stored in ~/.nemoclaw/credentials.json)`
+    : `  API key:       (not required for ${provider ?? "this provider"})`;
+  const noteLines = (Array.isArray(notes) ? notes : [])
+    .filter((n) => typeof n === "string" && n.length > 0)
+    .map((n) => `  Note:          ${n}`);
+  return [
+    "",
+    bar,
+    "  Review configuration",
+    bar,
+    `  Provider:      ${provider ?? "(unset)"}`,
+    `  Model:         ${model ?? "(unset)"}`,
+    apiKeyLine,
+    `  Web search:    ${webSearch}`,
+    `  Messaging:     ${messaging}`,
+    `  Sandbox name:  ${sandboxName}`,
+    ...noteLines,
+    bar,
+  ].join("\n");
+}
+
 // eslint-disable-next-line complexity
 async function createSandbox(
   gpu,
@@ -3312,6 +3361,7 @@ async function createSandbox(
     sandboxNameOverride ?? (await promptValidatedSandboxName()),
     "sandbox name",
   );
+
   const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${effectivePort}`;
 
@@ -6666,6 +6716,43 @@ async function onboard(opts = {}) {
         break;
       }
 
+      // Prompt for the sandbox name and show the review gate BEFORE
+      // setupInference runs upsertProvider / `inference set` on the gateway.
+      // On retry (inferenceResult.retry === "selection") the user is re-prompted
+      // for provider/model above and sees this gate again with the new config.
+      // See #2221 (CodeRabbit).
+      if (!sandboxName) {
+        sandboxName = await promptValidatedSandboxName();
+      }
+      console.log(
+        formatOnboardConfigSummary({
+          provider,
+          model,
+          credentialEnv,
+          webSearchConfig,
+          enabledChannels:
+            selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
+          sandboxName,
+          notes: ["Sandbox build takes ~6 minutes on this host."],
+        }),
+      );
+      console.log("  Web search and messaging channels will be prompted next.");
+      if (!isNonInteractive() && !dangerouslySkipPermissions) {
+        const answer = (await promptOrDefault("  Apply this configuration? [Y/n]: ", null, "y"))
+          .trim()
+          .toLowerCase();
+        if (answer === "n" || answer === "no") {
+          console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
+          console.log(
+            "  Credentials entered so far are stored in ~/.nemoclaw/credentials.json —",
+          );
+          console.log(
+            "  clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
+          );
+          process.exit(0);
+        }
+      }
+
       startRecordedStep("inference", { sandboxName, provider, model });
       const inferenceResult = await setupInference(
         sandboxName,
@@ -6923,6 +7010,7 @@ module.exports = {
   setupInference,
   setupMessagingChannels,
   setupNim,
+  formatOnboardConfigSummary,
   isInferenceRouteReady,
   isNonInteractive,
   isOpenclawReady,
