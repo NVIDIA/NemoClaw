@@ -455,6 +455,16 @@ function collectHttpUrls(value: ConfigValue): string[] {
   return urls;
 }
 
+function redactUrlForLogs(urlValue: string): string {
+  try {
+    const parsed = new URL(urlValue);
+    const port = parsed.port ? `:${parsed.port}` : "";
+    return `${parsed.protocol}//${parsed.hostname}${port}${parsed.pathname}`;
+  } catch {
+    return "<invalid-url>";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // config get
 // ---------------------------------------------------------------------------
@@ -536,7 +546,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
       await validateUrlValueWithDns(urlValue);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`  URL validation failed for ${JSON.stringify(urlValue)}: ${message}`);
+      console.error(`  URL validation failed for ${redactUrlForLogs(urlValue)}: ${message}`);
       process.exit(1);
     }
   }

@@ -308,4 +308,86 @@ describe("config set nested URL SSRF enforcement", () => {
       else delete requireCache[shieldsAuditPath];
     }
   });
+
+  it("redacts credentials, query strings, and fragments in validation errors", async () => {
+    const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config");
+    const openshellPath = require.resolve("../dist/lib/openshell");
+    const shieldsAuditPath = require.resolve("../dist/lib/shields-audit");
+
+    const priorSandboxConfig = require.cache[sandboxConfigPath];
+    const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
+
+    const childProcess = require("node:child_process");
+    const originalExecFileSync = childProcess.execFileSync;
+    const execSpy = vi.fn();
+    childProcess.execFileSync = execSpy;
+
+    delete require.cache[sandboxConfigPath];
+    requireCache[openshellPath] = {
+      id: openshellPath,
+      filename: openshellPath,
+      loaded: true,
+      exports: {
+        captureOpenshellCommand: () => ({
+          status: 0,
+          output: JSON.stringify({
+            inference: { endpoints: {} },
+          }),
+        }),
+        runOpenshellCommand: () => ({ status: 0 }),
+      },
+    } as any;
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry: () => {} },
+    } as any;
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? 0}`);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const { configSet } = require("../dist/lib/sandbox-config");
+      const nestedValue = JSON.stringify({
+        primary: "http://user:pass@127.0.0.1:8080/private/path?token=secret#frag",
+      });
+
+      await expect(
+        configSet("sandbox-ssrf-test", {
+          key: "inference.endpoints",
+          value: nestedValue,
+        }),
+      ).rejects.toThrow("process.exit:1");
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("URL validation failed for http://127.0.0.1:8080/private/path"),
+      );
+      expect(
+        errorSpy.mock.calls.some((call) => {
+          const text = String(call[0]);
+          return text.includes("user:pass") || text.includes("token=secret") || text.includes("#frag");
+        }),
+      ).toBe(false);
+      expect(execSpy).not.toHaveBeenCalled();
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      logSpy.mockRestore();
+      childProcess.execFileSync = originalExecFileSync;
+
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
+      else delete requireCache[sandboxConfigPath];
+
+      if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
+      else delete requireCache[openshellPath];
+
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
+    }
+  });
 });
