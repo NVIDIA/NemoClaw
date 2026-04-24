@@ -2319,7 +2319,11 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     assert.equal(payload.completed, false);
     assert.equal(payload.exitCode, 1);
     assert.equal(payload.prompts.length, 0);
-    assert.ok(payload.lines.some((line) => line.includes("Invalid key. Must start with nvapi-")));
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Invalid NVIDIA API key. Must start with nvapi-"),
+      ),
+    );
     assert.ok(
       payload.lines.some((line) =>
         line.includes("Get a key from https://build.nvidia.com/settings/api-keys"),
