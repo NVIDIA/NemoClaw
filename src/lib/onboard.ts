@@ -716,16 +716,19 @@ const {
 //
 // When `deferCredentialPersistence` is true, replaceNamedCredential prompts
 // the user and populates process.env as usual but does NOT write the key to
-// credentials.json. The env name is recorded in `pendingDeferredCredentials`
-// so a later flush call can persist it after the user has confirmed the
-// configuration at the review gate. See #2221.
+// credentials.json. The env name AND the exact staged value are recorded in
+// `pendingDeferredCredentials` so a later flush call can persist it after
+// the user has confirmed the configuration at the review gate. Storing the
+// value lets us verify at flush time that `process.env[envName]` still
+// matches the staged value — defends against a back-nav path that swapped
+// providers and left a stale entry in the map. See #2221.
 //
 // This keeps an aborted onboard from leaving API keys on disk that the user
 // never agreed to commit. If deferCredentialPersistence is false (default),
 // replaceNamedCredential behaves exactly as before: immediate persistence.
 let deferCredentialPersistence = false;
 let deferredCredentialsFlushed = false;
-const pendingDeferredCredentials = new Set<string>();
+const pendingDeferredCredentials = new Map<string, string>();
 
 function beginDeferredCredentialPersistence() {
   deferCredentialPersistence = true;
@@ -734,13 +737,23 @@ function beginDeferredCredentialPersistence() {
 }
 
 function flushDeferredCredentials() {
-  for (const envName of pendingDeferredCredentials) {
-    const value = process.env[envName];
-    if (typeof value === "string" && value.length > 0) {
-      saveCredential(envName, value);
+  let persistedAny = false;
+  for (const [envName, stagedValue] of pendingDeferredCredentials) {
+    // Only persist if the value currently in process.env matches what we
+    // staged. Guards against a back-nav path that abandoned this env name
+    // (process.env was cleared) or swapped providers without clearing the
+    // map entry. Belt-and-braces with discardStagedCredential.
+    const current = process.env[envName];
+    if (
+      typeof current === "string" &&
+      current.length > 0 &&
+      current === stagedValue
+    ) {
+      saveCredential(envName, current);
+      persistedAny = true;
     }
   }
-  if (pendingDeferredCredentials.size > 0) {
+  if (persistedAny) {
     deferredCredentialsFlushed = true;
   }
   pendingDeferredCredentials.clear();
@@ -757,7 +770,7 @@ function endDeferredCredentialPersistence() {
 }
 
 function discardDeferredCredentials() {
-  for (const envName of pendingDeferredCredentials) {
+  for (const envName of pendingDeferredCredentials.keys()) {
     delete process.env[envName];
   }
   pendingDeferredCredentials.clear();
@@ -806,7 +819,9 @@ async function replaceNamedCredential(
     if (deferCredentialPersistence) {
       // Hold in memory + process.env; flushDeferredCredentials() will write
       // to ~/.nemoclaw/credentials.json after the review gate confirms.
-      pendingDeferredCredentials.add(envName);
+      // Map stores the exact value so flush can verify process.env hasn't
+      // been swapped out from under us via a back-nav path.
+      pendingDeferredCredentials.set(envName, key);
       process.env[envName] = key;
       console.log("");
       console.log(`  Key held in memory; will be saved to ~/.nemoclaw/credentials.json on confirm.`);
@@ -3063,6 +3078,7 @@ type OnboardConfigSummary = {
   enabledChannels?: string[] | null;
   sandboxName: string;
   notes?: string[] | null;
+  credentialStorageState?: "deferred" | "persisted" | null;
 };
 
 /**
@@ -4163,7 +4179,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
                 stagedCredentialEnvThisIteration = "NVIDIA_API_KEY";
               }
             } else {
-              process.env.NVIDIA_API_KEY = getCredential("NVIDIA_API_KEY");
+              process.env.NVIDIA_API_KEY = getCredential("NVIDIA_API_KEY") ?? undefined;
             }
           } else {
             await ensureApiKey();
@@ -6794,6 +6810,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     if (deferInferenceCredentials) {
       beginDeferredCredentialPersistence();
     }
+    try {
     while (true) {
       const resumeProviderSelection =
         !forceProviderSelection &&
@@ -6928,12 +6945,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       );
       break;
     }
-    // Loop broke successfully — disarm the deferred-credential machinery so
-    // later prompts (Brave, messaging tokens) use the normal immediate-write
-    // path. Those live under their own gate-adjacent ordering and don't need
-    // deferral. See #2221.
-    if (deferInferenceCredentials) {
-      endDeferredCredentialPersistence();
+    } finally {
+      // Always disarm the deferred-credential machinery so later prompts
+      // (Brave, messaging tokens) use the normal immediate-write path and
+      // so a thrown exception doesn't leak module-scoped flags into later
+      // prompts or tests. See #2221.
+      if (deferInferenceCredentials) {
+        endDeferredCredentialPersistence();
+      }
     }
 
     const sandboxReuseState = getSandboxReuseState(sandboxName);
