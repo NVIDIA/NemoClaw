@@ -514,6 +514,148 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("#1737: patches the staged Dockerfile with Telegram mention-only config", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-mention-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-tg-mention",
+        "openai-api",
+        null,
+        null,
+        ["telegram"],
+        {},
+        {},
+        null,
+        { requireMention: true },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const line = patched
+        .split("\n")
+        .find((l) => l.startsWith("ARG NEMOCLAW_TELEGRAM_CONFIG_B64="));
+      assert.ok(line, "expected telegram config build arg");
+      const encoded = line.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, { requireMention: true });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#1737: patches the staged Dockerfile with Telegram open-group config when requireMention=false", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-open-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-tg-open",
+        "openai-api",
+        null,
+        null,
+        ["telegram"],
+        {},
+        {},
+        null,
+        { requireMention: false },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const line = patched
+        .split("\n")
+        .find((l) => l.startsWith("ARG NEMOCLAW_TELEGRAM_CONFIG_B64="));
+      assert.ok(line, "expected telegram config build arg");
+      const encoded = line.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, { requireMention: false });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#1737: preserves default Telegram group-open behavior when telegramConfig is empty", () => {
+    // Backward compatibility guard: the ARG default stays at e30= ({} base64)
+    // and patchStagedDockerfile does not rewrite it when no config is passed.
+    // The Dockerfile Python generator reads empty config as requireMention=false
+    // which maps to groupPolicy=open (matches pre-#1737 behavior).
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-empty-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-tg-default",
+        "openai-api",
+        null,
+        null,
+        ["telegram"],
+        {},
+        {},
+        null,
+        {},
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("maps NVIDIA Endpoints to the routed inference provider", () => {
     assert.deepEqual(
       getSandboxInferenceConfig("qwen/qwen3.5-397b-a17b", "nvidia-prod", "openai-completions"),

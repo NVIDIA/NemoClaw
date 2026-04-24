@@ -89,8 +89,13 @@ export interface Session {
   // migrated set is NOT seeded from the persisted record, so the cleanup
   // gate keeps the file until the *current* value is actually re-migrated.
   migratedLegacyValueHashes: Record<string, string> | null;
+  telegramConfig: TelegramConfig | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
+}
+
+export interface TelegramConfig {
+  requireMention: boolean;
 }
 
 export interface LockInfo {
@@ -120,6 +125,7 @@ export interface SessionUpdates {
   policyPresets?: string[];
   messagingChannels?: string[];
   migratedLegacyValueHashes?: Record<string, string>;
+  telegramConfig?: TelegramConfig | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
@@ -209,6 +215,13 @@ function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchCon
   return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
 }
 
+function parseTelegramConfig(value: unknown): TelegramConfig | null {
+  if (!isObject(value)) return null;
+  if (value.requireMention === true) return { requireMention: true };
+  if (value.requireMention === false) return { requireMention: false };
+  return null;
+}
+
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
   return {
@@ -288,6 +301,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
+    telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
@@ -320,6 +334,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
+    telegramConfig: parseTelegramConfig(data.telegramConfig),
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
@@ -632,6 +647,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
       if (typeof k === "string" && typeof v === "string") cleaned[k] = v;
     }
     safe.migratedLegacyValueHashes = cleaned;
+  }
+  if (isObject(updates.telegramConfig) && typeof updates.telegramConfig.requireMention === "boolean") {
+    safe.telegramConfig = { requireMention: updates.telegramConfig.requireMention };
+  } else if (updates.telegramConfig === null) {
+    safe.telegramConfig = null;
   }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
