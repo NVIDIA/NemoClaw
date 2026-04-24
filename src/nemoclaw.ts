@@ -3445,10 +3445,10 @@ function help() {
 
 // ── Dispatch ─────────────────────────────────────────────────────
 
-const [cmd, ...args] = process.argv.slice(2);
+async function dispatchCli(argv = process.argv.slice(2)) {
+  const [cmd, ...args] = argv;
 
-// eslint-disable-next-line complexity
-(async () => {
+  // eslint-disable-next-line complexity
   // No command → help
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     help();
@@ -3740,4 +3740,10 @@ const [cmd, ...args] = process.argv.slice(2);
 
   console.error(`  Run 'nemoclaw help' for usage.`);
   process.exit(1);
-})();
+}
+
+if (process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH !== "1") {
+  void dispatchCli();
+}
+
+module.exports.dispatchCli = dispatchCli;
