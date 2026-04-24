@@ -8,8 +8,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { shellQuote } from "./shell-quote";
+import { isErrnoException, isPermissionError } from "./errno";
 
-type ErrnoLike = Error | { code?: string | number } | null;
+// Strict JSON types for file serialization — unlike json-types.ts,
+// these exclude undefined since actual JSON cannot contain it.
 type JsonScalar = string | number | boolean | null;
 type JsonValue = JsonScalar | JsonObject | JsonValue[];
 type JsonObject = { [key: string]: JsonValue };
@@ -17,14 +19,6 @@ type SerializableConfig = JsonScalar | JsonValue[] | object;
 
 function toError(error: Error | string | number | boolean | null | undefined): Error {
   return error instanceof Error ? error : new Error(String(error));
-}
-
-function isErrnoException(error: ErrnoLike): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
-}
-
-function isPermissionError(error: ErrnoLike): error is NodeJS.ErrnoException {
-  return isErrnoException(error) && (error.code === "EACCES" || error.code === "EPERM");
 }
 
 function parseJson<T>(text: string): T {

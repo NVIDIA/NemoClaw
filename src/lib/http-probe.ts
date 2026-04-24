@@ -14,13 +14,9 @@ import type { ProbeResult } from "./onboard-types";
 import { ROOT } from "./paths";
 import { compactText } from "./url-utils";
 
+import { isErrnoException } from "./errno";
+
 export type CurlProbeResult = ProbeResult;
-
-type ErrnoLike = Error | { code?: string | number; errno?: string | number } | null;
-
-function isErrnoException(error: ErrnoLike): error is NodeJS.ErrnoException {
-  return error !== null && typeof error === "object" && ("code" in error || "errno" in error);
-}
 
 export interface CurlProbeOptions {
   cwd?: string;

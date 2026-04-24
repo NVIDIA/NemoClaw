@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { redactSensitiveText, redactUrl } from "./redact";
+import { isErrnoException } from "./errno";
 import type { WebSearchConfig } from "./web-search";
 
 export const SESSION_VERSION = 1;
@@ -18,9 +19,11 @@ export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 
-type SessionJsonPrimitive = string | number | boolean | null;
-type SessionJsonValue = SessionJsonPrimitive | UnknownRecord | SessionJsonValue[];
-type UnknownRecord = { [key: string]: SessionJsonValue };
+import type { JsonValue, JsonObject } from "./json-types";
+
+// Session-specific aliases for the shared JSON types.
+type SessionJsonValue = JsonValue;
+type UnknownRecord = JsonObject;
 type StepStatus = "pending" | "in_progress" | "complete" | "failed" | "skipped";
 
 const STEP_STATES: readonly StepStatus[] = [
@@ -158,12 +161,6 @@ function defaultSteps(): Record<string, StepState> {
 
 export function isObject(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-type ErrnoLike = Error | { code?: string | number } | null;
-
-function isErrnoException(error: ErrnoLike): error is NodeJS.ErrnoException {
-  return error !== null && error instanceof Error && "code" in error;
 }
 
 function readString(value: SessionJsonValue | undefined): string | null {
@@ -366,7 +363,7 @@ function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return error instanceof Error && isErrnoException(error) && error.code === "EPERM";
+    return isErrnoException(error) && error.code === "EPERM";
   }
 }
 
@@ -406,7 +403,7 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
       // resolves to the same file we created (fstat ino vs stat ino).
       fd = fs.openSync(LOCK_FILE, "wx", 0o600);
     } catch (error) {
-      if (!(error instanceof Error && isErrnoException(error)) || error.code !== "EEXIST") {
+      if (!isErrnoException(error) || error.code !== "EEXIST") {
         throw error;
       }
 
@@ -423,11 +420,7 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         staleInode = stat.ino;
         existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
       } catch (readError) {
-        if (
-          readError instanceof Error &&
-          isErrnoException(readError) &&
-          readError.code === "ENOENT"
-        ) {
+        if (isErrnoException(readError) && readError.code === "ENOENT") {
           continue;
         }
         throw readError;
@@ -505,7 +498,7 @@ function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): v
       return;
     }
   } catch (statError) {
-    if (statError instanceof Error && isErrnoException(statError) && statError.code === "ENOENT") {
+    if (isErrnoException(statError) && statError.code === "ENOENT") {
       return;
     }
     throw statError;
@@ -513,13 +506,7 @@ function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): v
   try {
     fs.unlinkSync(filePath);
   } catch (unlinkError) {
-    if (
-      !(
-        unlinkError instanceof Error &&
-        isErrnoException(unlinkError) &&
-        unlinkError.code === "ENOENT"
-      )
-    ) {
+    if (!isErrnoException(unlinkError) || unlinkError.code !== "ENOENT") {
       throw unlinkError;
     }
   }
@@ -540,7 +527,7 @@ export function releaseOnboardLock(): void {
         const pathStat = fs.statSync(LOCK_FILE, { bigint: true });
         pathInode = pathStat.ino;
       } catch (error) {
-        if (!(error instanceof Error && isErrnoException(error) && error.code === "ENOENT")) {
+        if (!(isErrnoException(error) && error.code === "ENOENT")) {
           // Unexpected — fall through to closing the fd.
         }
       }
@@ -548,13 +535,7 @@ export function releaseOnboardLock(): void {
         try {
           fs.unlinkSync(LOCK_FILE);
         } catch (unlinkError) {
-          if (
-            !(
-              unlinkError instanceof Error &&
-              isErrnoException(unlinkError) &&
-              unlinkError.code === "ENOENT"
-            )
-          ) {
+          if (!(isErrnoException(unlinkError) && unlinkError.code === "ENOENT")) {
             // Best effort — surfacing this would mask the real error.
           }
         }
@@ -582,7 +563,7 @@ export function releaseOnboardLock(): void {
     try {
       existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
     } catch (error) {
-      if (error instanceof Error && isErrnoException(error) && error.code === "ENOENT") return;
+      if (isErrnoException(error) && error.code === "ENOENT") return;
       throw error;
     }
     if (!existing) return;

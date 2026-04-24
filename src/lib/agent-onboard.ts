@@ -14,10 +14,7 @@ import { loadAgent, resolveAgentName, type AgentDefinition } from "./agent-defs"
 import { getProviderSelectionConfig } from "./inference-config";
 import * as onboardSession from "./onboard-session";
 import { sleepSeconds } from "./wait";
-
-type LooseScalar = string | number | boolean | null | undefined;
-type LooseValue = LooseScalar | LooseObject | LooseValue[];
-type LooseObject = { [key: string]: LooseValue };
+import type { JsonValue as LooseValue, JsonObject as LooseObject } from "./json-types";
 
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;

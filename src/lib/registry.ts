@@ -5,12 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
-
-type ErrnoLike = Error | { code?: string | number } | null;
-
-function isErrnoException(error: ErrnoLike): error is NodeJS.ErrnoException {
-  return error !== null && typeof error === "object" && "code" in error;
-}
+import { isErrnoException } from "./errno";
 
 export interface SandboxEntry {
   name: string;
@@ -74,7 +69,7 @@ export function acquireLock(): void {
       return;
     } catch (error) {
       if (
-        !(typeof error === "object" && error !== null && isErrnoException(error)) ||
+        !isErrnoException(error) ||
         error.code !== "EEXIST"
       ) {
         throw error;
@@ -90,7 +85,7 @@ export function acquireLock(): void {
             alive = true;
           } catch (killErr) {
             alive =
-              typeof killErr === "object" && killErr !== null && isErrnoException(killErr)
+              isErrnoException(killErr)
                 ? killErr.code === "EPERM"
                 : false;
           }
@@ -127,7 +122,7 @@ export function releaseLock(): void {
     fs.unlinkSync(LOCK_OWNER);
   } catch (error) {
     if (
-      !(typeof error === "object" && error !== null && isErrnoException(error)) ||
+      !isErrnoException(error) ||
       error.code !== "ENOENT"
     ) {
       throw error;
@@ -137,7 +132,7 @@ export function releaseLock(): void {
     fs.rmSync(LOCK_DIR, { recursive: true, force: true });
   } catch (error) {
     if (
-      !(typeof error === "object" && error !== null && isErrnoException(error)) ||
+      !isErrnoException(error) ||
       error.code !== "ENOENT"
     ) {
       throw error;
