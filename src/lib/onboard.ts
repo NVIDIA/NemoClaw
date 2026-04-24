@@ -6146,6 +6146,21 @@ const CONTROL_UI_PORT = DASHBOARD_PORT;
 // isLoopbackHostname — see urlUtils import above
 const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 
+// Parses `openshell forward list` output and returns the sandbox currently
+// owning `portToStop`, or null. Exported for unit testing — see #2169.
+// Columns: SANDBOX  BIND  PORT  PID  STATUS (whitespace-separated).
+function findDashboardForwardOwner(forwardListOutput, portToStop) {
+  if (!forwardListOutput) return null;
+  const portLine = forwardListOutput
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => {
+      const parts = l.split(/\s+/);
+      return parts[2] === portToStop;
+    });
+  return portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
+}
+
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
   const portToStop = getDashboardForwardPort(chatUiUrl);
   const forwardTarget = getDashboardForwardTarget(chatUiUrl);
@@ -6153,23 +6168,19 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
   // actionable message rather than silently stealing that sandbox's forward.
   // (Same sandbox is always allowed — covers reconnect and resume paths.)
   const existingForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
-  // Parse line-by-line to avoid false positives from substring matches.
-  // openshell forward list columns: SANDBOX  BIND  PORT  PID  STATUS
-  // Port is at column index 2; sandbox name is at column index 0.
-  const portLine = existingForwards
-    ?.split("\n")
-    .map((l) => l.trim())
-    .find((l) => {
-      const parts = l.split(/\s+/);
-      return parts[2] === portToStop;
-    });
-  const portOwner = portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
+  const portOwner = findDashboardForwardOwner(existingForwards, portToStop);
   if (portOwner !== null && portOwner !== sandboxName) {
-    throw new Error(
-      `Port ${portToStop} is already forwarded for sandbox '${portOwner}'. ` +
-        `Set CHAT_UI_URL to a different local port (e.g. http://127.0.0.1:18790) ` +
-        `before onboarding a second sandbox.`,
+    // Match the preflight pattern (printed error + exit) instead of throwing,
+    // so the user sees a clean message rather than a raw Node stack trace
+    // from the top-level IIFE's unhandled rejection. See #2169.
+    console.error(
+      `  Port ${portToStop} is already forwarded for sandbox '${portOwner}'.`,
     );
+    console.error(
+      `  Set CHAT_UI_URL to a different local port (e.g. http://127.0.0.1:18790)`,
+    );
+    console.error(`  before onboarding a second sandbox.`);
+    process.exit(1);
   }
   runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
@@ -7075,6 +7086,7 @@ module.exports = {
   getDashboardForwardPort,
   getDashboardForwardStartCommand,
   getDashboardGuidanceLines,
+  findDashboardForwardOwner,
   startGatewayForRecovery,
   runCaptureOpenshell,
   setupInference,
