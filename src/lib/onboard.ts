@@ -10,7 +10,7 @@ const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawn, spawnSync } = require("child_process");
+const { execFileSync, spawn, spawnSync } = require("child_process");
 const pRetry = require("p-retry");
 
 /** Parse a numeric env var, returning `fallback` when unset or non-finite. */
@@ -52,6 +52,7 @@ const {
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
+  validateOllamaPortConfiguration,
   validateOllamaModel,
   validateLocalProvider,
 } = require("./local-inference");
@@ -3292,6 +3293,55 @@ async function promptValidatedSandboxName() {
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
+/**
+ * Render the configuration summary shown before the destructive sandbox build.
+ * Extracted from confirmOnboardConfiguration() for direct unit testing — see #2165.
+ *
+ * Fields:
+ * - credentialEnv:    env-var name of the API key (e.g. "NVIDIA_API_KEY").
+ *                     Rendered with the fixed credentials.json location so
+ *                     users can see where the key was stored.
+ * - notes:            additional bullet lines shown under the summary
+ *                     (e.g. "~6 minutes on this host"). Each note rendered
+ *                     as "Note: <text>" so it's visually distinct.
+ */
+function formatOnboardConfigSummary({
+  provider,
+  model,
+  credentialEnv = null,
+  webSearchConfig,
+  enabledChannels,
+  sandboxName,
+  notes = [],
+}) {
+  const bar = `  ${"─".repeat(50)}`;
+  const messaging =
+    Array.isArray(enabledChannels) && enabledChannels.length > 0
+      ? enabledChannels.join(", ")
+      : "none";
+  const webSearch = webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
+  const apiKeyLine = credentialEnv
+    ? `  API key:       ${credentialEnv} (stored in ~/.nemoclaw/credentials.json)`
+    : `  API key:       (not required for ${provider ?? "this provider"})`;
+  const noteLines = (Array.isArray(notes) ? notes : [])
+    .filter((n) => typeof n === "string" && n.length > 0)
+    .map((n) => `  Note:          ${n}`);
+  return [
+    "",
+    bar,
+    "  Review configuration",
+    bar,
+    `  Provider:      ${provider ?? "(unset)"}`,
+    `  Model:         ${model ?? "(unset)"}`,
+    apiKeyLine,
+    `  Web search:    ${webSearch}`,
+    `  Messaging:     ${messaging}`,
+    `  Sandbox name:  ${sandboxName}`,
+    ...noteLines,
+    bar,
+  ].join("\n");
+}
+
 // eslint-disable-next-line complexity
 async function createSandbox(
   gpu,
@@ -3311,6 +3361,7 @@ async function createSandbox(
     sandboxNameOverride ?? (await promptValidatedSandboxName()),
     "sandbox name",
   );
+
   const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${effectivePort}`;
 
@@ -4116,6 +4167,20 @@ async function setupNim(gpu) {
     }
   }
 
+  function checkOllamaPortsOrWarn(): boolean {
+    const portValidation = validateOllamaPortConfiguration();
+    if (!portValidation.ok) {
+      console.error(`  ${portValidation.message}`);
+      if (isNonInteractive()) {
+        process.exit(1);
+      }
+      console.log("  Choose a different local inference provider or fix the port settings.");
+      console.log("");
+      return false;
+    }
+    return true;
+  }
+
   if (options.length > 1) {
     selectionLoop: while (true) {
       let selected;
@@ -4585,6 +4650,7 @@ async function setupNim(gpu) {
         }
         break;
       } else if (selected.key === "ollama") {
+        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
         if (!ollamaRunning) {
           console.log("  Starting Ollama...");
           // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
@@ -4657,6 +4723,7 @@ async function setupNim(gpu) {
         }
         break;
       } else if (selected.key === "install-ollama") {
+        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
         if (process.platform === "darwin") {
           console.log("  Installing Ollama via Homebrew...");
           run(["brew", "install", "ollama"], { ignoreError: true });
@@ -6067,6 +6134,21 @@ const CONTROL_UI_PORT = DASHBOARD_PORT;
 // isLoopbackHostname — see urlUtils import above
 const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 
+// Parses `openshell forward list` output and returns the sandbox currently
+// owning `portToStop`, or null. Exported for unit testing — see #2169.
+// Columns: SANDBOX  BIND  PORT  PID  STATUS (whitespace-separated).
+function findDashboardForwardOwner(forwardListOutput, portToStop) {
+  if (!forwardListOutput) return null;
+  const portLine = forwardListOutput
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => {
+      const parts = l.split(/\s+/);
+      return parts[2] === portToStop;
+    });
+  return portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
+}
+
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
   const portToStop = getDashboardForwardPort(chatUiUrl);
   const forwardTarget = getDashboardForwardTarget(chatUiUrl);
@@ -6074,23 +6156,19 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
   // actionable message rather than silently stealing that sandbox's forward.
   // (Same sandbox is always allowed — covers reconnect and resume paths.)
   const existingForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
-  // Parse line-by-line to avoid false positives from substring matches.
-  // openshell forward list columns: SANDBOX  BIND  PORT  PID  STATUS
-  // Port is at column index 2; sandbox name is at column index 0.
-  const portLine = existingForwards
-    ?.split("\n")
-    .map((l) => l.trim())
-    .find((l) => {
-      const parts = l.split(/\s+/);
-      return parts[2] === portToStop;
-    });
-  const portOwner = portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
+  const portOwner = findDashboardForwardOwner(existingForwards, portToStop);
   if (portOwner !== null && portOwner !== sandboxName) {
-    throw new Error(
-      `Port ${portToStop} is already forwarded for sandbox '${portOwner}'. ` +
-        `Set CHAT_UI_URL to a different local port (e.g. http://127.0.0.1:18790) ` +
-        `before onboarding a second sandbox.`,
+    // Match the preflight pattern (printed error + exit) instead of throwing,
+    // so the user sees a clean message rather than a raw Node stack trace
+    // from the top-level IIFE's unhandled rejection. See #2169.
+    console.error(
+      `  Port ${portToStop} is already forwarded for sandbox '${portOwner}'.`,
     );
+    console.error(
+      `  Set CHAT_UI_URL to a different local port (e.g. http://127.0.0.1:18790)`,
+    );
+    console.error(`  before onboarding a second sandbox.`);
+    process.exit(1);
   }
   runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
@@ -6115,6 +6193,21 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
   }
 }
 
+function findFileRecursive(dir, filename) {
+  if (!fs.existsSync(dir)) return null;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const found = findFileRecursive(p, filename);
+      if (found) return found;
+    } else if (e.name === filename) {
+      return p;
+    }
+  }
+  return null;
+}
+
 function findOpenclawJsonPath(dir) {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -6131,13 +6224,51 @@ function findOpenclawJsonPath(dir) {
 }
 
 /**
- * Pull gateway.auth.token from the sandbox image via openshell sandbox download
- * so onboard can print copy-paste Control UI URLs with #token= (same idea as nemoclaw-start.sh).
+ * Pull gateway auth token from the sandbox.
+ *
+ * Tries three retrieval paths in order:
+ *  1. kubectl exec cat /run/nemoclaw/gateway-token  (root mode — gateway:gateway 0400)
+ *  2. sandbox download /tmp/.runtime/nemoclaw/gateway-token  (non-root mode — sandbox:sandbox 0400)
+ *  3. sandbox download openclaw.json → gateway.auth.token  (pre-externalization images)
+ *
+ * Path 1 uses the same kubectl-via-K3s pattern as shields.ts — it runs as
+ * root inside the pod so it can read gateway-owned files.
+ * Path 2 works because sandbox download runs as the sandbox user, which owns
+ * the non-root token file.
  */
 function fetchGatewayAuthTokenFromSandbox(sandboxName) {
+  // 1. Root mode: kubectl exec reads gateway:gateway 0400 file (same as shields.ts)
+  try {
+    const K3S_CONTAINER = "openshell-cluster-nemoclaw";
+    const result = execFileSync("docker", [
+      "exec", K3S_CONTAINER,
+      "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
+      "cat", "/run/nemoclaw/gateway-token",
+    ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 });
+    const token = result.toString().trim();
+    if (token.length > 0) return token;
+  } catch {
+    // kubectl exec not available or file absent — fall through
+  }
+
+  // 2. Non-root mode: token at $XDG_RUNTIME_DIR/nemoclaw/gateway-token
+  // (sandbox-owned, downloadable via openshell sandbox download)
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
   try {
     const destDir = `${tmpDir}${path.sep}`;
+    const nonRootResult = runOpenshell(
+      ["sandbox", "download", sandboxName, "/tmp/.runtime/nemoclaw/gateway-token", destDir],
+      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
+    );
+    if (nonRootResult.status === 0) {
+      const tokenPath = findFileRecursive(tmpDir, "gateway-token");
+      if (tokenPath) {
+        const token = fs.readFileSync(tokenPath, "utf-8").trim();
+        if (token.length > 0) return token;
+      }
+    }
+
+    // 3. Legacy: openclaw.json (pre-externalization images)
     const result = runOpenshell(
       ["sandbox", "download", sandboxName, "/sandbox/.openclaw/openclaw.json", destDir],
       { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
@@ -6320,7 +6451,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
       console.log(`  ${entry.label}: ${entry.url}`);
     }
     console.log(
-      `  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
+      `  Token:       see /tmp/gateway.log inside the sandbox, or re-run onboard.`,
     );
     console.log(
       `               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`,
@@ -6654,6 +6785,43 @@ async function onboard(opts = {}) {
         break;
       }
 
+      // Prompt for the sandbox name and show the review gate BEFORE
+      // setupInference runs upsertProvider / `inference set` on the gateway.
+      // On retry (inferenceResult.retry === "selection") the user is re-prompted
+      // for provider/model above and sees this gate again with the new config.
+      // See #2221 (CodeRabbit).
+      if (!sandboxName) {
+        sandboxName = await promptValidatedSandboxName();
+      }
+      console.log(
+        formatOnboardConfigSummary({
+          provider,
+          model,
+          credentialEnv,
+          webSearchConfig,
+          enabledChannels:
+            selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
+          sandboxName,
+          notes: ["Sandbox build takes ~6 minutes on this host."],
+        }),
+      );
+      console.log("  Web search and messaging channels will be prompted next.");
+      if (!isNonInteractive() && !dangerouslySkipPermissions) {
+        const answer = (await promptOrDefault("  Apply this configuration? [Y/n]: ", null, "y"))
+          .trim()
+          .toLowerCase();
+        if (answer === "n" || answer === "no") {
+          console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
+          console.log(
+            "  Credentials entered so far are stored in ~/.nemoclaw/credentials.json —",
+          );
+          console.log(
+            "  clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
+          );
+          process.exit(0);
+        }
+      }
+
       startRecordedStep("inference", { sandboxName, provider, model });
       const inferenceResult = await setupInference(
         sandboxName,
@@ -6906,11 +7074,13 @@ module.exports = {
   getDashboardForwardPort,
   getDashboardForwardStartCommand,
   getDashboardGuidanceLines,
+  findDashboardForwardOwner,
   startGatewayForRecovery,
   runCaptureOpenshell,
   setupInference,
   setupMessagingChannels,
   setupNim,
+  formatOnboardConfigSummary,
   isInferenceRouteReady,
   isNonInteractive,
   isOpenclawReady,

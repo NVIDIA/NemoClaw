@@ -48,6 +48,20 @@ export interface LocalProviderHealthProbeOptions {
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
 }
 
+export function validateOllamaPortConfiguration(): ValidationResult {
+  if (!isWsl() && OLLAMA_PORT === OLLAMA_PROXY_PORT) {
+    return {
+      ok: false,
+      message:
+        `NEMOCLAW_OLLAMA_PORT and NEMOCLAW_OLLAMA_PROXY_PORT both resolve to ${OLLAMA_PORT}. ` +
+        "Run Ollama on a different port or set NEMOCLAW_OLLAMA_PROXY_PORT to a free port so " +
+        "the auth proxy does not route back to itself.",
+    };
+  }
+
+  return { ok: true };
+}
+
 export function getLocalProviderBaseUrl(provider: string): string | null {
   switch (provider) {
     case "vllm-local":
@@ -157,19 +171,27 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
   switch (provider) {
     case "vllm-local":
       return [
-        "docker", "run", "--rm",
-        "--add-host", "host.openshell.internal:host-gateway",
+        "docker",
+        "run",
+        "--rm",
+        "--add-host",
+        "host.openshell.internal:host-gateway",
         CONTAINER_REACHABILITY_IMAGE,
-        "-sf", `http://host.openshell.internal:${VLLM_PORT}/v1/models`,
+        "-sf",
+        `http://host.openshell.internal:${VLLM_PORT}/v1/models`,
       ];
     case "ollama-local":
       // Check the auth proxy port, not Ollama directly. The proxy listens
       // on 0.0.0.0 and is reachable from containers; Ollama is on 127.0.0.1.
       return [
-        "docker", "run", "--rm",
-        "--add-host", "host.openshell.internal:host-gateway",
+        "docker",
+        "run",
+        "--rm",
+        "--add-host",
+        "host.openshell.internal:host-gateway",
         CONTAINER_REACHABILITY_IMAGE,
-        "-sf", `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
+        "-sf",
+        `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
       ];
     default:
       return null;
@@ -180,6 +202,13 @@ export function validateLocalProvider(
   provider: string,
   runCaptureImpl?: RunCaptureFn,
 ): ValidationResult {
+  if (provider === "ollama-local") {
+    const portValidation = validateOllamaPortConfiguration();
+    if (!portValidation.ok) {
+      return portValidation;
+    }
+  }
+
   const capture = runCaptureImpl ?? runCapture;
   const command = getLocalProviderHealthCheck(provider);
   if (!command) {
@@ -197,8 +226,7 @@ export function validateLocalProvider(
       case "ollama-local":
         return {
           ok: false,
-          message:
-            `Local Ollama was selected, but nothing is responding on http://127.0.0.1:${OLLAMA_PORT}.`,
+          message: `Local Ollama was selected, but nothing is responding on http://127.0.0.1:${OLLAMA_PORT}.`,
         };
       default:
         return { ok: false, message: "The selected local inference provider is unavailable." };
@@ -219,14 +247,12 @@ export function validateLocalProvider(
     case "vllm-local":
       return {
         ok: false,
-        message:
-          `Local vLLM is responding on 127.0.0.1, but containers cannot reach http://host.openshell.internal:${VLLM_PORT}. Ensure the server is reachable from containers, not only from the host shell.`,
+        message: `Local vLLM is responding on 127.0.0.1, but containers cannot reach http://host.openshell.internal:${VLLM_PORT}. Ensure the server is reachable from containers, not only from the host shell.`,
       };
     case "ollama-local":
       return {
         ok: false,
-        message:
-          `Local Ollama is responding on 127.0.0.1, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
+        message: `Local Ollama is responding on 127.0.0.1, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
       };
     default:
       return {
@@ -303,7 +329,8 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
   // chars) then shellQuote'd (single-quoted), so injection through model
   // names is not feasible. This is the one intentional bash -c exception.
   return [
-    "bash", "-c",
+    "bash",
+    "-c",
     `nohup curl -s http://127.0.0.1:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,
   ];
 }
@@ -320,11 +347,15 @@ export function getOllamaProbeCommand(
     keep_alive: keepAlive,
   });
   return [
-    "curl", "-sS",
-    "--max-time", String(timeoutSeconds),
+    "curl",
+    "-sS",
+    "--max-time",
+    String(timeoutSeconds),
     `http://127.0.0.1:${OLLAMA_PORT}/api/generate`,
-    "-H", "Content-Type: application/json",
-    "-d", payload,
+    "-H",
+    "Content-Type: application/json",
+    "-d",
+    payload,
   ];
 }
 
