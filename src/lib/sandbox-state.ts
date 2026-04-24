@@ -31,7 +31,8 @@ import { resolveOpenshell } from "./resolve-openshell.js";
 import { captureOpenshellCommand } from "./openshell.js";
 import { sanitizeConfigFile, isSensitiveFile } from "./credential-filter.js";
 
-const REBUILD_BACKUPS_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw", "rebuild-backups");
+const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
+const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
 
@@ -168,6 +169,41 @@ function isWithinRoot(candidatePath: string, rootPath: string): boolean {
   const root = normalizeHostPath(rootPath);
   const relative = path.relative(root, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * Reject a path if it — or any ancestor up to $HOME — is a symlink.
+ * Prevents an attacker from planting a symlink at the target path to
+ * redirect reads or writes to an attacker-controlled directory.
+ *
+ * Mirrors the pattern from config-io.ts (PR #2290) and
+ * nemoclaw/src/blueprint/snapshot.ts.
+ */
+function rejectSymlinksOnPath(targetPath: string): void {
+  const home = HOME_DIR;
+  const resolved = path.resolve(targetPath);
+
+  const relToHome = path.relative(home, resolved);
+  if (relToHome === "" || relToHome.startsWith("..") || path.isAbsolute(relToHome)) {
+    return;
+  }
+
+  let current = resolved;
+  while (current !== home && current !== path.dirname(current)) {
+    try {
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        const linkTarget = readlinkSync(current);
+        throw new Error(
+          `Refusing to operate on path: ${current} is a symbolic link ` +
+            `(target: ${linkTarget}). This may indicate a symlink attack.`,
+        );
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    current = path.dirname(current);
+  }
 }
 
 /**
@@ -528,7 +564,16 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   }
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = path.join(REBUILD_BACKUPS_DIR, sandboxName, timestamp);
+
+  // SECURITY: Verify backup destination ancestors are not symlinks.
+  // Without this check, an attacker who plants ~/.nemoclaw/rebuild-backups
+  // as a symlink could redirect snapshot content to an arbitrary directory.
+  rejectSymlinksOnPath(backupPath);
+
   mkdirSync(backupPath, { recursive: true, mode: 0o700 });
+  // Re-check after creation to narrow the TOCTOU race window —
+  // a symlink swapped in between the first check and mkdirSync is caught here.
+  rejectSymlinksOnPath(backupPath);
 
   // Capture applied policy presets from the registry so they can be
   // re-applied after rebuild. Presets live in the gateway policy engine,

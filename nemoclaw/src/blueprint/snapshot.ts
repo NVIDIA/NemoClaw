@@ -15,15 +15,17 @@ import type { Dirent } from "node:fs";
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { execa } from "execa";
 
@@ -39,12 +41,49 @@ function compactTimestamp(): string {
     .replace(/\.\d+Z$/, "Z");
 }
 
-function collectFiles(dir: string): string[] {
+/**
+ * Reject a path if it — or any ancestor up to $HOME — is a symlink.
+ * Prevents an attacker from planting a symlink at the target path to
+ * redirect reads or writes to an attacker-controlled directory.
+ *
+ * Mirrors the pattern from src/lib/config-io.ts (PR #2290).
+ */
+function rejectSymlinksOnPath(targetPath: string): void {
+  const resolvedHome = resolve(HOME);
+  const resolved = resolve(targetPath);
+
+  const relToHome = relative(resolvedHome, resolved);
+  if (relToHome === "" || relToHome.startsWith("..") || isAbsolute(relToHome)) {
+    return;
+  }
+
+  let current = resolved;
+  while (current !== resolvedHome && current !== dirname(current)) {
+    try {
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        const linkTarget = readlinkSync(current);
+        throw new Error(
+          `Refusing to operate on path: ${current} is a symbolic link ` +
+            `(target: ${linkTarget}). This may indicate a symlink attack.`,
+        );
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    current = dirname(current);
+  }
+}
+
+function collectFiles(dir: string): { files: string[]; symlinks: string[] } {
   const files: string[] = [];
+  const symlinks: string[] = [];
   const walk = (current: string): void => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const full = join(current, entry.name);
-      if (entry.isDirectory()) {
+      if (entry.isSymbolicLink()) {
+        symlinks.push(relative(dir, full));
+      } else if (entry.isDirectory()) {
         walk(full);
       } else if (entry.isFile()) {
         files.push(relative(dir, full));
@@ -52,7 +91,7 @@ function collectFiles(dir: string): string[] {
     }
   };
   walk(dir);
-  return files;
+  return { files, symlinks };
 }
 
 export function createSnapshot(): string | null {
@@ -60,20 +99,33 @@ export function createSnapshot(): string | null {
     return null;
   }
 
+  // SECURITY: Verify source path is not a symlink before copying.
+  // Without this check, an attacker who replaces ~/.openclaw with a symlink
+  // to an arbitrary directory (e.g. /etc) could cause cpSync to copy
+  // sensitive files into the snapshot.
+  rejectSymlinksOnPath(OPENCLAW_DIR);
+
   const timestamp = compactTimestamp();
   const snapshotDir = join(SNAPSHOTS_DIR, timestamp);
+
+  // SECURITY: Verify snapshot destination ancestors are not symlinks.
+  rejectSymlinksOnPath(snapshotDir);
+
   mkdirSync(snapshotDir, { recursive: true });
 
   const dest = join(snapshotDir, "openclaw");
   cpSync(OPENCLAW_DIR, dest, { recursive: true });
 
-  const contents = collectFiles(dest);
-  const manifest = {
+  const { files, symlinks } = collectFiles(dest);
+  const manifest: Record<string, unknown> = {
     timestamp,
     source: OPENCLAW_DIR,
-    file_count: contents.length,
-    contents,
+    file_count: files.length,
+    contents: files,
   };
+  if (symlinks.length > 0) {
+    manifest.symlinks = symlinks;
+  }
   writeFileSync(join(snapshotDir, "snapshot.json"), JSON.stringify(manifest, null, 2));
 
   return snapshotDir;
@@ -176,6 +228,12 @@ export function rollbackFromSnapshot(snapshotDir: string): boolean {
     : null;
 
   try {
+    // SECURITY: Verify restore destination is not a symlink before writing.
+    // Without this check, an attacker who replaces ~/.openclaw with a symlink
+    // could redirect snapshot contents to an arbitrary directory.
+    // Inside the try/catch to preserve the boolean-return contract.
+    rejectSymlinksOnPath(OPENCLAW_DIR);
+
     if (archivePath !== null) {
       moveSync(OPENCLAW_DIR, archivePath);
     }
