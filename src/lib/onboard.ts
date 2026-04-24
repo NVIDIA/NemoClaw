@@ -1395,6 +1395,16 @@ function patchStagedDockerfile(
       `ARG NEMOCLAW_REASONING=${reasoning}`,
     );
   }
+  // NEMOCLAW_AGENT_TIMEOUT — override agents.defaults.timeoutSeconds at build
+  // time. Lets users increase the per-request inference timeout without
+  // editing the Dockerfile. Ref: issue #2281
+  const agentTimeout = process.env.NEMOCLAW_AGENT_TIMEOUT;
+  if (agentTimeout && POSITIVE_INT_RE.test(agentTimeout)) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_AGENT_TIMEOUT=.*$/m,
+      `ARG NEMOCLAW_AGENT_TIMEOUT=${agentTimeout}`,
+    );
+  }
   // Honor NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT exported in the host
   // shell so the sandbox-side nemoclaw-start.sh sees them via $ENV at runtime.
   // Without this, the host export is silently dropped at image build time and
@@ -4219,6 +4229,12 @@ async function setupNim(gpu) {
           }
         }
 
+        // Hydrate from saved credentials (~/.nemoclaw/credentials.json)
+        // before checking env, so rebuild and other non-interactive callers
+        // can resolve keys stored during the original interactive onboard.
+        // See #2273.
+        hydrateCredentialEnv(credentialEnv);
+
         if (selected.key === "build") {
           // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_API_KEY
           const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
@@ -6405,7 +6421,9 @@ async function onboard(opts = {}) {
       session = onboardSession.loadSession();
       if (!session || session.resumable === false) {
         console.error("  No resumable onboarding session was found.");
-        console.error("  Run: nemoclaw onboard");
+        console.error("  --resume only continues an interrupted onboarding run.");
+        console.error("  To change configuration on an existing sandbox, rebuild it:");
+        console.error("    nemoclaw onboard");
         process.exit(1);
       }
       const sessionFrom = session?.metadata?.fromDockerfile || null;

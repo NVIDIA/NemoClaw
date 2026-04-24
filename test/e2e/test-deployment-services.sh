@@ -22,37 +22,10 @@
 set -euo pipefail
 
 # ── Overall timeout ──────────────────────────────────────────────────────────
-TIMEOUT_CMD=""
-if command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="gtimeout"
-fi
-
-if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ "${NEMOCLAW_E2E_TIMEOUT_WRAPPED:-0}" != "1" ]; then
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-3600}"
-  if [ -n "$TIMEOUT_CMD" ]; then
-    export NEMOCLAW_E2E_TIMEOUT_WRAPPED=1
-    exec "$TIMEOUT_CMD" -s TERM "$TIMEOUT_SECONDS" "$0" "$@"
-  else
-    echo "ERROR: 'timeout' not found. Install coreutils (macOS: 'brew install coreutils')" >&2
-    echo "       or bypass with NEMOCLAW_E2E_NO_TIMEOUT=1" >&2
-    exit 127
-  fi
-fi
-
-# Run with $TIMEOUT_CMD if set; run directly if empty (NEMOCLAW_E2E_NO_TIMEOUT bypass).
-# Avoids `$TIMEOUT_CMD 60 ssh …` becoming `60 ssh …` → "60: command not found".
-# Usage: run_with_timeout <seconds> <command> [args...]
-run_with_timeout() {
-  local seconds="$1"
-  shift
-  if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ -n "$TIMEOUT_CMD" ]; then
-    "$TIMEOUT_CMD" "$seconds" "$@"
-  else
-    "$@"
-  fi
-}
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=3600
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -86,6 +59,10 @@ skip() {
   ((TOTAL += 1))
   echo -e "${YELLOW}  SKIP${NC} $1 — $2" | tee -a "$LOG_FILE"
 }
+
+# ── Config ───────────────────────────────────────────────────────────────────
+SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-deploy-svc}"
+LOG_FILE="test-deployment-services-$(date +%Y%m%d-%H%M%S).log"
 
 # ── Resolve repo root ────────────────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -151,7 +128,8 @@ preflight() {
         return 0
         ;;
     esac
-    if curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}" -o /tmp/cloudflared \
+    local cf_url="${CLOUDFLARED_DOWNLOAD_URL:-https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}}"
+    if curl -fsSL "$cf_url" -o /tmp/cloudflared \
       && chmod +x /tmp/cloudflared \
       && sudo mv /tmp/cloudflared /usr/local/bin/cloudflared 2>/dev/null; then
       log "cloudflared installed"
@@ -418,8 +396,10 @@ test_deploy_03_uninstall_keep_openshell() {
 
 # Clean up sandbox and services on exit.
 teardown() {
+  # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
+  # test/e2e/lib/sandbox-teardown.sh — the lock is PID-ownership-aware
+  # and onboard cleans up stale locks itself.
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   nemoclaw stop 2>/dev/null || true
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
   set -e

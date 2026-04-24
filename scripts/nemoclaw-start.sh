@@ -789,17 +789,252 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
-# axios + NODE_USE_ENV_PROXY double-proxy fix (NemoClaw#2109).
+# HTTP library + NODE_USE_ENV_PROXY double-proxy fix (NemoClaw#2109).
 # Node.js 22 sets NODE_USE_ENV_PROXY=1 in the OpenShell base image, which
-# intercepts all https.request() calls and handles proxy via CONNECT tunnel.
-# axios also reads HTTPS_PROXY, causing a double-proxy conflict that produces
-# malformed URLs (https://host:3128/) rejected by the L7 proxy.
-# The preload script disables axios's own proxy handling so NODE_USE_ENV_PROXY
-# takes over — the correct path for all other Node.js HTTP clients.
-_AXIOS_FIX_SCRIPT="/opt/nemoclaw-blueprint/scripts/axios-proxy-fix.js"
-if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT"
+# intercepts https.request() calls and handles proxying via CONNECT tunnel.
+# HTTP libraries (axios, follow-redirects, proxy-from-env) also read
+# HTTPS_PROXY and configure HTTP FORWARD mode, double-processing the
+# request — the L7 proxy rejects with "FORWARD rejected: HTTPS requires
+# CONNECT".
+#
+# The preload wraps http.request() — the lowest common denominator every
+# HTTP client bottoms out at — and rewrites FORWARD-mode requests back to
+# https.request() so NODE_USE_ENV_PROXY can handle the CONNECT tunnel.
+#
+# Earlier PR #2110 intercepted require('axios') via a Module._load hook;
+# that could not catch follow-redirects + proxy-from-env bundled as ESM
+# in OpenClaw's dist/ (no require() calls to intercept).
+#
+# The JS is embedded inline rather than copied from
+# nemoclaw-blueprint/scripts/http-proxy-fix.js because the blueprint
+# scripts/ directory is intentionally excluded from the optimized sandbox
+# build context — adding it cache-busts the `COPY nemoclaw-blueprint/`
+# Dockerfile layer and hangs npm ci in k3s Docker-in-Docker. See
+# src/lib/sandbox-build-context.ts. A sync test enforces that the
+# embedded copy is byte-identical to the canonical file.
+_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"
+if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+  emit_sandbox_sourced_file "$_PROXY_FIX_SCRIPT" <<'HTTP_PROXY_FIX_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// http-proxy-fix.js — http.request() wrapper resolving the double-proxy
+// conflict between NODE_USE_ENV_PROXY=1 (Node.js 22+) and HTTP libraries
+// that independently read HTTPS_PROXY (axios, follow-redirects,
+// proxy-from-env). See NemoClaw#2109.
+//
+// Problem:
+//   Node.js 22 with NODE_USE_ENV_PROXY=1 (baked into the OpenShell base
+//   image) intercepts https.request() calls and handles proxying via a
+//   CONNECT tunnel. HTTP libraries also read HTTPS_PROXY and configure
+//   HTTP FORWARD mode, so the request is processed twice and the L7 proxy
+//   rejects it with "FORWARD rejected: HTTPS requires CONNECT".
+//
+// Fix:
+//   Wrap http.request() — the lowest common denominator every HTTP client
+//   bottoms out at. Detect FORWARD-mode requests (hostname = proxy IP,
+//   path = full https:// URL) and rewrite them as https.request() against
+//   the real target host, letting NODE_USE_ENV_PROXY handle the CONNECT
+//   tunnel correctly.
+//
+// Earlier PR #2110 tried a Module._load hook intercepting require('axios').
+// That could not catch follow-redirects + proxy-from-env bundled as ESM in
+// OpenClaw's dist/ — there are no require() calls to intercept. The
+// http.request wrapper sits below all libraries and catches every path.
+//
+// This file is the canonical source for review and tests. At sandbox boot
+// nemoclaw-start.sh writes an identical copy to /tmp/nemoclaw-http-proxy-fix.js
+// and loads it via NODE_OPTIONS=--require. A sync test enforces byte-for-byte
+// equality. The content cannot be baked into /opt/nemoclaw-blueprint/scripts/
+// because adding files to the optimized sandbox build context cache-busts the
+// `COPY nemoclaw-blueprint/` Dockerfile layer and hangs npm ci in k3s
+// Docker-in-Docker — see src/lib/sandbox-build-context.ts.
+
+(function () {
+  'use strict';
+  if (process.env.NODE_USE_ENV_PROXY !== '1') return;
+
+  var http = require('http');
+  var origRequest = http.request;
+
+  var proxyUrl =
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy ||
+    '';
+  var proxyHost = '';
+  try {
+    proxyHost = new URL(proxyUrl).hostname;
+  } catch (_e) {
+    /* no usable proxy configured */
+  }
+  if (!proxyHost) return;
+
+  http.request = function (options, callback) {
+    if (typeof options === 'string' || !options) {
+      return origRequest.apply(http, arguments);
+    }
+    if (
+      options.hostname === proxyHost &&
+      options.path &&
+      options.path.startsWith('https://')
+    ) {
+      var target;
+      try {
+        target = new URL(options.path);
+      } catch (_e) {
+        return origRequest.apply(http, arguments);
+      }
+      var https = require('https');
+      // Clone caller's options and overwrite only the proxy-specific
+      // routing fields. Preserves signal (AbortController), lookup,
+      // TLS fields (ca/cert/key/rejectUnauthorized), auth, timeout,
+      // and any other per-request setting the caller supplied.
+      var rewritten = Object.assign({}, options, {
+        method: options.method || 'GET',
+        hostname: target.hostname,
+        host: target.hostname,
+        port: target.port || 443,
+        path: target.pathname + target.search,
+        protocol: 'https:',
+      });
+      return https.request(rewritten, callback);
+    }
+    return origRequest.apply(http, arguments);
+  };
+})();
+HTTP_PROXY_FIX_EOF
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT"
 fi
+
+# Nemotron inference parameter injection (NemoClaw#1193, NemoClaw#2051).
+# Nemotron models may return empty content (tool call instead of text) or
+# thinking-only blocks (stalls the conversation) when the model's chat
+# template produces an empty assistant turn. The vLLM / NIM chat template
+# kwarg `force_nonempty_content` prevents this by ensuring the template
+# always emits a non-empty content field.
+#
+# The preload wraps http.request() — the lowest common denominator every
+# HTTP client bottoms out at — buffers the JSON body for POST requests
+# to /v1/chat/completions, and injects the kwarg when the model ID
+# contains "nemotron". Backends that do not recognise the extra field
+# silently ignore it (OpenAI-compatible contract).
+#
+# Scoped strictly to Nemotron models: non-Nemotron requests pass through
+# completely untouched.
+_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
+emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <<'NEMOTRON_FIX_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// nemotron-inference-fix.js — inject chat_template_kwargs for Nemotron models.
+//
+// Problem (NemoClaw#1193, NemoClaw#2051):
+//   Nemotron models sometimes generate tool calls instead of text for simple
+//   queries, or return thinking-only blocks with stopReason "stop" that
+//   OpenClaw treats as end-of-turn, causing the conversation to stall.
+//   The root cause is the model's chat template producing empty assistant
+//   content when tool definitions are present.
+//
+// Fix:
+//   Inject `chat_template_kwargs: { force_nonempty_content: true }` into
+//   /v1/chat/completions request bodies when the model ID contains
+//   "nemotron". This tells the vLLM/NIM serving layer to force the chat
+//   template to always produce non-empty content alongside any tool calls
+//   or thinking blocks.
+//
+//   Scoped strictly to Nemotron models — all other requests pass through
+//   untouched. Backends that do not support chat_template_kwargs silently
+//   ignore the extra field per the OpenAI-compatible API contract.
+
+(function () {
+  'use strict';
+
+  var http = require('http');
+  var https = require('https');
+
+  var NEMOTRON_RE = /nemotron/i;
+  var COMPLETIONS_RE = /\/v1\/chat\/completions/;
+
+  function wrapModule(mod) {
+    var origRequest = mod.request;
+
+    mod.request = function (options, callback) {
+      // Only intercept object-form calls with a recognisable path.
+      if (typeof options === 'string' || !options) {
+        return origRequest.apply(mod, arguments);
+      }
+
+      var path = options.path || '';
+      if (options.method !== 'POST' || !COMPLETIONS_RE.test(path)) {
+        return origRequest.apply(mod, arguments);
+      }
+
+      // Create the real request, then intercept write/end to buffer the body.
+      var req = origRequest.apply(mod, arguments);
+      var origWrite = req.write;
+      var origEnd = req.end;
+      var chunks = [];
+      var intercepted = false;
+
+      req.write = function (chunk, encoding, cb) {
+        if (chunk != null) {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk);
+        }
+        // Buffer instead of sending — we flush in end().
+        if (typeof encoding === 'function') { encoding(); }
+        else if (typeof cb === 'function') { cb(); }
+        return true;
+      };
+
+      req.end = function (chunk, encoding, cb) {
+        if (chunk != null && typeof chunk !== 'function') {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk);
+        }
+        // Resolve the callback argument (end has multiple overload signatures).
+        var endCb = typeof chunk === 'function' ? chunk
+          : typeof encoding === 'function' ? encoding
+          : typeof cb === 'function' ? cb
+          : null;
+
+        var raw = Buffer.concat(chunks);
+        try {
+          var body = JSON.parse(raw.toString('utf-8'));
+          if (body && body.model && NEMOTRON_RE.test(body.model)) {
+            if (!body.chat_template_kwargs) {
+              body.chat_template_kwargs = {};
+            }
+            body.chat_template_kwargs.force_nonempty_content = true;
+            intercepted = true;
+            var modified = Buffer.from(JSON.stringify(body), 'utf-8');
+            // Update Content-Length so the proxy/server reads the full body.
+            if (req.getHeader && req.setHeader) {
+              req.removeHeader('content-length');
+              req.setHeader('Content-Length', modified.length);
+            }
+            origWrite.call(req, modified);
+          } else {
+            // Not a Nemotron model — send original bytes unmodified.
+            origWrite.call(req, raw);
+          }
+        } catch (_e) {
+          // JSON parse failed — forward original bytes.
+          origWrite.call(req, raw);
+        }
+
+        return endCb ? origEnd.call(req, endCb) : origEnd.call(req);
+      };
+
+      return req;
+    };
+  }
+
+  wrapModule(http);
+  wrapModule(https);
+})();
+NEMOTRON_FIX_EOF
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT"
 
 # WebSocket CONNECT tunnel fix (NemoClaw#1570).
 # The `ws` library calls https.request() for wss:// WebSocket upgrades.
@@ -843,16 +1078,18 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
-  # axios double-proxy fix: also expose NODE_OPTIONS in connect sessions so that
-  # interactive shells and user commands started via `openshell sandbox connect`
-  # also benefit from the preload. (NemoClaw#2109)
-  if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT\""
+  # HTTP library double-proxy fix: also expose NODE_OPTIONS in connect
+  # sessions so interactive shells and user commands started via
+  # `openshell sandbox connect` benefit from the preload. (NemoClaw#2109)
+  if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT\""
   fi
   # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
   if [ -f "$_WS_FIX_SCRIPT" ]; then
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
   fi
+  # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
+  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
   for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -973,8 +1210,10 @@ if [ "$(id -u)" -ne 0 ]; then
   chmod 600 /tmp/auto-pair.log
 
   # Defence-in-depth: verify /tmp file permissions before launching services.
-  # shellcheck disable=SC2119
-  validate_tmp_permissions
+  # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
+  # (both are trust-boundary files; tampering would let the sandbox user
+  # inject code into any Node process via NODE_OPTIONS).
+  validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
@@ -1031,6 +1270,70 @@ touch /tmp/auto-pair.log
 chown sandbox:sandbox /tmp/auto-pair.log
 chmod 600 /tmp/auto-pair.log
 
+# Provision per-agent workspaces for multi-agent OpenClaw deployments.
+#
+# OpenClaw can be configured with multiple named agents (agents.defaults.workspace
+# + agents.list[*].workspace in openclaw.json), each producing its own
+# `/sandbox/.openclaw/workspace-<name>/` directory. Without intervention these
+# land as real directories under the root-owned immutable `.openclaw/` tree and
+# are lost on every sandbox restart.
+#
+# Mirror the default-workspace persistence pattern: any `workspace-<name>`
+# discovered under `.openclaw-data/` or `.openclaw/` gets (a) a writable backing
+# dir under `.openclaw-data/workspace-<name>/` and (b) a symlink from
+# `.openclaw/workspace-<name>/ → .openclaw-data/workspace-<name>/`. The symlinks
+# are then picked up by validate_openclaw_symlinks below.
+#
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1260
+provision_agent_workspaces() {
+  local data_dir="/sandbox/.openclaw-data"
+  local config_dir="/sandbox/.openclaw"
+  local names=""
+  local d name
+
+  # Discover existing workspace-* dirs in either location.
+  if [ -d "$data_dir" ]; then
+    for d in "$data_dir"/workspace-*/; do
+      [ -d "$d" ] || continue
+      name="$(basename "$d")"
+      names="${names} ${name}"
+    done
+  fi
+  if [ -d "$config_dir" ]; then
+    for d in "$config_dir"/workspace-*/; do
+      # Skip the glob-fell-through sentinel ('workspace-*/' itself) and
+      # any existing symlink (already provisioned).
+      [ -e "$d" ] || continue
+      [ -L "${d%/}" ] && continue
+      name="$(basename "$d")"
+      names="${names} ${name}"
+    done
+  fi
+
+  local seen=""
+  for name in $names; do
+    case " $seen " in *" $name "*) continue ;; esac
+    seen="${seen} ${name}"
+
+    local data_path="$data_dir/$name"
+    local link_path="$config_dir/$name"
+
+    mkdir -p "$data_path"
+    chown -R sandbox:sandbox "$data_path" 2>/dev/null || true
+
+    if [ -L "$link_path" ]; then
+      continue
+    fi
+    if [ -e "$link_path" ]; then
+      cp -a "$link_path/." "$data_path/" 2>/dev/null || true
+      rm -rf "$link_path"
+    fi
+    ln -s "$data_path" "$link_path"
+    echo "[setup] provisioned multi-agent workspace: $name → $data_path" >&2
+  done
+}
+provision_agent_workspaces
+
 # Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
 # Dynamic scan so future OpenClaw symlinks are covered automatically.
 validate_openclaw_symlinks
@@ -1043,8 +1346,10 @@ validate_openclaw_symlinks
 harden_openclaw_symlinks
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
-# shellcheck disable=SC2119
-validate_tmp_permissions
+# Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
+# (both are trust-boundary files; tampering would let the sandbox user
+# inject code into any Node process via NODE_OPTIONS).
+validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

@@ -502,7 +502,7 @@ Versions (`v1`, `v2`, ...) are computed on read from timestamp-ascending order, 
 $ nemoclaw my-assistant snapshot list
 ```
 
-### `nemoclaw <name> snapshot restore [selector]`
+### `nemoclaw <name> snapshot restore [selector] [--to <dst>]`
 
 Restore sandbox state from a snapshot.
 The sandbox must be running before you restore.
@@ -515,11 +515,24 @@ The selector accepts any of:
 - An exact name passed to `snapshot create --name`.
 - An exact or prefix timestamp (partial prefixes are accepted when they match exactly one snapshot).
 
+Pass `--to <dst>` to restore the snapshot into a different sandbox instead of the source.
+When `dst` does not exist, it is auto-created by reusing the source sandbox's container image — no re-onboarding needed.
+
 ```console
+# restore latest snapshot in-place
 $ nemoclaw my-assistant snapshot restore
+
+# restore by version
 $ nemoclaw my-assistant snapshot restore v3
+
+# restore by user-assigned name
 $ nemoclaw my-assistant snapshot restore before-upgrade
-$ nemoclaw my-assistant snapshot restore 2026-04-14T
+
+# restore by exact timestamp
+$ nemoclaw my-assistant snapshot restore 2026-04-21T07-35-55-987Z
+
+# clone v3 into another sandbox
+$ nemoclaw my-assistant snapshot restore v3 --to my-assistant-clone
 ```
 
 ### `openshell term`

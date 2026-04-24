@@ -19,6 +19,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -129,6 +130,27 @@ export async function restoreIntoSandbox(
   return true;
 }
 
+/**
+ * Cross-device-safe move: try rename first (fast, same-device), fall back
+ * to copy+delete when the source and destination are on different filesystems.
+ *
+ * This happens on NVIDIA self-hosted CI runners where Docker uses the
+ * containerd overlayfs snapshotter — directories can span different overlay
+ * layers, causing `rename(2)` to return EXDEV.
+ */
+export function moveSync(src: string, dest: string): void {
+  try {
+    renameSync(src, dest);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "EXDEV") {
+      cpSync(src, dest, { recursive: true });
+      rmSync(src, { recursive: true, force: true });
+    } else {
+      throw err;
+    }
+  }
+}
+
 export function cutoverHost(): boolean {
   if (!existsSync(OPENCLAW_DIR)) {
     return true;
@@ -136,7 +158,7 @@ export function cutoverHost(): boolean {
 
   const archivePath = join(HOME, `.openclaw.pre-nemoclaw.${compactTimestamp()}`);
   try {
-    renameSync(OPENCLAW_DIR, archivePath);
+    moveSync(OPENCLAW_DIR, archivePath);
     return true;
   } catch {
     return false;
@@ -155,14 +177,14 @@ export function rollbackFromSnapshot(snapshotDir: string): boolean {
 
   try {
     if (archivePath !== null) {
-      renameSync(OPENCLAW_DIR, archivePath);
+      moveSync(OPENCLAW_DIR, archivePath);
     }
     cpSync(source, OPENCLAW_DIR, { recursive: true });
     return true;
   } catch {
     // Restore archived config if copy failed so the host isn't left without .openclaw
     if (archivePath !== null && existsSync(archivePath) && !existsSync(OPENCLAW_DIR)) {
-      renameSync(archivePath, OPENCLAW_DIR);
+      moveSync(archivePath, OPENCLAW_DIR);
     }
     return false;
   }
