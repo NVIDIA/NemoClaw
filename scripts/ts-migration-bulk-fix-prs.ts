@@ -1,8 +1,8 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync, type SpawnSyncReturns } from "node:child_process";
+
 import moveMap from "./ts-migration/move-map.json";
 
 type Options = {
@@ -14,8 +14,100 @@ type Options = {
   comment: boolean;
 };
 
+type UnknownRecord = { [key: string]: unknown };
+
+type PullRequestFile = {
+  path: string;
+};
+
+type PullRequestMetadata = {
+  number: number;
+  title: string;
+  headRefName: string;
+  baseRefName: string;
+  url: string;
+  maintainerCanModify: boolean;
+  files: PullRequestFile[];
+};
+
+type BulkFixSummary = {
+  fixed: number[];
+  skipped: string[];
+  manual: string[];
+};
+
 const REPO_ROOT = process.cwd();
-const RUNTIME_MOVES = moveMap.runtimeMoves as Record<string, string>;
+const RUNTIME_MOVES = moveMap.runtimeMoves;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readString(record: UnknownRecord, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}
+
+function readBoolean(record: UnknownRecord, key: string): boolean {
+  return record[key] === true;
+}
+
+function readNumber(record: UnknownRecord, key: string): number | null {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parsePrNumber(value: string | undefined, flag = "--pr"): number {
+  const parsed = Number.parseInt(value || "", 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Expected a positive pull request number after ${flag}.`);
+  }
+  return parsed;
+}
+
+function parsePrFiles(value: unknown): PullRequestFile[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+    const filePath = readString(entry, "path");
+    return filePath ? [{ path: filePath }] : [];
+  });
+}
+
+function parsePrMetadata(value: unknown): PullRequestMetadata {
+  if (!isRecord(value)) {
+    throw new Error("GitHub CLI returned malformed PR metadata.");
+  }
+
+  return {
+    number: readNumber(value, "number") ?? 0,
+    title: readString(value, "title"),
+    headRefName: readString(value, "headRefName"),
+    baseRefName: readString(value, "baseRefName"),
+    url: readString(value, "url"),
+    maintainerCanModify: readBoolean(value, "maintainerCanModify"),
+    files: parsePrFiles(value.files),
+  };
+}
+
+function parsePrList(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    throw new Error("GitHub CLI returned malformed PR list data.");
+  }
+
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+    const number = readNumber(entry, "number");
+    return number && number > 0 ? [number] : [];
+  });
+}
 
 function parseArgs(argv: string[]): Options {
   const prs: number[] = [];
@@ -28,7 +120,7 @@ function parseArgs(argv: string[]): Options {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--pr") {
-      prs.push(Number.parseInt(argv[index + 1] || "", 10));
+      prs.push(parsePrNumber(argv[index + 1], arg));
       index += 1;
       continue;
     }
@@ -67,7 +159,7 @@ function parseArgs(argv: string[]): Options {
   return { prs, all, base, dryRun, updateBranch, comment };
 }
 
-function printHelp() {
+function printHelp(): void {
   console.log(
     `Usage: npm run ts-migration:bulk-fix-prs -- --all [--base origin/main] [--update-branch] [--dry-run]\n       npm run ts-migration:bulk-fix-prs -- --pr 123 [--pr 456] [--base origin/main] [--update-branch] [--dry-run]\n\nMaintainer helper that ports stale PR branches across the JS→TS migration stack.`,
   );
@@ -77,24 +169,30 @@ function run(
   command: string,
   args: string[],
   options: { allowFailure?: boolean; quiet?: boolean } = {},
-) {
+): SpawnSyncReturns<string> {
   const result = spawnSync(command, args, {
     cwd: REPO_ROOT,
     encoding: "utf8",
-    stdio: options.quiet ? ["ignore", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
+
   if (!options.quiet) {
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
   }
+
   if (result.status !== 0 && !options.allowFailure) {
-    throw new Error(`${command} ${args.join(" ")} failed with exit ${result.status}`);
+    throw new Error(`${command} ${args.join(" ")} failed with exit ${String(result.status)}`);
   }
   return result;
 }
 
 function runCapture(command: string, args: string[]): string {
   return String(execFileSync(command, args, { cwd: REPO_ROOT, encoding: "utf8" })).trim();
+}
+
+function runCaptureJson<T>(command: string, args: string[], parse: (value: unknown) => T): T {
+  return parse(JSON.parse(runCapture(command, args)));
 }
 
 function isCleanWorktree(): boolean {
@@ -105,12 +203,14 @@ function getCurrentBranch(): string {
   return runCapture("git", ["branch", "--show-current"]);
 }
 
-function listTargetPrs(options: Options): Array<Record<string, unknown>> {
+function listTargetPrs(options: Options): number[] {
   if (!options.all) {
-    return options.prs.map((number) => ({ number }));
+    return [...options.prs];
   }
-  return JSON.parse(
-    runCapture("gh", [
+
+  return runCaptureJson(
+    "gh",
+    [
       "pr",
       "list",
       "--state",
@@ -119,23 +219,26 @@ function listTargetPrs(options: Options): Array<Record<string, unknown>> {
       "100",
       "--json",
       "number,title,headRefName,baseRefName,url,maintainerCanModify",
-    ]),
+    ],
+    parsePrList,
   );
 }
 
-function getPrMetadata(number: number): Record<string, unknown> {
-  return JSON.parse(
-    runCapture("gh", [
+function getPrMetadata(number: number): PullRequestMetadata {
+  return runCaptureJson(
+    "gh",
+    [
       "pr",
       "view",
       String(number),
       "--json",
       "number,title,headRefName,baseRefName,url,maintainerCanModify,files",
-    ]),
+    ],
+    parsePrMetadata,
   );
 }
 
-function touchesLegacyPaths(files: Array<{ path: string }>): boolean {
+function touchesLegacyPaths(files: PullRequestFile[]): boolean {
   return files.some((file) => {
     if (file.path in RUNTIME_MOVES) {
       return true;
@@ -144,17 +247,21 @@ function touchesLegacyPaths(files: Array<{ path: string }>): boolean {
   });
 }
 
-function comment(pr: number, body: string) {
-  run("gh", ["pr", "comment", String(pr), "--body", body], { allowFailure: true, quiet: true });
+function commentOnPr(pr: number, body: string): void {
+  run("gh", ["pr", "comment", String(pr), "--body", body], {
+    allowFailure: true,
+    quiet: true,
+  });
 }
 
 function validateBranch(): boolean {
-  const commands = [
+  const commands: ReadonlyArray<readonly [string, string[]]> = [
     ["npm", ["run", "build:cli"]],
     ["npm", ["run", "typecheck:cli"]],
     ["npm", ["run", "lint"]],
     ["npm", ["test"]],
-  ] as const;
+  ];
+
   for (const [command, args] of commands) {
     const result = run(command, args, { allowFailure: true });
     if (result.status !== 0) {
@@ -164,33 +271,33 @@ function validateBranch(): boolean {
   return true;
 }
 
-function main() {
+function createSummary(): BulkFixSummary {
+  return {
+    fixed: [],
+    skipped: [],
+    manual: [],
+  };
+}
+
+function main(): void {
   const options = parseArgs(process.argv.slice(2));
   if (!options.dryRun && !isCleanWorktree()) {
     throw new Error("Worktree must be clean before running bulk PR fixes.");
   }
 
   const startingBranch = getCurrentBranch();
-  const summary = {
-    fixed: [] as number[],
-    skipped: [] as string[],
-    manual: [] as string[],
-  };
+  const summary = createSummary();
 
   try {
-    const targets = listTargetPrs(options)
-      .map((entry) => Number(entry.number))
-      .filter((value) => Number.isFinite(value));
+    const targets = listTargetPrs(options);
 
     for (const prNumber of targets) {
       const metadata = getPrMetadata(prNumber);
-      const baseRef = String(metadata.baseRefName || "");
-      const files = (metadata.files as Array<{ path: string }>) || [];
-      if (baseRef !== "main") {
-        summary.skipped.push(`#${prNumber}: base is ${baseRef}, not main`);
+      if (metadata.baseRefName !== "main") {
+        summary.skipped.push(`#${prNumber}: base is ${metadata.baseRefName}, not main`);
         continue;
       }
-      if (!touchesLegacyPaths(files)) {
+      if (!touchesLegacyPaths(metadata.files)) {
         summary.skipped.push(`#${prNumber}: does not touch migrated legacy paths`);
         continue;
       }
@@ -206,7 +313,7 @@ function main() {
           "  npm test",
         ].join("\n");
         if (options.comment && !options.dryRun) {
-          comment(prNumber, body);
+          commentOnPr(prNumber, body);
         }
         summary.manual.push(`#${prNumber}: maintainerCanModify=false`);
         continue;
@@ -235,7 +342,7 @@ function main() {
             run("git", ["merge", "--abort"], { allowFailure: true, quiet: true });
             summary.manual.push(`#${prNumber}: merge from origin/main needs manual resolution`);
             if (options.comment) {
-              comment(
+              commentOnPr(
                 prNumber,
                 [
                   "I attempted to port this branch across the JS→TS migration and merge `origin/main`,",
@@ -256,7 +363,7 @@ function main() {
         if (!validateBranch()) {
           summary.manual.push(`#${prNumber}: validation failed after porting`);
           if (options.comment) {
-            comment(
+            commentOnPr(
               prNumber,
               [
                 "I ported this branch across the JS→TS migration, but validation is still failing.",
@@ -285,7 +392,7 @@ function main() {
           }
           run("git", ["push"]);
           if (options.comment) {
-            comment(
+            commentOnPr(
               prNumber,
               [
                 "I ported this branch across the mechanical JS→TS migration stack and pushed the result.",

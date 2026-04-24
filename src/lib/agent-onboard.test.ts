@@ -25,8 +25,8 @@ const uiAgent = {
 // Regression fixture for issue #2078 — matches the text a user sees when
 // no token is available and prevents the wording from regressing to
 // something that implies port 8642 is a browser UI.
-const buildUrlsLoopback = (token: string | null, port: number): string[] => {
-  const hash = token ? `#token=${token}` : "";
+const buildUrlsLoopback = (token: string | null, port: number, forDisplay?: boolean): string[] => {
+  const hash = token ? (forDisplay ? "#token=REDACTED" : `#token=${token}`) : "";
   return [`http://127.0.0.1:${port}/${hash}`];
 };
 
@@ -76,17 +76,20 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
     expect(noteSpy).not.toHaveBeenCalled();
   });
 
-  it("prints tokenized URL with save-now warning for UI-kind agents", () => {
+  it("prints redacted token URL with retrieval hint for UI-kind agents", () => {
     printDashboardUi("sandbox-y", "tok", uiAgent, {
       note: noteSpy,
       buildControlUiUrls: buildUrlsLoopback,
     });
 
     const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
-    expect(output).toContain(
-      "Ficticious UI (tokenized URL; treat it like a password; save it now - it will not be printed again)",
-    );
+    expect(output).toContain("Ficticious UI");
+    expect(output).not.toContain("tokenized URL; treat it like a password");
     expect(output).toContain("Port 19000 must be forwarded before opening this URL.");
-    expect(output).toContain("http://127.0.0.1:19000/#token=tok");
+    // Token should be redacted in display output
+    expect(output).toContain("http://127.0.0.1:19000/#token=REDACTED");
+    expect(output).not.toContain("#token=tok");
+    // Should print instructions for retrieving the full token
+    expect(output).toContain("To get the full token: nemoclaw sandbox-y connect");
   });
 });
