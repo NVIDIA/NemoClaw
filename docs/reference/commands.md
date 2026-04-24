@@ -712,7 +712,9 @@ $ nemoclaw gc [--dry-run] [--yes|--force]
 ### `nemoclaw uninstall`
 
 Run `uninstall.sh` to remove NemoClaw sandboxes, gateway resources, related images and containers, and local state.
-The CLI uses the local `uninstall.sh` first and falls back to the hosted script if the local file is unavailable.
+The CLI runs the local `uninstall.sh` shipped with the installed npm package.
+If that local script is missing, the CLI does not auto-fetch a remote copy.
+It prints the versioned URL of the matching `uninstall.sh` so you can download, review, and run it manually.
 
 Uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
@@ -726,6 +728,20 @@ Earlier releases only stopped `openshell forward` processes, so those orphans ac
 ```console
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
 ```
+
+#### `nemoclaw uninstall` vs. the hosted `uninstall.sh`
+
+Both forms execute the same `uninstall.sh` with the same flags, but differ in where the script comes from and how much they trust the network.
+Use `nemoclaw uninstall` by default.
+Use the hosted `curl … | bash` form only when the CLI is broken or already partially removed.
+
+|  | `nemoclaw uninstall` | `curl … \| bash` (Quickstart) |
+|---|---|---|
+| **Source of the script** | Local `uninstall.sh` shipped with the installed npm package. | Pulled live from `refs/heads/main` on GitHub. |
+| **Version pinning** | Pinned to the version of NemoClaw you installed. | Whatever is on `main` right now; may be newer than your installed CLI. |
+| **Network trust** | No network fetch at uninstall time; runs a vetted local file via `bash`. | Pipes a remote script straight to `bash` with no review step. |
+| **Robustness** | Requires the npm package to be discoverable so the CLI can find the local script. | Works even if the `nemoclaw` CLI is missing, broken, or partially uninstalled. |
+| **Recommended for** | Routine uninstalls. | Recovery when the CLI is unavailable. |
 
 ## Environment Variables
 
