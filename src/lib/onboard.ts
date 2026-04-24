@@ -5413,6 +5413,12 @@ async function setupMessagingChannels() {
       console.log("");
       console.log(`  ${ch.help}`);
       const token = normalizeCredentialValue(await prompt(`  ${ch.label}: `, { secret: true }));
+      if (token && ch.tokenFormat && !ch.tokenFormat.test(token)) {
+        console.log(`  ✗ Invalid format. ${ch.tokenFormatHint || "Check the token and try again."}`);
+        console.log(`  Skipped ${ch.name} (invalid token format)`);
+        enabled.delete(ch.name);
+        continue;
+      }
       if (token) {
         saveCredential(ch.envKey, token);
         process.env[ch.envKey] = token;

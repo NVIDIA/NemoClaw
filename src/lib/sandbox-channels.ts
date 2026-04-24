@@ -58,7 +58,7 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     description: "Slack bot messaging",
     help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
     label: "Slack Bot Token",
-    tokenFormat: /^xoxb-[A-Za-z0-9-]+$/,
+    tokenFormat: /^xoxb-[A-Za-z0-9_-]+$/,
     tokenFormatHint: "Slack bot tokens start with 'xoxb-' (e.g. xoxb-1234-5678-abcdef).",
     appTokenEnvKey: "SLACK_APP_TOKEN",
     appTokenHelp: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
