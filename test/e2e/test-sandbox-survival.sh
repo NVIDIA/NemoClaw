@@ -357,16 +357,19 @@ section "Phase 5: Plant state markers in sandbox"
 
 MARKER_VALUE="nemoclaw-survival-$(date +%s)"
 
-# 5a: Workspace file in /sandbox/
+# 5a: Workspace file in writable agent state directory.
+# /sandbox/ is read-only by policy (openclaw-sandbox.yaml); writable state
+# lives under /sandbox/.openclaw-data/. OpenShell ≥0.0.36 correctly enforces
+# this (NVIDIA/OpenShell#910), so markers must target the writable path.
 # shellcheck disable=SC2029
-if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo ${MARKER_VALUE} > /sandbox/.survival-marker" 2>/dev/null; then
-  pass "Planted workspace marker: /sandbox/.survival-marker"
+if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo ${MARKER_VALUE} > /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null; then
+  pass "Planted workspace marker: /sandbox/.openclaw-data/.survival-marker-workspace"
 else
   fail "Could not plant workspace marker"
 fi
 
 # Verify read-back before restart
-readback=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.survival-marker" 2>/dev/null)
+readback=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null)
 if [ "$readback" = "$MARKER_VALUE" ]; then
   pass "Workspace marker verified before restart"
 else
@@ -401,11 +404,12 @@ if [ -n "$agent_files_before" ]; then
 fi
 
 # 5d: Record a deeper workspace file to test nested persistence
+# Uses writable .openclaw-data path — /sandbox/ is read-only by policy.
 # shellcheck disable=SC2029
 if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "mkdir -p /sandbox/test-data && echo ${MARKER_VALUE} > /sandbox/test-data/nested-marker.txt" \
+  "mkdir -p /sandbox/.openclaw-data/test-data && echo ${MARKER_VALUE} > /sandbox/.openclaw-data/test-data/nested-marker.txt" \
   2>/dev/null; then
-  pass "Planted nested marker: /sandbox/test-data/nested-marker.txt"
+  pass "Planted nested marker: /sandbox/.openclaw-data/test-data/nested-marker.txt"
 else
   fail "Could not plant nested workspace marker"
 fi
@@ -595,7 +599,7 @@ fi
 section "Phase 9: Verify state persisted across restart"
 
 # 9a: Workspace marker
-post_restart_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.survival-marker" 2>/dev/null)
+post_restart_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null)
 if [ "$post_restart_marker" = "$MARKER_VALUE" ]; then
   pass "Workspace marker survived restart: $MARKER_VALUE"
 else
@@ -613,7 +617,7 @@ if [ "$agent_data_exists" = "yes" ]; then
 fi
 
 # 9c: Nested workspace file
-nested_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/test-data/nested-marker.txt" 2>/dev/null)
+nested_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/test-data/nested-marker.txt" 2>/dev/null)
 if [ "$nested_marker" = "$MARKER_VALUE" ]; then
   pass "Nested workspace marker survived restart"
 else
