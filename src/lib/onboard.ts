@@ -3338,13 +3338,29 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
     run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), GATEWAY_NAME], {
       ignoreError: true,
     });
-  }
-  const corednsReady = waitUntil(() => {
-    const check = runCaptureOpenshell(["doctor", "exec", "--", "kubectl", "get", "pods", "-n", "kube-system"], { ignoreError: true });
-    return check.includes("coredns");
-  }, 10);
-  if (!corednsReady) {
-    console.warn("  CoreDNS did not report ready within timeout; continuing may cause DNS flakiness.");
+    const corednsReady = waitUntil(() => {
+      const check = runCaptureOpenshell(
+        [
+          "doctor",
+          "exec",
+          "--",
+          "kubectl",
+          "get",
+          "pods",
+          "-n",
+          "kube-system",
+          "-l",
+          "k8s-app=kube-dns",
+          "-o",
+          'jsonpath={range .items[*]}{.status.phase}{" "}{range .status.containerStatuses[*]}{.ready}{" "}{end}{end}',
+        ],
+        { ignoreError: true },
+      );
+      return check.includes("Running") && !check.includes("false") && check.includes("true");
+    }, 10);
+    if (!corednsReady) {
+      console.warn("  CoreDNS did not report ready within timeout; continuing may cause DNS flakiness.");
+    }
   }
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
