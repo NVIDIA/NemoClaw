@@ -56,6 +56,22 @@ describe("sandbox provisioning: exec-approvals / update-check symlinks (#1027, #
   });
 });
 
+describe("sandbox provisioning: procps debug tools (#2343)", () => {
+  const baseSrc = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+  const mainSrc = fs.readFileSync(DOCKERFILE, "utf-8");
+
+  it("Dockerfile.base installs procps in the apt-get layer", () => {
+    expect(baseSrc).toMatch(/apt-get.*install.*procps/s);
+  });
+
+  it("Dockerfile has a procps fallback for stale GHCR base images", () => {
+    // The hardening step must protect procps from autoremove and install it
+    // if the base image predates the procps addition.
+    expect(mainSrc).toMatch(/command -v ps/);
+    expect(mainSrc).toMatch(/install.*procps/);
+  });
+});
+
 describe("sandbox provisioning: root-owned read-only config (#514)", () => {
   const src = fs.readFileSync(DOCKERFILE, "utf-8");
 
