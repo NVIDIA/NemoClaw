@@ -6215,9 +6215,17 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
       const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
       if (envPresets.length > 0) chosen = envPresets;
     } else {
-      console.error(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
-      console.error("  Valid values: suggested, custom, skip");
-      process.exit(1);
+      // #2429: step 8/8 runs after the sandbox is created. Exiting here left
+      // the sandbox with no presets. Warn, optionally suggest the intended
+      // variable, and fall through to the tier-derived suggestions list.
+      console.warn(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
+      console.warn("  Valid values: suggested, custom, skip (aliases: default/auto, list, none/no).");
+      if (tiers.getTier(policyMode)) {
+        console.warn(
+          `  '${policyMode}' is a policy tier — did you mean NEMOCLAW_POLICY_TIER=${policyMode}?`,
+        );
+      }
+      console.warn(`  Falling back to suggested presets for tier '${tierName}'.`);
     }
 
     const knownPresets = new Set(allPresets.map((p) => p.name));
