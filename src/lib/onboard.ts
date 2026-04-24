@@ -2061,7 +2061,10 @@ function startOllamaAuthProxy(): boolean {
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
   const pid = spawnOllamaAuthProxy(ollamaProxyToken);
-  waitForPort(OLLAMA_PROXY_PORT, 2);
+  if (!waitForPort(OLLAMA_PROXY_PORT, 2)) {
+    console.error(`  Error: Ollama auth proxy did not become ready on :${OLLAMA_PROXY_PORT} within timeout.`);
+    return false;
+  }
   if (!isOllamaProxyProcess(pid)) {
     console.error(`  Error: Ollama auth proxy failed to start on :${OLLAMA_PROXY_PORT}`);
     console.error(`  Containers will not be able to reach Ollama without the proxy.`);
@@ -2092,7 +2095,11 @@ function ensureOllamaAuthProxy(): void {
   killStaleProxy();
   ollamaProxyToken = token;
   spawnOllamaAuthProxy(token);
-  waitForPort(OLLAMA_PROXY_PORT, 2);
+  if (!waitForPort(OLLAMA_PROXY_PORT, 2)) {
+    console.error(`  Error: Ollama auth proxy did not become ready on :${OLLAMA_PROXY_PORT} within timeout.`);
+    // Void function, return early
+    return;
+  }
 }
 
 function getOllamaProxyToken(): string | null {
@@ -3332,10 +3339,13 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
       ignoreError: true,
     });
   }
-  waitUntil(() => {
+  const corednsReady = waitUntil(() => {
     const check = runCaptureOpenshell(["doctor", "exec", "--", "kubectl", "get", "pods", "-n", "kube-system"], { ignoreError: true });
     return check.includes("coredns");
   }, 10);
+  if (!corednsReady) {
+    console.warn("  CoreDNS did not report ready within timeout; continuing may cause DNS flakiness.");
+  }
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
@@ -4859,7 +4869,11 @@ async function setupNim(gpu) {
           // Shell required: backgrounding (&), env var prefix, output redirection.
           const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
           run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
-          waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10);
+          if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
+            console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
+            if (isNonInteractive()) process.exit(1);
+            continue selectionLoop;
+          }
           if (!isWsl()) printOllamaExposureWarning();
         }
         if (isWsl()) {
@@ -4936,7 +4950,11 @@ async function setupNim(gpu) {
         run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
           ignoreError: true,
         });
-        waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10);
+        if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
+          console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
+          if (isNonInteractive()) process.exit(1);
+          continue selectionLoop;
+        }
         if (!startOllamaAuthProxy()) {
           process.exit(1);
         }
