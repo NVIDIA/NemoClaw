@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -19,8 +18,8 @@ const spdxHeader = [
 // SKILL.md: frontmatter first, then SPDX after the closing ---
 const skillFrontmatterRe = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/;
 
-function listMarkdownFiles(root) {
-  const files = [];
+function listMarkdownFiles(root: string): string[] {
+  const files: string[] = [];
 
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     const fullPath = path.join(root, entry.name);
@@ -40,7 +39,7 @@ function listMarkdownFiles(root) {
 
 describe("repo skill markdown files", () => {
   const markdownFiles = listMarkdownFiles(skillsRoot);
-  const generatedUserSkillFiles = markdownFiles.filter((file) =>
+  const generatedUserSkillFiles = markdownFiles.filter((file: string) =>
     path.relative(skillsRoot, file).startsWith("nemoclaw-user-"),
   );
 
@@ -64,7 +63,9 @@ describe("repo skill markdown files", () => {
     });
   }
 
-  const skillFiles = generatedUserSkillFiles.filter((file) => path.basename(file) === "SKILL.md");
+  const skillFiles = generatedUserSkillFiles.filter(
+    (file: string) => path.basename(file) === "SKILL.md",
+  );
   for (const skillFile of skillFiles) {
     const relPath = path.relative(repoRoot, skillFile);
 
@@ -73,6 +74,9 @@ describe("repo skill markdown files", () => {
       const match = raw.match(skillFrontmatterRe);
 
       expect(match, `${relPath} must start with YAML frontmatter`).not.toBeNull();
+      if (!match) {
+        throw new Error(`${relPath} must start with YAML frontmatter`);
+      }
 
       const frontmatterText = match[1];
       const doc = YAML.parseDocument(frontmatterText, { prettyErrors: true });

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -15,7 +14,7 @@ const scriptContent = fs.readFileSync(SCRIPT, "utf-8");
 
 // Pull ensure_identity_symlink and fix_openclaw_data_ownership function bodies
 // from the script. They are defined as shell functions we can source directly.
-function extractFunction(name) {
+function extractFunction(name: string): string {
   const re = new RegExp(`^  ${name}\\(\\) \\{$`, "m");
   const start = scriptContent.search(re);
   if (start === -1) throw new Error(`Function ${name} not found in ${SCRIPT}`);
@@ -38,7 +37,7 @@ function extractFunction(name) {
 const ENSURE_IDENTITY_SYMLINK = extractFunction("ensure_identity_symlink");
 const FIX_OPENCLAW_DATA_OWNERSHIP = extractFunction("fix_openclaw_data_ownership");
 
-function runShell(script, env = {}) {
+function runShell(script: string, env: Record<string, string | undefined> = {}) {
   return spawnSync("bash", ["-euo", "pipefail", "-c", script], {
     cwd: path.join(import.meta.dirname, ".."),
     encoding: "utf-8",
@@ -48,7 +47,7 @@ function runShell(script, env = {}) {
 }
 
 describe("ensure_identity_symlink", () => {
-  let tmpDir;
+  let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-identity-"));
@@ -145,7 +144,7 @@ describe("ensure_identity_symlink", () => {
 });
 
 describe("fix_openclaw_data_ownership", () => {
-  let tmpDir;
+  let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ownership-"));

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -17,7 +16,7 @@ const REPO_ROOT = process.cwd();
 const DIST_ROOT = path.join(REPO_ROOT, "dist");
 const SRC_ROOT = path.join(REPO_ROOT, "src");
 const WRAPPER_HEADER = "// @ts-nocheck\n";
-const RUNTIME_MOVES = moveMap.runtimeMoves as Record<string, string>;
+const RUNTIME_MOVES: Record<string, string> = moveMap.runtimeMoves;
 
 const SPECIAL_REWRITES: Record<string, Array<[string, string]>> = {
   "bin/lib/onboard.js": [

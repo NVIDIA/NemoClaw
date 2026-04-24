@@ -12,6 +12,10 @@
 
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
 /**
  * JSON-like configuration value supported by credential stripping.
  */
@@ -67,14 +71,14 @@ export function isCredentialField(key: string): boolean {
 /**
  * Narrow an unknown value to a JSON-like configuration object.
  */
-export function isConfigObject(value: unknown): value is ConfigObject {
+export function isConfigObject(value: ConfigValue | object): value is ConfigObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
  * Narrow an unknown value to a JSON-like configuration value.
  */
-export function isConfigValue(value: unknown): value is ConfigValue {
+export function isConfigValue(value: ConfigValue | object): value is ConfigValue {
   if (value === null || value === undefined) return true;
   if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
     return true;
@@ -98,11 +102,19 @@ export function isConfigValue(value: unknown): value is ConfigValue {
  * Recursively strip credential fields from a JSON-like object.
  * Returns a new object with sensitive values replaced by a placeholder.
  */
-export function stripCredentials<T extends ConfigValue>(obj: T): T {
+export function stripCredentials(obj: null): null;
+export function stripCredentials(obj: undefined): undefined;
+export function stripCredentials(obj: boolean): boolean;
+export function stripCredentials(obj: number): number;
+export function stripCredentials(obj: string): string;
+export function stripCredentials<T extends ConfigValue[]>(obj: T): T;
+export function stripCredentials<T extends ConfigObject>(obj: T): T;
+export function stripCredentials(obj: ConfigValue): ConfigValue;
+export function stripCredentials(obj: ConfigValue): ConfigValue {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj !== "object") return obj;
   if (Array.isArray(obj)) {
-    return obj.map((value) => stripCredentials(value)) as T;
+    return obj.map((value) => stripCredentials(value));
   }
   if (!isConfigObject(obj)) return obj;
 
@@ -110,7 +122,7 @@ export function stripCredentials<T extends ConfigValue>(obj: T): T {
   for (const [key, value] of Object.entries(obj)) {
     result[key] = isCredentialField(key) ? CREDENTIAL_PLACEHOLDER : stripCredentials(value);
   }
-  return result as T;
+  return result;
 }
 
 /**
@@ -119,9 +131,9 @@ export function stripCredentials<T extends ConfigValue>(obj: T): T {
  */
 export function sanitizeConfigFile(configPath: string): void {
   if (!existsSync(configPath)) return;
-  let parsed: unknown;
+  let parsed: ConfigValue;
   try {
-    parsed = JSON.parse(readFileSync(configPath, "utf-8"));
+    parsed = parseJson<ConfigValue>(readFileSync(configPath, "utf-8"));
   } catch {
     return; // Not valid JSON — skip (may be YAML for Hermes)
   }

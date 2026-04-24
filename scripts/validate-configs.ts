@@ -22,6 +22,10 @@ interface ConfigTarget {
   files: string[];
 }
 
+type ConfigScalar = string | number | boolean | null;
+type ConfigValue = ConfigScalar | ConfigObject | ConfigValue[];
+type ConfigObject = { [key: string]: ConfigValue };
+
 /**
  * Build the list of config files and their corresponding JSON Schemas.
  * Preset YAML files are discovered dynamically from the presets directory.
@@ -55,10 +59,12 @@ function discoverTargets(): ConfigTarget[] {
         files: presetFiles,
       });
     } else {
-      console.warn("WARN: presets directory exists but contains no .yaml/.yml files — no preset validation performed");
+      console.warn(
+        "WARN: presets directory exists but contains no .yaml/.yml files — no preset validation performed",
+      );
     }
   } catch (err) {
-    const code = (err as { code?: string }).code;
+    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
     if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
     // presets directory may not exist — not an error
   }
@@ -70,7 +76,7 @@ function discoverTargets(): ConfigTarget[] {
  * Read and parse a config file relative to the repository root.
  * YAML files are parsed with the `yaml` library; everything else is parsed as JSON.
  */
-function loadFile(repoRelative: string): unknown {
+function loadFile(repoRelative: string): ConfigValue {
   const abs = join(REPO_ROOT, repoRelative);
   const raw = readFileSync(abs, "utf-8");
   if (repoRelative.endsWith(".yaml") || repoRelative.endsWith(".yml")) {
@@ -85,21 +91,30 @@ function loadFile(repoRelative: string): unknown {
  */
 function loadSchema(repoRelative: string): object {
   const abs = join(REPO_ROOT, repoRelative);
-  return JSON.parse(readFileSync(abs, "utf-8")) as object;
+  const schema: object = JSON.parse(readFileSync(abs, "utf-8"));
+  return schema;
 }
+
+type ValidationParams = { additionalProperty?: string; unevaluatedProperty?: string };
 
 /**
  * Format a single AJV validation error into a human-readable string.
  * Includes the JSON Pointer path and a detail message, expanding
  * `additionalProperty` and `unevaluatedProperty` params for clarity.
  */
-function formatError(err: { instancePath: string; keyword?: string; message?: string; params?: Record<string, unknown> }): string {
+function formatError(err: {
+  instancePath: string;
+  keyword?: string;
+  message?: string;
+  params?: ValidationParams;
+}): string {
   const path = err.instancePath || "/";
+  const message = err.message ?? "unknown error";
   const detail = err.params?.additionalProperty
-    ? `${err.message} '${err.params.additionalProperty}'`
+    ? `${message} '${err.params.additionalProperty}'`
     : err.params?.unevaluatedProperty
-      ? `${err.message} '${err.params.unevaluatedProperty}'`
-      : err.message ?? "unknown error";
+      ? `${message} '${err.params.unevaluatedProperty}'`
+      : message;
   return `  ${path}: ${detail}`;
 }
 
@@ -115,13 +130,7 @@ function formatError(err: { instancePath: string; keyword?: string; message?: st
 // legitimate pattern for real deployments.
 // ────────────────────────────────────────────────────────────────────
 
-const DANGEROUS_HOSTS: ReadonlySet<string> = new Set([
-  "*",
-  "0.0.0.0",
-  "0.0.0.0/0",
-  "::",
-  "::/0",
-]);
+const DANGEROUS_HOSTS: ReadonlySet<string> = new Set(["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"]);
 
 /**
  * Return true if `host` is a catch-all value that grants access to any destination.
@@ -224,7 +233,7 @@ function main(): void {
 
     for (const file of target.files) {
       totalFiles++;
-      let data: unknown;
+      let data: ConfigValue;
       try {
         data = loadFile(file);
       } catch (err) {
@@ -273,6 +282,9 @@ function main(): void {
 export { DANGEROUS_HOSTS, isDangerousHost, findDangerousHosts };
 
 // Only run main() when invoked directly (skip on test `import`).
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("validate-configs.ts")) {
+if (
+  import.meta.url === `file://${process.argv[1]}` ||
+  process.argv[1]?.endsWith("validate-configs.ts")
+) {
   main();
 }

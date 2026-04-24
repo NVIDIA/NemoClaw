@@ -15,6 +15,14 @@ import {
   probeContainerDns,
 } from "../../dist/lib/preflight";
 
+function requireMemoryInfo(result: ReturnType<typeof getMemoryInfo>) {
+  expect(result).not.toBeNull();
+  if (!result) {
+    throw new Error("Expected memory info to be present");
+  }
+  return result;
+}
+
 describe("checkPortAvailable", () => {
   it("falls through to the probe when lsof output is empty", async () => {
     let probedPort: number | null = null;
@@ -101,7 +109,7 @@ describe("checkPortAvailable", () => {
     const result = await checkPortAvailable(8080, {
       skipLsof: true,
       probeImpl: async () => ({
-        ok: true as const,
+        ok: true,
         warning: "port probe skipped: listen EPERM: operation not permitted 127.0.0.1",
       }),
     });
@@ -157,7 +165,7 @@ describe("probePortAvailability", () => {
       probeImpl: async (port: number) => {
         called = true;
         expect(port).toBe(9999);
-        return { ok: true as const };
+        return { ok: true };
       },
     });
     expect(called).toBe(true);
@@ -215,11 +223,10 @@ describe("getMemoryInfo", () => {
       "SwapFree:        4194300 kB",
     ].join("\n");
 
-    const result = getMemoryInfo({ meminfoContent, platform: "linux" });
-    expect(result).not.toBeNull();
-    expect(result!.totalRamMB).toBe(Math.floor(8152056 / 1024));
-    expect(result!.totalSwapMB).toBe(Math.floor(4194300 / 1024));
-    expect(result!.totalMB).toBe(result!.totalRamMB + result!.totalSwapMB);
+    const result = requireMemoryInfo(getMemoryInfo({ meminfoContent, platform: "linux" }));
+    expect(result.totalRamMB).toBe(Math.floor(8152056 / 1024));
+    expect(result.totalSwapMB).toBe(Math.floor(4194300 / 1024));
+    expect(result.totalMB).toBe(result.totalRamMB + result.totalSwapMB);
   });
 
   it("returns correct values when swap is zero", () => {
@@ -230,11 +237,10 @@ describe("getMemoryInfo", () => {
       "SwapFree:              0 kB",
     ].join("\n");
 
-    const result = getMemoryInfo({ meminfoContent, platform: "linux" });
-    expect(result).not.toBeNull();
-    expect(result!.totalRamMB).toBe(Math.floor(8152056 / 1024));
-    expect(result!.totalSwapMB).toBe(0);
-    expect(result!.totalMB).toBe(result!.totalRamMB);
+    const result = requireMemoryInfo(getMemoryInfo({ meminfoContent, platform: "linux" }));
+    expect(result.totalRamMB).toBe(Math.floor(8152056 / 1024));
+    expect(result.totalSwapMB).toBe(0);
+    expect(result.totalMB).toBe(result.totalRamMB);
   });
 
   it("returns null on unsupported platforms", () => {
@@ -255,14 +261,15 @@ describe("getMemoryInfo", () => {
   });
 
   it("handles malformed /proc/meminfo gracefully", () => {
-    const result = getMemoryInfo({
-      meminfoContent: "garbage data\nno fields here",
-      platform: "linux",
-    });
-    expect(result).not.toBeNull();
-    expect(result!.totalRamMB).toBe(0);
-    expect(result!.totalSwapMB).toBe(0);
-    expect(result!.totalMB).toBe(0);
+    const result = requireMemoryInfo(
+      getMemoryInfo({
+        meminfoContent: "garbage data\nno fields here",
+        platform: "linux",
+      }),
+    );
+    expect(result.totalRamMB).toBe(0);
+    expect(result.totalSwapMB).toBe(0);
+    expect(result.totalMB).toBe(0);
   });
 });
 
@@ -303,7 +310,8 @@ describe("assessHost", () => {
         CgroupVersion: "2",
       }),
       readFileImpl: () => '{"default-cgroupns-mode":"private"}',
-      commandExistsImpl: (name: string) => name === "docker" || name === "apt-get" || name === "systemctl",
+      commandExistsImpl: (name: string) =>
+        name === "docker" || name === "apt-get" || name === "systemctl",
       runCaptureImpl: (command: string) => {
         if (command === "command -v apt-get") return "/usr/bin/apt-get";
         if (command === "command -v systemctl") return "/usr/bin/systemctl";
@@ -432,7 +440,9 @@ describe("planHostRemediation", () => {
       notes: [],
     });
 
-    const action = actions.find((entry: { id: string }) => entry.id === "unsupported_runtime_warning");
+    const action = actions.find(
+      (entry: { id: string }) => entry.id === "unsupported_runtime_warning",
+    );
     expect(action).toBeTruthy();
     expect(action?.blocking).toBe(false);
   });

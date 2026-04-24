@@ -1,9 +1,12 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { execSync, execFileSync } from "node:child_process";
+import {
+  execSync,
+  execFileSync,
+  type ExecFileSyncOptionsWithStringEncoding,
+} from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, readFileSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -419,7 +422,7 @@ describe("service environment", () => {
             .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        const runOpts = { encoding: /** @type {const} */ "utf-8" };
+        const runOpts: ExecFileSyncOptionsWithStringEncoding = { encoding: "utf-8" };
         execFileSync("bash", [tmpFile], runOpts);
         execFileSync("bash", [tmpFile], runOpts);
         execFileSync("bash", [tmpFile], runOpts);
@@ -461,7 +464,7 @@ describe("service environment", () => {
           );
         }
         const toolRedirects = extractToolRedirects();
-        const makeWrapper = (host) =>
+        const makeWrapper = (host: string) =>
           [
             "#!/usr/bin/env bash",
             sandboxInitSource,

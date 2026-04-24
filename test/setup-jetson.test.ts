@@ -26,7 +26,7 @@ function runDaemonJsonPatcher(daemonPath: string): void {
   });
 }
 
-function getExecErrorOutput(error: unknown): string {
+function getExecErrorOutput(error: Error | string | null | undefined): string {
   if (!(error instanceof Error)) {
     return String(error);
   }
@@ -69,7 +69,15 @@ describe("setup-jetson daemon.json patcher", () => {
       runDaemonJsonPatcher(daemonPath);
 
       const patched = readFileSync(daemonPath, "utf-8");
-      const parsed = JSON.parse(patched) as Record<string, unknown>;
+      const parsed: {
+        "default-runtime": string;
+        runtimes: {
+          nvidia: {
+            path: string;
+            runtimeArgs: [];
+          };
+        };
+      } = JSON.parse(patched);
 
       expect(parsed).toEqual({
         "default-runtime": "nvidia",
@@ -115,7 +123,7 @@ describe("setup-jetson daemon.json patcher", () => {
       try {
         runDaemonJsonPatcher(daemonPath);
       } catch (error) {
-        output = getExecErrorOutput(error);
+        output = getExecErrorOutput(error instanceof Error ? error : String(error));
       }
 
       expect(output).toContain("daemon.json must contain a top-level JSON object");

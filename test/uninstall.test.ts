@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +9,7 @@ import { spawnSync } from "node:child_process";
 
 const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "..", "uninstall.sh");
 
-function createFakeNpmEnv(tmp) {
+function createFakeNpmEnv(tmp: string): Record<string, string | undefined> {
   const fakeBin = path.join(tmp, "bin");
   const npmPath = path.join(fakeBin, "npm");
   fs.mkdirSync(fakeBin, { recursive: true });

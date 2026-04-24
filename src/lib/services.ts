@@ -103,8 +103,8 @@ function removePid(pidDir: string, name: string): void {
 // Service lifecycle
 // ---------------------------------------------------------------------------
 
-const SERVICE_NAMES = ["cloudflared"] as const;
-type ServiceName = (typeof SERVICE_NAMES)[number];
+type ServiceName = "cloudflared";
+const SERVICE_NAMES: readonly ServiceName[] = ["cloudflared"];
 
 function startService(
   pidDir: string,

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,9 +6,120 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import {
+import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard-contract.js";
+import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context.js";
+
+type ShimScalar = string | number | boolean | null | undefined;
+type ShimCallable = (...args: readonly string[]) => ShimValue;
+type ShimValue = ShimScalar | { [key: string]: ShimValue } | ShimValue[] | ShimCallable;
+type ShimFn<TReturn = void> = (...args: ShimValue[]) => TReturn;
+type CommandEntry = {
+  command: string;
+  env?: Record<string, string | undefined>;
+};
+type DashboardAccess = { label: string; url: string };
+type ResumeConflict = { field: string; requested: string | null; recorded: string | null };
+type SandboxInferenceConfig = {
+  providerKey: string;
+  primaryModelRef: string;
+  inferenceBaseUrl: string;
+  inferenceApi: string;
+  inferenceCompat: ShimValue;
+};
+type ValidationClassification = { kind: string; retry: string };
+
+type OnboardTestInternals = {
+  buildProviderArgs: (
+    action: "create" | "update",
+    name: string,
+    type: string,
+    credentialEnv: string,
+    baseUrl: string | null,
+  ) => string[];
+  buildSandboxConfigSyncScript: ShimFn<string>;
+  classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
+  compactText: (value?: string) => string;
+  computeSetupPresetSuggestions: ShimFn<string[]>;
+  formatEnvAssignment: (name: string, value: string) => string;
+  findDashboardForwardOwner: (
+    forwardListOutput: string | null | undefined,
+    portToStop: string,
+  ) => string | null;
+  formatOnboardConfigSummary: ShimFn<string>;
+  getDashboardAccessInfo: ShimFn<DashboardAccess[]>;
+  getDashboardForwardStartCommand: ShimFn<string>;
+  getNavigationChoice: (value?: string | null) => string | null;
+  getGatewayReuseState: ShimFn<string>;
+  getPortConflictServiceHints: (platform?: string) => string[];
+  getFutureShellPathHint: (binDir: string, pathValue?: string) => string | null;
+  getSandboxInferenceConfig: ShimFn<SandboxInferenceConfig>;
+  getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
+  getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
+  getBlueprintMaxOpenshellVersion: (rootDir?: string) => string | null;
+  versionGte: (left?: string | null, right?: string | null) => boolean;
+  getRequestedModelHint: ShimFn<string | null>;
+  getRequestedProviderHint: ShimFn<string | null>;
+  getRequestedSandboxNameHint: ShimFn<string | null>;
+  getResumeConfigConflicts: ShimFn<ResumeConflict[]>;
+  getResumeSandboxConflict: ShimFn<{
+    requestedSandboxName: string;
+    recordedSandboxName: string;
+  } | null>;
+  getSandboxStateFromOutputs: ShimFn<string>;
+  getStableGatewayImageRef: (versionOutput?: string | null) => string | null;
+  getSuggestedPolicyPresets: ShimFn<string[]>;
+  isGatewayHealthy: ShimFn<boolean>;
+  classifyValidationFailure: ShimFn<ValidationClassification>;
+  hasResponsesToolCall: (body?: string | null) => boolean;
+  isLoopbackHostname: (hostname?: string) => boolean;
+  normalizeProviderBaseUrl: (
+    value: string | null | undefined,
+    flavor: "openai" | "anthropic",
+  ) => string;
+  parsePolicyPresetEnv: (value: string | null) => string[];
+  patchStagedDockerfile: ShimFn<void>;
+  pullAndResolveBaseImageDigest: () => { digest: string; ref: string } | null;
+  SANDBOX_BASE_IMAGE: string;
+  printSandboxCreateRecoveryHints: ShimFn<void>;
+  resolveDashboardForwardTarget: (chatUiUrl?: string) => string;
+  summarizeCurlFailure: ShimFn<string>;
+  summarizeProbeFailure: ShimFn<string>;
+  shouldIncludeBuildContextPath: ShimFn<boolean>;
+  writeSandboxConfigSyncFile: (script: string) => string;
+};
+
+function parseStdoutJson<T>(stdout: string): T {
+  const line = stdout.trim().split("\n").pop();
+  assert.ok(line, `expected JSON payload in stdout:\n${stdout}`);
+  return JSON.parse(line);
+}
+
+type OnboardTestInternalsCandidate = Partial<OnboardTestInternals> | null;
+
+function isOnboardTestInternals(
+  value: OnboardTestInternalsCandidate,
+): value is OnboardTestInternals {
+  return (
+    value !== null &&
+    typeof value.buildProviderArgs === "function" &&
+    typeof value.classifySandboxCreateFailure === "function" &&
+    typeof value.writeSandboxConfigSyncFile === "function"
+  );
+}
+
+const loadedOnboardInternals = require("../dist/lib/onboard");
+const onboardTestInternals =
+  typeof loadedOnboardInternals === "object" && loadedOnboardInternals !== null
+    ? loadedOnboardInternals
+    : null;
+if (!isOnboardTestInternals(onboardTestInternals)) {
+  throw new Error("Expected onboard test internals to expose helper functions");
+}
+
+const {
   buildProviderArgs,
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
@@ -49,10 +159,7 @@ import {
   writeSandboxConfigSyncFile,
   findDashboardForwardOwner,
   formatOnboardConfigSummary,
-} from "../dist/lib/onboard";
-import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard-contract";
-import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
-import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
+} = onboardTestInternals;
 
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
@@ -206,8 +313,8 @@ describe("onboard helpers", () => {
         enabledChannels: ["telegram", "slack"],
         knownPresetNames: known,
       });
-      expect(suggestions.filter((n) => n === "telegram")).toHaveLength(1);
-      expect(suggestions.filter((n) => n === "slack")).toHaveLength(1);
+      expect(suggestions.filter((n: string) => n === "telegram")).toHaveLength(1);
+      expect(suggestions.filter((n: string) => n === "slack")).toHaveLength(1);
     });
 
     it("drops channel names that are not known presets", () => {
@@ -927,6 +1034,9 @@ describe("onboard helpers", () => {
     const repoRoot = path.resolve(import.meta.dirname, "..");
     const v = getBlueprintMinOpenshellVersion(repoRoot);
     expect(v).not.toBe(null);
+    if (!v) {
+      throw new Error("expected min_openshell_version in shipped blueprint");
+    }
     expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
   });
 
@@ -974,6 +1084,9 @@ describe("onboard helpers", () => {
     const repoRoot = path.resolve(import.meta.dirname, "..");
     const v = getBlueprintMaxOpenshellVersion(repoRoot);
     expect(v).not.toBe(null);
+    if (!v) {
+      throw new Error("expected max_openshell_version in shipped blueprint");
+    }
     expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
   });
 
@@ -1639,7 +1752,7 @@ const { setupInference } = require(${onboardPath});
     });
 
     expect(result.status).toBe(0);
-    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
+    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
     assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway select nemoclaw/);
     assert.match(commands[1].command, /provider get/);
@@ -1884,7 +1997,7 @@ const { setupInference } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
+    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
     assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway select nemoclaw/);
     assert.match(commands[1].command, /provider get/);
@@ -1958,7 +2071,7 @@ const { setupInference } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
+    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
     assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway select nemoclaw/);
     assert.match(commands[1].command, /provider get/);
@@ -2043,12 +2156,16 @@ const { setupInference } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payload = parseStdoutJson<{
+      key: string;
+      inferenceSetCalls: number;
+      commands: CommandEntry[];
+    }>(result.stdout);
     assert.equal(payload.key, "sk-good");
     assert.equal(payload.inferenceSetCalls, 2);
     const providerEnvs = payload.commands
-      .filter((entry) => entry.command.includes("provider"))
-      .map((entry) => entry.env && entry.env.OPENAI_API_KEY)
+      .filter((entry: CommandEntry) => entry.command.includes("provider"))
+      .map((entry: CommandEntry) => entry.env && entry.env.OPENAI_API_KEY)
       .filter(Boolean);
     assert.deepEqual(providerEnvs, ["sk-bad", "sk-good"]);
   });
@@ -2111,10 +2228,14 @@ const { setupInference } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payload = parseStdoutJson<{
+      result: { retry: "selection" };
+      commands: CommandEntry[];
+    }>(result.stdout);
     assert.deepEqual(payload.result, { retry: "selection" });
     assert.equal(
-      payload.commands.filter((entry) => entry.command.includes("inference set")).length,
+      payload.commands.filter((entry: CommandEntry) => entry.command.includes("inference set"))
+        .length,
       1,
     );
   });
@@ -2172,7 +2293,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
     );
   });
 
@@ -2182,8 +2303,8 @@ const { setupInference } = require(${onboardPath});
       "utf-8",
     );
 
-    assert.match(source, /const ONBOARD_STEP_INDEX = \{/);
-    assert.match(source, /function skippedStepMessage\(stepName, detail, reason = "resume"\)/);
+    assert.match(source, /const ONBOARD_STEP_INDEX(?::[^=]+)? = \{/);
+    assert.match(source, /function skippedStepMessage\([\s\S]*?reason[^=]*= "resume"[\s\S]*?\)/);
     assert.match(source, /step\(stepInfo\.number, 8, stepInfo\.title\);/);
     assert.match(source, /skippedStepMessage\("openclaw", sandboxName\)/);
     assert.match(
@@ -2295,11 +2416,16 @@ const { setupInference } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payload = parseStdoutJson<{
+      openai: string;
+      commands: CommandEntry[];
+    }>(result.stdout);
     assert.equal(payload.openai, "sk-stored-secret");
     // commands[0]=gateway select, [1]=provider get, [2]=provider update
-    assert.equal(payload.commands[2].env.OPENAI_API_KEY, "sk-stored-secret");
-    assert.doesNotMatch(payload.commands[2].command, /sk-stored-secret/);
+    const providerUpdate = payload.commands[2];
+    assert.ok(providerUpdate, "expected provider update command");
+    assert.equal(providerUpdate.env?.OPENAI_API_KEY, "sk-stored-secret");
+    assert.doesNotMatch(providerUpdate.command, /sk-stored-secret/);
   });
 
   it("drops stale local sandbox registry entries when the live sandbox is gone", () => {
@@ -2442,7 +2568,7 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
     const payload = JSON.parse(payloadLine);
     assert.equal(payload.sandboxName, "my-assistant");
-    const createCommand = payload.commands.find((entry) =>
+    const createCommand = payload.commands.find((entry: CommandEntry) =>
       entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
@@ -2454,7 +2580,7 @@ const { createSandbox } = require(${onboardPath});
     assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
     assert.ok(
       payload.commands.some(
-        (entry) =>
+        (entry: CommandEntry) =>
           entry.command.includes("forward start --background 18789 my-assistant") ||
           entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
       ),
@@ -2542,9 +2668,9 @@ const { createSandbox } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
+    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
     assert.ok(
-      commands.some((entry) =>
+      commands.some((entry: CommandEntry) =>
         entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
       ),
       "expected remote dashboard forward target",
@@ -2650,7 +2776,7 @@ const { createSandbox } = require(${onboardPath});
       .find((line) => line.startsWith("{") && line.endsWith("}"));
     assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
     const payload = JSON.parse(payloadLine);
-    const createCommand = payload.commands.find((entry) =>
+    const createCommand = payload.commands.find((entry: CommandEntry) =>
       entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
@@ -2661,18 +2787,18 @@ const { createSandbox } = require(${onboardPath});
     // Forward must use same-port mapping (openshell does not support asymmetric)
     assert.ok(
       payload.commands.some(
-        (entry) =>
+        (entry: CommandEntry) =>
           entry.command.includes("forward start --background 19000 my-assistant") ||
           entry.command.includes("forward start --background 0.0.0.0:19000 my-assistant"),
       ),
       "expected dashboard forward for port 19000",
     );
     assert.ok(
-      !payload.commands.some((entry) => entry.command.includes("19000:18789")),
+      !payload.commands.some((entry: CommandEntry) => entry.command.includes("19000:18789")),
       "forward must not use asymmetric 19000:18789 mapping",
     );
     assert.ok(
-      !payload.commands.some((entry) => entry.command.includes("19000:19000")),
+      !payload.commands.some((entry: CommandEntry) => entry.command.includes("19000:19000")),
       "forward must not use port:port form (openshell does not support it)",
     );
   });
@@ -2778,29 +2904,31 @@ const { createSandbox } = require(${onboardPath});
       const payload = JSON.parse(payloadLine);
 
       // Verify providers were created with the right credential keys
-      const providerCommands = payload.commands.filter((e) =>
+      const providerCommands = payload.commands.filter((e: CommandEntry) =>
         e.command.includes("provider create"),
       );
-      const discordProvider = providerCommands.find((e) =>
+      const discordProvider = providerCommands.find((e: CommandEntry) =>
         e.command.includes("my-assistant-discord-bridge"),
       );
       assert.ok(discordProvider, "expected my-assistant-discord-bridge provider create command");
       assert.match(discordProvider.command, /--credential DISCORD_BOT_TOKEN/);
 
-      const slackProvider = providerCommands.find((e) =>
+      const slackProvider = providerCommands.find((e: CommandEntry) =>
         e.command.includes("my-assistant-slack-bridge"),
       );
       assert.ok(slackProvider, "expected my-assistant-slack-bridge provider create command");
       assert.match(slackProvider.command, /--credential SLACK_BOT_TOKEN/);
 
-      const telegramProvider = providerCommands.find((e) =>
+      const telegramProvider = providerCommands.find((e: CommandEntry) =>
         e.command.includes("my-assistant-telegram-bridge"),
       );
       assert.ok(telegramProvider, "expected my-assistant-telegram-bridge provider create command");
       assert.match(telegramProvider.command, /--credential TELEGRAM_BOT_TOKEN/);
 
       // Verify sandbox create includes --provider flags for all three
-      const createCommand = payload.commands.find((e) => e.command.includes("sandbox create"));
+      const createCommand = payload.commands.find((e: CommandEntry) =>
+        e.command.includes("sandbox create"),
+      );
       assert.ok(createCommand, "expected sandbox create command");
       assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
       assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
@@ -3015,26 +3143,28 @@ const { createSandbox } = require(${onboardPath});
 
       assert.equal(payload.sandboxName, "my-assistant", "should reuse existing sandbox");
       assert.ok(
-        payload.commands.every((entry) => !entry.command.includes("sandbox create")),
+        payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
         "should NOT recreate sandbox when providers already exist in gateway",
       );
       assert.ok(
-        payload.commands.every((entry) => !entry.command.includes("sandbox delete")),
+        payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox delete")),
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
       // Providers should still be upserted on reuse (credential refresh).
       // Since the mock reports providers as existing (run returns status 0),
       // upsertProvider issues 'update' rather than 'create'.
-      const providerUpserts = payload.commands.filter((entry) =>
+      const providerUpserts = payload.commands.filter((entry: CommandEntry) =>
         entry.command.includes("provider update"),
       );
       assert.ok(
-        providerUpserts.some((e) => e.command.includes("my-assistant-discord-bridge")),
+        providerUpserts.some((e: CommandEntry) =>
+          e.command.includes("my-assistant-discord-bridge"),
+        ),
         "should upsert discord provider on reuse to refresh credentials",
       );
       assert.ok(
-        providerUpserts.some((e) => e.command.includes("my-assistant-slack-bridge")),
+        providerUpserts.some((e: CommandEntry) => e.command.includes("my-assistant-slack-bridge")),
         "should upsert slack provider on reuse to refresh credentials",
       );
     },
@@ -3095,7 +3225,7 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const env = {
+      const env: Record<string, string | undefined> = {
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
@@ -3212,11 +3342,11 @@ const { createSandbox } = require(${onboardPath});
       const payload = JSON.parse(payloadLine);
 
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("sandbox delete")),
+        payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox delete")),
         "should delete existing sandbox when --recreate-sandbox is set",
       );
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("sandbox create")),
+        payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox create")),
         "should create a new sandbox when --recreate-sandbox is set",
       );
     },
@@ -3424,7 +3554,7 @@ const { createSandbox } = require(${onboardPath});
       fs.writeFileSync(scriptPath, script);
 
       // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
-      const env = {
+      const env: Record<string, string | undefined> = {
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
@@ -3449,11 +3579,11 @@ const { createSandbox } = require(${onboardPath});
 
       assert.equal(payload.sandboxName, "my-assistant", "should reuse when user answers y");
       assert.ok(
-        payload.commands.every((entry) => !entry.command.includes("sandbox create")),
+        payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
         "should NOT recreate sandbox when user chooses to reuse",
       );
       assert.ok(
-        payload.commands.every((entry) => !entry.command.includes("sandbox delete")),
+        payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox delete")),
         "should NOT delete sandbox when user chooses to reuse",
       );
       assert.ok(
@@ -3561,7 +3691,7 @@ const { createSandbox } = require(${onboardPath});
       fs.writeFileSync(scriptPath, script);
 
       // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
-      const env = {
+      const env: Record<string, string | undefined> = {
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
@@ -3585,11 +3715,15 @@ const { createSandbox } = require(${onboardPath});
       const payload = JSON.parse(payloadLine);
 
       assert.ok(
-        payload.commands.some((entry) => /sandbox.*delete/.test(String(entry.command))),
+        payload.commands.some((entry: CommandEntry) =>
+          /sandbox.*delete/.test(String(entry.command)),
+        ),
         "should delete existing sandbox when user confirms recreate",
       );
       assert.ok(
-        payload.commands.some((entry) => /sandbox.*create/.test(String(entry.command))),
+        payload.commands.some((entry: CommandEntry) =>
+          /sandbox.*create/.test(String(entry.command)),
+        ),
         "should create a new sandbox when user confirms recreate",
       );
       assert.ok(
@@ -3692,7 +3826,7 @@ const { createSandbox } = require(${onboardPath});
       fs.writeFileSync(scriptPath, script);
 
       // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
-      const env = {
+      const env: Record<string, string | undefined> = {
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
@@ -3716,11 +3850,11 @@ const { createSandbox } = require(${onboardPath});
       const payload = JSON.parse(payloadLine);
 
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("sandbox delete")),
+        payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox delete")),
         "should delete not-ready sandbox after user confirms",
       );
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("sandbox create")),
+        payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox create")),
         "should recreate sandbox when existing one is not ready",
       );
       assert.ok(result.stdout.includes("not ready"), "should mention sandbox is not ready");
@@ -3731,7 +3865,10 @@ const { createSandbox } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
-    assert.match(source, /const selectionDrift = getSelectionDrift\(sandboxName, provider, model\);/);
+    assert.match(
+      source,
+      /const selectionDrift = getSelectionDrift\(sandboxName, provider, model\);/,
+    );
     assert.match(
       source,
       /const confirmedSelectionDrift = selectionDrift\.changed && !selectionDrift\.unknown;/,
@@ -3791,7 +3928,10 @@ console.log(JSON.stringify({ result, commands }));
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payload = parseStdoutJson<{
+      result: { ok: true };
+      commands: string[];
+    }>(result.stdout);
     assert.deepEqual(payload.result, { ok: true });
     assert.equal(payload.commands.length, 2);
     assert.match(payload.commands[0], /provider get/);
@@ -3875,7 +4015,10 @@ console.log(JSON.stringify({ result, commands }));
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payload = parseStdoutJson<{
+      result: { ok: true };
+      commands: string[];
+    }>(result.stdout);
     assert.deepEqual(payload.result, { ok: true });
     assert.equal(payload.commands.length, 2);
     assert.match(payload.commands[0], /provider get/);
@@ -3920,7 +4063,11 @@ console.log(JSON.stringify(result));
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payload = parseStdoutJson<{
+      ok: false;
+      status: number;
+      message: string;
+    }>(result.stdout);
     assert.equal(payload.ok, false);
     assert.equal(payload.status, 1);
     assert.match(payload.message, /gateway unreachable/);
@@ -3957,7 +4104,7 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("discord-bridge") }
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payload = parseStdoutJson<{ exists: boolean }>(result.stdout);
     assert.equal(payload.exists, true);
   });
 
@@ -4006,7 +4153,12 @@ console.log(JSON.stringify({
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payload = parseStdoutJson<{
+      nullResult: null;
+      hydrated: string;
+      envSet: string;
+      missing: null;
+    }>(result.stdout);
     assert.equal(payload.nullResult, null, "should return null for null input");
     assert.equal(
       payload.hydrated,
@@ -4052,7 +4204,7 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("nonexistent") }));
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payload = parseStdoutJson<{ exists: boolean }>(result.stdout);
     assert.equal(payload.exists, false);
   });
 
@@ -4237,22 +4389,25 @@ const { createSandbox } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payload = parseStdoutJson<{
+      sandboxName: string;
+      commands: CommandEntry[];
+    }>(result.stdout);
     assert.equal(payload.sandboxName, "my-assistant");
     assert.ok(
-      payload.commands.some((entry) =>
+      payload.commands.some((entry: CommandEntry) =>
         entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
       ),
       "expected dashboard forward restore on sandbox reuse",
     );
     assert.ok(
-      payload.commands.every((entry) => !entry.command.includes("sandbox create")),
+      payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
       "did not expect sandbox create when reusing existing sandbox",
     );
   });
 
   it("prints resume guidance when sandbox image upload times out", () => {
-    const errors = [];
+    const errors: string[] = [];
     const originalError = console.error;
     console.error = (...args) => errors.push(args.join(" "));
     try {
@@ -4278,7 +4433,7 @@ const { createSandbox } = require(${onboardPath});
   });
 
   it("prints resume guidance when sandbox image upload resets after transfer progress", () => {
-    const errors = [];
+    const errors: string[] = [];
     const originalError = console.error;
     console.error = (...args) => errors.push(args.join(" "));
     try {
@@ -4369,7 +4524,7 @@ const { setupInference } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
+    const commands = parseStdoutJson<string[]>(result.stdout);
     // gateway select + provider get + provider update + inference set
     assert.equal(commands.length, 4);
   });
@@ -4440,7 +4595,7 @@ const { setupInference } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
+    const commands = parseStdoutJson<string[]>(result.stdout);
     // gateway select + provider get + provider update + inference set
     assert.equal(commands.length, 4);
   });
@@ -4547,27 +4702,29 @@ const { createSandbox } = require(${onboardPath});
       const payload = JSON.parse(payloadLine);
 
       // Only telegram provider should be created
-      const providerCommands = payload.commands.filter((e) =>
+      const providerCommands = payload.commands.filter((e: CommandEntry) =>
         e.command.includes("provider create"),
       );
-      const telegramProvider = providerCommands.find((e) =>
+      const telegramProvider = providerCommands.find((e: CommandEntry) =>
         e.command.includes("my-assistant-telegram-bridge"),
       );
       assert.ok(telegramProvider, "expected telegram provider to be created");
 
       // Discord and slack providers should NOT be created
-      const discordProvider = providerCommands.find((e) =>
+      const discordProvider = providerCommands.find((e: CommandEntry) =>
         e.command.includes("my-assistant-discord-bridge"),
       );
       assert.ok(!discordProvider, "discord provider should be filtered out");
 
-      const slackProvider = providerCommands.find((e) =>
+      const slackProvider = providerCommands.find((e: CommandEntry) =>
         e.command.includes("my-assistant-slack-bridge"),
       );
       assert.ok(!slackProvider, "slack provider should be filtered out");
 
       // Sandbox create should only have the telegram --provider flag
-      const createCommand = payload.commands.find((e) => e.command.includes("sandbox create"));
+      const createCommand = payload.commands.find((e: CommandEntry) =>
+        e.command.includes("sandbox create"),
+      );
       assert.ok(createCommand, "expected sandbox create command");
       assert.match(createCommand.command, /--provider my-assistant-telegram-bridge/);
       assert.doesNotMatch(createCommand.command, /my-assistant-discord-bridge/);
@@ -4675,7 +4832,7 @@ const { createSandbox } = require(${onboardPath});
       const payload = JSON.parse(payloadLine);
 
       // No messaging providers should be created at all
-      const providerCommands = payload.commands.filter((e) =>
+      const providerCommands = payload.commands.filter((e: CommandEntry) =>
         e.command.includes("provider create"),
       );
       assert.equal(
@@ -4685,7 +4842,9 @@ const { createSandbox } = require(${onboardPath});
       );
 
       // Sandbox create should have no --provider flags for messaging bridges
-      const createCommand = payload.commands.find((e) => e.command.includes("sandbox create"));
+      const createCommand = payload.commands.find((e: CommandEntry) =>
+        e.command.includes("sandbox create"),
+      );
       assert.ok(createCommand, "expected sandbox create command");
       assert.doesNotMatch(createCommand.command, /discord-bridge/);
       assert.doesNotMatch(createCommand.command, /slack-bridge/);
@@ -4758,8 +4917,7 @@ const { setupMessagingChannels } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const outputLine = result.stdout.trim().split("\n").pop();
-      const channels = JSON.parse(outputLine);
+      const channels = parseStdoutJson<string[]>(result.stdout);
 
       // Should return only the channels that have tokens set
       assert.ok(Array.isArray(channels), "expected an array return value");
@@ -4824,13 +4982,330 @@ const { setupMessagingChannels } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const outputLine = result.stdout.trim().split("\n").pop();
-      const channels = JSON.parse(outputLine);
+      const channels = parseStdoutJson<string[]>(result.stdout);
 
       assert.ok(Array.isArray(channels), "expected an array return value");
       assert.equal(channels.length, 0, "expected empty array when no tokens are set");
     },
   );
+
+  it(
+    "interactive setupMessagingChannels drops slack when prompted token fails tokenFormat check (#1912)",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-slack-format-reject-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "slack-format-reject.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "credentials.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      // Subscript: mocks credentials.prompt to return a bogus Slack token,
+      // exposes MESSAGING_CHANNELS so the parent can look up the Slack toggle
+      // digit, and asserts that setupMessagingChannels rejects the invalid
+      // token without persisting it. Slack is the 3rd channel in insertion
+      // order today (telegram, discord, slack) but we compute the index
+      // dynamically to avoid a brittle coupling to that ordering.
+      const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const saveCalls = [];
+credentials.saveCredential = (key, value) => { saveCalls.push({ key, value }); };
+credentials.getCredential = () => null;
+credentials.prompt = async (message) => {
+  if (message.includes("Slack Bot Token")) return "abcd";
+  return "";
+};
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+
+const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
+
+(async () => {
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  delete process.env.DISCORD_BOT_TOKEN;
+  delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_APP_TOKEN;
+
+  const result = await setupMessagingChannels();
+  console.log(JSON.stringify({
+    result,
+    saveCalls,
+    slackIndex1Based: MESSAGING_CHANNELS.findIndex((c) => c.name === "slack") + 1,
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      // Dry run with just Enter — no toggles, empty result — used to read back
+      // Slack's 1-based index from the same subscript so the real run can
+      // press the right digit.
+      const introspect = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+        input: "\n",
+      });
+      assert.equal(introspect.status, 0, introspect.stderr);
+      const introspectOut = JSON.parse(introspect.stdout.trim().split("\n").pop());
+      const slackIdx = introspectOut.slackIndex1Based;
+      assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
+
+      // Real run: press Slack's digit, Enter. Slack gets toggled on, prompt
+      // fires, mocked prompt returns "abcd", tokenFormat regex rejects it,
+      // channel is dropped, saveCredential never runs for SLACK_BOT_TOKEN.
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+        input: `${slackIdx}\n`,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const out = JSON.parse(result.stdout.trim().split("\n").pop());
+
+      assert.ok(
+        !out.result.includes("slack"),
+        `slack should have been dropped after invalid token; got ${JSON.stringify(out.result)}`,
+      );
+      assert.ok(
+        !out.saveCalls.some((c) => c.key === "SLACK_BOT_TOKEN"),
+        `SLACK_BOT_TOKEN should NOT have been persisted; saveCalls=${JSON.stringify(out.saveCalls)}`,
+      );
+      assert.ok(
+        result.stderr.includes("Invalid format") || result.stdout.includes("Invalid format"),
+        `expected 'Invalid format' warning; stderr=${result.stderr} stdout=${result.stdout}`,
+      );
+    },
+  );
+
+  it(
+    "interactive setupMessagingChannels drops slack when app token fails appTokenFormat check (#1912)",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-slack-app-format-reject-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "slack-app-format-reject.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "credentials.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      // Subscript: mocks prompt to return a VALID bot token but a bogus app
+      // token. Expected behavior: bot token passes the regex and persists,
+      // app token fails the regex, channel is dropped from the enabled set,
+      // and SLACK_APP_TOKEN is never saved.
+      const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const saveCalls = [];
+credentials.saveCredential = (key, value) => { saveCalls.push({ key, value }); };
+credentials.getCredential = () => null;
+credentials.prompt = async (message) => {
+  if (message.includes("Slack Bot Token")) return "xoxb-test-valid-bot-token";
+  if (message.includes("Slack App Token")) return "abcd";
+  return "";
+};
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+
+const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
+
+(async () => {
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  delete process.env.DISCORD_BOT_TOKEN;
+  delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_APP_TOKEN;
+
+  const result = await setupMessagingChannels();
+  console.log(JSON.stringify({
+    result,
+    saveCalls,
+    slackIndex1Based: MESSAGING_CHANNELS.findIndex((c) => c.name === "slack") + 1,
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      // Dry run with Enter only to introspect Slack's 1-based digit.
+      const introspect = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+        input: "\n",
+      });
+      assert.equal(introspect.status, 0, introspect.stderr);
+      const slackIdx = JSON.parse(
+        introspect.stdout.trim().split("\n").pop(),
+      ).slackIndex1Based;
+      assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
+
+      // Real run: toggle Slack on, exit UI, bot prompt returns valid, app
+      // prompt returns "abcd", app-token check rejects, channel dropped.
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+        input: `${slackIdx}\n`,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const out = JSON.parse(result.stdout.trim().split("\n").pop());
+
+      assert.ok(
+        !out.result.includes("slack"),
+        `slack should have been dropped after invalid app token; got ${JSON.stringify(out.result)}`,
+      );
+      // Bot token is persisted before the app-token prompt — that's fine, the
+      // user can retry later and the pre-saved bot token will light up as
+      // "already configured" on the next onboard.
+      assert.ok(
+        out.saveCalls.some((c) => c.key === "SLACK_BOT_TOKEN"),
+        `SLACK_BOT_TOKEN should have been persisted (valid format); saveCalls=${JSON.stringify(out.saveCalls)}`,
+      );
+      assert.ok(
+        !out.saveCalls.some((c) => c.key === "SLACK_APP_TOKEN"),
+        `SLACK_APP_TOKEN should NOT have been persisted (invalid format); saveCalls=${JSON.stringify(out.saveCalls)}`,
+      );
+      assert.ok(
+        result.stderr.includes("Invalid format") || result.stdout.includes("Invalid format"),
+        `expected 'Invalid format' warning; stderr=${result.stderr} stdout=${result.stdout}`,
+      );
+    },
+  );
+
+  it("Slack bot token format regex rejects obvious bogus tokens and accepts valid ones (#1912)", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const onboardPath = path.join(repoRoot, "dist", "lib", "onboard.js");
+    // Cache-bust the dynamic import so repeated test runs pick up rebuilds.
+    const onboardUrl = `${pathToFileURL(onboardPath).href}?update=${Date.now()}`;
+    const { MESSAGING_CHANNELS } = await import(onboardUrl);
+    const slack = MESSAGING_CHANNELS.find((c) => c.name === "slack");
+
+    assert.ok(slack, "slack messaging channel definition present");
+    assert.ok(slack.tokenFormat instanceof RegExp, "slack.tokenFormat is a regex");
+    assert.ok(
+      typeof slack.tokenFormatHint === "string" && slack.tokenFormatHint.length > 0,
+      "slack.tokenFormatHint set",
+    );
+
+    // Bogus tokens from the bug report and other common misentries — must be rejected.
+    // gitleaks-allow below: intentionally pasted fake prefixes to prove they don't match.
+    const invalid = [
+      "abcd",
+      "",
+      "xoxb",
+      "xoxb-",
+      "xoxp-" + "test-user-token", // gitleaks:allow
+      "xapp-" + "test-app-token", // gitleaks:allow
+      "Bearer xoxb-fake",
+      "xoxb-fake with space",
+    ];
+    for (const token of invalid) {
+      assert.ok(
+        !slack.tokenFormat.test(token),
+        `expected ${JSON.stringify(token)} to be rejected as Slack bot token`,
+      );
+    }
+
+    // Syntactically valid bot tokens — must be accepted. Values are
+    // intentionally obvious test strings to avoid tripping gitleaks.
+    const valid = [
+      "xoxb-test-slack-token-value",
+      "xoxb-fake-bot-token",
+      "xoxb-A",
+      // Slack tokens can contain underscores — lock in the widened
+      // character class per @jyaunches review on #2130.
+      "xoxb-test_with_underscores",
+      "xoxb-mix_of-hyphens_and_underscores",
+    ];
+    for (const token of valid) {
+      assert.ok(
+        slack.tokenFormat.test(token),
+        `expected ${JSON.stringify(token)} to be accepted as Slack bot token`,
+      );
+    }
+
+    // App token (xapp-) has its own format — same permissive character
+    // class. Per @jyaunches suggestion #2 on #2130.
+    assert.ok(slack.appTokenFormat instanceof RegExp, "slack.appTokenFormat is a regex");
+    assert.ok(
+      typeof slack.appTokenFormatHint === "string" && slack.appTokenFormatHint.length > 0,
+      "slack.appTokenFormatHint set",
+    );
+    const invalidApp = [
+      "abcd",
+      "",
+      "xapp",
+      "xapp-",
+      "xoxb-" + "test-bot-token", // gitleaks:allow
+      "Bearer xapp-fake",
+      "xapp-fake with space",
+    ];
+    for (const token of invalidApp) {
+      assert.ok(
+        !slack.appTokenFormat.test(token),
+        `expected ${JSON.stringify(token)} to be rejected as Slack app token`,
+      );
+    }
+    const validApp = [
+      "xapp-1-A0000-12345-abcdef",
+      "xapp-test-app-token-value",
+      "xapp-A",
+      "xapp-with_underscores_and-hyphens",
+    ];
+    for (const token of validApp) {
+      assert.ok(
+        slack.appTokenFormat.test(token),
+        `expected ${JSON.stringify(token)} to be accepted as Slack app token`,
+      );
+    }
+  });
 
   it("uses the custom Dockerfile parent directory as build context when --from is given", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");

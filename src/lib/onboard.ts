@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -14,7 +13,7 @@ const { execFileSync, spawn, spawnSync } = require("child_process");
 const pRetry = require("p-retry");
 
 /** Parse a numeric env var, returning `fallback` when unset or non-finite. */
-function envInt(name, fallback) {
+function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
   const n = Number(raw);
@@ -26,16 +25,30 @@ const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 
 /** Strip ANSI escape sequences before printing process output to the terminal.
  *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
-const {
-  ROOT,
-  SCRIPTS,
-  redact,
-  run,
-  runCapture,
-  runFile,
-  shellQuote,
-  validateName,
-} = require("./runner");
+const runner: typeof import("./runner") = require("./runner");
+const { ROOT, SCRIPTS, redact, run, runCapture, runFile, shellQuote, validateName } = runner;
+const errnoUtils: typeof import("./errno") = require("./errno");
+const { isErrnoException } = errnoUtils;
+
+type RunnerOptions = {
+  env?: NodeJS.ProcessEnv;
+  stdio?: import("node:child_process").StdioOptions;
+  ignoreError?: boolean;
+  suppressOutput?: boolean;
+  timeout?: number;
+  openshellBinary?: string;
+};
+
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+function requireValue<T>(value: T | null | undefined, message: string): T {
+  if (value == null) {
+    throw new Error(message);
+  }
+  return value;
+}
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const {
@@ -45,6 +58,7 @@ const {
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
 } = require("./ports");
+const localInference: typeof import("./local-inference") = require("./local-inference");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -55,36 +69,29 @@ const {
   validateOllamaPortConfiguration,
   validateOllamaModel,
   validateLocalProvider,
-} = require("./local-inference");
-const {
-  DEFAULT_CLOUD_MODEL,
-  getProviderSelectionConfig,
-  parseGatewayInference,
-} = require("./inference-config");
+} = localInference;
+const inferenceConfig: typeof import("./inference-config") = require("./inference-config");
+const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
 // Providers that run on the host and need the local-inference policy preset.
 // Shared constant so getSuggestedPolicyPresets() and setupPoliciesWithSelection()
 // stay in sync.
-const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
-const {
-  sleepSeconds,
-} = require("./wait");
-const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
+const LOCAL_INFERENCE_PROVIDERS: string[] = ["ollama-local", "vllm-local"];
+const { sleepSeconds } = require("./wait");
+const platformUtils: typeof import("./platform") = require("./platform");
+const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
 const { resolveOpenshell } = require("./resolve-openshell");
-const {
-  prompt,
-  ensureApiKey,
-  getCredential,
-  normalizeCredentialValue,
-  saveCredential,
-} = require("./credentials");
-const registry = require("./registry");
-const nim = require("./nim");
-const onboardSession = require("./onboard-session");
-const policies = require("./policies");
+const credentials: typeof import("./credentials") = require("./credentials");
+const { prompt, ensureApiKey, getCredential, normalizeCredentialValue, saveCredential } =
+  credentials;
+const registry: typeof import("./registry") = require("./registry");
+const nim: typeof import("./nim") = require("./nim");
+const onboardSession: typeof import("./onboard-session") = require("./onboard-session");
+const policies: typeof import("./policies") = require("./policies");
 const shields = require("./shields");
-const tiers = require("./tiers");
+const tiers: typeof import("./tiers") = require("./tiers");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
+const preflightUtils: typeof import("./preflight") = require("./preflight");
 const {
   assessHost,
   checkPortAvailable,
@@ -93,24 +100,43 @@ const {
   getMemoryInfo,
   planHostRemediation,
   probeContainerDns,
-} = require("./preflight");
+} = preflightUtils;
 const agentOnboard = require("./agent-onboard");
 const agentDefs = require("./agent-defs");
 
-const gatewayState = require("./gateway-state");
-const sandboxState = require("./sandbox-state");
-const validation = require("./validation");
-const urlUtils = require("./url-utils");
+const gatewayState: typeof import("./gateway-state") = require("./gateway-state");
+const sandboxState: typeof import("./sandbox-state") = require("./sandbox-state");
+const validation: typeof import("./validation") = require("./validation");
+const urlUtils: typeof import("./url-utils") = require("./url-utils");
 const buildContext = require("./build-context");
-const dashboardContract = require("./dashboard-contract");
-const httpProbe = require("./http-probe");
-const modelPrompts = require("./model-prompts");
-const providerModels = require("./provider-models");
-const sandboxCreateStream = require("./sandbox-create-stream");
-const validationRecovery = require("./validation-recovery");
-const webSearch = require("./web-search");
+const dashboardContract: typeof import("./dashboard-contract") = require("./dashboard-contract");
+const httpProbe: typeof import("./http-probe") = require("./http-probe");
+const modelPrompts: typeof import("./model-prompts") = require("./model-prompts");
+const providerModels: typeof import("./provider-models") = require("./provider-models");
+const sandboxCreateStream: typeof import("./sandbox-create-stream") = require("./sandbox-create-stream");
+const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
+const webSearch: typeof import("./web-search") = require("./web-search");
 
 import { listChannels } from "./sandbox-channels";
+import type { AgentDefinition } from "./agent-defs";
+import type { GatewayInference, ProviderSelectionConfig } from "./inference-config";
+import type { GpuInfo, ValidationResult } from "./local-inference";
+import type { ContainerRuntime } from "./platform";
+import type { SandboxEntry } from "./registry";
+import type { Session, SessionUpdates } from "./onboard-session";
+import type { CurlProbeResult } from "./http-probe";
+import type { ProbeRecovery } from "./validation-recovery";
+import type { SandboxCreateFailure, ValidationClassification } from "./validation";
+import type { TierDefinition, TierPreset } from "./tiers";
+import type { StreamSandboxCreateResult } from "./sandbox-create-stream";
+import type { WebSearchConfig } from "./web-search";
+import type {
+  ModelCatalogFetchResult,
+  ModelValidationResult,
+  ProbeResult,
+  ValidationFailureLike,
+} from "./onboard-types";
+import type { BackupResult } from "./sandbox-state";
 
 /**
  * Create a temp file inside a directory with a cryptographically random name.
@@ -118,7 +144,7 @@ import { listChannels } from "./sandbox-channels";
  * could be exploited via symlink attacks on shared /tmp.
  * Ref: https://github.com/NVIDIA/NemoClaw/issues/1093
  */
-function secureTempFile(prefix, ext = "") {
+function secureTempFile(prefix: string, ext = ""): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
   return path.join(dir, `${prefix}${ext}`);
 }
@@ -127,7 +153,7 @@ function secureTempFile(prefix, ext = "") {
  * Safely remove a mkdtemp-created directory.  Guards against accidentally
  * deleting the system temp root if a caller passes os.tmpdir() itself.
  */
-function cleanupTempDir(filePath, expectedPrefix) {
+function cleanupTempDir(filePath: string, expectedPrefix: string): void {
   const parentDir = path.dirname(filePath);
   if (parentDir !== os.tmpdir() && path.basename(parentDir).startsWith(`${expectedPrefix}-`)) {
     fs.rmSync(parentDir, { recursive: true, force: true });
@@ -138,7 +164,7 @@ const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
-let OPENSHELL_BIN = null;
+let OPENSHELL_BIN: string | null = null;
 const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_BOOTSTRAP_SECRET_NAMES = [
   "openshell-server-tls",
@@ -189,7 +215,41 @@ const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 
-const REMOTE_PROVIDER_CONFIG = {
+type RemoteProviderKey =
+  | "build"
+  | "openai"
+  | "anthropic"
+  | "anthropicCompatible"
+  | "gemini"
+  | "custom";
+
+type RemoteProviderConfigEntry = {
+  label: string;
+  providerName: string;
+  providerType: string;
+  credentialEnv: string;
+  endpointUrl: string;
+  helpUrl: string | null;
+  modelMode: "catalog" | "curated" | "input";
+  defaultModel: string;
+  skipVerify?: boolean;
+};
+
+// Re-export shared JSON types under the names used throughout this module.
+// See src/lib/json-types.ts for the canonical definitions.
+import type { JsonScalar as LooseScalar, JsonValue as LooseValue, JsonObject as LooseObject } from "./json-types";
+
+type OnboardOptions = {
+  nonInteractive?: boolean;
+  recreateSandbox?: boolean;
+  dangerouslySkipPermissions?: boolean;
+  resume?: boolean;
+  fromDockerfile?: string | null;
+  acceptThirdPartySoftware?: boolean;
+  agent?: string | null;
+};
+
+const REMOTE_PROVIDER_CONFIG: Record<string, RemoteProviderConfigEntry> = {
   build: {
     label: "NVIDIA Endpoints",
     providerName: "nvidia-prod",
@@ -263,21 +323,25 @@ const DISCORD_SNOWFLAKE_RE = /^[0-9]{17,19}$/;
 let NON_INTERACTIVE = false;
 let RECREATE_SANDBOX = false;
 
-function isNonInteractive() {
+function isNonInteractive(): boolean {
   return NON_INTERACTIVE || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 }
 
-function isRecreateSandbox() {
+function isRecreateSandbox(): boolean {
   return RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
 }
 
-function note(message) {
+function note(message: string): void {
   console.log(`${DIM}${message}${RESET}`);
 }
 
 // Prompt wrapper: returns env var value or default in non-interactive mode,
 // otherwise prompts the user interactively.
-async function promptOrDefault(question, envVar, defaultValue) {
+async function promptOrDefault(
+  question: string,
+  envVar: string | null,
+  defaultValue: string,
+): Promise<string> {
   if (isNonInteractive()) {
     const val = envVar ? process.env[envVar] : null;
     const result = val || defaultValue;
@@ -304,7 +368,7 @@ const {
  * Remove known_hosts lines whose host field contains an openshell-* entry.
  * Preserves blank lines and comments. Returns the cleaned string.
  */
-function pruneKnownHostsEntries(contents) {
+function pruneKnownHostsEntries(contents: string): string {
   return contents
     .split("\n")
     .filter((l) => {
@@ -316,14 +380,14 @@ function pruneKnownHostsEntries(contents) {
     .join("\n");
 }
 
-function getSandboxReuseState(sandboxName) {
+function getSandboxReuseState(sandboxName: string | null) {
   if (!sandboxName) return "missing";
   const getOutput = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
   const listOutput = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
   return getSandboxStateFromOutputs(sandboxName, getOutput, listOutput);
 }
 
-function repairRecordedSandbox(sandboxName) {
+function repairRecordedSandbox(sandboxName: string | null): void {
   if (!sandboxName) return;
   note(`  [resume] Cleaning up recorded sandbox '${sandboxName}' before recreating it.`);
   runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
@@ -334,35 +398,38 @@ function repairRecordedSandbox(sandboxName) {
 const { streamSandboxCreate } = sandboxCreateStream;
 
 /** Spawn `openshell gateway start` and stream its output with progress heartbeats. */
-function streamGatewayStart(command, env = process.env) {
+function streamGatewayStart(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ status: number; output: string }> {
   const child = spawn("bash", ["-lc", command], {
     cwd: ROOT,
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  const lines = [];
+  const lines: string[] = [];
   let pending = "";
   let settled = false;
-  let resolvePromise;
+  let resolvePromise: (value: { status: number; output: string }) => void;
   let lastPrintedLine = "";
   let currentPhase = "cluster";
   let lastHeartbeatBucket = -1;
   let lastOutputAt = Date.now();
   const startedAt = Date.now();
 
-  function getDisplayWidth() {
+  function getDisplayWidth(): number {
     return Math.max(60, Number(process.stdout.columns || 100));
   }
 
-  function trimDisplayLine(line) {
+  function trimDisplayLine(line: string): string {
     const width = getDisplayWidth();
     const maxLen = Math.max(40, width - 4);
     if (line.length <= maxLen) return line;
     return `${line.slice(0, Math.max(0, maxLen - 3))}...`;
   }
 
-  function printProgressLine(line) {
+  function printProgressLine(line: string): void {
     const display = trimDisplayLine(line);
     if (display !== lastPrintedLine) {
       console.log(display);
@@ -370,11 +437,11 @@ function streamGatewayStart(command, env = process.env) {
     }
   }
 
-  function elapsedSeconds() {
+  function elapsedSeconds(): number {
     return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
   }
 
-  function setPhase(nextPhase) {
+  function setPhase(nextPhase: string | null): void {
     if (!nextPhase || nextPhase === currentPhase) return;
     currentPhase = nextPhase;
     const phaseLine =
@@ -388,7 +455,7 @@ function streamGatewayStart(command, env = process.env) {
     printProgressLine(phaseLine);
   }
 
-  function classifyLine(line) {
+  function classifyLine(line: string): string | null {
     if (/ApplyJob|helm-install-openshell|Applying HelmChart/i.test(line)) return "install";
     if (
       /openshell-0|Observed pod startup duration|MountVolume\.MountDevice succeeded/i.test(line)
@@ -399,7 +466,7 @@ function streamGatewayStart(command, env = process.env) {
     return null;
   }
 
-  function flushLine(rawLine) {
+  function flushLine(rawLine: string): void {
     const line = rawLine.replace(/\r/g, "").trimEnd();
     if (!line) return;
     lines.push(line);
@@ -408,14 +475,14 @@ function streamGatewayStart(command, env = process.env) {
     if (nextPhase) setPhase(nextPhase);
   }
 
-  function onChunk(chunk) {
+  function onChunk(chunk: Buffer | string): void {
     pending += chunk.toString();
     const parts = pending.split("\n");
-    pending = parts.pop();
+    pending = parts.pop() ?? "";
     parts.forEach(flushLine);
   }
 
-  function finish(result) {
+  function finish(result: { status: number; output: string }): void {
     if (settled) return;
     settled = true;
     if (pending) flushLine(pending);
@@ -463,15 +530,15 @@ function streamGatewayStart(command, env = process.env) {
   }, GATEWAY_START_TIMEOUT);
   killTimer.unref?.();
 
-  return new Promise((resolve) => {
+  return new Promise<{ status: number; output: string }>((resolve) => {
     resolvePromise = resolve;
-    child.on("error", (error) => {
+    child.on("error", (error: Error) => {
       clearTimeout(killTimer);
       const detail = error?.message || String(error);
       lines.push(detail);
       finish({ status: 1, output: lines.join("\n") });
     });
-    child.on("close", (code) => {
+    child.on("close", (code: number | null) => {
       clearTimeout(killTimer);
       const exitCode = killedByTimeout ? 1 : (code ?? 1);
       finish({ status: exitCode, output: lines.join("\n") });
@@ -479,13 +546,13 @@ function streamGatewayStart(command, env = process.env) {
   });
 }
 
-function step(n, total, msg) {
+function step(n: number, total: number, msg: string): void {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
   console.log(`  ${"─".repeat(50)}`);
 }
 
-function getInstalledOpenshellVersion(versionOutput = null) {
+function getInstalledOpenshellVersion(versionOutput: string | null = null): string | null {
   const openshellBin = resolveOpenshell();
   if (!versionOutput && !openshellBin) return null;
   const output = String(
@@ -500,7 +567,7 @@ function getInstalledOpenshellVersion(versionOutput = null) {
  * Compare two semver-like x.y.z strings. Returns true iff `left >= right`.
  * Non-numeric or missing components are treated as 0.
  */
-function versionGte(left = "0.0.0", right = "0.0.0") {
+function versionGte(left = "0.0.0", right = "0.0.0"): boolean {
   const lhs = String(left)
     .split(".")
     .map((part) => Number.parseInt(part, 10) || 0);
@@ -523,7 +590,7 @@ function versionGte(left = "0.0.0", right = "0.0.0") {
  * as "no constraint configured" so a malformed install does not become a hard
  * onboard blocker. See #1317.
  */
-function getBlueprintVersionField(field, rootDir = ROOT) {
+function getBlueprintVersionField(field: string, rootDir = ROOT): string | null {
   try {
     // Lazy require: yaml is already a dependency via the policy helpers but
     // pulling it at module load would slow down `nemoclaw --help` for users
@@ -543,11 +610,11 @@ function getBlueprintVersionField(field, rootDir = ROOT) {
   }
 }
 
-function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
+function getBlueprintMinOpenshellVersion(rootDir = ROOT): string | null {
   return getBlueprintVersionField("min_openshell_version", rootDir);
 }
 
-function getBlueprintMaxOpenshellVersion(rootDir = ROOT) {
+function getBlueprintMaxOpenshellVersion(rootDir = ROOT): string | null {
   return getBlueprintVersionField("max_openshell_version", rootDir);
 }
 
@@ -565,7 +632,7 @@ const SANDBOX_BASE_TAG = "latest";
  * Returns { digest, ref } on success, or null when the pull or
  * inspect fails (offline, GHCR outage, local-only build).
  */
-function pullAndResolveBaseImageDigest() {
+function pullAndResolveBaseImageDigest(): { digest: string; ref: string } | null {
   const imageWithTag = `${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`;
   try {
     run(["docker", "pull", imageWithTag], { suppressOutput: true });
@@ -602,16 +669,16 @@ function pullAndResolveBaseImageDigest() {
   return { digest, ref };
 }
 
-function getStableGatewayImageRef(versionOutput = null) {
+function getStableGatewayImageRef(versionOutput: string | null = null): string | null {
   const version = getInstalledOpenshellVersion(versionOutput);
   if (!version) return null;
   return `ghcr.io/nvidia/openshell/cluster:${version}`;
 }
 
-function getOpenshellBinary() {
+function getOpenshellBinary(): string {
   if (OPENSHELL_BIN) return OPENSHELL_BIN;
   const resolved = resolveOpenshell();
-  if (!resolved) {
+  if (typeof resolved !== "string" || resolved.length === 0) {
     console.error("  openshell CLI not found.");
     console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
     process.exit(1);
@@ -620,21 +687,24 @@ function getOpenshellBinary() {
   return OPENSHELL_BIN;
 }
 
-function openshellShellCommand(args, options = {}) {
+function openshellShellCommand(args: string[], options: { openshellBinary?: string } = {}): string {
   const openshellBinary = options.openshellBinary || getOpenshellBinary();
   return [shellQuote(openshellBinary), ...args.map((arg) => shellQuote(arg))].join(" ");
 }
 
-function openshellArgv(args, options = {}) {
+function openshellArgv(args: string[], options: { openshellBinary?: string } = {}): string[] {
   const openshellBinary = options.openshellBinary || getOpenshellBinary();
   return [openshellBinary, ...args];
 }
 
-function runOpenshell(args, opts = {}) {
+function runOpenshell(args: string[], opts: RunnerOptions & { openshellBinary?: string } = {}) {
   return run(openshellArgv(args, opts), opts);
 }
 
-function runCaptureOpenshell(args, opts = {}) {
+function runCaptureOpenshell(
+  args: string[],
+  opts: RunnerOptions & { openshellBinary?: string } = {},
+) {
   return runCapture(openshellArgv(args, opts), opts);
 }
 
@@ -647,7 +717,7 @@ const {
   parsePolicyPresetEnv,
 } = urlUtils;
 
-function hydrateCredentialEnv(envName) {
+function hydrateCredentialEnv(envName: string | null | undefined): string | null {
   if (!envName) return null;
   const value = getCredential(envName);
   if (value) {
@@ -664,7 +734,7 @@ const {
   runStreamingEventProbe,
 } = httpProbe;
 
-function getNavigationChoice(value = "") {
+function getNavigationChoice(value = ""): "back" | "exit" | null {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
@@ -673,7 +743,7 @@ function getNavigationChoice(value = "") {
   return null;
 }
 
-function exitOnboardFromPrompt() {
+function exitOnboardFromPrompt(): never {
   console.log("  Exiting onboarding.");
   process.exit(1);
 }
@@ -695,7 +765,12 @@ const {
 
 // validateNvidiaApiKeyValue — see validation import above
 
-async function replaceNamedCredential(envName, label, helpUrl = null, validator = null) {
+async function replaceNamedCredential(
+  envName: string,
+  label: string,
+  helpUrl: string | null = null,
+  validator: ((value: string) => string | null) | null = null,
+): Promise<string> {
   if (helpUrl) {
     console.log("");
     console.log(`  Get your ${label} from: ${helpUrl}`);
@@ -722,7 +797,12 @@ async function replaceNamedCredential(envName, label, helpUrl = null, validator 
   }
 }
 
-async function promptValidationRecovery(label, recovery, credentialEnv = null, helpUrl = null) {
+async function promptValidationRecovery(
+  label: string,
+  recovery: ProbeRecovery,
+  credentialEnv: string | null = null,
+  helpUrl: string | null = null,
+): Promise<"credential" | "selection" | "retry" | "model"> {
   if (isNonInteractive()) {
     process.exit(1);
   }
@@ -773,7 +853,7 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
   }
 
   if (recovery.kind === "transport") {
-    console.log(getTransportRecoveryMessage(recovery.failure || {}));
+    console.log(getTransportRecoveryMessage("failure" in recovery ? recovery.failure || {} : {}));
     const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: "))
       .trim()
       .toLowerCase();
@@ -814,7 +894,13 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
  * @param {string|null} baseUrl - Optional base URL for API-compatible endpoints.
  * @returns {string[]} Argument array for runOpenshell().
  */
-function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
+function buildProviderArgs(
+  action: "create" | "update",
+  name: string,
+  type: string,
+  credentialEnv: string,
+  baseUrl: string | null,
+): string[] {
   const args =
     action === "create"
       ? ["provider", "create", "--name", name, "--type", type, "--credential", credentialEnv]
@@ -839,11 +925,22 @@ function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
  * @param {Record<string, string>} [env={}] - Environment variables for the openshell command.
  * @returns {{ ok: boolean, status?: number, message?: string }}
  */
-function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
+function upsertProvider(
+  name: string,
+  type: string,
+  credentialEnv: string,
+  baseUrl: string | null,
+  env: NodeJS.ProcessEnv = {},
+): { ok: boolean; status?: number; message?: string } {
   const exists = providerExistsInGateway(name);
   const action = exists ? "update" : "create";
   const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl);
-  const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
+  const stdio: RunnerOptions["stdio"] = ["ignore", "pipe", "pipe"];
+  const runOpts: RunnerOptions = {
+    ignoreError: true,
+    env,
+    stdio,
+  };
   const result = runOpenshell(args, runOpts);
   if (result.status !== 0) {
     const output =
@@ -862,7 +959,22 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
  * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
  * @returns {string[]} Provider names that were upserted.
  */
-function upsertMessagingProviders(tokenDefs) {
+type MessagingTokenDef = { name: string; envKey: string; token: string | null };
+
+type EndpointValidationResult =
+  | { ok: true; api: string; retry?: undefined }
+  | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
+
+type SelectionDrift = {
+  changed: boolean;
+  providerChanged: boolean;
+  modelChanged: boolean;
+  existingProvider: string | null;
+  existingModel: string | null;
+  unknown: boolean;
+};
+
+function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]): string[] {
   const providers = [];
   for (const { name, envKey, token } of tokenDefs) {
     if (!token) continue;
@@ -885,7 +997,7 @@ function upsertMessagingProviders(tokenDefs) {
  * @param {string} name - Provider name to look up (e.g. "discord-bridge").
  * @returns {boolean} True if the provider exists in the gateway.
  */
-function providerExistsInGateway(name) {
+function providerExistsInGateway(name: string): boolean {
   const result = runOpenshell(["provider", "get", name], {
     ignoreError: true,
     stdio: ["ignore", "ignore", "ignore"],
@@ -900,7 +1012,7 @@ function providerExistsInGateway(name) {
  * @param {string} value - Credential value to hash.
  * @returns {string|null} Hex-encoded SHA-256 hash, or null if value is falsy.
  */
-function hashCredential(value) {
+function hashCredential(value: string | null | undefined): string | null {
   if (!value) return null;
   return crypto.createHash("sha256").update(String(value).trim()).digest("hex");
 }
@@ -917,7 +1029,10 @@ function hashCredential(value) {
  * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
  * @returns {{ changed: boolean, changedProviders: string[] }}
  */
-function detectMessagingCredentialRotation(sandboxName, tokenDefs) {
+function detectMessagingCredentialRotation(
+  sandboxName: string,
+  tokenDefs: MessagingTokenDef[],
+): { changed: boolean; changedProviders: string[] } {
   const sb = registry.getSandbox(sandboxName);
   const storedHashes = sb?.providerCredentialHashes || {};
   const changedProviders = [];
@@ -938,7 +1053,7 @@ function detectMessagingCredentialRotation(sandboxName, tokenDefs) {
 // gate, a transient gateway failure would be recorded as "no providers" and
 // permanently suppress future backfill retries.
 function makeConflictProbe() {
-  let gatewayAlive = null;
+  let gatewayAlive: boolean | null = null;
   const isGatewayAlive = () => {
     if (gatewayAlive === null) {
       const result = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
@@ -950,14 +1065,14 @@ function makeConflictProbe() {
     return gatewayAlive;
   };
   return {
-    providerExists: (name) => {
+    providerExists: (name: string) => {
       if (!isGatewayAlive()) return "error";
       return providerExistsInGateway(name) ? "present" : "absent";
     },
   };
 }
 
-function verifyInferenceRoute(_provider, _model) {
+function verifyInferenceRoute(_provider: string, _model: string): void {
   const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
   if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
     console.error("  OpenShell inference route was not configured.");
@@ -965,19 +1080,19 @@ function verifyInferenceRoute(_provider, _model) {
   }
 }
 
-function isInferenceRouteReady(provider, model) {
+function isInferenceRouteReady(provider: string, model: string): boolean {
   const live = parseGatewayInference(
     runCaptureOpenshell(["inference", "get"], { ignoreError: true }),
   );
   return Boolean(live && live.provider === provider && live.model === model);
 }
 
-function sandboxExistsInGateway(sandboxName) {
+function sandboxExistsInGateway(sandboxName: string): boolean {
   const output = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
   return Boolean(output);
 }
 
-function pruneStaleSandboxEntry(sandboxName) {
+function pruneStaleSandboxEntry(sandboxName: string): boolean {
   const existing = registry.getSandbox(sandboxName);
   const liveExists = sandboxExistsInGateway(sandboxName);
   if (existing && !liveExists) {
@@ -986,7 +1101,7 @@ function pruneStaleSandboxEntry(sandboxName) {
   return liveExists;
 }
 
-function findSelectionConfigPath(dir) {
+function findSelectionConfigPath(dir: string): string | null {
   if (!dir || !fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -1003,12 +1118,18 @@ function findSelectionConfigPath(dir) {
   return null;
 }
 
-function readSandboxSelectionConfig(sandboxName) {
+function readSandboxSelectionConfig(sandboxName: string): ProviderSelectionConfig | null {
   if (!sandboxName) return null;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-selection-"));
   try {
     const result = runOpenshell(
-      ["sandbox", "download", sandboxName, "/sandbox/.nemoclaw/config.json", `${tmpDir}${path.sep}`],
+      [
+        "sandbox",
+        "download",
+        sandboxName,
+        "/sandbox/.nemoclaw/config.json",
+        `${tmpDir}${path.sep}`,
+      ],
       { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
     );
     if (result.status !== 0) return null;
@@ -1031,7 +1152,11 @@ function readSandboxSelectionConfig(sandboxName) {
   }
 }
 
-function getSelectionDrift(sandboxName, requestedProvider, requestedModel) {
+function getSelectionDrift(
+  sandboxName: string,
+  requestedProvider: string | null,
+  requestedModel: string | null,
+): SelectionDrift {
   const existing = readSandboxSelectionConfig(sandboxName);
   if (!existing) {
     return {
@@ -1072,7 +1197,12 @@ function getSelectionDrift(sandboxName, requestedProvider, requestedModel) {
   };
 }
 
-async function confirmRecreateForSelectionDrift(sandboxName, drift, requestedProvider, requestedModel) {
+async function confirmRecreateForSelectionDrift(
+  sandboxName: string,
+  drift: SelectionDrift,
+  requestedProvider: string | null,
+  requestedModel: string | null,
+): Promise<boolean> {
   const currentProvider = drift.existingProvider || "unknown";
   const currentModel = drift.existingModel || "unknown";
   const nextProvider = requestedProvider || "unknown";
@@ -1081,7 +1211,9 @@ async function confirmRecreateForSelectionDrift(sandboxName, drift, requestedPro
   console.log(`  Sandbox '${sandboxName}' exists but requested inference selection changed.`);
   console.log(`  Current:   provider=${currentProvider}  model=${currentModel}`);
   console.log(`  Requested: provider=${nextProvider}  model=${nextModel}`);
-  console.log("  Recreating the sandbox is required to apply this change to the running OpenClaw UI.");
+  console.log(
+    "  Recreating the sandbox is required to apply this change to the running OpenClaw UI.",
+  );
 
   if (isNonInteractive()) {
     note("  [non-interactive] Recreating sandbox due to provider/model drift.");
@@ -1092,7 +1224,7 @@ async function confirmRecreateForSelectionDrift(sandboxName, drift, requestedPro
   return isAffirmativeAnswer(answer);
 }
 
-function buildSandboxConfigSyncScript(selectionConfig) {
+function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
   // openclaw.json is immutable (root:root 444, Landlock read-only) — never
   // write to it at runtime.  Model routing is handled by the host-side
   // gateway (`openshell inference set` in Step 5), not from inside the
@@ -1107,21 +1239,21 @@ exit
 `.trim();
 }
 
-function isOpenclawReady(sandboxName) {
+function isOpenclawReady(sandboxName: string): boolean {
   return Boolean(fetchGatewayAuthTokenFromSandbox(sandboxName));
 }
 
-function writeSandboxConfigSyncFile(script) {
+function writeSandboxConfigSyncFile(script: string): string {
   const scriptFile = secureTempFile("nemoclaw-sync", ".sh");
   fs.writeFileSync(scriptFile, `${script}\n`, { mode: 0o600 });
   return scriptFile;
 }
 
-function encodeDockerJsonArg(value) {
+function encodeDockerJsonArg(value: LooseValue): string {
   return Buffer.from(JSON.stringify(value || {}), "utf8").toString("base64");
 }
 
-function isAffirmativeAnswer(value) {
+function isAffirmativeAnswer(value: string | null | undefined): boolean {
   return ["y", "yes"].includes(
     String(value || "")
       .trim()
@@ -1129,7 +1261,7 @@ function isAffirmativeAnswer(value) {
   );
 }
 
-function validateBraveSearchApiKey(apiKey) {
+function validateBraveSearchApiKey(apiKey: string): CurlProbeResult {
   return runCurlProbe([
     "-sS",
     "--compressed",
@@ -1148,7 +1280,9 @@ function validateBraveSearchApiKey(apiKey) {
   ]);
 }
 
-async function promptBraveSearchRecovery(validation) {
+async function promptBraveSearchRecovery(
+  validation: ValidationFailureLike,
+): Promise<"retry" | "skip"> {
   const recovery = classifyValidationFailure(validation);
 
   if (recovery.kind === "credential") {
@@ -1167,7 +1301,7 @@ async function promptBraveSearchRecovery(validation) {
   return "retry";
 }
 
-async function promptBraveSearchApiKey() {
+async function promptBraveSearchApiKey(): Promise<string> {
   console.log("");
   console.log(`  Get your Brave Search API key from: ${BRAVE_SEARCH_HELP_URL}`);
   console.log("");
@@ -1184,9 +1318,12 @@ async function promptBraveSearchApiKey() {
   }
 }
 
-async function ensureValidatedBraveSearchCredential(nonInteractive = isNonInteractive()) {
+async function ensureValidatedBraveSearchCredential(
+  nonInteractive = isNonInteractive(),
+): Promise<string | null> {
   const savedApiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
-  let apiKey = savedApiKey || normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV]);
+  let apiKey: string | null =
+    savedApiKey || normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV]);
   let usingSavedKey = Boolean(savedApiKey);
 
   while (true) {
@@ -1233,7 +1370,9 @@ async function ensureValidatedBraveSearchCredential(nonInteractive = isNonIntera
   }
 }
 
-async function configureWebSearch(existingConfig = null) {
+async function configureWebSearch(
+  existingConfig: WebSearchConfig | null = null,
+): Promise<WebSearchConfig | null> {
   if (existingConfig) {
     return { fetchEnabled: true };
   }
@@ -1271,7 +1410,17 @@ async function configureWebSearch(existingConfig = null) {
   return { fetchEnabled: true };
 }
 
-function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi = null) {
+function getSandboxInferenceConfig(
+  model: string,
+  provider: string | null = null,
+  preferredInferenceApi: string | null = null,
+): {
+  providerKey: string;
+  primaryModelRef: string;
+  inferenceBaseUrl: string;
+  inferenceApi: string;
+  inferenceCompat: LooseObject | null;
+} {
   let providerKey;
   let primaryModelRef;
   let inferenceBaseUrl = "https://inference.local/v1";
@@ -1316,17 +1465,17 @@ function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi
 }
 
 function patchStagedDockerfile(
-  dockerfilePath,
-  model,
-  chatUiUrl,
+  dockerfilePath: string,
+  model: string,
+  chatUiUrl: string,
   buildId = String(Date.now()),
-  provider = null,
-  preferredInferenceApi = null,
-  webSearchConfig = null,
-  messagingChannels = [],
-  messagingAllowedIds = {},
-  discordGuilds = {},
-  baseImageRef = null,
+  provider: string | null = null,
+  preferredInferenceApi: string | null = null,
+  webSearchConfig: WebSearchConfig | null = null,
+  messagingChannels: string[] = [],
+  messagingAllowedIds: LooseObject = {},
+  discordGuilds: LooseObject = {},
+  baseImageRef: string | null = null,
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -1337,16 +1486,19 @@ function patchStagedDockerfile(
   // Only rewrite when the current value already points at our sandbox-base
   // image — custom --from Dockerfiles may use a different base.
   if (baseImageRef) {
-    dockerfile = dockerfile.replace(/^ARG BASE_IMAGE=(.*)$/m, (line, currentValue) => {
-      const trimmed = String(currentValue).trim();
-      if (
-        trimmed.startsWith(`${SANDBOX_BASE_IMAGE}:`) ||
-        trimmed.startsWith(`${SANDBOX_BASE_IMAGE}@`)
-      ) {
-        return `ARG BASE_IMAGE=${baseImageRef}`;
-      }
-      return line;
-    });
+    dockerfile = dockerfile.replace(
+      /^ARG BASE_IMAGE=(.*)$/m,
+      (line: string, currentValue: string) => {
+        const trimmed = String(currentValue).trim();
+        if (
+          trimmed.startsWith(`${SANDBOX_BASE_IMAGE}:`) ||
+          trimmed.startsWith(`${SANDBOX_BASE_IMAGE}@`)
+        ) {
+          return `ARG BASE_IMAGE=${baseImageRef}`;
+        }
+        return line;
+      },
+    );
   }
   dockerfile = dockerfile.replace(/^ARG NEMOCLAW_MODEL=.*$/m, `ARG NEMOCLAW_MODEL=${model}`);
   dockerfile = dockerfile.replace(
@@ -1459,23 +1611,44 @@ function patchStagedDockerfile(
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
 
-function parseJsonObject(body) {
+type ResponseOutputValue = LooseScalar | ResponseOutputItem | ResponseOutputValue[];
+type ResponseOutputRoot = { output?: ResponseOutputValue[] };
+type ResponseOutputItem = {
+  type?: string;
+  content?: ResponseOutputValue[];
+};
+
+function parseJsonObject(body: string | null | undefined): ResponseOutputRoot | null {
   if (!body) return null;
   try {
-    return JSON.parse(body);
+    return parseJson<ResponseOutputRoot>(body);
   } catch {
     return null;
   }
 }
 
-function hasResponsesToolCall(body) {
+function readResponseOutputItem(
+  value: ResponseOutputValue | object | undefined,
+): ResponseOutputItem | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const type = Reflect.get(value, "type");
+  const content = Reflect.get(value, "content");
+  return {
+    type: typeof type === "string" ? type : undefined,
+    content: Array.isArray(content) ? content : undefined,
+  };
+}
+
+function hasResponsesToolCall(body: string | null | undefined): boolean {
   const parsed = parseJsonObject(body);
   if (!parsed || !Array.isArray(parsed.output)) return false;
 
   const stack = [...parsed.output];
   while (stack.length > 0) {
-    const item = stack.pop();
-    if (!item || typeof item !== "object") continue;
+    const item = readResponseOutputItem(stack.pop());
+    if (!item) continue;
     if (item.type === "function_call" || item.type === "tool_call") return true;
     if (Array.isArray(item.content)) {
       stack.push(...item.content);
@@ -1485,7 +1658,7 @@ function hasResponsesToolCall(body) {
   return false;
 }
 
-function shouldRequireResponsesToolCalling(provider) {
+function shouldRequireResponsesToolCalling(provider: string): boolean {
   return (
     provider === "nvidia-prod" || provider === "gemini-api" || provider === "compatible-endpoint"
   );
@@ -1499,7 +1672,7 @@ function shouldRequireResponsesToolCalling(provider) {
 // helper (probeOpenAiLikeEndpoint, probeResponsesToolCalling) target the
 // OpenAI-compat URL, so returning undefined for every provider is correct:
 // probes default to Bearer auth and Gemini onboarding succeeds.
-function getProbeAuthMode(_provider) {
+function getProbeAuthMode(_provider: string): "query-param" | undefined {
   return undefined;
 }
 
@@ -1510,18 +1683,23 @@ function getProbeAuthMode(_provider) {
 // Per-validation-probe curl timing. Tighter than the default 60s in
 // getCurlTimingArgs() because validation must not hang the wizard for a
 // minute on a misbehaving model. See issue #1601 (Bug 3).
-function getValidationProbeCurlArgs(opts) {
+function getValidationProbeCurlArgs(opts?: { isWsl?: boolean }): string[] {
   if (isWsl(opts)) {
     return ["--connect-timeout", "20", "--max-time", "30"];
   }
   return ["--connect-timeout", "10", "--max-time", "15"];
 }
 
-function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
+function probeResponsesToolCalling(
+  endpointUrl: string,
+  model: string,
+  apiKey: string | null,
+  options: { authMode?: "bearer" | "query-param" } = {},
+): CurlProbeResult {
   const useQueryParam = options.authMode === "query-param";
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authHeader =
+  const authHeader: string[] =
     !useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : [];
   const url =
     useQueryParam && normalizedKey
@@ -1573,13 +1751,35 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
   };
 }
 
-function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
+type EndpointProbeFailure = {
+  name: string;
+  httpStatus: number;
+  curlStatus: number;
+  message: string;
+  body?: string;
+};
+
+type EndpointProbeResult =
+  | { ok: true; api: string; label: string }
+  | { ok: false; message: string; failures: EndpointProbeFailure[] };
+
+function probeOpenAiLikeEndpoint(
+  endpointUrl: string,
+  model: string,
+  apiKey: string | null,
+  options: {
+    authMode?: "bearer" | "query-param";
+    requireResponsesToolCalling?: boolean;
+    skipResponsesProbe?: boolean;
+    probeStreaming?: boolean;
+  } = {},
+): EndpointProbeResult {
   const useQueryParam = options.authMode === "query-param";
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authHeader =
+  const authHeader: string[] =
     !useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : [];
-  const appendKey = (path) =>
+  const appendKey = (path: string): string =>
     useQueryParam && normalizedKey
       ? `${baseUrl}${path}?key=${encodeURIComponent(normalizedKey)}`
       : `${baseUrl}${path}`;
@@ -1637,7 +1837,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     ? [chatCompletionsProbe]
     : [responsesProbe, chatCompletionsProbe];
 
-  const failures = [];
+  const failures: EndpointProbeFailure[] = [];
   for (const probe of probes) {
     const result = probe.execute();
     if (result.ok) {
@@ -1709,7 +1909,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   // Single retry with doubled timeouts on timeout/connection failure.
   // WSL2's virtualized network stack can cause the initial probe to time out
   // before the TLS handshake completes. See issue #987.
-  const isTimeoutOrConnFailure = (cs) => cs === 28 || cs === 6 || cs === 7;
+  const isTimeoutOrConnFailure = (cs: number | undefined) => cs === 28 || cs === 6 || cs === 7;
   let retriedAfterTimeout = false;
   if (failures.length > 0 && isTimeoutOrConnFailure(failures[0].curlStatus)) {
     retriedAfterTimeout = true;
@@ -1739,7 +1939,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   const accountFailure = failures.find(
     (failure) =>
       isNvcfFunctionNotFoundForAccount(failure.message) ||
-      isNvcfFunctionNotFoundForAccount(failure.body),
+      isNvcfFunctionNotFoundForAccount(failure.body || ""),
   );
   if (accountFailure) {
     return {
@@ -1762,7 +1962,11 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   };
 }
 
-function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
+function probeAnthropicEndpoint(
+  endpointUrl: string,
+  model: string,
+  apiKey: string | null,
+): EndpointProbeResult {
   const result = runCurlProbe([
     "-sS",
     ...getCurlTimingArgs(),
@@ -1798,14 +2002,19 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
 }
 
 async function validateOpenAiLikeSelection(
-  label,
-  endpointUrl,
-  model,
-  credentialEnv = null,
+  label: string,
+  endpointUrl: string,
+  model: string,
+  credentialEnv: string | null = null,
   retryMessage = "Please choose a provider/model again.",
-  helpUrl = null,
-  options = {},
-) {
+  helpUrl: string | null = null,
+  options: {
+    authMode?: "bearer" | "query-param";
+    requireResponsesToolCalling?: boolean;
+    skipResponsesProbe?: boolean;
+    probeStreaming?: boolean;
+  } = {},
+): Promise<EndpointValidationResult> {
   const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
   const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options);
   if (!probe.ok) {
@@ -1831,13 +2040,13 @@ async function validateOpenAiLikeSelection(
 }
 
 async function validateAnthropicSelectionWithRetryMessage(
-  label,
-  endpointUrl,
-  model,
-  credentialEnv,
+  label: string,
+  endpointUrl: string,
+  model: string,
+  credentialEnv: string,
   retryMessage = "Please choose a provider/model again.",
-  helpUrl = null,
-) {
+  helpUrl: string | null = null,
+): Promise<EndpointValidationResult> {
   const apiKey = getCredential(credentialEnv);
   const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
   if (!probe.ok) {
@@ -1863,12 +2072,12 @@ async function validateAnthropicSelectionWithRetryMessage(
 }
 
 async function validateCustomOpenAiLikeSelection(
-  label,
-  endpointUrl,
-  model,
-  credentialEnv,
-  helpUrl = null,
-) {
+  label: string,
+  endpointUrl: string,
+  model: string,
+  credentialEnv: string,
+  helpUrl: string | null = null,
+): Promise<EndpointValidationResult> {
   const apiKey = getCredential(credentialEnv);
   const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, {
     requireResponsesToolCalling: true,
@@ -1898,12 +2107,12 @@ async function validateCustomOpenAiLikeSelection(
 }
 
 async function validateCustomAnthropicSelection(
-  label,
-  endpointUrl,
-  model,
-  credentialEnv,
-  helpUrl = null,
-) {
+  label: string,
+  endpointUrl: string,
+  model: string,
+  credentialEnv: string,
+  helpUrl: string | null = null,
+): Promise<EndpointValidationResult> {
   const apiKey = getCredential(credentialEnv);
   const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
   if (probe.ok) {
@@ -1975,9 +2184,10 @@ function loadPersistedProxyToken(): string | null {
 }
 
 function persistProxyPid(pid: number | null | undefined): void {
-  if (!Number.isInteger(pid) || pid <= 0) return;
+  const validPid = typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
+  if (validPid === null) return;
   ensureProxyStateDir();
-  fs.writeFileSync(PROXY_PID_PATH, `${pid}\n`, { mode: 0o600 });
+  fs.writeFileSync(PROXY_PID_PATH, `${validPid}\n`, { mode: 0o600 });
   fs.chmodSync(PROXY_PID_PATH, 0o600);
 }
 
@@ -2003,8 +2213,11 @@ function clearPersistedProxyPid(): void {
 }
 
 function isOllamaProxyProcess(pid: number | null | undefined): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  const cmdline = runCapture(["ps", "-p", String(pid), "-o", "args="], { ignoreError: true });
+  const validPid = typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
+  if (validPid === null) return false;
+  const cmdline = runCapture(["ps", "-p", String(validPid), "-o", "args="], {
+    ignoreError: true,
+  });
   return Boolean(cmdline && cmdline.includes("ollama-auth-proxy.js"));
 }
 
@@ -2053,11 +2266,12 @@ function startOllamaAuthProxy(): boolean {
   const crypto = require("crypto");
   killStaleProxy();
 
-  ollamaProxyToken = crypto.randomBytes(24).toString("hex");
+  const proxyToken = crypto.randomBytes(24).toString("hex");
+  ollamaProxyToken = proxyToken;
   // Don't persist yet — wait until provider is confirmed in setupInference.
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
-  const pid = spawnOllamaAuthProxy(ollamaProxyToken);
+  const pid = spawnOllamaAuthProxy(proxyToken);
   sleep(1);
   if (!isOllamaProxyProcess(pid)) {
     console.error(`  Error: Ollama auth proxy failed to start on :${OLLAMA_PROXY_PORT}`);
@@ -2099,7 +2313,7 @@ function getOllamaProxyToken(): string | null {
   return ollamaProxyToken;
 }
 
-async function promptOllamaModel(gpu = null) {
+async function promptOllamaModel(gpu: GpuInfo | null = null): Promise<string> {
   const installed = getOllamaModelOptions();
   const options = installed.length > 0 ? installed : getBootstrapOllamaModelOptions(gpu);
   const defaultModel = getDefaultOllamaModel(gpu);
@@ -2134,7 +2348,7 @@ function printOllamaExposureWarning() {
   console.log("");
 }
 
-function pullOllamaModel(model) {
+function pullOllamaModel(model: string): boolean {
   const result = spawnSync("ollama", ["pull", model], {
     cwd: ROOT,
     encoding: "utf8",
@@ -2151,7 +2365,10 @@ function pullOllamaModel(model) {
   return result.status === 0;
 }
 
-function prepareOllamaModel(model, installedModels = []) {
+function prepareOllamaModel(
+  model: string,
+  installedModels: string[] = [],
+): ValidationResult | { ok: false; message: string } {
   const alreadyInstalled = installedModels.includes(model);
   if (!alreadyInstalled) {
     console.log(`  Pulling Ollama model: ${model}`);
@@ -2170,14 +2387,14 @@ function prepareOllamaModel(model, installedModels = []) {
   return validateOllamaModel(model);
 }
 
-function getRequestedSandboxNameHint() {
+function getRequestedSandboxNameHint(): string | null {
   const raw = process.env.NEMOCLAW_SANDBOX_NAME;
   if (typeof raw !== "string") return null;
   const normalized = raw.trim().toLowerCase();
   return normalized || null;
 }
 
-function getResumeSandboxConflict(session) {
+function getResumeSandboxConflict(session: Session | null) {
   const requestedSandboxName = getRequestedSandboxNameHint();
   if (!requestedSandboxName || !session?.sandboxName) {
     return null;
@@ -2187,17 +2404,17 @@ function getResumeSandboxConflict(session) {
     : null;
 }
 
-function getRequestedProviderHint(nonInteractive = isNonInteractive()) {
+function getRequestedProviderHint(nonInteractive = isNonInteractive()): string | null {
   return nonInteractive ? getNonInteractiveProvider() : null;
 }
 
-function getRequestedModelHint(nonInteractive = isNonInteractive()) {
+function getRequestedModelHint(nonInteractive = isNonInteractive()): string | null {
   if (!nonInteractive) return null;
   const providerKey = getRequestedProviderHint(nonInteractive) || "cloud";
   return getNonInteractiveModel(providerKey);
 }
 
-function getEffectiveProviderName(providerKey) {
+function getEffectiveProviderName(providerKey: string | null | undefined): string | null {
   if (!providerKey) return null;
   if (REMOTE_PROVIDER_CONFIG[providerKey]) {
     return REMOTE_PROVIDER_CONFIG[providerKey].providerName;
@@ -2216,7 +2433,10 @@ function getEffectiveProviderName(providerKey) {
   }
 }
 
-function getResumeConfigConflicts(session, opts = {}) {
+function getResumeConfigConflicts(
+  session: Session | null,
+  opts: { nonInteractive?: boolean; fromDockerfile?: string | null; agent?: string | null } = {},
+) {
   const conflicts = [];
   const nonInteractive = opts.nonInteractive ?? isNonInteractive();
 
@@ -2277,12 +2497,14 @@ function getResumeConfigConflicts(session, opts = {}) {
   return conflicts;
 }
 
-function getContainerRuntime() {
+function getContainerRuntime(): ContainerRuntime {
   const info = runCapture(["docker", "info"], { ignoreError: true });
   return inferContainerRuntime(info);
 }
 
-function printRemediationActions(actions) {
+function printRemediationActions(
+  actions: Array<{ title: string; reason: string; commands?: string[] }> | null | undefined,
+): void {
   if (!Array.isArray(actions) || actions.length === 0) {
     return;
   }
@@ -2298,18 +2520,18 @@ function printRemediationActions(actions) {
   }
 }
 
-function isOpenshellInstalled() {
+function isOpenshellInstalled(): boolean {
   return resolveOpenshell() !== null;
 }
 
-function getFutureShellPathHint(binDir, pathValue = process.env.PATH || "") {
+function getFutureShellPathHint(binDir: string, pathValue = process.env.PATH || ""): string | null {
   if (String(pathValue).split(path.delimiter).includes(binDir)) {
     return null;
   }
   return `export PATH="${binDir}:$PATH"`;
 }
 
-function getPortConflictServiceHints(platform = process.platform) {
+function getPortConflictServiceHints(platform = process.platform): string[] {
   if (platform === "darwin") {
     return [
       "       # or, if it's a launchctl service (macOS):",
@@ -2324,7 +2546,11 @@ function getPortConflictServiceHints(platform = process.platform) {
   ];
 }
 
-function installOpenshell() {
+function installOpenshell(): {
+  installed: boolean;
+  localBin: string | null;
+  futureShellPathHint: string | null;
+} {
   const result = spawnSync("bash", [path.join(SCRIPTS, "install-openshell.sh")], {
     cwd: ROOT,
     env: process.env,
@@ -2355,7 +2581,7 @@ function installOpenshell() {
   };
 }
 
-function sleep(seconds) {
+function sleep(seconds: number): void {
   sleepSeconds(seconds);
 }
 
@@ -2376,7 +2602,7 @@ function destroyGateway() {
   );
 }
 
-function getGatewayClusterContainerState() {
+function getGatewayClusterContainerState(): string {
   const containerName = getGatewayClusterContainerName();
   const state = runCapture(
     `docker inspect --type container --format '{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}' ${shellQuote(containerName)} 2>/dev/null`,
@@ -2407,15 +2633,15 @@ function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
   };
 }
 
-function getGatewayClusterContainerName() {
+function getGatewayClusterContainerName(): string {
   return `openshell-cluster-${GATEWAY_NAME}`;
 }
 
-function getGatewayLocalEndpoint() {
+function getGatewayLocalEndpoint(): string {
   return `https://127.0.0.1:${GATEWAY_PORT}`;
 }
 
-function getGatewayBootstrapRepairPlan(missingSecrets = []) {
+function getGatewayBootstrapRepairPlan(missingSecrets: string[] = []) {
   const allowed = new Set(GATEWAY_BOOTSTRAP_SECRET_NAMES);
   const normalized = [
     ...new Set((missingSecrets || []).map((name) => String(name).trim()).filter(Boolean)),
@@ -2433,7 +2659,7 @@ function getGatewayBootstrapRepairPlan(missingSecrets = []) {
   };
 }
 
-function buildGatewayBootstrapSecretsScript(missingSecrets = []) {
+function buildGatewayBootstrapSecretsScript(missingSecrets: string[] = []): string {
   const plan = getGatewayBootstrapRepairPlan(missingSecrets);
   if (!plan.needsRepair) return "exit 0";
 
@@ -2472,12 +2698,12 @@ fi
 `;
 }
 
-function runGatewayClusterCapture(script, opts = {}) {
+function runGatewayClusterCapture(script: string, opts: RunnerOptions = {}) {
   const containerName = getGatewayClusterContainerName();
   return runCapture(`docker exec ${shellQuote(containerName)} sh -lc ${shellQuote(script)}`, opts);
 }
 
-function runGatewayCluster(script, opts = {}) {
+function runGatewayCluster(script: string, opts: RunnerOptions = {}) {
   const containerName = getGatewayClusterContainerName();
   return run(`docker exec ${shellQuote(containerName)} sh -lc ${shellQuote(script)}`, opts);
 }
@@ -2501,7 +2727,7 @@ done
     .filter(Boolean);
 }
 
-function gatewayClusterHealthcheckPassed() {
+function gatewayClusterHealthcheckPassed(): boolean {
   const result = runGatewayCluster("/usr/local/bin/cluster-healthcheck.sh", {
     ignoreError: true,
     suppressOutput: true,
@@ -2509,7 +2735,7 @@ function gatewayClusterHealthcheckPassed() {
   return result.status === 0;
 }
 
-function repairGatewayBootstrapSecrets() {
+function repairGatewayBootstrapSecrets(): { repaired: boolean; missingSecrets: string[] } {
   const missingSecrets = listMissingGatewayBootstrapSecrets();
   const plan = getGatewayBootstrapRepairPlan(missingSecrets);
   if (!plan.needsRepair) return { repaired: false, missingSecrets };
@@ -2529,7 +2755,9 @@ function repairGatewayBootstrapSecrets() {
   return { repaired: false, missingSecrets: remainingSecrets };
 }
 
-function attachGatewayMetadataIfNeeded({ forceRefresh = false } = {}) {
+function attachGatewayMetadataIfNeeded({
+  forceRefresh = false,
+}: { forceRefresh?: boolean } = {}): boolean {
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
     ignoreError: true,
   });
@@ -2549,7 +2777,15 @@ function attachGatewayMetadataIfNeeded({ forceRefresh = false } = {}) {
   return false;
 }
 
-async function ensureNamedCredential(envName, label, helpUrl = null) {
+async function ensureNamedCredential(
+  envName: string | null,
+  label: string,
+  helpUrl: string | null = null,
+): Promise<string> {
+  if (!envName) {
+    console.error(`  Missing credential target for ${label}.`);
+    process.exit(1);
+  }
   let key = getCredential(envName);
   if (key) {
     process.env[envName] = key;
@@ -2558,7 +2794,7 @@ async function ensureNamedCredential(envName, label, helpUrl = null) {
   return replaceNamedCredential(envName, label, helpUrl);
 }
 
-function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
+function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 2): boolean {
   for (let i = 0; i < attempts; i += 1) {
     const podPhase = runCaptureOpenshell(
       [
@@ -2585,10 +2821,10 @@ function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
 // parsePolicyPresetEnv — see urlUtils import above
 // isSafeModelId — see validation import above
 
-function getNonInteractiveProvider() {
+function getNonInteractiveProvider(): string | null {
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
-  const aliases = {
+  const aliases: Record<string, string> = {
     cloud: "build",
     nim: "nim-local",
     vllm: "vllm",
@@ -2618,7 +2854,7 @@ function getNonInteractiveProvider() {
   return normalized;
 }
 
-function getNonInteractiveModel(providerKey) {
+function getNonInteractiveModel(providerKey: string): string | null {
   const model = (process.env.NEMOCLAW_MODEL || "").trim();
   if (!model) return null;
   if (!isSafeModelId(model)) {
@@ -2632,7 +2868,7 @@ function getNonInteractiveModel(providerKey) {
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 // eslint-disable-next-line complexity
-async function preflight() {
+async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
 
   const host = assessHost();
@@ -2848,7 +3084,14 @@ async function preflight() {
   // OpenShell CLI — install if missing, upgrade if below minimum version.
   // MIN_VERSION in install-openshell.sh handles the version gate; calling it
   // when openshell already exists is safe (it exits early if version is OK).
-  let openshellInstall = { localBin: null, futureShellPathHint: null };
+  let openshellInstall: {
+    installed?: boolean;
+    localBin: string | null;
+    futureShellPathHint: string | null;
+  } = {
+    localBin: null,
+    futureShellPathHint: null,
+  };
   if (!isOpenshellInstalled()) {
     console.log("  openshell CLI not found. Installing...");
     openshellInstall = installOpenshell();
@@ -3117,12 +3360,12 @@ async function preflight() {
           `  ⚠ Low memory detected (${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap = ${mem.totalMB} MB total)`,
         );
 
-        let proceedWithSwap = false;
+        let proceedWithSwap: boolean = false;
         if (!isNonInteractive()) {
           const answer = await prompt(
             "  Create a 4 GB swap file to prevent OOM during sandbox build? (requires sudo) [y/N]: ",
           );
-          proceedWithSwap = answer && answer.toLowerCase().startsWith("y");
+          proceedWithSwap = Boolean(answer && answer.toLowerCase().startsWith("y"));
         }
 
         if (!proceedWithSwap) {
@@ -3157,7 +3400,10 @@ async function preflight() {
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
 /** Start the OpenShell gateway with retry logic and post-start health polling. */
-async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
+async function startGatewayWithOptions(
+  _gpu: ReturnType<typeof nim.detectGpu>,
+  { exitOnFailure = true }: { exitOnFailure?: boolean } = {},
+) {
   step(2, 8, "Starting OpenShell gateway");
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
@@ -3277,7 +3523,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
         retries,
         minTimeout: 10_000,
         factor: 3,
-        onFailedAttempt: (err) => {
+        onFailedAttempt: (err: { attemptNumber: number; retriesLeft: number }) => {
           console.log(
             `  Gateway start attempt ${err.attemptNumber} failed. ${err.retriesLeft} retries left...`,
           );
@@ -3334,16 +3580,16 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
-async function startGateway(_gpu) {
+async function startGateway(_gpu: ReturnType<typeof nim.detectGpu>): Promise<void> {
   return startGatewayWithOptions(_gpu, { exitOnFailure: true });
 }
 
-async function startGatewayForRecovery(_gpu) {
+async function startGatewayForRecovery(_gpu: ReturnType<typeof nim.detectGpu>): Promise<void> {
   return startGatewayWithOptions(_gpu, { exitOnFailure: false });
 }
 
-function getGatewayStartEnv() {
-  const gatewayEnv = {};
+function getGatewayStartEnv(): Record<string, string> {
+  const gatewayEnv: Record<string, string> = {};
   const openshellVersion = getInstalledOpenshellVersion();
   const stableGatewayImage = openshellVersion
     ? `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`
@@ -3383,7 +3629,7 @@ async function recoverGatewayRuntime() {
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
   const recoveryWait = getGatewayHealthWaitConfig(
-    startResult.status,
+    startResult.status ?? 0,
     getGatewayClusterContainerState(),
   );
   const recoveryPollCount = recoveryWait.extended
@@ -3460,7 +3706,8 @@ async function promptValidatedSandboxName() {
       }
       return validatedSandboxName;
     } catch (error) {
-      console.error(`  ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`  ${errorMessage}`);
     }
 
     if (/^[0-9]/.test(sandboxName)) {
@@ -3487,6 +3734,16 @@ async function promptValidatedSandboxName() {
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
+type OnboardConfigSummary = {
+  provider: string | null;
+  model: string | null;
+  credentialEnv?: string | null;
+  webSearchConfig?: WebSearchConfig | null;
+  enabledChannels?: string[] | null;
+  sandboxName: string;
+  notes?: string[] | null;
+};
+
 /**
  * Render the configuration summary shown before the destructive sandbox build.
  * Extracted from confirmOnboardConfiguration() for direct unit testing — see #2165.
@@ -3503,17 +3760,18 @@ function formatOnboardConfigSummary({
   provider,
   model,
   credentialEnv = null,
-  webSearchConfig,
-  enabledChannels,
+  webSearchConfig = null,
+  enabledChannels = null,
   sandboxName,
   notes = [],
-}) {
+}: OnboardConfigSummary): string {
   const bar = `  ${"─".repeat(50)}`;
   const messaging =
     Array.isArray(enabledChannels) && enabledChannels.length > 0
       ? enabledChannels.join(", ")
       : "none";
-  const webSearch = webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
+  const webSearch =
+    webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
   const apiKeyLine = credentialEnv
     ? `  API key:       ${credentialEnv} (stored in ~/.nemoclaw/credentials.json)`
     : `  API key:       (not required for ${provider ?? "this provider"})`;
@@ -3538,15 +3796,15 @@ function formatOnboardConfigSummary({
 
 // eslint-disable-next-line complexity
 async function createSandbox(
-  gpu,
-  model,
-  provider,
-  preferredInferenceApi = null,
-  sandboxNameOverride = null,
-  webSearchConfig = null,
-  enabledChannels = null,
-  fromDockerfile = null,
-  agent = null,
+  gpu: ReturnType<typeof nim.detectGpu>,
+  model: string,
+  provider: string,
+  preferredInferenceApi: string | null = null,
+  sandboxNameOverride: string | null = null,
+  webSearchConfig: WebSearchConfig | null = null,
+  enabledChannels: string[] | null = null,
+  fromDockerfile: string | null = null,
+  agent: AgentDefinition | null = null,
   dangerouslySkipPermissions = false,
 ) {
   step(6, 8, "Creating sandbox");
@@ -3562,7 +3820,7 @@ async function createSandbox(
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
   // without provider attachments (security: prevents legacy raw-env-var leaks).
-  const getMessagingToken = (envKey) =>
+  const getMessagingToken = (envKey: string): string | null =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
 
   // The UI toggle list can include channels the user toggled on but then
@@ -3622,8 +3880,9 @@ async function createSandbox(
   // the bridge comes back.
   const disabledChannels = registry.getDisabledChannels(sandboxName);
   const disabledEnvKeys = new Set(
-    MESSAGING_CHANNELS.filter((c) => disabledChannels.includes(c.name))
-      .flatMap((c) => (c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey])),
+    MESSAGING_CHANNELS.filter((c) => disabledChannels.includes(c.name)).flatMap((c) =>
+      c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey],
+    ),
   );
 
   const messagingTokenDefs = [
@@ -3665,7 +3924,7 @@ async function createSandbox(
 
   // Declared outside the liveExists block so it is accessible during
   // post-creation restore (the sandbox create path runs after the block).
-  let pendingStateRestore = null;
+  let pendingStateRestore: BackupResult | null = null;
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
@@ -3713,7 +3972,9 @@ async function createSandbox(
           }
         } else {
           console.error(`  Sandbox '${sandboxName}' already exists but is not ready.`);
-          console.error("  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.");
+          console.error(
+            "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.",
+          );
           process.exit(1);
         }
       } else if (existingSandboxState === "ready") {
@@ -3742,7 +4003,11 @@ async function createSandbox(
       } else {
         console.log(`  Sandbox '${sandboxName}' exists but is not ready.`);
         console.log("  Selecting 'n' will abort onboarding.");
-        const answer = await promptOrDefault("  Delete it and create a new one? [Y/n]: ", null, "y");
+        const answer = await promptOrDefault(
+          "  Delete it and create a new one? [Y/n]: ",
+          null,
+          "y",
+        );
         const normalizedAnswer = answer.trim().toLowerCase();
         if (normalizedAnswer === "n" || normalizedAnswer === "no") {
           console.log("  Aborting onboarding.");
@@ -3767,9 +4032,10 @@ async function createSandbox(
           console.error("  Pass --recreate-sandbox to force recreation without backup.");
           upsertMessagingProviders(messagingTokenDefs);
           // Update stored hashes so the next onboard doesn't re-detect rotation.
-          const abortHashes = {};
+          const abortHashes: Record<string, string> = {};
           for (const { envKey, token } of messagingTokenDefs) {
-            if (token) abortHashes[envKey] = hashCredential(token);
+            const hash = token ? hashCredential(token) : null;
+            if (hash) abortHashes[envKey] = hash;
           }
           if (Object.keys(abortHashes).length > 0) {
             registry.updateSandbox(sandboxName, { providerCredentialHashes: abortHashes });
@@ -3778,12 +4044,14 @@ async function createSandbox(
           return sandboxName;
         }
       } catch (err) {
-        console.error(`  State backup threw: ${err.message} — aborting rebuild.`);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error(`  State backup threw: ${errorMessage} — aborting rebuild.`);
         console.error("  Pass --recreate-sandbox to force recreation without backup.");
         upsertMessagingProviders(messagingTokenDefs);
-        const abortHashes = {};
+        const abortHashes: Record<string, string> = {};
         for (const { envKey, token } of messagingTokenDefs) {
-          if (token) abortHashes[envKey] = hashCredential(token);
+          const hash = token ? hashCredential(token) : null;
+          if (hash) abortHashes[envKey] = hash;
         }
         if (Object.keys(abortHashes).length > 0) {
           registry.updateSandbox(sandboxName, { providerCredentialHashes: abortHashes });
@@ -3806,10 +4074,11 @@ async function createSandbox(
       note(`  Sandbox '${sandboxName}' exists but is not ready — recreating it.`);
     }
 
-    const previousEntry = registry.getSandbox(sandboxName);
-    if (previousEntry?.policies?.length > 0) {
-      onboardSession.updateSession((current) => {
-        current.policyPresets = previousEntry.policies;
+    const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
+    const previousPolicies = previousEntry?.policies ?? null;
+    if (previousPolicies && previousPolicies.length > 0) {
+      onboardSession.updateSession((current: Session) => {
+        current.policyPresets = previousPolicies;
         return current;
       });
     }
@@ -3819,7 +4088,10 @@ async function createSandbox(
     // Destroy old sandbox and clean up its host-side Docker image.
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     if (previousEntry?.imageTag) {
-      const rmiResult = run(["docker", "rmi", previousEntry.imageTag], { ignoreError: true, suppressOutput: true });
+      const rmiResult = run(["docker", "rmi", previousEntry.imageTag], {
+        ignoreError: true,
+        suppressOutput: true,
+      });
       if (rmiResult.status !== 0) {
         console.warn(`  Warning: failed to remove old sandbox image '${previousEntry.imageTag}'.`);
       }
@@ -3846,13 +4118,14 @@ async function createSandbox(
     try {
       fs.cpSync(path.dirname(fromResolved), buildCtx, {
         recursive: true,
-        filter: (src) => {
+        filter: (src: string) => {
           const base = path.basename(src);
           return !["node_modules", ".git", ".venv", "__pycache__"].includes(base);
         },
       });
     } catch (err) {
-      if (err.code === "EACCES") {
+      const errorObject = typeof err === "object" && err !== null ? err : null;
+      if (isErrnoException(errorObject) && errorObject.code === "EACCES") {
         console.error(
           `  Permission denied while copying build context from: ${path.dirname(fromResolved)}`,
         );
@@ -3948,22 +4221,22 @@ async function createSandbox(
     ...new Set(
       messagingTokenDefs
         .filter(({ token }) => !!token)
-        .map(({ envKey }) => {
-          if (envKey === "DISCORD_BOT_TOKEN") return "discord";
-          if (envKey === "SLACK_BOT_TOKEN") return "slack";
+        .flatMap(({ envKey }) => {
+          if (envKey === "DISCORD_BOT_TOKEN") return ["discord"];
+          if (envKey === "SLACK_BOT_TOKEN") return ["slack"];
           // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
-          if (envKey === "SLACK_APP_TOKEN")
-            return tokensByEnvKey["SLACK_BOT_TOKEN"] ? "slack" : null;
-          if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
-          return null;
-        })
-        .filter(Boolean),
+          if (envKey === "SLACK_APP_TOKEN") {
+            return tokensByEnvKey["SLACK_BOT_TOKEN"] ? ["slack"] : [];
+          }
+          if (envKey === "TELEGRAM_BOT_TOKEN") return ["telegram"];
+          return [];
+        }),
     ),
   ];
   // Build allowed sender IDs map from env vars set during the messaging prompt.
   // Each channel with a userIdEnvKey in MESSAGING_CHANNELS may have a
   // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
-  const messagingAllowedIds = {};
+  const messagingAllowedIds: Record<string, string[]> = {};
   const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
   for (const ch of MESSAGING_CHANNELS) {
     if (
@@ -3972,14 +4245,14 @@ async function createSandbox(
       ch.userIdEnvKey &&
       process.env[ch.userIdEnvKey]
     ) {
-      const ids = process.env[ch.userIdEnvKey]
+      const ids = String(process.env[ch.userIdEnvKey])
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
       if (ids.length > 0) messagingAllowedIds[ch.name] = ids;
     }
   }
-  const discordGuilds = {};
+  const discordGuilds: Record<string, { requireMention: boolean; users?: string[] }> = {};
   if (enabledTokenEnvKeys.has("DISCORD_BOT_TOKEN")) {
     const serverIds = (process.env.DISCORD_SERVER_IDS || process.env.DISCORD_SERVER_ID || "")
       .split(",")
@@ -4206,10 +4479,11 @@ async function createSandbox(
 
   // Register only after confirmed ready — prevents phantom entries
   const effectiveAgent = agent || agentDefs.loadAgent("openclaw");
-  const providerCredentialHashes = {};
+  const providerCredentialHashes: Record<string, string> = {};
   for (const { envKey, token } of messagingTokenDefs) {
-    if (token) {
-      providerCredentialHashes[envKey] = hashCredential(token);
+    const hash = token ? hashCredential(token) : null;
+    if (hash) {
+      providerCredentialHashes[envKey] = hash;
     }
   }
   registry.registerSandbox({
@@ -4228,7 +4502,7 @@ async function createSandbox(
   });
 
   // Restore workspace state if we backed it up during credential rotation.
-  if (pendingStateRestore?.success) {
+  if (pendingStateRestore?.success && pendingStateRestore.manifest) {
     note("  Restoring workspace state after credential rotation...");
     const restore = sandboxState.restoreSandboxState(
       sandboxName,
@@ -4304,15 +4578,24 @@ async function createSandbox(
 // ── Step 3: Inference selection ──────────────────────────────────
 
 // eslint-disable-next-line complexity
-async function setupNim(gpu) {
+type ProviderChoice = { key: string; label: string };
+
+async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
+  model: string | null;
+  provider: string;
+  endpointUrl: string | null;
+  credentialEnv: string | null;
+  preferredInferenceApi: string | null;
+  nimContainer: string | null;
+}> {
   step(3, 8, "Configuring inference (NIM)");
 
-  let model = null;
-  let provider = REMOTE_PROVIDER_CONFIG.build.providerName;
-  let nimContainer = null;
-  let endpointUrl = REMOTE_PROVIDER_CONFIG.build.endpointUrl;
-  let credentialEnv = REMOTE_PROVIDER_CONFIG.build.credentialEnv;
-  let preferredInferenceApi = null;
+  let model: string | null = null;
+  let provider: string = REMOTE_PROVIDER_CONFIG.build.providerName;
+  let nimContainer: string | null = null;
+  let endpointUrl: string | null = REMOTE_PROVIDER_CONFIG.build.endpointUrl;
+  let credentialEnv: string | null = REMOTE_PROVIDER_CONFIG.build.credentialEnv;
+  let preferredInferenceApi: string | null = null;
 
   // Detect local inference options
   // "command -v" is a shell builtin — must go through bash.
@@ -4327,7 +4610,7 @@ async function setupNim(gpu) {
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
-  const options = [];
+  const options: Array<{ key: string; label: string }> = [];
   options.push({ key: "build", label: "NVIDIA Endpoints" });
   options.push({ key: "openai", label: "OpenAI" });
   options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
@@ -4377,7 +4660,7 @@ async function setupNim(gpu) {
 
   if (options.length > 1) {
     selectionLoop: while (true) {
-      let selected;
+      let selected: ProviderChoice | undefined;
 
       if (isNonInteractive()) {
         const providerKey = requestedProvider || "build";
@@ -4397,7 +4680,7 @@ async function setupNim(gpu) {
         }
         note(`  [non-interactive] Provider: ${selected.key}`);
       } else {
-        const suggestions = [];
+        const suggestions: string[] = [];
         if (vllmRunning) suggestions.push("vLLM");
         if (ollamaRunning) suggestions.push("Ollama");
         if (suggestions.length > 0) {
@@ -4423,6 +4706,11 @@ async function setupNim(gpu) {
         const choice = await prompt(`  Choose [${defaultIdx}]: `);
         const idx = parseInt(choice || String(defaultIdx), 10) - 1;
         selected = options[idx] || options[defaultIdx - 1];
+      }
+
+      if (!selected) {
+        console.error("  No provider was selected.");
+        process.exit(1);
       }
 
       if (REMOTE_PROVIDER_CONFIG[selected.key]) {
@@ -4552,15 +4840,19 @@ async function setupNim(gpu) {
           }
           const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
           const defaultModel = requestedModel || _envModelRemote || remoteConfig.defaultModel;
-          let modelValidator = null;
+          const selectedCredentialEnv = requireValue(
+            credentialEnv,
+            `Missing credential env for ${remoteConfig.label}`,
+          );
+          let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
           if (selected.key === "openai" || selected.key === "gemini") {
             const modelAuthMode = getProbeAuthMode(provider);
             modelValidator = (candidate) =>
               validateOpenAiLikeModel(
                 remoteConfig.label,
-                endpointUrl,
+                endpointUrl || remoteConfig.endpointUrl,
                 candidate,
-                getCredential(credentialEnv),
+                getCredential(selectedCredentialEnv) || "",
                 ...(modelAuthMode ? [{ authMode: modelAuthMode }] : []),
               );
           } else if (selected.key === "anthropic") {
@@ -4568,7 +4860,7 @@ async function setupNim(gpu) {
               validateAnthropicModel(
                 endpointUrl || ANTHROPIC_ENDPOINT_URL,
                 candidate,
-                getCredential(credentialEnv),
+                getCredential(selectedCredentialEnv) || "",
               );
           }
           while (true) {
@@ -4593,9 +4885,9 @@ async function setupNim(gpu) {
             if (selected.key === "custom") {
               const validation = await validateCustomOpenAiLikeSelection(
                 remoteConfig.label,
-                endpointUrl,
+                endpointUrl || OPENAI_ENDPOINT_URL,
                 model,
-                credentialEnv,
+                selectedCredentialEnv,
                 remoteConfig.helpUrl,
               );
               if (validation.ok) {
@@ -4640,7 +4932,7 @@ async function setupNim(gpu) {
                 remoteConfig.label,
                 endpointUrl || ANTHROPIC_ENDPOINT_URL,
                 model,
-                credentialEnv,
+                selectedCredentialEnv,
                 remoteConfig.helpUrl,
               );
               if (validation.ok) {
@@ -4664,7 +4956,7 @@ async function setupNim(gpu) {
                   remoteConfig.label,
                   endpointUrl || ANTHROPIC_ENDPOINT_URL,
                   model,
-                  credentialEnv,
+                  selectedCredentialEnv,
                   retryMessage,
                   remoteConfig.helpUrl,
                 );
@@ -4684,7 +4976,7 @@ async function setupNim(gpu) {
                   remoteConfig.label,
                   endpointUrl,
                   model,
-                  credentialEnv,
+                  selectedCredentialEnv,
                   retryMessage,
                   remoteConfig.helpUrl,
                   {
@@ -4739,8 +5031,12 @@ async function setupNim(gpu) {
         console.log(`  Using ${remoteConfig.label} with model: ${model}`);
         break;
       } else if (selected.key === "nim-local") {
+        const localGpu = requireValue(
+          gpu,
+          "GPU details are required for local NIM model selection",
+        );
         // List models that fit GPU VRAM
-        const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= gpu.totalMemoryMB);
+        const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= localGpu.totalMemoryMB);
         if (models.length === 0) {
           console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
         } else {
@@ -4815,17 +5111,17 @@ async function setupNim(gpu) {
             provider = "vllm-local";
             credentialEnv = "OPENAI_API_KEY";
             endpointUrl = getLocalProviderBaseUrl(provider);
+            if (!endpointUrl) {
+              console.error("  Local NVIDIA NIM base URL could not be determined.");
+              process.exit(1);
+            }
             const validation = await validateOpenAiLikeSelection(
               "Local NVIDIA NIM",
               endpointUrl,
-              model,
+              requireValue(model, "Expected a Local NVIDIA NIM model after startup"),
               credentialEnv,
             );
-            if (
-              validation.retry === "selection" ||
-              validation.retry === "back" ||
-              validation.retry === "model"
-            ) {
+            if (validation.retry === "selection" || validation.retry === "model") {
               continue selectionLoop;
             }
             if (!validation.ok) {
@@ -4870,6 +5166,10 @@ async function setupNim(gpu) {
         provider = "ollama-local";
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
+        if (!endpointUrl) {
+          console.error("  Local Ollama base URL could not be determined.");
+          process.exit(1);
+        }
         while (true) {
           const installedModels = getOllamaModelOptions();
           if (isNonInteractive()) {
@@ -4882,7 +5182,8 @@ async function setupNim(gpu) {
             console.log("");
             continue selectionLoop;
           }
-          const probe = prepareOllamaModel(model, installedModels);
+          const selectedModel = requireValue(model, "Expected an Ollama model selection");
+          const probe = prepareOllamaModel(selectedModel, installedModels);
           if (!probe.ok) {
             console.error(`  ${probe.message}`);
             if (isNonInteractive()) {
@@ -4892,14 +5193,19 @@ async function setupNim(gpu) {
             console.log("");
             continue;
           }
+          const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
+          if (!validationBaseUrl) {
+            console.error("  Local Ollama validation URL could not be determined.");
+            process.exit(1);
+          }
           const validation = await validateOpenAiLikeSelection(
             "Local Ollama",
-            getLocalProviderValidationBaseUrl(provider),
-            model,
+            validationBaseUrl,
+            selectedModel,
             null,
             "Choose a different Ollama model or select Other.",
           );
-          if (validation.retry === "selection" || validation.retry === "back") {
+          if (validation.retry === "selection") {
             continue selectionLoop;
           }
           if (!validation.ok) {
@@ -4940,6 +5246,10 @@ async function setupNim(gpu) {
         provider = "ollama-local";
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
+        if (!endpointUrl) {
+          console.error("  Local Ollama base URL could not be determined.");
+          process.exit(1);
+        }
         while (true) {
           const installedModels = getOllamaModelOptions();
           if (isNonInteractive()) {
@@ -4952,7 +5262,8 @@ async function setupNim(gpu) {
             console.log("");
             continue selectionLoop;
           }
-          const probe = prepareOllamaModel(model, installedModels);
+          const selectedModel = requireValue(model, "Expected an Ollama model selection");
+          const probe = prepareOllamaModel(selectedModel, installedModels);
           if (!probe.ok) {
             console.error(`  ${probe.message}`);
             if (isNonInteractive()) {
@@ -4962,14 +5273,19 @@ async function setupNim(gpu) {
             console.log("");
             continue;
           }
+          const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
+          if (!validationBaseUrl) {
+            console.error("  Local Ollama validation URL could not be determined.");
+            process.exit(1);
+          }
           const validation = await validateOpenAiLikeSelection(
             "Local Ollama",
-            getLocalProviderValidationBaseUrl(provider),
-            model,
+            validationBaseUrl,
+            selectedModel,
             null,
             "Choose a different Ollama model or select Other.",
           );
-          if (validation.retry === "selection" || validation.retry === "back") {
+          if (validation.retry === "selection") {
             continue selectionLoop;
           }
           if (!validation.ok) {
@@ -4991,6 +5307,10 @@ async function setupNim(gpu) {
         provider = "vllm-local";
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
+        if (!endpointUrl) {
+          console.error("  Local vLLM base URL could not be determined.");
+          process.exit(1);
+        }
         // Query vLLM for the actual model ID
         const vllmModelsRaw = runCapture(
           ["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`],
@@ -5001,8 +5321,10 @@ async function setupNim(gpu) {
         try {
           const vllmModels = JSON.parse(vllmModelsRaw);
           if (vllmModels.data && vllmModels.data.length > 0) {
-            model = vllmModels.data[0].id;
-            if (!isSafeModelId(model)) {
+            const detectedModel =
+              typeof vllmModels.data[0]?.id === "string" ? vllmModels.data[0].id : null;
+            model = detectedModel;
+            if (!detectedModel || !isSafeModelId(detectedModel)) {
               console.error(`  Detected model ID contains invalid characters: ${model}`);
               process.exit(1);
             }
@@ -5017,17 +5339,18 @@ async function setupNim(gpu) {
           );
           process.exit(1);
         }
+        const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
+        if (!validationBaseUrl) {
+          console.error("  Local vLLM validation URL could not be determined.");
+          process.exit(1);
+        }
         const validation = await validateOpenAiLikeSelection(
           "Local vLLM",
-          getLocalProviderValidationBaseUrl(provider),
-          model,
+          validationBaseUrl,
+          requireValue(model, "Expected a detected vLLM model"),
           credentialEnv,
         );
-        if (
-          validation.retry === "selection" ||
-          validation.retry === "back" ||
-          validation.retry === "model"
-        ) {
+        if (validation.retry === "selection" || validation.retry === "model") {
           continue selectionLoop;
         }
         if (!validation.ok) {
@@ -5055,12 +5378,12 @@ async function setupNim(gpu) {
 
 // eslint-disable-next-line complexity
 async function setupInference(
-  sandboxName,
-  model,
-  provider,
-  endpointUrl = null,
-  credentialEnv = null,
-) {
+  sandboxName: string | null,
+  model: string,
+  provider: string,
+  endpointUrl: string | null = null,
+  credentialEnv: string | null = null,
+): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
   step(4, 8, "Setting up inference provider");
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
@@ -5077,6 +5400,10 @@ async function setupInference(
       provider === "nvidia-nim"
         ? REMOTE_PROVIDER_CONFIG.build
         : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
+    if (!config) {
+      console.error(`  Unsupported provider configuration: ${provider}`);
+      process.exit(1);
+    }
     while (true) {
       const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
       const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
@@ -5221,7 +5548,9 @@ async function setupInference(
   }
 
   verifyInferenceRoute(provider, model);
-  registry.updateSandbox(sandboxName, { model, provider });
+  if (sandboxName) {
+    registry.updateSandbox(sandboxName, { model, provider });
+  }
   console.log(`  ✓ Inference route set: ${provider} / ${model}`);
   return { ok: true };
 }
@@ -5287,10 +5616,10 @@ async function checkTelegramReachability(token: string) {
   }
 }
 
-async function setupMessagingChannels() {
+async function setupMessagingChannels(): Promise<string[]> {
   step(5, 8, "Messaging channels");
 
-  const getMessagingToken = (envKey) =>
+  const getMessagingToken = (envKey: string): string | null =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
 
   // Non-interactive: skip prompt, tokens come from env/credentials
@@ -5299,7 +5628,10 @@ async function setupMessagingChannels() {
     if (found.length > 0) {
       note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
       if (found.includes("telegram")) {
-        await checkTelegramReachability(getMessagingToken("TELEGRAM_BOT_TOKEN"));
+        const telegramToken = getMessagingToken("TELEGRAM_BOT_TOKEN");
+        if (telegramToken) {
+          await checkTelegramReachability(telegramToken);
+        }
       }
     } else {
       note("  [non-interactive] No messaging tokens configured. Skipping.");
@@ -5336,7 +5668,7 @@ async function setupMessagingChannels() {
 
   showList();
 
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const input = process.stdin;
     let rawModeEnabled = false;
     let finished = false;
@@ -5348,7 +5680,7 @@ async function setupMessagingChannels() {
       }
     }
 
-    function finish() {
+    function finish(): void {
       if (finished) return;
       finished = true;
       cleanup();
@@ -5356,7 +5688,7 @@ async function setupMessagingChannels() {
       resolve();
     }
 
-    function onData(chunk) {
+    function onData(chunk: Buffer | string): void {
       const text = chunk.toString("utf8");
       for (let i = 0; i < text.length; i += 1) {
         const ch = text[i];
@@ -5413,6 +5745,12 @@ async function setupMessagingChannels() {
       console.log("");
       console.log(`  ${ch.help}`);
       const token = normalizeCredentialValue(await prompt(`  ${ch.label}: `, { secret: true }));
+      if (token && ch.tokenFormat && !ch.tokenFormat.test(token)) {
+        console.log(`  ✗ Invalid format. ${ch.tokenFormatHint || "Check the token and try again."}`);
+        console.log(`  Skipped ${ch.name} (invalid token format)`);
+        enabled.delete(ch.name);
+        continue;
+      }
       if (token) {
         saveCredential(ch.envKey, token);
         process.env[ch.envKey] = token;
@@ -5433,6 +5771,14 @@ async function setupMessagingChannels() {
         const appToken = normalizeCredentialValue(
           await prompt(`  ${ch.appTokenLabel}: `, { secret: true }),
         );
+        if (appToken && ch.appTokenFormat && !ch.appTokenFormat.test(appToken)) {
+          console.log(
+            `  ✗ Invalid format. ${ch.appTokenFormatHint || "Check the token and try again."}`,
+          );
+          console.log(`  Skipped ${ch.name} app token (invalid token format)`);
+          enabled.delete(ch.name);
+          continue;
+        }
         if (appToken) {
           saveCredential(ch.appTokenEnvKey, appToken);
           process.env[ch.appTokenEnvKey] = appToken;
@@ -5504,8 +5850,11 @@ async function setupMessagingChannels() {
   // The non-interactive branch above already ran this probe and returned early,
   // so this second call only fires on the interactive path — guard explicitly
   // to make the no-double-probe invariant visible at the call site.
-  if (!isNonInteractive() && enabled.has("telegram") && getMessagingToken("TELEGRAM_BOT_TOKEN")) {
-    await checkTelegramReachability(getMessagingToken("TELEGRAM_BOT_TOKEN"));
+  if (!isNonInteractive() && enabled.has("telegram")) {
+    const telegramToken = getMessagingToken("TELEGRAM_BOT_TOKEN");
+    if (telegramToken) {
+      await checkTelegramReachability(telegramToken);
+    }
   }
 
   return Array.from(enabled);
@@ -5515,7 +5864,11 @@ function getSuggestedPolicyPresets({
   enabledChannels = null,
   webSearchConfig = null,
   provider = null,
-} = {}) {
+}: {
+  enabledChannels?: string[] | null;
+  webSearchConfig?: WebSearchConfig | null;
+  provider?: string | null;
+} = {}): string[] {
   const suggestions = ["pypi", "npm"];
 
   // Auto-suggest local-inference preset when a local provider is selected
@@ -5524,7 +5877,7 @@ function getSuggestedPolicyPresets({
   }
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
 
-  const maybeSuggestMessagingPreset = (channel, envKey) => {
+  const maybeSuggestMessagingPreset = (channel: string, envKey: string): void => {
     if (usesExplicitMessagingSelection) {
       if (enabledChannels.includes(channel)) suggestions.push(channel);
       return;
@@ -5548,7 +5901,7 @@ function getSuggestedPolicyPresets({
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
 
-async function setupOpenclaw(sandboxName, model, provider) {
+async function setupOpenclaw(sandboxName: string, model: string, provider: string): Promise<void> {
   step(7, 8, "Setting up OpenClaw inside sandbox");
 
   const selectionConfig = getProviderSelectionConfig(provider, model);
@@ -5576,7 +5929,14 @@ async function setupOpenclaw(sandboxName, model, provider) {
 // ── Step 7: Policy presets ───────────────────────────────────────
 
 // eslint-disable-next-line complexity
-async function _setupPolicies(sandboxName, options = {}) {
+async function _setupPolicies(
+  sandboxName: string,
+  options: {
+    enabledChannels?: string[] | null;
+    webSearchConfig?: WebSearchConfig | null;
+    provider?: string | null;
+  } = {},
+) {
   step(8, 8, "Policy presets");
   const suggestions = getSuggestedPolicyPresets(options);
 
@@ -5585,7 +5945,7 @@ async function _setupPolicies(sandboxName, options = {}) {
 
   if (isNonInteractive()) {
     const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
-    let selectedPresets = suggestions;
+    let selectedPresets: string[] = suggestions;
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
       note("  [non-interactive] Skipping policy presets.");
@@ -5593,13 +5953,13 @@ async function _setupPolicies(sandboxName, options = {}) {
     }
 
     if (policyMode === "custom" || policyMode === "list") {
-      selectedPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
+      selectedPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
       if (selectedPresets.length === 0) {
         console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
         process.exit(1);
       }
     } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
-      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
+      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
       if (envPresets.length > 0) {
         selectedPresets = envPresets;
       }
@@ -5627,7 +5987,7 @@ async function _setupPolicies(sandboxName, options = {}) {
           policies.applyPreset(sandboxName, name);
           break;
         } catch (err) {
-          const message = err && err.message ? err.message : String(err);
+          const message = err instanceof Error ? err.message : String(err);
           if (!message.includes("sandbox not found") || attempt === 2) {
             throw err;
           }
@@ -5680,7 +6040,7 @@ async function _setupPolicies(sandboxName, options = {}) {
   console.log("  ✓ Policies applied");
 }
 
-function arePolicyPresetsApplied(sandboxName, selectedPresets = []) {
+function arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[] = []): boolean {
   if (!Array.isArray(selectedPresets) || selectedPresets.length === 0) return false;
   const applied = new Set(policies.getAppliedPresets(sandboxName));
   return selectedPresets.every((preset) => applied.has(preset));
@@ -5694,7 +6054,7 @@ function arePolicyPresetsApplied(sandboxName, selectedPresets = []) {
  *
  * @returns {Promise<string>}
  */
-async function selectPolicyTier() {
+async function selectPolicyTier(): Promise<string> {
   const allTiers = tiers.listTiers();
   const defaultTier = allTiers.find((t) => t.name === "balanced") || allTiers[1];
 
@@ -5772,7 +6132,7 @@ async function selectPolicyTier() {
   process.stdin.resume();
   process.stdin.setEncoding("utf8");
 
-  return new Promise((resolve) => {
+  return new Promise<string>((resolve) => {
     const cleanup = () => {
       process.stdin.setRawMode(false);
       process.stdin.pause();
@@ -5786,7 +6146,7 @@ async function selectPolicyTier() {
     };
     process.once("SIGTERM", onSigterm);
 
-    const onData = (key) => {
+    const onData = (key: string) => {
       if (key === "\r" || key === "\n") {
         cleanup();
         process.stdout.write("\n");
@@ -5829,9 +6189,13 @@ async function selectPolicyTier() {
  * @param {string[]} [extraSelected]  — names pre-checked even if not in tier (e.g. already-applied)
  * @returns {Promise<Array<{name: string, access: string}>>}
  */
-async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = []) {
+async function selectTierPresetsAndAccess(
+  tierName: string,
+  allPresets: Array<{ name: string; description?: string }>,
+  extraSelected: string[] = [],
+): Promise<Array<{ name: string; access: string }>> {
   const tierDef = tiers.getTier(tierName);
-  const tierPresetMap = {};
+  const tierPresetMap: Record<string, string> = {};
   if (tierDef) {
     for (const p of tierDef.presets) {
       tierPresetMap[p.name] = p.access;
@@ -5841,8 +6205,10 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
   // Tier presets first (in tier order), then the rest in their original order.
   const tierNames = tierDef ? tierDef.presets.map((p) => p.name) : [];
   const tierSet = new Set(tierNames);
-  const ordered = [
-    ...tierNames.map((name) => allPresets.find((p) => p.name === name)).filter(Boolean),
+  const ordered: Array<{ name: string; description?: string }> = [
+    ...tierNames
+      .map((name) => allPresets.find((p) => p.name === name))
+      .filter((p): p is { name: string; description?: string } => Boolean(p)),
     ...allPresets.filter((p) => !tierSet.has(p.name)),
   ];
 
@@ -5853,7 +6219,7 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
   ]);
 
   // Access levels: tier defaults for tier presets, read-write default for others.
-  const accessModes = {};
+  const accessModes: Record<string, string> = {};
   for (const p of ordered) {
     accessModes[p.name] = tierPresetMap[p.name] ?? "read-write";
   }
@@ -5950,7 +6316,7 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
   process.stdin.resume();
   process.stdin.setEncoding("utf8");
 
-  return new Promise((resolve) => {
+  return new Promise<Array<{ name: string; access: string }>>((resolve) => {
     const cleanup = () => {
       process.stdin.setRawMode(false);
       process.stdin.pause();
@@ -5964,7 +6330,7 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
     };
     process.once("SIGTERM", onSigterm);
 
-    const onData = (key) => {
+    const onData = (key: string) => {
       if (key === "\r" || key === "\n") {
         cleanup();
         process.stdout.write("\n");
@@ -5983,7 +6349,9 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
         cursor = (cursor + 1) % n;
         redraw();
       } else if (key === " ") {
-        const name = ordered[cursor].name;
+        const currentPreset = ordered[cursor];
+        if (!currentPreset) return;
+        const name = currentPreset.name;
         if (included.has(name)) {
           included.delete(name);
         } else {
@@ -5991,7 +6359,9 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
         }
         redraw();
       } else if (key === "r" || key === "R") {
-        const name = ordered[cursor].name;
+        const currentPreset = ordered[cursor];
+        if (!currentPreset) return;
+        const name = currentPreset.name;
         accessModes[name] = accessModes[name] === "read-write" ? "read" : "read-write";
         redraw();
       }
@@ -6006,8 +6376,11 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
  * Keys: ↑/↓ or k/j to move, Space to toggle, a to select/unselect all, Enter to confirm.
  * Falls back to a simple line-based prompt when stdin is not a TTY.
  */
-async function presetsCheckboxSelector(allPresets, initialSelected) {
-  const selected = new Set(initialSelected);
+async function presetsCheckboxSelector(
+  allPresets: Array<{ name: string; description: string }>,
+  initialSelected: string[],
+): Promise<string[]> {
+  const selected = new Set<string>(initialSelected);
   const n = allPresets.length;
 
   // ── Zero-presets guard ────────────────────────────────────────────
@@ -6086,7 +6459,7 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
   process.stdin.resume();
   process.stdin.setEncoding("utf8");
 
-  return new Promise((resolve) => {
+  return new Promise<string[]>((resolve) => {
     const cleanup = () => {
       process.stdin.setRawMode(false);
       process.stdin.pause();
@@ -6100,7 +6473,7 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
     };
     process.once("SIGTERM", onSigterm);
 
-    const onData = (key) => {
+    const onData = (key: string) => {
       if (key === "\r" || key === "\n") {
         cleanup();
         process.stdout.write("\n");
@@ -6116,7 +6489,9 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
         cursor = (cursor + 1) % n;
         redraw();
       } else if (key === " ") {
-        const name = allPresets[cursor].name;
+        const currentPreset = allPresets[cursor];
+        if (!currentPreset) return;
+        const name = currentPreset.name;
         if (selected.has(name)) selected.delete(name);
         else selected.add(name);
         redraw();
@@ -6131,11 +6506,19 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
   });
 }
 
-function computeSetupPresetSuggestions(tierName, options = {}) {
+function computeSetupPresetSuggestions(
+  tierName: string,
+  options: {
+    enabledChannels?: string[] | null;
+    webSearchConfig?: WebSearchConfig | null;
+    provider?: string | null;
+    knownPresetNames?: string[] | null;
+  } = {},
+): string[] {
   const { enabledChannels = null, webSearchConfig = null, provider = null } = options;
   const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
   const suggestions = tiers.resolveTierPresets(tierName).map((p) => p.name);
-  const add = (name) => {
+  const add = (name: string) => {
     if (suggestions.includes(name)) return;
     if (known && !known.has(name)) return;
     suggestions.push(name);
@@ -6149,7 +6532,17 @@ function computeSetupPresetSuggestions(tierName, options = {}) {
 }
 
 // eslint-disable-next-line complexity
-async function setupPoliciesWithSelection(sandboxName, options = {}) {
+async function setupPoliciesWithSelection(
+  sandboxName: string,
+  options: {
+    selectedPresets?: string[] | null;
+    onSelection?: ((policyPresets: string[]) => void) | null;
+    webSearchConfig?: WebSearchConfig | null;
+    enabledChannels?: string[] | null;
+    provider?: string | null;
+    knownPresetNames?: string[];
+  } = {},
+) {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
   const webSearchConfig = options.webSearchConfig || null;
@@ -6194,13 +6587,13 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     }
 
     if (policyMode === "custom" || policyMode === "list") {
-      chosen = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
+      chosen = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
       if (chosen.length === 0) {
         console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
         process.exit(1);
       }
     } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
-      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
+      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
       if (envPresets.length > 0) chosen = envPresets;
     } else {
       // #2429: step 8/8 runs after the sandbox is created. Exiting here left
@@ -6251,7 +6644,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     process.exit(1);
   }
 
-  const accessByName = {};
+  const accessByName: Record<string, string> = {};
   for (const p of resolvedPresets) accessByName[p.name] = p.access;
   syncPresetSelection(sandboxName, applied, interactiveChoice, accessByName);
   return interactiveChoice;
@@ -6296,7 +6689,7 @@ function syncPresetSelection(
         }
         break;
       } catch (err) {
-        const message = err && err.message ? err.message : String(err);
+        const message = err instanceof Error ? err.message : String(err);
         if (!message.includes("sandbox not found") || attempt === 2) {
           throw err;
         }
@@ -6318,7 +6711,7 @@ function syncPresetSelection(
         }
         break;
       } catch (err) {
-        const message = err && err.message ? err.message : String(err);
+        const message = err instanceof Error ? err.message : String(err);
         if (!message.includes("sandbox not found") || attempt === 2) {
           throw err;
         }
@@ -6338,7 +6731,10 @@ const { buildChain, buildControlUiUrls } = dashboardContract;
 // Parses `openshell forward list` output and returns the sandbox currently
 // owning `portToStop`, or null. Exported for unit testing — see #2169.
 // Columns: SANDBOX  BIND  PORT  PID  STATUS (whitespace-separated).
-function findDashboardForwardOwner(forwardListOutput, portToStop) {
+function findDashboardForwardOwner(
+  forwardListOutput: string | null | undefined,
+  portToStop: string,
+): string | null {
   if (!forwardListOutput) return null;
   const portLine = forwardListOutput
     .split("\n")
@@ -6350,7 +6746,10 @@ function findDashboardForwardOwner(forwardListOutput, portToStop) {
   return portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
 }
 
-function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
+function ensureDashboardForward(
+  sandboxName: string,
+  chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`,
+) {
   const chain = buildChain({ chatUiUrl, isWsl: isWsl() });
   const portToStop = String(chain.port);
   const forwardTarget = chain.forwardTarget;
@@ -6363,12 +6762,8 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
     // Match the preflight pattern (printed error + exit) instead of throwing,
     // so the user sees a clean message rather than a raw Node stack trace
     // from the top-level IIFE's unhandled rejection. See #2169.
-    console.error(
-      `  Port ${portToStop} is already forwarded for sandbox '${portOwner}'.`,
-    );
-    console.error(
-      `  Set CHAT_UI_URL to a different local port (e.g. http://127.0.0.1:18790)`,
-    );
+    console.error(`  Port ${portToStop} is already forwarded for sandbox '${portOwner}'.`);
+    console.error(`  Set CHAT_UI_URL to a different local port (e.g. http://127.0.0.1:18790)`);
     console.error(`  before onboarding a second sandbox.`);
     process.exit(1);
   }
@@ -6395,7 +6790,7 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
   }
 }
 
-function findFileRecursive(dir, filename) {
+function findFileRecursive(dir: string, filename: string): string | null {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const e of entries) {
@@ -6410,13 +6805,13 @@ function findFileRecursive(dir, filename) {
   return null;
 }
 
-function findOpenclawJsonPath(dir) {
+function findOpenclawJsonPath(dir: string): string | null {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const e of entries) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) {
-      const found = findOpenclawJsonPath(p);
+      const found: string | null = findOpenclawJsonPath(p);
       if (found) return found;
     } else if (e.name === "openclaw.json") {
       return p;
@@ -6438,15 +6833,28 @@ function findOpenclawJsonPath(dir) {
  * Path 2 works because sandbox download runs as the sandbox user, which owns
  * the non-root token file.
  */
-function fetchGatewayAuthTokenFromSandbox(sandboxName) {
+function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
   // 1. Root mode: kubectl exec reads gateway:gateway 0400 file (same as shields.ts)
   try {
-    const K3S_CONTAINER = "openshell-cluster-nemoclaw";
-    const result = execFileSync("docker", [
-      "exec", K3S_CONTAINER,
-      "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
-      "cat", "/run/nemoclaw/gateway-token",
-    ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 });
+    const k3sContainer = "openshell-cluster-nemoclaw";
+    const result = execFileSync(
+      "docker",
+      [
+        "exec",
+        k3sContainer,
+        "kubectl",
+        "exec",
+        "-n",
+        "openshell",
+        sandboxName,
+        "-c",
+        "agent",
+        "--",
+        "cat",
+        "/run/nemoclaw/gateway-token",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+    );
     const token = result.toString().trim();
     if (token.length > 0) return token;
   } catch {
@@ -6492,8 +6900,180 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
   }
 }
 
+// buildControlUiUrls — see dashboard-contract import above
+
+function buildDashboardChain(
+  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+  options: {
+    wslHostAddress?: string | null;
+    runCapture?: typeof runCapture;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    release?: string;
+    isWsl?: boolean;
+  } = {},
+) {
+  return buildChain({
+    chatUiUrl,
+    isWsl: isWsl(options),
+    wslHostAddress: getWslHostAddress(options),
+  });
+}
+
+function getDashboardForwardPort(
+  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+  options: {
+    wslHostAddress?: string | null;
+    runCapture?: typeof runCapture;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    release?: string;
+    isWsl?: boolean;
+  } = {},
+): string {
+  return String(buildDashboardChain(chatUiUrl, options).port);
+}
+
+function getDashboardForwardTarget(
+  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+  options: {
+    wslHostAddress?: string | null;
+    runCapture?: typeof runCapture;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    release?: string;
+    isWsl?: boolean;
+    chatUiUrl?: string;
+    token?: string | null;
+  } = {},
+): string {
+  return buildDashboardChain(chatUiUrl, options).forwardTarget;
+}
+
+function getDashboardForwardStartCommand(
+  sandboxName: string,
+  options: {
+    chatUiUrl?: string;
+    openshellBinary?: string;
+    wslHostAddress?: string | null;
+    runCapture?: typeof runCapture;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    release?: string;
+    isWsl?: boolean;
+    token?: string | null;
+  } = {},
+): string {
+  const chatUiUrl =
+    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const forwardTarget = getDashboardForwardTarget(chatUiUrl, options);
+  return `${openshellShellCommand(
+    ["forward", "start", "--background", forwardTarget, sandboxName],
+    options,
+  )}`;
+}
+
+function buildAuthenticatedDashboardUrl(baseUrl: string, token: string | null = null): string {
+  if (!token) return baseUrl;
+  return `${baseUrl}#token=${encodeURIComponent(token)}`;
+}
+
+function getWslHostAddress(
+  options: {
+    wslHostAddress?: string | null;
+    runCapture?: typeof runCapture;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    release?: string;
+    isWsl?: boolean;
+  } = {},
+): string | null {
+  if (options.wslHostAddress) {
+    return options.wslHostAddress;
+  }
+  if (!isWsl(options)) {
+    return null;
+  }
+  const runCaptureFn = options.runCapture || runCapture;
+  const output = runCaptureFn("hostname -I 2>/dev/null", { ignoreError: true });
+  const candidates = String(output || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  return candidates[0] || null;
+}
+
+function getDashboardAccessInfo(
+  sandboxName: string,
+  options: {
+    token?: string | null;
+    chatUiUrl?: string;
+    wslHostAddress?: string | null;
+    runCapture?: typeof runCapture;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    release?: string;
+    isWsl?: boolean;
+  } = {},
+) {
+  const token = Object.prototype.hasOwnProperty.call(options, "token")
+    ? options.token
+    : fetchGatewayAuthTokenFromSandbox(sandboxName);
+  const chatUiUrl =
+    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const chain = buildDashboardChain(chatUiUrl, options);
+  const dashboardAccess = buildControlUiUrls(token, chain.port, chain.accessUrl).map(
+    (url, index) => ({
+      label: index === 0 ? "Dashboard" : `Alt ${index}`,
+      url: buildAuthenticatedDashboardUrl(url, null),
+    }),
+  );
+
+  const wslHostAddress = getWslHostAddress(options);
+  if (wslHostAddress) {
+    const wslUrl = buildAuthenticatedDashboardUrl(`http://${wslHostAddress}:${chain.port}/`, token);
+    if (!dashboardAccess.some((access) => access.url === wslUrl)) {
+      dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
+    }
+  }
+
+  return dashboardAccess;
+}
+
+function getDashboardGuidanceLines(
+  dashboardAccess: Array<{ label: string; url: string }> = [],
+  options: {
+    chatUiUrl?: string;
+    wslHostAddress?: string | null;
+    runCapture?: typeof runCapture;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    release?: string;
+    isWsl?: boolean;
+  } = {},
+): string[] {
+  const chatUiUrl =
+    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const chain = buildDashboardChain(chatUiUrl, options);
+  const guidance = [`Port ${String(chain.port)} must be forwarded before opening these URLs.`];
+  if (isWsl(options)) {
+    guidance.push(
+      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
+    );
+  }
+  if (dashboardAccess.length === 0) {
+    guidance.push("No dashboard URLs were generated.");
+  }
+  return guidance;
+}
 /** Print the post-onboard dashboard with sandbox status and reconfiguration hints. */
-function printDashboard(sandboxName, model, provider, nimContainer = null, agent = null) {
+function printDashboard(
+  sandboxName: string,
+  model: string,
+  provider: string,
+  nimContainer: string | null = null,
+  agent: AgentDefinition | null = null,
+): void {
   const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
 
@@ -6541,7 +7121,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
   if (agent) {
     agentOnboard.printDashboardUi(sandboxName, token, agent, {
       note,
-      buildControlUiUrls: (tokenValue, port) => {
+      buildControlUiUrls: (tokenValue: string | null, port: number) => {
         return buildControlUiUrls(tokenValue, port, chain.accessUrl);
       },
     });
@@ -6564,9 +7144,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
     for (const entry of dashboardAccess) {
       console.log(`  ${entry.label}: ${entry.url}`);
     }
-    console.log(
-      `  Token:       see /tmp/gateway.log inside the sandbox, or re-run onboard.`,
-    );
+    console.log(`  Token:       see /tmp/gateway.log inside the sandbox, or re-run onboard.`);
     console.log(
       `               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`,
     );
@@ -6574,25 +7152,74 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
   console.log(`  ${"─".repeat(50)}`);
   console.log("");
   console.log("  To change settings later:");
-  console.log(`    Model:       openshell inference set -g nemoclaw --model <model> --provider <provider>`);
+  console.log(
+    `    Model:       openshell inference set -g nemoclaw --model <model> --provider <provider>`,
+  );
   console.log(`    Policies:    nemoclaw ${sandboxName} policy-add`);
   console.log("    Credentials: nemoclaw credentials reset <KEY>  then  nemoclaw onboard");
   console.log("");
 }
 
-function startRecordedStep(stepName, updates = {}) {
+function toOptionalString(value: string | null | undefined): string | undefined {
+  return value ?? undefined;
+}
+
+function toSessionUpdates(
+  updates: {
+    sandboxName?: string | null;
+    provider?: string | null;
+    model?: string | null;
+    endpointUrl?: string | null;
+    credentialEnv?: string | null;
+    preferredInferenceApi?: string | null;
+    nimContainer?: string | null;
+    webSearchConfig?: WebSearchConfig | null;
+    policyPresets?: string[] | null;
+    messagingChannels?: string[] | null;
+  } = {},
+): SessionUpdates {
+  const normalized: SessionUpdates = {};
+  if (updates.sandboxName !== undefined)
+    normalized.sandboxName = toOptionalString(updates.sandboxName);
+  if (updates.provider !== undefined) normalized.provider = toOptionalString(updates.provider);
+  if (updates.model !== undefined) normalized.model = toOptionalString(updates.model);
+  if (updates.endpointUrl !== undefined)
+    normalized.endpointUrl = toOptionalString(updates.endpointUrl);
+  if (updates.credentialEnv !== undefined)
+    normalized.credentialEnv = toOptionalString(updates.credentialEnv);
+  if (updates.preferredInferenceApi !== undefined) {
+    normalized.preferredInferenceApi = toOptionalString(updates.preferredInferenceApi);
+  }
+  if (updates.nimContainer !== undefined)
+    normalized.nimContainer = toOptionalString(updates.nimContainer);
+  if (updates.webSearchConfig !== undefined) normalized.webSearchConfig = updates.webSearchConfig;
+  if (updates.policyPresets) normalized.policyPresets = updates.policyPresets;
+  if (updates.messagingChannels) normalized.messagingChannels = updates.messagingChannels;
+  return normalized;
+}
+
+function startRecordedStep(
+  stepName: string,
+  updates: {
+    sandboxName?: string | null;
+    provider?: string | null;
+    model?: string | null;
+    policyPresets?: string[] | null;
+  } = {},
+): void {
   onboardSession.markStepStarted(stepName);
   if (Object.keys(updates).length > 0) {
-    onboardSession.updateSession((session) => {
-      if (typeof updates.sandboxName === "string") session.sandboxName = updates.sandboxName;
-      if (typeof updates.provider === "string") session.provider = updates.provider;
-      if (typeof updates.model === "string") session.model = updates.model;
+    onboardSession.updateSession((session: Session) => {
+      if (updates.sandboxName !== undefined) session.sandboxName = updates.sandboxName;
+      if (updates.provider !== undefined) session.provider = updates.provider;
+      if (updates.model !== undefined) session.model = updates.model;
+      if (updates.policyPresets) session.policyPresets = updates.policyPresets;
       return session;
     });
   }
 }
 
-const ONBOARD_STEP_INDEX = {
+const ONBOARD_STEP_INDEX: Record<string, { number: number; title: string }> = {
   preflight: { number: 1, title: "Preflight checks" },
   gateway: { number: 2, title: "Starting OpenShell gateway" },
   provider_selection: { number: 3, title: "Configuring inference (NIM)" },
@@ -6603,7 +7230,11 @@ const ONBOARD_STEP_INDEX = {
   policies: { number: 8, title: "Policy presets" },
 };
 
-function skippedStepMessage(stepName, detail, reason = "resume") {
+function skippedStepMessage(
+  stepName: string,
+  detail?: string | null,
+  reason: "resume" | "reuse" = "resume",
+): void {
   const stepInfo = ONBOARD_STEP_INDEX[stepName];
   if (stepInfo) {
     step(stepInfo.number, 8, stepInfo.title);
@@ -6615,7 +7246,7 @@ function skippedStepMessage(stepName, detail, reason = "resume") {
 // ── Main ─────────────────────────────────────────────────────────
 
 // eslint-disable-next-line complexity
-async function onboard(opts = {}) {
+async function onboard(opts: OnboardOptions = {}): Promise<void> {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   const dangerouslySkipPermissions =
@@ -6676,12 +7307,12 @@ async function onboard(opts = {}) {
   process.once("exit", releaseOnboardLock);
 
   try {
-    let session;
-    let selectedMessagingChannels = [];
+    let session: Session | null;
+    let selectedMessagingChannels: string[] = [];
     // Merged, absolute fromDockerfile: explicit flag/env takes precedence; on
     // resume falls back to what the original session recorded so the same image
     // is used even when --from is omitted from the resume invocation.
-    let fromDockerfile;
+    let fromDockerfile: string | null;
     if (resume) {
       session = onboardSession.loadSession();
       if (!session || session.resumable === false) {
@@ -6736,7 +7367,7 @@ async function onboard(opts = {}) {
         console.error("  Or rerun with the original settings to continue that session.");
         process.exit(1);
       }
-      onboardSession.updateSession((current) => {
+      onboardSession.updateSession((current: Session) => {
         current.mode = isNonInteractive() ? "non-interactive" : "interactive";
         current.failure = null;
         current.status = "in_progress";
@@ -6772,7 +7403,7 @@ async function onboard(opts = {}) {
 
     const agent = agentOnboard.resolveAgent({ agentFlag: opts.agent, session });
     if (agent) {
-      onboardSession.updateSession((s) => {
+      onboardSession.updateSession((s: Session) => {
         s.agent = agent.name;
         return s;
       });
@@ -6867,35 +7498,36 @@ async function onboard(opts = {}) {
         credentialEnv = selection.credentialEnv;
         preferredInferenceApi = selection.preferredInferenceApi;
         nimContainer = selection.nimContainer;
-        onboardSession.markStepComplete("provider_selection", {
-          sandboxName,
-          provider,
-          model,
-          endpointUrl,
-          credentialEnv,
-          preferredInferenceApi,
-          nimContainer,
-        });
+        onboardSession.markStepComplete(
+          "provider_selection",
+          toSessionUpdates({
+            sandboxName,
+            provider,
+            model,
+            endpointUrl,
+            credentialEnv,
+            preferredInferenceApi,
+            nimContainer,
+          }),
+        );
       }
 
+      if (typeof provider !== "string" || typeof model !== "string") {
+        console.error("  Inference selection did not yield a provider/model.");
+        process.exit(1);
+      }
       process.env.NEMOCLAW_OPENSHELL_BIN = getOpenshellBinary();
       const resumeInference =
-        !forceProviderSelection &&
-        resume &&
-        typeof provider === "string" &&
-        typeof model === "string" &&
-        isInferenceRouteReady(provider, model);
+        !forceProviderSelection && resume && isInferenceRouteReady(provider, model);
       if (resumeInference) {
         skippedStepMessage("inference", `${provider} / ${model}`);
-        if (nimContainer) {
+        if (nimContainer && sandboxName) {
           registry.updateSandbox(sandboxName, { nimContainer });
         }
-        onboardSession.markStepComplete("inference", {
-          sandboxName,
-          provider,
-          model,
-          nimContainer,
-        });
+        onboardSession.markStepComplete(
+          "inference",
+          toSessionUpdates({ sandboxName, provider, model, nimContainer }),
+        );
         break;
       }
 
@@ -6913,8 +7545,7 @@ async function onboard(opts = {}) {
           model,
           credentialEnv,
           webSearchConfig,
-          enabledChannels:
-            selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
+          enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
           sandboxName,
           notes: ["Sandbox build takes ~6 minutes on this host."],
         }),
@@ -6926,9 +7557,7 @@ async function onboard(opts = {}) {
           .toLowerCase();
         if (answer === "n" || answer === "no") {
           console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
-          console.log(
-            "  Credentials entered so far are stored in ~/.nemoclaw/credentials.json —",
-          );
+          console.log("  Credentials entered so far are stored in ~/.nemoclaw/credentials.json —");
           console.log(
             "  clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
           );
@@ -6949,10 +7578,13 @@ async function onboard(opts = {}) {
         forceProviderSelection = true;
         continue;
       }
-      if (nimContainer) {
+      if (nimContainer && sandboxName) {
         registry.updateSandbox(sandboxName, { nimContainer });
       }
-      onboardSession.markStepComplete("inference", { sandboxName, provider, model, nimContainer });
+      onboardSession.markStepComplete(
+        "inference",
+        toSessionUpdates({ sandboxName, provider, model, nimContainer }),
+      );
       break;
     }
 
@@ -7001,10 +7633,14 @@ async function onboard(opts = {}) {
       }
       startRecordedStep("sandbox", { sandboxName, provider, model });
       selectedMessagingChannels = await setupMessagingChannels();
-      onboardSession.updateSession((current) => {
+      onboardSession.updateSession((current: Session) => {
         current.messagingChannels = selectedMessagingChannels;
         return current;
       });
+      if (typeof model !== "string" || typeof provider !== "string") {
+        console.error("  Inference selection is incomplete; cannot create sandbox.");
+        process.exit(1);
+      }
       sandboxName = await createSandbox(
         gpu,
         model,
@@ -7022,13 +7658,19 @@ async function onboard(opts = {}) {
       // updateSandbox() silently no-ops when the entry is missing, so this must
       // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
       registry.updateSandbox(sandboxName, { model, provider });
-      onboardSession.markStepComplete("sandbox", {
-        sandboxName,
-        provider,
-        model,
-        nimContainer,
-        webSearchConfig,
-      });
+      onboardSession.markStepComplete(
+        "sandbox",
+        toSessionUpdates({ sandboxName, provider, model, nimContainer, webSearchConfig }),
+      );
+    }
+
+    if (
+      typeof sandboxName !== "string" ||
+      typeof provider !== "string" ||
+      typeof model !== "string"
+    ) {
+      console.error("  Onboarding state is incomplete after sandbox setup.");
+      process.exit(1);
     }
 
     if (agent) {
@@ -7048,11 +7690,17 @@ async function onboard(opts = {}) {
       const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
       if (resumeOpenclaw) {
         skippedStepMessage("openclaw", sandboxName);
-        onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+        onboardSession.markStepComplete(
+          "openclaw",
+          toSessionUpdates({ sandboxName, provider, model }),
+        );
       } else {
         startRecordedStep("openclaw", { sandboxName, provider, model });
         await setupOpenclaw(sandboxName, model, provider);
-        onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+        onboardSession.markStepComplete(
+          "openclaw",
+          toSessionUpdates({ sandboxName, provider, model }),
+        );
       }
       onboardSession.markStepSkipped("agent_setup");
     }
@@ -7071,23 +7719,24 @@ async function onboard(opts = {}) {
         process.exit(1);
       }
       shields.shieldsDownPermanent(sandboxName);
-      onboardSession.markStepComplete("policies", {
-        sandboxName,
-        provider,
-        model,
-        policyPresets: [],
-      });
+      onboardSession.markStepComplete(
+        "policies",
+        toSessionUpdates({ sandboxName, provider, model, policyPresets: [] }),
+      );
     } else {
       const resumePolicies =
         resume && sandboxName && arePolicyPresetsApplied(sandboxName, recordedPolicyPresets || []);
       if (resumePolicies) {
         skippedStepMessage("policies", (recordedPolicyPresets || []).join(", "));
-        onboardSession.markStepComplete("policies", {
-          sandboxName,
-          provider,
-          model,
-          policyPresets: recordedPolicyPresets || [],
-        });
+        onboardSession.markStepComplete(
+          "policies",
+          toSessionUpdates({
+            sandboxName,
+            provider,
+            model,
+            policyPresets: recordedPolicyPresets || [],
+          }),
+        );
       } else {
         startRecordedStep("policies", {
           sandboxName,
@@ -7107,22 +7756,20 @@ async function onboard(opts = {}) {
           webSearchConfig,
           provider,
           onSelection: (policyPresets) => {
-            onboardSession.updateSession((current) => {
+            onboardSession.updateSession((current: Session) => {
               current.policyPresets = policyPresets;
               return current;
             });
           },
         });
-        onboardSession.markStepComplete("policies", {
-          sandboxName,
-          provider,
-          model,
-          policyPresets: appliedPolicyPresets,
-        });
+        onboardSession.markStepComplete(
+          "policies",
+          toSessionUpdates({ sandboxName, provider, model, policyPresets: appliedPolicyPresets }),
+        );
       }
     }
 
-    onboardSession.completeSession({ sandboxName, provider, model });
+    onboardSession.completeSession(toSessionUpdates({ sandboxName, provider, model }));
     completed = true;
     printDashboard(sandboxName, model, provider, nimContainer, agent);
   } finally {
@@ -7190,6 +7837,7 @@ module.exports = {
   runCaptureOpenshell,
   setupInference,
   setupMessagingChannels,
+  MESSAGING_CHANNELS,
   setupNim,
   formatOnboardConfigSummary,
   isInferenceRouteReady,

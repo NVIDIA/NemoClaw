@@ -198,6 +198,15 @@ $ NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS=1 nemoclaw onboard --non-interactive --y
 
 The flag is persisted on the sandbox registry entry, so `nemoclaw <sandbox> status` surfaces `Permissions: dangerously-skip-permissions (shields permanently down)` for sandboxes created this way. To tighten a sandbox after the fact, re-run `nemoclaw onboard` without the flag.
 
+### `nemoclaw onboard --from`
+
+Use a custom Dockerfile for the sandbox image.
+This variant of `nemoclaw onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image.
+
+```console
+$ nemoclaw onboard --from ./Dockerfile.custom
+```
+
 ### `nemoclaw list`
 
 List all registered sandboxes with their model, provider, and policy presets.
@@ -563,7 +572,7 @@ $ nemoclaw my-assistant snapshot restore 2026-04-21T07-35-55-987Z
 $ nemoclaw my-assistant snapshot restore v3 --to my-assistant-clone
 ```
 
-### `openshell term`
+## `openshell term`
 
 Open the OpenShell TUI to monitor sandbox activity and approve network egress requests.
 Run this on the host where the sandbox is running.
@@ -594,12 +603,41 @@ $ nemoclaw tunnel stop
 
 `nemoclaw stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
 
+### `nemoclaw start`
+
+:::{warning}
+Deprecated. Use `nemoclaw tunnel start` instead.
+:::
+
+This command remains as a compatibility alias to `nemoclaw tunnel start`.
+
+### `nemoclaw stop`
+
+:::{warning}
+Deprecated. Use `nemoclaw tunnel stop` instead.
+:::
+
+This command remains as a compatibility alias to `nemoclaw tunnel stop`.
+
 ### `nemoclaw status`
 
 Show the sandbox list and the status of host auxiliary services (for example cloudflared).
 
 ```console
 $ nemoclaw status
+```
+
+### `nemoclaw setup`
+
+:::{warning}
+The `nemoclaw setup` command is deprecated.
+Use `nemoclaw onboard` instead.
+:::
+
+This command remains as a compatibility alias to `nemoclaw onboard`.
+
+```console
+$ nemoclaw setup
 ```
 
 ### `nemoclaw setup-spark`

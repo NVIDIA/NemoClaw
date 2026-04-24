@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -49,7 +48,9 @@ function buildIsolatedSystemPath() {
         // the first pass. Any other error (EPERM, EACCES, EINVAL, ENOENT…)
         // would leave TEST_SYSTEM_PATH partially populated and turn into a
         // confusing downstream test failure, so re-throw it.
-        if (err && err.code === "EEXIST") continue;
+        const code =
+          typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
+        if (code === "EEXIST") continue;
         throw err;
       }
     }
@@ -59,8 +60,16 @@ function buildIsolatedSystemPath() {
 
 const TEST_SYSTEM_PATH = buildIsolatedSystemPath();
 
-function writeExecutable(target, contents) {
+function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
+}
+
+function requireMatch(match: RegExpMatchArray | null, message: string): RegExpMatchArray {
+  expect(match).not.toBeNull();
+  if (!match) {
+    throw new Error(message);
+  }
+  return match;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,7 +77,7 @@ function writeExecutable(target, contents) {
 // ---------------------------------------------------------------------------
 
 /** Fake node that reports v22.16.0. */
-function writeNodeStub(fakeBin) {
+function writeNodeStub(fakeBin: string) {
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
@@ -87,7 +96,7 @@ exit 99`,
  * Minimal npm stub. Handles --version, config-get-prefix, and a custom
  * install handler injected as a shell snippet via NPM_INSTALL_HANDLER.
  */
-function writeNpmStub(fakeBin, installSnippet = "exit 0") {
+function writeNpmStub(fakeBin: string, installSnippet: string = "exit 0") {
   writeExecutable(
     path.join(fakeBin, "npm"),
     `#!/usr/bin/env bash
@@ -1334,7 +1343,7 @@ describe("installer release-tag resolution", () => {
    * Requires the source guard so that main() doesn't run on source.
    * `fakeBin` must contain a `curl` stub (and optionally `node`).
    */
-  function callResolveReleaseTag(fakeBin, env = {}) {
+  function callResolveReleaseTag(fakeBin: string, env: Record<string, string | undefined> = {}) {
     return spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; resolve_release_tag`], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -1539,9 +1548,11 @@ fi`,
   // block where it's easy to miss.
   it("install_nodejs upgrade path emits a Node-specific shell-reload hint", () => {
     const script = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
-    const installNodejs = script.match(/install_nodejs\(\)\s*\{[\s\S]*?\n\}/);
-    expect(installNodejs).not.toBeNull();
-    const body = installNodejs![0];
+    const installNodejs = requireMatch(
+      script.match(/install_nodejs\(\)\s*\{[\s\S]*?\n\}/),
+      "Expected install_nodejs() function body to be present",
+    );
+    const body = installNodejs[0];
     // Anchor to the actual warn/printf calls (not the comment) so the test
     // fails if the executable statements are removed. A child process can't
     // mutate the parent's PATH, so the honest fix is printing the exact
@@ -1562,7 +1573,7 @@ describe("installer pure helpers", () => {
   /**
    * Helper: source install.sh and call a function, returning stdout.
    */
-  function callInstallerFn(fnCall, env = {}) {
+  function callInstallerFn(fnCall: string, env: Record<string, string | undefined> = {}) {
     return spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; ${fnCall}`], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -1837,7 +1848,10 @@ describe("installer runtime checks (sourced)", () => {
    * Call ensure_supported_runtime() in isolation by sourcing install.sh.
    * This avoids triggering install_nodejs() which would download real nvm.
    */
-  function callEnsureSupportedRuntime(fakeBin, env = {}) {
+  function callEnsureSupportedRuntime(
+    fakeBin: string,
+    env: Record<string, string | undefined> = {},
+  ) {
     return spawnSync(
       "bash",
       ["-c", `source "${INSTALLER}" 2>/dev/null; ensure_supported_runtime`],
@@ -1974,7 +1988,10 @@ describe("curl-pipe installer release-tag resolution", () => {
    * Unlike install.sh, this script also requires docker, openshell, and
    * uname stubs because it runs everything top-to-bottom with no main().
    */
-  function buildCurlPipeEnv(tmp, { curlStub, gitStub }) {
+  function buildCurlPipeEnv(
+    tmp: string,
+    { curlStub, gitStub }: { curlStub: string; gitStub: string },
+  ) {
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
     const gitLog = path.join(tmp, "git.log");
