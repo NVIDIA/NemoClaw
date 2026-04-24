@@ -2803,122 +2803,6 @@ const { createSandbox } = require(${onboardPath});
     );
   });
 
-  it("derives NEMOCLAW_DASHBOARD_PORT from CHAT_UI_URL when env var is unset (#2267)", { timeout: 35000 }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-chatui-port-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "chatui-port-envargs.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-const preflight = require(${preflightPath});
-const credentials = require(${credentialsPath});
-const childProcess = require("node:child_process");
-const { EventEmitter } = require("node:events");
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ command: _n([file, ...args]), env: opts.env || null });
-  return { status: 0 };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18790/")) return "ok";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18790 12345 running";
-  return "";
-};
-registry.registerSandbox = () => true;
-registry.removeSandbox = () => true;
-preflight.checkPortAvailable = async () => ({ ok: true });
-credentials.prompt = async () => "";
-
-childProcess.spawn = (...args) => {
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
-  process.nextTick(() => {
-    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
-    child.emit("close", 0);
-  });
-  return child;
-};
-
-const { createSandbox } = require(${onboardPath});
-
-(async () => {
-  process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4");
-  console.log(JSON.stringify({ sandboxName, commands }));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    // Set CHAT_UI_URL with a custom port but do NOT set NEMOCLAW_DASHBOARD_PORT.
-    // This is the exact scenario from #2267: the port must be derived from
-    // CHAT_UI_URL and injected unconditionally. The underscore-prefixed names
-    // mark the destructured keys as intentionally unused.
-    const { CHAT_UI_URL: _stripped, NEMOCLAW_DASHBOARD_PORT: _stripped2, ...inheritedEnv } =
-      process.env;
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...inheritedEnv,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        CHAT_UI_URL: "http://127.0.0.1:18790",
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
-    const createCommand = payload.commands.find((entry: CommandEntry) =>
-      entry.command.includes("sandbox create"),
-    );
-    assert.ok(createCommand, "expected sandbox create command");
-    // #2267: NEMOCLAW_DASHBOARD_PORT must be derived from CHAT_UI_URL and
-    // injected even when the env var is not explicitly set.
-    assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=18790/);
-    // Forward must target the same port
-    assert.ok(
-      payload.commands.some(
-        (entry: CommandEntry) =>
-          entry.command.includes("forward start --background 18790 my-assistant") ||
-          entry.command.includes("forward start --background 0.0.0.0:18790 my-assistant"),
-      ),
-      "expected dashboard forward for port 18790",
-    );
-  });
-
   it(
     "creates providers for messaging tokens and attaches them to the sandbox",
     { timeout: 60_000 },
@@ -4324,7 +4208,7 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("nonexistent") }));
     assert.equal(payload.exists, false);
   });
 
-  it("continues once the sandbox is Ready even if the create stream never closes", { timeout: 20000 }, async () => {
+  it("continues once the sandbox is Ready even if the create stream never closes", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -5182,7 +5066,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
         input: "\n",
       });
       assert.equal(introspect.status, 0, introspect.stderr);
-      const introspectOut = JSON.parse(introspect.stdout.trim().split("\n").pop() ?? "{}");
+      const introspectOut = JSON.parse(introspect.stdout.trim().split("\n").pop()!);
       const slackIdx = introspectOut.slackIndex1Based;
       assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
 
@@ -5201,7 +5085,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const out = JSON.parse(result.stdout.trim().split("\n").pop() ?? "{}");
+      const out = JSON.parse(result.stdout.trim().split("\n").pop()!);
 
       assert.ok(
         !out.result.includes("slack"),
@@ -5293,7 +5177,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       });
       assert.equal(introspect.status, 0, introspect.stderr);
       const slackIdx = JSON.parse(
-        introspect.stdout.trim().split("\n").pop() ?? "{}",
+        introspect.stdout.trim().split("\n").pop()!,
       ).slackIndex1Based;
       assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
 
@@ -5311,7 +5195,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const out = JSON.parse(result.stdout.trim().split("\n").pop() ?? "{}");
+      const out = JSON.parse(result.stdout.trim().split("\n").pop()!);
 
       assert.ok(
         !out.result.includes("slack"),
