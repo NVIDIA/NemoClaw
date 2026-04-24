@@ -241,19 +241,30 @@ export function getGatewayCommand(agent: AgentDefinition | null): string {
 
 /**
  * Build a single copy-pasteable command that starts the agent gateway as a
- * backgrounded, persistent process — the manual equivalent of
+ * backgrounded, persistent process, the manual equivalent of
  * {@link buildRecoveryScript}. Shown to the user when automatic recovery
  * fails.
  *
  * The raw `gateway_command` (e.g. `hermes gateway run`) is a foreground
- * debugging command; it does not survive a disconnect and lacks the port
- * flag and agent-specific env vars that the sandbox boot sequence sets.
- * This helper mirrors what nemoclaw-start.sh and buildRecoveryScript do:
- * agent-specific env vars → nohup → gateway_command → --port → log redirect
- * → backgrounded.
+ * debugging command; it does not survive a disconnect and lacks the
+ * agent-specific env vars that the sandbox boot sequence sets.
+ *
+ * Port source varies by agent. OpenClaw reads the port from the `--port`
+ * flag; Hermes reads it from HERMES_HOME/config.yaml (NemoClaw provisions
+ * `platforms.api_server.extra.port: 18642` with socat forwarding
+ * 0.0.0.0:8642 → 127.0.0.1:18642 from agents/hermes/start.sh). Passing
+ * `--port 8642` to `hermes gateway run` would override the config and
+ * break the forwarder, so we omit the flag for hermes and mirror what
+ * start.sh does: set HERMES_HOME and let config.yaml drive the port.
+ *
+ * This helper mirrors nemoclaw-start.sh / buildRecoveryScript for
+ * non-hermes agents: `env vars → nohup → gateway_command → --port →
+ * log redirect → backgrounded`.
  */
 export function buildManualRecoveryCommand(agent: AgentDefinition | null, port: number): string {
   const gatewayCmd = getGatewayCommand(agent);
-  const envPrefix = agent?.name === "hermes" ? "HERMES_HOME=/sandbox/.hermes-data " : "";
-  return `${envPrefix}nohup ${gatewayCmd} --port ${port} >/tmp/gateway.log 2>&1 &`;
+  const isHermes = agent?.name === "hermes";
+  const envPrefix = isHermes ? "HERMES_HOME=/sandbox/.hermes-data " : "";
+  const portFlag = isHermes ? "" : ` --port ${port}`;
+  return `${envPrefix}nohup ${gatewayCmd}${portFlag} >/tmp/gateway.log 2>&1 &`;
 }

@@ -288,7 +288,13 @@ describe("buildManualRecoveryCommand (#2426)", () => {
   it("prefixes HERMES_HOME for the hermes agent so the gateway can find its config", () => {
     const cmd = buildManualRecoveryCommand(hermesAgent, 8642);
     expect(cmd).toContain("HERMES_HOME=/sandbox/.hermes-data");
-    expect(cmd).toContain("nohup hermes gateway run --port 8642");
+    expect(cmd).toContain("nohup hermes gateway run >/tmp/gateway.log");
+  });
+
+  it("omits --port for hermes so it reads the listen port from HERMES_HOME/config.yaml (NemoClaw provisions 18642, socat bridges 0.0.0.0:8642)", () => {
+    const cmd = buildManualRecoveryCommand(hermesAgent, 8642);
+    expect(cmd).not.toContain("--port");
+    expect(cmd).toBe("HERMES_HOME=/sandbox/.hermes-data nohup hermes gateway run >/tmp/gateway.log 2>&1 &");
   });
 
   it("does not prefix HERMES_HOME for non-hermes agents", () => {
