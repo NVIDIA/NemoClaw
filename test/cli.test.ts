@@ -114,8 +114,11 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("nemoclaw")).toBeTruthy();
   });
 
-  it("bare unknown name surfaces sandbox-not-found (#2164)", () => {
-    const r = run("boguscmd");
+  it("bare unknown name surfaces sandbox-not-found (#2164)", { timeout: 35000 }, () => {
+    // Longer timeout: when openshell is installed but the gateway is down,
+    // the CLI probes the gateway before reporting "not found" and the
+    // default 10s is not enough for the connection to time out.
+    const r = runWithEnv("boguscmd", {}, 30000);
     expect(r.code).toBe(1);
     expect(r.out.includes("Sandbox 'boguscmd' does not exist")).toBeTruthy();
   });
@@ -133,7 +136,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("No sandboxes")).toBeTruthy();
   });
 
-  it("start does not prompt for NVIDIA_API_KEY before launching local services", () => {
+  it("start does not prompt for NVIDIA_API_KEY before launching local services", { timeout: 35000 }, () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
