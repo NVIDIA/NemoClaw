@@ -124,7 +124,14 @@ $ kill <PID>
 If the process does not exit, use `kill -9 <PID>` to force-terminate it.
 Then retry onboarding.
 
-Alternatively, override the conflicting port with an environment variable instead of stopping the other process:
+Alternatively, override the conflicting port instead of stopping the other process.
+Set `CHAT_UI_URL` with the desired port — the dashboard port is derived automatically:
+
+```console
+$ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
+```
+
+Or set the port directly:
 
 ```console
 $ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
@@ -138,11 +145,12 @@ Each sandbox requires its own dashboard port.
 If you onboard a second sandbox without overriding the port, onboarding fails with a clear error because port `18789` is already forwarded to the first sandbox.
 `onboard` checks `openshell forward list` before starting a new forward, so a second onboard cannot silently take over the first sandbox's port.
 
-Assign a distinct port to each sandbox at onboard time:
+Assign a distinct port to each sandbox at onboard time.
+Set `CHAT_UI_URL` with the desired port — the dashboard port is derived automatically:
 
 ```console
-$ nemoclaw onboard                              # first sandbox — uses default 18789
-$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard  # second sandbox — uses 19000
+$ nemoclaw onboard                                                   # first sandbox — uses default 18789
+$ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard               # second sandbox — uses 19000
 ```
 
 Each sandbox then has its own SSH tunnel and its own dashboard URL:
@@ -561,21 +569,20 @@ $ openshell term
 To permanently allow an endpoint, add it to the network policy.
 Refer to Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for details.
 
-### Dashboard not reachable after setting `NEMOCLAW_DASHBOARD_PORT`
+### Dashboard not reachable after setting a custom port
 
-If you ran `NEMOCLAW_DASHBOARD_PORT=<port> nemoclaw onboard` and onboarding completed
+If you ran `nemoclaw onboard` with a custom dashboard port and onboarding completed
 but the dashboard URL is unreachable (browser shows connection refused or the page fails
-to load), the sandbox was most likely created with an older NemoClaw version that had a
-bug where `NEMOCLAW_DASHBOARD_PORT` was parsed on the host but not passed into the sandbox
-at startup. The gateway inside the sandbox continued listening on the default port 18789
-while the SSH tunnel forwarded the custom port — leaving nothing at the other end of the
-tunnel.
+to load), the sandbox was most likely created with an older NemoClaw version that did not
+pass the dashboard port into the sandbox at startup. The gateway inside the sandbox
+continued listening on the default port 18789 while the SSH tunnel forwarded the custom
+port — leaving nothing at the other end of the tunnel.
 
-Re-run onboarding on the current NemoClaw release with the desired port. This rebuilds
-the sandbox image with the gateway bound to the configured port:
+Re-run onboarding on the current NemoClaw release with the desired port. Current versions
+derive the dashboard port from `CHAT_UI_URL` automatically and inject it into the sandbox:
 
 ```console
-$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
+$ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
 ```
 
 If you need to run multiple sandboxes at different ports at the same time, see

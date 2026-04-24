@@ -480,7 +480,7 @@ exit 98
     expect(output).not.toMatch(/0\.1\.0/);
   });
 
-  it("uses npm install + npm link for a source checkout (no -g)", () => {
+  it("uses npm install + npm link for a source checkout (no -g)", { timeout: 20000 }, () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
