@@ -85,7 +85,7 @@ describe("install-openshell.sh version check", () => {
   });
 
   it("fails with a clear error when openshell is above MAX_VERSION", () => {
-    const result = runWithInstalledVersion("0.0.33");
+    const result = runWithInstalledVersion("0.0.37");
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/above the maximum/);
   });

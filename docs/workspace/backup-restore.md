@@ -136,6 +136,31 @@ USER.md
 memory/
 ```
 
+## Multi-Agent Deployments
+
+When OpenClaw is configured with multiple named agents, each agent has its own
+workspace directory (`workspace-main/`, `workspace-support/`, `workspace-ops/`,
+and so on — see [Multi-Agent Deployments](workspace-files.md#multi-agent-deployments)).
+
+`nemoclaw <name> snapshot create` automatically discovers every `workspace-*/`
+directory under the sandbox state tree and includes it in the snapshot bundle
+alongside the default `workspace/`. `snapshot restore` re-applies the full
+per-agent set. No manual per-workspace backup pattern is needed.
+
+The sandbox entrypoint ensures every per-agent workspace is backed by the
+persistent `.openclaw-data/` tree (via a symlink from
+`.openclaw/workspace-<name>/`) so state also survives `openshell sandbox restart`.
+
+### Shared files across agents
+
+Files that operators typically want consistent across every per-agent workspace
+(`AGENTS.md`, shared skills, common templates) are **not** synced automatically.
+Each workspace is independent; changes in one don't propagate. Operators that
+need this either copy the shared files explicitly to each workspace after
+editing, or maintain a host-side sync layer. Tracking shared-file tooling
+(shared mount, `workspaces list` command) in
+[#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
+
 ## Next Steps
 
 - [Workspace Files overview](workspace-files.md) to learn what each file does

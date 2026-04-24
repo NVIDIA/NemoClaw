@@ -430,7 +430,7 @@ describe("runtime CORS origin override (#719)", () => {
     );
 
     const rootBlock = src.match(
-      /# ── Root path[\s\S]*?apply_model_override\n\s*apply_cors_override\n\s*apply_slack_token_override\n\s*export_gateway_token/,
+      /# ── Root path[\s\S]*?apply_model_override[\s\S]*?apply_cors_override[\s\S]*?apply_slack_token_override[\s\S]*?export_gateway_token/,
     );
     expect(rootBlock).toBeTruthy();
   });
@@ -472,6 +472,76 @@ describe("runtime CORS origin override (#719)", () => {
     const fn = src.match(/apply_cors_override\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
     expect(fn[1]).toContain("control characters");
+  });
+});
+
+describe("Slack channel guard — unhandled-rejection safety net (#2340)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines install_slack_channel_guard function", () => {
+    expect(src).toMatch(/install_slack_channel_guard\(\) \{/);
+  });
+
+  it("calls install_slack_channel_guard after configure_messaging_channels in both paths", () => {
+    const nonRootBlock = src.match(
+      /if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/,
+    );
+    expect(nonRootBlock).toBeTruthy();
+    expect(nonRootBlock[1]).toMatch(
+      /configure_messaging_channels[\s\S]*?install_slack_channel_guard/,
+    );
+
+    const rootBlock = src.match(
+      /# ── Root path[\s\S]*?configure_messaging_channels[\s\S]*?install_slack_channel_guard/,
+    );
+    expect(rootBlock).toBeTruthy();
+  });
+
+  it("is a no-op when no Slack channel is configured", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain('grep -q \'"slack"\'');
+    expect(fn[1]).toContain("return 0");
+  });
+
+  it("installs a Node.js preload script via NODE_OPTIONS", () => {
+    expect(src).toContain('export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT"');
+  });
+
+  it("catches unhandled promise rejections from Slack", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("unhandledRejection");
+    expect(fn[1]).toContain("isSlackRejection");
+  });
+
+  it("catches uncaught exceptions from Slack (sync throws)", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("uncaughtException");
+  });
+
+  it("re-throws non-Slack rejections to preserve default behavior", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("throw reason");
+    expect(fn[1]).toContain("process.exit(1)");
+  });
+
+  it("detects Slack errors by error code, message, and stack trace", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("slack_webapi_platform_error");
+    expect(fn[1]).toContain("invalid_auth");
+    expect(fn[1]).toContain("token_revoked");
+    expect(fn[1]).toContain("@slack/");
+  });
+
+  it("logs caught Slack errors as warnings instead of crashing", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("provider failed to start");
+    expect(fn[1]).toContain("caught by safety net, gateway continues");
   });
 });
 

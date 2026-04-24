@@ -25,6 +25,11 @@
 set -euo pipefail
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-snapshot}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 MARKER_FILE="/sandbox/.openclaw-data/workspace/snapshot-marker.txt"
 MARKER_CONTENT="SNAPSHOT_E2E_$(date +%s)"
 SECOND_MARKER="/sandbox/.openclaw-data/workspace/snapshot-marker-2.txt"
@@ -36,17 +41,27 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 pass() { echo -e "${GREEN}[PASS]${NC} $1"; }
+
+# Shared diagnostics — called by fail() and Phase 2b.
+# Intentionally non-reentrant (single-threaded bash).
+dump_diagnostics() {
+  local _fd="${1:-2}" # default to stderr
+  echo -e "${YELLOW}[DIAG]${NC} --- Diagnostics ---" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} nemoclaw path: $(command -v nemoclaw 2>&1 || echo 'not found')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} nemoclaw version: $(nemoclaw --version 2>&1 || echo 'failed')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} node version: $(node --version 2>&1 || echo 'not found')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Sandboxes: $(openshell sandbox list 2>&1 || echo 'unavailable')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Backup dir: $(ls -la "$HOME/.nemoclaw/rebuild-backups/${SANDBOX_NAME}/" 2>&1 || echo 'not found')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Registry: $(cat "$HOME/.nemoclaw/sandboxes.json" 2>&1 || echo 'not found')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Registry lock: $(ls -la "$HOME/.nemoclaw/sandboxes.json.lock" 2>&1 || echo 'no lock')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Config dir: $(ls -la "$HOME/.nemoclaw/" 2>&1 || echo 'not found')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Docker ps: $(docker ps --format '{{.Names}} {{.Status}}' 2>&1 || echo 'unavailable')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} --- End diagnostics ---" >&"$_fd"
+}
+
 fail() {
   echo -e "${RED}[FAIL]${NC} $1" >&2
-  echo -e "${YELLOW}[DIAG]${NC} --- Failure diagnostics ---" >&2
-  echo -e "${YELLOW}[DIAG]${NC} Sandboxes: $(openshell sandbox list 2>&1 || echo 'unavailable')" >&2
-  echo -e "${YELLOW}[DIAG]${NC} Backup dir: $(ls -la "$HOME/.nemoclaw/rebuild-backups/${SANDBOX_NAME}/" 2>&1 || echo 'not found')" >&2
-  echo -e "${YELLOW}[DIAG]${NC} Registry: $(cat "$HOME/.nemoclaw/sandboxes.json" 2>&1 || echo 'not found')" >&2
-  echo -e "${YELLOW}[DIAG]${NC} Registry lock: $(ls -la "$HOME/.nemoclaw/sandboxes.json.lock" 2>&1 || echo 'no lock')" >&2
-  echo -e "${YELLOW}[DIAG]${NC} Docker ps: $(docker ps --format '{{.Names}} {{.Status}}' 2>&1 || echo 'unavailable')" >&2
-  echo -e "${YELLOW}[DIAG]${NC} nemoclaw path: $(command -v nemoclaw 2>&1 || echo 'not found')" >&2
-  echo -e "${YELLOW}[DIAG]${NC} node version: $(node --version 2>&1 || echo 'not found')" >&2
-  echo -e "${YELLOW}[DIAG]${NC} --- End diagnostics ---" >&2
+  dump_diagnostics 2
   exit 1
 }
 info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
@@ -56,11 +71,12 @@ info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
 #   Sets $VAR_NAME to the combined stdout+stderr and $_CAPTURE_RC to the exit code.
 _CAPTURE_RC=0
 run_capture() {
-  local _var_name="$1"; shift
+  local _var_name="$1"
+  shift
   _CAPTURE_RC=0
   local _output
   _output=$("$@" 2>&1) || _CAPTURE_RC=$?
-  eval "${_var_name}=\${_output}"
+  printf -v "$_var_name" '%s' "$_output"
 }
 
 # ── Preflight ───────────────────────────────────────────────────────
@@ -118,18 +134,7 @@ pass "Marker file written"
 # ── Phase 2b: Pre-snapshot diagnostics ─────────────────────────────
 # Collect state that helps diagnose Phase 3 failures (see #2350).
 info "Phase 2b: Pre-snapshot diagnostics..."
-echo -e "${YELLOW}[DIAG]${NC} nemoclaw binary: $(command -v nemoclaw)"
-echo -e "${YELLOW}[DIAG]${NC} nemoclaw version: $(nemoclaw --version 2>&1 || echo 'failed')"
-echo -e "${YELLOW}[DIAG]${NC} openshell sandbox list:"
-openshell sandbox list 2>&1 || echo "(openshell sandbox list failed)"
-echo -e "${YELLOW}[DIAG]${NC} Registry file:"
-cat "$HOME/.nemoclaw/sandboxes.json" 2>&1 || echo "(registry not found)"
-echo -e "${YELLOW}[DIAG]${NC} Registry lock:"
-ls -la "$HOME/.nemoclaw/sandboxes.json.lock" 2>&1 || echo "(no stale lock)"
-echo -e "${YELLOW}[DIAG]${NC} Config dir:"
-ls -la "$HOME/.nemoclaw/" 2>&1 || echo "(config dir not found)"
-echo -e "${YELLOW}[DIAG]${NC} Docker containers:"
-docker ps --format '{{.Names}} {{.Status}}' 2>&1 || echo "(docker ps failed)"
+dump_diagnostics 1 # stdout — informational, not a failure
 
 # ── Phase 3: snapshot create ────────────────────────────────────────
 info "Phase 3: Creating snapshot..."
@@ -144,7 +149,10 @@ if [ "$_CAPTURE_RC" -ne 0 ]; then
   fail "snapshot create exited with code $_CAPTURE_RC: ${SNAPSHOT_OUTPUT}"
 fi
 
-if echo "$SNAPSHOT_OUTPUT" | grep -q "Snapshot.*created"; then
+# The success marker is `✓ Snapshot v<N> created (<count> directories)` — the
+# version token between "Snapshot" and "created" broke the old literal grep
+# for "Snapshot created". Use a regex that tolerates the version field.
+if echo "$SNAPSHOT_OUTPUT" | grep -qE "Snapshot v[0-9]+.*created"; then
   pass "snapshot create succeeded"
 else
   fail "snapshot create did not report success: ${SNAPSHOT_OUTPUT}"
@@ -267,7 +275,7 @@ fi
 
 # ── Cleanup ─────────────────────────────────────────────────────────
 info "Cleaning up..."
-nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}Snapshot commands E2E passed.${NC}"

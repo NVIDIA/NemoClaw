@@ -40,37 +40,10 @@
 
 set -uo pipefail
 
-TIMEOUT_CMD=""
-if command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="gtimeout"
-fi
-
-if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ "${NEMOCLAW_E2E_TIMEOUT_WRAPPED:-0}" != "1" ]; then
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-900}"
-  if [ -n "$TIMEOUT_CMD" ]; then
-    export NEMOCLAW_E2E_TIMEOUT_WRAPPED=1
-    exec "$TIMEOUT_CMD" -s TERM "$TIMEOUT_SECONDS" "$0" "$@"
-  else
-    echo "ERROR: 'timeout' not found. Install coreutils (macOS: 'brew install coreutils')" >&2
-    echo "       or bypass with NEMOCLAW_E2E_NO_TIMEOUT=1" >&2
-    exit 127
-  fi
-fi
-
-# Run with $TIMEOUT_CMD if set; run directly if empty (NEMOCLAW_E2E_NO_TIMEOUT bypass).
-# Avoids `$TIMEOUT_CMD 60 ssh …` becoming `60 ssh …` → "60: command not found".
-# Usage: run_with_timeout <seconds> <command> [args...]
-run_with_timeout() {
-  local seconds="$1"
-  shift
-  if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ -n "$TIMEOUT_CMD" ]; then
-    "$TIMEOUT_CMD" "$seconds" "$@"
-  else
-    "$@"
-  fi
-}
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=900
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 PASS=0
 FAIL=0
@@ -120,6 +93,11 @@ version_gte() {
 }
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-survival}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -379,16 +357,19 @@ section "Phase 5: Plant state markers in sandbox"
 
 MARKER_VALUE="nemoclaw-survival-$(date +%s)"
 
-# 5a: Workspace file in /sandbox/
+# 5a: Workspace file in writable agent state directory.
+# /sandbox/ is read-only by policy (openclaw-sandbox.yaml); writable state
+# lives under /sandbox/.openclaw-data/. OpenShell ≥0.0.36 correctly enforces
+# this (NVIDIA/OpenShell#910), so markers must target the writable path.
 # shellcheck disable=SC2029
-if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo ${MARKER_VALUE} > /sandbox/.survival-marker" 2>/dev/null; then
-  pass "Planted workspace marker: /sandbox/.survival-marker"
+if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo ${MARKER_VALUE} > /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null; then
+  pass "Planted workspace marker: /sandbox/.openclaw-data/.survival-marker-workspace"
 else
   fail "Could not plant workspace marker"
 fi
 
 # Verify read-back before restart
-readback=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.survival-marker" 2>/dev/null)
+readback=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null)
 if [ "$readback" = "$MARKER_VALUE" ]; then
   pass "Workspace marker verified before restart"
 else
@@ -423,11 +404,12 @@ if [ -n "$agent_files_before" ]; then
 fi
 
 # 5d: Record a deeper workspace file to test nested persistence
+# Uses writable .openclaw-data path — /sandbox/ is read-only by policy.
 # shellcheck disable=SC2029
 if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "mkdir -p /sandbox/test-data && echo ${MARKER_VALUE} > /sandbox/test-data/nested-marker.txt" \
+  "mkdir -p /sandbox/.openclaw-data/test-data && echo ${MARKER_VALUE} > /sandbox/.openclaw-data/test-data/nested-marker.txt" \
   2>/dev/null; then
-  pass "Planted nested marker: /sandbox/test-data/nested-marker.txt"
+  pass "Planted nested marker: /sandbox/.openclaw-data/test-data/nested-marker.txt"
 else
   fail "Could not plant nested workspace marker"
 fi
@@ -573,7 +555,7 @@ if ! setup_ssh; then
 
   # Jump to cleanup
   section "Phase 11: Cleanup"
-  nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+  [[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
   echo ""
   echo "========================================"
@@ -617,7 +599,7 @@ fi
 section "Phase 9: Verify state persisted across restart"
 
 # 9a: Workspace marker
-post_restart_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.survival-marker" 2>/dev/null)
+post_restart_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null)
 if [ "$post_restart_marker" = "$MARKER_VALUE" ]; then
   pass "Workspace marker survived restart: $MARKER_VALUE"
 else
@@ -635,7 +617,7 @@ if [ "$agent_data_exists" = "yes" ]; then
 fi
 
 # 9c: Nested workspace file
-nested_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/test-data/nested-marker.txt" 2>/dev/null)
+nested_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/test-data/nested-marker.txt" 2>/dev/null)
 if [ "$nested_marker" = "$MARKER_VALUE" ]; then
   pass "Nested workspace marker survived restart"
 else
@@ -708,7 +690,7 @@ cleanup_ssh
 # ══════════════════════════════════════════════════════════════════
 section "Phase 11: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 if [ -f "$REGISTRY" ] && grep -Fq "\"${SANDBOX_NAME}\"" "$REGISTRY"; then
