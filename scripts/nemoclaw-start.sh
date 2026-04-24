@@ -31,6 +31,14 @@
 
 set -euo pipefail
 
+# ── Early stderr/stdout capture ──────────────────────────────────
+# Capture all entrypoint output to /tmp/nemoclaw-start.log so that if
+# the script crashes before touch /tmp/gateway.log (e.g., a Landlock
+# read failure), the output is still available for diagnostics.
+# The log is written in append mode and also forwarded to the original
+# stderr/stdout via tee so openshell sandbox create can still stream it.
+exec > >(tee -a /tmp/nemoclaw-start.log) 2> >(tee -a /tmp/nemoclaw-start.log >&2)
+
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
 # agents/hermes/start.sh. Ref: https://github.com/NVIDIA/NemoClaw/issues/2277
@@ -1161,10 +1169,61 @@ export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCR
 # The preload patches https.request() to inject a CONNECT tunnel agent for
 # WebSocket upgrade requests. Activates whenever HTTPS_PROXY is set (the
 # script itself guards on the env var).
-_WS_FIX_SCRIPT="/opt/nemoclaw-blueprint/scripts/ws-proxy-fix.js"
-if [ -f "$_WS_FIX_SCRIPT" ]; then
+_WS_FIX_SOURCE="/usr/local/lib/nemoclaw/ws-proxy-fix.js"
+_WS_FIX_SCRIPT="/tmp/nemoclaw-ws-proxy-fix.js"
+if [ -f "$_WS_FIX_SOURCE" ]; then
+  # Copy to /tmp so the sandbox user can read it — /usr/local/lib/ may be
+  # Landlock-restricted in some runtimes. Same pattern as the other preloads.
+  emit_sandbox_sourced_file "$_WS_FIX_SCRIPT" <"$_WS_FIX_SOURCE"
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_WS_FIX_SCRIPT"
 fi
+
+# ── Seccomp syscall guard ─────────────────────────────────────
+# OpenShell ≥0.0.36 seccomp policy blocks syscalls like getifaddrs
+# (used by Node's os.networkInterfaces()). Third-party libraries (e.g.,
+# @homebridge/ciao mDNS) call these without error handling, producing
+# unhandled promise rejections that crash the gateway under Node v22's
+# default --unhandled-rejections=throw.
+#
+# This preload catches those specific sandbox-infrastructure errors
+# and logs them as warnings instead of letting them kill the process.
+# Unlike the Slack channel guard, this is always installed because the
+# seccomp-blocked syscalls affect all sandboxes, not just Slack ones.
+_SECCOMP_GUARD_SCRIPT="/tmp/nemoclaw-seccomp-guard.js"
+emit_sandbox_sourced_file "$_SECCOMP_GUARD_SCRIPT" <<'SECCOMP_GUARD_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// seccomp-guard.js — patch syscalls that are blocked by OpenShell ≥0.0.36
+// seccomp policy. Third-party libraries (e.g., @homebridge/ciao mDNS) call
+// os.networkInterfaces() without error handling, producing unhandled promise
+// rejections. OpenClaw's rejection handler (unhandled-rejections-*.js) calls
+// process.exit(1) for unrecognised errors, crashing the gateway.
+//
+// Rather than trying to catch the rejection (which races with OpenClaw's own
+// handler), this preload patches the syscall wrappers to return safe defaults
+// when the underlying call is blocked by seccomp.
+
+(function () {
+  'use strict';
+  var os = require('os');
+  var _origNetworkInterfaces = os.networkInterfaces;
+
+  os.networkInterfaces = function () {
+    try {
+      return _origNetworkInterfaces.call(os);
+    } catch (err) {
+      if (err && String(err.message || '').indexOf('uv_interface_addresses') !== -1) {
+        // seccomp blocks getifaddrs — return empty result.
+        // mDNS discovery is not needed inside a sandbox.
+        return {};
+      }
+      throw err;
+    }
+  };
+})();
+SECCOMP_GUARD_EOF
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT"
 
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns
@@ -1207,6 +1266,8 @@ PROXYEOF
   fi
   # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
   echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
+  # Seccomp guard for connect sessions.
+  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT\""
   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
   for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -1343,7 +1404,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT"
+  validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait.
   # Pass OPENCLAW_GATEWAY_TOKEN only on this launch line so it lives solely
@@ -1483,7 +1544,7 @@ harden_openclaw_symlinks
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT"
+validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

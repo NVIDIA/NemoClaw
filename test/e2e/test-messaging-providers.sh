@@ -1181,6 +1181,15 @@ if echo "$gw_port" | grep -q "OPEN"; then
   pass "S1: Gateway is serving on port 18789 — Slack auth failure did not crash it"
 else
   fail "S1: Gateway is not serving on port 18789 (${gw_port:0:200})"
+  # Dump early entrypoint log — captures crashes that happen before
+  # touch /tmp/gateway.log (e.g., Landlock read failures, seccomp blocks).
+  start_log=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/nemoclaw-start.log 2>/dev/null || true)
+  if [ -n "$start_log" ]; then
+    info "Entrypoint log (last 40 lines of /tmp/nemoclaw-start.log):"
+    echo "$start_log" | tail -40 | while IFS= read -r line; do
+      info "  $line"
+    done
+  fi
 fi
 
 # S2: Dump gateway.log for diagnostics (must use openshell exec — SSH user
