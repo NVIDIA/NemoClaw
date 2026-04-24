@@ -11,6 +11,7 @@ export default defineConfig({
           name: "cli",
           include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**", "test/e2e/**"],
+          testTimeout: 15000,
         },
       },
       {

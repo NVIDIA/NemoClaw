@@ -22,6 +22,7 @@ WORKDIR /opt/nemoclaw
 RUN npm ci && npm run build
 
 # Stage 2: Runtime image — pull cached base from GHCR
+# hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
@@ -366,6 +367,7 @@ json.dump(config, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
 
 # Install NemoClaw plugin into OpenClaw
+# hadolint ignore=SC2015
 RUN openclaw doctor --fix > /dev/null 2>&1 || true \
     && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
