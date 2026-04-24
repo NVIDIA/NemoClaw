@@ -37,7 +37,18 @@ set -euo pipefail
 # read failure), the output is still available for diagnostics.
 # The log is written in append mode and also forwarded to the original
 # stderr/stdout via tee so openshell sandbox create can still stream it.
-exec > >(tee -a /tmp/nemoclaw-start.log) 2> >(tee -a /tmp/nemoclaw-start.log >&2)
+# SECURITY: restrict permissions before writing — the script later prints
+# tokenized dashboard URLs to stderr (#token=...).
+_START_LOG="/tmp/nemoclaw-start.log"
+if [ "$(id -u)" -eq 0 ]; then
+  : >"$_START_LOG"
+  chown root:root "$_START_LOG"
+  chmod 600 "$_START_LOG"
+else
+  : >"$_START_LOG"
+  chmod 600 "$_START_LOG" 2>/dev/null || true
+fi
+exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
 
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with

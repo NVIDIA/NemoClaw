@@ -59,7 +59,7 @@ describe("Seccomp guard preload", () => {
     const testScript = `
       // Simulate seccomp-blocked os.networkInterfaces
       const os = require('os');
-      const origNI = os.networkInterfaces;
+      const _origNI = os.networkInterfaces;
       os.networkInterfaces = function() {
         throw new SystemError('uv_interface_addresses');
       };
@@ -169,7 +169,12 @@ describe("Early entrypoint stderr capture", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("redirects stdout and stderr to /tmp/nemoclaw-start.log via tee", () => {
-    expect(src).toMatch(/exec\s+>\s+>\(tee\s+-a\s+\/tmp\/nemoclaw-start\.log\)/);
-    expect(src).toMatch(/2>\s+>\(tee\s+-a\s+\/tmp\/nemoclaw-start\.log\s+>&2\)/);
+    expect(src).toContain('_START_LOG="/tmp/nemoclaw-start.log"');
+    expect(src).toMatch(/exec\s+>\s+>\(tee\s+-a\s+"\$_START_LOG"\)/);
+    expect(src).toMatch(/2>\s+>\(tee\s+-a\s+"\$_START_LOG"\s+>&2\)/);
+  });
+
+  it("restricts log permissions before writing to prevent token leakage", () => {
+    expect(src).toMatch(/chmod 600 "\$_START_LOG"/);
   });
 });
