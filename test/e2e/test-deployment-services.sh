@@ -22,28 +22,10 @@
 set -euo pipefail
 
 # ── Overall timeout ──────────────────────────────────────────────────────────
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-3600}"
-  if command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  fi
-fi
-
-# ── Config ───────────────────────────────────────────────────────────────────
-SANDBOX_NAME="e2e-deploy"
-LOG_FILE="test-deployment-services-$(date +%Y%m%d-%H%M%S).log"
-touch "$LOG_FILE"
-
-if command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="gtimeout"
-elif command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="timeout"
-else
-  TIMEOUT_CMD=""
-fi
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=3600
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -77,6 +59,10 @@ skip() {
   ((TOTAL += 1))
   echo -e "${YELLOW}  SKIP${NC} $1 — $2" | tee -a "$LOG_FILE"
 }
+
+# ── Config ───────────────────────────────────────────────────────────────────
+SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-deploy-svc}"
+LOG_FILE="test-deployment-services-$(date +%Y%m%d-%H%M%S).log"
 
 # ── Resolve repo root ────────────────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -142,7 +128,8 @@ preflight() {
         return 0
         ;;
     esac
-    if curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}" -o /tmp/cloudflared \
+    local cf_url="${CLOUDFLARED_DOWNLOAD_URL:-https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}}"
+    if curl -fsSL "$cf_url" -o /tmp/cloudflared \
       && chmod +x /tmp/cloudflared \
       && sudo mv /tmp/cloudflared /usr/local/bin/cloudflared 2>/dev/null; then
       log "cloudflared installed"
@@ -167,7 +154,7 @@ sandbox_exec() {
     return 1
   fi
   local result ssh_exit=0
-  result=$(${TIMEOUT_CMD:+$TIMEOUT_CMD 120} ssh -F "$ssh_cfg" \
+  result=$(run_with_timeout 120 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" "$cmd" 2>&1) || ssh_exit=$?
@@ -185,7 +172,7 @@ onboard_sandbox() {
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="open" \
-    ${TIMEOUT_CMD:+$TIMEOUT_CMD 600} nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    run_with_timeout 600 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | tee -a "$LOG_FILE" || {
     log "FATAL: Onboard failed for '$name'"
     return 1
@@ -409,8 +396,10 @@ test_deploy_03_uninstall_keep_openshell() {
 
 # Clean up sandbox and services on exit.
 teardown() {
+  # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
+  # test/e2e/lib/sandbox-teardown.sh — the lock is PID-ownership-aware
+  # and onboard cleans up stale locks itself.
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   nemoclaw stop 2>/dev/null || true
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
   set -e

@@ -39,7 +39,7 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 MIN_VERSION="0.0.32"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.32"
+MAX_VERSION="0.0.36"
 # Pin fresh installs to this version instead of pulling "latest".
 PIN_VERSION="$MAX_VERSION"
 

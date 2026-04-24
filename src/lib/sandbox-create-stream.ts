@@ -18,6 +18,13 @@ export interface StreamSandboxCreateOptions {
   heartbeatIntervalMs?: number;
   silentPhaseMs?: number;
   logLine?: (line: string) => void;
+  // Initial progress phase:
+  //   build  — docker-building the sandbox image
+  //   upload — pushing the built image into the gateway registry
+  //   create — k3s provisioning the pod from the image
+  //   ready  — waiting for the pod to reach Ready state
+  // Defaults to "build".
+  initialPhase?: "build" | "upload" | "create" | "ready";
   spawnImpl?: (
     command: string,
     args: readonly string[],
@@ -214,7 +221,7 @@ export function streamSandboxCreate(
     : null;
   readyTimer?.unref?.();
 
-  setPhase("build");
+  setPhase(options.initialPhase ?? "build");
   const heartbeatTimer = setInterval(() => {
     if (settled) return;
     const silentForMs = Date.now() - lastOutputAt;

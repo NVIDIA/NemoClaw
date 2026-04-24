@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { Mock } from "vitest";
 
 // Import from compiled dist/ for coverage attribution.
-import nim from "../../dist/lib/nim";
+import * as nim from "../../dist/lib/nim";
 
 const require = createRequire(import.meta.url);
 const NIM_DIST_PATH = require.resolve("../../dist/lib/nim");

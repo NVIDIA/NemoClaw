@@ -78,12 +78,31 @@ jobs:
           path: /tmp/isolation-image.tar.gz
           retention-days: 1
 
+  build-sandbox-images-arm64:
+    runs-on: linux-arm64-cpu4
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Pull base image from GHCR (fall back to local build)
+        run: |
+          if docker pull ghcr.io/nvidia/nemoclaw/sandbox-base:latest 2>/dev/null; then
+            echo "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest" >> "$GITHUB_ENV"
+          else
+            echo "::warning::GHCR base image not available, building locally"
+            docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
+            echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build production image on arm64
+        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production-arm64 .
+
+      - name: Build sandbox test image on arm64
+        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .
+
   test-e2e-sandbox:
-    # Use GitHub-hosted runner — snapshot rollback test fails 100% on
-    # linux-amd64-cpu4 self-hosted runners due to a Docker storage/filesystem
-    # incompatibility (renameSync on overlayfs symlink dirs). Passes reliably
-    # on ubuntu-latest. See PR #2288 for diagnosis.
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     needs: build-sandbox-images
     steps:
@@ -121,3 +140,23 @@ jobs:
 
       - name: Run gateway isolation E2E tests
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
+
+  test-e2e-port-overrides:
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 10
+    needs: build-sandbox-images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: isolation-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
+
+      - name: Run port override E2E tests
+        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-port-overrides.sh

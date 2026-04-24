@@ -82,6 +82,10 @@ fi
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-hermes}"
 export NEMOCLAW_AGENT="${NEMOCLAW_AGENT:-hermes}"
 
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 # Hermes health probe endpoint (from agents/hermes/manifest.yaml)
 HERMES_HEALTH_URL="http://localhost:8642/health"
 
@@ -512,7 +516,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 8: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 # Verify against the registry file directly.  `nemoclaw list` triggers

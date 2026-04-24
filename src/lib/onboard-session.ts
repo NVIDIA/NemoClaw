@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { TOKEN_PREFIX_PATTERNS } from "./secret-patterns";
 import type { WebSearchConfig } from "./web-search";
 
 export const SESSION_VERSION = 1;
@@ -207,16 +208,22 @@ function parseLockInfo(value: unknown): LockInfo | null {
 
 export function redactSensitiveText(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  return value
+
+  // Context-anchored patterns: preserve the key name for debuggability.
+  let result = value
     .replace(
-      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY)=\S+/gi,
+      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN)=\S+/gi,
       "$1=<REDACTED>",
     )
-    .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>")
-    .replace(/nvapi-[A-Za-z0-9_-]{10,}/g, "<REDACTED>")
-    .replace(/ghp_[A-Za-z0-9]{20,}/g, "<REDACTED>")
-    .replace(/sk-[A-Za-z0-9_-]{10,}/g, "<REDACTED>")
-    .slice(0, 240);
+    .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>");
+
+  // Standalone token patterns — delegate to the canonical source of truth
+  // (secret-patterns.ts) instead of maintaining a duplicate regex list.
+  for (const pattern of TOKEN_PREFIX_PATTERNS) {
+    result = result.replace(pattern, "<REDACTED>");
+  }
+
+  return result.slice(0, 240);
 }
 
 export function sanitizeFailure(
