@@ -126,6 +126,8 @@ describe("local inference helpers", () => {
           ...process.env,
           NEMOCLAW_OLLAMA_PORT: "11435",
           NEMOCLAW_OLLAMA_PROXY_PORT: "11435",
+          WSL_DISTRO_NAME: "",
+          WSL_INTEROP: "",
         },
       },
     );
