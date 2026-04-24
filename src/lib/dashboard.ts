@@ -43,8 +43,9 @@ export function resolveDashboardForwardTarget(
  * embedding in a URL fragment (forDisplay=false).
  */
 function redactToken(token: string, forDisplay: boolean): string {
-  if (!forDisplay || token.length <= 4) return token;
-  return token.slice(0, 4) + "*".repeat(Math.min(token.length - 4, 20));
+  if (!forDisplay) return token;
+  if (token.length <= 4) return "*".repeat(token.length);
+  return token.slice(0, 4) + "*".repeat(token.length - 4);
 }
 
 /**

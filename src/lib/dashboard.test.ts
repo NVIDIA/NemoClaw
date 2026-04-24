@@ -120,4 +120,21 @@ describe("buildControlUiUrls", () => {
     const urls = buildControlUiUrls("my-token", 19000);
     expect(urls).toEqual(["http://127.0.0.1:19000/#token=my-token"]);
   });
+
+  it("redacts token in URL when forDisplay is true", () => {
+    const urls = buildControlUiUrls("my-secret-token", 18789, true);
+    expect(urls[0]).toContain("#token=my-s***********");
+    expect(urls[0]).not.toContain("my-secret-token");
+  });
+
+  it("fully masks short tokens (<=4 chars) when forDisplay is true", () => {
+    const urls = buildControlUiUrls("abcd", 18789, true);
+    expect(urls[0]).toContain("#token=****");
+    expect(urls[0]).not.toContain("abcd");
+  });
+
+  it("returns full token in URL when forDisplay is false", () => {
+    const urls = buildControlUiUrls("my-secret-token");
+    expect(urls[0]).toContain("#token=my-secret-token");
+  });
 });
