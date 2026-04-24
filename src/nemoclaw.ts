@@ -66,6 +66,7 @@ const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
 const { ensureOllamaAuthProxy } = require("./lib/onboard");
+const backup = require("./lib/backup");
 const skillInstall = require("./lib/skill-install");
 const { sleepSeconds } = require("./lib/wait");
 const { parseSandboxPhase } = require("./lib/gateway-state");
@@ -100,6 +101,8 @@ const GLOBAL_COMMANDS = new Set([
   "uninstall",
   "credentials",
   "backup-all",
+  "backups",
+  "import",
   "upgrade-sandboxes",
   "gc",
   "help",
@@ -2932,6 +2935,50 @@ async function garbageCollectImages(args = []) {
   if (failed > 0) process.exit(1);
 }
 
+/**
+ * Lists all sandbox backups.
+ */
+function listBackups() {
+  const backups = backup.listBackups();
+  if (backups.length === 0) {
+    console.log("");
+    console.log("  No backups found in ~/.nemoclaw/backups/");
+    console.log("");
+    return;
+  }
+
+  console.log("");
+  console.log("  Backups:");
+  for (const b of backups) {
+    const sizeMb = (b.size / (1024 * 1024)).toFixed(1);
+    console.log(`    ${b.name} (${sizeMb} MB) — ${b.createdAt}`);
+    console.log(`      ${D}${b.path}${R}`);
+  }
+  console.log("");
+}
+
+/**
+ * Imports a sandbox from a backup file.
+ * @param {string} backupPath - Path to the backup file.
+ * @param {string} [newName] - Optional new name for the sandbox.
+ */
+async function importBackup(backupPath, newName) {
+  if (!backupPath) {
+    console.error("  Usage: nemoclaw import <path> [new-name]");
+    process.exit(1);
+  }
+  await backup.importSandbox(backupPath, newName);
+}
+
+/**
+ * Exports a sandbox to a backup file.
+ * @param {string} sandboxName - Name of the sandbox to export.
+ * @param {string} [exportPath] - Optional output path for the backup.
+ */
+function sandboxExport(sandboxName, exportPath) {
+  backup.exportSandbox(sandboxName, exportPath);
+}
+
 // ── Help ─────────────────────────────────────────────────────────
 
 /** Print CLI usage with all commands, flags, and reconfiguration guidance. */
@@ -2955,6 +3002,7 @@ function help() {
     nemoclaw <name> snapshot restore  Restore state from a snapshot ${D}([v<N>|name|timestamp], omit for latest)${R}
     nemoclaw <name> rebuild          Upgrade sandbox to current agent version ${D}(--yes to skip prompt)${R}
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
+    nemoclaw <name> export ${D}[path]${R}    Export sandbox to backup file
 
   ${G}Skills:${R}
     nemoclaw <name> skill install <path>  Deploy a skill directory to the sandbox
@@ -2994,6 +3042,10 @@ function help() {
 
   ${G}Backup:${R}
     nemoclaw backup-all              Back up all sandbox state before upgrade
+
+  ${G}Backup & Restore:${R}
+    nemoclaw backups                List all backups
+    nemoclaw import ${D}<path> [name]${R}   Import sandbox from backup file
 
   ${G}Upgrade:${R}
     nemoclaw upgrade-sandboxes       Detect and rebuild stale sandboxes ${D}(--check, --auto)${R}
@@ -3086,6 +3138,12 @@ const [cmd, ...args] = process.argv.slice(2);
       case "backup-all":
         backupAll();
         break;
+      case "backups":
+        listBackups();
+        break;
+      case "import":
+        await importBackup(args[0], args[1]);
+        break;
       case "upgrade-sandboxes":
         await upgradeSandboxes(args);
         break;
@@ -3121,6 +3179,7 @@ const [cmd, ...args] = process.argv.slice(2);
     "shields",
     "config",
     "channels",
+    "export",
     "",
   ];
   if (!registry.getSandbox(cmd) && sandboxActions.includes(args[0] || "")) {
@@ -3177,6 +3236,9 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "snapshot":
         sandboxSnapshot(cmd, actionArgs);
+        break;
+      case "export":
+        sandboxExport(cmd, actionArgs[0]);
         break;
       case "shields": {
         const shieldsSub = actionArgs[0];
@@ -3302,7 +3364,7 @@ const [cmd, ...args] = process.argv.slice(2);
       default:
         console.error(`  Unknown action: ${action}`);
         console.error(
-          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, channels, destroy`,
+          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, channels, export, destroy`,
         );
         process.exit(1);
     }

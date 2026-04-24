@@ -3,22 +3,22 @@
 //
 // Sandbox backup and restore functionality
 
-const fs = require("fs");
-const path = require("path");
-const os = require("os");
-const { spawnSync } = require("child_process");
-const registry = require("./registry");
-const { ROOT } = require("./runner");
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+import { spawnSync } from "node:child_process";
+import * as registry from "./registry.js";
+import { ROOT } from "./runner.js";
 
-const BACKUP_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw", "backups");
+export const BACKUP_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw", "backups");
 
 const SANDBOX_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
-function isValidSandboxName(name) {
+function isValidSandboxName(name: string): boolean {
   return SANDBOX_NAME_PATTERN.test(name);
 }
 
-function runOpenshell(args) {
+function runOpenshell(args: string[]) {
   const result = spawnSync("openshell", args, {
     encoding: "utf-8",
     timeout: 30000,
@@ -34,22 +34,32 @@ function runOpenshell(args) {
 /**
  * Ensures the backup directory exists with appropriate permissions.
  */
-function ensureBackupDir() {
+export function ensureBackupDir(): void {
   fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
+}
+
+export interface BackupEntry {
+  name: string;
+  createdAt: string;
+  path: string;
+  size: number;
 }
 
 /**
  * Lists all sandbox backups in the backup directory.
- * @returns {Array<{name: string, createdAt: string, path: string, size: number}>}
+ * @returns {BackupEntry[]}
  */
-function listBackups() {
+export function listBackups(): BackupEntry[] {
   ensureBackupDir();
+  if (!fs.existsSync(BACKUP_DIR)) return [];
+
   const files = fs.readdirSync(BACKUP_DIR).filter(f => f.endsWith(".json"));
-  const backups = [];
+  const backups: BackupEntry[] = [];
 
   for (const file of files) {
     try {
-      const content = JSON.parse(fs.readFileSync(path.join(BACKUP_DIR, file), "utf-8"));
+      const filePath = path.join(BACKUP_DIR, file);
+      const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
       if (!content.metadata || !content.metadata.name || !content.metadata.createdAt) {
         console.warn(`  Warning: Skipping malformed backup ${file}: missing metadata`);
         continue;
@@ -57,10 +67,10 @@ function listBackups() {
       backups.push({
         name: content.metadata.name,
         createdAt: content.metadata.createdAt,
-        path: path.join(BACKUP_DIR, file),
-        size: fs.statSync(path.join(BACKUP_DIR, file)).size,
+        path: filePath,
+        size: fs.statSync(filePath).size,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.warn(`  Warning: Could not read backup ${file}: ${err.message}`);
     }
   }
@@ -74,7 +84,7 @@ function listBackups() {
  * @param {string} [outputPath] - Optional output path for the backup file.
  * @returns {string|null} Path to the created backup file, or null if sandbox not found.
  */
-function exportSandbox(sandboxName, outputPath) {
+export function exportSandbox(sandboxName: string, outputPath?: string): string | null {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) {
     console.error(`  Sandbox not found: ${sandboxName}`);
@@ -90,12 +100,19 @@ function exportSandbox(sandboxName, outputPath) {
   const policyResult = runOpenshell(["policy", "get", sandboxName]);
   const policyContent = policyResult.status === 0 ? policyResult.stdout : "";
 
+  let version = "unknown";
+  try {
+    version = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf-8")).version;
+  } catch {
+    // ignore
+  }
+
   const backup = {
     version: "1.0",
     metadata: {
       name: sandboxName,
       createdAt: new Date().toISOString(),
-      nemoclawVersion: JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf-8")).version,
+      nemoclawVersion: version,
     },
     sandbox: {
       name: sandbox.name,
@@ -122,15 +139,15 @@ function exportSandbox(sandboxName, outputPath) {
  * Imports a sandbox from a backup file.
  * @param {string} backupPath - Path to the backup file.
  * @param {string} [newName] - Optional new name for the imported sandbox.
- * @returns {boolean} True if import succeeded, false otherwise.
+ * @returns {Promise<boolean>} True if import succeeded, false otherwise.
  */
-function importSandbox(backupPath, newName) {
+export async function importSandbox(backupPath: string, newName?: string): Promise<boolean> {
   if (!fs.existsSync(backupPath)) {
     console.error(`  Backup file not found: ${backupPath}`);
     return false;
   }
 
-  let backup;
+  let backup: any;
   try {
     backup = JSON.parse(fs.readFileSync(backupPath, "utf-8"));
   } catch {
@@ -179,10 +196,10 @@ function importSandbox(backupPath, newName) {
       } else {
         console.warn(`  Warning: Could not restore policy: ${policyResult.stderr}`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn(`  Warning: Could not restore policy: ${err.message}`);
     } finally {
-      fs.unlinkSync(policyPath);
+      try { fs.unlinkSync(policyPath); } catch { /* ignore */ }
     }
   }
 
@@ -195,7 +212,7 @@ function importSandbox(backupPath, newName) {
  * @param {string} backupPath - Path to the backup file to delete.
  * @returns {boolean} True if deletion succeeded, false otherwise.
  */
-function deleteBackup(backupPath) {
+export function deleteBackup(backupPath: string): boolean {
   if (!fs.existsSync(backupPath)) {
     console.error(`  Backup not found: ${backupPath}`);
     return false;
@@ -204,11 +221,3 @@ function deleteBackup(backupPath) {
   console.log(`  Deleted backup: ${backupPath}`);
   return true;
 }
-
-module.exports = {
-  BACKUP_DIR,
-  listBackups,
-  exportSandbox,
-  importSandbox,
-  deleteBackup,
-};
