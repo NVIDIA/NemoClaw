@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard-contract.js";
@@ -4987,6 +4988,324 @@ const { setupMessagingChannels } = require(${onboardPath});
       assert.equal(channels.length, 0, "expected empty array when no tokens are set");
     },
   );
+
+  it(
+    "interactive setupMessagingChannels drops slack when prompted token fails tokenFormat check (#1912)",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-slack-format-reject-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "slack-format-reject.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "credentials.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      // Subscript: mocks credentials.prompt to return a bogus Slack token,
+      // exposes MESSAGING_CHANNELS so the parent can look up the Slack toggle
+      // digit, and asserts that setupMessagingChannels rejects the invalid
+      // token without persisting it. Slack is the 3rd channel in insertion
+      // order today (telegram, discord, slack) but we compute the index
+      // dynamically to avoid a brittle coupling to that ordering.
+      const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const saveCalls = [];
+credentials.saveCredential = (key, value) => { saveCalls.push({ key, value }); };
+credentials.getCredential = () => null;
+credentials.prompt = async (message) => {
+  if (message.includes("Slack Bot Token")) return "abcd";
+  return "";
+};
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+
+const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
+
+(async () => {
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  delete process.env.DISCORD_BOT_TOKEN;
+  delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_APP_TOKEN;
+
+  const result = await setupMessagingChannels();
+  console.log(JSON.stringify({
+    result,
+    saveCalls,
+    slackIndex1Based: MESSAGING_CHANNELS.findIndex((c) => c.name === "slack") + 1,
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      // Dry run with just Enter — no toggles, empty result — used to read back
+      // Slack's 1-based index from the same subscript so the real run can
+      // press the right digit.
+      const introspect = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+        input: "\n",
+      });
+      assert.equal(introspect.status, 0, introspect.stderr);
+      const introspectOut = JSON.parse(introspect.stdout.trim().split("\n").pop());
+      const slackIdx = introspectOut.slackIndex1Based;
+      assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
+
+      // Real run: press Slack's digit, Enter. Slack gets toggled on, prompt
+      // fires, mocked prompt returns "abcd", tokenFormat regex rejects it,
+      // channel is dropped, saveCredential never runs for SLACK_BOT_TOKEN.
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+        input: `${slackIdx}\n`,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const out = JSON.parse(result.stdout.trim().split("\n").pop());
+
+      assert.ok(
+        !out.result.includes("slack"),
+        `slack should have been dropped after invalid token; got ${JSON.stringify(out.result)}`,
+      );
+      assert.ok(
+        !out.saveCalls.some((c) => c.key === "SLACK_BOT_TOKEN"),
+        `SLACK_BOT_TOKEN should NOT have been persisted; saveCalls=${JSON.stringify(out.saveCalls)}`,
+      );
+      assert.ok(
+        result.stderr.includes("Invalid format") || result.stdout.includes("Invalid format"),
+        `expected 'Invalid format' warning; stderr=${result.stderr} stdout=${result.stdout}`,
+      );
+    },
+  );
+
+  it(
+    "interactive setupMessagingChannels drops slack when app token fails appTokenFormat check (#1912)",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-slack-app-format-reject-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "slack-app-format-reject.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "credentials.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      // Subscript: mocks prompt to return a VALID bot token but a bogus app
+      // token. Expected behavior: bot token passes the regex and persists,
+      // app token fails the regex, channel is dropped from the enabled set,
+      // and SLACK_APP_TOKEN is never saved.
+      const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const saveCalls = [];
+credentials.saveCredential = (key, value) => { saveCalls.push({ key, value }); };
+credentials.getCredential = () => null;
+credentials.prompt = async (message) => {
+  if (message.includes("Slack Bot Token")) return "xoxb-test-valid-bot-token";
+  if (message.includes("Slack App Token")) return "abcd";
+  return "";
+};
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+
+const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
+
+(async () => {
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  delete process.env.DISCORD_BOT_TOKEN;
+  delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_APP_TOKEN;
+
+  const result = await setupMessagingChannels();
+  console.log(JSON.stringify({
+    result,
+    saveCalls,
+    slackIndex1Based: MESSAGING_CHANNELS.findIndex((c) => c.name === "slack") + 1,
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      // Dry run with Enter only to introspect Slack's 1-based digit.
+      const introspect = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+        input: "\n",
+      });
+      assert.equal(introspect.status, 0, introspect.stderr);
+      const slackIdx = JSON.parse(
+        introspect.stdout.trim().split("\n").pop(),
+      ).slackIndex1Based;
+      assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
+
+      // Real run: toggle Slack on, exit UI, bot prompt returns valid, app
+      // prompt returns "abcd", app-token check rejects, channel dropped.
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+        input: `${slackIdx}\n`,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const out = JSON.parse(result.stdout.trim().split("\n").pop());
+
+      assert.ok(
+        !out.result.includes("slack"),
+        `slack should have been dropped after invalid app token; got ${JSON.stringify(out.result)}`,
+      );
+      // Bot token is persisted before the app-token prompt — that's fine, the
+      // user can retry later and the pre-saved bot token will light up as
+      // "already configured" on the next onboard.
+      assert.ok(
+        out.saveCalls.some((c) => c.key === "SLACK_BOT_TOKEN"),
+        `SLACK_BOT_TOKEN should have been persisted (valid format); saveCalls=${JSON.stringify(out.saveCalls)}`,
+      );
+      assert.ok(
+        !out.saveCalls.some((c) => c.key === "SLACK_APP_TOKEN"),
+        `SLACK_APP_TOKEN should NOT have been persisted (invalid format); saveCalls=${JSON.stringify(out.saveCalls)}`,
+      );
+      assert.ok(
+        result.stderr.includes("Invalid format") || result.stdout.includes("Invalid format"),
+        `expected 'Invalid format' warning; stderr=${result.stderr} stdout=${result.stdout}`,
+      );
+    },
+  );
+
+  it("Slack bot token format regex rejects obvious bogus tokens and accepts valid ones (#1912)", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const onboardPath = path.join(repoRoot, "dist", "lib", "onboard.js");
+    // Cache-bust the dynamic import so repeated test runs pick up rebuilds.
+    const onboardUrl = `${pathToFileURL(onboardPath).href}?update=${Date.now()}`;
+    const { MESSAGING_CHANNELS } = await import(onboardUrl);
+    const slack = MESSAGING_CHANNELS.find((c) => c.name === "slack");
+
+    assert.ok(slack, "slack messaging channel definition present");
+    assert.ok(slack.tokenFormat instanceof RegExp, "slack.tokenFormat is a regex");
+    assert.ok(
+      typeof slack.tokenFormatHint === "string" && slack.tokenFormatHint.length > 0,
+      "slack.tokenFormatHint set",
+    );
+
+    // Bogus tokens from the bug report and other common misentries — must be rejected.
+    // gitleaks-allow below: intentionally pasted fake prefixes to prove they don't match.
+    const invalid = [
+      "abcd",
+      "",
+      "xoxb",
+      "xoxb-",
+      "xoxp-" + "test-user-token", // gitleaks:allow
+      "xapp-" + "test-app-token", // gitleaks:allow
+      "Bearer xoxb-fake",
+      "xoxb-fake with space",
+    ];
+    for (const token of invalid) {
+      assert.ok(
+        !slack.tokenFormat.test(token),
+        `expected ${JSON.stringify(token)} to be rejected as Slack bot token`,
+      );
+    }
+
+    // Syntactically valid bot tokens — must be accepted. Values are
+    // intentionally obvious test strings to avoid tripping gitleaks.
+    const valid = [
+      "xoxb-test-slack-token-value",
+      "xoxb-fake-bot-token",
+      "xoxb-A",
+      // Slack tokens can contain underscores — lock in the widened
+      // character class per @jyaunches review on #2130.
+      "xoxb-test_with_underscores",
+      "xoxb-mix_of-hyphens_and_underscores",
+    ];
+    for (const token of valid) {
+      assert.ok(
+        slack.tokenFormat.test(token),
+        `expected ${JSON.stringify(token)} to be accepted as Slack bot token`,
+      );
+    }
+
+    // App token (xapp-) has its own format — same permissive character
+    // class. Per @jyaunches suggestion #2 on #2130.
+    assert.ok(slack.appTokenFormat instanceof RegExp, "slack.appTokenFormat is a regex");
+    assert.ok(
+      typeof slack.appTokenFormatHint === "string" && slack.appTokenFormatHint.length > 0,
+      "slack.appTokenFormatHint set",
+    );
+    const invalidApp = [
+      "abcd",
+      "",
+      "xapp",
+      "xapp-",
+      "xoxb-" + "test-bot-token", // gitleaks:allow
+      "Bearer xapp-fake",
+      "xapp-fake with space",
+    ];
+    for (const token of invalidApp) {
+      assert.ok(
+        !slack.appTokenFormat.test(token),
+        `expected ${JSON.stringify(token)} to be rejected as Slack app token`,
+      );
+    }
+    const validApp = [
+      "xapp-1-A0000-12345-abcdef",
+      "xapp-test-app-token-value",
+      "xapp-A",
+      "xapp-with_underscores_and-hyphens",
+    ];
+    for (const token of validApp) {
+      assert.ok(
+        slack.appTokenFormat.test(token),
+        `expected ${JSON.stringify(token)} to be accepted as Slack app token`,
+      );
+    }
+  });
 
   it("uses the custom Dockerfile parent directory as build context when --from is given", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
