@@ -325,7 +325,7 @@ describe("onboard session", () => {
     session.saveSession(session.createSession());
     session.markStepFailed(
       "inference",
-      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value ghp_1234567890123456789012345",
+      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value-that-is-long-enough ghp_1234567890123456789012345",
     );
 
     const loaded = session.loadSession();
@@ -333,7 +333,7 @@ describe("onboard session", () => {
     expect(loaded.steps.inference.error).toContain("Bearer <REDACTED>");
     expect(loaded.steps.inference.error).not.toContain("nvapi-secret");
     expect(loaded.steps.inference.error).not.toContain("topsecret");
-    expect(loaded.steps.inference.error).not.toContain("sk-secret-value");
+    expect(loaded.steps.inference.error).not.toContain("sk-secret-value-that-is-long-enough");
     expect(loaded.steps.inference.error).not.toContain("ghp_1234567890123456789012345");
     expect(loaded.failure.message).toBe(loaded.steps.inference.error);
   });

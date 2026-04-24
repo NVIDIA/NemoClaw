@@ -174,7 +174,7 @@ The OpenClaw gateway includes a built-in web UI. Access it at:
 http://127.0.0.1:18789/#token=<your-gateway-token>
 ```
 
-Find your gateway token in `~/.openclaw/openclaw.json` under `gateway.auth.token` inside the sandbox.
+The gateway token is printed by `nemoclaw onboard` at startup. It is stored at `/run/nemoclaw/gateway-token` (root mode, readable only by root and the gateway user) or `/tmp/.runtime/nemoclaw/gateway-token` (non-root mode).
 
 > **Important**: Use `127.0.0.1` (not `localhost`) — the gateway's origin check requires an exact match. External dashboards like Mission Control cannot currently connect due to the gateway resetting `controlUi.allowedOrigins` on every config reload (see [openclaw#49950](https://github.com/openclaw/openclaw/issues/49950)).
 

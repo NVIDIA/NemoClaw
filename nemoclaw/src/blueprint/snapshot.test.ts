@@ -61,6 +61,13 @@ vi.mock("node:fs", async (importOriginal) => {
         }
       }
     }),
+    rmSync: vi.fn((target: string) => {
+      for (const k of [...store.keys()]) {
+        if (k === target || k.startsWith(target + "/")) {
+          store.delete(k);
+        }
+      }
+    }),
     readdirSync: (p: string, opts?: { withFileTypes?: boolean }) => {
       const prefix = p.endsWith("/") ? p : p + "/";
       const childTypes = new Map<string, "file" | "dir">();
@@ -95,8 +102,14 @@ vi.mock("node:fs", async (importOriginal) => {
 const mockExeca = vi.fn();
 vi.mock("execa", () => ({ execa: (...args: unknown[]) => mockExeca(...args) }));
 
-const { createSnapshot, restoreIntoSandbox, cutoverHost, rollbackFromSnapshot, listSnapshots } =
-  await import("./snapshot.js");
+const {
+  createSnapshot,
+  restoreIntoSandbox,
+  cutoverHost,
+  rollbackFromSnapshot,
+  listSnapshots,
+  moveSync,
+} = await import("./snapshot.js");
 
 const OPENCLAW_DIR = `${FAKE_HOME}/.openclaw`;
 const SNAPSHOTS_DIR = `${FAKE_HOME}/.nemoclaw/snapshots`;
@@ -219,6 +232,59 @@ describe("snapshot", () => {
 
       expect(await restoreIntoSandbox(SNAP)).toBe(false);
       expect(mockExeca).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("moveSync", () => {
+    it("uses renameSync when on the same device", () => {
+      addDir("/src-dir");
+      addFile("/src-dir/file.txt", "hello");
+
+      moveSync("/src-dir", "/dest-dir");
+
+      expect(store.has("/dest-dir/file.txt")).toBe(true);
+      expect(store.has("/src-dir")).toBe(false);
+    });
+
+    it("falls back to cpSync + rmSync when renameSync throws EXDEV", async () => {
+      addDir("/xdev-src");
+      addFile("/xdev-src/file.txt", "cross-device");
+
+      const fs = await import("node:fs");
+      const { renameSync: mockRename, cpSync: mockCp } = vi.mocked(fs);
+
+      // First call: throw EXDEV (cross-device)
+      const exdevError = Object.assign(new Error("EXDEV: cross-device link not permitted"), {
+        code: "EXDEV",
+        errno: -18,
+        syscall: "rename",
+      });
+      mockRename.mockImplementationOnce(() => {
+        throw exdevError;
+      });
+
+      // cpSync mock: copy entries from src to dest (default mock behavior)
+      // rmSync mock: exists via import
+
+      moveSync("/xdev-src", "/xdev-dest");
+
+      // cpSync should have been called as fallback
+      expect(mockCp).toHaveBeenCalledWith("/xdev-src", "/xdev-dest", { recursive: true });
+    });
+
+    it("re-throws non-EXDEV errors from renameSync", async () => {
+      addDir("/eperm-src");
+
+      const fs = await import("node:fs");
+      const { renameSync: mockRename } = vi.mocked(fs);
+
+      mockRename.mockImplementationOnce(() => {
+        throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+      });
+
+      expect(() => {
+        moveSync("/eperm-src", "/eperm-dest");
+      }).toThrow("EPERM");
     });
   });
 

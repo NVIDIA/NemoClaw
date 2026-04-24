@@ -29,6 +29,10 @@
  *   BREV_MIN_DISK          — Minimum disk size in GB (default: 50)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
  *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
+ *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
+ *   SLACK_APP_TOKEN          — Slack app token for messaging-providers test (fake OK)
+ *   SLACK_BOT_TOKEN_REVOKED  — Revoked xoxb- token to test auth pre-validation (#2340)
+ *   SLACK_APP_TOKEN_REVOKED  — Paired xapp- token for the revoked bot token
  *   TELEGRAM_BOT_TOKEN_REAL  — Real Telegram token for optional live round-trip
  *   DISCORD_BOT_TOKEN_REAL   — Real Discord token for optional live round-trip
  *   TELEGRAM_CHAT_ID_E2E     — Telegram chat ID for optional sendMessage test
@@ -143,6 +147,10 @@ function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
   for (const key of [
     "TELEGRAM_BOT_TOKEN",
     "DISCORD_BOT_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
+    "SLACK_BOT_TOKEN_REVOKED",
+    "SLACK_APP_TOKEN_REVOKED",
     "TELEGRAM_BOT_TOKEN_REAL",
     "DISCORD_BOT_TOKEN_REAL",
     "TELEGRAM_CHAT_ID_E2E",

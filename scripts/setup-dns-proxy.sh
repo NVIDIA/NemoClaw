@@ -59,7 +59,15 @@ fi
 # ── Helper: kubectl via gateway ─────────────────────────────────────
 
 kctl() {
-  docker exec "$CLUSTER" kubectl "$@"
+  # Target the `agent` container explicitly for `exec` so kubectl stops
+  # emitting `Defaulted container "agent" out of: agent, workspace-init (init)`
+  # on every call.
+  if [ "${1:-}" = "exec" ]; then
+    shift
+    docker exec "$CLUSTER" kubectl exec -c agent "$@"
+  else
+    docker exec "$CLUSTER" kubectl "$@"
+  fi
 }
 
 # ── Discover CoreDNS pod IP ─────────────────────────────────────────
@@ -163,9 +171,19 @@ kctl exec -n openshell "$POD" -- \
 # with a real DNS query instead of just checking the file. See #2017.
 _dns_ready=0
 for _i in $(seq 1 10); do
-  if kctl exec -n openshell "$POD" -- \
-    sh -c "printf '%b' '\x00\x1e\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06google\x03com\x00\x00\x01\x00\x01' \
-      | timeout 1 socat - UDP:${VETH_GW}:53 2>/dev/null" | grep -q .; then
+  # Probe via python3, not socat — socat is not installed in the sandbox image.
+  if kctl exec -n openshell "$POD" -- python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(1)
+try:
+    s.sendto(b'\x00\x1e\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06google\x03com\x00\x00\x01\x00\x01',
+             ('${VETH_GW}', 53))
+    data, _ = s.recvfrom(4096)
+    sys.stdout.write('ok' if data else '')
+except Exception:
+    pass
+" 2>/dev/null | grep -q ok; then
     _dns_ready=1
     break
   fi

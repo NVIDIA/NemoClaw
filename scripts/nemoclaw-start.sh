@@ -389,12 +389,13 @@ PYCORS
 apply_slack_token_override() {
   [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
 
-  # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
-  # Non-root with SLACK_BOT_TOKEN set means the placeholder can never be resolved —
-  # Bolt will crash with invalid_auth. Fail fast rather than silently skip.
+  # Non-root cannot write to /sandbox/.openclaw (root:root 444), so the
+  # placeholder token cannot be resolved here. Log a warning and continue —
+  # the Slack channel guard will catch the inevitable auth failure at runtime
+  # without crashing the gateway. Ref: #2340
   if [ "$(id -u)" -ne 0 ]; then
-    printf '[SECURITY] Slack Socket Mode requires a root container — SLACK_BOT_TOKEN is set but token placeholder resolution needs root. Run the container as root or remove SLACK_BOT_TOKEN.\n' >&2
-    return 1
+    printf '[channels] Slack token override skipped (non-root) — channel guard will handle auth failure at runtime\n' >&2
+    return 0
   fi
 
   local config_file="/sandbox/.openclaw/openclaw.json"
@@ -465,66 +466,182 @@ PYSLACK
   printf '[channels] Config hash recomputed after Slack token override\n' >&2
 }
 
-_read_gateway_token() {
-  python3 - <<'PYTOKEN'
-import json
-try:
-    with open('/sandbox/.openclaw/openclaw.json') as f:
-        cfg = json.load(f)
-    print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
-except Exception:
-    print('')
-PYTOKEN
+# ── Gateway auth token (externalized) ──────────────────────────
+# The gateway auth token is NOT stored in openclaw.json. It is generated
+# at container startup and passed as OPENCLAW_GATEWAY_TOKEN env var only
+# to the gateway process launch line. OpenClaw reads this natively via
+# its resolveGatewayCredentialsFromValues() path.
+#
+# Token file location depends on startup mode:
+#   Root mode:     /run/nemoclaw/gateway-token (gateway:gateway 0400)
+#                  Host reads via kubectl exec (runs as root in pod).
+#                  Sandbox user cannot access: wrong uid, /proc/pid/environ
+#                  is uid-gated, no-new-privileges blocks escalation.
+#   Non-root mode: $XDG_RUNTIME_DIR/nemoclaw/gateway-token (sandbox:sandbox 0400)
+#                  Host reads via openshell sandbox download (sandbox user).
+#                  No uid isolation — matches pre-externalization posture.
+#
+# Both paths regenerate the token on every container start.
+GATEWAY_TOKEN_DIR="/run/nemoclaw"
+GATEWAY_TOKEN_FILE="${GATEWAY_TOKEN_DIR}/gateway-token"
+
+generate_gateway_token() {
+  [ "$(id -u)" -eq 0 ] || {
+    printf '[SECURITY] generate_gateway_token requires root — skipping\n' >&2
+    return 1
+  }
+
+  mkdir -p "$GATEWAY_TOKEN_DIR"
+  chmod 755 "$GATEWAY_TOKEN_DIR"
+
+  python3 -c "import secrets; print(secrets.token_hex(32), end='')" \
+    >"$GATEWAY_TOKEN_FILE"
+
+  chown gateway:gateway "$GATEWAY_TOKEN_FILE"
+  chmod 400 "$GATEWAY_TOKEN_FILE"
+  printf '[token] Gateway auth token generated at %s (gateway:gateway 0400)\n' \
+    "$GATEWAY_TOKEN_FILE" >&2
 }
 
-export_gateway_token() {
-  local token
-  token="$(_read_gateway_token)"
-  local marker_begin="# nemoclaw-gateway-token begin"
-  local marker_end="# nemoclaw-gateway-token end"
+# ── Slack channel guard (unhandled-rejection safety net) ─────────
+# Prevents the gateway from crashing when a Slack channel fails to
+# initialize (e.g., invalid_auth, token_revoked, unresolved placeholder
+# tokens). Instead of modifying openclaw.json (which is Landlock
+# read-only at runtime), this injects a Node.js preload via
+# NODE_OPTIONS that catches unhandled promise rejections originating
+# from Slack channel initialization and logs them as warnings instead
+# of letting Node v22 treat them as fatal.
+#
+# Same pattern as the HTTP proxy fix (_PROXY_FIX_SCRIPT) and the
+# WebSocket CONNECT fix (_WS_FIX_SCRIPT).
+#
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
+_SLACK_GUARD_SCRIPT="/tmp/nemoclaw-slack-channel-guard.js"
 
-  if [ -z "$token" ]; then
-    # Remove any stale marker blocks from rc files so revoked/old tokens
-    # are not re-exported in later interactive sessions.
-    unset OPENCLAW_GATEWAY_TOKEN
-    for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-      if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-        local tmp
-        tmp="$(mktemp)"
-        awk -v b="$marker_begin" -v e="$marker_end" \
-          '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
-        cat "$tmp" >"$rc_file"
-        rm -f "$tmp"
-      fi
-    done
-    return
+install_slack_channel_guard() {
+  local config_file="/sandbox/.openclaw/openclaw.json"
+
+  # Only install if a Slack channel is configured
+  if ! grep -q '"slack"' "$config_file" 2>/dev/null; then
+    return 0
   fi
-  export OPENCLAW_GATEWAY_TOKEN="$token"
 
-  # Persist to .bashrc/.profile so interactive sessions (openshell sandbox
-  # connect) also see the token — same pattern as the proxy config above.
-  # Shell-escape the token so quotes/dollars/backticks cannot break the
-  # sourced snippet or allow code injection.
-  local escaped_token
-  escaped_token="$(printf '%s' "$token" | sed "s/'/'\\\\''/g")"
-  local snippet
-  snippet="${marker_begin}
-export OPENCLAW_GATEWAY_TOKEN='${escaped_token}'
-${marker_end}"
+  printf '[channels] Installing Slack channel guard (unhandled-rejection safety net)\n' >&2
 
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-      local tmp
-      tmp="$(mktemp)"
-      awk -v b="$marker_begin" -v e="$marker_end" \
-        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
-      printf '%s\n' "$snippet" >>"$tmp"
-      cat "$tmp" >"$rc_file"
-      rm -f "$tmp"
-    elif [ -w "$rc_file" ] || [ -w "$(dirname "$rc_file")" ]; then
-      printf '\n%s\n' "$snippet" >>"$rc_file"
-    fi
-  done
+  emit_sandbox_sourced_file "$_SLACK_GUARD_SCRIPT" <<'SLACK_GUARD_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// slack-channel-guard.js — catches unhandled promise rejections from Slack
+// channel initialization so a single channel auth failure does not crash
+// the entire OpenClaw gateway. Node v22 treats unhandled rejections as
+// fatal (--unhandled-rejections=throw is the default), taking down
+// inference, chat, and TUI alongside the failed Slack channel.
+//
+// This preload installs a process-level handler that detects Slack-specific
+// rejections (by error code or stack trace) and logs a warning instead of
+// crashing. Non-Slack rejections are re-thrown to preserve normal behavior.
+//
+// Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
+
+(function () {
+  'use strict';
+
+  // Slack-specific error codes from @slack/web-api that indicate auth failure.
+  // These appear as error.code on the WebAPIRequestError or CodedError objects.
+  var SLACK_AUTH_ERRORS = [
+    'slack_webapi_platform_error',
+    'slack_webapi_request_error',
+    'slackbot_error',
+  ];
+
+  // Slack-specific error messages that indicate auth/token problems.
+  var SLACK_AUTH_MESSAGES = [
+    'invalid_auth',
+    'not_authed',
+    'token_revoked',
+    'token_expired',
+    'account_inactive',
+    'missing_scope',
+    'not_allowed_token_type',
+    'An API error occurred: invalid_auth',
+  ];
+
+  function isSlackRejection(reason) {
+    if (!reason) return false;
+
+    // Check error code (Slack SDK sets .code on its errors)
+    var code = reason.code || '';
+    for (var i = 0; i < SLACK_AUTH_ERRORS.length; i++) {
+      if (code === SLACK_AUTH_ERRORS[i]) return true;
+    }
+
+    // Check error message
+    var msg = String(reason.message || reason);
+    for (var j = 0; j < SLACK_AUTH_MESSAGES.length; j++) {
+      if (msg.indexOf(SLACK_AUTH_MESSAGES[j]) !== -1) return true;
+    }
+
+    // Check stack trace for @slack/ packages
+    var stack = reason.stack || '';
+    if (stack.indexOf('@slack/') !== -1 || stack.indexOf('slack-') !== -1) {
+      return true;
+    }
+
+    // Check for proxy/network errors targeting Slack domains.
+    // When the network policy blocks or rejects connections to Slack
+    // servers, the error comes from the HTTP client (CONNECT tunnel
+    // failure), not from @slack/ code. The stack won't contain @slack/
+    // but the error message or URL may reference the Slack hostname.
+    if (msg.indexOf('slack.com') !== -1) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function handleSlackError(reason, source) {
+    if (isSlackRejection(reason)) {
+      var msg = (reason && reason.message) ? reason.message : String(reason);
+      process.stderr.write(
+        '[channels] [slack] provider failed to start: ' + msg +
+        ' \u2014 ' + source + ' caught by safety net, gateway continues\n'
+      );
+      return true; // handled
+    }
+    return false;
+  }
+
+  // Catch async Slack errors (rejected promises from @slack/web-api).
+  process.on('unhandledRejection', function (reason, promise) {
+    if (handleSlackError(reason, 'unhandledRejection')) return;
+    // Non-Slack: re-throw to preserve default --unhandled-rejections=throw.
+    throw reason;
+  });
+
+  // Catch sync Slack errors (e.g., Bolt token format validation throws
+  // synchronously when appToken doesn't start with xapp-).
+  process.on('uncaughtException', function (err, origin) {
+    if (handleSlackError(err, 'uncaughtException')) return;
+    // Non-Slack: re-throw to preserve normal crash behavior.
+    // Print the error first since re-throw inside uncaughtException handler
+    // may not print the original stack.
+    process.stderr.write(err.stack || String(err));
+    process.stderr.write('\n');
+    process.exit(1);
+  });
+})();
+SLACK_GUARD_EOF
+
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT"
+  printf '[channels] Slack channel guard installed (NODE_OPTIONS updated)\n' >&2
+}
+
+_read_gateway_token() {
+  # Read the gateway token from the externalized file.
+  # Callable by root (entrypoint) and gateway user only.
+  # Returns the token on stdout; empty output means no token.
+  cat "$GATEWAY_TOKEN_FILE" 2>/dev/null || true
 }
 
 install_configure_guard() {
@@ -614,8 +731,8 @@ GUARD
       printf '\n%s\n' "$snippet" >>"$rc_file"
     fi
   done
-  # Final lock after all rc-file mutations (export_gateway_token + this
-  # function) are complete so Landlock read_only enforcement holds.
+  # Final lock after all rc-file mutations are complete so Landlock
+  # read_only enforcement holds.
   lock_rc_files "$_SANDBOX_HOME"
 }
 
@@ -908,6 +1025,134 @@ HTTP_PROXY_FIX_EOF
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT"
 fi
 
+# Nemotron inference parameter injection (NemoClaw#1193, NemoClaw#2051).
+# Nemotron models may return empty content (tool call instead of text) or
+# thinking-only blocks (stalls the conversation) when the model's chat
+# template produces an empty assistant turn. The vLLM / NIM chat template
+# kwarg `force_nonempty_content` prevents this by ensuring the template
+# always emits a non-empty content field.
+#
+# The preload wraps http.request() — the lowest common denominator every
+# HTTP client bottoms out at — buffers the JSON body for POST requests
+# to /v1/chat/completions, and injects the kwarg when the model ID
+# contains "nemotron". Backends that do not recognise the extra field
+# silently ignore it (OpenAI-compatible contract).
+#
+# Scoped strictly to Nemotron models: non-Nemotron requests pass through
+# completely untouched.
+_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
+emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <<'NEMOTRON_FIX_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// nemotron-inference-fix.js — inject chat_template_kwargs for Nemotron models.
+//
+// Problem (NemoClaw#1193, NemoClaw#2051):
+//   Nemotron models sometimes generate tool calls instead of text for simple
+//   queries, or return thinking-only blocks with stopReason "stop" that
+//   OpenClaw treats as end-of-turn, causing the conversation to stall.
+//   The root cause is the model's chat template producing empty assistant
+//   content when tool definitions are present.
+//
+// Fix:
+//   Inject `chat_template_kwargs: { force_nonempty_content: true }` into
+//   /v1/chat/completions request bodies when the model ID contains
+//   "nemotron". This tells the vLLM/NIM serving layer to force the chat
+//   template to always produce non-empty content alongside any tool calls
+//   or thinking blocks.
+//
+//   Scoped strictly to Nemotron models — all other requests pass through
+//   untouched. Backends that do not support chat_template_kwargs silently
+//   ignore the extra field per the OpenAI-compatible API contract.
+
+(function () {
+  'use strict';
+
+  var http = require('http');
+  var https = require('https');
+
+  var NEMOTRON_RE = /nemotron/i;
+  var COMPLETIONS_RE = /\/v1\/chat\/completions/;
+
+  function wrapModule(mod) {
+    var origRequest = mod.request;
+
+    mod.request = function (options, callback) {
+      // Only intercept object-form calls with a recognisable path.
+      if (typeof options === 'string' || !options) {
+        return origRequest.apply(mod, arguments);
+      }
+
+      var path = options.path || '';
+      if (options.method !== 'POST' || !COMPLETIONS_RE.test(path)) {
+        return origRequest.apply(mod, arguments);
+      }
+
+      // Create the real request, then intercept write/end to buffer the body.
+      var req = origRequest.apply(mod, arguments);
+      var origWrite = req.write;
+      var origEnd = req.end;
+      var chunks = [];
+      var intercepted = false;
+
+      req.write = function (chunk, encoding, cb) {
+        if (chunk != null) {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk);
+        }
+        // Buffer instead of sending — we flush in end().
+        if (typeof encoding === 'function') { encoding(); }
+        else if (typeof cb === 'function') { cb(); }
+        return true;
+      };
+
+      req.end = function (chunk, encoding, cb) {
+        if (chunk != null && typeof chunk !== 'function') {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk);
+        }
+        // Resolve the callback argument (end has multiple overload signatures).
+        var endCb = typeof chunk === 'function' ? chunk
+          : typeof encoding === 'function' ? encoding
+          : typeof cb === 'function' ? cb
+          : null;
+
+        var raw = Buffer.concat(chunks);
+        try {
+          var body = JSON.parse(raw.toString('utf-8'));
+          if (body && body.model && NEMOTRON_RE.test(body.model)) {
+            if (!body.chat_template_kwargs) {
+              body.chat_template_kwargs = {};
+            }
+            body.chat_template_kwargs.force_nonempty_content = true;
+            intercepted = true;
+            var modified = Buffer.from(JSON.stringify(body), 'utf-8');
+            // Update Content-Length so the proxy/server reads the full body.
+            if (req.getHeader && req.setHeader) {
+              req.removeHeader('content-length');
+              req.setHeader('Content-Length', modified.length);
+            }
+            origWrite.call(req, modified);
+          } else {
+            // Not a Nemotron model — send original bytes unmodified.
+            origWrite.call(req, raw);
+          }
+        } catch (_e) {
+          // JSON parse failed — forward original bytes.
+          origWrite.call(req, raw);
+        }
+
+        return endCb ? origEnd.call(req, endCb) : origEnd.call(req);
+      };
+
+      return req;
+    };
+  }
+
+  wrapModule(http);
+  wrapModule(https);
+})();
+NEMOTRON_FIX_EOF
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT"
+
 # WebSocket CONNECT tunnel fix (NemoClaw#1570).
 # The `ws` library calls https.request() for wss:// WebSocket upgrades.
 # EnvHttpProxyAgent (NODE_USE_ENV_PROXY=1) sends a forward proxy request
@@ -960,6 +1205,8 @@ PROXYEOF
   if [ -f "$_WS_FIX_SCRIPT" ]; then
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
   fi
+  # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
+  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
   for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -996,9 +1243,22 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_model_override
   apply_cors_override
   apply_slack_token_override
-  export_gateway_token
+  # Non-root: no privilege separation — uid separation is unavailable, so the
+  # sandbox user can read the token file. This is no worse than the pre-PR
+  # state where the token lived in openclaw.json (also sandbox-readable).
+  # Write the token to a restrictive file (0400) so it is not world-readable,
+  # and pass it on the gateway launch line (not exported to the shell env).
+  _NONROOT_GATEWAY_TOKEN="$(python3 -c "import secrets; print(secrets.token_hex(32), end='')")"
+  _NONROOT_TOKEN_DIR="${XDG_RUNTIME_DIR:-/tmp}/nemoclaw"
+  _NONROOT_TOKEN_FILE="${_NONROOT_TOKEN_DIR}/gateway-token"
+  mkdir -p "$_NONROOT_TOKEN_DIR"
+  rm -f "$_NONROOT_TOKEN_FILE"
+  printf '%s' "$_NONROOT_GATEWAY_TOKEN" >"$_NONROOT_TOKEN_FILE"
+  chmod 0400 "$_NONROOT_TOKEN_FILE"
+  printf '[SECURITY] Non-root mode — gateway token at %s (no uid isolation)\n' "$_NONROOT_TOKEN_FILE" >&2
   install_configure_guard
   configure_messaging_channels
+  install_slack_channel_guard
   validate_openclaw_symlinks
 
   # Ensure writable state directories exist and are owned by the current user.
@@ -1083,10 +1343,13 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_PROXY_FIX_SCRIPT"
+  validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT"
 
-  # Start gateway in background, auto-pair, then wait
-  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
+  # Start gateway in background, auto-pair, then wait.
+  # Pass OPENCLAW_GATEWAY_TOKEN only on this launch line so it lives solely
+  # in the gateway process env — not exported to the sandbox shell.
+  OPENCLAW_GATEWAY_TOKEN="$_NONROOT_GATEWAY_TOKEN" \
+    nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
   start_auto_pair
@@ -1111,13 +1374,14 @@ verify_config_integrity /sandbox/.openclaw
 apply_model_override
 apply_cors_override
 apply_slack_token_override
-export_gateway_token
+generate_gateway_token
 install_configure_guard
 
 # Inject messaging channel config if provider tokens are present.
 # Must run AFTER integrity check (to detect build-time tampering) and
 # BEFORE chattr +i (which locks the config permanently).
 configure_messaging_channels
+install_slack_channel_guard
 
 # Write auth profile as sandbox user (needs writable .openclaw-data)
 # and recursively re-tighten any auth-profiles.json files under ~/.openclaw.
@@ -1140,6 +1404,70 @@ touch /tmp/auto-pair.log
 chown sandbox:sandbox /tmp/auto-pair.log
 chmod 600 /tmp/auto-pair.log
 
+# Provision per-agent workspaces for multi-agent OpenClaw deployments.
+#
+# OpenClaw can be configured with multiple named agents (agents.defaults.workspace
+# + agents.list[*].workspace in openclaw.json), each producing its own
+# `/sandbox/.openclaw/workspace-<name>/` directory. Without intervention these
+# land as real directories under the root-owned immutable `.openclaw/` tree and
+# are lost on every sandbox restart.
+#
+# Mirror the default-workspace persistence pattern: any `workspace-<name>`
+# discovered under `.openclaw-data/` or `.openclaw/` gets (a) a writable backing
+# dir under `.openclaw-data/workspace-<name>/` and (b) a symlink from
+# `.openclaw/workspace-<name>/ → .openclaw-data/workspace-<name>/`. The symlinks
+# are then picked up by validate_openclaw_symlinks below.
+#
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1260
+provision_agent_workspaces() {
+  local data_dir="/sandbox/.openclaw-data"
+  local config_dir="/sandbox/.openclaw"
+  local names=""
+  local d name
+
+  # Discover existing workspace-* dirs in either location.
+  if [ -d "$data_dir" ]; then
+    for d in "$data_dir"/workspace-*/; do
+      [ -d "$d" ] || continue
+      name="$(basename "$d")"
+      names="${names} ${name}"
+    done
+  fi
+  if [ -d "$config_dir" ]; then
+    for d in "$config_dir"/workspace-*/; do
+      # Skip the glob-fell-through sentinel ('workspace-*/' itself) and
+      # any existing symlink (already provisioned).
+      [ -e "$d" ] || continue
+      [ -L "${d%/}" ] && continue
+      name="$(basename "$d")"
+      names="${names} ${name}"
+    done
+  fi
+
+  local seen=""
+  for name in $names; do
+    case " $seen " in *" $name "*) continue ;; esac
+    seen="${seen} ${name}"
+
+    local data_path="$data_dir/$name"
+    local link_path="$config_dir/$name"
+
+    mkdir -p "$data_path"
+    chown -R sandbox:sandbox "$data_path" 2>/dev/null || true
+
+    if [ -L "$link_path" ]; then
+      continue
+    fi
+    if [ -e "$link_path" ]; then
+      cp -a "$link_path/." "$data_path/" 2>/dev/null || true
+      rm -rf "$link_path"
+    fi
+    ln -s "$data_path" "$link_path"
+    echo "[setup] provisioned multi-agent workspace: $name → $data_path" >&2
+  done
+}
+provision_agent_workspaces
+
 # Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
 # Dynamic scan so future OpenClaw symlinks are covered automatically.
 validate_openclaw_symlinks
@@ -1155,13 +1483,16 @@ harden_openclaw_symlinks
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_PROXY_FIX_SCRIPT"
+validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
-nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
+# SECURITY: OPENCLAW_GATEWAY_TOKEN is passed only to the gateway process
+# env — the sandbox user cannot read /proc/<pid>/environ (different uid).
+OPENCLAW_GATEWAY_TOKEN="$(_read_gateway_token)" \
+  nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 

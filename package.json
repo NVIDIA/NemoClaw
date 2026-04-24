@@ -22,7 +22,7 @@
     "ts-migration:guard": "tsx scripts/check-legacy-migrated-paths.ts",
     "type-safety:hotspots": "tsx scripts/type-safety-hotspots.ts",
     "bump:version": "tsx scripts/bump-version.ts",
-    "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && (npm install --omit=dev --ignore-scripts 2>/dev/null || true) && if [ -d .git ]; then if [ -z \"${NEMOCLAW_INSTALLING:-}\" ]; then npm link 2>/dev/null || true; fi; if command -v prek >/dev/null 2>&1; then prek install; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
+    "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && (npm install --omit=dev --ignore-scripts 2>/dev/null || true) && if [ -d .git ]; then if [ -z \"${NEMOCLAW_INSTALLING:-}\" ]; then NEMOCLAW_INSTALLING=1 npm link 2>/dev/null || true; fi; if command -v prek >/dev/null 2>&1; then prek install; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
     "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && test -s .version && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {

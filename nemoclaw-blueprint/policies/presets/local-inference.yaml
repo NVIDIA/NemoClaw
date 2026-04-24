@@ -33,3 +33,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/claude }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }        # alternative Node install path (apt-installed)
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/python3 }     # apt-installed python3 (Dockerfile.base: python3=3.11.2)

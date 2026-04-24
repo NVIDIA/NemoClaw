@@ -42,6 +42,10 @@
 #   TELEGRAM_ALLOWED_IDS                   — comma-separated Telegram user IDs for DM allowlisting
 #   TELEGRAM_BOT_TOKEN_REAL                — optional: enables Phase 6 real round-trip
 #   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real round-trip
+#   SLACK_BOT_TOKEN                        — defaults to fake token (xoxb-fake-...)
+#   SLACK_APP_TOKEN                        — defaults to fake token (xapp-fake-...)
+#   SLACK_BOT_TOKEN_REVOKED                — optional: revoked xoxb- token to test auth pre-validation (#2340)
+#   SLACK_APP_TOKEN_REVOKED                — optional: paired xapp- token for the revoked bot token
 #   TELEGRAM_CHAT_ID_E2E                   — optional: enables sendMessage test
 #   NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY    — fail instead of skip on known Discord gateway blockers
 #
@@ -91,12 +95,20 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-msg-provider}"
 
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 # Default to fake tokens if not provided
 TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
+SLACK_TOKEN="${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}"
+SLACK_APP="${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}"
 TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
+export SLACK_BOT_TOKEN="$SLACK_TOKEN"
+export SLACK_APP_TOKEN="$SLACK_APP"
 export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
 
 # Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
@@ -160,6 +172,8 @@ pass "Docker is running"
 
 info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
 info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
+info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
+info "Slack app token: configured (${#SLACK_APP} chars)"
 info "Sandbox name: $SANDBOX_NAME"
 STRICT_DISCORD_GATEWAY="${NEMOCLAW_E2E_STRICT_DISCORD_GATEWAY:-0}"
 
@@ -180,6 +194,83 @@ if command -v openshell >/dev/null 2>&1; then
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
 fi
 pass "Pre-cleanup complete"
+
+# Pre-merge Slack policy into the base sandbox policy.
+#
+# The base policy (openclaw-sandbox.yaml) includes Telegram and Discord
+# network rules but NOT Slack — Slack access normally comes from the
+# slack.yaml preset, applied in onboard Step 8. However, the sandbox
+# container starts in Step 6, so the gateway boots without Slack access.
+# The Slack SDK's connection attempt hangs or gets a CONNECT 403 before
+# the preset is applied, preventing the gateway from serving on 18789.
+#
+# By appending the Slack rules to the base policy BEFORE install.sh, the
+# sandbox is created with Slack access from the start. The Slack SDK gets
+# a fast "invalid_auth" response, the channel guard catches it, and the
+# gateway continues serving.
+# Ref: #2340
+BASE_POLICY="$REPO/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
+SLACK_PRESET="$REPO/nemoclaw-blueprint/policies/presets/slack.yaml"
+if [ -f "$BASE_POLICY" ] && [ -f "$SLACK_PRESET" ] && ! grep -q "api.slack.com" "$BASE_POLICY"; then
+  BASE_POLICY_BAK="$(mktemp)"
+  cp "$BASE_POLICY" "$BASE_POLICY_BAK"
+  trap 'cp "$BASE_POLICY_BAK" "$BASE_POLICY" 2>/dev/null || true; rm -f "$BASE_POLICY_BAK"' EXIT
+  info "Pre-merging Slack network policy into base sandbox policy..."
+  cat >>"$BASE_POLICY" <<'SLACK_POLICY_EOF'
+
+  # ── Slack — pre-merged for messaging E2E (#2340) ──────────────
+  # Normally applied as a preset in onboard Step 8, but the sandbox
+  # container starts before presets are applied. Inline here so the
+  # gateway has Slack access from first boot.
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: hooks.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: wss-primary.slack.com
+        port: 443
+        access: full
+        tls: skip
+      - host: wss-backup.slack.com
+        port: 443
+        access: full
+        tls: skip
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+SLACK_POLICY_EOF
+  if ! grep -q "api.slack.com" "$BASE_POLICY"; then
+    fail "Failed to append Slack policy to base sandbox policy"
+    exit 1
+  fi
+  pass "Slack network policy pre-merged into base policy"
+else
+  if grep -q "api.slack.com" "$BASE_POLICY" 2>/dev/null; then
+    info "Slack policy already present in base policy — skipping pre-merge"
+  else
+    fail "Cannot pre-merge Slack policy: missing base policy or preset file"
+    exit 1
+  fi
+fi
 
 # Run install.sh --non-interactive which installs Node.js, openshell,
 # NemoClaw, and runs onboard. Messaging tokens are already exported so
@@ -554,6 +645,37 @@ print(account.get('groupPolicy', ''))
     fail "M11d: Telegram groupPolicy is '$tg_group_policy' (expected 'open')"
   else
     skip "M11d: Telegram groupPolicy not set (channel may not be configured)"
+  fi
+
+  # M11e: Slack channel configured — gateway must survive auth failure (#2340)
+  # The Slack channel has placeholder tokens that will fail auth. The channel
+  # guard preload (NODE_OPTIONS --require) should catch the error. We can't
+  # verify the guard file via SSH (different container), but we CAN check the
+  # gateway port from here. This is tested more thoroughly in Phase 7.
+  slack_configured=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print('yes' if 'slack' in d else 'no')
+" 2>/dev/null || true)
+  if [ "$slack_configured" = "yes" ]; then
+    pass "M11e: Slack channel configured with placeholder tokens (guard needed)"
+
+    # Diagnostics: check if the guard was installed and what NODE_OPTIONS looks like
+    info "Checking guard installation diagnostics (via openshell exec as root):"
+    guard_exists=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ls -la /tmp/nemoclaw-slack-channel-guard.js 2>/dev/null || echo "EXEC_FAILED")
+    info "  Guard file: $guard_exists"
+    node_opts=$(openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c 'echo "$NODE_OPTIONS"' 2>/dev/null || echo "EXEC_FAILED")
+    info "  NODE_OPTIONS: $node_opts"
+    proxy_fix=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ls -la /tmp/nemoclaw-http-proxy-fix.js 2>/dev/null || echo "EXEC_FAILED")
+    info "  Proxy fix file: $proxy_fix"
+    # Check what processes are running
+    procs=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ps aux 2>/dev/null | head -10 || echo "EXEC_FAILED")
+    info "  Processes:"
+    echo "$procs" | while IFS= read -r line; do
+      info "    $line"
+    done
+  else
+    skip "M11e: No Slack channel in config"
   fi
 fi
 
@@ -1039,12 +1161,59 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 7: Cleanup
+# Phase 7: Slack channel guard (#2340)
+#
+# The sandbox was installed with fake Slack tokens. The channel guard
+# preload (NODE_OPTIONS --require) should catch the unhandled rejection
+# from @slack/web-api and keep the gateway alive.
 # ══════════════════════════════════════════════════════════════════
-section "Phase 7: Cleanup"
+section "Phase 7: Slack channel guard (#2340)"
+
+# S1: Gateway is serving on port 18789 — the guard caught the Slack rejection
+gw_port=$(sandbox_exec 'node -e "
+const net = require(\"net\");
+const sock = net.connect(18789, \"127.0.0.1\");
+sock.on(\"connect\", () => { console.log(\"OPEN\"); sock.end(); });
+sock.on(\"error\", () => console.log(\"CLOSED\"));
+setTimeout(() => { console.log(\"TIMEOUT\"); sock.destroy(); }, 5000);
+"' 2>/dev/null || true)
+if echo "$gw_port" | grep -q "OPEN"; then
+  pass "S1: Gateway is serving on port 18789 — Slack auth failure did not crash it"
+else
+  fail "S1: Gateway is not serving on port 18789 (${gw_port:0:200})"
+fi
+
+# S2: Dump gateway.log for diagnostics (must use openshell exec — SSH user
+# cannot read the file because it's 600 gateway:gateway).
+gw_log=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/gateway.log 2>/dev/null || true)
+if [ -z "$gw_log" ]; then
+  # Container may have already exited
+  gw_log=$(nemoclaw "$SANDBOX_NAME" logs 2>&1 | tail -200 || true)
+fi
+
+info "Gateway log (last 30 lines):"
+echo "$gw_log" | tail -30 | while IFS= read -r line; do
+  info "  $line"
+done
+
+if echo "$gw_log" | grep -q "provider failed to start:.*gateway continues"; then
+  pass "S2: Gateway log shows Slack rejection was caught by channel guard"
+elif echo "$gw_log" | grep -qi "slack"; then
+  info "Slack-related lines: $(echo "$gw_log" | grep -i slack | head -5)"
+  skip "S2: Gateway log has Slack output but not the guard catch message"
+elif [ -z "$gw_log" ]; then
+  skip "S2: Could not read gateway log (container may have exited)"
+else
+  skip "S2: No Slack-related output in gateway log"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 8: Cleanup
+# ══════════════════════════════════════════════════════════════════
+section "Phase 8: Cleanup"
 
 info "Destroying sandbox '$SANDBOX_NAME'..."
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 
 # Verify cleanup

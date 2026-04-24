@@ -164,12 +164,14 @@ describe("policies", () => {
       expect(content).toContain("port: 8000");
     });
 
-    it("local-inference preset restricts binaries to openclaw and claude", () => {
+    it("local-inference preset includes openclaw, claude, and common tool binaries", () => {
       const content = policies.loadPreset("local-inference");
       expect(content).toContain("/usr/local/bin/openclaw");
       expect(content).toContain("/usr/local/bin/claude");
-      // Should NOT include node — only agent binaries need inference access
-      expect(content).not.toContain("/usr/local/bin/node");
+      // node, curl, and python3 are needed for direct inference access (#2199)
+      expect(content).toContain("/usr/local/bin/node");
+      expect(content).toContain("/usr/bin/curl");
+      expect(content).toContain("/usr/bin/python3");
     });
   });
 
@@ -605,6 +607,14 @@ describe("policies", () => {
         expect(content.includes("method: POST")).toBe(false);
         expect(content.includes("method: DELETE")).toBe(false);
       }
+    });
+
+    it("outlook preset allows PATCH on graph.microsoft.com", () => {
+      // Microsoft Graph API uses PATCH for common email and calendar operations:
+      // marking messages as read, updating drafts, modifying calendar events.
+      const content = policies.loadPreset("outlook");
+      const graphSection = content.split("host: graph.microsoft.com")[1]?.split("- host:")[0] ?? "";
+      expect(graphSection).toContain("method: PATCH");
     });
 
     it("messaging WebSocket presets keep tls: skip on gateway endpoints", () => {

@@ -15,38 +15,10 @@
 
 set -uo pipefail
 
-TIMEOUT_CMD=""
-if command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="gtimeout"
-fi
-
-if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ "${NEMOCLAW_E2E_TIMEOUT_WRAPPED:-0}" != "1" ]; then
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-900}"
-  if [ -n "$TIMEOUT_CMD" ]; then
-    export NEMOCLAW_E2E_TIMEOUT_WRAPPED=1
-    exec "$TIMEOUT_CMD" -s TERM "$TIMEOUT_SECONDS" "$0" "$@"
-  else
-    echo "ERROR: 'timeout' not found. Install coreutils (macOS: 'brew install coreutils')" >&2
-    echo "       or bypass with NEMOCLAW_E2E_NO_TIMEOUT=1" >&2
-    exit 127
-  fi
-fi
-
-# Run with $TIMEOUT_CMD if set; run directly if empty (NEMOCLAW_E2E_NO_TIMEOUT bypass).
-# Avoids `$TIMEOUT_CMD 60 ssh …` becoming `60 ssh …` → "60: command not found".
-# Usage: run_with_timeout <seconds> <command> [args...]
-# shellcheck disable=SC2329
-run_with_timeout() {
-  local seconds="$1"
-  shift
-  if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ -n "$TIMEOUT_CMD" ]; then
-    "$TIMEOUT_CMD" "$seconds" "$@"
-  else
-    "$@"
-  fi
-}
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=900
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 PASS=0
 FAIL=0
