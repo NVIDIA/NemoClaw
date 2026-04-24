@@ -147,23 +147,69 @@ except (IOError, ValueError, KeyError, AttributeError):
 " 2>/dev/null; then
       info "NVIDIA runtime already configured in Docker daemon"
     else
-      info "Adding NVIDIA runtime to Docker daemon config..."
+      info "Patching Docker daemon config for NVIDIA runtime..."
+      # Repair malformed JSON (e.g. missing-comma from prior sed-based patching),
+      # remove legacy iptables/bridge keys, and write atomically with preserved
+      # permissions. See: https://github.com/NVIDIA/NemoClaw/issues/1875
+      python3 - "$DAEMON_JSON" <<'PYEOF'
+import json, os, re, sys, tempfile
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except FileNotFoundError:
+    cfg = {}
+except json.JSONDecodeError:
+    # Attempt to repair the known missing-comma pattern introduced by the
+    # previous sed-based approach before re-parsing. If repair fails, abort
+    # rather than silently overwriting the file with an empty object.
+    with open(path) as f:
+        raw = f.read()
+    # Insert missing comma after "default-runtime": "nvidia" when followed
+    # by whitespace + a quoted key (next JSON member without comma separator).
+    repaired = re.sub(
+        r'("default-runtime"\s*:\s*"nvidia")([\s\n]+")',
+        r'\1,\2',
+        raw,
+    )
+    try:
+        cfg = json.loads(repaired)
+    except json.JSONDecodeError as e:
+        sys.exit(f'daemon.json is malformed and could not be repaired automatically: {e}')
+if not isinstance(cfg, dict):
+    sys.exit('daemon.json must contain a top-level JSON object')
+cfg.pop('iptables', None)
+cfg.pop('bridge', None)
+# Write atomically: dump to a temp file in the same directory, then replace.
+# Copy permissions from the original file (or use 0644 if missing) so the
+# replaced file is world-readable, matching the typical daemon.json mode.
+dirname = os.path.dirname(os.path.abspath(path))
+try:
+    orig_mode = os.stat(path).st_mode & 0o777
+except FileNotFoundError:
+    orig_mode = 0o644
+fd, tmp = tempfile.mkstemp(dir=dirname)
+try:
+    os.chmod(tmp, orig_mode)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(cfg, f, indent=4)
+        f.write('\n')
+    os.replace(tmp, path)
+    os.chmod(path, orig_mode)
+except Exception:
+    os.unlink(tmp)
+    raise
+PYEOF
+      # Now add nvidia runtime config via python3 (safe JSON merge)
       python3 -c "
 import json
-try:
-    with open('$DAEMON_JSON') as f:
-        d = json.load(f)
-except (IOError, ValueError, KeyError):
-    d = {}
-if not isinstance(d, dict):
-    d = {}
-d.setdefault('runtimes', {})['nvidia'] = {
-    'path': 'nvidia-container-runtime',
-    'runtimeArgs': []
-}
+with open('$DAEMON_JSON') as f:
+    d = json.load(f)
+d.setdefault('runtimes', {})['nvidia'] = {'path': 'nvidia-container-runtime', 'runtimeArgs': []}
 d['default-runtime'] = 'nvidia'
 with open('$DAEMON_JSON', 'w') as f:
-    json.dump(d, f, indent=2)
+    json.dump(d, f, indent=4)
+    f.write('\n')
 "
       NEEDS_RESTART=true
     fi
@@ -172,13 +218,13 @@ with open('$DAEMON_JSON', 'w') as f:
     mkdir -p "$(dirname "$DAEMON_JSON")"
     cat >"$DAEMON_JSON" <<'DAEMONJSON'
 {
-  "runtimes": {
-    "nvidia": {
-      "path": "nvidia-container-runtime",
-      "runtimeArgs": []
-    }
-  },
-  "default-runtime": "nvidia"
+    "runtimes": {
+        "nvidia": {
+            "path": "nvidia-container-runtime",
+            "runtimeArgs": []
+        }
+    },
+    "default-runtime": "nvidia"
 }
 DAEMONJSON
     NEEDS_RESTART=true
