@@ -2901,7 +2901,7 @@ const { createSandbox } = require(${onboardPath});
       .find((line) => line.startsWith("{") && line.endsWith("}"));
     assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
     const payload = JSON.parse(payloadLine);
-    const createCommand = payload.commands.find((entry) =>
+    const createCommand = payload.commands.find((entry: CommandEntry) =>
       entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
@@ -2911,7 +2911,7 @@ const { createSandbox } = require(${onboardPath});
     // Forward must target the same port
     assert.ok(
       payload.commands.some(
-        (entry) =>
+        (entry: CommandEntry) =>
           entry.command.includes("forward start --background 18790 my-assistant") ||
           entry.command.includes("forward start --background 0.0.0.0:18790 my-assistant"),
       ),
