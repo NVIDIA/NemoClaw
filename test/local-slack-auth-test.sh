@@ -122,6 +122,20 @@ fi
 
 # ──────────────────────────────────────────────────────────────────
 
+header "T3b: Proxy CONNECT tunnel failure to slack.com — should be caught"
+run_node "
+  Promise.reject(new Error('CONNECT tunnel to api.slack.com:443 failed with status 403'));
+  setTimeout(function() { console.log('ALIVE'); }, 200);
+"
+
+if [ "$LAST_EXIT" -eq 0 ] && echo "$LAST_STDERR" | grep -q "caught by safety net"; then
+  pass "proxy CONNECT failure to slack.com caught (exit=$LAST_EXIT)"
+else
+  fail "expected guard to catch CONNECT tunnel error, got exit=$LAST_EXIT stderr='$LAST_STDERR'"
+fi
+
+# ──────────────────────────────────────────────────────────────────
+
 header "T4: Non-Slack rejection — should NOT be caught (re-thrown)"
 run_node "
   Promise.reject(new Error('database connection failed'));
