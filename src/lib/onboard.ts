@@ -5439,6 +5439,14 @@ async function setupMessagingChannels() {
         const appToken = normalizeCredentialValue(
           await prompt(`  ${ch.appTokenLabel}: `, { secret: true }),
         );
+        if (appToken && ch.appTokenFormat && !ch.appTokenFormat.test(appToken)) {
+          console.log(
+            `  ✗ Invalid format. ${ch.appTokenFormatHint || "Check the token and try again."}`,
+          );
+          console.log(`  Skipped ${ch.name} app token (invalid token format)`);
+          enabled.delete(ch.name);
+          continue;
+        }
         if (appToken) {
           saveCredential(ch.appTokenEnvKey, appToken);
           process.env[ch.appTokenEnvKey] = appToken;
