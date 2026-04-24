@@ -75,10 +75,9 @@ jobs:
           if-no-files-found: ignore
 
   cloud-experimental-e2e:
-    # DISABLED: CLI/docs command reference drift causes check-docs failures.
-    # Landlock fix landed in OpenShell#810 (v0.0.32+). Re-enable once
-    # docs-drift is resolved.
-    if: github.repository == 'NVIDIA/NemoClaw' && vars.CLOUD_EXPERIMENTAL_E2E_ENABLED == 'true'
+    # Runs the full cloud-experimental E2E suite with docs parity isolated below.
+    # Landlock fix: OpenShell#810 (v0.0.32+). Docs parity: #2388 (typed registry).
+    if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
     # Main suite + check-docs + network-policy skip script can exceed 45m on cold runners.
     timeout-minutes: 90
@@ -99,8 +98,8 @@ jobs:
           NEMOCLAW_RECREATE_SANDBOX: "1"
           NEMOCLAW_POLICY_MODE: "custom"
           NEMOCLAW_POLICY_PRESETS: "npm,pypi"
-          RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_FINAL_CLEANUP: "1"
           RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_CHECK_DOCS: "1"
+          RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_FINAL_CLEANUP: "1"
         run: bash test/e2e/test-e2e-cloud-experimental.sh
 
       - name: Documentation checks (check-docs.sh)
