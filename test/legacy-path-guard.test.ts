@@ -27,36 +27,41 @@ function initTempRepo(prefix: string): string {
   run("git", ["init", "-b", "main"], repoDir);
   run("git", ["config", "user.name", "Test User"], repoDir);
   run("git", ["config", "user.email", "test@example.com"], repoDir);
+  run("git", ["config", "commit.gpgsign", "false"], repoDir);
   return repoDir;
 }
 
 describe("ts-migration:guard", () => {
-  it("blocks renaming a removed shim by checking the source path in R entries", { timeout: 15000 }, () => {
-    const repoDir = initTempRepo("nemoclaw-legacy-guard-");
-    const originalPath = path.join(repoDir, "bin", "lib", "runner.js");
-    const renamedPath = path.join(repoDir, "tmp", "runner.js");
+  it(
+    "blocks renaming a removed shim by checking the source path in R entries",
+    { timeout: 15000 },
+    () => {
+      const repoDir = initTempRepo("nemoclaw-legacy-guard-");
+      const originalPath = path.join(repoDir, "bin", "lib", "runner.js");
+      const renamedPath = path.join(repoDir, "tmp", "runner.js");
 
-    fs.mkdirSync(path.dirname(originalPath), { recursive: true });
-    fs.writeFileSync(originalPath, "module.exports = {};\n");
-    run("git", ["add", "."], repoDir);
-    run("git", ["commit", "-m", "base"], repoDir);
+      fs.mkdirSync(path.dirname(originalPath), { recursive: true });
+      fs.writeFileSync(originalPath, "module.exports = {};\n");
+      run("git", ["add", "."], repoDir);
+      run("git", ["commit", "-m", "base"], repoDir);
 
-    run("git", ["checkout", "-b", "feature"], repoDir);
-    fs.mkdirSync(path.dirname(renamedPath), { recursive: true });
-    run("git", ["mv", "bin/lib/runner.js", "tmp/runner.js"], repoDir);
-    run("git", ["commit", "-m", "rename shim"], repoDir);
+      run("git", ["checkout", "-b", "feature"], repoDir);
+      fs.mkdirSync(path.dirname(renamedPath), { recursive: true });
+      run("git", ["mv", "bin/lib/runner.js", "tmp/runner.js"], repoDir);
+      run("git", ["commit", "-m", "rename shim"], repoDir);
 
-    const result = spawnSync(TSX, [GUARD_SCRIPT, "--base", "main", "--head", "HEAD"], {
-      cwd: repoDir,
-      encoding: "utf-8",
-    });
+      const result = spawnSync(TSX, [GUARD_SCRIPT, "--base", "main", "--head", "HEAD"], {
+        cwd: repoDir,
+        encoding: "utf-8",
+      });
 
-    expect(result.status).toBe(1);
-    expect(`${result.stdout}${result.stderr}`).toContain(
-      "Removed compatibility shims must not be reintroduced or edited directly:",
-    );
-    expect(`${result.stdout}${result.stderr}`).toContain(
-      "bin/lib/runner.js -> src/lib/runner.ts",
-    );
-  });
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        "Removed compatibility shims must not be reintroduced or edited directly:",
+      );
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        "bin/lib/runner.js -> src/lib/runner.ts",
+      );
+    },
+  );
 });

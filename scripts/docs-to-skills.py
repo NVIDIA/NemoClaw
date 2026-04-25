@@ -54,6 +54,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -61,6 +62,39 @@ import sys
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+def load_html_baseurl(docs_dir: Path) -> str | None:
+    """Read ``html_baseurl`` from a Sphinx ``conf.py`` without executing it.
+
+    Skill files must be self-contained and must not reference repository
+    paths (for example, ``../../../docs/...``). When an inter-doc link
+    points at a page that has no corresponding skill, the rewriter
+    substitutes the page's published HTTPS URL derived from
+    ``html_baseurl``. Parsing the assignment with :mod:`ast` avoids the
+    side effects of ``exec``-ing conf.py (which pulls in Sphinx, modifies
+    ``sys.path``, reads JSON, and so on).
+    """
+    conf_py = docs_dir / "conf.py"
+    if not conf_py.exists():
+        return None
+    try:
+        tree = ast.parse(conf_py.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if (
+            isinstance(target, ast.Name)
+            and target.id == "html_baseurl"
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            url = node.value.value
+            return url if url.endswith("/") else url + "/"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -433,15 +467,42 @@ def rewrite_doc_paths(
     source_page: DocPage,
     docs_dir: Path,
     doc_to_skill: dict[str, str],
+    html_baseurl: str | None = None,
 ) -> str:
-    """Resolve relative doc paths to repo-root paths or skill cross-references.
+    """Resolve relative doc paths to skill cross-refs or published URLs.
 
-    Handles:
-    - Markdown links: [text](../path.md) → [text](docs/path.md) or skill ref
-    - Include placeholders: "included from ../../README.md" → repo-root path
+    Skill files are meant to be self-contained, so the rewriter never
+    emits filesystem paths back into ``docs/`` (or anywhere else in the
+    repo). Rewrite precedence for each Markdown link ``[text](path)``:
+
+    1. If the target is an external URL, an anchor, or a ``mailto:``
+       reference, or the target is not a ``.md`` / ``.html`` file, leave
+       it untouched.
+    2. If the target resolves to a doc that has a generated skill,
+       replace the whole link with ``text (use the `<skill>` skill)``.
+    3. If the target is a page inside ``docs/``, emit
+       ``[text](<html_baseurl><page>.html)`` using the base URL read
+       from ``conf.py``.
+    4. Otherwise (target outside ``docs/``, or no base URL available),
+       strip the hyperlink and keep the link text. Self-containment wins
+       over navigability in the fallback.
+
+    Include placeholders that referenced ``docs/``-relative paths are
+    rewritten the same way: published URL if available, else dropped.
     """
     repo_root = docs_dir.parent
     source_dir = source_page.path.parent
+
+    def _to_html_url(resolved: Path, frag: str) -> str | None:
+        """Published URL for a doc under ``docs/``; ``None`` otherwise."""
+        if not html_baseurl:
+            return None
+        try:
+            rel_to_docs = resolved.relative_to(docs_dir)
+        except ValueError:
+            return None
+        html_path = rel_to_docs.with_suffix(".html").as_posix()
+        return f"{html_baseurl}{html_path}{frag}"
 
     def _resolve_link(match: re.Match) -> str:
         link_text = match.group(1)
@@ -451,8 +512,13 @@ def rewrite_doc_paths(
         if raw_path.startswith(("http://", "https://", "#", "mailto:")):
             return match.group(0)
 
-        # Strip fragment anchors before checking extension
-        path_no_frag = raw_path.split("#")[0]
+        # Preserve fragment anchors across the rewrite
+        if "#" in raw_path:
+            path_no_frag, _, frag = raw_path.partition("#")
+            frag = "#" + frag
+        else:
+            path_no_frag = raw_path
+            frag = ""
 
         # Skip non-doc files
         if not path_no_frag.endswith(".md") and not path_no_frag.endswith(".html"):
@@ -471,8 +537,11 @@ def rewrite_doc_paths(
             skill_name = doc_to_skill[rel_str]
             return f"{link_text} (use the `{skill_name}` skill)"
 
-        # Fall back to repo-root-relative path
-        return f"[{link_text}]({rel_to_repo})"
+        # Self-contained fallback: published URL or strip the hyperlink.
+        url = _to_html_url(resolved, frag)
+        if url is not None:
+            return f"[{link_text}]({url})"
+        return link_text
 
     # Rewrite markdown links: [text](path)
     text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _resolve_link, text)
@@ -481,11 +550,12 @@ def rewrite_doc_paths(
     def _resolve_include(match: re.Match) -> str:
         raw_path = match.group(1).strip()
         resolved = (source_dir / raw_path).resolve()
-        try:
-            rel_to_repo = resolved.relative_to(repo_root)
-        except ValueError:
-            return match.group(0)
-        return f"> *Content included from `{rel_to_repo}` — see the original doc for full text.*"
+        url = _to_html_url(resolved, "")
+        if url is not None:
+            return f"> *Content included from [{raw_path}]({url}) — see the original doc for full text.*"
+        # No base URL available; drop the breadcrumb so the skill stays
+        # self-contained. The included content itself is already inlined.
+        return ""
 
     text = re.sub(
         r"> \*Content included from ([^\n]+) — see the original doc for full text\.\*",
@@ -1017,11 +1087,17 @@ def generate_skill(
     *,
     docs_dir: Path | None = None,
     doc_to_skill: dict[str, str] | None = None,
+    html_baseurl: str | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Generate a complete skill directory from a group of doc pages.
 
-    Writes identical output to each directory in *output_dirs*.
+    Writes identical output to each directory in *output_dirs*. Since
+    inter-doc links are rewritten to either skill cross-references or
+    absolute HTTPS URLs (see :func:`rewrite_doc_paths`), the emitted
+    content is independent of where it is written and can safely be
+    mirrored across multiple output roots.
+
     Returns a summary dict for reporting.
     """
     description = build_skill_description(name, pages)
@@ -1030,7 +1106,13 @@ def generate_skill(
         """Apply directive cleanup and path rewriting for a source page."""
         result = clean_myst_directives(text)
         if docs_dir and doc_to_skill is not None:
-            result = rewrite_doc_paths(result, source, docs_dir, doc_to_skill)
+            result = rewrite_doc_paths(
+                result,
+                source,
+                docs_dir,
+                doc_to_skill,
+                html_baseurl=html_baseurl,
+            )
         return result
 
     procedures = [
@@ -1296,7 +1378,6 @@ EXCLUDED_PATTERNS = {
     "CHANGELOG.md",
     "LICENSE.md",
     "license.md",
-    "index.md",
     # Maintainer-only content consumed directly by skills/dashboards;
     # not user-facing documentation.
     "triage-instructions.md",
@@ -1306,9 +1387,17 @@ EXCLUDED_PATTERNS = {
 def scan_docs(docs_dir: Path) -> list[DocPage]:
     """Recursively scan a directory for documentation markdown files."""
     pages: list[DocPage] = []
+    docs_root_index = (docs_dir / "index.md").resolve()
     for md_path in sorted(docs_dir.rglob("*.md")):
         # Skip excluded files
         if md_path.name in EXCLUDED_PATTERNS:
+            continue
+        # Skip the top-level docs/index.md (Sphinx landing page — mostly
+        # boilerplate). Subdirectory index.md files (for example
+        # docs/get-started/platform-setup/index.md) are hub pages with
+        # real content and should be included so links to them can
+        # resolve to a generated skill instead of a file path.
+        if md_path.resolve() == docs_root_index:
             continue
         # Skip include fragments and templates
         if md_path.parent.name.startswith("_"):
@@ -1465,6 +1554,19 @@ def main():
             except ValueError:
                 pass
 
+    # Published-URL fallback for inter-doc links that do not map to a
+    # generated skill. Read from Sphinx's conf.py so the script stays
+    # project-agnostic — any docs tree with an html_baseurl assignment
+    # will just work.
+    html_baseurl = load_html_baseurl(docs_dir_resolved)
+    if html_baseurl is None:
+        print(
+            f"  warning: no html_baseurl found in {docs_dir_resolved}/conf.py; "
+            "inter-doc links without a skill mapping will be stripped to plain "
+            "text to keep skills self-contained.",
+            file=sys.stderr,
+        )
+
     # Generate skills
     dirs_str = ", ".join(str(d) for d in args.output_dirs)
     print(f"\n{'[DRY RUN] ' if args.dry_run else ''}Generating skills to {dirs_str}")
@@ -1477,6 +1579,7 @@ def main():
             args.output_dirs,
             docs_dir=docs_dir_resolved,
             doc_to_skill=doc_to_skill,
+            html_baseurl=html_baseurl,
             dry_run=args.dry_run,
         )
         summaries.append(summary)

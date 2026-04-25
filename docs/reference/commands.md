@@ -198,6 +198,15 @@ $ NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS=1 nemoclaw onboard --non-interactive --y
 
 The flag is persisted on the sandbox registry entry, so `nemoclaw <sandbox> status` surfaces `Permissions: dangerously-skip-permissions (shields permanently down)` for sandboxes created this way. To tighten a sandbox after the fact, re-run `nemoclaw onboard` without the flag.
 
+### `nemoclaw onboard --from`
+
+Use a custom Dockerfile for the sandbox image.
+This variant of `nemoclaw onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image.
+
+```console
+$ nemoclaw onboard --from ./Dockerfile.custom
+```
+
 ### `nemoclaw list`
 
 List all registered sandboxes with their model, provider, and policy presets.
@@ -563,7 +572,7 @@ $ nemoclaw my-assistant snapshot restore 2026-04-21T07-35-55-987Z
 $ nemoclaw my-assistant snapshot restore v3 --to my-assistant-clone
 ```
 
-### `openshell term`
+## `openshell term`
 
 Open the OpenShell TUI to monitor sandbox activity and approve network egress requests.
 Run this on the host where the sandbox is running.
@@ -594,12 +603,41 @@ $ nemoclaw tunnel stop
 
 `nemoclaw stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
 
+### `nemoclaw start`
+
+:::{warning}
+Deprecated. Use `nemoclaw tunnel start` instead.
+:::
+
+This command remains as a compatibility alias to `nemoclaw tunnel start`.
+
+### `nemoclaw stop`
+
+:::{warning}
+Deprecated. Use `nemoclaw tunnel stop` instead.
+:::
+
+This command remains as a compatibility alias to `nemoclaw tunnel stop`.
+
 ### `nemoclaw status`
 
 Show the sandbox list and the status of host auxiliary services (for example cloudflared).
 
 ```console
 $ nemoclaw status
+```
+
+### `nemoclaw setup`
+
+:::{warning}
+The `nemoclaw setup` command is deprecated.
+Use `nemoclaw onboard` instead.
+:::
+
+This command remains as a compatibility alias to `nemoclaw onboard`.
+
+```console
+$ nemoclaw setup
 ```
 
 ### `nemoclaw setup-spark`
@@ -674,7 +712,9 @@ $ nemoclaw gc [--dry-run] [--yes|--force]
 ### `nemoclaw uninstall`
 
 Run `uninstall.sh` to remove NemoClaw sandboxes, gateway resources, related images and containers, and local state.
-The CLI uses the local `uninstall.sh` first and falls back to the hosted script if the local file is unavailable.
+The CLI runs the local `uninstall.sh` shipped with the installed npm package.
+If that local script is missing, the CLI does not auto-fetch a remote copy.
+It prints the versioned URL of the matching `uninstall.sh` so you can download, review, and run it manually.
 
 Uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
@@ -689,6 +729,20 @@ Earlier releases only stopped `openshell forward` processes, so those orphans ac
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
 ```
 
+#### `nemoclaw uninstall` vs. the hosted `uninstall.sh`
+
+Both forms execute the same `uninstall.sh` with the same flags, but differ in where the script comes from and how much they trust the network.
+Use `nemoclaw uninstall` by default.
+Use the hosted `curl … | bash` form only when the CLI is broken or already partially removed.
+
+|  | `nemoclaw uninstall` | `curl … \| bash` (Quickstart) |
+|---|---|---|
+| **Source of the script** | Local `uninstall.sh` shipped with the installed npm package. | Pulled live from `refs/heads/main` on GitHub. |
+| **Version pinning** | Pinned to the version of NemoClaw you installed. | Whatever is on `main` right now; may be newer than your installed CLI. |
+| **Network trust** | No network fetch at uninstall time; runs a vetted local file via `bash`. | Pipes a remote script straight to `bash` with no review step. |
+| **Robustness** | Requires the npm package to be discoverable so the CLI can find the local script. | Works even if the `nemoclaw` CLI is missing, broken, or partially uninstalled. |
+| **Recommended for** | Routine uninstalls. | Recovery when the CLI is unavailable. |
+
 ## Environment Variables
 
 NemoClaw reads the following environment variables to configure service ports.
@@ -698,7 +752,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 | Variable | Default | Service |
 |----------|---------|---------|
 | `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway |
-| `NEMOCLAW_DASHBOARD_PORT` | 18789 | Dashboard UI |
+| `NEMOCLAW_DASHBOARD_PORT` | 18789 (auto-derived from `CHAT_UI_URL` port if set) | Dashboard UI |
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |

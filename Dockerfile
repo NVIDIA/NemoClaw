@@ -25,10 +25,22 @@ RUN npm ci && npm run build
 FROM ${BASE_IMAGE}
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
-RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
+# Protect procps before autoremove — the GHCR base may predate the procps
+# addition, leaving it absent or auto-marked. apt-mark + conditional install
+# guarantees ps/top/kill are present regardless of base image staleness.
+# Ref: #2343
+# hadolint ignore=DL3001
+RUN apt-mark manual procps 2>/dev/null || true \
+    && (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
         netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
     && apt-get autoremove --purge -y \
-    && rm -rf /var/lib/apt/lists/*
+    && if ! command -v ps >/dev/null 2>&1; then \
+        apt-get update && apt-get install -y --no-install-recommends procps=2:4.0.2-3 \
+        && rm -rf /var/lib/apt/lists/*; \
+    else \
+        rm -rf /var/lib/apt/lists/*; \
+    fi \
+    && ps --version
 
 
 # Copy built plugin and blueprint into the sandbox

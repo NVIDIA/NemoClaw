@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,11 +9,58 @@ import path from "node:path";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
-function run(args) {
+type CliRunResult = {
+  code: number;
+  out: string;
+};
+
+type CliErrorShape = {
+  status?: number;
+  stdout?: string | Buffer;
+  stderr?: string | Buffer;
+};
+
+type CliErrorCandidate = {
+  status?: unknown;
+  stdout?: unknown;
+  stderr?: unknown;
+};
+
+function isCliErrorCandidate(value: unknown): value is CliErrorCandidate {
+  return typeof value === "object" && value !== null;
+}
+
+function readBufferOrStringProperty(
+  value: CliErrorCandidate,
+  key: "stdout" | "stderr",
+): string | Buffer | undefined {
+  const property = value[key];
+  return typeof property === "string" || Buffer.isBuffer(property) ? property : undefined;
+}
+
+function toText(value: string | Buffer | undefined): string {
+  return typeof value === "string" ? value : Buffer.isBuffer(value) ? value.toString("utf8") : "";
+}
+
+function readCliErrorOutput(error: CliErrorShape | string | null | undefined): CliRunResult {
+  if (!error || typeof error === "string") {
+    return { code: 1, out: String(error || "") };
+  }
+  return {
+    code: typeof error.status === "number" ? error.status : 1,
+    out: `${toText(error.stdout)}${toText(error.stderr)}`,
+  };
+}
+
+function run(args: string): CliRunResult {
   return runWithEnv(args);
 }
 
-function runWithEnv(args, env = {}, timeout = Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000)) {
+function runWithEnv(
+  args: string,
+  env: Record<string, string | undefined> = {},
+  timeout: number = Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+): CliRunResult {
   try {
     const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",
@@ -29,11 +75,18 @@ function runWithEnv(args, env = {}, timeout = Number(process.env.NEMOCLAW_EXEC_T
     });
     return { code: 0, out };
   } catch (err) {
-    return { code: err.status, out: (err.stdout || "") + (err.stderr || "") };
+    if (isCliErrorCandidate(err)) {
+      return readCliErrorOutput({
+        status: typeof err.status === "number" ? err.status : undefined,
+        stdout: readBufferOrStringProperty(err, "stdout"),
+        stderr: readBufferOrStringProperty(err, "stderr"),
+      });
+    }
+    return readCliErrorOutput(String(err));
   }
 }
 
-function readRecordedArgs(markerFile) {
+function readRecordedArgs(markerFile: string): string[] {
   return fs.readFileSync(markerFile, "utf8").trim().split(/\s+/);
 }
 
@@ -61,8 +114,11 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("nemoclaw")).toBeTruthy();
   });
 
-  it("bare unknown name surfaces sandbox-not-found (#2164)", () => {
-    const r = run("boguscmd");
+  it("bare unknown name surfaces sandbox-not-found (#2164)", { timeout: 35000 }, () => {
+    // Longer timeout: when openshell is installed but the gateway is down,
+    // the CLI probes the gateway before reporting "not found" and the
+    // default 10s is not enough for the connection to time out.
+    const r = runWithEnv("boguscmd", {}, 30000);
     expect(r.code).toBe(1);
     expect(r.out.includes("Sandbox 'boguscmd' does not exist")).toBeTruthy();
   });
@@ -80,7 +136,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("No sandboxes")).toBeTruthy();
   });
 
-  it("start does not prompt for NVIDIA_API_KEY before launching local services", () => {
+  it("start does not prompt for NVIDIA_API_KEY before launching local services", { timeout: 35000 }, () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -179,7 +235,9 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(1);
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
     expect(r.out.includes("--resume only continues an interrupted onboarding run")).toBeTruthy();
-    expect(r.out.includes("To change configuration on an existing sandbox, rebuild it")).toBeTruthy();
+    expect(
+      r.out.includes("To change configuration on an existing sandbox, rebuild it"),
+    ).toBeTruthy();
     expect(r.out.includes("nemoclaw onboard")).toBeTruthy();
   });
 
@@ -345,7 +403,7 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -356,10 +414,10 @@ describe("CLI dispatch", () => {
         "  echo 'openshell 0.0.16'",
         "  exit 0",
         "fi",
-        "printf '%s ' \"$@\" > \"$marker_file\"",
+        'printf \'%s \' "$@" > "$marker_file"',
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const r = runWithEnv("alpha logs --follow", {
@@ -923,22 +981,20 @@ describe("CLI dispatch", () => {
         "  echo '  Phase: Ready'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"list\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
         "  echo 'alpha   Ready   2m ago'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"connect\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "connect" ] && [ "$3" = "alpha" ]; then',
         "  exit 0",
         "fi",
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
     );
-    fs.writeFileSync(
-      path.join(localBin, "sleep"),
-      ["#!/usr/bin/env bash", "exit 0"].join("\n"),
-      { mode: 0o755 }
-    );
+    fs.writeFileSync(path.join(localBin, "sleep"), ["#!/usr/bin/env bash", "exit 0"].join("\n"), {
+      mode: 0o755,
+    });
 
     const r = runWithEnv("alpha connect", {
       HOME: home,
@@ -974,7 +1030,7 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -982,8 +1038,8 @@ describe("CLI dispatch", () => {
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
-        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",
@@ -992,29 +1048,27 @@ describe("CLI dispatch", () => {
         "  echo '  Phase: Pending'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"list\" ]; then",
-        "  count=$(cat \"$state_file\" 2>/dev/null || echo 0)",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  count=$(cat "$state_file" 2>/dev/null || echo 0)',
         "  count=$((count + 1))",
-        "  echo \"$count\" > \"$state_file\"",
-        "  if [ \"$count\" -eq 1 ]; then",
+        '  echo "$count" > "$state_file"',
+        '  if [ "$count" -eq 1 ]; then',
         "    echo 'alpha   ContainerCreating   10s ago'",
         "  else",
         "    echo 'alpha   Ready   20s ago'",
         "  fi",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"connect\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "connect" ] && [ "$3" = "alpha" ]; then',
         "  exit 0",
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
-    fs.writeFileSync(
-      path.join(localBin, "sleep"),
-      ["#!/usr/bin/env bash", "exit 0"].join("\n"),
-      { mode: 0o755 }
-    );
+    fs.writeFileSync(path.join(localBin, "sleep"), ["#!/usr/bin/env bash", "exit 0"].join("\n"), {
+      mode: 0o755,
+    });
 
     const r = runWithEnv("alpha connect", {
       HOME: home,
@@ -1051,15 +1105,15 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
-        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",
@@ -1068,17 +1122,17 @@ describe("CLI dispatch", () => {
         "  echo '  Phase: Failed'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"list\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
         "  echo 'alpha   Failed   1m ago'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"connect\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "connect" ] && [ "$3" = "alpha" ]; then',
         "  echo 'should-not-connect' >> \"$marker_file\"",
         "  exit 0",
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const r = runWithEnv("alpha connect", {
@@ -1752,56 +1806,60 @@ describe("CLI dispatch", () => {
     expect(result.status).toBe(130);
   });
 
-  it("keeps registry entries when status hits a gateway-level transport error", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-error-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+  it(
+    "keeps registry entries when status hits a gateway-level transport error",
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-error-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
           },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Error: transport error: handshake verification failed' >&2",
+          "  exit 1",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv(
+        "alpha status",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
-        "  echo 'Error: transport error: handshake verification failed' >&2",
-        "  exit 1",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+      );
 
-    const r = runWithEnv(
-      "alpha status",
-      {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      },
-      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
-    );
-
-    expect(r.code).toBe(0);
-    expect(r.out.includes("Could not verify sandbox 'alpha'")).toBeTruthy();
-    expect(r.out.includes("gateway identity drift after restart")).toBeTruthy();
-    const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
-    expect(saved.sandboxes.alpha).toBeTruthy();
-  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
+      expect(r.code).toBe(0);
+      expect(r.out.includes("Could not verify sandbox 'alpha'")).toBeTruthy();
+      expect(r.out.includes("gateway identity drift after restart")).toBeTruthy();
+      const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
+      expect(saved.sandboxes.alpha).toBeTruthy();
+    },
+    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+  );
 
   it("recovers status after gateway runtime is reattached", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-recover-status-"));
@@ -1923,19 +1981,19 @@ describe("CLI dispatch", () => {
         'while [ "$#" -gt 0 ]; do',
         '  case "$1" in',
         '    -o) out="$2"; shift 2 ;;',
-        '    -w|--connect-timeout|--max-time) shift 2 ;;',
-        '    -s|-S|-sS|-f) shift ;;',
+        "    -w|--connect-timeout|--max-time) shift 2 ;;",
+        "    -s|-S|-sS|-f) shift ;;",
         '    http://*|https://*) url="$1"; shift ;;',
-        '    *) shift ;;',
-        '  esac',
-        'done',
+        "    *) shift ;;",
+        "  esac",
+        "done",
         'if [ -n "$out" ]; then : > "$out"; fi',
         'if echo "$url" | grep -q "11434/api/tags"; then',
         '  printf "000"',
-        '  exit 7',
-        'fi',
+        "  exit 7",
+        "fi",
         'printf "000"',
-        'exit 7',
+        "exit 7",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -1952,203 +2010,215 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("http://127.0.0.1:11434/api/tags");
   });
 
-  it("does not treat a different connected gateway as a healthy nemoclaw gateway", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-mixed-gateway-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+  it(
+    "does not treat a different connected gateway as a healthy nemoclaw gateway",
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-mixed-gateway-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
           },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Error: transport error: Connection refused' >&2",
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Server Status'",
+          "  echo",
+          "  echo '  Gateway: openshell'",
+          "  echo '  Status: Connected'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+          "  echo 'Gateway Info'",
+          "  echo",
+          "  echo '  Gateway: nemoclaw'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "start" ] && [ "$3" = "--name" ] && [ "$4" = "nemoclaw" ]; then',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv(
+        "alpha status",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
-        "  echo 'Error: transport error: Connection refused' >&2",
-        "  exit 1",
-        "fi",
-        'if [ "$1" = "status" ]; then',
-        "  echo 'Server Status'",
-        "  echo",
-        "  echo '  Gateway: openshell'",
-        "  echo '  Status: Connected'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
-        "  echo 'Gateway Info'",
-        "  echo",
-        "  echo '  Gateway: nemoclaw'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "start" ] && [ "$3" = "--name" ] && [ "$4" = "nemoclaw" ]; then',
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+      );
 
-    const r = runWithEnv(
-      "alpha status",
-      {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      },
-      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
-    );
+      expect(r.code).toBe(0);
+      expect(r.out.includes("Recovered NemoClaw gateway runtime")).toBeFalsy();
+      expect(r.out.includes("Could not verify sandbox 'alpha'")).toBeTruthy();
+      expect(r.out.includes("verify the active gateway")).toBeTruthy();
+    },
+    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+  );
 
-    expect(r.code).toBe(0);
-    expect(r.out.includes("Recovered NemoClaw gateway runtime")).toBeFalsy();
-    expect(r.out.includes("Could not verify sandbox 'alpha'")).toBeTruthy();
-    expect(r.out.includes("verify the active gateway")).toBeTruthy();
-  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
-
-  it("matches ANSI-decorated gateway transport errors when printing lifecycle hints", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ansi-transport-hint-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+  it(
+    "matches ANSI-decorated gateway transport errors when printing lifecycle hints",
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ansi-transport-hint-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
           },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  printf '\\033[31mError: trans\\033[0mport error: Connec\\033[33mtion refused\\033[0m\\n' >&2",
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Server Status'",
+          "  echo",
+          "  echo '  Gateway: openshell'",
+          "  echo '  Status: Disconnected'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+          "  printf 'Gateway Info\\n\\n  Gateway: openshell\\n'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv(
+        "alpha status",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
-        "  printf '\\033[31mError: trans\\033[0mport error: Connec\\033[33mtion refused\\033[0m\\n' >&2",
-        "  exit 1",
-        "fi",
-        'if [ "$1" = "status" ]; then',
-        "  echo 'Server Status'",
-        "  echo",
-        "  echo '  Gateway: openshell'",
-        "  echo '  Status: Disconnected'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
-        "  printf 'Gateway Info\\n\\n  Gateway: openshell\\n'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+      );
 
-    const r = runWithEnv(
-      "alpha status",
-      {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      },
-      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
-    );
+      expect(r.code).toBe(0);
+      expect(r.out.includes("current gateway/runtime is not reachable")).toBeTruthy();
+    },
+    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+  );
 
-    expect(r.code).toBe(0);
-    expect(r.out.includes("current gateway/runtime is not reachable")).toBeTruthy();
-  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
-
-  it("matches ANSI-decorated gateway auth errors when printing lifecycle hints", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ansi-auth-hint-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+  it(
+    "matches ANSI-decorated gateway auth errors when printing lifecycle hints",
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ansi-auth-hint-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
           },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  printf '\\033[31mMissing gateway auth\\033[0m token\\n' >&2",
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Server Status'",
+          "  echo",
+          "  echo '  Gateway: openshell'",
+          "  echo '  Status: Disconnected'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+          "  printf 'Gateway Info\\n\\n  Gateway: openshell\\n'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv(
+        "alpha status",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
-        "  printf '\\033[31mMissing gateway auth\\033[0m token\\n' >&2",
-        "  exit 1",
-        "fi",
-        'if [ "$1" = "status" ]; then',
-        "  echo 'Server Status'",
-        "  echo",
-        "  echo '  Gateway: openshell'",
-        "  echo '  Status: Disconnected'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
-        "  printf 'Gateway Info\\n\\n  Gateway: openshell\\n'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+      );
 
-    const r = runWithEnv(
-      "alpha status",
-      {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      },
-      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
-    );
-
-    expect(r.code).toBe(0);
-    expect(
-      r.out.includes("Verify the active gateway and retry after re-establishing the runtime."),
-    ).toBeTruthy();
-  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
+      expect(r.code).toBe(0);
+      expect(
+        r.out.includes("Verify the active gateway and retry after re-establishing the runtime."),
+      ).toBeTruthy();
+    },
+    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+  );
 
   it("explains unrecoverable gateway trust rotation after restart", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-identity-drift-"));
@@ -2221,153 +2291,161 @@ describe("CLI dispatch", () => {
     expect(connectResult.out.includes("Recreate this sandbox")).toBeTruthy();
   });
 
-  it("explains when gateway metadata exists but the restarted API is still refusing connections", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-unreachable-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+  it(
+    "explains when gateway metadata exists but the restarted API is still refusing connections",
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-unreachable-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
           },
-        },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
-        "  echo 'Error: transport error: Connection refused' >&2",
-        "  exit 1",
-        "fi",
-        'if [ "$1" = "status" ]; then',
-        "  echo 'Server Status'",
-        "  echo",
-        "  echo '  Gateway: nemoclaw'",
-        "  echo '  Server: https://127.0.0.1:8080'",
-        "  echo 'Error: client error (Connect)' >&2",
-        "  echo 'Connection refused (os error 111)' >&2",
-        "  exit 1",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
-        "  echo 'Gateway Info'",
-        "  echo",
-        "  echo '  Gateway: nemoclaw'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "start" ] && [ "$3" = "--name" ] && [ "$4" = "nemoclaw" ]; then',
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Error: transport error: Connection refused' >&2",
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Server Status'",
+          "  echo",
+          "  echo '  Gateway: nemoclaw'",
+          "  echo '  Server: https://127.0.0.1:8080'",
+          "  echo 'Error: client error (Connect)' >&2",
+          "  echo 'Connection refused (os error 111)' >&2",
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+          "  echo 'Gateway Info'",
+          "  echo",
+          "  echo '  Gateway: nemoclaw'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "start" ] && [ "$3" = "--name" ] && [ "$4" = "nemoclaw" ]; then',
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
 
-    const statusResult = runWithEnv(
-      "alpha status",
-      {
+      const statusResult = runWithEnv(
+        "alpha status",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+      );
+      expect(statusResult.code).toBe(0);
+      expect(
+        statusResult.out.includes("gateway is still refusing connections after restart"),
+      ).toBeTruthy();
+      expect(
+        statusResult.out.includes("Retry `openshell gateway start --name nemoclaw`"),
+      ).toBeTruthy();
+
+      const connectResult = runWithEnv("alpha connect", {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
-      },
-      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
-    );
-    expect(statusResult.code).toBe(0);
-    expect(
-      statusResult.out.includes("gateway is still refusing connections after restart"),
-    ).toBeTruthy();
-    expect(
-      statusResult.out.includes("Retry `openshell gateway start --name nemoclaw`"),
-    ).toBeTruthy();
+      });
+      expect(connectResult.code).toBe(1);
+      expect(
+        connectResult.out.includes("gateway is still refusing connections after restart"),
+      ).toBeTruthy();
+      expect(connectResult.out.includes("If the gateway never becomes healthy")).toBeTruthy();
+    },
+    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+  );
 
-    const connectResult = runWithEnv("alpha connect", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
-    expect(connectResult.code).toBe(1);
-    expect(
-      connectResult.out.includes("gateway is still refusing connections after restart"),
-    ).toBeTruthy();
-    expect(connectResult.out.includes("If the gateway never becomes healthy")).toBeTruthy();
-  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
-
-  it("explains when the named gateway is no longer configured after restart or rebuild", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-missing-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+  it(
+    "explains when the named gateway is no longer configured after restart or rebuild",
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-missing-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
           },
-        },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
-        "  echo 'Error: transport error: Connection refused' >&2",
-        "  exit 1",
-        "fi",
-        'if [ "$1" = "status" ]; then',
-        "  echo 'Gateway Status'",
-        "  echo",
-        "  echo '  Status: No gateway configured.'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
-        "  exit 1",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "start" ] && [ "$3" = "--name" ] && [ "$4" = "nemoclaw" ]; then',
-        "  exit 1",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Error: transport error: Connection refused' >&2",
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Gateway Status'",
+          "  echo",
+          "  echo '  Status: No gateway configured.'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "start" ] && [ "$3" = "--name" ] && [ "$4" = "nemoclaw" ]; then',
+          "  exit 1",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
 
-    const statusResult = runWithEnv(
-      "alpha status",
-      {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      },
-      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
-    );
-    expect(statusResult.code).toBe(0);
-    expect(
-      statusResult.out.includes("gateway is no longer configured after restart/rebuild"),
-    ).toBeTruthy();
-    expect(statusResult.out.includes("Start the gateway again")).toBeTruthy();
-  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
+      const statusResult = runWithEnv(
+        "alpha status",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+      );
+      expect(statusResult.code).toBe(0);
+      expect(
+        statusResult.out.includes("gateway is no longer configured after restart/rebuild"),
+      ).toBeTruthy();
+      expect(statusResult.out.includes("Start the gateway again")).toBeTruthy();
+    },
+    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+  );
 });
 
 describe("list shows live gateway inference", () => {

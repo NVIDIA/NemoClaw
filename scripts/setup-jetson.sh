@@ -16,6 +16,42 @@ error() {
   exit 1
 }
 
+# Returns 0 only when both the live kernel state AND our persistent
+# drop-ins are in place:
+#   - runtime: bridge-nf-call-iptables sysctl reads back as 1
+#   - persistence: /etc/modules-load.d/nemoclaw.conf contains `br_netfilter`
+#     and /etc/sysctl.d/99-nemoclaw.conf contains the sysctl=1 line
+# Skipping on runtime-only state is wrong: if someone transiently ran
+# `modprobe br_netfilter` + `sysctl -w ...=1` without persisting, the
+# fix would evaporate after the next reboot. Requiring persistence too
+# makes the skip branch safe and lets `apply_br_netfilter_setup` (which
+# is idempotent) re-write the drop-ins whenever they're missing.
+bridge_netfilter_ready() {
+  [[ -f /proc/sys/net/bridge/bridge-nf-call-iptables ]] \
+    && [[ "$(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null)" == "1" ]] \
+    && [[ -f /etc/modules-load.d/nemoclaw.conf ]] \
+    && grep -qx 'br_netfilter' /etc/modules-load.d/nemoclaw.conf 2>/dev/null \
+    && [[ -f /etc/sysctl.d/99-nemoclaw.conf ]] \
+    && grep -qx 'net.bridge.bridge-nf-call-iptables=1' /etc/sysctl.d/99-nemoclaw.conf 2>/dev/null
+}
+
+# Load br_netfilter and flip bridge-nf-call-iptables, then persist both
+# across reboots. Required for k3s (running inside the OpenShell gateway
+# container) to NAT pod → ClusterIP traffic; without this the kube-proxy
+# iptables rules are written but never matched for bridged pod traffic,
+# so sandbox pods cannot reach CoreDNS. Idempotent — safe to re-run
+# whenever bridge_netfilter_ready returns false, including the "runtime
+# is live but drop-ins missing" case (e.g. someone ran modprobe + sysctl
+# manually without persisting).
+apply_br_netfilter_setup() {
+  "${SUDO[@]}" modprobe br_netfilter
+  "${SUDO[@]}" sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null
+
+  # Persist across reboots
+  echo "br_netfilter" | "${SUDO[@]}" tee /etc/modules-load.d/nemoclaw.conf >/dev/null
+  echo "net.bridge.bridge-nf-call-iptables=1" | "${SUDO[@]}" tee /etc/sysctl.d/99-nemoclaw.conf >/dev/null
+}
+
 get_jetpack_version() {
   local release_line release revision l4t_version
 
@@ -32,7 +68,31 @@ get_jetpack_version() {
   fi
 
   if ((release >= 39)); then
-    info "Jetson detected (L4T $l4t_version) — this version does not require any host setup" >&2
+    # JP7 R39 does not need iptables / daemon.json changes, but k3s inside
+    # the OpenShell gateway container still needs br_netfilter +
+    # bridge-nf-call-iptables=1 for ClusterIP service routing. Some R39
+    # kernel images ship with it already in place, so check first and only
+    # apply when missing — avoids planting NemoClaw-owned drop-ins in
+    # /etc/modules-load.d and /etc/sysctl.d on systems that don't need
+    # them. See #2418.
+    if bridge_netfilter_ready; then
+      info "Jetson detected (L4T $l4t_version) — br_netfilter already configured; no host setup needed" >&2
+    else
+      info "Jetson detected (L4T $l4t_version) — loading br_netfilter (required by k3s inside the OpenShell gateway; see #2418)" >&2
+      if ((EUID != 0)); then
+        "${SUDO[@]}" true >/dev/null \
+          || error "Sudo is required to load br_netfilter and write /etc/modules-load.d and /etc/sysctl.d drop-ins."
+      fi
+      apply_br_netfilter_setup
+      # Read the value back from /proc (not just "we set it to 1") so the
+      # log is actual evidence that the apply path landed — useful when a
+      # user is validating the fix on their own Jetson and needs to confirm
+      # from log output alone that the runtime state is correct.
+      local v4
+      v4="$(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null || echo '?')"
+      info "br_netfilter runtime: bridge-nf-call-iptables=$v4 — sandbox → ClusterIP routing (CoreDNS, services) is unblocked; no docker or k3s restart needed" >&2
+      info "Reboot persistence: /etc/modules-load.d/nemoclaw.conf, /etc/sysctl.d/99-nemoclaw.conf" >&2
+    fi
     return 0
   fi
 
@@ -124,12 +184,7 @@ PYEOF
       ;;
   esac
 
-  "${SUDO[@]}" modprobe br_netfilter
-  "${SUDO[@]}" sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null
-
-  # Persist across reboots
-  echo "br_netfilter" | "${SUDO[@]}" tee /etc/modules-load.d/nemoclaw.conf >/dev/null
-  echo "net.bridge.bridge-nf-call-iptables=1" | "${SUDO[@]}" tee /etc/sysctl.d/99-nemoclaw.conf >/dev/null
+  apply_br_netfilter_setup
 
   if [[ "$jetpack_version" == "jp6" ]]; then
     "${SUDO[@]}" systemctl restart docker

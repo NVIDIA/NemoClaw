@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
-const DEFAULT_PROJECTS = ["tsconfig.cli.json", "nemoclaw/tsconfig.json"] as const;
+const DEFAULT_PROJECTS = Object.freeze(["tsconfig.cli.json", "nemoclaw/tsconfig.json"]);
 const DEFAULT_TOP_FILES = 15;
 const DEFAULT_TOP_FUNCTIONS = 15;
 const DEFAULT_MIN_SCORE = 1;
@@ -156,6 +156,13 @@ function createPatternCounts(): PatternCounts {
   };
 }
 
+function requireDefined<T>(value: T | undefined, message: string): T {
+  if (value === undefined) {
+    throw new Error(message);
+  }
+  return value;
+}
+
 function addPattern(target: PatternCounts, key: keyof PatternCounts, amount = 1): void {
   target[key] += amount;
 }
@@ -287,7 +294,8 @@ function shouldIncludeFile(filePath: string, includeTests: boolean): boolean {
 }
 
 function hasExportModifier(node: ts.Node): boolean {
-  return (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Export) !== 0;
+  const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
+  return Boolean(modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword));
 }
 
 function countExports(sourceFile: ts.SourceFile): number {
@@ -1082,7 +1090,13 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
 
   const rawFiles = [...analyzedFiles]
     .sort((left, right) => left.localeCompare(right))
-    .map((absPath) => analyzeFile(absPath, rootDir, projectByFile.get(absPath)!));
+    .map((absPath) =>
+      analyzeFile(
+        absPath,
+        rootDir,
+        requireDefined(projectByFile.get(absPath), `Missing project for ${absPath}`),
+      ),
+    );
 
   const importersByFile = new Map<string, Set<string>>();
   const importsFromFile = new Map<string, Set<string>>();
@@ -1092,8 +1106,14 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
   }
 
   for (const file of rawFiles) {
-    const project = projectByFile.get(file.absPath)!;
-    const resolvedImports = importsFromFile.get(file.absPath)!;
+    const project = requireDefined(
+      projectByFile.get(file.absPath),
+      `Missing project for analyzed file ${file.absPath}`,
+    );
+    const resolvedImports = requireDefined(
+      importsFromFile.get(file.absPath),
+      `Missing import set for analyzed file ${file.absPath}`,
+    );
 
     for (const specifier of file.importSpecifiers) {
       const resolved = resolveLocalImport(project, file.absPath, specifier, analyzedFiles);
@@ -1306,6 +1326,13 @@ export function renderTextReport(
   return lines.join("\n");
 }
 
+function requireCliValue(flag: string, value: string | undefined): string {
+  if (!value || value.startsWith("-")) {
+    throw new Error(`Missing value for ${flag}`);
+  }
+  return value;
+}
+
 function parseInteger(flag: string, value: string | undefined): number {
   if (!value) {
     throw new Error(`Missing value for ${flag}`);
@@ -1333,17 +1360,11 @@ export function parseArgs(argv: string[]): CliOptions {
     const arg = argv[index];
     switch (arg) {
       case "--root":
-        if (!argv[index + 1]) {
-          throw new Error("Missing value for --root");
-        }
-        options.rootDir = path.resolve(argv[index + 1]!);
+        options.rootDir = path.resolve(requireCliValue("--root", argv[index + 1]));
         index += 1;
         break;
       case "--project":
-        if (!argv[index + 1]) {
-          throw new Error("Missing value for --project");
-        }
-        projectPaths.push(argv[index + 1]!);
+        projectPaths.push(requireCliValue("--project", argv[index + 1]));
         index += 1;
         break;
       case "--top-files":

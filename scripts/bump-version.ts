@@ -22,18 +22,15 @@ type Options = {
 type PackageJson = {
   version: string;
   scripts?: Record<string, string>;
-  [key: string]: unknown;
 };
 
 type BlueprintManifest = {
   version?: string;
-  [key: string]: unknown;
 };
 
 type DocsProjectJson = {
   name?: string;
   version?: string;
-  [key: string]: unknown;
 };
 
 type DocsVersionEntry = {
@@ -41,6 +38,34 @@ type DocsVersionEntry = {
   version: string;
   url: string;
 };
+
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+function parseYaml<T>(text: string): T {
+  return YAML.parse(text);
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error;
+}
+
+function readStringProperty(value: object | null, key: string): string | undefined {
+  if (!value || Array.isArray(value)) {
+    return undefined;
+  }
+  const property = Reflect.get(value, key);
+  return typeof property === "string" ? property : undefined;
+}
+
+function readNumberProperty(value: object | null, key: string): number | undefined {
+  if (!value || Array.isArray(value)) {
+    return undefined;
+  }
+  const property = Reflect.get(value, key);
+  return typeof property === "number" ? property : undefined;
+}
 
 const REPO_ROOT = process.cwd();
 const ROOT_PACKAGE_JSON = path.join(REPO_ROOT, "package.json");
@@ -209,7 +234,9 @@ function parseArgs(args: string[]): Options {
   }
 
   if (createPr && push) {
-    throw new Error("--push cannot be combined with --create-pr; PR mode pushes a release branch instead");
+    throw new Error(
+      "--push cannot be combined with --create-pr; PR mode pushes a release branch instead",
+    );
   }
 
   if (!branchName) {
@@ -251,7 +278,9 @@ function ensureCleanGit(): void {
 function ensureOnMainBranch(): void {
   const branch = run("git", ["branch", "--show-current"]).trim();
   if (branch !== "main") {
-    throw new Error(`Release bumps must run from main. Current branch: ${branch || "(detached HEAD)"}`);
+    throw new Error(
+      `Release bumps must run from main. Current branch: ${branch || "(detached HEAD)"}`,
+    );
   }
 }
 
@@ -279,12 +308,16 @@ function ensureUpToDateWithOriginMain(): void {
 
   if (localHead !== originHead) {
     if (mergeBase === originHead) {
-      throw new Error("Local main is ahead of origin/main. Push or reconcile before cutting a release.");
+      throw new Error(
+        "Local main is ahead of origin/main. Push or reconcile before cutting a release.",
+      );
     }
     if (mergeBase === localHead) {
       throw new Error("Local main is behind origin/main. Pull/rebase before cutting a release.");
     }
-    throw new Error("Local main has diverged from origin/main. Reconcile before cutting a release.");
+    throw new Error(
+      "Local main has diverged from origin/main. Reconcile before cutting a release.",
+    );
   }
 }
 
@@ -301,7 +334,7 @@ function updatePackageJson(filePath: string, version: string): void {
 }
 
 function updateBlueprintVersion(version: string): void {
-  const manifest = YAML.parse(readText(BLUEPRINT_YAML)) as BlueprintManifest;
+  const manifest = parseYaml<BlueprintManifest>(readText(BLUEPRINT_YAML));
   manifest.version = version;
   writeFileSync(BLUEPRINT_YAML, YAML.stringify(manifest), "utf8");
 }
@@ -354,30 +387,24 @@ function updateDocsVersionsJson(version: string): void {
 
 function readDocsVersionsJson(): DocsVersionEntry[] {
   try {
-    const parsed = JSON.parse(readText(DOCS_VERSIONS_JSON)) as unknown;
+    const parsed = parseJson<Array<Partial<DocsVersionEntry>>>(readText(DOCS_VERSIONS_JSON));
     if (!Array.isArray(parsed)) {
       throw new Error("docs/versions1.json must contain an array");
     }
     return parsed.map((entry) => {
-      if (!entry || typeof entry !== "object") {
-        throw new Error("Invalid docs/versions1.json entry");
-      }
-      const candidate = entry as Partial<DocsVersionEntry>;
-      if (typeof candidate.version !== "string") {
+      const version = typeof entry.version === "string" ? entry.version : undefined;
+      if (!version) {
         throw new Error("Each docs/versions1.json entry must include a string version");
       }
+      const url = typeof entry.url === "string" ? entry.url : undefined;
       return {
-        preferred: candidate.preferred === true ? true : undefined,
-        version: candidate.version,
-        url:
-          typeof candidate.url === "string" && candidate.url.length > 0
-            ? candidate.url
-            : buildDocsVersionUrl(candidate.version),
+        preferred: entry.preferred === true ? true : undefined,
+        version,
+        url: url && url.length > 0 ? url : buildDocsVersionUrl(version),
       };
     });
   } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code === "ENOENT") {
+    if (isErrnoException(error) && error.code === "ENOENT") {
       return [];
     }
     throw error;
@@ -416,10 +443,26 @@ function updateInstallAndUninstallDocs(nextDocsVersion: string): void {
   const installReplacement = `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash # ${nextDocsVersion}`;
   const uninstallReplacement = `curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash # ${nextDocsVersion}`;
 
-  replaceCodeBlockLine(README_MD, /^curl -fsSL https:\/\/www\.nvidia\.com\/nemoclaw\.sh \| bash(?: # v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)?$/m, installReplacement);
-  replaceCodeBlockLine(QUICKSTART_MD, /^curl -fsSL https:\/\/www\.nvidia\.com\/nemoclaw\.sh \| bash(?: # v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)?$/m, installReplacement);
-  replaceCodeBlockLine(README_MD, /^curl -fsSL https:\/\/raw\.githubusercontent\.com\/NVIDIA\/NemoClaw\/refs\/heads\/main\/uninstall\.sh \| bash(?: # v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)?$/m, uninstallReplacement);
-  replaceCodeBlockLine(QUICKSTART_MD, /^curl -fsSL https:\/\/raw\.githubusercontent\.com\/NVIDIA\/NemoClaw\/refs\/heads\/main\/uninstall\.sh \| bash(?: # v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)?$/m, uninstallReplacement);
+  replaceCodeBlockLine(
+    README_MD,
+    /^curl -fsSL https:\/\/www\.nvidia\.com\/nemoclaw\.sh \| bash(?: # v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)?$/m,
+    installReplacement,
+  );
+  replaceCodeBlockLine(
+    QUICKSTART_MD,
+    /^curl -fsSL https:\/\/www\.nvidia\.com\/nemoclaw\.sh \| bash(?: # v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)?$/m,
+    installReplacement,
+  );
+  replaceCodeBlockLine(
+    README_MD,
+    /^curl -fsSL https:\/\/raw\.githubusercontent\.com\/NVIDIA\/NemoClaw\/refs\/heads\/main\/uninstall\.sh \| bash(?: # v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)?$/m,
+    uninstallReplacement,
+  );
+  replaceCodeBlockLine(
+    QUICKSTART_MD,
+    /^curl -fsSL https:\/\/raw\.githubusercontent\.com\/NVIDIA\/NemoClaw\/refs\/heads\/main\/uninstall\.sh \| bash(?: # v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)?$/m,
+    uninstallReplacement,
+  );
 }
 
 function replaceCodeBlockLine(filePath: string, pattern: RegExp, replacement: string): void {
@@ -431,11 +474,23 @@ function replaceCodeBlockLine(filePath: string, pattern: RegExp, replacement: st
   writeFileSync(filePath, updated, "utf8");
 }
 
-function verifyVersionState(version: string, docsPublicUrl: string, docsDisplayVersion: string): void {
-  assertEqual(readJson<PackageJson>(ROOT_PACKAGE_JSON).version, version, "root package.json version mismatch");
-  assertEqual(readJson<PackageJson>(PLUGIN_PACKAGE_JSON).version, version, "plugin package.json version mismatch");
+function verifyVersionState(
+  version: string,
+  docsPublicUrl: string,
+  docsDisplayVersion: string,
+): void {
+  assertEqual(
+    readJson<PackageJson>(ROOT_PACKAGE_JSON).version,
+    version,
+    "root package.json version mismatch",
+  );
+  assertEqual(
+    readJson<PackageJson>(PLUGIN_PACKAGE_JSON).version,
+    version,
+    "plugin package.json version mismatch",
+  );
 
-  const blueprint = YAML.parse(readText(BLUEPRINT_YAML)) as BlueprintManifest;
+  const blueprint = parseYaml<BlueprintManifest>(readText(BLUEPRINT_YAML));
   assertEqual(blueprint.version, version, "blueprint version mismatch");
 
   requireContains(INSTALL_SH, `DEFAULT_NEMOCLAW_VERSION="${version}"`);
@@ -490,21 +545,18 @@ function createReleasePr(options: Options, previousVersion: string, tagName: str
     ranTests: !options.skipTests,
     ranFormat: false,
   });
-  const prUrl = run(
-    "gh",
-    [
-      "pr",
-      "create",
-      "--base",
-      "main",
-      "--head",
-      options.branchName,
-      "--title",
-      `chore(release): bump version to ${tagName}`,
-      "--body",
-      prBody,
-    ],
-  ).trim();
+  const prUrl = run("gh", [
+    "pr",
+    "create",
+    "--base",
+    "main",
+    "--head",
+    options.branchName,
+    "--title",
+    `chore(release): bump version to ${tagName}`,
+    "--body",
+    prBody,
+  ]).trim();
 
   log(`Release PR created: ${prUrl}`);
   log(`Review and merge the PR before creating release tags on main.`);
@@ -521,7 +573,11 @@ function ensureBranchDoesNotExist(branchName: string): void {
 }
 
 function gitRemoteBranchExists(branchName: string): boolean {
-  return run("git", ["ls-remote", "--exit-code", "--heads", "origin", branchName], { allowFailure: true }).exitCode === 0;
+  return (
+    run("git", ["ls-remote", "--exit-code", "--heads", "origin", branchName], {
+      allowFailure: true,
+    }).exitCode === 0
+  );
 }
 
 type PrBodyOptions = {
@@ -575,7 +631,7 @@ function buildPrBody(previousVersion: string, nextVersion: string, options: PrBo
     "- [x] Doc pages updated for any user-facing behavior changes (new commands, changed defaults, new features, bug fixes that contradict existing docs).",
     "",
     "### Doc Changes",
-    "- [ ] Follows the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md). Try running the `update-docs` agent skill to draft changes while complying with the style guide. For example, prompt your agent with \"`/update-docs` catch up the docs for the new changes I made in this PR.\"",
+    '- [ ] Follows the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md). Try running the `update-docs` agent skill to draft changes while complying with the style guide. For example, prompt your agent with "`/update-docs` catch up the docs for the new changes I made in this PR."',
     "- [ ] New pages include SPDX license header and frontmatter, if creating a new page.",
     "- [x] Cross-references and links verified.",
     "",
@@ -594,11 +650,13 @@ function updateLatestTag(tagName: string): void {
 }
 
 function gitRefExists(ref: string): boolean {
-  return run("git", ["show-ref", "--verify", "--quiet", ref], { allowFailure: true }).exitCode === 0;
+  return (
+    run("git", ["show-ref", "--verify", "--quiet", ref], { allowFailure: true }).exitCode === 0
+  );
 }
 
 function readJson<T>(filePath: string): T {
-  return JSON.parse(readText(filePath)) as T;
+  return parseJson<T>(readText(filePath));
 }
 
 function readText(filePath: string): string {
@@ -677,13 +735,17 @@ function verifyDocsLinks(filePath: string, expectedDocsPublicUrl: string): void 
   }
 }
 
-function assertEqual(actual: unknown, expected: unknown, message: string): void {
+function assertEqual<T>(actual: T, expected: T, message: string): void {
   if (actual !== expected) {
     throw new Error(`${message}. Expected '${expected}', got '${String(actual)}'`);
   }
 }
 
-function run(command: string, args: string[], options?: { allowFailure?: boolean }): string & { exitCode?: number } {
+function run(
+  command: string,
+  args: string[],
+  options?: { allowFailure?: boolean },
+): string & { exitCode?: number } {
   try {
     const output = execFileSync(command, args, {
       cwd: REPO_ROOT,
@@ -692,16 +754,13 @@ function run(command: string, args: string[], options?: { allowFailure?: boolean
     });
     return Object.assign(output, { exitCode: 0 });
   } catch (error) {
-    const err = error as NodeJS.ErrnoException & {
-      stdout?: string;
-      stderr?: string;
-      status?: number;
-    };
+    const errorObject = typeof error === "object" && error !== null ? error : null;
+    const stdout = readStringProperty(errorObject, "stdout")?.trim();
+    const stderr = readStringProperty(errorObject, "stderr")?.trim();
+    const status = readNumberProperty(errorObject, "status") ?? 1;
     if (options?.allowFailure) {
-      return Object.assign(err.stdout ?? "", { exitCode: err.status ?? 1 });
+      return Object.assign(stdout ?? "", { exitCode: status });
     }
-    const stderr = err.stderr?.trim();
-    const stdout = err.stdout?.trim();
     throw new Error(
       [`Command failed: ${command} ${args.join(" ")}`, stdout, stderr].filter(Boolean).join("\n"),
     );
@@ -722,8 +781,12 @@ function printDryRunPlan(
   log(`Docs mode: ${docsMode}`);
   log(`Docs URL target: ${docsPublicUrl}/`);
   log(`Files to update: ${FILES_TO_STAGE.map((filePath) => relative(filePath)).join(", ")}`);
-  log("Pre-checks: clean git tree, main branch, canonical origin, origin/main sync, tag availability");
-  log(`Mode: ${docsMode === "versioned" ? "versioned docs" : "latest docs"}, ${skipTests ? "tests skipped" : "tests enabled"}`);
+  log(
+    "Pre-checks: clean git tree, main branch, canonical origin, origin/main sync, tag availability",
+  );
+  log(
+    `Mode: ${docsMode === "versioned" ? "versioned docs" : "latest docs"}, ${skipTests ? "tests skipped" : "tests enabled"}`,
+  );
   if (skipTests) {
     log("Checks: installer version and build:cli only (typecheck and tests skipped)");
   } else {

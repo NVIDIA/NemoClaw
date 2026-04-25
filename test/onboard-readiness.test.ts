@@ -1,10 +1,33 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
 import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../dist/lib/policies";
-import { hasStaleGateway, isSandboxReady, parseSandboxStatus } from "../dist/lib/onboard";
+
+type OnboardReadinessInternals = {
+  hasStaleGateway: (output: string | null | undefined) => boolean;
+  isSandboxReady: (output: string | null | undefined, sandboxName: string) => boolean;
+  parseSandboxStatus: (output: string | null | undefined, sandboxName: string) => string | null;
+};
+
+function isOnboardReadinessInternals(value: object | null): value is OnboardReadinessInternals {
+  return (
+    value !== null &&
+    typeof Reflect.get(value, "hasStaleGateway") === "function" &&
+    typeof Reflect.get(value, "isSandboxReady") === "function" &&
+    typeof Reflect.get(value, "parseSandboxStatus") === "function"
+  );
+}
+
+const loadedOnboardReadinessInternals = require("../dist/lib/onboard");
+const onboardReadinessInternals =
+  typeof loadedOnboardReadinessInternals === "object" && loadedOnboardReadinessInternals !== null
+    ? loadedOnboardReadinessInternals
+    : null;
+if (!isOnboardReadinessInternals(onboardReadinessInternals)) {
+  throw new Error("Expected onboard readiness internals to be available");
+}
+const { hasStaleGateway, isSandboxReady, parseSandboxStatus } = onboardReadinessInternals;
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {
@@ -132,7 +155,9 @@ describe("parseSandboxStatus", () => {
   });
 
   it("returns ContainerCreating status", () => {
-    expect(parseSandboxStatus("my-assistant   ContainerCreating   5s ago", "my-assistant")).toBe("ContainerCreating");
+    expect(parseSandboxStatus("my-assistant   ContainerCreating   5s ago", "my-assistant")).toBe(
+      "ContainerCreating",
+    );
   });
 
   it("returns Failed status", () => {
@@ -140,7 +165,9 @@ describe("parseSandboxStatus", () => {
   });
 
   it("returns CrashLoopBackOff status", () => {
-    expect(parseSandboxStatus("my-assistant   CrashLoopBackOff   3m ago", "my-assistant")).toBe("CrashLoopBackOff");
+    expect(parseSandboxStatus("my-assistant   CrashLoopBackOff   3m ago", "my-assistant")).toBe(
+      "CrashLoopBackOff",
+    );
   });
 
   it("returns null when sandbox not found", () => {
@@ -158,7 +185,10 @@ describe("parseSandboxStatus", () => {
 
   it("strips ANSI codes before parsing", () => {
     expect(
-      parseSandboxStatus("\x1b[1mmy-assistant\x1b[0m   \x1b[33mPending\x1b[0m   10s", "my-assistant")
+      parseSandboxStatus(
+        "\x1b[1mmy-assistant\x1b[0m   \x1b[33mPending\x1b[0m   10s",
+        "my-assistant",
+      ),
     ).toBe("Pending");
   });
 

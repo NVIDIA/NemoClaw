@@ -42,11 +42,27 @@ function runScript(scriptBody: string): SpawnSyncReturns<string> {
  * Sets NEMOCLAW_POLICY_TIER, NEMOCLAW_POLICY_MODE, and NEMOCLAW_POLICY_PRESETS
  * before the require so non-interactive paths read the right values.
  */
-function buildPreamble({ tierEnv = "balanced", policyMode = "skip", policyPresets = "" } = {}): string {
+function buildPreamble({
+  tierEnv = "balanced",
+  policyMode = "skip",
+  policyPresets = "",
+  stubOpenshellBin = false,
+  runCaptureReturn = "",
+} = {}): string {
   const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
   const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
   const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const resolveOpenshellPath = JSON.stringify(
+    path.join(repoRoot, "dist", "lib", "resolve-openshell.js"),
+  );
+
+  // Both stubs must run before onboard.js is required — onboard destructures
+  // resolveOpenshell and runCapture at require time, so later overrides are
+  // too late for anything onboard calls internally.
+  const openshellStub = stubOpenshellBin
+    ? `require(${resolveOpenshellPath}).resolveOpenshell = () => "/usr/bin/true";`
+    : "";
 
   return String.raw`
 const credentials = require(${credPath});
@@ -58,7 +74,8 @@ credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + ms
 credentials.ensureApiKey = async () => {};
 credentials.getCredential = () => null;
 runner.run = () => {};
-runner.runCapture = () => "";
+runner.runCapture = () => ${JSON.stringify(runCaptureReturn)};
+${openshellStub}
 
 const updates = [];
 registry.registerSandbox = () => true;
@@ -269,6 +286,90 @@ console.log = (...args) => lines.push(args.join(" "));
     assert.equal(tierUpdate.policyTier, "open");
     // With POLICY_MODE=skip, applied presets list is empty
     assert.deepEqual(payload.applied, []);
+  });
+
+  // #2429: an unrecognised NEMOCLAW_POLICY_MODE used to hard-exit at step 8/8,
+  // leaving the already-built sandbox with zero presets. We now warn and fall
+  // back to the tier-derived suggestions so the sandbox stays usable, and hint
+  // that the user may have meant NEMOCLAW_POLICY_TIER when the value looks like
+  // a tier name.
+  it("falls back to tier suggestions when NEMOCLAW_POLICY_MODE is unknown (#2429)", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "restricted",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+policies.applyPreset = (sandbox, name) => { appliedCalls.push(name); return true; };
+policies.getAppliedPresets = () => [];
+
+// Silence onboard's note()/console.log so stdout is pure JSON.
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {});
+    process.stdout.write(JSON.stringify({ applied, appliedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    // Warn path, not exit: tier suggestions were applied (non-empty).
+    assert.ok(
+      payload.applied.length > 0,
+      `expected fallback presets to be applied, got: ${JSON.stringify(payload.applied)}`,
+    );
+    // Warnings mention the bad value, the tier-name hint, and the fallback.
+    // They land on stderr via console.warn.
+    assert.match(result.stderr, /Unsupported NEMOCLAW_POLICY_MODE: restricted/);
+    assert.match(result.stderr, /NEMOCLAW_POLICY_TIER=restricted/);
+    assert.match(result.stderr, /Falling back to suggested presets/);
+  });
+
+  it("omits the tier-name hint for a non-tier invalid value (#2429)", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "garbage",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+policies.applyPreset = () => true;
+policies.getAppliedPresets = () => [];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {});
+    process.stdout.write(JSON.stringify({ applied }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.match(result.stderr, /Unsupported NEMOCLAW_POLICY_MODE: garbage/);
+    assert.ok(
+      !/did you mean NEMOCLAW_POLICY_TIER/.test(result.stderr),
+      `tier-name hint should not appear for non-tier values, stderr: ${result.stderr}`,
+    );
   });
 });
 
