@@ -2595,17 +2595,33 @@ function destroyGateway() {
   }
   // openshell gateway destroy doesn't remove Docker volumes, which leaves
   // corrupted cluster state that breaks the next gateway start. Clean them up.
-  // Shell required: pipe (|), && chaining, || fallback.
-  run(
-    `docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm || true`,
+  const volumeIds = runCapture(
+    ["docker", "volume", "ls", "-q", "--filter", `name=openshell-cluster-${GATEWAY_NAME}`],
     { ignoreError: true },
-  );
+  )
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (volumeIds.length > 0) {
+    run(["docker", "volume", "rm", ...volumeIds], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+  }
 }
 
 function getGatewayClusterContainerState(): string {
   const containerName = getGatewayClusterContainerName();
   const state = runCapture(
-    `docker inspect --type container --format '{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}' ${shellQuote(containerName)} 2>/dev/null`,
+    [
+      "docker",
+      "inspect",
+      "--type",
+      "container",
+      "--format",
+      "{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}",
+      containerName,
+    ],
     { ignoreError: true },
   )
     .trim()
@@ -2700,12 +2716,12 @@ fi
 
 function runGatewayClusterCapture(script: string, opts: RunnerOptions = {}) {
   const containerName = getGatewayClusterContainerName();
-  return runCapture(`docker exec ${shellQuote(containerName)} sh -lc ${shellQuote(script)}`, opts);
+  return runCapture(["docker", "exec", containerName, "sh", "-lc", script], opts);
 }
 
 function runGatewayCluster(script: string, opts: RunnerOptions = {}) {
   const containerName = getGatewayClusterContainerName();
-  return run(`docker exec ${shellQuote(containerName)} sh -lc ${shellQuote(script)}`, opts);
+  return run(["docker", "exec", containerName, "sh", "-lc", script], opts);
 }
 
 function listMissingGatewayBootstrapSecrets() {
@@ -3289,14 +3305,14 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
       // tunnels the user may have set up on the same port. (#1950)
       if (port === DASHBOARD_PORT && portCheck.process === "ssh" && portCheck.pid) {
         // Use `ps` to get the command line — works on Linux, macOS, and WSL.
-        const cmdline = runCapture(`ps -p ${portCheck.pid} -o args= 2>/dev/null`, {
+        const cmdline = runCapture(["ps", "-p", String(portCheck.pid), "-o", "args="], {
           ignoreError: true,
         }).trim();
         if (cmdline.includes("openshell")) {
           console.log(
             `  Cleaning up orphaned SSH port-forward on port ${port} (PID ${portCheck.pid})...`,
           );
-          run(`kill ${portCheck.pid} 2>/dev/null || true`, { ignoreError: true });
+          run(["kill", String(portCheck.pid)], { ignoreError: true });
           sleep(1);
           portCheck = await checkPortAvailable(port);
           if (portCheck.ok) {
@@ -4598,8 +4614,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
   let preferredInferenceApi: string | null = null;
 
   // Detect local inference options
-  // "command -v" is a shell builtin — must go through bash.
-  const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
+  const hasOllama = !!runCapture(["which", "ollama"], { ignoreError: true });
   const ollamaRunning = !!runCapture(["curl", "-sf", `http://127.0.0.1:${OLLAMA_PORT}/api/tags`], {
     ignoreError: true,
   });
@@ -7090,7 +7105,11 @@ function printDashboard(
 
   const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const wslAddr = isWsl() ? (String(runCapture("hostname -I 2>/dev/null", { ignoreError: true }) || "").trim().split(/\s+/)[0] || null) : null;
+  const wslAddr = isWsl()
+    ? (String(runCapture(["hostname", "-I"], { ignoreError: true }) || "")
+        .trim()
+        .split(/\s+/)[0] || null)
+    : null;
   const chain = buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: wslAddr });
 
   // Build access info inline — uses chain instead of re-deriving from env
