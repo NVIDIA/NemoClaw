@@ -321,12 +321,14 @@ usage() {
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice in non-interactive mode\n"
+  printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
   printf "    NVIDIA_API_KEY                API key (skips credential prompt)\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
+  printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
@@ -1192,22 +1194,85 @@ run_onboard() {
   show_usage_notice
   info "Running nemoclaw onboard…"
   local -a onboard_cmd=(onboard)
-  if command_exists node && [[ -f "${HOME}/.nemoclaw/onboard-session.json" ]]; then
-    if node -e '
-      const fs = require("fs");
-      const file = process.argv[1];
-      try {
-        const data = JSON.parse(fs.readFileSync(file, "utf8"));
-        const resumable = data && data.resumable !== false;
-        const status = data && data.status;
-        process.exit(resumable && status && status !== "complete" ? 0 : 1);
-      } catch {
-        process.exit(1);
-      }
-    ' "${HOME}/.nemoclaw/onboard-session.json"; then
-      info "Found an interrupted onboarding session — resuming it."
-      onboard_cmd+=(--resume)
-    fi
+  local session_file="${HOME}/.nemoclaw/onboard-session.json"
+  # --fresh takes precedence over any session state. We forward --fresh to
+  # `nemoclaw onboard` so the CLI clears the existing session file before
+  # creating a new one — the install.sh classifier is bypassed entirely.
+  if [ "${FRESH:-}" = "1" ]; then
+    info "Starting a fresh onboarding session (--fresh)."
+    onboard_cmd+=(--fresh)
+  elif command_exists node && [[ -f "$session_file" ]]; then
+    # Classify the session: "resume" (auto-attach --resume), "failed"
+    # (last run reported a step failure — user must choose), "skip"
+    # (complete / missing / unreadable — nothing to resume), or "corrupt".
+    local session_state
+    session_state="$(
+      node -e '
+        const fs = require("fs");
+        let out = "skip";
+        try {
+          const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          if (!data || data.resumable === false || data.status === "complete") {
+            out = "skip";
+          } else if (data.status === "failed" || data.failure) {
+            out = "failed";
+          } else if (data.status === "in_progress") {
+            out = "resume";
+          } else {
+            // Unknown or missing status — do not auto-resume a file we
+            // cannot classify against what onboard-session.ts actually
+            // writes (in_progress / failed / complete).
+            out = "corrupt";
+          }
+        } catch {
+          out = "corrupt";
+        }
+        process.stdout.write(out);
+      ' "$session_file" 2>/dev/null || printf "corrupt"
+    )"
+    case "$session_state" in
+      resume)
+        info "Found an interrupted onboarding session — resuming it."
+        onboard_cmd+=(--resume)
+        ;;
+      failed)
+        # #2430: a previous run failed. The user's provider/inference
+        # choice may be the cause, so auto-resuming would just loop.
+        # Refuse in non-interactive mode (no safe default); prompt in
+        # interactive mode so the user can pick resume vs. fresh.
+        if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+          error "Previous onboarding session failed. Re-run with --fresh to discard it, or run 'nemoclaw onboard --resume' to retry the same session."
+        fi
+        local _prompt_stdin="/dev/tty"
+        if [ -t 0 ]; then _prompt_stdin="/dev/stdin"; fi
+        if [ ! -r "$_prompt_stdin" ]; then
+          error "Previous onboarding session failed, and no TTY is available to prompt. Re-run with --fresh or run 'nemoclaw onboard --resume'."
+        fi
+        info "Previous onboarding session failed."
+        local _resume_answer=""
+        while :; do
+          printf "  Resume the failed session, or start fresh? [R/f]: " >&2
+          if ! IFS= read -r _resume_answer <"$_prompt_stdin"; then
+            error "Could not read response from TTY. Re-run with --fresh or run 'nemoclaw onboard --resume'."
+          fi
+          case "${_resume_answer,,}" in
+            "" | r | resume)
+              onboard_cmd+=(--resume)
+              break
+              ;;
+            f | fresh)
+              onboard_cmd+=(--fresh)
+              break
+              ;;
+            *) printf "  Please answer 'r' or 'f'.\n" >&2 ;;
+          esac
+        done
+        ;;
+      corrupt)
+        warn "Onboarding session file is unreadable — ignoring and starting fresh."
+        ;;
+      skip | *) ;;
+    esac
   fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     onboard_cmd+=(--non-interactive)
@@ -1268,10 +1333,12 @@ main() {
   # Parse flags
   NON_INTERACTIVE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
+  FRESH=""
   for arg in "$@"; do
     case "$arg" in
       --non-interactive) NON_INTERACTIVE=1 ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
+      --fresh) FRESH=1 ;;
       --version | -v)
         local version_suffix
         version_suffix="$(installer_version_for_display)"
@@ -1291,6 +1358,7 @@ main() {
   # Also honor env var
   NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
+  FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
