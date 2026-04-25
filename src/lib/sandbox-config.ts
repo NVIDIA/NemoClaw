@@ -17,11 +17,11 @@ const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const { promises: dnsPromises } = require("node:dns");
-const { isIPv4, isIPv6 } = require("node:net");
 const { validateName } = require("./runner");
 const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue } = credentialFilter;
 const { appendAuditEntry } = require("./shields-audit");
+const { isPrivateHostname, isPrivateIp } = require("./private-networks");
 
 type ConfigObject = import("./credential-filter").ConfigObject;
 type ConfigValue = import("./credential-filter").ConfigValue;
@@ -58,17 +58,7 @@ interface AgentConfigTarget {
   configFile: string;
 }
 
-interface CidrRange {
-  network: Uint8Array;
-  prefixLen: number;
-}
-
-interface LookupAddress {
-  address: string;
-  family: number;
-}
-
-type LookupFn = (hostname: string, options: { all: true }) => Promise<LookupAddress[]>;
+type LookupFn = (hostname: string, options: { all: true }) => Promise<Array<{ address: string }>>;
 
 const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   agentName: "openclaw",
@@ -239,125 +229,6 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
 // URL validation (strict SSRF checks for config set)
 // ---------------------------------------------------------------------------
 
-const PRIVATE_NETWORKS: CidrRange[] = [
-  cidr("0.0.0.0", 8), // RFC 1122 "This network"
-  cidr("127.0.0.0", 8),
-  cidr("10.0.0.0", 8),
-  cidr("172.16.0.0", 12),
-  cidr("192.168.0.0", 16),
-  cidr("169.254.0.0", 16),
-  cidr("100.64.0.0", 10), // RFC 6598 CGNAT
-  cidr("198.18.0.0", 15), // RFC 2544 benchmark range
-  cidr6("::1", 128),
-  cidr6("::", 128),
-  cidr6("fc00::", 7),
-  cidr6("fe80::", 10),
-  cidr6("ff00::", 8),
-];
-
-function parseIPv4(addr: string): Uint8Array {
-  const parts = addr.split(".");
-  return new Uint8Array(parts.map(Number));
-}
-
-function parseIPv6(addr: string): Uint8Array {
-  // Handle IPv4-mapped notation (e.g., ::ffff:127.0.0.1)
-  const lastColon = addr.lastIndexOf(":");
-  const tail = addr.slice(lastColon + 1);
-  if (tail.includes(".")) {
-    const ipv4Parts = tail.split(".").map(Number);
-    const hi = ((ipv4Parts[0] << 8) | ipv4Parts[1]).toString(16);
-    const lo = ((ipv4Parts[2] << 8) | ipv4Parts[3]).toString(16);
-    return parseIPv6(addr.slice(0, lastColon + 1) + hi + ":" + lo);
-  }
-
-  let groups: string[];
-  if (addr.includes("::")) {
-    const [left, right] = addr.split("::");
-    const leftGroups = left ? left.split(":") : [];
-    const rightGroups = right ? right.split(":") : [];
-    const missing = 8 - leftGroups.length - rightGroups.length;
-    groups = [...leftGroups, ...Array<string>(missing).fill("0"), ...rightGroups];
-  } else {
-    groups = addr.split(":");
-  }
-
-  const bytes = new Uint8Array(16);
-  for (let i = 0; i < 8; i++) {
-    const val = parseInt(groups[i], 16);
-    bytes[i * 2] = (val >> 8) & 0xff;
-    bytes[i * 2 + 1] = val & 0xff;
-  }
-  return bytes;
-}
-
-function cidr(addr: string, prefixLen: number): CidrRange {
-  return { network: parseIPv4(addr), prefixLen };
-}
-
-function cidr6(addr: string, prefixLen: number): CidrRange {
-  return { network: parseIPv6(addr), prefixLen };
-}
-
-function ipInCidr(ipBytes: Uint8Array, range: CidrRange): boolean {
-  if (ipBytes.length !== range.network.length) return false;
-
-  const fullBytes = Math.floor(range.prefixLen / 8);
-  const remainingBits = range.prefixLen % 8;
-
-  for (let i = 0; i < fullBytes; i++) {
-    if (ipBytes[i] !== range.network[i]) return false;
-  }
-
-  if (remainingBits > 0) {
-    const mask = 0xff << (8 - remainingBits);
-    if ((ipBytes[fullBytes] & mask) !== (range.network[fullBytes] & mask)) return false;
-  }
-
-  return true;
-}
-
-function isIPv4Mapped(bytes: Uint8Array): boolean {
-  return (
-    bytes.length === 16 &&
-    bytes[10] === 0xff &&
-    bytes[11] === 0xff &&
-    bytes.slice(0, 10).every((b) => b === 0)
-  );
-}
-
-function normalizeHostname(hostname: string): string {
-  return String(hostname || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "")
-    .replace(/\.$/, "");
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  return hostname === "localhost" || hostname.endsWith(".localhost");
-}
-
-function isPrivateIpAddress(addr: string): boolean {
-  const normalized = normalizeHostname(addr);
-
-  if (isIPv4(normalized)) {
-    const ipBytes = parseIPv4(normalized);
-    return PRIVATE_NETWORKS.some((range) => ipInCidr(ipBytes, range));
-  }
-
-  if (isIPv6(normalized)) {
-    const ipBytes = parseIPv6(normalized);
-    if (isIPv4Mapped(ipBytes)) {
-      const ipv4Bytes = ipBytes.slice(12);
-      return PRIVATE_NETWORKS.some((range) => ipInCidr(ipv4Bytes, range));
-    }
-    return PRIVATE_NETWORKS.some((range) => ipInCidr(ipBytes, range));
-  }
-
-  return false;
-}
-
 function parseHttpUrl(value: string): URL | null {
   let parsed: URL;
   try {
@@ -370,15 +241,11 @@ function parseHttpUrl(value: string): URL | null {
     throw new Error(`URL scheme "${parsed.protocol}" is not allowed. Use http: or https:.`);
   }
 
-  if (!parsed.hostname) {
-    throw new Error(`No hostname found in URL "${value}".`);
-  }
-
   return parsed;
 }
 
 function assertPublicHost(hostname: string): void {
-  if (isLoopbackHostname(hostname) || isPrivateIpAddress(hostname)) {
+  if (isPrivateHostname(hostname)) {
     throw new Error(
       `URL points to private/internal address "${hostname}". ` +
         `This could expose internal services to the sandbox.`,
@@ -389,7 +256,7 @@ function assertPublicHost(hostname: string): void {
 function validateUrlValue(value: string): void {
   const parsed = parseHttpUrl(value);
   if (!parsed) return;
-  assertPublicHost(normalizeHostname(parsed.hostname));
+  assertPublicHost(parsed.hostname);
 }
 
 async function validateUrlValueWithDns(
@@ -399,15 +266,10 @@ async function validateUrlValueWithDns(
   const parsed = parseHttpUrl(value);
   if (!parsed) return;
 
-  const hostname = normalizeHostname(parsed.hostname);
+  const hostname = parsed.hostname;
   assertPublicHost(hostname);
 
-  // Direct IP literal already validated above.
-  if (isIPv4(hostname) || isIPv6(hostname)) {
-    return;
-  }
-
-  let addresses: LookupAddress[];
+  let addresses: Array<{ address: string }>;
   try {
     addresses = await lookup(hostname, { all: true });
   } catch (err: unknown) {
@@ -420,7 +282,7 @@ async function validateUrlValueWithDns(
   }
 
   for (const { address } of addresses) {
-    if (isPrivateIpAddress(address)) {
+    if (isPrivateIp(address)) {
       throw new Error(
         `URL hostname "${hostname}" resolves to private/internal address "${address}". ` +
           `This could expose internal services to the sandbox.`,
@@ -541,21 +403,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   const config = readSandboxConfig(sandboxName, target);
 
   // 2. Parse and validate value
-  const parsedValue = parseCliConfigValue(opts.value);
-
-  // 3. Validate URLs for SSRF (supports nested object/array values)
-  const urlsToValidate = collectHttpUrls(parsedValue);
-  for (const urlValue of urlsToValidate) {
-    try {
-      await validateUrlValueWithDns(urlValue);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`  URL validation failed for ${redactUrlForLogs(urlValue)}: ${message}`);
-      process.exit(1);
-    }
-  }
-
-  // 4. Check that we're not modifying the gateway section (contains auth tokens)
+  // 3. Check that we're not modifying the gateway section (contains auth tokens)
   if (opts.key.startsWith("gateway.") || opts.key === "gateway") {
     console.error("  Cannot modify the gateway section directly.");
     console.error("  Use `nemoclaw config rotate-token` for credential changes.");
@@ -569,22 +417,37 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     process.exit(1);
   }
 
-  // 5. Show what will change
+  // 4. Parse and validate value
+  const parsedValue = parseCliConfigValue(opts.value);
+
+  // 5. Validate URLs for SSRF (supports nested object/array values)
+  const urlsToValidate = collectHttpUrls(parsedValue);
+  for (const urlValue of urlsToValidate) {
+    try {
+      await validateUrlValueWithDns(urlValue);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  URL validation failed for ${redactUrlForLogs(urlValue)}: ${message}`);
+      process.exit(1);
+    }
+  }
+
+  // 6. Show what will change
   const oldValue = extractDotpath(config, opts.key);
   console.log(`  Agent:     ${target.agentName}`);
   console.log(`  Key:       ${opts.key}`);
   console.log(`  Old value: ${oldValue !== undefined ? JSON.stringify(oldValue) : "(not set)"}`);
   console.log(`  New value: ${JSON.stringify(parsedValue)}`);
 
-  // 6. Apply change
+  // 7. Apply change
   setDotpath(config, opts.key, parsedValue);
 
-  // 7. Write to temp file in the agent's native format
+  // 8. Write to temp file in the agent's native format
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
   const tmpFile = path.join(tmpDir, target.configFile);
   fs.writeFileSync(tmpFile, serializeConfig(config, target.format), { mode: 0o600 });
 
-  // 8. Write config to sandbox via kubectl exec (bypasses Landlock)
+  // 9. Write config to sandbox via kubectl exec (bypasses Landlock)
   console.log(`  Writing config to sandbox (${target.configPath})...`);
   const content = fs.readFileSync(tmpFile, "utf-8");
   execFileSync(
@@ -609,7 +472,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     { input: content, stdio: ["pipe", "pipe", "pipe"], timeout: 15000 },
   );
 
-  // 9. Fix ownership via kubectl exec (bypasses Landlock)
+  // 10. Fix ownership via kubectl exec (bypasses Landlock)
   try {
     execFileSync(
       "docker",
@@ -634,7 +497,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     // Best effort — chown failure is non-fatal
   }
 
-  // 10. Cleanup temp
+  // 11. Cleanup temp
   try {
     fs.unlinkSync(tmpFile);
     fs.rmdirSync(tmpDir);

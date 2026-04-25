@@ -83,6 +83,85 @@ describe("config set nested URL SSRF enforcement", () => {
     }
   });
 
+  it("validates the key before doing URL or DNS validation", async () => {
+    const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config");
+    const openshellPath = require.resolve("../dist/lib/openshell");
+    const shieldsAuditPath = require.resolve("../dist/lib/shields-audit");
+
+    const priorSandboxConfig = require.cache[sandboxConfigPath];
+    const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
+
+    const childProcess = require("node:child_process");
+    const dns = require("node:dns");
+    const originalExecFileSync = childProcess.execFileSync;
+    const originalLookup = dns.promises.lookup;
+    const execSpy = vi.fn();
+    const lookupSpy = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
+    childProcess.execFileSync = execSpy;
+    dns.promises.lookup = lookupSpy;
+
+    delete require.cache[sandboxConfigPath];
+    requireCache[openshellPath] = {
+      id: openshellPath,
+      filename: openshellPath,
+      loaded: true,
+      exports: {
+        captureOpenshellCommand: () => ({
+          status: 0,
+          output: JSON.stringify({
+            inference: { endpoints: {} },
+          }),
+        }),
+        runOpenshellCommand: () => ({ status: 0 }),
+      },
+    } as any;
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry: () => {} },
+    } as any;
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? 0}`);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const { configSet } = require("../dist/lib/sandbox-config");
+
+      await expect(
+        configSet("sandbox-ssrf-test", {
+          key: "not.a.real.key",
+          value: JSON.stringify({ primary: "http://example.com/v1" }),
+        }),
+      ).rejects.toThrow("process.exit:1");
+
+      expect(lookupSpy).not.toHaveBeenCalled();
+      expect(execSpy).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Key validation failed"),
+      );
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      logSpy.mockRestore();
+      childProcess.execFileSync = originalExecFileSync;
+      dns.promises.lookup = originalLookup;
+
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
+      else delete requireCache[sandboxConfigPath];
+
+      if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
+      else delete requireCache[openshellPath];
+
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
+    }
+  });
+
   it("accepts nested object/array URL values when all are public", async () => {
     const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config");
     const openshellPath = require.resolve("../dist/lib/openshell");

@@ -187,6 +187,19 @@ describe("config set helpers", () => {
     it("rejects localhost subdomains", () => {
       expect(() => validateUrlValue("http://api.localhost:8080")).toThrow(/private/i);
     });
+
+    it("rejects reserved hostname suffixes from the shared blocklist", () => {
+      expect(() => validateUrlValue("http://printer.local:8080")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://my-vm.internal:8080")).toThrow(/private/i);
+    });
+
+    it("rejects additional reserved special-use ranges from the shared blocklist", () => {
+      expect(() => validateUrlValue("http://192.0.2.1:80")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://240.0.0.1:80")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://[64:ff9b::a00:1]:80")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://[2001::1]:80")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://[2002::1]:80")).toThrow(/private/i);
+    });
   });
 
   describe("validateUrlValueWithDns", () => {
