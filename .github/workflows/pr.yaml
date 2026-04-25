@@ -44,9 +44,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
 
       - name: Run basic checks
         uses: ./.github/actions/basic-checks
+
+      - name: Reject banned files in PR diff
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}" --depth=1
+          node scripts/check-banned-files.mjs "origin/${{ github.base_ref }}" HEAD
 
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
