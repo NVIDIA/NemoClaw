@@ -845,6 +845,78 @@ install_or_upgrade_ollama() {
 }
 
 # ---------------------------------------------------------------------------
+# 3. vLLM (Brev GPU deploys, restored from removed brev-setup.sh — #996)
+# ---------------------------------------------------------------------------
+# Default model id mirrors the vllm profile in nemoclaw-blueprint/blueprint.yaml.
+# Update both together; install.sh queries the blueprint at runtime when present.
+VLLM_DEFAULT_MODEL="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8"
+VLLM_PORT=8000
+VLLM_READY_TIMEOUT_SECS=240
+
+resolve_vllm_model() {
+  local blueprint="${SCRIPT_DIR}/../nemoclaw-blueprint/blueprint.yaml"
+  if [ -r "$blueprint" ]; then
+    awk '/^      vllm:/{f=1; next} f && /model:/{ gsub(/.*model: *"|".*/, ""); print; exit }' \
+      "$blueprint" 2>/dev/null
+  fi
+}
+
+install_or_start_vllm() {
+  if [[ "${NEMOCLAW_PROVIDER:-}" != "vllm" ]]; then
+    return 0
+  fi
+  if ! detect_gpu; then
+    warn "NEMOCLAW_PROVIDER=vllm but no GPU detected — skipping vLLM setup."
+    return 0
+  fi
+
+  local model
+  model="$(resolve_vllm_model)"
+  [ -n "$model" ] || model="$VLLM_DEFAULT_MODEL"
+
+  if ! python3 -c "import vllm" 2>/dev/null; then
+    info "Installing vLLM…"
+    if ! command_exists pip3; then
+      sudo apt-get install -y -qq python3-pip >/dev/null 2>&1 || true
+    fi
+    pip3 install --break-system-packages vllm 2>/dev/null || pip3 install vllm
+  else
+    info "vLLM already installed"
+  fi
+
+  if curl -fsS "http://localhost:${VLLM_PORT}/v1/models" >/dev/null 2>&1; then
+    info "vLLM already running on :${VLLM_PORT}"
+    return 0
+  fi
+
+  info "Starting vLLM with model ${model} on :${VLLM_PORT}…"
+  nohup python3 -m vllm.entrypoints.openai.api_server \
+    --model "$model" \
+    --port "$VLLM_PORT" \
+    --host 0.0.0.0 \
+    --trust-remote-code \
+    >/tmp/vllm-server.log 2>&1 &
+  local vllm_pid=$!
+
+  info "Waiting for vLLM (model load can take several minutes)…"
+  local elapsed=0
+  while [ "$elapsed" -lt "$VLLM_READY_TIMEOUT_SECS" ]; do
+    if curl -fsS "http://localhost:${VLLM_PORT}/v1/models" >/dev/null 2>&1; then
+      info "vLLM ready (PID $vllm_pid)"
+      return 0
+    fi
+    if ! kill -0 "$vllm_pid" 2>/dev/null; then
+      warn "vLLM exited early. See /tmp/vllm-server.log"
+      return 1
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  warn "vLLM did not become ready within ${VLLM_READY_TIMEOUT_SECS}s. See /tmp/vllm-server.log"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # Fix npm permissions for global installs (Linux only).
 # If the npm global prefix points to a system directory (e.g. /usr or
 # /usr/local) the user likely lacks write permissions and npm link will fail
@@ -1303,7 +1375,13 @@ main() {
   ensure_supported_runtime
 
   step 2 "NemoClaw CLI"
-  # install_or_upgrade_ollama
+  # Local inference setup is opt-in via NEMOCLAW_PROVIDER. Both functions
+  # short-circuit when the env var doesn't match, so the regular cloud-only
+  # install path runs unchanged.
+  if [[ "${NEMOCLAW_PROVIDER:-}" == "ollama" ]]; then
+    install_or_upgrade_ollama
+  fi
+  install_or_start_vllm
   fix_npm_permissions
   install_nemoclaw
   verify_nemoclaw
