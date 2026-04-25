@@ -6020,7 +6020,11 @@ async function _setupPolicies(
       let lastErr: Error | null = null;
       const success = waitUntil(() => {
         try {
-          policies.applyPreset(sandboxName, name);
+          const applied = policies.applyPreset(sandboxName, name);
+          if (!applied) {
+            lastErr = new Error(`applyPreset returned false for preset ${name}`);
+            return false;
+          }
           return true;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -6724,8 +6728,10 @@ function syncPresetSelection(
     let lastErr: Error | null = null;
     const success = waitUntil(() => {
       try {
-        if (!policies.removePreset(sandboxName, name)) {
-          throw new Error(`Failed to remove preset '${name}'.`);
+        const removed = policies.removePreset(sandboxName, name);
+        if (!removed) {
+          lastErr = new Error(`removePreset returned false for preset ${name}`);
+          return false;
         }
         return true;
       } catch (err) {
@@ -6750,8 +6756,10 @@ function syncPresetSelection(
         // e.g. unknown preset, malformed YAML. Treat that as a failure so
         // setupPoliciesWithSelection doesn't silently report success on a
         // preset that never got applied.
-        if (!policies.applyPreset(sandboxName, name, options)) {
-          throw new Error(`Failed to apply preset '${name}'.`);
+        const applied = policies.applyPreset(sandboxName, name, options);
+        if (!applied) {
+          lastErr = new Error(`applyPreset returned false for preset ${name}`);
+          return false;
         }
         return true;
       } catch (err) {
