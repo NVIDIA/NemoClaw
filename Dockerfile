@@ -227,7 +227,8 @@ ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 # Set to "1" to disable device-pairing auth (development/headless only).
 # Default: "0" (device auth enabled — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
-# Unique per build to ensure each image gets a fresh auth token.
+# Unique per build — busts the Docker cache for the token-injection layer
+# so each image gets a fresh gateway auth token.
 # Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
 ARG NEMOCLAW_BUILD_ID=default
 # Sandbox egress proxy host/port. Defaults match the OpenShell-injected
@@ -267,11 +268,10 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
 WORKDIR /sandbox
 USER sandbox
 
-# Write the COMPLETE openclaw.json including gateway config and auth token.
-# This file is immutable at runtime (Landlock read-only on /sandbox/.openclaw).
-# No runtime writes to openclaw.json are needed or possible.
+# Write openclaw.json with gateway config and a placeholder auth token.
+# The real token is injected in a later layer (see "Inject gateway auth
+# token" below) so this expensive layer stays cached across builds.
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
-# Auth token is generated per build so each image has a unique token.
 #
 # Temporary workaround for NemoClaw#1738: the OpenClaw Discord extension's
 # gateway uses `ws` (via @buape/carbon), which ignores HTTPS_PROXY/HTTP_PROXY
@@ -283,8 +283,8 @@ USER sandbox
 # the OpenShell proxy. Mirror of the Telegram treatment immediately below.
 # Remove once OpenClaw lands an env-var-honouring fix for the Discord
 # gateway equivalent to openclaw/openclaw#62878 (Slack Socket Mode).
-RUN NEMOCLAW_BUILD_ID="${NEMOCLAW_BUILD_ID}" python3 -c "\
-import base64, json, os, secrets; \
+RUN python3 -c "\
+import base64, json, os; \
 from urllib.parse import urlparse; \
 proxy_url = f\"http://{os.environ['NEMOCLAW_PROXY_HOST']}:{os.environ['NEMOCLAW_PROXY_PORT']}\"; \
 model = os.environ['NEMOCLAW_MODEL']; \
@@ -333,7 +333,7 @@ config = { \
             'allowedOrigins': origins, \
         }, \
         'trustedProxies': ['127.0.0.1', '::1'], \
-        'auth': {'token': secrets.token_hex(32)} \
+        'auth': {'token': ''} \
     } \
 }; \
 config.update({ \
@@ -355,6 +355,19 @@ os.chmod(path, 0o600)"
 # Install NemoClaw plugin into OpenClaw
 RUN openclaw doctor --fix > /dev/null 2>&1 || true \
     && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
+
+# Inject gateway auth token into openclaw.json.
+# NEMOCLAW_BUILD_ID busts the Docker cache so each image gets a unique token.
+# This is the ONLY layer that rebuilds on every build — the expensive
+# doctor/plugins layer above stays cached.
+# openclaw doctor --fix may auto-generate a token; this overwrites it.
+RUN NEMOCLAW_BUILD_ID="${NEMOCLAW_BUILD_ID}" python3 -c "\
+import json, os, secrets; \
+path = os.path.expanduser('~/.openclaw/openclaw.json'); \
+cfg = json.load(open(path)); \
+cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = secrets.token_hex(32); \
+json.dump(cfg, open(path, 'w'), indent=2); \
+os.chmod(path, 0o600)"
 
 # Lock openclaw.json via DAC: chown to root so the sandbox user cannot modify
 # it at runtime.  This works regardless of Landlock enforcement status.
