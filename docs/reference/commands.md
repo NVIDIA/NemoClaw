@@ -180,6 +180,25 @@ In interactive mode, the wizard asks for confirmation before delete and recreate
 In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs; if NemoClaw cannot read the stored selection, NemoClaw reuses by default.
 Set `NEMOCLAW_RECREATE_SANDBOX=1` to force recreation even when no drift is detected.
 
+#### `--recreate-sandbox`
+
+Delete and recreate the existing sandbox instead of reusing it.
+Use this when you need onboarding to rebuild the sandbox after configuration changes, to recover from a broken sandbox state, or to force recreation when no provider or model drift is detected.
+
+```console
+$ nemoclaw onboard --resume --recreate-sandbox
+```
+
+In non-interactive mode, `NEMOCLAW_RECREATE_SANDBOX=1` provides the same behavior.
+
+#### `--agent <name>`
+
+Select a specific installed agent profile during onboarding instead of using the default agent.
+
+```console
+$ nemoclaw onboard --agent hermes
+```
+
 Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
