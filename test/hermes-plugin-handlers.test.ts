@@ -90,14 +90,20 @@ describe("Hermes Dockerfile history symlink (regression #2432)", () => {
   it("creates .hermes_history symlink pointing to writable data dir before directory is locked", () => {
     const src = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
 
-    // The symlink must be created (ln -s ... .hermes_history)
-    expect(src).toContain(".hermes/.hermes_history");
-    expect(src).toContain(".hermes-data/.hermes_history");
+    // Ignore comment lines so assertions only target executable Dockerfile commands.
+    const nonCommentSrc = src
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
 
-    // The symlink line must appear BEFORE the chown step that locks .hermes,
+    // The symlink command must appear before the lock-down chown command,
     // otherwise the root:root chown will own the target file, not the symlink.
-    const symlinkIdx = src.indexOf(".hermes/.hermes_history");
-    const chownIdx = src.indexOf("chown root:root /sandbox/.hermes");
+    const symlinkIdx = nonCommentSrc.search(
+      /RUN\s+ln\s+-s\s+\/sandbox\/\.hermes-data\/\.hermes_history\s+\/sandbox\/\.hermes\/\.hermes_history\b/,
+    );
+    const chownIdx = nonCommentSrc.search(
+      /RUN\s+chown\s+root:root\s+\/sandbox\/\.hermes\b/,
+    );
     expect(symlinkIdx).toBeGreaterThanOrEqual(0);
     expect(chownIdx).toBeGreaterThanOrEqual(0);
     expect(symlinkIdx).toBeLessThan(chownIdx);
