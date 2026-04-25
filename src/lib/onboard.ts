@@ -7564,7 +7564,7 @@ function printDashboard(
       console.log(`  ${line}`);
     }
     for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${entry.url}`);
+      console.log(`  ${entry.label}: ${redact(entry.url)}`);
     }
   } else {
     note("  Could not read gateway token from the sandbox (download failed).");
@@ -7573,7 +7573,7 @@ function printDashboard(
       console.log(`  ${line}`);
     }
     for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${entry.url}`);
+      console.log(`  ${entry.label}: ${redact(entry.url)}`);
     }
     console.log(
       `  Token:       ${cliName()} ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,

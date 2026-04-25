@@ -9,7 +9,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { ROOT, run, shellQuote } from "./runner";
+import { ROOT, run, shellQuote, redact } from "./runner";
 import { dockerBuild, dockerImageInspect } from "./docker";
 import { loadAgent, resolveAgentName, type AgentDefinition } from "./agent-defs";
 import { getAgentBranding } from "./branding";
@@ -356,7 +356,7 @@ export function printDashboardUi(
       const url = path && path !== "/" ? `${withoutHash}${path}` : `${withoutHash}/`;
       if (seen.has(url)) continue;
       seen.add(url);
-      console.log(`  ${url}`);
+      console.log(`  ${redact(url)}`);
     }
     return;
   }
@@ -367,14 +367,14 @@ export function printDashboardUi(
     );
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(token, info.port)) {
-      console.log(`  ${url}`);
+      console.log(`  ${redact(url)}`);
     }
   } else {
     deps.note("  Could not read gateway token from the sandbox (download failed).");
     console.log(`  ${info.displayName} ${label}`);
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(null, info.port)) {
-      console.log(`  ${url}`);
+      console.log(`  ${redact(url)}`);
     }
   }
 }
