@@ -91,6 +91,15 @@ RUN printf '%s\n' \
     > /sandbox/.hermes-data/memories/SOUL.md \
     && ln -s /sandbox/.hermes-data/memories/SOUL.md /sandbox/.hermes/SOUL.md
 
+# Hermes TUI (prompt_toolkit) writes command history to /sandbox/.hermes/.hermes_history.
+# /sandbox/.hermes is locked root:root at image build time, making that path
+# unwritable for the sandbox user. Symlink it to the writable data dir so the
+# history file is created under /sandbox/.hermes-data/ instead.
+# The symlink itself becomes root-owned after the chown step below (chown -h),
+# but the target path (/sandbox/.hermes-data/.hermes_history) remains
+# sandbox-owned and writable. See issue #2432.
+RUN ln -s /sandbox/.hermes-data/.hermes_history /sandbox/.hermes/.hermes_history
+
 # Lock .hermes via DAC: chown to root so sandbox user cannot modify config.
 # Same pattern as OpenClaw — Landlock provides defense-in-depth.
 # hadolint ignore=DL3002

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -70,5 +71,35 @@ print(json.dumps(result))
     expect(result.reload).toContain("Skill reload complete. 2 skill(s) discovered:");
     expect(result.reload).toContain("alpha: First skill");
     expect(result.reload).toContain("beta: Second skill");
+  });
+});
+
+// Regression guard: the Hermes Dockerfile must create a symlink from the
+// immutable /sandbox/.hermes/.hermes_history to the writable data dir so
+// prompt_toolkit can persist TUI history even though /sandbox/.hermes is
+// root-owned at runtime. See issue #2432.
+describe("Hermes Dockerfile history symlink (regression #2432)", () => {
+  const HERMES_DOCKERFILE = path.join(
+    import.meta.dirname,
+    "..",
+    "agents",
+    "hermes",
+    "Dockerfile",
+  );
+
+  it("creates .hermes_history symlink pointing to writable data dir before directory is locked", () => {
+    const src = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+
+    // The symlink must be created (ln -s ... .hermes_history)
+    expect(src).toContain(".hermes/.hermes_history");
+    expect(src).toContain(".hermes-data/.hermes_history");
+
+    // The symlink line must appear BEFORE the chown step that locks .hermes,
+    // otherwise the root:root chown will own the target file, not the symlink.
+    const symlinkIdx = src.indexOf(".hermes/.hermes_history");
+    const chownIdx = src.indexOf("chown root:root /sandbox/.hermes");
+    expect(symlinkIdx).toBeGreaterThanOrEqual(0);
+    expect(chownIdx).toBeGreaterThanOrEqual(0);
+    expect(symlinkIdx).toBeLessThan(chownIdx);
   });
 });
