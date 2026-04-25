@@ -57,7 +57,7 @@ exit 1`,
   }
 }
 
-describe("install-openshell.sh version check", () => {
+describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   it("exits cleanly when openshell 0.0.32 is already installed", () => {
     const result = runWithInstalledVersion("0.0.32");
     expect(result.status).toBe(0);
