@@ -57,6 +57,33 @@ jobs:
           path: /tmp/isolation-image.tar.gz
           retention-days: 1
 
+  build-hermes-sandbox-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve Hermes base image
+        uses: ./.github/actions/resolve-hermes-base-image
+
+      - name: Build Hermes production image
+        run: docker build -f agents/hermes/Dockerfile --build-arg BASE_IMAGE=${{ env.HERMES_BASE_IMAGE }} -t nemoclaw-hermes-production .
+
+      - name: Verify sandbox user can read copied files
+        run: |
+          set -euo pipefail
+          docker run --rm --user sandbox nemoclaw-hermes-production \
+            test -r /opt/nemoclaw-generate-config.ts
+          docker run --rm --user sandbox nemoclaw-hermes-production \
+            test -r /opt/nemoclaw-hermes-plugin/plugin.yaml
+          docker run --rm --user sandbox nemoclaw-hermes-production \
+            test -r /opt/nemoclaw-blueprint/blueprint.yaml
+          docker run --rm --user sandbox nemoclaw-hermes-production \
+            test -x /usr/local/bin/nemoclaw-decode-proxy
+          docker run --rm --user sandbox nemoclaw-hermes-production \
+            test -x /usr/local/bin/nemoclaw-start
+
   build-sandbox-images-arm64:
     if: inputs.run_arm64
     runs-on: ubuntu-24.04-arm
