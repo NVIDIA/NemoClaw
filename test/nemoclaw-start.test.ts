@@ -14,14 +14,18 @@ describe("nemoclaw-start non-root fallback", () => {
 
     expect(src).toMatch(/if \[ "\$\(id -u\)" -ne 0 \]; then/);
     expect(src).toMatch(/touch \/tmp\/gateway\.log/);
-    expect(src).toMatch(/nohup "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/);
+    expect(src).toMatch(
+      /nohup "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/,
+    );
   });
 
   it("exits on config integrity failure in non-root mode", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-    // Non-root block must call verify_config_integrity and exit 1 on failure
-    expect(src).toMatch(/if ! verify_config_integrity; then\s+.*exit 1/s);
+    const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
+    expect(nonRootBlock).toBeTruthy();
+    // Non-root block must call verify_config_integrity (with config dir) and exit 1 on failure
+    expect(nonRootBlock[1]).toMatch(/if ! verify_config_integrity\b.*; then\s+.*exit 1/s);
     // Must not contain the old "proceeding anyway" fallback
     expect(src).not.toMatch(/proceeding anyway/i);
   });
@@ -48,9 +52,11 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(nonRootBlock).toBeTruthy();
     const block = nonRootBlock[1];
 
-    // Only check top-level echo lines that are NOT inside { } > file redirects.
-    // Filter out lines inside brace-group redirects (proxy-env.sh, etc.)
-    const braceStripped = block.replace(/\{[\s\S]*?\}\s*>\s*"[^"]*"/g, "");
+    // Only check top-level echo lines that are NOT inside { } > file redirects
+    // or { } | emit_sandbox_sourced_file pipe patterns (proxy-env.sh, etc.)
+    const braceStripped = block
+      .replace(/^\s*\{[\s\S]*?^\s*\}\s*>\s*"[^"]*"\s*$/gm, "")
+      .replace(/^\s*\{[\s\S]*?^\s*\}\s*\|\s*emit_sandbox_sourced_file\b[^\n]*$/gm, "");
     const echoLines = braceStripped.match(/^\s*echo\s+.+$/gm) || [];
     expect(echoLines.length).toBeGreaterThan(0);
     for (const line of echoLines) {
@@ -243,6 +249,48 @@ describe("nemoclaw-start configure guard blocks --local (#2016)", () => {
   });
 });
 
+describe("nemoclaw-start configure guard blocks config set/unset (#1973)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("adds a config) case that matches only set and unset subcommands", () => {
+    expect(src).toMatch(/config\)\s+case "\$2" in\s+set \| unset\)/);
+  });
+
+  it("prints an actionable error quoting the invoked subcommand and returns 1", () => {
+    expect(src).toContain("'openclaw config $2' cannot modify config inside the sandbox");
+    expect(src).toMatch(/set \| unset\)[\s\S]*?return 1/);
+  });
+
+  it("redirects users to nemoclaw onboard --resume", () => {
+    expect(src).toMatch(/set \| unset\)[\s\S]*?nemoclaw onboard --resume/);
+  });
+
+  it("does not block immutable subcommands (get, list) — they fall through to the real binary", () => {
+    // The config) arm only enumerates mutating subcommands. Read-only ones are
+    // not matched, so execution falls through to `command openclaw "$@"` below.
+    expect(src).not.toMatch(/config\)\s+case "\$2" in[\s\S]*?\b(get|list|show|view)\)/);
+    expect(src).toContain('command openclaw "$@"');
+  });
+});
+
+describe("nemoclaw-start configure guard blocks channels mutators (#2097)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("adds a channels) case that allows read-only subcommands through", () => {
+    expect(src).toMatch(/channels\)\s+case "\$2" in\s+list \| "" \| -h \| --help\)/);
+  });
+
+  it("blocks mutating channels subcommands with an actionable error and return 1", () => {
+    expect(src).toContain("'openclaw channels $2' cannot modify channels inside the sandbox");
+    expect(src).toMatch(/channels\)[\s\S]*?\*\)[\s\S]*?return 1/);
+  });
+
+  it("redirects users to the host-side channels commands", () => {
+    expect(src).toMatch(/channels\)[\s\S]*?nemoclaw <sandbox> channels add/);
+    expect(src).toMatch(/channels\)[\s\S]*?nemoclaw <sandbox> channels remove/);
+  });
+});
+
 describe("runtime model override (#759)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -278,7 +326,8 @@ describe("runtime model override (#759)", () => {
     expect(fn).toBeTruthy();
     // Guard checks all override env vars before returning early
     expect(fn[1]).toContain("NEMOCLAW_MODEL_OVERRIDE");
-    expect(fn[1]).toContain("|| return 0");
+    // shfmt may format `|| return 0` as a standalone `return 0` on its own line
+    expect(fn[1]).toMatch(/\|\|\s*return 0|^\s*return 0/m);
   });
 
   it("supports optional NEMOCLAW_INFERENCE_API_OVERRIDE for cross-provider switches", () => {
@@ -377,11 +426,11 @@ describe("runtime CORS origin override (#719)", () => {
     const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
     expect(nonRootBlock).toBeTruthy();
     expect(nonRootBlock[1]).toMatch(
-      /apply_model_override[\s\S]*?apply_cors_override[\s\S]*?export_gateway_token/,
+      /apply_model_override[\s\S]*?apply_cors_override[\s\S]*?apply_slack_token_override[\s\S]*?export_gateway_token/,
     );
 
     const rootBlock = src.match(
-      /# ── Root path[\s\S]*?apply_model_override\n\s*apply_cors_override\n\s*export_gateway_token/,
+      /# ── Root path[\s\S]*?apply_model_override[\s\S]*?apply_cors_override[\s\S]*?apply_slack_token_override[\s\S]*?export_gateway_token/,
     );
     expect(rootBlock).toBeTruthy();
   });
@@ -423,6 +472,78 @@ describe("runtime CORS origin override (#719)", () => {
     const fn = src.match(/apply_cors_override\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
     expect(fn[1]).toContain("control characters");
+  });
+});
+
+describe("Slack channel guard — unhandled-rejection safety net (#2340)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines install_slack_channel_guard function", () => {
+    expect(src).toMatch(/install_slack_channel_guard\(\) \{/);
+  });
+
+  it("calls install_slack_channel_guard after configure_messaging_channels in both paths", () => {
+    const nonRootBlock = src.match(
+      /if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/,
+    );
+    expect(nonRootBlock).toBeTruthy();
+    expect(nonRootBlock[1]).toMatch(
+      /configure_messaging_channels[\s\S]*?install_slack_channel_guard/,
+    );
+
+    const rootBlock = src.match(
+      /# ── Root path[\s\S]*?configure_messaging_channels[\s\S]*?install_slack_channel_guard/,
+    );
+    expect(rootBlock).toBeTruthy();
+  });
+
+  it("is a no-op when no Slack channel is configured", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain('grep -q \'"slack"\'');
+    expect(fn[1]).toContain("return 0");
+  });
+
+  it("installs a Node.js preload script via NODE_OPTIONS", () => {
+    expect(src).toContain('export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT"');
+  });
+
+  it("catches unhandled promise rejections from Slack", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("unhandledRejection");
+    expect(fn[1]).toContain("isSlackRejection");
+  });
+
+  it("catches uncaught exceptions from Slack (sync throws)", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("uncaughtException");
+  });
+
+  it("re-throws non-Slack rejections to preserve default behavior", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("throw reason");
+    expect(fn[1]).toContain("process.exit(1)");
+  });
+
+  it("detects Slack errors by error code, message, stack trace, and domain", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("slack_webapi_platform_error");
+    expect(fn[1]).toContain("invalid_auth");
+    expect(fn[1]).toContain("token_revoked");
+    expect(fn[1]).toContain("@slack/");
+    // Proxy/network errors targeting Slack domains (CONNECT tunnel failures)
+    expect(fn[1]).toMatch(/msg\.indexOf\('slack\.com'\)\s*!==\s*-1/);
+  });
+
+  it("logs caught Slack errors as warnings instead of crashing", () => {
+    const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("provider failed to start");
+    expect(fn[1]).toContain("caught by safety net, gateway continues");
   });
 });
 
@@ -490,51 +611,38 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
 describe("nemoclaw-start signal handling", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("defines cleanup() as a single top-level function", () => {
-    const matches = src.match(/^cleanup\(\)/gm);
-    expect(matches).toHaveLength(1);
+  it("uses shared cleanup_on_signal from sandbox-init.sh", () => {
+    // cleanup_on_signal is provided by sandbox-init.sh; the entrypoint
+    // must NOT define its own cleanup() — it uses the shared version.
+    const localCleanup = src.match(/^cleanup\(\)/gm);
+    expect(localCleanup).toBeNull();
+    // Must reference cleanup_on_signal in trap registrations
+    expect(src).toContain("trap cleanup_on_signal SIGTERM SIGINT");
   });
 
-  it("cleanup() forwards SIGTERM to both GATEWAY_PID and AUTO_PAIR_PID", () => {
-    const cleanup = src.match(/cleanup\(\) \{[\s\S]*?^}/m)?.[0];
-    expect(cleanup).toBeDefined();
-    expect(cleanup).toMatch(/kill -TERM "\$GATEWAY_PID"/);
-    expect(cleanup).toMatch(/kill -TERM "\$AUTO_PAIR_PID"/);
-  });
-
-  it("cleanup() waits for both child processes", () => {
-    const cleanup = src.match(/cleanup\(\) \{[\s\S]*?^}/m)?.[0];
-    expect(cleanup).toMatch(/wait "\$GATEWAY_PID"/);
-    expect(cleanup).toMatch(/wait "\$AUTO_PAIR_PID"/);
-  });
-
-  it("cleanup() exits with the gateway exit status", () => {
-    const cleanup = src.match(/cleanup\(\) \{[\s\S]*?^}/m)?.[0];
-    expect(cleanup).toMatch(/exit "\$gateway_status"/);
-  });
-
-  it("registers trap before start_auto_pair in non-root path", () => {
-    // trap must appear before start_auto_pair within the non-root block.
-    // Use the Root path comment as boundary instead of ^fi$ which matches
-    // nested fi inside helper functions.
+  it("sets SANDBOX_CHILD_PIDS and SANDBOX_WAIT_PID before trap in non-root path", () => {
     const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then[\s\S]*?# ── Root path/)?.[0];
     expect(nonRootBlock).toBeDefined();
-    const trapIdx = nonRootBlock.indexOf("trap cleanup SIGTERM SIGINT");
-    // Match the call site "start_auto_pair\n" (not the function definition "start_auto_pair() {")
-    const autoIdx = nonRootBlock.search(/^\s*start_auto_pair\s*$/m);
-    expect(trapIdx).toBeGreaterThan(-1);
-    expect(autoIdx).toBeGreaterThan(-1);
-    expect(trapIdx).toBeLessThan(autoIdx);
+    expect(nonRootBlock).toContain("SANDBOX_CHILD_PIDS=");
+    expect(nonRootBlock).toContain("SANDBOX_WAIT_PID=");
+    const pidsIdx = nonRootBlock.indexOf("SANDBOX_CHILD_PIDS=");
+    const waitIdx = nonRootBlock.indexOf("SANDBOX_WAIT_PID=");
+    const trapIdx = nonRootBlock.indexOf("trap cleanup_on_signal");
+    expect(waitIdx).toBeGreaterThan(-1);
+    expect(pidsIdx).toBeLessThan(trapIdx);
+    expect(waitIdx).toBeLessThan(trapIdx);
   });
 
-  it("registers trap before start_auto_pair in root path", () => {
-    // In the root path (after the non-root block), trap must precede start_auto_pair
+  it("sets SANDBOX_CHILD_PIDS and SANDBOX_WAIT_PID before trap in root path", () => {
     const rootBlock = src.split(/# ── Root path/)[1] || "";
-    const trapIdx = rootBlock.indexOf("trap cleanup SIGTERM SIGINT");
-    const autoIdx = rootBlock.indexOf("start_auto_pair");
-    expect(trapIdx).toBeGreaterThan(-1);
-    expect(autoIdx).toBeGreaterThan(-1);
-    expect(trapIdx).toBeLessThan(autoIdx);
+    expect(rootBlock).toContain("SANDBOX_CHILD_PIDS=");
+    expect(rootBlock).toContain("SANDBOX_WAIT_PID=");
+    const pidsIdx = rootBlock.indexOf("SANDBOX_CHILD_PIDS=");
+    const waitIdx = rootBlock.indexOf("SANDBOX_WAIT_PID=");
+    const trapIdx = rootBlock.indexOf("trap cleanup_on_signal");
+    expect(waitIdx).toBeGreaterThan(-1);
+    expect(pidsIdx).toBeLessThan(trapIdx);
+    expect(waitIdx).toBeLessThan(trapIdx);
   });
 
   it("captures AUTO_PAIR_PID from background process", () => {

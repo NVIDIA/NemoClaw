@@ -4,18 +4,22 @@
 #
 # =============================================================================
 # test-inference-routing.sh
-# NemoClaw Inference Error Classification E2E Tests
+# NemoClaw Inference Routing E2E Tests
 #
-# Validates that onboard produces classified, human-readable error messages
-# when inference validation fails — not raw stack traces.
+# Validates inference routing through the OpenShell gateway proxy for
+# multiple providers, credential isolation, and error classification.
 #
 # Covers:
-#   TC-INF-05: Credential isolation inside sandbox
-#   TC-INF-06: Invalid API key → classified "credential" error
-#   TC-INF-07: Unreachable endpoint → classified "transport" error
+#   TC-INF-02: OpenAI provider end-to-end inference (requires OPENAI_API_KEY)
+#   TC-INF-03: Anthropic provider end-to-end inference (requires ANTHROPIC_API_KEY)
+#   TC-INF-05: Credential isolation inside sandbox (requires NVIDIA_API_KEY)
+#   TC-INF-06: Invalid API key → classified "credential" error (PR-safe)
+#   TC-INF-07: Unreachable endpoint → classified "transport" error (PR-safe)
+#   TC-INF-09: Custom OpenAI-compatible endpoint (requires NEMOCLAW_ENDPOINT_URL + COMPATIBLE_API_KEY)
 #
-# PR-safe: no real API keys or secrets needed. Uses intentionally invalid
-# credentials and unreachable endpoints to trigger error paths.
+# TC-INF-06 and TC-INF-07 are PR-safe (no real API keys needed).
+# TC-INF-02, TC-INF-03, TC-INF-05, TC-INF-09 skip gracefully when
+# their required API keys are not set.
 #
 # Prerequisites:
 #   - NemoClaw installed (nemoclaw on PATH)
@@ -26,25 +30,10 @@
 set -euo pipefail
 
 # ── Overall timeout ──────────────────────────────────────────────────────────
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-1200}"
-  if command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  fi
-fi
-
-# macOS uses gtimeout (from coreutils); Linux uses timeout
-if command -v gtimeout &>/dev/null; then
-  TIMEOUT_CMD="gtimeout"
-elif command -v timeout &>/dev/null; then
-  TIMEOUT_CMD="timeout"
-else
-  echo "ERROR: Neither timeout nor gtimeout found. Install coreutils: brew install coreutils"
-  exit 1
-fi
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1200
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -58,6 +47,17 @@ SKIP=0
 TOTAL=0
 
 LOG_FILE="test-inference-routing-$(date +%Y%m%d-%H%M%S).log"
+
+# Safe literal string replacement for redacting secrets in log output.
+redact_stream() {
+  local secret="${1:-}"
+  SECRET_TO_REDACT="$secret" python3 -c '
+import os, sys
+secret = os.environ.get("SECRET_TO_REDACT", "")
+data = sys.stdin.read()
+sys.stdout.write(data.replace(secret, "REDACTED") if secret else data)
+'
+}
 
 # Log a timestamped message to stdout and the log file.
 log() { echo -e "${CYAN}[$(date +%H:%M:%S)]${NC} $*" | tee -a "$LOG_FILE"; }
@@ -168,7 +168,7 @@ sandbox_exec() {
     return 1
   fi
   local result ssh_exit=0
-  result=$($TIMEOUT_CMD 60 ssh -F "$ssh_cfg" \
+  result=$(run_with_timeout 60 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" "$cmd" 2>&1) || ssh_exit=$?
@@ -193,23 +193,20 @@ test_inf_05_credential_isolation() {
     return
   fi
 
-  # Always recreate to avoid stale state hiding credential plumbing regressions
-  if nemoclaw list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
-    log "  Removing existing sandbox '$SANDBOX_NAME' to avoid stale state..."
-    nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
-  fi
+  # Always recreate to avoid stale state hiding credential plumbing regressions.
+  # Unconditional destroy catches not-ready sandboxes that `nemoclaw list` misses.
+  log "  Preflight: destroying any existing '$SANDBOX_NAME' sandbox..."
+  nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 
   log "  Onboarding sandbox '$SANDBOX_NAME' for credential test..."
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   local onboard_exit=0
-  local escaped_key
-  escaped_key=$(printf '%s\n' "$real_key" | sed 's/[&/\]/\\&/g')
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="open" \
     nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
-    2>&1 | sed "s/${escaped_key}/REDACTED/g" | tee -a "$LOG_FILE" || onboard_exit=$?
+    2>&1 | redact_stream "$real_key" | tee -a "$LOG_FILE" || onboard_exit=$?
   if [[ $onboard_exit -ne 0 ]]; then
     fail "TC-INF-05: Setup" "Onboard failed (exit $onboard_exit)"
     return
@@ -305,7 +302,7 @@ test_inf_06_invalid_api_key() {
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_SANDBOX_NAME="e2e-invalid-key" \
-    $TIMEOUT_CMD 120 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    run_with_timeout 120 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1) || exit_code=$?
 
   # 1. Exit code should be non-zero (onboard should fail)
@@ -365,11 +362,11 @@ test_inf_07_unreachable_endpoint() {
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_SANDBOX_NAME="e2e-unreachable" \
-    NEMOCLAW_PROVIDER="compatible-endpoint" \
-    NEMOCLAW_COMPATIBLE_ENDPOINT_URL="https://nemoclaw-e2e.invalid/v1" \
-    NEMOCLAW_COMPATIBLE_ENDPOINT_MODEL="test-model" \
+    NEMOCLAW_PROVIDER="custom" \
+    NEMOCLAW_ENDPOINT_URL="https://nemoclaw-e2e.invalid/v1" \
+    NEMOCLAW_MODEL="test-model" \
     COMPATIBLE_API_KEY="fake-key-for-unreachable-test" \
-    $TIMEOUT_CMD 120 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    run_with_timeout 120 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1) || exit_code=$?
 
   # 1. Exit code should be non-zero
@@ -408,13 +405,257 @@ test_inf_07_unreachable_endpoint() {
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
 }
 
+# =============================================================================
+# TC-INF-02: OpenAI provider end-to-end inference
+# =============================================================================
+test_inf_02_openai() {
+  log "=== TC-INF-02: OpenAI Provider Inference ==="
+
+  local api_key="${OPENAI_API_KEY:-}"
+  if [[ -z "$api_key" ]]; then
+    skip "TC-INF-02" "OPENAI_API_KEY not set"
+    return
+  fi
+
+  local sbx_name="e2e-openai"
+  local model="${NEMOCLAW_OPENAI_MODEL:-gpt-4o-mini}"
+  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
+
+  log "  Preflight: destroying any existing '$sbx_name' sandbox..."
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
+
+  log "  Onboarding with OpenAI provider, model: $model"
+  local onboard_exit=0
+  NEMOCLAW_SANDBOX_NAME="$sbx_name" \
+    NEMOCLAW_NON_INTERACTIVE=1 \
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+    NEMOCLAW_POLICY_TIER="open" \
+    NEMOCLAW_PROVIDER="openai" \
+    NEMOCLAW_MODEL="$model" \
+    OPENAI_API_KEY="$api_key" \
+    run_with_timeout 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    2>&1 | redact_stream "$api_key" | tee -a "$LOG_FILE" || onboard_exit=$?
+
+  if [[ $onboard_exit -ne 0 ]]; then
+    fail "TC-INF-02: Onboard" "Onboard with OpenAI failed (exit $onboard_exit)"
+    return
+  fi
+  pass "TC-INF-02: Onboard with OpenAI succeeded"
+
+  local ssh_cfg
+  ssh_cfg="$(mktemp)"
+  if ! openshell sandbox ssh-config "$sbx_name" >"$ssh_cfg" 2>/dev/null; then
+    fail "TC-INF-02: SSH" "Could not get SSH config for sandbox"
+    rm -f "$ssh_cfg"
+    return
+  fi
+
+  log "  Sending test prompt through sandbox inference proxy..."
+  local response
+  response=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 -o LogLevel=ERROR \
+    "openshell-${sbx_name}" \
+    "curl -s --max-time 60 https://inference.local/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":50}'" \
+    2>&1) || true
+  rm -f "$ssh_cfg"
+
+  log "  Response: ${response:0:300}"
+
+  local content
+  content=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'])" 2>/dev/null) || true
+
+  if [[ -n "$content" ]] && echo "$content" | grep -qi "PONG"; then
+    pass "TC-INF-02: OpenAI inference response received through sandbox proxy"
+  elif [[ -n "$content" ]]; then
+    pass "TC-INF-02: OpenAI response received (content: ${content:0:100})"
+  else
+    fail "TC-INF-02: Inference" "No valid response from OpenAI through sandbox: ${response:0:200}"
+  fi
+
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
+  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
+}
+
+# =============================================================================
+# TC-INF-03: Anthropic provider end-to-end inference
+# =============================================================================
+test_inf_03_anthropic() {
+  log "=== TC-INF-03: Anthropic Provider Inference ==="
+
+  local api_key="${ANTHROPIC_API_KEY:-}"
+  if [[ -z "$api_key" ]]; then
+    skip "TC-INF-03" "ANTHROPIC_API_KEY not set"
+    return
+  fi
+
+  local sbx_name="e2e-anthropic"
+  local model="${NEMOCLAW_ANTHROPIC_MODEL:-claude-sonnet-4-6}"
+  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
+
+  log "  Preflight: destroying any existing '$sbx_name' sandbox..."
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
+
+  log "  Onboarding with Anthropic provider, model: $model"
+  local onboard_exit=0
+  NEMOCLAW_SANDBOX_NAME="$sbx_name" \
+    NEMOCLAW_NON_INTERACTIVE=1 \
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+    NEMOCLAW_POLICY_TIER="open" \
+    NEMOCLAW_PROVIDER="anthropic" \
+    NEMOCLAW_MODEL="$model" \
+    ANTHROPIC_API_KEY="$api_key" \
+    run_with_timeout 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    2>&1 | redact_stream "$api_key" | tee -a "$LOG_FILE" || onboard_exit=$?
+
+  if [[ $onboard_exit -ne 0 ]]; then
+    fail "TC-INF-03: Onboard" "Onboard with Anthropic failed (exit $onboard_exit)"
+    return
+  fi
+  pass "TC-INF-03: Onboard with Anthropic succeeded"
+
+  local ssh_cfg
+  ssh_cfg="$(mktemp)"
+  if ! openshell sandbox ssh-config "$sbx_name" >"$ssh_cfg" 2>/dev/null; then
+    fail "TC-INF-03: SSH" "Could not get SSH config for sandbox"
+    rm -f "$ssh_cfg"
+    return
+  fi
+
+  log "  Sending test prompt through sandbox inference proxy (Anthropic Messages API)..."
+  local response
+  response=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 -o LogLevel=ERROR \
+    "openshell-${sbx_name}" \
+    "curl -s --max-time 60 https://inference.local/v1/messages \
+      -H 'Content-Type: application/json' \
+      -d '{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":50}'" \
+    2>&1) || true
+  rm -f "$ssh_cfg"
+
+  log "  Response: ${response:0:300}"
+
+  local content
+  content=$(printf '%s' "$response" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+# Anthropic Messages API returns content as array of blocks
+if 'content' in d and isinstance(d['content'], list):
+    print(''.join(part.get('text', '') for part in d['content'] if isinstance(part, dict)))
+# Fallback: OpenAI-compatible format (gateway may translate)
+elif 'choices' in d:
+    print(d['choices'][0]['message']['content'])
+" 2>/dev/null) || true
+
+  if [[ -n "$content" ]] && echo "$content" | grep -qi "PONG"; then
+    pass "TC-INF-03: Anthropic inference response received through sandbox proxy"
+  elif [[ -n "$content" ]]; then
+    pass "TC-INF-03: Anthropic response received (content: ${content:0:100})"
+  else
+    fail "TC-INF-03: Inference" "No valid response from Anthropic through sandbox: ${response:0:200}"
+  fi
+
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
+  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
+}
+
+# =============================================================================
+# TC-INF-09: Custom OpenAI-compatible endpoint inference
+# =============================================================================
+test_inf_09_compatible_endpoint() {
+  log "=== TC-INF-09: Custom OpenAI-Compatible Endpoint ==="
+
+  local endpoint_url="${NEMOCLAW_ENDPOINT_URL:-}"
+  local endpoint_model="${NEMOCLAW_COMPAT_MODEL:-}"
+  local endpoint_key="${COMPATIBLE_API_KEY:-}"
+
+  if [[ -z "$endpoint_url" || -z "$endpoint_model" || -z "$endpoint_key" ]]; then
+    skip "TC-INF-09" "Missing NEMOCLAW_ENDPOINT_URL, NEMOCLAW_COMPAT_MODEL, or COMPATIBLE_API_KEY"
+    return
+  fi
+
+  local sbx_name="e2e-compat-ep"
+  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
+
+  log "  Preflight: destroying any existing '$sbx_name' sandbox..."
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
+
+  log "  Onboarding with compatible endpoint: $endpoint_url"
+  log "  Model: $endpoint_model"
+  local onboard_exit=0
+  NEMOCLAW_SANDBOX_NAME="$sbx_name" \
+    NEMOCLAW_NON_INTERACTIVE=1 \
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+    NEMOCLAW_POLICY_TIER="open" \
+    NEMOCLAW_PROVIDER="custom" \
+    NEMOCLAW_ENDPOINT_URL="$endpoint_url" \
+    NEMOCLAW_MODEL="$endpoint_model" \
+    COMPATIBLE_API_KEY="$endpoint_key" \
+    run_with_timeout 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    2>&1 | redact_stream "$endpoint_key" | tee -a "$LOG_FILE" || onboard_exit=$?
+
+  if [[ $onboard_exit -ne 0 ]]; then
+    fail "TC-INF-09: Onboard" "Onboard with compatible endpoint failed (exit $onboard_exit)"
+    return
+  fi
+  pass "TC-INF-09: Onboard with compatible endpoint succeeded"
+
+  # Get SSH config for the sandbox
+  local ssh_cfg
+  ssh_cfg="$(mktemp)"
+  if ! openshell sandbox ssh-config "$sbx_name" >"$ssh_cfg" 2>/dev/null; then
+    fail "TC-INF-09: SSH" "Could not get SSH config for sandbox"
+    rm -f "$ssh_cfg"
+    return
+  fi
+
+  # Send a prompt through the inference proxy inside the sandbox
+  log "  Sending test prompt through sandbox inference proxy..."
+  local response
+  response=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 -o LogLevel=ERROR \
+    "openshell-${sbx_name}" \
+    "curl -s --max-time 60 https://inference.local/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{\"model\":\"$endpoint_model\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":50}'" \
+    2>&1) || true
+  rm -f "$ssh_cfg"
+
+  log "  Response: ${response:0:300}"
+
+  local content
+  content=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'])" 2>/dev/null) || true
+
+  if [[ -n "$content" ]] && echo "$content" | grep -qi "PONG"; then
+    pass "TC-INF-09: Inference response received through sandbox proxy"
+  elif [[ -n "$content" ]]; then
+    pass "TC-INF-09: Inference response received (content: ${content:0:100})"
+  elif [[ -n "$response" ]]; then
+    fail "TC-INF-09: Inference" "Got response but could not extract content: ${response:0:200}"
+  else
+    fail "TC-INF-09: Inference" "No response from inference.local"
+  fi
+
+  nemoclaw "$sbx_name" destroy --yes 2>/dev/null || true
+  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
+}
+
 # ── Teardown ─────────────────────────────────────────────────────────────────
 teardown() {
+  # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
+  # test/e2e/lib/sandbox-teardown.sh — the lock is PID-ownership-aware
+  # and onboard cleans up stale locks itself.
   set +e
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
+  nemoclaw "e2e-openai" destroy --yes 2>/dev/null || true
+  nemoclaw "e2e-anthropic" destroy --yes 2>/dev/null || true
   nemoclaw "e2e-invalid-key" destroy --yes 2>/dev/null || true
   nemoclaw "e2e-unreachable" destroy --yes 2>/dev/null || true
+  nemoclaw "e2e-compat-ep" destroy --yes 2>/dev/null || true
   set -e
 }
 
@@ -422,7 +663,7 @@ teardown() {
 summary() {
   echo ""
   echo "============================================================"
-  echo "  Inference Error Classification E2E Results"
+  echo "  NemoClaw Inference Routing E2E Results"
   echo "============================================================"
   echo -e "  ${GREEN}PASS: $PASS${NC}"
   echo -e "  ${RED}FAIL: $FAIL${NC}"
@@ -443,16 +684,19 @@ summary() {
 main() {
   echo ""
   echo "============================================================"
-  echo "  NemoClaw Inference Error Classification E2E Tests"
+  echo "  NemoClaw Inference Routing E2E Tests"
   echo "  $(date)"
   echo "============================================================"
   echo ""
 
   preflight
 
+  test_inf_02_openai
+  test_inf_03_anthropic
   test_inf_05_credential_isolation
   test_inf_06_invalid_api_key
   test_inf_07_unreachable_endpoint
+  test_inf_09_compatible_endpoint
 
   trap - EXIT
   teardown

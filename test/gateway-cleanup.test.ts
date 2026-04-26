@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -24,6 +23,9 @@ describe("gateway cleanup: Docker volumes removed on failure (#17)", () => {
     const content = fs.readFileSync(path.join(ROOT, "src/lib/onboard.ts"), "utf-8");
     const startGwBlock = content.match(/async function startGatewayWithOptions[\s\S]*?^}/m);
     expect(startGwBlock).toBeTruthy();
+    if (!startGwBlock) {
+      throw new Error("Expected startGatewayWithOptions() in src/lib/onboard.ts");
+    }
 
     // Current behavior:
     // 1. stale gateway is detected but NOT destroyed upfront — gateway start

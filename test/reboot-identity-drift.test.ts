@@ -116,7 +116,7 @@ if (args[0] === "sandbox" && args[1] === "get" && args[2] === ${JSON.stringify(s
 }
 
 if (args[0] === "sandbox" && args[1] === "list") {
-  process.stdout.write("${sandboxName}\\n");
+  process.stdout.write("${sandboxName}   Ready   2m ago\\n");
   process.exit(0);
 }
 
@@ -201,7 +201,7 @@ if (args[0] === "sandbox" && args[1] === "get" && args[2] === ${JSON.stringify(s
 }
 
 if (args[0] === "sandbox" && args[1] === "list") {
-  process.stdout.write("${sandboxName}\\n");
+  process.stdout.write("${sandboxName}   Ready   2m ago\\n");
   process.exit(0);
 }
 

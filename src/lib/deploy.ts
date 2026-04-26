@@ -5,6 +5,27 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { sleepSeconds } from "./wait";
+
+type ExecLikeValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | string[]
+  | NodeJS.ProcessEnv
+  | object;
+type ExecLikeOptions = { [key: string]: ExecLikeValue };
+
+function readCommandOutput(error: object | null, key: "stdout" | "stderr"): string {
+  if (error === null) {
+    return "";
+  }
+  const value = Reflect.get(error, key);
+  return typeof value === "string" ? value : String(value || "");
+}
+
 export interface DeployCredentials {
   NVIDIA_API_KEY?: string | null;
   OPENAI_API_KEY?: string | null;
@@ -40,8 +61,8 @@ export interface DeployExecutionOptions {
   shellQuote: (value: string) => string;
   run: (command: string, opts?: { ignoreError?: boolean }) => void;
   runInteractive: (command: string) => void;
-  execFileSync: (file: string, args: string[], opts?: Record<string, unknown>) => string;
-  spawnSync: (file: string, args: string[], opts?: Record<string, unknown>) => void;
+  execFileSync: (file: string, args: string[], opts?: ExecLikeOptions) => string;
+  spawnSync: (file: string, args: string[], opts?: ExecLikeOptions) => void;
   log: (message?: string) => void;
   error: (message?: string) => void;
   stdoutWrite: (message: string) => void;
@@ -126,7 +147,7 @@ export function buildDeployEnvLines(opts: {
     "NEMOCLAW_POLICY_MODE",
     "NEMOCLAW_POLICY_PRESETS",
     "CHAT_UI_URL",
-  ] as const;
+  ];
   for (const key of passthroughVars) {
     const value = env[key];
     if (value) envLines.push(`${key}=${shellQuote(value)}`);
@@ -157,7 +178,11 @@ export function findBrevInstanceStatus(
   try {
     const items = JSON.parse(rawJson);
     if (!Array.isArray(items)) return null;
-    return (items.find((item) => item && item.name === instanceName) as BrevInstanceStatus) || null;
+    const match = items.find(
+      (item): item is BrevInstanceStatus =>
+        typeof item === "object" && item !== null && item.name === instanceName,
+    );
+    return match ?? null;
   } catch {
     return null;
   }
@@ -241,7 +266,9 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
   const name = validateName(instanceName, "instance name");
   const qname = shellQuote(name);
   const gpu = env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
-  const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp").trim().toLowerCase();
+  const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp")
+    .trim()
+    .toLowerCase();
   const skipConnect = ["1", "true"].includes(
     String(env.NEMOCLAW_DEPLOY_NO_CONNECT || "").toLowerCase(),
   );
@@ -290,9 +317,9 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     const out = execFileSync("brev", ["ls"], { encoding: "utf-8" });
     exists = outputHasExactLine(out, name);
   } catch (caught) {
-    const err = caught as { stdout?: string; stderr?: string };
-    if (outputHasExactLine(err.stdout, name)) exists = true;
-    if (outputHasExactLine(err.stderr, name)) exists = true;
+    const caughtObject = typeof caught === "object" && caught !== null ? caught : null;
+    if (outputHasExactLine(readCommandOutput(caughtObject, "stdout"), name)) exists = true;
+    if (outputHasExactLine(readCommandOutput(caughtObject, "stderr"), name)) exists = true;
   }
 
   if (!exists) {
@@ -333,7 +360,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       return fail([`  Timed out waiting for Brev instance readiness for ${name}`], error, exit);
     }
     stdoutWrite(".");
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
   }
 
   // ── SSH trust-on-first-use (TOFU) ──────────────────────────────
@@ -371,7 +398,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       );
     }
     stdoutWrite(".");
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
   }
 
   const sshOpts = buildSshOpts(knownHostsFile, shellQuote);
@@ -401,9 +428,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
     try {
       run(`scp -q ${sshOpts} ${shellQuote(envTmp)} ${qname}:${shellQuote(`${remoteDir}/.env`)}`);
-      run(
-        `ssh -q ${sshOpts} ${qname} 'chmod 600 ${shellQuote(`${remoteDir}/.env`)}'`,
-      );
+      run(`ssh -q ${sshOpts} ${qname} 'chmod 600 ${shellQuote(`${remoteDir}/.env`)}'`);
     } finally {
       try {
         fs.unlinkSync(envTmp);

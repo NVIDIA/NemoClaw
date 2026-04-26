@@ -1,79 +1,12 @@
 ---
 name: "nemoclaw-user-configure-inference"
-description: "Lists all inference providers offered during NemoClaw onboarding. Use when explaining which providers are available, what the onboard wizard presents, or how inference routing works. Changes the active inference model without restarting the sandbox. Use when switching inference providers, changing the model runtime, or reconfiguring inference routing. Connects NemoClaw to a local inference server. Use when setting up Ollama, vLLM, TensorRT-LLM, NIM, or any OpenAI-compatible local model server with NemoClaw."
+description: "Lists all inference providers offered during NemoClaw onboarding. Use when explaining which providers are available, what the onboard wizard presents, or how inference routing works. Trigger keywords - nemoclaw inference options, nemoclaw onboarding providers, nemoclaw inference routing, switch nemoclaw inference model, change inference runtime, nemoclaw local inference, ollama nemoclaw, vllm nemoclaw, local model server, openai compatible endpoint."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw User Configure Inference
-
-Lists all inference providers offered during NemoClaw onboarding. Use when explaining which providers are available, what the onboard wizard presents, or how inference routing works.
-
-## Context
-
-NemoClaw supports multiple inference providers.
-During onboarding, the `nemoclaw onboard` wizard presents a numbered list of providers to choose from.
-Your selection determines where the agent's inference traffic is routed.
-
-## How Inference Routing Works
-
-The agent inside the sandbox talks to `inference.local`.
-It never connects to a provider directly.
-OpenShell intercepts inference traffic on the host and forwards it to the provider you selected.
-
-Provider credentials stay on the host.
-The sandbox does not receive your API key.
-
-## Provider Status
-
-<!-- provider-status:begin -->
-| Provider | Status | Endpoint type | Notes |
-|----------|--------|---------------|-------|
-| NVIDIA Endpoints | Tested | OpenAI-compatible | Hosted models on integrate.api.nvidia.com |
-| OpenAI | Tested | Native OpenAI-compatible | Uses OpenAI model IDs |
-| Other OpenAI-compatible endpoint | Tested | Custom OpenAI-compatible | For compatible proxies and gateways |
-| Anthropic | Tested | Native Anthropic | Uses anthropic-messages |
-| Other Anthropic-compatible endpoint | Tested | Custom Anthropic-compatible | For Claude proxies and compatible gateways |
-| Google Gemini | Tested | OpenAI-compatible | Uses Google's OpenAI-compatible endpoint |
-| Local Ollama | Caveated | Local Ollama API | Available when Ollama is installed or running on the host |
-| Local NVIDIA NIM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU |
-| Local vLLM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a server already running on `localhost:8000` |
-<!-- provider-status:end -->
-
-## Provider Options
-
-The onboard wizard presents the following provider options by default.
-The first six are always available.
-Ollama appears when it is installed or running on the host.
-
-| Option | Description | Curated models |
-|--------|-------------|----------------|
-| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_API_KEY`. | Nemotron 3 Super 120B, Kimi K2.5, GLM-5, MiniMax M2.5, GPT-OSS 120B |
-| OpenAI | Routes to the OpenAI API. Set `OPENAI_API_KEY`. | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro-2026-03-05` |
-| Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. If the endpoint also supports `/responses` with OpenClaw-style tool calling, NemoClaw can use that path; otherwise it falls back to `/chat/completions`. The wizard prompts for a base URL and model name. Works with OpenRouter, LocalAI, llama.cpp, or any compatible proxy. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
-| Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
-| Other Anthropic-compatible endpoint | Routes to any server that implements the Anthropic Messages API (`/v1/messages`). The wizard prompts for a base URL and model name. Set `COMPATIBLE_ANTHROPIC_API_KEY`. | You provide the model name. |
-| Google Gemini | Routes to Google's OpenAI-compatible endpoint. NemoClaw prefers `/responses` only when the endpoint proves it can handle tool calling in a way OpenClaw uses; otherwise it falls back to `/chat/completions`. Set `GEMINI_API_KEY`. | `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` |
-| Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to Use a Local Inference Server (see the `nemoclaw-user-configure-inference` skill). |
-
-## Experimental Options
-
-The following local inference options require `NEMOCLAW_EXPERIMENTAL=1` and, when prerequisites are met, appear in the onboarding selection list.
-
-| Option | Condition | Notes |
-|--------|-----------|-------|
-| Local NVIDIA NIM | NIM-capable GPU detected | Pulls and manages a NIM container. |
-| Local vLLM | vLLM running on `localhost:8000` | Auto-detects the loaded model. |
-
-For setup instructions, refer to Use a Local Inference Server (see the `nemoclaw-user-configure-inference` skill).
-
-## Validation
-
-NemoClaw validates the selected provider and model before creating the sandbox.
-If validation fails, the wizard returns to provider selection.
-
-*Full details in `references/inference-options.md`.*
+# NemoClaw Inference Options
 
 ## Prerequisites
 
@@ -184,7 +117,42 @@ Remove the env vars and recreate the sandbox to revert to the original model.
 `NEMOCLAW_INFERENCE_API_OVERRIDE` accepts `openai-completions` (for NVIDIA, OpenAI, Gemini, compatible endpoints) or `anthropic-messages` (for Anthropic and Anthropic-compatible endpoints).
 This variable is only needed when switching between provider families.
 
-## Step 3: Verify the Active Model
+## Step 3: Tune Model Metadata
+
+The sandbox image bakes model metadata (context window, max output tokens, and reasoning mode) into `openclaw.json` at build time.
+To change these values, set the corresponding environment variables before running `nemoclaw onboard` so they patch into the Dockerfile before the image builds.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer (tokens) | `131072` |
+| `NEMOCLAW_MAX_TOKENS` | Positive integer (tokens) | `4096` |
+| `NEMOCLAW_REASONING` | `true` or `false` | `false` |
+| `NEMOCLAW_AGENT_TIMEOUT` | Positive integer (seconds) | `600` |
+
+Invalid values are ignored, and the default bakes into the image.
+
+```console
+$ export NEMOCLAW_CONTEXT_WINDOW=65536
+$ export NEMOCLAW_MAX_TOKENS=8192
+$ export NEMOCLAW_REASONING=true
+$ export NEMOCLAW_AGENT_TIMEOUT=1800
+$ nemoclaw onboard
+```
+
+`NEMOCLAW_AGENT_TIMEOUT` controls the per-request inference timeout baked into
+`agents.defaults.timeoutSeconds`. Increase it for slow local inference (for
+example, CPU-only Ollama or vLLM on modest hardware). `openclaw.json` is
+immutable at runtime, so this value can only be changed by rebuilding the
+sandbox via `nemoclaw onboard`.
+
+These variables are build-time settings.
+If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:
+
+```console
+$ nemoclaw onboard --resume --recreate-sandbox
+```
+
+## Step 4: Verify the Active Model
 
 Run the status command to confirm the change:
 
@@ -200,7 +168,7 @@ $ nemoclaw <name> status --json
 
 The output includes the active provider, model, and endpoint.
 
-## Step 4: Notes
+## Step 5: Notes
 
 - The host keeps provider credentials.
 - The sandbox continues to use `inference.local`.
@@ -217,7 +185,7 @@ All approaches use the same `inference.local` routing model.
 The agent inside the sandbox never connects to your model server directly.
 OpenShell intercepts inference traffic and forwards it to the local endpoint you configure.
 
-## Step 5: Ollama
+## Step 6: Ollama
 
 Ollama is the default local inference option.
 The onboard wizard detects Ollama automatically when it is installed or running on the host.
@@ -280,7 +248,7 @@ If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on availa
 | `NEMOCLAW_PROVIDER` | Set to `ollama`. |
 | `NEMOCLAW_MODEL` | Ollama model tag to use. Optional. |
 
-## Step 6: OpenAI-Compatible Server
+## Step 7: OpenAI-Compatible Server
 
 This option works with any server that implements `/v1/chat/completions`, including vLLM, TensorRT-LLM, llama.cpp, LocalAI, and others.
 For compatible endpoints, NemoClaw uses `/v1/chat/completions` by default.
@@ -354,9 +322,9 @@ You can use this variable in both interactive and non-interactive mode.
 If you already onboarded and the sandbox is failing at runtime, re-run
 `nemoclaw onboard` to re-probe the endpoint and bake the correct API path
 into the image.
-Refer to Switch Inference Models (see the `nemoclaw-user-configure-inference` skill) for details.
+Refer to Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for details.
 
-## Step 7: Anthropic-Compatible Server
+## Step 8: Anthropic-Compatible Server
 
 If your local server implements the Anthropic Messages API (`/v1/messages`), choose **Other Anthropic-compatible endpoint** during onboarding instead.
 
@@ -374,7 +342,7 @@ $ NEMOCLAW_PROVIDER=anthropicCompatible \
   nemoclaw onboard --non-interactive
 ```
 
-## Step 8: vLLM Auto-Detection (Experimental)
+## Step 9: vLLM Auto-Detection (Experimental)
 
 When vLLM is already running on `localhost:8000`, NemoClaw can detect it automatically and query the `/v1/models` endpoint to determine the loaded model.
 
@@ -401,7 +369,7 @@ $ NEMOCLAW_EXPERIMENTAL=1 \
 NemoClaw auto-detects the model from the running vLLM instance.
 To override the model, set `NEMOCLAW_MODEL`.
 
-## Step 9: NVIDIA NIM (Experimental)
+## Step 10: NVIDIA NIM (Experimental)
 
 NemoClaw can pull, start, and manage a NIM container on hosts with a NIM-capable NVIDIA GPU.
 
@@ -413,6 +381,11 @@ $ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
 
 Select **Local NVIDIA NIM [experimental]** from the provider list.
 NemoClaw filters available models by GPU VRAM, pulls the NIM container image, starts it, and waits for it to become healthy before continuing.
+
+NIM container images are hosted on `nvcr.io` and require NGC registry authentication before `docker pull` succeeds.
+If Docker is not already logged in to `nvcr.io`, onboard prompts for an [NGC API key](https://org.ngc.nvidia.com/setup/api-key) and runs `docker login nvcr.io` over `--password-stdin` so the key is never written to disk or shell history.
+The prompt masks the key during input and retries once on a bad key before failing.
+In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run `docker login nvcr.io` yourself, then re-run `nemoclaw onboard --non-interactive`.
 
 > **Note:** NIM uses vLLM internally.
 > The same `chat/completions` API path restriction applies.
@@ -427,7 +400,7 @@ $ NEMOCLAW_EXPERIMENTAL=1 \
 
 To select a specific model, set `NEMOCLAW_MODEL`.
 
-## Step 10: Timeout Configuration
+## Step 11: Timeout Configuration
 
 Local inference requests use a default timeout of 180 seconds.
 Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so NemoClaw sets a higher default for local providers (Ollama, vLLM, NIM).
@@ -443,7 +416,7 @@ The value is in seconds.
 This setting is baked into the sandbox at build time.
 Changing it after onboarding requires re-running `nemoclaw onboard`.
 
-## Step 11: Verify the Configuration
+## Step 12: Verify the Configuration
 
 After onboarding completes, confirm the active provider and model.
 
@@ -453,10 +426,10 @@ $ nemoclaw <name> status
 
 The output shows the provider label (for example, "Local vLLM" or "Other OpenAI-compatible endpoint") and the active model.
 
-## Step 12: Switch Models at Runtime
+## Step 13: Switch Models at Runtime
 
 You can change the model without re-running onboard.
-Refer to Switch Inference Models (see the `nemoclaw-user-configure-inference` skill) for the full procedure.
+Refer to Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for the full procedure.
 
 For compatible endpoints, the command is:
 
@@ -466,6 +439,10 @@ $ openshell inference set --provider compatible-endpoint --model <model-name>
 
 If the provider itself needs to change (for example, switching from vLLM to a cloud API), rerun `nemoclaw onboard`.
 
+## References
+
+- **Load [references/inference-options.md](references/inference-options.md)** when explaining which providers are available, what the onboard wizard presents, or how inference routing works. Lists all inference providers offered during NemoClaw onboarding.
+
 ## Related Skills
 
-- `nemoclaw-user-get-started` — Quickstart for first-time installation
+- `nemoclaw-user-get-started` — Quickstart (use the `nemoclaw-user-get-started` skill) for first-time installation

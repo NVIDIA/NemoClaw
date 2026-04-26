@@ -306,6 +306,21 @@ describe("commands/migration-state", () => {
       expect(result.externalRoots.some((r) => r.kind === "skillsExtraDir")).toBe(true);
     });
 
+    it("resolves external roots against the provided env", () => {
+      const env = { HOME: "/home/user", OPENCLAW_HOME: "/custom/home" };
+      addDir("/custom/home/.openclaw");
+      addFile(
+        "/custom/home/.openclaw/openclaw.json",
+        JSON.stringify({
+          skills: { load: { extraDirs: ["~/skills-extra"] } },
+        }),
+      );
+      addDir("/custom/home/skills-extra");
+
+      const result = detectHostOpenClaw(env);
+      expect(result.externalRoots[0]?.sourcePath).toBe("/custom/home/skills-extra");
+    });
+
     it("warns about symlinks in workspace", () => {
       const env = { HOME: "/home/user" };
       addDir("/home/user/.openclaw");
@@ -890,12 +905,56 @@ describe("commands/migration-state", () => {
         stateDir: "/home/user/.openclaw",
         configPath: null,
         hasExternalConfig: false,
-        externalRoots: [],
-        warnings: [],
+        externalRoots: [
+          {
+            id: "workspace-root",
+            kind: "workspace",
+            label: "Workspace",
+            sourcePath: "/host/workspace",
+            snapshotRelativePath: "external/workspace",
+            sandboxPath: "/sandbox/workspace",
+            symlinkPaths: ["/sandbox/.openclaw/workspace-link"],
+            bindings: [{ configPath: "workspace.path" }],
+          },
+        ],
+        warnings: ["workspace root was remapped"],
       };
       addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
       const loaded = loadSnapshotManifest("/snapshots/snap1");
       expect(loaded).toEqual(manifest);
+    });
+
+    it("rejects a snapshot manifest whose JSON root is not an object", () => {
+      addFile("/snapshots/snap1/snapshot.json", JSON.stringify(["not", "an", "object"]));
+      expect(() => loadSnapshotManifest("/snapshots/snap1")).toThrow(/Invalid snapshot manifest/);
+    });
+
+    it("rejects malformed externalRoots and warnings entries", () => {
+      addFile(
+        "/snapshots/snap1/snapshot.json",
+        JSON.stringify({
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [
+            {
+              id: "workspace-root",
+              kind: "workspace",
+              label: "Workspace",
+              sourcePath: "/host/workspace",
+              snapshotRelativePath: "external/workspace",
+              sandboxPath: "/sandbox/workspace",
+              symlinkPaths: ["/sandbox/.openclaw/workspace-link"],
+              bindings: [1],
+            },
+          ],
+          warnings: [null],
+        }),
+      );
+      expect(() => loadSnapshotManifest("/snapshots/snap1")).toThrow(/Invalid snapshot manifest/);
     });
   });
 

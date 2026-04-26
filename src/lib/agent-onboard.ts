@@ -8,21 +8,23 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { spawnSync } from "child_process";
 
-import { ROOT, run, shellQuote } from "./runner";
+import { ROOT, run } from "./runner";
 import { loadAgent, resolveAgentName, type AgentDefinition } from "./agent-defs";
 import { getProviderSelectionConfig } from "./inference-config";
 import * as onboardSession from "./onboard-session";
+import { sleepSeconds } from "./wait";
+import type { JsonValue as LooseValue, JsonObject as LooseObject } from "./json-types";
 
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
-  buildSandboxConfigSyncScript: (config: Record<string, unknown>) => string;
+  openshellBinary: string;
+  buildSandboxConfigSyncScript: (config: LooseObject) => string;
   writeSandboxConfigSyncFile: (script: string) => string;
   cleanupTempDir: (file: string, prefix: string) => void;
-  startRecordedStep: (stepName: string, updates: Record<string, unknown>) => void;
+  startRecordedStep: (stepName: string, updates: LooseObject) => void;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
 }
 
@@ -53,17 +55,21 @@ export function createAgentSandbox(agent: AgentDefinition): {
   const agentDockerfile = agent.dockerfilePath;
   const baseDockerfile = agent.dockerfileBasePath;
 
+  if (!agentDockerfile) {
+    throw new Error(`${agent.displayName} is missing a sandbox Dockerfile`);
+  }
+
   if (baseDockerfile) {
     const baseImageTag = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base:latest`;
-    const inspectResult = run(`docker image inspect ${shellQuote(baseImageTag)} >/dev/null 2>&1`, {
+    const inspectResult = run(["docker", "image", "inspect", baseImageTag], {
       ignoreError: true,
+      suppressOutput: true,
     });
     if (inspectResult.status !== 0) {
       console.log(`  Building ${agent.displayName} base image (first time only)...`);
-      run(
-        `docker build -f ${shellQuote(baseDockerfile)} -t ${shellQuote(baseImageTag)} ${shellQuote(ROOT)}`,
-        { stdio: ["ignore", "inherit", "inherit"] },
-      );
+      run(["docker", "build", "-f", baseDockerfile, "-t", baseImageTag, ROOT], {
+        stdio: ["ignore", "inherit", "inherit"],
+      });
       console.log(`  \u2713 Base image built: ${baseImageTag}`);
     } else {
       console.log(`  Base image exists: ${baseImageTag}`);
@@ -79,7 +85,7 @@ export function createAgentSandbox(agent: AgentDefinition): {
     },
   });
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.copyFileSync(agentDockerfile!, stagedDockerfile);
+  fs.copyFileSync(agentDockerfile, stagedDockerfile);
   console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
 
   return { buildCtx, stagedDockerfile };
@@ -100,7 +106,7 @@ export function getAgentPermissivePolicyPath(agent: AgentDefinition): string | n
 }
 
 function sleep(seconds: number): void {
-  spawnSync("sleep", [String(seconds)]);
+  sleepSeconds(seconds);
 }
 
 /**
@@ -114,13 +120,14 @@ export async function handleAgentSetup(
   provider: string,
   agent: AgentDefinition,
   resume: boolean,
-  _session: unknown,
+  _session: object | null,
   ctx: OnboardContext,
 ): Promise<void> {
   const {
     step,
     runCaptureOpenshell,
     openshellShellCommand,
+    openshellBinary: openshellBin,
     buildSandboxConfigSyncScript,
     writeSandboxConfigSyncFile,
     cleanupTempDir,
@@ -156,10 +163,11 @@ export async function handleAgentSetup(
     const script = buildSandboxConfigSyncScript(sandboxConfig);
     const scriptFile = writeSandboxConfigSyncFile(script);
     try {
-      run(
-        `${openshellShellCommand(["sandbox", "connect", sandboxName])} < ${shellQuote(scriptFile)}`,
-        { stdio: ["ignore", "ignore", "inherit"] },
-      );
+      const scriptContent = fs.readFileSync(scriptFile, "utf-8");
+      run([openshellBin, "sandbox", "connect", sandboxName], {
+        stdio: ["pipe", "ignore", "inherit"],
+        input: scriptContent,
+      });
     } finally {
       cleanupTempDir(scriptFile, "nemoclaw-sync");
     }
@@ -186,12 +194,8 @@ export async function handleAgentSetup(
     if (healthy) {
       console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
     } else {
-      console.log(
-        `  \u26a0 ${agent.displayName} gateway did not respond within ${timeoutSecs}s.`,
-      );
-      console.log(
-        `    The gateway may still be starting. Check: nemoclaw ${sandboxName} logs`,
-      );
+      console.log(`  \u26a0 ${agent.displayName} gateway did not respond within ${timeoutSecs}s.`);
+      console.log(`    The gateway may still be starting. Check: nemoclaw ${sandboxName} logs`);
     }
   } else {
     console.log(`  \u2713 ${agent.displayName} configured inside sandbox`);
@@ -215,6 +219,11 @@ export function getAgentDashboardInfo(agent: AgentDefinition): {
 
 /**
  * Print the dashboard UI section for a non-OpenClaw agent.
+ *
+ * When the agent manifest declares `dashboard.kind: api`, we print the
+ * endpoint as an API (no tokenized URL fragment — the caller authenticates
+ * via a header) and use the manifest-supplied label/path. Otherwise we fall
+ * back to the original UI-style output used by browser dashboards.
  */
 export function printDashboardUi(
   _sandboxName: string,
@@ -226,15 +235,33 @@ export function printDashboardUi(
   },
 ): void {
   const info = getAgentDashboardInfo(agent);
+  const { kind, label, path } = agent.dashboard;
+
+  if (kind === "api") {
+    console.log(`  ${info.displayName} ${label}`);
+    console.log(`  Port ${info.port} must be forwarded before connecting.`);
+    const seen = new Set<string>();
+    for (const baseUrl of deps.buildControlUiUrls(null, info.port)) {
+      const withoutHash = baseUrl.split("#")[0].replace(/\/$/, "");
+      const url = path && path !== "/" ? `${withoutHash}${path}` : `${withoutHash}/`;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      console.log(`  ${url}`);
+    }
+    return;
+  }
+
   if (token) {
-    console.log(`  ${info.displayName} UI (tokenized URL; treat it like a password)`);
+    console.log(
+      `  ${info.displayName} ${label} (tokenized URL; treat it like a password; save it now - it will not be printed again)`,
+    );
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(token, info.port)) {
       console.log(`  ${url}`);
     }
   } else {
     deps.note("  Could not read gateway token from the sandbox (download failed).");
-    console.log(`  ${info.displayName} UI`);
+    console.log(`  ${info.displayName} ${label}`);
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(null, info.port)) {
       console.log(`  ${url}`);

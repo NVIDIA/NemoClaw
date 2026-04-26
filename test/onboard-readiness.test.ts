@@ -1,10 +1,33 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
 import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../dist/lib/policies";
-import { hasStaleGateway, isSandboxReady } from "../dist/lib/onboard";
+
+type OnboardReadinessInternals = {
+  hasStaleGateway: (output: string | null | undefined) => boolean;
+  isSandboxReady: (output: string | null | undefined, sandboxName: string) => boolean;
+  parseSandboxStatus: (output: string | null | undefined, sandboxName: string) => string | null;
+};
+
+function isOnboardReadinessInternals(value: object | null): value is OnboardReadinessInternals {
+  return (
+    value !== null &&
+    typeof Reflect.get(value, "hasStaleGateway") === "function" &&
+    typeof Reflect.get(value, "isSandboxReady") === "function" &&
+    typeof Reflect.get(value, "parseSandboxStatus") === "function"
+  );
+}
+
+const loadedOnboardReadinessInternals = require("../dist/lib/onboard");
+const onboardReadinessInternals =
+  typeof loadedOnboardReadinessInternals === "object" && loadedOnboardReadinessInternals !== null
+    ? loadedOnboardReadinessInternals
+    : null;
+if (!isOnboardReadinessInternals(onboardReadinessInternals)) {
+  throw new Error("Expected onboard readiness internals to be available");
+}
+const { hasStaleGateway, isSandboxReady, parseSandboxStatus } = onboardReadinessInternals;
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {
@@ -119,6 +142,71 @@ describe("WSL sandbox name handling", () => {
     expect(!isSandboxReady("my-assistant   Ready   2m ago", "m")).toBeTruthy();
     expect(!isSandboxReady("my-assistant   Ready   2m ago", "my")).toBeTruthy();
     expect(!isSandboxReady("my-assistant   Ready   2m ago", "my-")).toBeTruthy();
+  });
+});
+
+describe("parseSandboxStatus", () => {
+  it("returns status for a matching sandbox", () => {
+    expect(parseSandboxStatus("my-assistant   Ready   2m ago", "my-assistant")).toBe("Ready");
+  });
+
+  it("returns Pending status", () => {
+    expect(parseSandboxStatus("my-assistant   Pending   10s ago", "my-assistant")).toBe("Pending");
+  });
+
+  it("returns ContainerCreating status", () => {
+    expect(parseSandboxStatus("my-assistant   ContainerCreating   5s ago", "my-assistant")).toBe(
+      "ContainerCreating",
+    );
+  });
+
+  it("returns Failed status", () => {
+    expect(parseSandboxStatus("my-assistant   Failed   1m ago", "my-assistant")).toBe("Failed");
+  });
+
+  it("returns CrashLoopBackOff status", () => {
+    expect(parseSandboxStatus("my-assistant   CrashLoopBackOff   3m ago", "my-assistant")).toBe(
+      "CrashLoopBackOff",
+    );
+  });
+
+  it("returns null when sandbox not found", () => {
+    expect(parseSandboxStatus("other-box   Ready   2m ago", "my-assistant")).toBe(null);
+  });
+
+  it("returns null for empty output", () => {
+    expect(parseSandboxStatus("", "my-assistant")).toBe(null);
+  });
+
+  it("returns null for null/undefined input", () => {
+    expect(parseSandboxStatus(null, "my-assistant")).toBe(null);
+    expect(parseSandboxStatus(undefined, "my-assistant")).toBe(null);
+  });
+
+  it("strips ANSI codes before parsing", () => {
+    expect(
+      parseSandboxStatus(
+        "\x1b[1mmy-assistant\x1b[0m   \x1b[33mPending\x1b[0m   10s",
+        "my-assistant",
+      ),
+    ).toBe("Pending");
+  });
+
+  it("exact-matches sandbox name in first column", () => {
+    expect(parseSandboxStatus("my-assistant   Ready   2m ago", "my")).toBe(null);
+  });
+
+  it("picks correct sandbox from multi-line output", () => {
+    const output = [
+      "NAME           STATUS              AGE",
+      "dev-box        NotReady            5m ago",
+      "my-assistant   ContainerCreating   10s ago",
+      "staging        Ready               10m ago",
+    ].join("\n");
+    expect(parseSandboxStatus(output, "my-assistant")).toBe("ContainerCreating");
+    expect(parseSandboxStatus(output, "dev-box")).toBe("NotReady");
+    expect(parseSandboxStatus(output, "staging")).toBe("Ready");
+    expect(parseSandboxStatus(output, "prod")).toBe(null);
   });
 });
 

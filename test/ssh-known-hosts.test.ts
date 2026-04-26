@@ -1,9 +1,33 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { pruneKnownHostsEntries } from "../dist/lib/onboard";
+
+type OnboardKnownHostsInternals = {
+  pruneKnownHostsEntries: (contents: string) => string;
+};
+
+type OnboardKnownHostsCandidate = {
+  pruneKnownHostsEntries?: unknown;
+  default?: unknown;
+} | null;
+
+function isOnboardKnownHostsInternals(
+  value: OnboardKnownHostsCandidate,
+): value is OnboardKnownHostsInternals {
+  return value !== null && typeof value.pruneKnownHostsEntries === "function";
+}
+
+const loadedOnboardKnownHostsModule = await import("../dist/lib/onboard.js");
+const onboardKnownHostsInternals = isOnboardKnownHostsInternals(loadedOnboardKnownHostsModule)
+  ? loadedOnboardKnownHostsModule
+  : isOnboardKnownHostsInternals(loadedOnboardKnownHostsModule.default)
+    ? loadedOnboardKnownHostsModule.default
+    : null;
+if (!isOnboardKnownHostsInternals(onboardKnownHostsInternals)) {
+  throw new Error("Expected onboard internals to expose pruneKnownHostsEntries");
+}
+const { pruneKnownHostsEntries } = onboardKnownHostsInternals;
 
 describe("pruneKnownHostsEntries", () => {
   it("removes lines with openshell- hostnames", () => {

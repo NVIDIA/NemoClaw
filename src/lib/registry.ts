@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
+import { isErrnoException } from "./errno";
 
 export interface SandboxEntry {
   name: string;
@@ -18,8 +19,10 @@ export interface SandboxEntry {
   agent?: string | null;
   dangerouslySkipPermissions?: boolean;
   agentVersion?: string | null;
+  imageTag?: string | null;
   providerCredentialHashes?: Record<string, string>;
   messagingChannels?: string[];
+  disabledChannels?: string[];
 }
 
 export interface SandboxRegistry {
@@ -65,8 +68,12 @@ export function acquireLock(): void {
       }
       return;
     } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code !== "EEXIST") throw err;
+      if (
+        !isErrnoException(error) ||
+        error.code !== "EEXIST"
+      ) {
+        throw error;
+      }
       let ownerChecked = false;
       try {
         const ownerPid = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
@@ -77,7 +84,10 @@ export function acquireLock(): void {
             process.kill(ownerPid, 0);
             alive = true;
           } catch (killErr) {
-            alive = (killErr as NodeJS.ErrnoException).code === "EPERM";
+            alive =
+              isErrnoException(killErr)
+                ? killErr.code === "EPERM"
+                : false;
           }
           if (!alive) {
             const recheck = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
@@ -111,12 +121,22 @@ export function releaseLock(): void {
   try {
     fs.unlinkSync(LOCK_OWNER);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (
+      !isErrnoException(error) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
   }
   try {
     fs.rmSync(LOCK_DIR, { recursive: true, force: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (
+      !isErrnoException(error) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
   }
 }
 
@@ -164,11 +184,15 @@ export function registerSandbox(entry: SandboxEntry): void {
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
       agent: entry.agent || null,
-      dangerouslySkipPermissions:
-        entry.dangerouslySkipPermissions === true ? true : undefined,
+      dangerouslySkipPermissions: entry.dangerouslySkipPermissions === true ? true : undefined,
       agentVersion: entry.agentVersion || null,
+      imageTag: entry.imageTag || null,
       providerCredentialHashes: entry.providerCredentialHashes || undefined,
       messagingChannels: entry.messagingChannels || [],
+      disabledChannels:
+        Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
+          ? [...entry.disabledChannels]
+          : undefined,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;
@@ -225,5 +249,24 @@ export function setDefault(name: string): boolean {
 export function clearAll(): void {
   withLock(() => {
     save({ sandboxes: {}, defaultSandbox: null });
+  });
+}
+
+export function getDisabledChannels(name: string): string[] {
+  const data = load();
+  return data.sandboxes[name]?.disabledChannels ?? [];
+}
+
+export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
+  return withLock(() => {
+    const data = load();
+    const entry = data.sandboxes[name];
+    if (!entry) return false;
+    const current = new Set(entry.disabledChannels ?? []);
+    if (disabled) current.add(channel);
+    else current.delete(channel);
+    entry.disabledChannels = current.size > 0 ? Array.from(current).sort() : undefined;
+    save(data);
+    return true;
   });
 }
