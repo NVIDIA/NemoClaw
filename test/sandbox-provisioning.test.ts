@@ -72,6 +72,19 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
   });
 });
 
+describe("sandbox provisioning: inference provider SSRF allowance (openclaw 4.9 compat)", () => {
+  const src = fs.readFileSync(DOCKERFILE, "utf-8");
+
+  it("openclaw.json provider config opts into allowPrivateNetwork so inference.local resolves", () => {
+    // openclaw 2026.4.9 added a global SSRF guard that blocks .local / .internal
+    // / private-IP hostnames on every model-provider HTTP request. NemoClaw
+    // routes inference at https://inference.local/v1, so without this opt-in
+    // every LLM call inside the sandbox fails closed. The key is the typed
+    // ConfiguredModelProviderRequest.allowPrivateNetwork field upstream.
+    expect(src).toContain("'request': {'allowPrivateNetwork': True}");
+  });
+});
+
 describe("sandbox provisioning: root-owned read-only config (#514)", () => {
   const src = fs.readFileSync(DOCKERFILE, "utf-8");
 
