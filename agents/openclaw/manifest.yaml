@@ -19,7 +19,7 @@ homepage: "https://openclaw.ai"
 install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
-expected_version: "2026.4.2"
+expected_version: "2026.4.9"
 gateway_command: "openclaw gateway run"
 
 # ── Health probe ────────────────────────────────────────────────

@@ -44,9 +44,19 @@ $ nemoclaw my-assistant snapshot list
 $ nemoclaw my-assistant snapshot restore
 ```
 
-To restore a specific snapshot instead of the latest, pass a timestamp or prefix:
+`snapshot list` prints a table of version, name, timestamp, and path. Versions (`v1`, `v2`, ..., `vN`) are computed from the timestamp order, so `vN` is always the newest snapshot.
+
+To tag a snapshot with a human-readable label, pass `--name`:
 
 ```console
+$ nemoclaw my-assistant snapshot create --name before-upgrade
+```
+
+To restore a specific snapshot instead of the latest, pass a version, name, or timestamp prefix:
+
+```console
+$ nemoclaw my-assistant snapshot restore v3
+$ nemoclaw my-assistant snapshot restore before-upgrade
 $ nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
@@ -125,6 +135,31 @@ SOUL.md
 USER.md
 memory/
 ```
+
+## Multi-Agent Deployments
+
+When OpenClaw is configured with multiple named agents, each agent has its own
+workspace directory (`workspace-main/`, `workspace-support/`, `workspace-ops/`,
+and so on — see [Multi-Agent Deployments](workspace-files.md#multi-agent-deployments)).
+
+`nemoclaw <name> snapshot create` automatically discovers every `workspace-*/`
+directory under the sandbox state tree and includes it in the snapshot bundle
+alongside the default `workspace/`. `snapshot restore` re-applies the full
+per-agent set. No manual per-workspace backup pattern is needed.
+
+The sandbox entrypoint ensures every per-agent workspace is backed by the
+persistent `.openclaw-data/` tree (via a symlink from
+`.openclaw/workspace-<name>/`) so state also survives `openshell sandbox restart`.
+
+### Shared files across agents
+
+Files that operators typically want consistent across every per-agent workspace
+(`AGENTS.md`, shared skills, common templates) are **not** synced automatically.
+Each workspace is independent; changes in one don't propagate. Operators that
+need this either copy the shared files explicitly to each workspace after
+editing, or maintain a host-side sync layer. Tracking shared-file tooling
+(shared mount, `workspaces list` command) in
+[#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
 
 ## Next Steps
 

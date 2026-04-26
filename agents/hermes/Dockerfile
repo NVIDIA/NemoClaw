@@ -24,18 +24,23 @@ ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 
 # Copy NemoClaw plugin for Hermes (Python-based)
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
+RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 
 # Copy config generation script and URL-decode proxy
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-generate-config.ts
+RUN chmod 444 /opt/nemoclaw-generate-config.ts
 COPY agents/hermes/decode-proxy.py /usr/local/bin/nemoclaw-decode-proxy
 RUN chmod 755 /usr/local/bin/nemoclaw-decode-proxy
 
 # Copy blueprint (shared infrastructure)
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+# Ensure sandbox user can read blueprint files copied as root
+RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 
 # Copy startup script
+COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
-RUN chmod 755 /usr/local/bin/nemoclaw-start
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
 
 # Build args for config that varies per deployment.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b

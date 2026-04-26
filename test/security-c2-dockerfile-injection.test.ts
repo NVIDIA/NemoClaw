@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -18,7 +17,7 @@ import { spawnSync } from "node:child_process";
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "Dockerfile");
 
-function runPython(src, env = {}) {
+function runPython(src: string, env: Record<string, string | undefined> = {}) {
   return spawnSync("python3", ["-c", src], {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
@@ -28,7 +27,7 @@ function runPython(src, env = {}) {
 }
 
 // Simulate what Docker ARG substitution produces (the VULNERABLE pattern)
-function vulnerableSource(chatUiUrlValue) {
+function vulnerableSource(chatUiUrlValue: string): string {
   return (
     "import json, os, secrets; " +
     "from urllib.parse import urlparse; " +
@@ -39,7 +38,7 @@ function vulnerableSource(chatUiUrlValue) {
 }
 
 // Simulate the FIXED pattern (env var, no source interpolation)
-function fixedSource() {
+function fixedSource(): string {
   return (
     "import json, os, secrets; " +
     "from urllib.parse import urlparse; " +

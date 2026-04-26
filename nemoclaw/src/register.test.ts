@@ -112,6 +112,22 @@ describe("plugin registration", () => {
     expect(logLines.some((line) => line.includes("Provider:  Ollama"))).toBe(true);
     expect(logLines.some((line) => line.includes("Model:     llama3.2:latest"))).toBe(true);
   });
+
+  it("does not treat the provider name as a fallback endpoint", () => {
+    mockedExecFileSync.mockReturnValue(
+      JSON.stringify({
+        provider: "Ollama",
+        model: "llama3.2:latest",
+      }),
+    );
+
+    const api = createMockApi();
+    register(api);
+
+    const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
+    expect(logLines.some((line) => line.includes("Endpoint:  build.nvidia.com"))).toBe(true);
+    expect(logLines.some((line) => line.includes("Endpoint:  Ollama"))).toBe(false);
+  });
 });
 
 describe("before_tool_call secret scanner hook (#1233)", () => {

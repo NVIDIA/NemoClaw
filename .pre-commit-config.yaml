@@ -75,9 +75,9 @@ repos:
     hooks:
       - id: platform-matrix-sync
         name: Sync platform matrix to docs
-        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add README.md docs/get-started/quickstart.md docs/inference/inference-options.md'
+        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add README.md docs/inference/inference-options.md'
         language: system
-        files: ^(ci/platform-matrix\.json|README\.md|docs/get-started/quickstart\.md|docs/inference/inference-options\.md|scripts/generate-platform-docs\.py)$
+        files: ^(ci/platform-matrix\.json|README\.md|docs/inference/inference-options\.md|scripts/generate-platform-docs\.py)$
         pass_filenames: false
         priority: 3
 

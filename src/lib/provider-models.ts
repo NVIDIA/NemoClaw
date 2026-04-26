@@ -20,9 +20,22 @@ export interface ProviderModelOptions {
   authMode?: "bearer" | "query-param";
 }
 
-function parseModelIds(body: string, itemKeys: string[] = ["id"]): string[] {
-  const parsed = JSON.parse(body) as { data?: Array<Record<string, unknown> | null> };
-  if (!Array.isArray(parsed?.data)) {
+type ModelCatalogItem = {
+  id?: string | null;
+  name?: string | null;
+};
+
+type ModelCatalogResponse = {
+  data?: Array<ModelCatalogItem | null>;
+};
+
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+function parseModelIds(body: string, itemKeys: Array<keyof ModelCatalogItem> = ["id"]): string[] {
+  const parsed = parseJson<ModelCatalogResponse>(body);
+  if (!Array.isArray(parsed.data)) {
     throw new Error("Unexpected model catalog response: expected a top-level data array");
   }
   return parsed.data
@@ -41,7 +54,7 @@ function parseModelIds(body: string, itemKeys: string[] = ["id"]): string[] {
 
 function toModelCatalogFetchResult(
   result: CurlProbeResult,
-  itemKeys: string[] = ["id"],
+  itemKeys: Array<keyof ModelCatalogItem> = ["id"],
 ): ModelCatalogFetchResult {
   if (!result.ok) {
     return {
@@ -126,7 +139,10 @@ export function fetchOpenAiLikeModels(
   const useQueryParam = options.authMode === "query-param";
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = `${String(endpointUrl).replace(/\/+$/, "")}/models`;
-  const url = useQueryParam && normalizedKey ? `${baseUrl}?key=${encodeURIComponent(normalizedKey)}` : baseUrl;
+  const url =
+    useQueryParam && normalizedKey
+      ? `${baseUrl}?key=${encodeURIComponent(normalizedKey)}`
+      : baseUrl;
   try {
     const result = runCurlProbeImpl([
       "-sS",

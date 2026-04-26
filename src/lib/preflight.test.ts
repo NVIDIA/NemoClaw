@@ -8,10 +8,20 @@ import { describe, expect, it } from "vitest";
 import {
   assessHost,
   checkPortAvailable,
+  getDockerBridgeGatewayIp,
   getMemoryInfo,
   ensureSwap,
   planHostRemediation,
+  probeContainerDns,
 } from "../../dist/lib/preflight";
+
+function requireMemoryInfo(result: ReturnType<typeof getMemoryInfo>) {
+  expect(result).not.toBeNull();
+  if (!result) {
+    throw new Error("Expected memory info to be present");
+  }
+  return result;
+}
 
 describe("checkPortAvailable", () => {
   it("falls through to the probe when lsof output is empty", async () => {
@@ -99,7 +109,7 @@ describe("checkPortAvailable", () => {
     const result = await checkPortAvailable(8080, {
       skipLsof: true,
       probeImpl: async () => ({
-        ok: true as const,
+        ok: true,
         warning: "port probe skipped: listen EPERM: operation not permitted 127.0.0.1",
       }),
     });
@@ -155,7 +165,7 @@ describe("probePortAvailability", () => {
       probeImpl: async (port: number) => {
         called = true;
         expect(port).toBe(9999);
-        return { ok: true as const };
+        return { ok: true };
       },
     });
     expect(called).toBe(true);
@@ -213,11 +223,10 @@ describe("getMemoryInfo", () => {
       "SwapFree:        4194300 kB",
     ].join("\n");
 
-    const result = getMemoryInfo({ meminfoContent, platform: "linux" });
-    expect(result).not.toBeNull();
-    expect(result!.totalRamMB).toBe(Math.floor(8152056 / 1024));
-    expect(result!.totalSwapMB).toBe(Math.floor(4194300 / 1024));
-    expect(result!.totalMB).toBe(result!.totalRamMB + result!.totalSwapMB);
+    const result = requireMemoryInfo(getMemoryInfo({ meminfoContent, platform: "linux" }));
+    expect(result.totalRamMB).toBe(Math.floor(8152056 / 1024));
+    expect(result.totalSwapMB).toBe(Math.floor(4194300 / 1024));
+    expect(result.totalMB).toBe(result.totalRamMB + result.totalSwapMB);
   });
 
   it("returns correct values when swap is zero", () => {
@@ -228,11 +237,10 @@ describe("getMemoryInfo", () => {
       "SwapFree:              0 kB",
     ].join("\n");
 
-    const result = getMemoryInfo({ meminfoContent, platform: "linux" });
-    expect(result).not.toBeNull();
-    expect(result!.totalRamMB).toBe(Math.floor(8152056 / 1024));
-    expect(result!.totalSwapMB).toBe(0);
-    expect(result!.totalMB).toBe(result!.totalRamMB);
+    const result = requireMemoryInfo(getMemoryInfo({ meminfoContent, platform: "linux" }));
+    expect(result.totalRamMB).toBe(Math.floor(8152056 / 1024));
+    expect(result.totalSwapMB).toBe(0);
+    expect(result.totalMB).toBe(result.totalRamMB);
   });
 
   it("returns null on unsupported platforms", () => {
@@ -253,14 +261,15 @@ describe("getMemoryInfo", () => {
   });
 
   it("handles malformed /proc/meminfo gracefully", () => {
-    const result = getMemoryInfo({
-      meminfoContent: "garbage data\nno fields here",
-      platform: "linux",
-    });
-    expect(result).not.toBeNull();
-    expect(result!.totalRamMB).toBe(0);
-    expect(result!.totalSwapMB).toBe(0);
-    expect(result!.totalMB).toBe(0);
+    const result = requireMemoryInfo(
+      getMemoryInfo({
+        meminfoContent: "garbage data\nno fields here",
+        platform: "linux",
+      }),
+    );
+    expect(result.totalRamMB).toBe(0);
+    expect(result.totalSwapMB).toBe(0);
+    expect(result.totalMB).toBe(0);
   });
 });
 
@@ -301,7 +310,8 @@ describe("assessHost", () => {
         CgroupVersion: "2",
       }),
       readFileImpl: () => '{"default-cgroupns-mode":"private"}',
-      commandExistsImpl: (name: string) => name === "docker" || name === "apt-get" || name === "systemctl",
+      commandExistsImpl: (name: string) =>
+        name === "docker" || name === "apt-get" || name === "systemctl",
       runCaptureImpl: (command: string) => {
         if (command === "command -v apt-get") return "/usr/bin/apt-get";
         if (command === "command -v systemctl") return "/usr/bin/systemctl";
@@ -430,7 +440,9 @@ describe("planHostRemediation", () => {
       notes: [],
     });
 
-    const action = actions.find((entry: { id: string }) => entry.id === "unsupported_runtime_warning");
+    const action = actions.find(
+      (entry: { id: string }) => entry.id === "unsupported_runtime_warning",
+    );
     expect(action).toBeTruthy();
     expect(action?.blocking).toBe(false);
   });
@@ -563,5 +575,224 @@ describe("ensureSwap", () => {
     });
     expect(called).toBe(true);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("probeContainerDns", () => {
+  const BUSYBOX_SUCCESS =
+    "Server:\t\t172.17.0.1\n" +
+    "Address:\t172.17.0.1:53\n" +
+    "\n" +
+    "Non-authoritative answer:\n" +
+    "Name:\tregistry.npmjs.org\n" +
+    "Address: 104.16.26.35\n" +
+    "Address: 104.16.27.35\n";
+
+  const BUSYBOX_FAILURE =
+    ";; connection timed out; no servers could be reached\n";
+
+  it("returns ok when busybox nslookup succeeds", () => {
+    const result = probeContainerDns({ outputOverride: BUSYBOX_SUCCESS });
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBeUndefined();
+  });
+
+  it("flags servers_unreachable when resolver is unreachable (UDP:53 blocked)", () => {
+    // Typical #2101 signature.
+    const result = probeContainerDns({ outputOverride: BUSYBOX_FAILURE });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("servers_unreachable");
+    expect(result.details).toContain("connection timed out");
+  });
+
+  it("flags servers_unreachable on 'no servers could be reached' alone", () => {
+    const result = probeContainerDns({
+      outputOverride: ";; no servers could be reached\n",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("servers_unreachable");
+  });
+
+  it("flags image_pull_failed when docker can't fetch the test image", () => {
+    const pullError =
+      "Unable to find image 'busybox:latest' locally\n" +
+      "latest: Pulling from library/busybox\n" +
+      "docker: Error response from daemon: Head \"https://registry-1.docker.io/v2/library/busybox/manifests/latest\": dial tcp: lookup registry-1.docker.io: no such host.\n";
+    const result = probeContainerDns({ outputOverride: pullError });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("image_pull_failed");
+    expect(result.details).toContain("registry-1.docker.io");
+  });
+
+  it("flags image_pull_failed on pull access denied", () => {
+    const result = probeContainerDns({
+      outputOverride:
+        "docker: Error response from daemon: pull access denied for busybox, repository does not exist.\n",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("image_pull_failed");
+  });
+
+  it("flags resolution_failed for NXDOMAIN-style failures (resolver OK, name unknown)", () => {
+    const result = probeContainerDns({
+      outputOverride:
+        "Server:\t\t1.1.1.1\n" +
+        "Address:\t1.1.1.1:53\n" +
+        "\n" +
+        "** server can't find registry.npmjs.org: NXDOMAIN\n",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("resolution_failed");
+  });
+
+  it("flags no_output when docker run returns empty", () => {
+    const result = probeContainerDns({ outputOverride: "" });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("no_output");
+  });
+
+  it("flags no_output when runCapture returns null", () => {
+    const result = probeContainerDns({ outputOverride: null });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("no_output");
+  });
+
+  it("flags no_output on whitespace-only output (e.g., a killed child)", () => {
+    const result = probeContainerDns({ outputOverride: "  \n\n  \t\n" });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("no_output");
+  });
+
+  it("captures the spawned command for runCapture override", () => {
+    const captured: string[] = [];
+    const result = probeContainerDns({
+      runCaptureImpl: (command) => {
+        captured.push(command);
+        return BUSYBOX_SUCCESS;
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toContain("docker run");
+    expect(captured[0]).toContain("busybox");
+    expect(captured[0]).toContain("registry.npmjs.org");
+  });
+
+  it("allows the command to be overridden", () => {
+    let seen = "";
+    probeContainerDns({
+      command: "echo OVERRIDDEN",
+      runCaptureImpl: (command) => {
+        seen = command;
+        return "Name:\tregistry.npmjs.org\nAddress: 1.2.3.4\n";
+      },
+    });
+    expect(seen).toBe("echo OVERRIDDEN");
+  });
+
+  it("treats thrown runCapture errors as error reason", () => {
+    const result = probeContainerDns({
+      runCaptureImpl: () => {
+        throw new Error("docker daemon unreachable");
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("error");
+    expect(result.details).toContain("docker daemon unreachable");
+  });
+
+  it("truncates long failure details to the last 400 bytes", () => {
+    const huge = "X".repeat(2000) + "real_error_here";
+    const result = probeContainerDns({ outputOverride: huge });
+    expect(result.ok).toBe(false);
+    expect(result.details?.length).toBeLessThanOrEqual(400);
+    expect(result.details).toContain("real_error_here");
+  });
+
+  it("passes a 20s timeout to runCapture (cross-platform via Node)", () => {
+    // The probe bounds itself via Node's spawn-level `timeout` option
+    // rather than a host-side `timeout` binary — portable across Linux /
+    // macOS / Windows / WSL.
+    let seenOpts: { ignoreError?: boolean; timeout?: number } | undefined;
+    probeContainerDns({
+      runCaptureImpl: (_cmd, o) => {
+        seenOpts = o;
+        return BUSYBOX_SUCCESS;
+      },
+    });
+    expect(seenOpts).toBeDefined();
+    expect(seenOpts?.ignoreError).toBe(true);
+    expect(seenOpts?.timeout).toBe(20_000);
+  });
+
+  it("emits a plain `docker run ...` command (no shell-specific wrappers)", () => {
+    let captured = "";
+    probeContainerDns({
+      runCaptureImpl: (command) => {
+        captured = command;
+        return BUSYBOX_SUCCESS;
+      },
+    });
+    expect(captured.startsWith("docker run")).toBe(true);
+    expect(captured.startsWith("timeout ")).toBe(false);
+    expect(captured.startsWith("gtimeout ")).toBe(false);
+  });
+});
+
+describe("getDockerBridgeGatewayIp", () => {
+  it("returns the parsed IPv4 address from docker network inspect", () => {
+    const result = getDockerBridgeGatewayIp(() => "172.17.0.1\n");
+    expect(result).toBe("172.17.0.1");
+  });
+
+  it("returns non-default IPs too (user has changed bip)", () => {
+    const result = getDockerBridgeGatewayIp(() => "10.42.0.1");
+    expect(result).toBe("10.42.0.1");
+  });
+
+  it("returns null for empty output", () => {
+    expect(getDockerBridgeGatewayIp(() => "")).toBeNull();
+    expect(getDockerBridgeGatewayIp(() => null)).toBeNull();
+  });
+
+  it("returns null for garbage / IPv6 / non-IP output", () => {
+    expect(getDockerBridgeGatewayIp(() => "not-an-ip")).toBeNull();
+    expect(getDockerBridgeGatewayIp(() => "fe80::1")).toBeNull();
+    expect(getDockerBridgeGatewayIp(() => "172.17.0")).toBeNull();
+  });
+
+  it("extracts the IPv4 from concatenated dual-stack output (IPv4 first)", () => {
+    // When the bridge has both IPv4 and IPv6 gateways, docker's
+    // {{range .IPAM.Config}}{{.Gateway}}{{end}} template concatenates
+    // them with no separator — we need to pull the v4 out of the blob.
+    const result = getDockerBridgeGatewayIp(() => "172.17.0.1fd00:abcd::1");
+    expect(result).toBe("172.17.0.1");
+  });
+
+  it("extracts the IPv4 from concatenated dual-stack output (IPv6 first)", () => {
+    const result = getDockerBridgeGatewayIp(() => "fd00:abcd::1172.17.0.1");
+    expect(result).toBe("172.17.0.1");
+  });
+
+  it("returns the first IPv4 when multiple are present", () => {
+    const result = getDockerBridgeGatewayIp(() => "10.0.0.1 192.168.1.1");
+    expect(result).toBe("10.0.0.1");
+  });
+
+  it("returns null when runCapture throws", () => {
+    const result = getDockerBridgeGatewayIp(() => {
+      throw new Error("docker: command not found");
+    });
+    expect(result).toBeNull();
+  });
+
+  it("uses the expected docker network inspect command shape", () => {
+    let captured = "";
+    getDockerBridgeGatewayIp((cmd) => {
+      captured = cmd;
+      return "172.17.0.1";
+    });
+    expect(captured).toContain("docker network inspect bridge");
+    expect(captured).toContain("Gateway");
   });
 });

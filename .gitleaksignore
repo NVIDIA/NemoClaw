@@ -1,1 +1,7 @@
 test/e2e/test-inference-routing.sh:generic-api-key:304
+.github/workflows/nightly-e2e.yaml:discord-client-secret:130
+.github/workflows/nightly-e2e.yaml:discord-client-secret:131
+.github/workflows/nightly-e2e.yaml:discord-client-secret:232
+.github/workflows/nightly-e2e.yaml:discord-client-secret:233
+src/lib/sandbox-channels.ts:slack-app-token:69
+test/onboard.test.ts:slack-app-token:5297

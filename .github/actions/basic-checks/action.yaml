@@ -38,6 +38,14 @@ runs:
       shell: bash
       run: npm run build:cli
 
+    - name: Typecheck CLI + tests (strict)
+      # Explicit gate independent of the prek tsc-cli hook's file-pattern filter.
+      # The hook's `files:` scope excludes test/ and src/, which let #2130 +
+      # #2422 interact to ship a strict-mode regression onto main silently.
+      # Running this unconditionally here catches that class of drift.
+      shell: bash
+      run: npm run typecheck:cli
+
     - name: Validate config schemas
       shell: bash
       run: npm run validate:configs

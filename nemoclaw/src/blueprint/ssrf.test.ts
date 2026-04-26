@@ -51,12 +51,24 @@ describe("isPrivateIp", () => {
   it.each([
     "8.8.8.8",
     "1.1.1.1",
-    "203.0.113.1",
     "2607:f8b0:4004:800::200e",
     "2607:f8b0:4004:0800:0000:0000:0000:200e", // fully-expanded IPv6 (no ::)
     "::ffff:8.8.8.8", // IPv4-mapped IPv6 — public
   ])("allows public IP: %s", (ip) => {
     expect(isPrivateIp(ip)).toBe(false);
+  });
+
+  it.each([
+    "192.0.2.1", // TEST-NET-1 (RFC 5737)
+    "198.51.100.1", // TEST-NET-2 (RFC 5737)
+    "203.0.113.1", // TEST-NET-3 (RFC 5737)
+    "192.0.0.1", // IETF protocol assignments (incl. DS-Lite)
+    "64:ff9b::a00:1", // NAT64 well-known, embedding 10.0.0.1
+    "64:ff9b:1::a00:1", // NAT64 local-use
+    "2001::1", // Teredo
+    "2002:0a00:0001::", // 6to4 embedding 10.0.0.1
+  ])("detects translation/reserved range as private: %s", (ip) => {
+    expect(isPrivateIp(ip)).toBe(true);
   });
 
   it("returns false for invalid IP", () => {
