@@ -509,6 +509,19 @@ $ nemoclaw <sandbox> channels remove <telegram|discord|slack>
 `channels add` stores credentials under `~/.nemoclaw/credentials.json` and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
 
+### `nemoclaw <sandbox> config set` refuses a key that does not currently exist
+
+This is intentional.
+The host-side `config set` does not maintain a copy of OpenClaw's config schema, so it cannot tell a typo'd key path apart from a schema-valid path that has not been written yet.
+To make typos visible without blocking documented first-time writes (such as `provider.compatible-endpoint.timeoutSeconds`), it asks before creating a brand-new key.
+
+In an interactive terminal, accept the prompt to proceed.
+
+In non-interactive mode (CI or `NEMOCLAW_NON_INTERACTIVE=1`), pass `--config-accept-new-path` or set `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1`.
+Modifying a key that already exists in the config never triggers this gate.
+
+Numeric path segments are also refused because `config set` only writes plain objects and would silently overwrite array elements; replace the array as a whole with `--value '[...]'` instead.
+
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
 This is expected.
