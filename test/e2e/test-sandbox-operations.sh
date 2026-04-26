@@ -289,9 +289,26 @@ test_sbx_02_connect_chat() {
   require_sandbox "$SANDBOX_A" "TC-SBX-02" || return
 
   log "  Sending one-shot message to agent via SSH (openclaw agent --json)..."
-  local session_id raw
+  local session_id raw ssh_cfg
   session_id="e2e-sbx-02-$(date +%s)-$$"
-  raw=$(sandbox_exec "openclaw agent --agent main --json --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" 2>/dev/null) || true
+  # Use a direct ssh invocation rather than sandbox_exec(): sandbox_exec_for
+  # merges stderr into stdout via 2>&1 so it can log non-zero exits, which
+  # would pollute the JSON document we need to parse below. Drop stderr at
+  # the source so node deprecation warnings (UNDICI-EHPA, etc.) and
+  # progress-bar bytes from openclaw cannot trip up json.load().
+  ssh_cfg="$(mktemp)"
+  if ! openshell sandbox ssh-config "$SANDBOX_A" >"$ssh_cfg" 2>/dev/null; then
+    rm -f "$ssh_cfg"
+    fail "TC-SBX-02: Connect & Chat" "Failed to fetch SSH config for '$SANDBOX_A'"
+    return
+  fi
+  raw=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 -o LogLevel=ERROR \
+    "openshell-${SANDBOX_A}" \
+    "openclaw agent --agent main --json --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
+    2>/dev/null) || true
+  rm -f "$ssh_cfg"
 
   local reply
   reply=$(echo "$raw" | python3 -c "
