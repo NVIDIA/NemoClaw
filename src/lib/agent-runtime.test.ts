@@ -306,4 +306,10 @@ describe("buildManualRecoveryCommand (#2426)", () => {
     const cmd = buildManualRecoveryCommand(null, 18789);
     expect(cmd).toBe("nohup openclaw gateway run --port 18789 >/tmp/gateway.log 2>&1 &");
   });
+
+  it("falls back to openclaw gateway run when gateway_command is whitespace-only (mirrors buildRecoveryScript)", () => {
+    const agent = makeAgent({ gateway_command: "   " });
+    const cmd = buildManualRecoveryCommand(agent, 19000);
+    expect(cmd).toBe("nohup openclaw gateway run --port 19000 >/tmp/gateway.log 2>&1 &");
+  });
 });
