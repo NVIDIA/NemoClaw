@@ -81,7 +81,17 @@ describe("sandbox provisioning: inference provider SSRF allowance (openclaw 4.9 
     // routes inference at https://inference.local/v1, so without this opt-in
     // every LLM call inside the sandbox fails closed. The key is the typed
     // ConfiguredModelProviderRequest.allowPrivateNetwork field upstream.
-    expect(src).toContain("'request': {'allowPrivateNetwork': True}");
+    //
+    // Anchor the literal inside the provider dict by asserting it appears
+    // between 'baseUrl': inference_base_url and the 'models': key in the
+    // python that builds providers. A bare toContain() would match any
+    // unrelated occurrence elsewhere in the Dockerfile.
+    const baseUrlIdx = src.indexOf("'baseUrl': inference_base_url");
+    const requestIdx = src.indexOf("'request': {'allowPrivateNetwork': True}");
+    const modelsIdx = src.indexOf("'models': [{**({'compat'");
+    expect(baseUrlIdx).toBeGreaterThanOrEqual(0);
+    expect(requestIdx).toBeGreaterThan(baseUrlIdx);
+    expect(modelsIdx).toBeGreaterThan(requestIdx);
   });
 });
 
