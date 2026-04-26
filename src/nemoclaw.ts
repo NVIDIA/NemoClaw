@@ -60,6 +60,7 @@ const {
   buildVersionedUninstallUrl,
   runUninstallCommand,
 } = require("./lib/uninstall-command");
+const hostBridge = require("./lib/host-bridge");
 const agentRuntime = require("../bin/lib/agent-runtime");
 
 // ── Global commands ──────────────────────────────────────────────
@@ -1253,6 +1254,279 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+function isMissingHostServiceResult(output = "") {
+  return /\bnot found\b|no such host service|unknown host service/i.test(stripAnsi(output));
+}
+
+function isHostServiceUnsupported(output = "") {
+  return /unknown command 'host-service'|unrecognized subcommand 'host-service'|unexpected argument 'host-service'/i.test(
+    stripAnsi(output),
+  );
+}
+
+function writeHostBridgeEvidenceBundle({
+  paths,
+  operation,
+  sandboxName,
+  policyBefore,
+  policyAfter,
+  registration,
+  details,
+  result = "pending",
+}) {
+  hostBridge.writeHostBridgeEvidence({
+    paths,
+    policyBefore,
+    policyAfter,
+    registration,
+    revertScript: hostBridge.buildHostBridgeRevertScript({
+      operation,
+      sandboxName,
+      policyBeforePath: paths.policyBeforePath,
+      registrationPath: paths.registrationPath,
+    }),
+    validationNotes: hostBridge.formatHostBridgeValidationNotes({
+      operation,
+      sandboxName,
+      result,
+      details,
+    }),
+  });
+}
+
+function updateHostBridgeEvidenceStatus(paths, operation, sandboxName, result, details) {
+  hostBridge.updateHostBridgeValidationNotes(
+    paths.validationNotesPath,
+    hostBridge.formatHostBridgeValidationNotes({
+      operation,
+      sandboxName,
+      result,
+      details,
+    }),
+  );
+}
+
+async function sandboxHostBridgeAdd(sandboxName, bridgeName) {
+  hostBridge.validateHostBridgeName(bridgeName);
+  await ensureLiveSandboxOrExit(sandboxName);
+
+  const policyResult = captureOpenshell(["policy", "get", sandboxName, "--full"]);
+  if (policyResult.status !== 0) {
+    console.error(`  Failed to load current policy for sandbox '${sandboxName}'.`);
+    if (policyResult.output) {
+      console.error(policyResult.output);
+    }
+    process.exit(policyResult.status || 1);
+  }
+
+  const policyBefore = policies.parseCurrentPolicy(policyResult.output) || "version: 1\nnetwork_policies: {}\n";
+  const policyAfter = hostBridge.mergeCodexVersionPolicy(policyBefore);
+  const registration = hostBridge.buildCodexVersionBridgeRegistration(sandboxName);
+  const paths = hostBridge.buildHostBridgeEvidencePaths(sandboxName, "add");
+  const details = [
+    "Proxy-only host service flow; direct --noproxy access must fail before reaching the host bridge.",
+    "OpenShell host-service commands are an upstream dependency and may be unavailable on older builds.",
+  ];
+
+  writeHostBridgeEvidenceBundle({
+    paths,
+    operation: "add",
+    sandboxName,
+    policyBefore,
+    policyAfter,
+    registration,
+    details,
+  });
+
+  const registerResult = captureOpenshell(
+    hostBridge.buildHostServiceRegisterArgs(sandboxName, paths.registrationPath),
+  );
+  if (registerResult.status !== 0) {
+    const errorDetails = [...details];
+    if (isHostServiceUnsupported(registerResult.output)) {
+      errorDetails.push(
+        "OpenShell host-service commands are unavailable in this build; upstream implementation is still required.",
+      );
+    } else {
+      errorDetails.push("OpenShell host-service registration failed before policy apply.");
+    }
+    updateHostBridgeEvidenceStatus(paths, "add", sandboxName, "failed", errorDetails);
+    console.error(`  Failed to register host bridge for sandbox '${sandboxName}'.`);
+    if (registerResult.output) {
+      console.error(registerResult.output);
+    }
+    process.exit(registerResult.status || 1);
+  }
+
+  const policySetResult = runOpenshell(hostBridge.buildPolicySetArgs(sandboxName, paths.policyAfterPath), {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (policySetResult.status !== 0) {
+    const rollbackResult = captureOpenshell(hostBridge.buildHostServiceUnregisterArgs(sandboxName));
+    const errorDetails = [...details, "Sandbox policy apply failed after host-service registration."];
+    if (rollbackResult.status === 0 || isMissingHostServiceResult(rollbackResult.output)) {
+      errorDetails.push("Best-effort rollback unregistered the host service.");
+    } else {
+      errorDetails.push("Best-effort rollback could not unregister the host service cleanly.");
+    }
+    updateHostBridgeEvidenceStatus(paths, "add", sandboxName, "failed", errorDetails);
+    if (policySetResult.stdout) process.stdout.write(policySetResult.stdout);
+    if (policySetResult.stderr) process.stderr.write(policySetResult.stderr);
+    console.error(`  Failed to apply updated policy for sandbox '${sandboxName}'.`);
+    process.exit(policySetResult.status || 1);
+  }
+
+  updateHostBridgeEvidenceStatus(paths, "add", sandboxName, "success", [
+    ...details,
+    "Host service registered and sandbox policy updated.",
+    `Evidence written to ${paths.dir}`,
+  ]);
+  console.log(`  Applied host bridge '${bridgeName}' to sandbox '${sandboxName}'.`);
+  console.log(`  Evidence: ${paths.dir}`);
+}
+
+async function sandboxHostBridgeRemove(sandboxName, bridgeName) {
+  hostBridge.validateHostBridgeName(bridgeName);
+  await ensureLiveSandboxOrExit(sandboxName);
+
+  const policyResult = captureOpenshell(["policy", "get", sandboxName, "--full"]);
+  if (policyResult.status !== 0) {
+    console.error(`  Failed to load current policy for sandbox '${sandboxName}'.`);
+    if (policyResult.output) {
+      console.error(policyResult.output);
+    }
+    process.exit(policyResult.status || 1);
+  }
+
+  const policyBefore = policies.parseCurrentPolicy(policyResult.output) || "version: 1\nnetwork_policies: {}\n";
+  const policyAfter = hostBridge.removeCodexVersionPolicy(policyBefore);
+  const registration = hostBridge.buildCodexVersionBridgeRegistration(sandboxName);
+  const paths = hostBridge.buildHostBridgeEvidencePaths(sandboxName, "remove");
+  const details = [
+    "Removal unregisters the proxy-only host service before restoring the prior policy revision.",
+  ];
+
+  writeHostBridgeEvidenceBundle({
+    paths,
+    operation: "remove",
+    sandboxName,
+    policyBefore,
+    policyAfter,
+    registration,
+    details,
+  });
+
+  const unregisterResult = captureOpenshell(hostBridge.buildHostServiceUnregisterArgs(sandboxName));
+  if (unregisterResult.status !== 0 && !isMissingHostServiceResult(unregisterResult.output)) {
+    const errorDetails = [...details];
+    if (isHostServiceUnsupported(unregisterResult.output)) {
+      errorDetails.push(
+        "OpenShell host-service commands are unavailable in this build; upstream implementation is still required.",
+      );
+    } else {
+      errorDetails.push("OpenShell host-service unregister failed before policy restore.");
+    }
+    updateHostBridgeEvidenceStatus(paths, "remove", sandboxName, "failed", errorDetails);
+    console.error(`  Failed to unregister host bridge for sandbox '${sandboxName}'.`);
+    if (unregisterResult.output) {
+      console.error(unregisterResult.output);
+    }
+    process.exit(unregisterResult.status || 1);
+  }
+
+  const policySetResult = runOpenshell(hostBridge.buildPolicySetArgs(sandboxName, paths.policyAfterPath), {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (policySetResult.status !== 0) {
+    const rollbackResult = captureOpenshell(
+      hostBridge.buildHostServiceRegisterArgs(sandboxName, paths.registrationPath),
+    );
+    const errorDetails = [...details, "Sandbox policy restore failed after host-service unregister."];
+    if (rollbackResult.status === 0) {
+      errorDetails.push("Best-effort rollback re-registered the host service.");
+    } else {
+      errorDetails.push("Best-effort rollback could not re-register the host service cleanly.");
+    }
+    updateHostBridgeEvidenceStatus(paths, "remove", sandboxName, "failed", errorDetails);
+    if (policySetResult.stdout) process.stdout.write(policySetResult.stdout);
+    if (policySetResult.stderr) process.stderr.write(policySetResult.stderr);
+    console.error(`  Failed to restore policy for sandbox '${sandboxName}'.`);
+    process.exit(policySetResult.status || 1);
+  }
+
+  updateHostBridgeEvidenceStatus(paths, "remove", sandboxName, "success", [
+    ...details,
+    "Host service unregistered and bridge policy entry removed.",
+    `Evidence written to ${paths.dir}`,
+  ]);
+  console.log(`  Removed host bridge '${bridgeName}' from sandbox '${sandboxName}'.`);
+  console.log(`  Evidence: ${paths.dir}`);
+}
+
+async function sandboxHostBridgeList(sandboxName, bridgeName = hostBridge.SUPPORTED_HOST_BRIDGE) {
+  hostBridge.validateHostBridgeName(bridgeName);
+  await ensureLiveSandboxOrExit(sandboxName);
+
+  const policyResult = captureOpenshell(["policy", "get", sandboxName, "--full"]);
+  const hostServiceResult = captureOpenshell(hostBridge.buildHostServiceListArgs(sandboxName));
+  const evidenceDirs = hostBridge.listHostBridgeEvidenceDirs(sandboxName);
+  const policyPresent =
+    policyResult.status === 0 && hostBridge.policyHasCodexVersionBridge(policyResult.output);
+
+  console.log("");
+  console.log(`  Host bridge: ${bridgeName}`);
+  console.log(`    Sandbox: ${sandboxName}`);
+  console.log(`    Service: ${hostBridge.CODEX_VERSION_SERVICE_NAME}:${hostBridge.CODEX_VERSION_SERVICE_PORT}`);
+  console.log(`    Target:  ${hostBridge.CODEX_VERSION_TARGET_SCHEME}://${hostBridge.CODEX_VERSION_TARGET_HOST}:${hostBridge.CODEX_VERSION_TARGET_PORT}${hostBridge.CODEX_VERSION_TARGET_PATH}`);
+  console.log(`    Policy:  ${policyPresent ? "present" : "absent"}`);
+  if (hostServiceResult.status === 0) {
+    console.log(`    Host service: available`);
+    if (hostServiceResult.output) {
+      console.log("");
+      console.log(hostServiceResult.output);
+    }
+  } else if (isHostServiceUnsupported(hostServiceResult.output)) {
+    console.log(`    Host service: OpenShell host-service commands unavailable in this build`);
+  } else {
+    console.log(`    Host service: unavailable`);
+    if (hostServiceResult.output) {
+      console.log(`    Detail: ${hostServiceResult.output}`);
+    }
+  }
+  console.log(`    Evidence snapshots: ${evidenceDirs.length}`);
+  if (evidenceDirs.length > 0) {
+    console.log(`    Latest evidence: ${evidenceDirs[0]}`);
+  }
+  console.log("");
+}
+
+async function sandboxHostBridge(sandboxName, args = []) {
+  try {
+    const action = args[0];
+    const bridgeName = args[1] || hostBridge.SUPPORTED_HOST_BRIDGE;
+
+    switch (action) {
+      case "add":
+        await sandboxHostBridgeAdd(sandboxName, bridgeName);
+        break;
+      case "remove":
+        await sandboxHostBridgeRemove(sandboxName, bridgeName);
+        break;
+      case "list":
+        await sandboxHostBridgeList(sandboxName, bridgeName);
+        break;
+      default:
+        console.error("  Usage: nemoclaw <sandbox> host-bridge <add|remove|list> [codex-version]");
+        process.exit(1);
+    }
+  } catch (error) {
+    console.error(`  ${(error && error.message) || String(error)}`);
+    process.exit(1);
+  }
+}
+
 function cleanupSandboxServices(sandboxName) {
   // Stop host services (cloudflared) and clean up PID directory.
   const { stopAll } = require("./lib/services");
@@ -1347,6 +1621,11 @@ function help() {
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset ${D}(--dry-run to preview)${R}
     nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
+
+  ${G}Host Bridges:${R}
+    nemoclaw <name> host-bridge add codex-version
+    nemoclaw <name> host-bridge remove codex-version
+    nemoclaw <name> host-bridge list ${D}[codex-version]${R}
 
   ${G}Compatibility Commands:${R}
     nemoclaw setup                   Deprecated alias for ${B}nemoclaw onboard${R}
@@ -1465,12 +1744,17 @@ const [cmd, ...args] = process.argv.slice(2);
       case "policy-list":
         sandboxPolicyList(cmd);
         break;
+      case "host-bridge":
+        await sandboxHostBridge(cmd, actionArgs);
+        break;
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(
+          `  Valid actions: connect, status, logs, policy-add, policy-list, host-bridge, destroy`,
+        );
         process.exit(1);
     }
     return;

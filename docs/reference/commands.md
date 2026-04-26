@@ -57,6 +57,46 @@ Print the installed NemoClaw CLI version.
 $ nemoclaw --version
 ```
 
+### `nemoclaw <sandbox> host-bridge add codex-version`
+
+Register the proxy-only `codex-bridge.local` host bridge wrapper for a live sandbox, apply the matching sandbox policy entry, and capture evidence under `~/.nemoclaw/state/host-bridges/`.
+This is a NemoClaw-side wrapper only. It still depends on future OpenShell support for:
+
+- `openshell host-service register`
+- `openshell host-service unregister`
+- `openshell host-service list`
+- proxy-only `codex-bridge.local` routing
+- request-id propagation
+- allow/deny audit logging
+
+Hoiku Stage 5 remains blocked until that OpenShell primitive exists.
+The MVP service shape is fixed to `http://codex-bridge.local/codex_version` on port `80`.
+HTTPS/TLS is future work.
+Binary restriction is best-effort unless OpenShell exposes process binary identity at the enforcement point.
+
+```console
+$ nemoclaw my-sandbox host-bridge add codex-version
+```
+
+### `nemoclaw <sandbox> host-bridge remove codex-version`
+
+Unregister the proxy-only host bridge, remove the matching sandbox policy entry, and capture a revert bundle.
+Like `add`, this command wraps future OpenShell `host-service` support rather than implementing proxy routing itself.
+
+```console
+$ nemoclaw my-sandbox host-bridge remove codex-version
+```
+
+### `nemoclaw <sandbox> host-bridge list [codex-version]`
+
+Show the current policy state, host-service availability, and the latest evidence snapshot for the host bridge.
+The generated v1 service shape is fixed to `http://codex-bridge.local/codex_version` on port `80`.
+If the current OpenShell build does not support `host-service`, the command reports that gracefully and leaves Stage 5 marked blocked.
+
+```console
+$ nemoclaw my-sandbox host-bridge list
+```
+
 ### `nemoclaw onboard`
 
 Run the interactive setup wizard (recommended for new installs).
