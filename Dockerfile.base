@@ -152,7 +152,7 @@ RUN printf '%s\n' \
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
 # the base image on push to main, or use workflow_dispatch on base-image.yaml
 # with the openclaw_version input for a one-off build without editing this file.
-ARG OPENCLAW_VERSION=2026.4.2
+ARG OPENCLAW_VERSION=2026.4.9
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 

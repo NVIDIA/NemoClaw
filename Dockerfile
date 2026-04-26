@@ -227,9 +227,9 @@ ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 # Set to "1" to disable device-pairing auth (development/headless only).
 # Default: "0" (device auth enabled — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
-# Unique per build to bust Docker cache for config materialization layers.
+# Unique per build — busts the Docker cache for the token-injection layer
+# so each image gets a fresh gateway auth token.
 # Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
-# Gateway auth token is generated at container startup by the entrypoint.
 ARG NEMOCLAW_BUILD_ID=default
 # Sandbox egress proxy host/port. Defaults match the OpenShell-injected
 # gateway (10.200.0.1:3128). Operators on non-default networks can override
@@ -268,17 +268,9 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
 WORKDIR /sandbox
 USER sandbox
 
-# Write openclaw.json with gateway config but WITHOUT the real auth token.
-# The gateway auth token is generated at container startup by the entrypoint
-# and passed via OPENCLAW_GATEWAY_TOKEN env var only to the gateway process
-# (running as 'gateway' user). The token file location depends on startup mode:
-#   Root mode:     /run/nemoclaw/gateway-token (gateway:gateway 0400)
-#   Non-root mode: $XDG_RUNTIME_DIR/nemoclaw/gateway-token (sandbox:sandbox 0400)
-# In root mode the sandbox user cannot read the env var (/proc/pid/environ is
-# uid-gated) or the file (wrong uid, no-new-privileges blocks escalation).
-# See: scripts/nemoclaw-start.sh generate_gateway_token()
-#
-# This file is immutable at runtime (Landlock read-only on /sandbox/.openclaw).
+# Write openclaw.json with gateway config and a placeholder auth token.
+# The real token is injected in a later layer (see "Inject gateway auth
+# token" below) so this expensive layer stays cached across builds.
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
 # Temporary workaround for NemoClaw#1738: the OpenClaw Discord extension's
@@ -312,7 +304,7 @@ _allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_AL
 _discord_guilds = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_DISCORD_GUILDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
 _token_keys = {'discord': 'token', 'telegram': 'botToken', 'slack': 'botToken'}; \
 _env_keys = {'discord': 'DISCORD_BOT_TOKEN', 'telegram': 'TELEGRAM_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
-_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'appToken': 'openshell:resolve:env:SLACK_APP_TOKEN'} if ch == 'slack' else {}), **({'proxy': proxy_url} if ch in ('telegram', 'discord') else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
+_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, 'healthMonitor': {'enabled': False}, **({'appToken': 'openshell:resolve:env:SLACK_APP_TOKEN'} if ch == 'slack' else {}), **({'proxy': proxy_url} if ch in ('telegram', 'discord') else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
 _ch_cfg['discord'].update({'groupPolicy': 'allowlist', 'guilds': _discord_guilds}) if 'discord' in _ch_cfg and _discord_guilds else None; \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
@@ -364,14 +356,16 @@ os.chmod(path, 0o600)"
 RUN openclaw doctor --fix > /dev/null 2>&1 || true \
     && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
-# SECURITY: Clear any gateway auth token that openclaw doctor/plugins may have
-# auto-generated. The real token is created at container startup by the
-# entrypoint (generate_gateway_token) and never stored in openclaw.json.
-RUN python3 -c "\
-import json, os; \
+# Inject gateway auth token into openclaw.json.
+# NEMOCLAW_BUILD_ID busts the Docker cache so each image gets a unique token.
+# This is the ONLY layer that rebuilds on every build — the expensive
+# doctor/plugins layer above stays cached.
+# openclaw doctor --fix may auto-generate a token; this overwrites it.
+RUN NEMOCLAW_BUILD_ID="${NEMOCLAW_BUILD_ID}" python3 -c "\
+import json, os, secrets; \
 path = os.path.expanduser('~/.openclaw/openclaw.json'); \
 cfg = json.load(open(path)); \
-cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''; \
+cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = secrets.token_hex(32); \
 json.dump(cfg, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
 

@@ -106,9 +106,30 @@ If the Jetson setup step fails, verify that you have `sudo` access and that Dock
 
 For JetPack 6 (L4T 36.x), the setup switches iptables to legacy mode and adjusts the Docker daemon configuration.
 For JetPack 7 (L4T 38.x / Thor), only bridge netfilter and sysctl settings are applied.
-BSP R39 and later do not require host customization and are handled automatically.
+For JetPack 7 (L4T 39.x), bridge netfilter is loaded only when the host is missing it. Some R39 images already ship with `br_netfilter` configured and are left untouched. On affected R39 hosts, the installer prints `loading br_netfilter (required by k3s inside the OpenShell gateway)`. Without this fix, sandbox pods fail DNS resolution against the in-cluster service and the onboard `Setting up OpenClaw inside sandbox` step times out.
 
 If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
+
+### DNS resolution from inside docker fails (corporate firewall)
+
+Some corporate networks block outbound UDP port 53 to public DNS servers and force all host name resolution through DNS over TLS on TCP port 853. Containers do not inherit the host's DNS-over-TLS configuration, so the sandbox build's `npm ci` step times out trying to resolve `registry.npmjs.org` against `1.1.1.1` or `8.8.8.8`.
+
+NemoClaw's preflight runs a short `docker run --rm busybox nslookup registry.npmjs.org` probe before starting the sandbox build. When the probe confirms a DNS failure, onboarding stops with platform-specific remediation instead of hanging for ~15 minutes and printing a cryptic `Exit handler never called`.
+
+The fix depends on your platform and runtime. Pick the matching path from the preflight output, apply it, then re-run `nemoclaw onboard`.
+
+- **Linux with systemd-resolved.** Add a `DNSStubListenerExtra` drop-in pointing at the docker bridge gateway IP (the preflight prints the detected IP), then add the same IP to `/etc/docker/daemon.json` under `dns`. Restart `systemd-resolved` and `docker`.
+- **macOS with Colima.** Restart Colima with the corporate DNS address, for example `colima stop && colima start --dns <corp-dns-ip>`.
+- **macOS with Docker Desktop.** Add the corporate DNS address to `~/.docker/daemon.json` under `dns`, then restart Docker Desktop.
+- **Windows or WSL.** Configure DNS in the Docker Desktop settings GUI, or apply the Linux fix above when running native docker inside WSL.
+
+Verify the fix worked:
+
+```console
+$ docker run --rm busybox nslookup registry.npmjs.org
+```
+
+When the lookup returns an answer, retry onboarding.
 
 ### Port already in use
 
@@ -276,6 +297,44 @@ $ sudo mkswap /swapfile
 $ sudo swapon /swapfile
 $ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 $ nemoclaw onboard
+```
+
+### Previous onboarding session failed
+
+If a previous `nemoclaw onboard` attempt fails partway through (for example, a provider or inference-setup step reporting an error), NemoClaw records the failure in `~/.nemoclaw/onboard-session.json`.
+
+When you re-run the installer, it detects the failed session and does not silently retry it.
+Silent retry would loop on the same failure if your original choice, such as an unreachable provider, was the cause.
+
+- In an interactive terminal, the installer prompts whether to resume the failed session or start fresh.
+  Press `R` (or Enter) to retry the same session, or `f` to discard it and make fresh choices.
+- In non-interactive mode (piped `curl | bash` with `NEMOCLAW_NON_INTERACTIVE=1`, CI, scripts), the installer refuses and exits with a non-zero status so a scripted re-run cannot loop.
+  You must opt in to one of two paths explicitly:
+
+  Start over with new choices (discards the recorded session and provider/model selection):
+
+  ```console
+  $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh
+  ```
+
+  Or equivalently, via env var.
+  The variable must be set on the `bash` side of the pipe, not on `curl`, since only the right-hand process inherits it:
+
+  ```console
+  $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_FRESH=1 bash
+  ```
+
+  Retry the same session without re-prompting.
+  This is only useful if the original failure was transient, for example a network blip or a stopped Docker daemon, and not a wrong provider choice:
+
+  ```console
+  $ nemoclaw onboard --resume
+  ```
+
+As a last resort, you can also delete the session file directly and re-run the installer:
+
+```console
+$ rm ~/.nemoclaw/onboard-session.json
 ```
 
 ## Runtime

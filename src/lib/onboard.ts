@@ -9,7 +9,7 @@ const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execFileSync, spawn, spawnSync } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const pRetry = require("p-retry");
 
 /** Parse a numeric env var, returning `fallback` when unset or non-finite. */
@@ -244,6 +244,7 @@ type OnboardOptions = {
   recreateSandbox?: boolean;
   dangerouslySkipPermissions?: boolean;
   resume?: boolean;
+  fresh?: boolean;
   fromDockerfile?: string | null;
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
@@ -6790,21 +6791,6 @@ function ensureDashboardForward(
   }
 }
 
-function findFileRecursive(dir: string, filename: string): string | null {
-  if (!fs.existsSync(dir)) return null;
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const e of entries) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) {
-      const found = findFileRecursive(p, filename);
-      if (found) return found;
-    } else if (e.name === filename) {
-      return p;
-    }
-  }
-  return null;
-}
-
 function findOpenclawJsonPath(dir: string): string | null {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -6821,64 +6807,13 @@ function findOpenclawJsonPath(dir: string): string | null {
 }
 
 /**
- * Pull gateway auth token from the sandbox.
- *
- * Tries three retrieval paths in order:
- *  1. kubectl exec cat /run/nemoclaw/gateway-token  (root mode — gateway:gateway 0400)
- *  2. sandbox download /tmp/.runtime/nemoclaw/gateway-token  (non-root mode — sandbox:sandbox 0400)
- *  3. sandbox download openclaw.json → gateway.auth.token  (pre-externalization images)
- *
- * Path 1 uses the same kubectl-via-K3s pattern as shields.ts — it runs as
- * root inside the pod so it can read gateway-owned files.
- * Path 2 works because sandbox download runs as the sandbox user, which owns
- * the non-root token file.
+ * Pull gateway.auth.token from the sandbox image via openshell sandbox download
+ * so onboard can print copy-paste Control UI URLs with #token= (same idea as nemoclaw-start.sh).
  */
 function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
-  // 1. Root mode: kubectl exec reads gateway:gateway 0400 file (same as shields.ts)
-  try {
-    const k3sContainer = "openshell-cluster-nemoclaw";
-    const result = execFileSync(
-      "docker",
-      [
-        "exec",
-        k3sContainer,
-        "kubectl",
-        "exec",
-        "-n",
-        "openshell",
-        sandboxName,
-        "-c",
-        "agent",
-        "--",
-        "cat",
-        "/run/nemoclaw/gateway-token",
-      ],
-      { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-    );
-    const token = result.toString().trim();
-    if (token.length > 0) return token;
-  } catch {
-    // kubectl exec not available or file absent — fall through
-  }
-
-  // 2. Non-root mode: token at $XDG_RUNTIME_DIR/nemoclaw/gateway-token
-  // (sandbox-owned, downloadable via openshell sandbox download)
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
   try {
     const destDir = `${tmpDir}${path.sep}`;
-    const nonRootResult = runOpenshell(
-      ["sandbox", "download", sandboxName, "/tmp/.runtime/nemoclaw/gateway-token", destDir],
-      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
-    );
-    if (nonRootResult.status === 0) {
-      const tokenPath = findFileRecursive(tmpDir, "gateway-token");
-      if (tokenPath) {
-        const token = fs.readFileSync(tokenPath, "utf-8").trim();
-        if (token.length > 0) return token;
-      }
-    }
-
-    // 3. Legacy: openclaw.json (pre-externalization images)
     const result = runOpenshell(
       ["sandbox", "download", sandboxName, "/sandbox/.openclaw/openclaw.json", destDir],
       { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
@@ -7144,7 +7079,9 @@ function printDashboard(
     for (const entry of dashboardAccess) {
       console.log(`  ${entry.label}: ${entry.url}`);
     }
-    console.log(`  Token:       see /tmp/gateway.log inside the sandbox, or re-run onboard.`);
+    console.log(
+      `  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
+    );
     console.log(
       `               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`,
     );
@@ -7263,6 +7200,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   }
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
+  const fresh = opts.fresh === true;
+  if (resume && fresh) {
+    console.error("  --resume and --fresh cannot both be set.");
+    process.exit(1);
+  }
   // In non-interactive mode also accept the env var so CI pipelines can set it.
   // This is the explicitly requested value; on resume it may be absent and the
   // session-recorded path is used instead (see below).
@@ -7283,7 +7225,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   // problem: an unsupported provider value.
   getRequestedProviderHint();
   const lockResult = onboardSession.acquireOnboardLock(
-    `nemoclaw onboard${resume ? " --resume" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
+    `nemoclaw onboard${resume ? " --resume" : ""}${fresh ? " --fresh" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
   );
   if (!lockResult.acquired) {
     console.error("  Another NemoClaw onboarding run is already in progress.");
@@ -7375,6 +7317,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       });
       session = onboardSession.loadSession();
     } else {
+      // --fresh asks for an explicit fresh start. createSession + saveSession
+      // already overwrites any existing file, but clearing first removes the
+      // old file outright so an interrupted createSession cannot leave the
+      // previous session readable on disk.
+      if (fresh) {
+        onboardSession.clearSession();
+      }
       fromDockerfile = requestedFromDockerfile ? path.resolve(requestedFromDockerfile) : null;
       session = onboardSession.saveSession(
         onboardSession.createSession({
