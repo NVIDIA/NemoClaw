@@ -1551,6 +1551,17 @@ function patchStagedDockerfile(
       `ARG NEMOCLAW_REASONING=${reasoning}`,
     );
   }
+  // Honor NEMOCLAW_INFERENCE_INPUTS for vision-capable models. OpenClaw's
+  // model schema currently accepts "text" and "image" only, so validate
+  // strictly against that vocabulary. Adding modalities to OpenClaw later
+  // only requires widening this regex. See #2421.
+  const inferenceInputs = process.env.NEMOCLAW_INFERENCE_INPUTS;
+  if (inferenceInputs && /^(text|image)(,(text|image))*$/.test(inferenceInputs)) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_INFERENCE_INPUTS=.*$/m,
+      `ARG NEMOCLAW_INFERENCE_INPUTS=${inferenceInputs}`,
+    );
+  }
   // NEMOCLAW_AGENT_TIMEOUT — override agents.defaults.timeoutSeconds at build
   // time. Lets users increase the per-request inference timeout without
   // editing the Dockerfile. Ref: issue #2281
