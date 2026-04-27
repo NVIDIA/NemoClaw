@@ -7354,12 +7354,18 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     // a mismatch between the recorded config and the current env value as drift
     // so the reuse path forces a recreate (mirrors webSearchConfigChanged). See
     // #1737 and the CodeRabbit review on #2417.
+    //
+    // Compare *effective* modes — null and false both produce groupPolicy: open
+    // at config-generation time (default behavior), so they collapse to the same
+    // bucket here. Without this, a sandbox built before TELEGRAM_REQUIRE_MENTION
+    // existed (recordedTelegramRequireMention === null) would be reused with the
+    // old groupPolicy: open even after the user sets TELEGRAM_REQUIRE_MENTION=1,
+    // and vice versa.
     const currentTelegramRequireMention = computeTelegramRequireMention();
     const recordedTelegramRequireMention = session?.telegramConfig?.requireMention ?? null;
-    const telegramConfigChanged =
-      currentTelegramRequireMention !== null &&
-      recordedTelegramRequireMention !== null &&
-      currentTelegramRequireMention !== recordedTelegramRequireMention;
+    const effectiveCurrent = currentTelegramRequireMention ?? false;
+    const effectiveRecorded = recordedTelegramRequireMention ?? false;
+    const telegramConfigChanged = effectiveCurrent !== effectiveRecorded;
     const resumeSandbox =
       resume &&
       !webSearchConfigChanged &&
