@@ -286,7 +286,7 @@ describe("shouldSkipResponsesProbe", () => {
 
   it("does not skip the Responses probe for other providers", () => {
     expect(shouldSkipResponsesProbe("openai-api")).toBe(false);
-    expect(shouldSkipResponsesProbe("anthropic-api")).toBe(false);
+    expect(shouldSkipResponsesProbe("anthropic-prod")).toBe(false);
     expect(shouldSkipResponsesProbe("compatible-endpoint")).toBe(false);
     expect(shouldSkipResponsesProbe("")).toBe(false);
   });
