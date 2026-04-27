@@ -94,6 +94,20 @@ function clearPersistedProxyPid(): void {
 
 // ── Process management ───────────────────────────────────────────
 
+/**
+ * Verify that the running proxy accepts the given token.
+ * /v1/models is an authenticated endpoint (unlike /api/tags which is exempt),
+ * so a 200 response confirms the token matches what the proxy was started with.
+ */
+function isProxyTokenValid(token: string): boolean {
+  const result = spawnSync(
+    "curl",
+    ["-sf", "--max-time", "3", "-H", `Authorization: Bearer ${token}`, `http://localhost:${OLLAMA_PROXY_PORT}/v1/models`],
+    { encoding: "utf8" },
+  );
+  return result.status === 0;
+}
+
 function isOllamaProxyProcess(pid: number | null | undefined): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   const cmdline = runCapture(["ps", "-p", String(pid), "-o", "args="], { ignoreError: true });
@@ -168,6 +182,12 @@ function startOllamaAuthProxy(): boolean {
 /**
  * Ensure the auth proxy is running — called on sandbox connect to recover
  * from host reboots where the background proxy process was lost.
+ *
+ * Also handles token divergence: if the proxy is running but was started with
+ * a different token than what is persisted on disk (which can happen when
+ * multiple onboard runs occur without the proxy being restarted in between),
+ * the proxy is killed and restarted with the persisted token so the sandbox
+ * credential and the proxy stay in sync.
  */
 function ensureOllamaAuthProxy(): void {
   // Try to load persisted token first — if none, this isn't an Ollama setup.
@@ -175,12 +195,12 @@ function ensureOllamaAuthProxy(): void {
   if (!token) return;
 
   const pid = loadPersistedProxyPid();
-  if (isOllamaProxyProcess(pid)) {
+  if (isOllamaProxyProcess(pid) && isProxyTokenValid(token)) {
     ollamaProxyToken = token;
     return;
   }
 
-  // Proxy not running — restart it with the persisted token.
+  // Proxy not running, or running with a stale token — restart with the persisted token.
   killStaleProxy();
   ollamaProxyToken = token;
   spawnOllamaAuthProxy(token);
