@@ -192,6 +192,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # Copy startup script and shared sandbox initialisation library
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
+COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
 
 # Build args for config that varies per deployment.
@@ -228,8 +229,10 @@ ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).
 # Used to enable guild-channel responses for native Discord. Default: empty map.
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
-# Set to "1" to disable device-pairing auth (development/headless only).
-# Default: "0" (device auth enabled — secure by default).
+# Set to "1" to force-disable device-pairing auth. Also auto-disabled when
+# CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
+# since terminal-based pairing is impossible in those contexts.
+# Default: "0" (device auth enabled for local deployments — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
 # Unique per build — busts the Docker cache for the token-injection layer
 # so each image gets a fresh gateway auth token.
@@ -288,75 +291,10 @@ USER sandbox
 # the OpenShell proxy. Mirror of the Telegram treatment immediately below.
 # Remove once OpenClaw lands an env-var-honouring fix for the Discord
 # gateway equivalent to openclaw/openclaw#62878 (Slack Socket Mode).
-RUN python3 -c "\
-import base64, json, os; \
-from urllib.parse import urlparse; \
-proxy_url = f\"http://{os.environ['NEMOCLAW_PROXY_HOST']}:{os.environ['NEMOCLAW_PROXY_PORT']}\"; \
-model = os.environ['NEMOCLAW_MODEL']; \
-chat_ui_url = os.environ['CHAT_UI_URL']; \
-provider_key = os.environ['NEMOCLAW_PROVIDER_KEY']; \
-primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
-inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
-inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
-context_window = int(os.environ.get('NEMOCLAW_CONTEXT_WINDOW', '131072')); \
-max_tokens = int(os.environ.get('NEMOCLAW_MAX_TOKENS', '4096')); \
-reasoning = os.environ.get('NEMOCLAW_REASONING', 'false') == 'true'; \
-inference_inputs = [v.strip() for v in os.environ.get('NEMOCLAW_INFERENCE_INPUTS', 'text').split(',') if v.strip()] or ['text']; \
-_raw_agent_timeout = os.environ.get('NEMOCLAW_AGENT_TIMEOUT', '600'); \
-agent_timeout = int(_raw_agent_timeout) if _raw_agent_timeout.isdigit() and int(_raw_agent_timeout) > 0 else (_ for _ in ()).throw(ValueError('NEMOCLAW_AGENT_TIMEOUT must be a positive integer')); \
-inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
-msg_channels = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_CHANNELS_B64', 'W10=') or 'W10=').decode('utf-8')); \
-_allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_ALLOWED_IDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
-_discord_guilds = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_DISCORD_GUILDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
-_token_keys = {'discord': 'token', 'telegram': 'botToken', 'slack': 'botToken'}; \
-_env_keys = {'discord': 'DISCORD_BOT_TOKEN', 'telegram': 'TELEGRAM_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
-_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, 'healthMonitor': {'enabled': False}, **({'appToken': 'openshell:resolve:env:SLACK_APP_TOKEN'} if ch == 'slack' else {}), **({'proxy': proxy_url} if ch in ('telegram', 'discord') else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
-_ch_cfg['discord'].update({'groupPolicy': 'allowlist', 'guilds': _discord_guilds}) if 'discord' in _ch_cfg and _discord_guilds else None; \
-parsed = urlparse(chat_ui_url); \
-chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
-origins = ['http://127.0.0.1:18789']; \
-origins = list(dict.fromkeys(origins + [chat_origin])); \
-disable_device_auth = os.environ.get('NEMOCLAW_DISABLE_DEVICE_AUTH', '') == '1'; \
-allow_insecure = parsed.scheme == 'http'; \
-providers = { \
-    provider_key: { \
-        'baseUrl': inference_base_url, \
-        'apiKey': 'unused', \
-        'api': inference_api, \
-        'models': [{**({'compat': inference_compat} if inference_compat else {}), 'id': model, 'name': primary_model_ref, 'reasoning': reasoning, 'input': inference_inputs, 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': context_window, 'maxTokens': max_tokens}] \
-    } \
-}; \
-config = { \
-    'agents': {'defaults': {'model': {'primary': primary_model_ref}, 'timeoutSeconds': agent_timeout}}, \
-    'models': {'mode': 'merge', 'providers': providers}, \
-    'channels': {'defaults': {}, **_ch_cfg}, \
-    'update': {'checkOnStart': False}, \
-    'gateway': { \
-        'mode': 'local', \
-        'controlUi': { \
-            'allowInsecureAuth': allow_insecure, \
-            'dangerouslyDisableDeviceAuth': disable_device_auth, \
-            'allowedOrigins': origins, \
-        }, \
-        'trustedProxies': ['127.0.0.1', '::1'], \
-        'auth': {'token': ''} \
-    } \
-}; \
-config.update({ \
-    'tools': { \
-        'web': { \
-            'search': { \
-                'enabled': True, \
-                'provider': 'brave', \
-                'apiKey': 'openshell:resolve:env:BRAVE_API_KEY' \
-            }, \
-            'fetch': {'enabled': True} \
-        } \
-    } \
-}) if os.environ.get('NEMOCLAW_WEB_SEARCH_ENABLED', '') == '1' else None; \
-path = os.path.expanduser('~/.openclaw/openclaw.json'); \
-json.dump(config, open(path, 'w'), indent=2); \
-os.chmod(path, 0o600)"
+# Generate openclaw.json from environment variables. Config generation logic
+# lives in scripts/generate-openclaw-config.py — see that file for the full
+# list of env vars and derivation rules.
+RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 
 # Install NemoClaw plugin into OpenClaw
 RUN openclaw doctor --fix > /dev/null 2>&1 || true \
