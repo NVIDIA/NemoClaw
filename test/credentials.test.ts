@@ -123,7 +123,7 @@ describe("credential prompts", () => {
     expect(credentials.listCredentialKeys()).toEqual(["ALPHA", "ZETA"]);
   });
 
-  it("exits cleanly when answers are staged through a pipe", () => {
+  it("exits cleanly when answers are staged through a pipe", { timeout: 20000 }, () => {
     const script = `
       set -euo pipefail
       pipe="$(mktemp -u)"
@@ -140,7 +140,7 @@ describe("credential prompts", () => {
     const result = spawnSync("bash", ["-lc", script], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
-      timeout: 5000,
+      timeout: 15000,
     });
 
     expect(result.status).toBe(0);

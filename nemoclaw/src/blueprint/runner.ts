@@ -20,6 +20,7 @@ import { join, sep } from "node:path";
 import { execa } from "execa";
 import YAML from "yaml";
 
+import { metrics } from "../observability/metrics.js";
 import { validateEndpointUrl } from "./ssrf.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { DASHBOARD_PORT } from "../lib/ports.js";
@@ -260,6 +261,15 @@ async function openshellAvailable(): Promise<boolean> {
   return result.exitCode === 0;
 }
 
+async function validateEndpointForMetrics(
+  endpointUrl: string,
+  source: "override" | "blueprint",
+): ReturnType<typeof validateEndpointUrl> {
+  return await metrics.observeOperation("api_validation", { kind: "endpoint_url", source }, () =>
+    validateEndpointUrl(endpointUrl),
+  );
+}
+
 /**
  * Resolve inference config and sandbox config from a blueprint, applying
  * endpoint URL override and SSRF validation if provided.
@@ -281,7 +291,7 @@ async function resolveRunConfig(
 
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {
-    const validated = await validateEndpointUrl(endpointUrl);
+    const validated = await validateEndpointForMetrics(endpointUrl, "override");
     // Use DNS-pinned URL for HTTP (full SSRF/rebinding protection). For HTTPS,
     // keep the original hostname — TLS certificate validation prevents rebinding
     // since the attacker cannot present a valid cert for the target.
@@ -291,7 +301,7 @@ async function resolveRunConfig(
 
   // Validate the final endpoint (whether from CLI override or blueprint profile)
   if (inferenceCfg.endpoint) {
-    const validated = await validateEndpointUrl(inferenceCfg.endpoint);
+    const validated = await validateEndpointForMetrics(inferenceCfg.endpoint, "blueprint");
     const safe = inferenceCfg.endpoint.startsWith("https:") ? validated.url : validated.pinnedUrl;
     inferenceCfg = { ...inferenceCfg, endpoint: safe };
   }
@@ -322,6 +332,16 @@ export interface RunPlan {
 }
 
 export async function actionPlan(
+  profile: string,
+  blueprint: Blueprint,
+  options?: { dryRun?: boolean; endpointUrl?: string },
+): Promise<RunPlan> {
+  return await metrics.observeOperation("blueprint_execution", { action: "plan" }, () =>
+    actionPlanImpl(profile, blueprint, options),
+  );
+}
+
+async function actionPlanImpl(
   profile: string,
   blueprint: Blueprint,
   options?: { dryRun?: boolean; endpointUrl?: string },
@@ -371,6 +391,16 @@ export async function actionApply(
   blueprint: Blueprint,
   options?: { planPath?: string; endpointUrl?: string },
 ): Promise<void> {
+  await metrics.observeOperation("blueprint_execution", { action: "apply" }, () =>
+    actionApplyImpl(profile, blueprint, options),
+  );
+}
+
+async function actionApplyImpl(
+  profile: string,
+  blueprint: Blueprint,
+  options?: { planPath?: string; endpointUrl?: string },
+): Promise<void> {
   if (options?.planPath) {
     throw new Error(
       "--plan is not yet implemented. Run apply without --plan to use the live blueprint.",
@@ -403,14 +433,16 @@ export async function actionApply(
     createArgs.push("--forward", String(port));
   }
 
-  const createResult = await runCmd(createArgs, { reject: false });
-  if (createResult.exitCode !== 0) {
-    if (createResult.stderr.includes("already exists")) {
-      log(`Sandbox '${sandboxName}' already exists, reusing.`);
-    } else {
-      throw new Error(`Failed to create sandbox: ${createResult.stderr}`);
+  await metrics.observeOperation("sandbox_lifecycle", { operation: "create" }, async () => {
+    const createResult = await runCmd(createArgs, { reject: false });
+    if (createResult.exitCode !== 0) {
+      if (createResult.stderr.includes("already exists")) {
+        log(`Sandbox '${sandboxName}' already exists, reusing.`);
+      } else {
+        throw new Error(`Failed to create sandbox: ${createResult.stderr}`);
+      }
     }
-  }
+  });
 
   progress(50, "Configuring inference provider");
   const providerName = inferenceCfg.provider_name ?? "default";

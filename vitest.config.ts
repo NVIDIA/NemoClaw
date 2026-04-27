@@ -3,6 +3,16 @@
 
 import { defineConfig } from "vitest/config";
 
+const runInstallerIntegration =
+  process.env.CI === "true" ||
+  process.env.CI === "1" ||
+  process.env.NEMOCLAW_RUN_INSTALLER_TESTS === "1";
+const runBrevE2e =
+  !!process.env.BREV_API_TOKEN &&
+  (process.env.CI === "true" ||
+    process.env.CI === "1" ||
+    process.env.NEMOCLAW_RUN_BREV_E2E === "1");
+
 export default defineConfig({
   test: {
     projects: [
@@ -19,34 +29,38 @@ export default defineConfig({
           ],
         },
       },
-      {
-        test: {
-          name: "installer-integration",
-          include: [
-            "test/install-preflight.test.ts",
-            "test/install-openshell-version-check.test.ts",
-          ],
-          // Slow tests that spawn real bash install.sh processes.
-          // Run in CI or explicitly: npx vitest run --project installer-integration
-          // Excluded from pre-commit/pre-push to avoid flaky timeouts.
-          enabled: process.env.CI === "true" || process.env.CI === "1" ||
-            process.env.NEMOCLAW_RUN_INSTALLER_TESTS === "1",
-        },
-      },
+      // Installer integration tests spawn real install scripts and may clone from GitHub.
+      // Keep them out of the default local suite unless CI or an explicit env opt-in asks for them.
+      ...(runInstallerIntegration
+        ? [
+            {
+              test: {
+                name: "installer-integration",
+                include: [
+                  "test/install-preflight.test.ts",
+                  "test/install-openshell-version-check.test.ts",
+                ],
+              },
+            },
+          ]
+        : []),
       {
         test: {
           name: "plugin",
           include: ["nemoclaw/src/**/*.test.ts"],
         },
       },
-      {
-        test: {
-          name: "e2e-brev",
-          include: ["test/e2e/brev-e2e.test.ts"],
-          // Only run when explicitly targeted: npx vitest run --project e2e-brev
-          enabled: !!process.env.BREV_API_TOKEN,
-        },
-      },
+      // Brev E2E provisions cloud instances, so it also requires an explicit opt-in.
+      ...(runBrevE2e
+        ? [
+            {
+              test: {
+                name: "e2e-brev",
+                include: ["test/e2e/brev-e2e.test.ts"],
+              },
+            },
+          ]
+        : []),
     ],
     coverage: {
       provider: "v8",

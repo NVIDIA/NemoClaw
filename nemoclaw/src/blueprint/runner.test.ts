@@ -79,6 +79,7 @@ vi.mock("./ssrf.js", () => ({
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 
+const { metrics } = await import("../observability/metrics.js");
 const { emitRunId, loadBlueprint, actionPlan, actionApply, actionStatus, actionRollback, main } =
   await import("./runner.js");
 
@@ -135,6 +136,8 @@ describe("runner", () => {
     stdoutChunks.length = 0;
     vi.clearAllMocks();
     delete process.env.NEMOCLAW_BLUEPRINT_PATH;
+    delete process.env.NEMOCLAW_METRICS_ENABLED;
+    metrics.reset();
   });
 
   afterEach(() => {
@@ -379,6 +382,38 @@ describe("runner", () => {
       expect(out).toContain("PROGRESS:10:Validating blueprint");
       expect(out).toContain("PROGRESS:100:Plan complete");
     });
+
+    it("records blueprint and endpoint validation metrics when enabled", async () => {
+      process.env.NEMOCLAW_METRICS_ENABLED = "true";
+      captureStdout();
+      mockExeca.mockResolvedValue({ exitCode: 0 });
+
+      await actionPlan("default", minimalBlueprint());
+
+      const output = metrics.renderPrometheus();
+      expect(output).toContain('blueprint_execution_total{action="plan",status="success"} 1');
+      expect(output).toContain(
+        'blueprint_execution_duration_seconds_count{action="plan",status="success"} 1',
+      );
+      expect(output).toContain(
+        'api_validation_total{kind="endpoint_url",source="blueprint",status="success"} 1',
+      );
+    });
+
+    it("records failed endpoint validation metrics when enabled", async () => {
+      process.env.NEMOCLAW_METRICS_ENABLED = "true";
+      captureStdout();
+      mockExeca.mockResolvedValue({ exitCode: 0 });
+      mockedValidateEndpoint.mockRejectedValueOnce(new Error("SSRF blocked"));
+
+      await expect(actionPlan("default", minimalBlueprint())).rejects.toThrow("SSRF blocked");
+
+      const output = metrics.renderPrometheus();
+      expect(output).toContain('blueprint_execution_total{action="plan",status="error"} 1');
+      expect(output).toContain(
+        'api_validation_total{kind="endpoint_url",source="blueprint",status="error"} 1',
+      );
+    });
   });
 
   describe("actionApply", () => {
@@ -495,6 +530,19 @@ describe("runner", () => {
       expect(out).toContain("PROGRESS:70:Setting inference route");
       expect(out).toContain("PROGRESS:85:Saving run state");
       expect(out).toContain("PROGRESS:100:Apply complete");
+    });
+
+    it("records sandbox lifecycle metrics when enabled", async () => {
+      process.env.NEMOCLAW_METRICS_ENABLED = "true";
+
+      await actionApply("default", minimalBlueprint());
+
+      const output = metrics.renderPrometheus();
+      expect(output).toContain('blueprint_execution_total{action="apply",status="success"} 1');
+      expect(output).toContain('sandbox_lifecycle_total{operation="create",status="success"} 1');
+      expect(output).toContain(
+        'sandbox_lifecycle_duration_seconds_count{operation="create",status="success"} 1',
+      );
     });
 
     it("uses defaults when profile fields are missing", async () => {

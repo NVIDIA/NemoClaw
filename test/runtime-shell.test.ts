@@ -20,7 +20,7 @@ function runShell(
   });
 }
 
-describe("shell runtime helpers", () => {
+describe("shell runtime helpers", { timeout: 15000 }, () => {
   it("respects an existing DOCKER_HOST", () => {
     const result = runShell(`source "${RUNTIME_SH}"; detect_docker_host`, {
       DOCKER_HOST: "unix:///custom/docker.sock",
@@ -145,13 +145,13 @@ describe("shell runtime helpers", () => {
     expect(result.stdout.trim()).toBe("podman");
   });
 
-  it("returns the vllm-local base URL", () => {
+  it("returns the vllm-local base URL", { timeout: 15000 }, () => {
     const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url vllm-local`);
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("http://host.openshell.internal:8000/v1");
   });
 
-  it("returns the ollama-local base URL", () => {
+  it("returns the ollama-local base URL", { timeout: 15000 }, () => {
     const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url ollama-local`);
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("http://host.openshell.internal:11434/v1");

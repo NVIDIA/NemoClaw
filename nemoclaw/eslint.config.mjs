@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 import tseslint from "@typescript-eslint/eslint-plugin";
 import tsparser from "@typescript-eslint/parser";
 import prettier from "eslint-config-prettier";
@@ -10,6 +13,9 @@ export default [
       parserOptions: {
         projectService: {
           allowDefaultProject: ["src/*.test.ts", "src/*/*.test.ts"],
+          // Co-located plugin tests intentionally live outside the build tsconfig.
+          // Keep full-repo lint viable while preserving type-aware test linting.
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 64,
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -20,10 +26,7 @@ export default [
     rules: {
       ...tseslint.configs["strict-type-checked"]?.rules,
       "@typescript-eslint/no-explicit-any": "error",
-      "@typescript-eslint/no-unused-vars": [
-        "error",
-        { argsIgnorePattern: "^_" },
-      ],
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/no-require-imports": "error",
       "@typescript-eslint/consistent-type-imports": "error",

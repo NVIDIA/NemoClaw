@@ -18,6 +18,8 @@ import {
   describeOnboardProvider,
   loadOnboardConfig,
 } from "./onboard/config.js";
+import { isMetricsEnabled, metrics } from "./observability/metrics.js";
+import { startMetricsServer, type MetricsServer } from "./observability/server.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
 
 type PluginScalar = string | number | boolean | null | undefined;
@@ -330,7 +332,43 @@ export default function register(api: OpenClawPluginApi): void {
     handler: (ctx) => handleSlashCommand(ctx, api),
   });
 
-  // 2. Register nvidia-nim provider — use onboard config if available
+  // 2. Register optional Prometheus-compatible metrics endpoint (#233)
+  if (isMetricsEnabled()) {
+    let metricsServer: MetricsServer | undefined;
+    api.registerService({
+      id: "nemoclaw-metrics",
+      start: async ({ logger }) => {
+        try {
+          metricsServer = await startMetricsServer({ registry: metrics, logger });
+        } catch (error) {
+          logger.warn(
+            `[OBSERVABILITY] Could not start NemoClaw metrics endpoint: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      },
+      stop: async ({ logger }) => {
+        if (!metricsServer) {
+          return;
+        }
+        try {
+          await metricsServer.close();
+          logger.info("NemoClaw metrics endpoint stopped");
+        } catch (error) {
+          logger.warn(
+            `[OBSERVABILITY] Could not stop NemoClaw metrics endpoint cleanly: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        } finally {
+          metricsServer = undefined;
+        }
+      },
+    });
+  }
+
+  // 3. Register nvidia-nim provider — use onboard config if available
   const onboardCfg = loadOnboardConfig();
 
   // Prefer onboard config; fall back to live OpenShell inference state when
@@ -356,7 +394,7 @@ export default function register(api: OpenClawPluginApi): void {
   const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
   api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv, probedModel));
 
-  // 3. Register before_tool_call hook to block secrets in memory writes (#1233)
+  // 4. Register before_tool_call hook to block secrets in memory writes (#1233)
   // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract
   // (PluginHookBeforeToolCallEvent/Result in openclaw/src/plugins/types.ts).
   // If the hook name or return shape changes in a future OpenClaw release,

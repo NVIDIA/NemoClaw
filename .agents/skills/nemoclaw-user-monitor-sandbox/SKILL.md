@@ -8,6 +8,10 @@ description: "Inspects sandbox health, traces agent behavior, and diagnoses prob
 
 # Monitor NemoClaw Sandbox Activity and Debug Issues
 
+## Gotchas
+
+- The `/metrics` endpoint is unauthenticated.
+
 ## Prerequisites
 
 - A running NemoClaw sandbox.
@@ -50,7 +54,42 @@ To follow the log output in real time:
 $ nemoclaw <name> logs --follow
 ```
 
-## Step 3: Monitor Network Activity in the TUI
+## Step 3: Export Prometheus Metrics
+
+NemoClaw can expose lightweight Prometheus-format metrics for blueprint execution, API validation, and sandbox lifecycle operations.
+Metrics are disabled by default.
+
+Set the following environment variable before starting the OpenClaw process that loads the NemoClaw plugin:
+
+```console
+$ export NEMOCLAW_METRICS_ENABLED=true
+```
+
+The metrics endpoint listens on `127.0.0.1:9090` by default:
+
+```console
+$ curl http://127.0.0.1:9090/metrics
+```
+
+> **Warning:** The `/metrics` endpoint is unauthenticated. If `NEMOCLAW_METRICS_HOST` binds beyond
+> loopback, any host or network that can reach
+> `NEMOCLAW_METRICS_HOST:NEMOCLAW_METRICS_PORT/metrics` may scrape operational metadata
+> about blueprint execution, API validation, and sandbox lifecycle activity. Prefer
+> scraping over a secured network, restrict access with firewall rules, or keep
+> `NEMOCLAW_METRICS_HOST` bound to loopback and expose `/metrics` through a secured proxy.
+
+Use `NEMOCLAW_METRICS_PORT` to select another port, or `NEMOCLAW_METRICS_HOST` to bind to a different interface when your deployment needs remote scraping.
+The endpoint serves only `/metrics`; other paths return `404`.
+
+Example metric families include:
+
+```text
+blueprint_execution_total{action="apply",profile="default",status="success"} 1
+api_validation_total{kind="endpoint_url",source="blueprint",status="success"} 1
+sandbox_lifecycle_total{operation="create",status="success"} 1
+```
+
+## Step 4: Monitor Network Activity in the TUI
 
 Open the OpenShell terminal UI for a live view of sandbox network activity and egress requests:
 
@@ -68,7 +107,7 @@ The TUI shows the following information:
 
 Refer to Approve or Deny Agent Network Requests (use the `nemoclaw-user-manage-policy` skill) for details on handling blocked requests.
 
-## Step 4: Test Inference
+## Step 5: Test Inference
 
 Run a test inference request to verify that the provider is responding:
 

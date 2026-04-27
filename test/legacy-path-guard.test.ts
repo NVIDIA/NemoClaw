@@ -9,7 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
+const TSX_LOADER = "tsx";
 const GUARD_SCRIPT = path.join(REPO_ROOT, "scripts", "check-legacy-migrated-paths.ts");
 
 function run(command: string, args: string[], cwd: string) {
@@ -49,11 +49,20 @@ describe("ts-migration:guard", () => {
       fs.mkdirSync(path.dirname(renamedPath), { recursive: true });
       run("git", ["mv", "bin/lib/runner.js", "tmp/runner.js"], repoDir);
       run("git", ["commit", "-m", "rename shim"], repoDir);
+      fs.symlinkSync(
+        path.join(REPO_ROOT, "node_modules"),
+        path.join(repoDir, "node_modules"),
+        "dir",
+      );
 
-      const result = spawnSync(TSX, [GUARD_SCRIPT, "--base", "main", "--head", "HEAD"], {
-        cwd: repoDir,
-        encoding: "utf-8",
-      });
+      const result = spawnSync(
+        process.execPath,
+        ["--import", TSX_LOADER, GUARD_SCRIPT, "--base", "main", "--head", "HEAD"],
+        {
+          cwd: repoDir,
+          encoding: "utf-8",
+        },
+      );
 
       expect(result.status).toBe(1);
       expect(`${result.stdout}${result.stderr}`).toContain(

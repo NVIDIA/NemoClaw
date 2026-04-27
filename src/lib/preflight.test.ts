@@ -17,6 +17,47 @@ import {
   probeContainerDns,
 } from "../../dist/lib/preflight";
 
+type NetServer = import("node:net").Server;
+
+async function listenOnLoopbackOrNull(): Promise<{ server: NetServer; port: number } | null> {
+  const net = require("node:net") as typeof import("node:net");
+  const server = net.createServer();
+
+  return await new Promise((resolve, reject) => {
+    const onError = (error: NodeJS.ErrnoException) => {
+      server.off("listening", onListening);
+      if (error.code === "EPERM" || error.code === "EACCES") {
+        resolve(null);
+        return;
+      }
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      const address = server.address();
+      if (typeof address === "object" && address !== null) {
+        resolve({ server, port: address.port });
+        return;
+      }
+      reject(new Error("Expected loopback listener to have a numeric port"));
+    };
+    server.once("error", onError);
+    server.listen(0, "127.0.0.1", onListening);
+  });
+}
+
+async function closeServer(server: NetServer): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error?: Error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 function requireMemoryInfo(result: ReturnType<typeof getMemoryInfo>) {
   expect(result).not.toBeNull();
   if (!result) {
@@ -147,17 +188,16 @@ describe("probePortAvailability", () => {
   });
 
   it("detects EADDRINUSE on an occupied port (real net probe)", async () => {
-    // Start a server on a random port, then probe it
-    const net = require("node:net");
-    const srv = net.createServer();
-    await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
-    const port = srv.address().port;
+    const listener = await listenOnLoopbackOrNull();
+    if (!listener) {
+      return;
+    }
     try {
-      const result = await probePortAvailability(port, {});
+      const result = await probePortAvailability(listener.port, {});
       expect(result.ok).toBe(false);
       expect(result.reason).toContain("EADDRINUSE");
     } finally {
-      await new Promise<void>((resolve) => srv.close(resolve));
+      await closeServer(listener.server);
     }
   });
 
@@ -183,15 +223,15 @@ describe("checkPortAvailable — real probe fallback", () => {
   });
 
   it("detects a real occupied port", async () => {
-    const net = require("node:net");
-    const srv = net.createServer();
-    await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
-    const port = srv.address().port;
+    const listener = await listenOnLoopbackOrNull();
+    if (!listener) {
+      return;
+    }
     try {
-      const result = await checkPortAvailable(port, { skipLsof: true });
+      const result = await checkPortAvailable(listener.port, { skipLsof: true });
       expect(result.ok).toBe(false);
     } finally {
-      await new Promise<void>((resolve) => srv.close(resolve));
+      await closeServer(listener.server);
     }
   });
 });
@@ -731,8 +771,7 @@ describe("probeContainerDns", () => {
     "Address: 104.16.26.35\n" +
     "Address: 104.16.27.35\n";
 
-  const BUSYBOX_FAILURE =
-    ";; connection timed out; no servers could be reached\n";
+  const BUSYBOX_FAILURE = ";; connection timed out; no servers could be reached\n";
 
   it("returns ok when busybox nslookup succeeds", () => {
     const result = probeContainerDns({ outputOverride: BUSYBOX_SUCCESS });
@@ -760,7 +799,7 @@ describe("probeContainerDns", () => {
     const pullError =
       "Unable to find image 'busybox:latest' locally\n" +
       "latest: Pulling from library/busybox\n" +
-      "docker: Error response from daemon: Head \"https://registry-1.docker.io/v2/library/busybox/manifests/latest\": dial tcp: lookup registry-1.docker.io: no such host.\n";
+      'docker: Error response from daemon: Head "https://registry-1.docker.io/v2/library/busybox/manifests/latest": dial tcp: lookup registry-1.docker.io: no such host.\n';
     const result = probeContainerDns({ outputOverride: pullError });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("image_pull_failed");

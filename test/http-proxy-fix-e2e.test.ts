@@ -35,7 +35,9 @@ const PROXY_HOST = "10.200.0.1";
 
 // Cert setup at module load (not inside beforeAll) so the result is
 // visible to `it.skipIf` at definition time.
-function trySetupCert(): { ok: true; key: Buffer; cert: Buffer; dir: string } | { ok: false; reason: string } {
+function trySetupCert():
+  | { ok: true; key: Buffer; cert: Buffer; dir: string }
+  | { ok: false; reason: string } {
   try {
     execSync("openssl version", { stdio: "pipe" });
   } catch (err) {
@@ -101,7 +103,11 @@ function loadWrapper() {
   require(FIX_PATH);
 }
 
-function startMock(): Promise<{ port: number; close: () => Promise<void>; received: CapturedRequest[] }> {
+function startMock(): Promise<{
+  port: number;
+  close: () => Promise<void>;
+  received: CapturedRequest[];
+}> {
   return new Promise((resolve, reject) => {
     const received: CapturedRequest[] = [];
     const server = https.createServer({ key, cert }, (req, res) => {
@@ -140,6 +146,15 @@ function startMock(): Promise<{ port: number; close: () => Promise<void>; receiv
       });
     });
   });
+}
+
+function isLoopbackListenDenied(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "EPERM" || error.code === "EACCES")
+  );
 }
 
 type ResponseSnapshot = {
@@ -194,17 +209,29 @@ function sendForwardModeRequest(opts: {
 }
 
 describe("http-proxy-fix end-to-end against a local OpenAI-compatible mock", () => {
-  let mock: Awaited<ReturnType<typeof startMock>>;
+  let mock: Awaited<ReturnType<typeof startMock>> | undefined;
+  let skipReason: string | undefined;
   // The wrapper monkey-patches `http.request` at module load. Save the
   // original here so we can restore it in afterEach — leaving the patched
   // function in place would chain wrappers across this file's tests and
   // (because vitest `cli` runs many test files in one worker) into other
   // suites in the same process.
-  let origHttpRequest: typeof http.request;
+  let origHttpRequest: typeof http.request | undefined;
 
   beforeEach(async () => {
+    skipReason = undefined;
+    mock = undefined;
+    origHttpRequest = http.request;
     if (!opensslAvailable) return;
-    mock = await startMock();
+    try {
+      mock = await startMock();
+    } catch (error) {
+      if (isLoopbackListenDenied(error) && process.env.CI !== "true") {
+        skipReason = `loopback listener unavailable: ${(error as Error).message}`;
+        return;
+      }
+      throw error;
+    }
     // Use vi.stubEnv consistently with the rewrite suite. Raw process.env
     // mutation here would skip the unstub-on-fail behavior `vi` provides
     // and could leak `NODE_USE_ENV_PROXY=1` into adjacent test files if
@@ -214,27 +241,41 @@ describe("http-proxy-fix end-to-end against a local OpenAI-compatible mock", () 
     vi.stubEnv("https_proxy", "");
     vi.stubEnv("HTTP_PROXY", "");
     vi.stubEnv("http_proxy", "");
-    origHttpRequest = http.request;
     loadWrapper();
   });
 
   afterEach(async () => {
     if (!opensslAvailable) return;
-    http.request = origHttpRequest;
-    await mock.close();
+    if (origHttpRequest) {
+      http.request = origHttpRequest;
+    }
+    if (mock) {
+      await mock.close();
+    }
     vi.unstubAllEnvs();
   });
 
   it.skipIf(!opensslAvailable)(
     "completes a chat-completions POST against a custom upstream through the FORWARD→CONNECT-equivalent rewrite",
     async () => {
+      if (skipReason) {
+        // eslint-disable-next-line no-console
+        console.warn(`[http-proxy-fix-e2e] skipping locally: ${skipReason}`);
+        return;
+      }
+      const activeMock = mock;
+      expect(activeMock).toBeDefined();
+      if (!activeMock) {
+        throw new Error("mock server was not initialized");
+      }
+
       const requestBody = JSON.stringify({
         model: "deepseek-ai/DeepSeek-V4-Flash",
         messages: [{ role: "user", content: "What is 6 multiplied by 7?" }],
       });
 
       const response = await sendForwardModeRequest({
-        port: mock.port,
+        port: activeMock.port,
         body: requestBody,
         authorizationHeader: "Bearer real-deepinfra-token",
       });
@@ -248,14 +289,18 @@ describe("http-proxy-fix end-to-end against a local OpenAI-compatible mock", () 
       expect(parsed?.choices?.[0]?.message?.content).toBe("PONG");
 
       // Server-side proof of the strips:
-      expect(mock.received).toHaveLength(1);
-      const captured = mock.received[0]!;
+      expect(activeMock.received).toHaveLength(1);
+      const captured = activeMock.received[0];
+      expect(captured).toBeDefined();
+      if (!captured) {
+        throw new Error("captured request missing");
+      }
       expect(captured.method).toBe("POST");
       expect(captured.url).toBe("/v1/openai/chat/completions");
       // Caller-intent auth survived the rewrite.
       expect(captured.headers.authorization).toBe("Bearer real-deepinfra-token");
       // Host points at the actual target now, not the proxy.
-      expect(captured.headers.host).toBe(`localhost:${mock.port}`);
+      expect(captured.headers.host).toBe(`localhost:${activeMock.port}`);
       // Proxy-hop headers did not leak through to the upstream.
       expect(captured.headers["proxy-authorization"]).toBeUndefined();
       expect(captured.headers["proxy-connection"]).toBeUndefined();
