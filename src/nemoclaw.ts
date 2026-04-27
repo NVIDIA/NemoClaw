@@ -31,11 +31,16 @@ const {
 } = require("./lib/runner");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
 const {
+  fetchGatewayAuthTokenFromSandbox,
   startGatewayForRecovery,
   pruneKnownHostsEntries,
   ensureOllamaAuthProxy,
   isNonInteractive,
 } = require("./lib/onboard");
+const {
+  parseGatewayTokenArgs,
+  runGatewayTokenCommand,
+} = require("./lib/gateway-token-command");
 const {
   getCredential,
   deleteCredential,
@@ -72,7 +77,6 @@ const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
 const { parseRestoreArgs } = sandboxState;
-const backup = require("./lib/backup");
 const skillInstall = require("./lib/skill-install");
 const { sleepSeconds } = require("./lib/wait");
 const { parseSandboxPhase } = require("./lib/gateway-state");
@@ -3491,50 +3495,6 @@ async function garbageCollectImages(args: string[] = []): Promise<void> {
   if (failed > 0) process.exit(1);
 }
 
-/**
- * Lists all sandbox backups.
- */
-function listBackups() {
-  const backups = backup.listBackups();
-  if (backups.length === 0) {
-    console.log("");
-    console.log("  No backups found in ~/.nemoclaw/backups/");
-    console.log("");
-    return;
-  }
-
-  console.log("");
-  console.log("  Backups:");
-  for (const b of backups) {
-    const sizeMb = (b.size / (1024 * 1024)).toFixed(1);
-    console.log(`    ${b.name} (${sizeMb} MB) — ${b.createdAt}`);
-    console.log(`      ${D}${b.path}${R}`);
-  }
-  console.log("");
-}
-
-/**
- * Imports a sandbox from a backup file.
- * @param {string} backupPath - Path to the backup file.
- * @param {string} [newName] - Optional new name for the sandbox.
- */
-async function importBackup(backupPath: string, newName?: string) {
-  if (!backupPath) {
-    console.error("  Usage: nemoclaw import <path> [new-name]");
-    process.exit(1);
-  }
-  await backup.importSandbox(backupPath, newName);
-}
-
-/**
- * Exports a sandbox to a backup file.
- * @param {string} sandboxName - Name of the sandbox to export.
- * @param {string} [exportPath] - Optional output path for the backup.
- */
-function sandboxExport(sandboxName: string, exportPath?: string) {
-  backup.exportSandbox(sandboxName, exportPath);
-}
-
 // ── Help ─────────────────────────────────────────────────────────
 
 /** Print CLI usage with all commands, flags, and reconfiguration guidance. */
@@ -3553,13 +3513,16 @@ function help() {
 
     let isFirstInGroup = true;
     for (const cmd of cmds) {
-      const usage = cmd.usage.replace(/^nemoclaw\s+/, "");
-      const prefix = cmd.scope === "global" ? "nemoclaw " : "nemoclaw <name> ";
+      const usage = cmd.usage;
       const desc = cmd.description;
       const flags = cmd.flags ? ` ${D}${cmd.flags}${R}` : "";
 
+      // Bold the first command in each group
+      const prefix = isFirstInGroup ? B : "";
+      const suffix = isFirstInGroup ? R : "";
+
+      // Deprecated commands get dim styling
       const dPrefix = cmd.deprecated ? D : "";
-      const suffix = cmd.deprecated ? ` ${D}(deprecated)${R}` : "";
       const dSuffix = cmd.deprecated ? R : "";
 
       const displayUsage = `${dPrefix}${prefix}${usage}${suffix}${dSuffix}`;
@@ -3667,12 +3630,6 @@ const [cmd, ...args] = process.argv.slice(2);
       case "backup-all":
         backupAll();
         break;
-      case "backups":
-        listBackups();
-        break;
-      case "import":
-        await importBackup(args[0], args[1]);
-        break;
       case "upgrade-sandboxes":
         await upgradeSandboxes(args);
         break;
@@ -3742,6 +3699,25 @@ const [cmd, ...args] = process.argv.slice(2);
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
+      case "gateway-token": {
+        const { options: gatewayTokenOpts, unknown: gatewayTokenUnknown } =
+          parseGatewayTokenArgs(actionArgs);
+        if (gatewayTokenUnknown.length > 0) {
+          console.error(`  Unknown flag: ${gatewayTokenUnknown[0]}`);
+          console.error("  Usage: nemoclaw <name> gateway-token [--quiet|-q]");
+          process.exit(1);
+        }
+        // Suppress EPIPE traces when the consumer closes the pipe early
+        // (e.g. `... | head -c 0`). The token has already been written.
+        process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+          if (err.code === "EPIPE") process.exit(0);
+        });
+        const exitCode = runGatewayTokenCommand(cmd, gatewayTokenOpts, {
+          fetchToken: fetchGatewayAuthTokenFromSandbox,
+        });
+        if (exitCode !== 0) process.exit(exitCode);
+        break;
+      }
       case "skill":
         await sandboxSkillInstall(cmd, actionArgs);
         break;
@@ -3750,9 +3726,6 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "snapshot":
         await sandboxSnapshot(cmd, actionArgs);
-        break;
-      case "export":
-        sandboxExport(cmd, actionArgs[0]);
         break;
       case "shields": {
         const shieldsSub = actionArgs[0];
@@ -3903,7 +3876,7 @@ const [cmd, ...args] = process.argv.slice(2);
       default:
         console.error(`  Unknown action: ${action}`);
         console.error(
-          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, channels, export, destroy`,
+          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, channels, gateway-token, destroy`,
         );
         process.exit(1);
     }

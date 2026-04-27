@@ -776,6 +776,106 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("regression #2421: bakes NEMOCLAW_INFERENCE_INPUTS into the staged Dockerfile when env is set", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-inputs-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_INFERENCE_INPUTS=text",
+      ].join("\n"),
+    );
+
+    const prior = process.env.NEMOCLAW_INFERENCE_INPUTS;
+    process.env.NEMOCLAW_INFERENCE_INPUTS = "text,image";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-inputs",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_INFERENCE_INPUTS=text,image$/m);
+    } finally {
+      if (prior === undefined) {
+        delete process.env.NEMOCLAW_INFERENCE_INPUTS;
+      } else {
+        process.env.NEMOCLAW_INFERENCE_INPUTS = prior;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #2421: rejects malformed NEMOCLAW_INFERENCE_INPUTS and keeps default", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-inputs-bad-"),
+    );
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    const baseDockerfile = [
+      "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+      "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+      "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+      "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+      "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+      "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+      "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+      "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+      "ARG NEMOCLAW_BUILD_ID=default",
+      "ARG NEMOCLAW_INFERENCE_INPUTS=text",
+    ].join("\n");
+
+    const prior = process.env.NEMOCLAW_INFERENCE_INPUTS;
+    try {
+      // Cases that must all leave the default untouched.
+      const rejectCases = [
+        undefined,
+        "audio",
+        "text,",
+        "Text,Image",
+        "text, image",
+        'text"\nRUN rm -rf /',
+      ];
+      for (const [index, value] of rejectCases.entries()) {
+        fs.writeFileSync(dockerfilePath, baseDockerfile);
+        if (value === undefined) {
+          delete process.env.NEMOCLAW_INFERENCE_INPUTS;
+        } else {
+          process.env.NEMOCLAW_INFERENCE_INPUTS = value;
+        }
+        patchStagedDockerfile(
+          dockerfilePath,
+          "gpt-5.4",
+          "http://127.0.0.1:18789",
+          `build-inputs-reject-${index}`,
+          "openai-api",
+        );
+        assert.match(
+          fs.readFileSync(dockerfilePath, "utf8"),
+          /^ARG NEMOCLAW_INFERENCE_INPUTS=text$/m,
+          `value="${String(value)}" should not change the ARG default`,
+        );
+      }
+    } finally {
+      if (prior === undefined) {
+        delete process.env.NEMOCLAW_INFERENCE_INPUTS;
+      } else {
+        process.env.NEMOCLAW_INFERENCE_INPUTS = prior;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("regression #1409: rejects malformed NEMOCLAW_PROXY_HOST/PORT and keeps defaults", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-bad-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");

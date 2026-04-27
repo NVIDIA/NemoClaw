@@ -12,6 +12,7 @@ describe("buildChain", () => {
       healthEndpoint: "/health", port: 18789, bindAddress: "127.0.0.1",
     });
     expect(c.corsOrigins).toEqual(["http://127.0.0.1:18789"]);
+    expect(c.shouldDisableDeviceAuth).toBe(false);
   });
 
   it("preserves custom port from loopback URL", () => {
@@ -26,6 +27,7 @@ describe("buildChain", () => {
     expect(c.bindAddress).toBe("0.0.0.0");
     expect(c.corsOrigins[0]).toBe("http://127.0.0.1:18789");
     expect(c.corsOrigins).toContain("https://my-brev-host.example.com:18789");
+    expect(c.shouldDisableDeviceAuth).toBe(true);
   });
 
   it("uses WSL host address and binds to 0.0.0.0", () => {
@@ -33,6 +35,7 @@ describe("buildChain", () => {
     expect(c.forwardTarget).toBe("0.0.0.0:18789");
     expect(c.accessUrl).toBe("http://172.24.240.1:18789");
     expect(c.corsOrigins).toContain("http://172.24.240.1:18789");
+    expect(c.shouldDisableDeviceAuth).toBe(true);
   });
 
   it("respects explicit port override", () => {
@@ -53,6 +56,15 @@ describe("buildChain", () => {
     const c = buildChain({ chatUiUrl: "remote-host:18789" });
     expect(c.accessUrl).toBe("http://remote-host:18789");
     expect(c.forwardTarget).toBe("0.0.0.0:18789");
+    expect(c.shouldDisableDeviceAuth).toBe(true);
+  });
+
+  it("shouldDisableDeviceAuth is false for localhost", () => {
+    expect(buildChain({ chatUiUrl: "http://localhost:18789" }).shouldDisableDeviceAuth).toBe(false);
+  });
+
+  it("shouldDisableDeviceAuth is false for IPv6 loopback", () => {
+    expect(buildChain({ chatUiUrl: "http://[::1]:18789" }).shouldDisableDeviceAuth).toBe(false);
   });
 });
 

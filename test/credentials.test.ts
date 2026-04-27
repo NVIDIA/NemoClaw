@@ -178,7 +178,7 @@ describe("credential prompts", () => {
       "utf-8",
     );
     expect(source).toMatch(/while \(true\) \{/);
-    expect(source).toMatch(/Invalid key\. Must start with nvapi-/);
+    expect(source).toMatch(/Invalid NVIDIA API key\. Must start with nvapi-/);
     expect(source).toMatch(/continue;/);
   });
 

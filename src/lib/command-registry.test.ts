@@ -17,10 +17,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 49 commands", () => {
+    it("should contain exactly 50 commands", () => {
       // 25 global (20 visible + 5 hidden help/version aliases)
-      // 24 sandbox (18 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(49);
+      // 25 sandbox (19 visible + 6 hidden shields/config)
+      expect(COMMANDS).toHaveLength(50);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -52,9 +52,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 24 entries", () => {
-      // 18 visible + 6 hidden (shields×3 + config×3)
-      expect(sandboxCommands()).toHaveLength(24);
+    it("should return exactly 25 entries", () => {
+      // 19 visible + 6 hidden (shields×3 + config×3)
+      expect(sandboxCommands()).toHaveLength(25);
     });
 
     it("every entry has scope sandbox", () => {
@@ -65,10 +65,10 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 11 hidden commands (38 visible)", () => {
+    it("should exclude 11 hidden commands (39 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
       // 6 hidden sandbox (shields×3, config×3)
-      expect(visibleCommands()).toHaveLength(38);
+      expect(visibleCommands()).toHaveLength(39);
     });
 
     it("no visible command has hidden=true", () => {
@@ -169,27 +169,28 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 15 unique action tokens including empty string", () => {
+    it("returns exactly 16 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(15);
+      expect(tokens).toHaveLength(16);
       // Must contain the same set as the old sandboxActions array
-      const expected = new Set([
-        "connect",
-        "status",
-        "logs",
-        "policy-add",
-        "policy-remove",
-        "policy-list",
-        "destroy",
-        "export",
-        "skill",
-        "rebuild",
-        "snapshot",
-        "shields",
-        "config",
-        "channels",
-        "",
-      ]);
+const expected = new Set([
+          "connect",
+          "status",
+          "logs",
+          "policy-add",
+          "policy-remove",
+          "policy-list",
+          "destroy",
+          "export",
+          "skill",
+          "rebuild",
+          "snapshot",
+          "shields",
+          "config",
+          "channels",
+          "gateway-token",
+          "",
+        ]);
       expect(new Set(tokens)).toEqual(expected);
     });
 
