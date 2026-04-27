@@ -35,6 +35,7 @@ const {
   startGatewayForRecovery,
   pruneKnownHostsEntries,
   ensureOllamaAuthProxy,
+  hydrateCredentialEnv,
   isNonInteractive,
 } = require("./lib/onboard");
 const {
@@ -44,7 +45,6 @@ const {
 const {
   getCredential,
   deleteCredential,
-  listCredentialKeys,
   prompt: askPrompt,
 } = require("./lib/credentials");
 const registry = require("./lib/registry");
@@ -1177,23 +1177,38 @@ async function credentialsCommand(args: string[]): Promise<void> {
     console.log("  Usage: nemoclaw credentials <subcommand>");
     console.log("");
     console.log("  Subcommands:");
-    console.log("    list                  List stored credential keys (values are not printed)");
-    console.log("    reset <KEY> [--yes]   Remove a stored credential so onboard re-prompts");
+    console.log("    list                  List provider credentials registered with the OpenShell gateway");
+    console.log("    reset <KEY> [--yes]   Remove a provider credential so onboard re-prompts");
     console.log("");
-    console.log("  Stored at ~/.nemoclaw/credentials.json (mode 600)");
+    console.log("  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.");
+    console.log("  Nothing is persisted to host disk; deploy/non-onboard commands read from env vars.");
     console.log("");
     return;
   }
 
   if (sub === "list") {
-    const keys = listCredentialKeys();
-    if (keys.length === 0) {
-      console.log("  No stored credentials.");
+    // The gateway is the system of record. List provider names registered there.
+    const result = runOpenshell(["provider", "list", "--names"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.status !== 0) {
+      console.error("  Could not query OpenShell gateway. Is it running?");
+      console.error("  Run 'openshell gateway start' or 'nemoclaw onboard' first.");
+      process.exit(1);
+    }
+    const names = String(result.stdout || "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .sort();
+    if (names.length === 0) {
+      console.log("  No provider credentials registered.");
       return;
     }
-    console.log("  Stored credentials:");
-    for (const k of keys) {
-      console.log(`    ${k}`);
+    console.log("  Providers registered with the OpenShell gateway:");
+    for (const name of names) {
+      console.log(`    ${name}`);
     }
     return;
   }
@@ -1201,11 +1216,10 @@ async function credentialsCommand(args: string[]): Promise<void> {
   if (sub === "reset") {
     const key = args[1];
     // Validate that <KEY> is a real positional argument, not a flag like
-    // `--yes` that the user passed without a key. Without this guard, the
-    // missing-key path would mistakenly look up '--yes' as a credential.
+    // `--yes` that the user passed without a key.
     if (!key || key.startsWith("-")) {
       console.error("  Usage: nemoclaw credentials reset <KEY> [--yes]");
-      console.error("  Run 'nemoclaw credentials list' to see stored keys.");
+      console.error("  KEY is an OpenShell provider name. Run 'nemoclaw credentials list' first.");
       process.exit(1);
     }
     // Reject unknown trailing arguments to keep scripted use predictable.
@@ -1215,16 +1229,9 @@ async function credentialsCommand(args: string[]): Promise<void> {
       console.error("  Usage: nemoclaw credentials reset <KEY> [--yes]");
       process.exit(1);
     }
-    // Only consult the persisted credentials file — getCredential() falls back
-    // to process.env, which would let an env-only key pass this check even
-    // though there is nothing on disk to delete.
-    if (!listCredentialKeys().includes(key)) {
-      console.error(`  No stored credential found for '${key}'.`);
-      process.exit(1);
-    }
     const skipPrompt = args.includes("--yes") || args.includes("-y");
     if (!skipPrompt) {
-      const answer = (await askPrompt(`  Remove stored credential '${key}'? [y/N]: `))
+      const answer = (await askPrompt(`  Remove provider '${key}' from the OpenShell gateway? [y/N]: `))
         .trim()
         .toLowerCase();
       if (answer !== "y" && answer !== "yes") {
@@ -1232,12 +1239,20 @@ async function credentialsCommand(args: string[]): Promise<void> {
         return;
       }
     }
-    const removed = deleteCredential(key);
-    if (removed) {
-      console.log(`  Removed '${key}' from ~/.nemoclaw/credentials.json`);
+    // Forget any stale value held in this process so the gateway is
+    // unambiguously the source of truth for the next run.
+    deleteCredential(key);
+    const result = runOpenshell(["provider", "delete", key], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.status === 0) {
+      console.log(`  Removed provider '${key}' from the OpenShell gateway.`);
       console.log("  Re-run 'nemoclaw onboard' to enter a new value.");
     } else {
-      console.error(`  No stored credential found for '${key}'.`);
+      console.error(`  Could not remove provider '${key}'.`);
+      const stderr = String(result.stderr || "").trim();
+      if (stderr) console.error(`  ${stderr}`);
       process.exit(1);
     }
     return;
@@ -2664,7 +2679,10 @@ async function sandboxRebuild(
     rebuildCredentialEnv = session?.credentialEnv || null;
   }
   if (rebuildCredentialEnv) {
-    const credentialValue = getCredential(rebuildCredentialEnv);
+    // hydrateCredentialEnv migrates any pre-fix legacy credentials.json
+    // into process.env once, so users upgrading from a release that wrote
+    // the plaintext file can still rebuild without re-entering keys.
+    const credentialValue = hydrateCredentialEnv(rebuildCredentialEnv);
     log(
       `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
     );
@@ -2673,7 +2691,7 @@ async function sandboxRebuild(
       console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
       console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
       console.error(
-        "  but it is not set in the environment or saved in ~/.nemoclaw/credentials.json.",
+        "  but it is not set in the environment.",
       );
       console.error("");
       console.error("  To fix, do one of:");
@@ -3693,7 +3711,7 @@ function help() {
   // ── Footer ──
   lines.push("");
   lines.push(`  ${D}Powered by NVIDIA OpenShell · Nemotron · Agent Toolkit`);
-  lines.push(`  Credentials saved in ~/.nemoclaw/credentials.json (mode 600)${R}`);
+  lines.push(`  Credentials registered with the OpenShell gateway${R}`);
   lines.push(`  ${D}https://www.nvidia.com/nemoclaw${R}`);
   lines.push("");
 

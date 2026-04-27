@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type CredentialsModule = typeof import("../dist/lib/credentials.js");
 
@@ -14,8 +14,36 @@ function isCredentialsModule(value: object | null): value is CredentialsModule {
     value !== null &&
     typeof Reflect.get(value, "loadCredentials") === "function" &&
     typeof Reflect.get(value, "getCredential") === "function" &&
-    typeof Reflect.get(value, "saveCredential") === "function"
+    typeof Reflect.get(value, "saveCredential") === "function" &&
+    typeof Reflect.get(value, "migrateLegacyCredentialsFile") === "function"
   );
+}
+
+const TRACKED_ENV_KEYS = [
+  "NVIDIA_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY",
+  "COMPATIBLE_ANTHROPIC_API_KEY",
+  "BRAVE_API_KEY",
+  "GITHUB_TOKEN",
+  "TELEGRAM_BOT_TOKEN",
+  "ALLOWED_CHAT_IDS",
+  "DISCORD_BOT_TOKEN",
+  "SLACK_BOT_TOKEN",
+  "SLACK_APP_TOKEN",
+  "TEST_API_KEY",
+  "OTHER_KEY",
+  "EMPTY_VALUE",
+  "ZETA",
+  "ALPHA",
+];
+
+function clearTrackedEnv() {
+  for (const key of TRACKED_ENV_KEYS) {
+    delete process.env[key];
+  }
 }
 
 async function importCredentialsModule(home: string): Promise<CredentialsModule> {
@@ -33,47 +61,56 @@ async function importCredentialsModule(home: string): Promise<CredentialsModule>
   return moduleObject;
 }
 
+beforeEach(() => {
+  // The user's shell may export NVIDIA_API_KEY etc.; the credentials module
+  // now reads exclusively from process.env, so any inherited value would
+  // contaminate every test. Start each case from a clean process env.
+  clearTrackedEnv();
+});
+
 afterEach(() => {
+  clearTrackedEnv();
   vi.restoreAllMocks();
   vi.resetModules();
   vi.unstubAllEnvs();
 });
 
-describe("credential prompts", () => {
-  it("loads, normalizes, and saves credentials from disk", async () => {
+describe("host-side credential staging", () => {
+  it("stages values in process.env and never writes to disk", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credentials = await importCredentialsModule(home);
 
     expect(credentials.loadCredentials()).toEqual({});
 
-    credentials.saveCredential("TEST_API_KEY", "  nvapi-saved-key \r\n");
+    credentials.saveCredential("NVIDIA_API_KEY", "  nvapi-saved-key \r\n");
 
-    expect(credentials.getCredsDir()).toBe(path.join(home, ".nemoclaw"));
-    expect(credentials.getCredsFile()).toBe(path.join(home, ".nemoclaw", "credentials.json"));
-    expect(credentials.loadCredentials()).toEqual({ TEST_API_KEY: "nvapi-saved-key" });
-    expect(credentials.getCredential("TEST_API_KEY")).toBe("nvapi-saved-key");
+    // No plaintext credentials.json — the gateway is the system of record.
+    const legacyFile = path.join(home, ".nemoclaw", "credentials.json");
+    expect(fs.existsSync(legacyFile)).toBe(false);
 
-    const saved = JSON.parse(
-      fs.readFileSync(path.join(home, ".nemoclaw", "credentials.json"), "utf-8"),
-    );
-    expect(saved).toEqual({ TEST_API_KEY: "nvapi-saved-key" });
-
-    const dirMode = fs.statSync(path.join(home, ".nemoclaw")).mode & 0o777;
-    const fileMode = fs.statSync(path.join(home, ".nemoclaw", "credentials.json")).mode & 0o777;
-    expect(dirMode).toBe(0o700);
-    expect(fileMode).toBe(0o600);
+    expect(process.env.NVIDIA_API_KEY).toBe("nvapi-saved-key");
+    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe("nvapi-saved-key");
+    expect(credentials.loadCredentials()).toEqual({ NVIDIA_API_KEY: "nvapi-saved-key" });
+    expect(credentials.listCredentialKeys()).toEqual(["NVIDIA_API_KEY"]);
   });
 
-  it("prefers environment credentials and ignores malformed credential files", async () => {
+  it("getCredential reads only from process.env", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+
+    // A pre-existing legacy file must NOT bleed into getCredential — the
+    // module no longer reads cleartext from disk.
     fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
-    fs.writeFileSync(path.join(home, ".nemoclaw", "credentials.json"), "{not-json");
+    fs.writeFileSync(
+      path.join(home, ".nemoclaw", "credentials.json"),
+      JSON.stringify({ NVIDIA_API_KEY: "nvapi-from-disk" }),
+      { mode: 0o600 },
+    );
 
     const credentials = await importCredentialsModule(home);
-    expect(credentials.loadCredentials()).toEqual({});
+    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe(null);
 
-    vi.stubEnv("TEST_API_KEY", "  nvapi-from-env \n");
-    expect(credentials.getCredential("TEST_API_KEY")).toBe("nvapi-from-env");
+    vi.stubEnv("NVIDIA_API_KEY", "  nvapi-from-env \n");
+    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe("nvapi-from-env");
   });
 
   it("returns null for missing or blank credential values", async () => {
@@ -81,48 +118,112 @@ describe("credential prompts", () => {
     const credentials = await importCredentialsModule(home);
 
     credentials.saveCredential("EMPTY_VALUE", " \r\n ");
-    expect(credentials.getCredential("MISSING_VALUE")).toBe(null);
     expect(credentials.getCredential("EMPTY_VALUE")).toBe(null);
+    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe(null);
   });
 
-  it("deleteCredential removes a stored key and leaves the file mode intact", async () => {
+  it("deleteCredential clears the staged value without touching disk", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
-    // Isolate from real environment so getCredential only checks the file.
-    vi.stubEnv("NVIDIA_API_KEY", "");
-    vi.stubEnv("OTHER_KEY", "");
     const credentials = await importCredentialsModule(home);
 
     credentials.saveCredential("NVIDIA_API_KEY", "nvapi-bad-key");
-    credentials.saveCredential("OTHER_KEY", "other-value");
-    const credsFile = path.join(home, ".nemoclaw", "credentials.json");
-    expect(fs.statSync(credsFile).mode & 0o777).toBe(0o600);
-    expect(credentials.listCredentialKeys()).toEqual(["NVIDIA_API_KEY", "OTHER_KEY"]);
+    credentials.saveCredential("OPENAI_API_KEY", "sk-other");
+
+    expect(credentials.listCredentialKeys()).toEqual(["NVIDIA_API_KEY", "OPENAI_API_KEY"]);
+    expect(fs.existsSync(path.join(home, ".nemoclaw", "credentials.json"))).toBe(false);
 
     expect(credentials.deleteCredential("NVIDIA_API_KEY")).toBe(true);
-    expect(fs.statSync(credsFile).mode & 0o777).toBe(0o600);
     expect(credentials.getCredential("NVIDIA_API_KEY")).toBe(null);
-    expect(credentials.listCredentialKeys()).toEqual(["OTHER_KEY"]);
-    expect(credentials.getCredential("OTHER_KEY")).toBe("other-value");
+    expect(credentials.listCredentialKeys()).toEqual(["OPENAI_API_KEY"]);
+    expect(credentials.getCredential("OPENAI_API_KEY")).toBe("sk-other");
 
-    // Removing the same key twice is a no-op that returns false.
+    // Idempotent.
     expect(credentials.deleteCredential("NVIDIA_API_KEY")).toBe(false);
   });
 
-  it("deleteCredential returns false when no credentials file exists", async () => {
+  it("deleteCredential returns false when nothing is staged", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credentials = await importCredentialsModule(home);
     expect(credentials.deleteCredential("ANYTHING")).toBe(false);
   });
 
-  it("listCredentialKeys returns sorted key names without exposing values", async () => {
+  it("listCredentialKeys reports staged known keys, sorted, without exposing values", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credentials = await importCredentialsModule(home);
     expect(credentials.listCredentialKeys()).toEqual([]);
-    credentials.saveCredential("ZETA", "z");
-    credentials.saveCredential("ALPHA", "a");
-    expect(credentials.listCredentialKeys()).toEqual(["ALPHA", "ZETA"]);
+
+    credentials.saveCredential("ANTHROPIC_API_KEY", "z");
+    credentials.saveCredential("OPENAI_API_KEY", "a");
+    expect(credentials.listCredentialKeys()).toEqual(["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]);
+  });
+});
+
+describe("legacy credentials.json migration", () => {
+  it("hydrates env from a pre-fix plaintext file and securely removes it", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(
+      legacyFile,
+      JSON.stringify({
+        NVIDIA_API_KEY: "nvapi-legacy",
+        TELEGRAM_BOT_TOKEN: "tg-legacy",
+        IGNORED_NON_STRING: 42 as unknown as string,
+      }),
+      { mode: 0o600 },
+    );
+
+    const credentials = await importCredentialsModule(home);
+    const migrated = credentials.migrateLegacyCredentialsFile();
+
+    expect(migrated).toEqual(["NVIDIA_API_KEY", "TELEGRAM_BOT_TOKEN"]);
+    expect(process.env.NVIDIA_API_KEY).toBe("nvapi-legacy");
+    expect(process.env.TELEGRAM_BOT_TOKEN).toBe("tg-legacy");
+
+    // File is gone.
+    expect(fs.existsSync(legacyFile)).toBe(false);
   });
 
+  it("returns [] when no legacy file is present", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.migrateLegacyCredentialsFile()).toEqual([]);
+  });
+
+  it("does not override env values that the user explicitly set", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(credsDir, "credentials.json"),
+      JSON.stringify({ NVIDIA_API_KEY: "nvapi-from-disk" }),
+      { mode: 0o600 },
+    );
+
+    vi.stubEnv("NVIDIA_API_KEY", "nvapi-from-env");
+    const credentials = await importCredentialsModule(home);
+    credentials.migrateLegacyCredentialsFile();
+
+    expect(process.env.NVIDIA_API_KEY).toBe("nvapi-from-env");
+    expect(fs.existsSync(path.join(credsDir, "credentials.json"))).toBe(false);
+  });
+
+  it("deletes a corrupt legacy file without staging anything", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "{not-json", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.migrateLegacyCredentialsFile()).toEqual([]);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+    expect(process.env.NVIDIA_API_KEY).toBeUndefined();
+  });
+});
+
+describe("prompt machinery (unchanged)", () => {
   it("exits cleanly when answers are staged through a pipe", () => {
     const script = `
       set -euo pipefail
