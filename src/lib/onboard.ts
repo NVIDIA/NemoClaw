@@ -121,8 +121,14 @@ const platformUtils: typeof import("./platform") = require("./platform");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
 const { resolveOpenshell } = require("./resolve-openshell");
 const credentials: typeof import("./credentials") = require("./credentials");
-const { prompt, ensureApiKey, getCredential, normalizeCredentialValue, saveCredential } =
-  credentials;
+const {
+  prompt,
+  ensureApiKey,
+  getCredential,
+  migrateLegacyCredentialsFile,
+  normalizeCredentialValue,
+  saveCredential,
+} = credentials;
 const registry: typeof import("./registry") = require("./registry");
 const nim: typeof import("./nim") = require("./nim");
 const onboardSession: typeof import("./onboard-session") = require("./onboard-session");
@@ -666,6 +672,11 @@ const {
 
 function hydrateCredentialEnv(envName: string | null | undefined): string | null {
   if (!envName) return null;
+  // Idempotently migrate any pre-fix plaintext credentials.json into
+  // process.env so callers that reach a credential check from outside the
+  // onboard entry point (e.g. rebuild preflight) also benefit from the
+  // one-time migration.
+  migrateLegacyCredentialsFile();
   const value = getCredential(envName);
   if (value) {
     process.env[envName] = value;
@@ -738,7 +749,7 @@ async function replaceNamedCredential(
     saveCredential(envName, key);
     process.env[envName] = key;
     console.log("");
-    console.log(`  Key saved to ~/.nemoclaw/credentials.json (mode 600)`);
+    console.log(`  ${envName} staged. Onboarding will register it with the OpenShell gateway.`);
     console.log("");
     return key;
   }
@@ -3016,7 +3027,7 @@ function formatOnboardConfigSummary({
   const webSearch =
     webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
   const apiKeyLine = credentialEnv
-    ? `  API key:       ${credentialEnv} (stored in ~/.nemoclaw/credentials.json)`
+    ? `  API key:       ${credentialEnv} (registered with the OpenShell gateway)`
     : `  API key:       (not required for ${provider ?? "this provider"})`;
   const noteLines = (Array.isArray(notes) ? notes : [])
     .filter((n) => typeof n === "string" && n.length > 0)
@@ -4019,7 +4030,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           }
         }
 
-        // Hydrate from saved credentials (~/.nemoclaw/credentials.json)
+        // Hydrate from credential env vars set earlier in this process
         // before checking env, so rebuild and other non-interactive callers
         // can resolve keys stored during the original interactive onboard.
         // See #2273.
@@ -6473,6 +6484,17 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     process.exit(1);
   }
 
+  // Hydrate this process from any pre-fix plaintext credentials.json and
+  // securely remove the file. Subsequent provider upserts in this onboard
+  // run register each migrated value with the OpenShell gateway; from then
+  // on the gateway is the only system of record.
+  const migratedKeys = migrateLegacyCredentialsFile();
+  if (migratedKeys.length > 0) {
+    console.error(
+      `  Migrated ${String(migratedKeys.length)} stored credential(s) to the OpenShell gateway and removed the legacy file.`,
+    );
+  }
+
   let lockReleased = false;
   const releaseOnboardLock = () => {
     if (lockReleased) return;
@@ -6739,9 +6761,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           .toLowerCase();
         if (answer === "n" || answer === "no") {
           console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
-          console.log("  Credentials entered so far are stored in ~/.nemoclaw/credentials.json —");
+          console.log("  Credentials registered with the OpenShell gateway in this run remain there.");
           console.log(
-            "  clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
+            "  Clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
           );
           process.exit(0);
         }

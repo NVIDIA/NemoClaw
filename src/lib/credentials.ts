@@ -1,5 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+//
+// Host-side credential helpers.
+//
+// The OpenShell gateway is the system of record for provider credentials.
+// This module holds them only in the current process environment so they
+// can be passed through to `openshell provider create/update --credential KEY`
+// during onboarding. Nothing is written to disk.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -7,18 +14,36 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-import { readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "./errno";
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
 
 type CredentialInput = string | null | undefined;
 
+// Credential env keys NemoClaw knows how to round-trip. listCredentialKeys()
+// projects the in-process env through this set; entries not in the set are
+// invisible to `nemoclaw credentials list` even if exported.
+const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
+  "NVIDIA_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY",
+  "COMPATIBLE_ANTHROPIC_API_KEY",
+  "BRAVE_API_KEY",
+  "GITHUB_TOKEN",
+  "TELEGRAM_BOT_TOKEN",
+  "ALLOWED_CHAT_IDS",
+  "DISCORD_BOT_TOKEN",
+  "SLACK_BOT_TOKEN",
+  "SLACK_APP_TOKEN",
+];
+
 export function resolveHomeDir(): string {
   const raw = process.env.HOME || os.homedir();
   if (!raw) {
     throw new Error(
-      "Cannot determine safe home directory for credential storage. " +
+      "Cannot determine safe home directory. " +
         "Set the HOME environment variable to a user-owned directory.",
     );
   }
@@ -27,10 +52,10 @@ export function resolveHomeDir(): string {
     const real = fs.realpathSync(home);
     if (UNSAFE_HOME_PATHS.has(real)) {
       throw new Error(
-        "Cannot store credentials: HOME resolves to '" +
+        "Cannot use HOME='" +
           real +
-          "' which is world-readable. " +
-          "Set the HOME environment variable to a user-owned directory.",
+          "': resolves to a world-readable path. " +
+          "Set HOME to a user-owned directory.",
       );
     }
   } catch (error) {
@@ -43,10 +68,10 @@ export function resolveHomeDir(): string {
   }
   if (UNSAFE_HOME_PATHS.has(home)) {
     throw new Error(
-      "Cannot store credentials: HOME resolves to '" +
+      "Cannot use HOME='" +
         home +
-        "' which is world-readable. " +
-        "Set the HOME environment variable to a user-owned directory.",
+        "': resolves to a world-readable path. " +
+        "Set HOME to a user-owned directory.",
     );
   }
   return home;
@@ -54,26 +79,25 @@ export function resolveHomeDir(): string {
 
 let _cachedHome: string | null = null;
 let _credsDir: string | null = null;
-let _credsFile: string | null = null;
+let _legacyCredsFile: string | null = null;
 
 export function getCredsDir(): string {
   const home = resolveHomeDir();
   if (_cachedHome !== home) {
     _cachedHome = home;
     _credsDir = path.join(home, ".nemoclaw");
-    _credsFile = null;
+    _legacyCredsFile = null;
   }
   return _credsDir || path.join(home, ".nemoclaw");
 }
 
+// Path of the pre-migration plaintext credentials file. Retained only so
+// migrateLegacyCredentialsFile() can find and securely delete it. New code
+// must NOT write to this path; the gateway is the system of record.
 export function getCredsFile(): string {
   const dir = getCredsDir();
-  if (!_credsFile) _credsFile = path.join(dir, "credentials.json");
-  return _credsFile;
-}
-
-export function loadCredentials(): Record<string, string> {
-  return readConfigFile<Record<string, string>>(getCredsFile(), {});
+  if (!_legacyCredsFile) _legacyCredsFile = path.join(dir, "credentials.json");
+  return _legacyCredsFile;
 }
 
 export function normalizeCredentialValue(value: CredentialInput): string {
@@ -81,31 +105,121 @@ export function normalizeCredentialValue(value: CredentialInput): string {
   return value.replace(/\r/g, "").trim();
 }
 
+// Stage a credential for the current process. The OpenShell upsert that
+// follows in onboarding (`openshell provider create/update --credential KEY`)
+// reads the value from this env entry. Nothing is persisted to disk.
 export function saveCredential(key: string, value: CredentialInput): void {
-  const creds = loadCredentials();
-  creds[key] = normalizeCredentialValue(value);
-  writeConfigFile(getCredsFile(), creds);
+  const normalized = normalizeCredentialValue(value);
+  if (normalized) {
+    process.env[key] = normalized;
+  } else {
+    delete process.env[key];
+  }
 }
 
 export function getCredential(key: string): string | null {
-  if (process.env[key]) return normalizeCredentialValue(process.env[key]);
-  const creds = loadCredentials();
-  const value = normalizeCredentialValue(creds[key]);
-  return value || null;
+  const raw = process.env[key];
+  if (!raw) return null;
+  const normalized = normalizeCredentialValue(raw);
+  return normalized || null;
 }
 
 export function deleteCredential(key: string): boolean {
-  const file = getCredsFile();
-  if (!fs.existsSync(file)) return false;
-  const creds = loadCredentials();
-  if (!Object.prototype.hasOwnProperty.call(creds, key)) return false;
-  delete creds[key];
-  writeConfigFile(file, creds);
+  if (!(key in process.env)) return false;
+  delete process.env[key];
   return true;
+}
+
+export function loadCredentials(): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const key of KNOWN_CREDENTIAL_ENV_KEYS) {
+    const raw = process.env[key];
+    if (!raw) continue;
+    const normalized = normalizeCredentialValue(raw);
+    if (normalized) result[key] = normalized;
+  }
+  return result;
 }
 
 export function listCredentialKeys(): string[] {
   return Object.keys(loadCredentials()).sort();
+}
+
+// Best-effort secure unlink: zero the file's bytes, fsync, then unlink.
+// Does not defeat copy-on-write filesystems or prior backup snapshots, but
+// removes the cleartext from the typical ext4/HFS+/APFS-without-snapshot
+// path that backup tools and same-user processes tend to read.
+function secureUnlink(filePath: string): void {
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size > 0) {
+      const fd = fs.openSync(filePath, "r+");
+      try {
+        const chunkSize = Math.min(stat.size, 64 * 1024);
+        const zeros = Buffer.alloc(chunkSize);
+        let written = 0;
+        while (written < stat.size) {
+          const len = Math.min(chunkSize, stat.size - written);
+          fs.writeSync(fd, zeros, 0, len, written);
+          written += len;
+        }
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+  } catch {
+    // best effort
+  }
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    // best effort
+  }
+}
+
+// Hydrate process.env from a pre-fix plaintext credentials.json (if one
+// exists), then securely remove the file. The next onboarding step pushes
+// each value into the OpenShell gateway via the existing upsertProvider
+// path. Returns the credential keys that were migrated, or [].
+export function migrateLegacyCredentialsFile(): string[] {
+  const legacyFile = getCredsFile();
+  if (!fs.existsSync(legacyFile)) return [];
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(legacyFile, "utf-8");
+  } catch {
+    secureUnlink(legacyFile);
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    secureUnlink(legacyFile);
+    return [];
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    secureUnlink(legacyFile);
+    return [];
+  }
+
+  const migrated: string[] = [];
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof value !== "string") continue;
+    const normalized = normalizeCredentialValue(value);
+    if (!normalized) continue;
+    // Defer to env values that were already set (e.g. by the user) so the
+    // file cannot silently override an explicit override.
+    if (!process.env[key]) process.env[key] = normalized;
+    migrated.push(key);
+  }
+
+  secureUnlink(legacyFile);
+  return migrated.sort();
 }
 
 export function promptSecret(question: string): Promise<string> {
@@ -288,7 +402,8 @@ export async function ensureApiKey(): Promise<void> {
   saveCredential("NVIDIA_API_KEY", key);
   process.env.NVIDIA_API_KEY = key;
   console.log("");
-  console.log("  Key saved to ~/.nemoclaw/credentials.json (mode 600)");
+  console.log("  Key staged for the OpenShell gateway. It is held in process memory only;");
+  console.log("  onboarding registers it with the gateway and nothing is written to disk.");
   console.log("");
 }
 
@@ -311,6 +426,7 @@ export async function ensureGithubToken(): Promise<void> {
     return;
   }
 
+  // Preferred path: gh CLI keeps tokens in the OS keychain.
   try {
     token = execFileSync("gh", ["auth", "token"], {
       encoding: "utf-8",
@@ -321,16 +437,18 @@ export async function ensureGithubToken(): Promise<void> {
       return;
     }
   } catch {
-    /* ignored */
+    /* gh not available or not logged in */
   }
 
   console.log("");
-  console.log("  ┌──────────────────────────────────────────────────┐");
-  console.log("  │  GitHub token required (private repo detected)   │");
-  console.log("  │                                                  │");
-  console.log("  │  Option A: gh auth login (if you have gh CLI)    │");
-  console.log("  │  Option B: Paste a PAT with read:packages scope  │");
-  console.log("  └──────────────────────────────────────────────────┘");
+  console.log("  ┌────────────────────────────────────────────────────────────────┐");
+  console.log("  │  GitHub token required (private repo detected)                 │");
+  console.log("  │                                                                │");
+  console.log("  │  Recommended: run 'gh auth login' so the token is stored in    │");
+  console.log("  │  the system keychain. NemoClaw will pick it up automatically.  │");
+  console.log("  │                                                                │");
+  console.log("  │  Otherwise, paste a PAT below for this run only.               │");
+  console.log("  └────────────────────────────────────────────────────────────────┘");
   console.log("");
 
   token = await prompt("  GitHub Token: ", { secret: true });
@@ -343,6 +461,7 @@ export async function ensureGithubToken(): Promise<void> {
   saveCredential("GITHUB_TOKEN", token);
   process.env.GITHUB_TOKEN = token;
   console.log("");
-  console.log("  Token saved to ~/.nemoclaw/credentials.json (mode 600)");
+  console.log("  Token loaded for this session only. Run 'gh auth login' to persist");
+  console.log("  it in the system keychain so future runs do not prompt.");
   console.log("");
 }

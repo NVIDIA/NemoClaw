@@ -125,11 +125,8 @@ else
   exit 1
 fi
 
-node -e '
-const { saveCredential } = require(process.argv[1]);
-saveCredential("NVIDIA_API_KEY", process.argv[2]);
-' "$REPO/dist/lib/credentials.js" "$RESTORE_API_KEY"
-pass "Stored NVIDIA_API_KEY in ~/.nemoclaw/credentials.json for resume hydration"
+export NVIDIA_API_KEY="$RESTORE_API_KEY"
+pass "Exported NVIDIA_API_KEY for the repair run (host writes nothing to disk; OpenShell gateway is the system of record)"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 2: Create interrupted resumable state
