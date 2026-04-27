@@ -22,7 +22,7 @@ import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const FIX_PATH = path.resolve(
   import.meta.dirname,
@@ -43,9 +43,12 @@ function trySetupCert(): { ok: true; key: Buffer; cert: Buffer; dir: string } | 
   }
   try {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-proxy-fix-e2e-"));
+    // 7-day expiry. Cert is generated at module load (once per test run);
+    // 1-day was tight enough that long `vitest --watch` sessions could
+    // outrun it. Still ephemeral — `afterAll` rms the dir.
     execSync(
       `openssl req -x509 -newkey rsa:2048 -keyout "${dir}/key.pem" -out "${dir}/cert.pem" ` +
-        `-days 1 -nodes -subj "/CN=localhost" ` +
+        `-days 7 -nodes -subj "/CN=localhost" ` +
         `-addext "subjectAltName=DNS:localhost,IP:127.0.0.1"`,
       { stdio: "pipe" },
     );
@@ -63,8 +66,17 @@ function trySetupCert(): { ok: true; key: Buffer; cert: Buffer; dir: string } | 
 const certSetup = trySetupCert();
 const opensslAvailable = certSetup.ok;
 if (!certSetup.ok) {
+  if (process.env.CI === "true") {
+    // CI runners (ubuntu-latest, macos-latest) ship openssl. A skip here
+    // would be a silent green; fail loud instead so missing infra is
+    // visible.
+    throw new Error(
+      `[http-proxy-fix-e2e] CI=true but openssl unavailable: ${certSetup.reason}. ` +
+        `This test must not silently skip in CI — install openssl on the runner.`,
+    );
+  }
   // eslint-disable-next-line no-console
-  console.warn(`[http-proxy-fix-e2e] skipping: ${certSetup.reason}`);
+  console.warn(`[http-proxy-fix-e2e] skipping locally: ${certSetup.reason}`);
 }
 const key = certSetup.ok ? certSetup.key : Buffer.alloc(0);
 const cert = certSetup.ok ? certSetup.cert : Buffer.alloc(0);
@@ -183,23 +195,34 @@ function sendForwardModeRequest(opts: {
 
 describe("http-proxy-fix end-to-end against a local OpenAI-compatible mock", () => {
   let mock: Awaited<ReturnType<typeof startMock>>;
+  // The wrapper monkey-patches `http.request` at module load. Save the
+  // original here so we can restore it in afterEach — leaving the patched
+  // function in place would chain wrappers across this file's tests and
+  // (because vitest `cli` runs many test files in one worker) into other
+  // suites in the same process.
+  let origHttpRequest: typeof http.request;
 
   beforeEach(async () => {
     if (!opensslAvailable) return;
     mock = await startMock();
-    process.env.NODE_USE_ENV_PROXY = "1";
-    process.env.HTTPS_PROXY = `http://${PROXY_HOST}:3128`;
-    delete process.env.https_proxy;
-    delete process.env.HTTP_PROXY;
-    delete process.env.http_proxy;
+    // Use vi.stubEnv consistently with the rewrite suite. Raw process.env
+    // mutation here would skip the unstub-on-fail behavior `vi` provides
+    // and could leak `NODE_USE_ENV_PROXY=1` into adjacent test files if
+    // an assertion threw before afterEach.
+    vi.stubEnv("NODE_USE_ENV_PROXY", "1");
+    vi.stubEnv("HTTPS_PROXY", `http://${PROXY_HOST}:3128`);
+    vi.stubEnv("https_proxy", "");
+    vi.stubEnv("HTTP_PROXY", "");
+    vi.stubEnv("http_proxy", "");
+    origHttpRequest = http.request;
     loadWrapper();
   });
 
   afterEach(async () => {
     if (!opensslAvailable) return;
+    http.request = origHttpRequest;
     await mock.close();
-    delete process.env.NODE_USE_ENV_PROXY;
-    delete process.env.HTTPS_PROXY;
+    vi.unstubAllEnvs();
   });
 
   it.skipIf(!opensslAvailable)(

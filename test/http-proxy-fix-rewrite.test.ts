@@ -33,7 +33,16 @@ const FIX_PATH = path.resolve(
 const PROXY_URL = "http://10.200.0.1:3128";
 const PROXY_HOST = "10.200.0.1";
 
-type RewrittenOptions = http.RequestOptions & { protocol?: string };
+type RewrittenOptions = http.RequestOptions & {
+  protocol?: string;
+  servername?: string;
+  checkServerIdentity?: unknown;
+  socketPath?: string;
+  localAddress?: string;
+  lookup?: unknown;
+  family?: number;
+  hints?: number;
+};
 
 function loadWrapper() {
   // Clear cached copies so the IIFE re-runs and reads our test env.
@@ -52,9 +61,9 @@ describe("http-proxy-fix rewrite (deepinfra-style failure, follow-up to #2344)",
     captured = null;
     vi.stubEnv("NODE_USE_ENV_PROXY", "1");
     vi.stubEnv("HTTPS_PROXY", PROXY_URL);
-    delete process.env.https_proxy;
-    delete process.env.HTTP_PROXY;
-    delete process.env.http_proxy;
+    vi.stubEnv("https_proxy", "");
+    vi.stubEnv("HTTP_PROXY", "");
+    vi.stubEnv("http_proxy", "");
     loadWrapper();
     // Wrapper grabs `https` via a fresh require inside the rewrite branch,
     // so spying on https.request after the wrapper installs is fine.
@@ -118,7 +127,7 @@ describe("http-proxy-fix rewrite (deepinfra-style failure, follow-up to #2344)",
     expect("auth" in (captured ?? {})).toBe(false);
   });
 
-  it("strips Host / Proxy-* headers so Node regenerates Host for the target", () => {
+  it("strips Host / Proxy-* / RFC-7230-§6.1 hop-by-hop headers; preserves target-intent headers", () => {
     http.request({
       hostname: PROXY_HOST,
       port: 3128,
@@ -127,6 +136,13 @@ describe("http-proxy-fix rewrite (deepinfra-style failure, follow-up to #2344)",
         Host: `${PROXY_HOST}:3128`,
         "Proxy-Authorization": "Basic dXNlcjpwYXNz",
         "Proxy-Connection": "keep-alive",
+        "Proxy-Authenticate": "Basic realm=p",
+        Connection: "close",
+        "Keep-Alive": "timeout=5",
+        TE: "trailers",
+        Trailer: "Expires",
+        "Transfer-Encoding": "chunked",
+        Upgrade: "h2c",
         Authorization: "Bearer real-target-token",
         "Content-Type": "application/json",
       },
@@ -134,17 +150,50 @@ describe("http-proxy-fix rewrite (deepinfra-style failure, follow-up to #2344)",
 
     expect(captured).not.toBeNull();
     const headers = (captured?.headers ?? {}) as Record<string, string>;
-    expect(headers.Host).toBeUndefined();
-    expect(headers.host).toBeUndefined();
-    expect(headers["Proxy-Authorization"]).toBeUndefined();
-    expect(headers["Proxy-Connection"]).toBeUndefined();
-    // Target Authorization / Content-Type must survive — those are caller
-    // intent, not proxy-hop metadata.
+    // RFC 7230 §6.1 hop-by-hop set + proxy-pointing Host all stripped.
+    for (const k of [
+      "Host",
+      "host",
+      "Proxy-Authorization",
+      "Proxy-Connection",
+      "Proxy-Authenticate",
+      "Connection",
+      "Keep-Alive",
+      "TE",
+      "Trailer",
+      "Transfer-Encoding",
+      "Upgrade",
+    ]) {
+      expect(headers[k]).toBeUndefined();
+    }
+    // Target intent (caller's Authorization to the upstream and content
+    // negotiation) must survive.
     expect(headers.Authorization).toBe("Bearer real-target-token");
     expect(headers["Content-Type"]).toBe("application/json");
   });
 
-  it("preserves signal, timeout, and TLS fields the caller supplied", () => {
+  it("strips tokens named in the Connection header (RFC 7230 §6.1 transitive hop-by-hop)", () => {
+    http.request({
+      hostname: PROXY_HOST,
+      port: 3128,
+      path: "https://api.deepinfra.com/v1/foo",
+      headers: {
+        Connection: "close, X-Hop-Token, X-Other-Hop",
+        "X-Hop-Token": "leaks-without-strip",
+        "X-Other-Hop": "also-leaks",
+        "X-Keep-Me": "survives",
+      },
+    });
+
+    expect(captured).not.toBeNull();
+    const headers = (captured?.headers ?? {}) as Record<string, string>;
+    expect(headers.Connection).toBeUndefined();
+    expect(headers["X-Hop-Token"]).toBeUndefined();
+    expect(headers["X-Other-Hop"]).toBeUndefined();
+    expect(headers["X-Keep-Me"]).toBe("survives");
+  });
+
+  it("preserves signal, timeout, and TLS material the caller supplied", () => {
     const ac = new AbortController();
     http.request({
       hostname: PROXY_HOST,
@@ -160,6 +209,41 @@ describe("http-proxy-fix rewrite (deepinfra-style failure, follow-up to #2344)",
     expect(captured?.signal).toBe(ac.signal);
     expect(captured?.timeout).toBe(12345);
     expect((captured as { rejectUnauthorized?: boolean })?.rejectUnauthorized).toBe(false);
+  });
+
+  it("strips proxy-hop TLS identity fields (servername, checkServerIdentity)", () => {
+    const customCheck = (): undefined => undefined;
+    http.request({
+      hostname: PROXY_HOST,
+      port: 3128,
+      path: "https://api.deepinfra.com/v1/foo",
+      servername: PROXY_HOST,
+      checkServerIdentity: customCheck,
+      headers: {},
+    } as http.RequestOptions & { servername?: string; checkServerIdentity?: unknown });
+
+    expect(captured).not.toBeNull();
+    expect("servername" in (captured ?? {})).toBe(false);
+    expect("checkServerIdentity" in (captured ?? {})).toBe(false);
+  });
+
+  it("strips proxy-hop transport hints (socketPath, localAddress, lookup, family, hints)", () => {
+    http.request({
+      hostname: PROXY_HOST,
+      port: 3128,
+      path: "https://api.deepinfra.com/v1/foo",
+      socketPath: "/var/run/cntlm.sock",
+      localAddress: "10.0.0.42",
+      lookup: () => undefined,
+      family: 4,
+      hints: 0,
+      headers: {},
+    } as http.RequestOptions & { socketPath?: string; localAddress?: string; lookup?: unknown; family?: number; hints?: number });
+
+    expect(captured).not.toBeNull();
+    for (const k of ["socketPath", "localAddress", "lookup", "family", "hints"]) {
+      expect(k in (captured ?? {})).toBe(false);
+    }
   });
 
   it("uses the explicit target port when one is present in the URL", () => {
@@ -191,5 +275,49 @@ describe("http-proxy-fix rewrite (deepinfra-style failure, follow-up to #2344)",
     req.destroy();
 
     expect(httpsSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("http-proxy-fix bisect: control case for the bug class", () => {
+  // Pins the regression independent of the wrapper itself. Constructs the
+  // exact rewrite shape the *broken* pre-fix wrapper produced (no agent /
+  // auth strip, hop-by-hop headers preserved) and asserts that
+  // https.request rejects it. If a future maintainer reverts the strip,
+  // this test still fails — the bug class doesn't depend on the wrapper.
+  // Combined with the rewrite tests above (which prove the wrapper does
+  // strip), this gives a two-sided proof of correctness without storing
+  // a copy of the broken wrapper in the repo.
+  it("https.request throws TypeError when a forward-proxy http.Agent rides into rewritten options (Node 22 surface)", () => {
+    const proxyAgent = new http.Agent({ keepAlive: false });
+    const callerOptions = {
+      hostname: PROXY_HOST,
+      port: 3128,
+      path: "https://example.invalid/v1/x",
+      method: "POST",
+      agent: proxyAgent,
+      auth: "proxyuser:proxypass",
+      headers: {
+        Host: `${PROXY_HOST}:3128`,
+        "Proxy-Authorization": "Basic x",
+      },
+    };
+
+    const target = new URL(callerOptions.path);
+    // Reproduce the broken pre-fix wrapper's rewrite verbatim: shallow
+    // Object.assign with no field strips and no header sanitization.
+    const broken: http.RequestOptions = Object.assign({}, callerOptions, {
+      method: callerOptions.method || "GET",
+      hostname: target.hostname,
+      host: target.hostname,
+      port: Number.parseInt(target.port, 10) || 443,
+      path: target.pathname + target.search,
+      protocol: "https:",
+    } as http.RequestOptions);
+
+    // Node 22's _http_agent.js validates `agent.protocol` and throws
+    // synchronously. Older Node falls through and fails the TLS handshake
+    // instead — same root cause, different surface error. The wrapper's
+    // job is to make sure neither path is reachable.
+    expect(() => https.request(broken)).toThrow(/Protocol "https:" not supported/);
   });
 });

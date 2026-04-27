@@ -55,24 +55,60 @@
   if (!proxyHost) return;
 
   // Strip headers that were meaningful for the proxy hop only. Once we
-  // re-issue against the target via https.request and let
-  // NODE_USE_ENV_PROXY handle the CONNECT tunnel, the original Host
-  // points at the proxy and the Proxy-* hop-by-hop headers either leak
-  // proxy credentials or confuse the target server.
+  // re-issue against the target via https.request, the original Host
+  // points at the proxy and the hop-by-hop headers (RFC 7230 §6.1) leak
+  // upstream — they describe the connection between the caller and the
+  // proxy, not the rewritten connection to the target.
+  //
+  // RFC 7230 §6.1 hop-by-hop set (request direction):
+  //   Connection, Keep-Alive, Proxy-Authorization, TE, Trailer,
+  //   Transfer-Encoding, Upgrade.
+  // Also stripped: Host (points at the proxy); Proxy-Connection (de
+  // facto deprecated header still emitted by some clients); and
+  // Proxy-Authenticate (response-only per RFC 7235 §4.3, included
+  // belt-and-suspenders for clients that echo response headers into
+  // retry-request options). Plus: per RFC 7230 §6.1, any token named in
+  // the Connection header is itself hop-by-hop and must be stripped.
+  var STATIC_HOP_BY_HOP = [
+    'host',
+    'connection',
+    'keep-alive',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'proxy-connection',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+  ];
+
   function sanitizeHeaders(headers) {
     if (!headers || typeof headers !== 'object') return undefined;
+    // Collect tokens named in the Connection header — those become
+    // hop-by-hop transitively per RFC 7230 §6.1.
+    var dynamic = new Set();
+    for (var k in headers) {
+      if (
+        !Object.prototype.hasOwnProperty.call(headers, k) ||
+        String(k).toLowerCase() !== 'connection'
+      ) {
+        continue;
+      }
+      var raw = headers[k];
+      var listed = Array.isArray(raw) ? raw.join(',') : raw;
+      if (typeof listed === 'string') {
+        listed.split(',').forEach(function (token) {
+          var t = token.trim().toLowerCase();
+          if (t) dynamic.add(t);
+        });
+      }
+    }
+    var staticSet = new Set(STATIC_HOP_BY_HOP);
     var out = {};
     for (var key in headers) {
       if (!Object.prototype.hasOwnProperty.call(headers, key)) continue;
       var lower = String(key).toLowerCase();
-      if (
-        lower === 'host' ||
-        lower === 'proxy-authorization' ||
-        lower === 'proxy-authenticate' ||
-        lower === 'proxy-connection'
-      ) {
-        continue;
-      }
+      if (staticSet.has(lower) || dynamic.has(lower)) continue;
       out[key] = headers[key];
     }
     return out;
@@ -100,15 +136,28 @@
       //   - agent: a forward-proxy http.Agent cannot speak TLS. Leaving
       //     it attached caused upstreams like deepinfra to surface as
       //     "LLM request failed: network connection error" while other
-      //     upstreams that don't end up on this code path still worked
-      //     (Discord report #2344-followup).
+      //     upstreams that don't end up on this code path still worked.
+      //     On Node 22 https.request throws a synchronous TypeError; on
+      //     Node 18/20 it falls through and the TLS handshake fails.
       //   - auth: basic-auth meant for the proxy hop. Leaving it on
       //     would Basic-auth the target server with proxy credentials.
-      //   - Host / Proxy-* headers: stripped via sanitizeHeaders so
-      //     Node regenerates Host from `host`/`port` to point at the
-      //     real target.
-      // Signal (AbortController), lookup, TLS fields (ca/cert/key/
-      // rejectUnauthorized), and timeout are preserved.
+      //   - servername / checkServerIdentity: TLS SNI + cert validation
+      //     pre-computed for the proxy hop. Wrong cert chain and wrong
+      //     SNI must not survive into the rewrite — drop them so Node
+      //     re-derives from the new `hostname`.
+      //   - socketPath: Unix-socket proxies exist (e.g. cntlm-style
+      //     local proxies). Routing TLS bytes into the proxy's Unix
+      //     socket would defeat the entire rewrite.
+      //   - localAddress / lookup / family / hints: source-binding and
+      //     DNS hints picked for reachability to the proxy. The
+      //     rewritten target may not be reachable from the same NIC or
+      //     DNS family.
+      //   - Host / hop-by-hop headers (RFC 7230 §6.1): stripped via
+      //     sanitizeHeaders so Node regenerates Host from `host`/`port`
+      //     to point at the real target.
+      // Signal (AbortController) and TLS material (ca/cert/key/
+      // rejectUnauthorized), timeout, body, and target-intent headers
+      // (Authorization, Content-Type, …) are preserved.
       var rewritten = Object.assign({}, options, {
         method: options.method || 'GET',
         hostname: target.hostname,
@@ -120,6 +169,13 @@
       });
       delete rewritten.agent;
       delete rewritten.auth;
+      delete rewritten.servername;
+      delete rewritten.checkServerIdentity;
+      delete rewritten.socketPath;
+      delete rewritten.localAddress;
+      delete rewritten.lookup;
+      delete rewritten.family;
+      delete rewritten.hints;
       return https.request(rewritten, callback);
     }
     return origRequest.apply(http, arguments);
