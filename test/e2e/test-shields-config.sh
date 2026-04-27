@@ -30,15 +30,10 @@
 
 set -uo pipefail
 
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-900}"
-  if command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  fi
-fi
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=900
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 PASS=0
 FAIL=0
@@ -61,6 +56,11 @@ section() {
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-shields}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -276,7 +276,7 @@ section "Phase 5: config set"
 
 # Set a test key
 CONFIG_SET_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" config set \
-  --key "nemoclaw_e2e_test" --value '"shields-config-e2e"' 2>&1)
+  --key "agents.defaults.model.primary" --value '"shields-config-e2e"' 2>&1)
 echo "$CONFIG_SET_OUTPUT"
 
 if echo "$CONFIG_SET_OUTPUT" | grep -q "Config updated\|config updated"; then
@@ -286,7 +286,7 @@ else
 fi
 
 # Verify the change is visible via config get
-VERIFY_SET=$(nemoclaw "${SANDBOX_NAME}" config get --key nemoclaw_e2e_test 2>&1)
+VERIFY_SET=$(nemoclaw "${SANDBOX_NAME}" config get --key agents.defaults.model.primary 2>&1)
 if echo "$VERIFY_SET" | grep -q "shields-config-e2e"; then
   pass "config set change visible in config get"
 else
@@ -304,7 +304,7 @@ fi
 
 # Verify SSRF validation on URLs
 SSRF_SET=$(nemoclaw "${SANDBOX_NAME}" config set \
-  --key "test_url" --value '"http://127.0.0.1:8080/steal"' 2>&1 || true)
+  --key "agents.defaults.model.primary" --value '"http://127.0.0.1:8080/steal"' 2>&1 || true)
 if echo "$SSRF_SET" | grep -qi "private\|validation failed"; then
   pass "config set blocks private IP URLs (SSRF)"
 else
@@ -383,7 +383,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 8: Config changes persist"
 
-PERSIST_CHECK=$(nemoclaw "${SANDBOX_NAME}" config get --key nemoclaw_e2e_test 2>&1)
+PERSIST_CHECK=$(nemoclaw "${SANDBOX_NAME}" config get --key agents.defaults.model.primary 2>&1)
 if echo "$PERSIST_CHECK" | grep -q "shields-config-e2e"; then
   pass "Config changes survived shields up (persisted)"
 else
@@ -538,7 +538,7 @@ pass "Cleanup: shields up"
 # ══════════════════════════════════════════════════════════════════
 section "Cleanup"
 
-nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
 pass "Sandbox destroyed"
 
 # ══════════════════════════════════════════════════════════════════

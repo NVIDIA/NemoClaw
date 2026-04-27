@@ -9,6 +9,14 @@ import { spawnSync } from "node:child_process";
 
 import { describe, it } from "vitest";
 
+function parseStdoutJson<T>(stdout: string): T {
+  const line = stdout.trim().split("\n").pop();
+  if (!line) {
+    throw new Error("Expected JSON payload on the last stdout line");
+  }
+  return JSON.parse(line);
+}
+
 describe("ollama auth proxy recovery", () => {
   it("restarts the proxy from the persisted token when the recorded pid is stale", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -72,7 +80,20 @@ console.log(JSON.stringify({
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop() as string);
+    const payload = parseStdoutJson<{
+      proxySpawns: Array<{
+        cmd: string;
+        args: string[];
+        detached: boolean;
+        stdio: string;
+        env: {
+          OLLAMA_PROXY_TOKEN: string;
+          OLLAMA_PROXY_PORT: string;
+          OLLAMA_BACKEND_PORT: string;
+        };
+      }>;
+      pid: string;
+    }>(result.stdout);
     assert.equal(payload.proxySpawns.length, 1);
     assert.equal(payload.pid, "4242");
     assert.equal(payload.proxySpawns[0].cmd, process.execPath);
@@ -131,7 +152,7 @@ console.log(JSON.stringify({ proxySpawns }));
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop() as string);
+    const payload = parseStdoutJson<{ proxySpawns: object[] }>(result.stdout);
     assert.equal(payload.proxySpawns.length, 0);
   });
 });

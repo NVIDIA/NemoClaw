@@ -30,10 +30,39 @@ interface Preset {
   name: string;
 }
 
+type TierShape = {
+  name?: string;
+  label?: string;
+  description?: string;
+  presets?: TierPreset[];
+};
+
+function requireTierPreset(value: TierPreset | undefined, name: string): TierPreset {
+  expect(value).toBeDefined();
+  if (!value) {
+    throw new Error(`Expected preset '${name}' to be present`);
+  }
+  return value;
+}
+
+function isTier(value: TierShape | null): value is Tier {
+  return (
+    value !== null &&
+    typeof value.name === "string" &&
+    typeof value.label === "string" &&
+    typeof value.description === "string" &&
+    Array.isArray(value.presets)
+  );
+}
+
 function mustGetTier(name: string): Tier {
   const tier = tiers.getTier(name);
   expect(tier).not.toBeNull();
-  return tier as Tier;
+  const tierObject: TierShape | null = typeof tier === "object" && tier !== null ? tier : null;
+  if (!isTier(tierObject)) {
+    throw new Error(`Expected tier '${name}' to be present`);
+  }
+  return tierObject;
 }
 
 describe("tiers", () => {
@@ -169,10 +198,16 @@ describe("tiers", () => {
       const resolved: TierPreset[] = tiers.resolveTierPresets("balanced", {
         overrides: { npm: "read" },
       });
-      const npm = resolved.find((preset: TierPreset) => preset.name === "npm");
-      expect(npm!.access).toBe("read");
-      const pypi = resolved.find((preset: TierPreset) => preset.name === "pypi");
-      expect(pypi!.access).toBe("read-write");
+      const npm = requireTierPreset(
+        resolved.find((preset: TierPreset) => preset.name === "npm"),
+        "npm",
+      );
+      expect(npm.access).toBe("read");
+      const pypi = requireTierPreset(
+        resolved.find((preset: TierPreset) => preset.name === "pypi"),
+        "pypi",
+      );
+      expect(pypi.access).toBe("read-write");
     });
 
     it("restricts to selected presets when selected list is provided", () => {

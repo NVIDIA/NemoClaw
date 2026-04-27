@@ -41,13 +41,15 @@ interface ResolveTierPresetOptions {
   selected?: string[] | null;
 }
 
-type UnknownRecord = { [key: string]: unknown };
+type TierYamlScalar = string | number | boolean | null | undefined;
+type TierYamlValue = TierYamlScalar | TierYamlRecord | TierYamlValue[];
+type TierYamlRecord = { [key: string]: TierYamlValue };
 
-function isRecord(value: unknown): value is UnknownRecord {
+function isRecord(value: TierYamlValue): value is TierYamlRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readString(record: UnknownRecord, key: string): string | null {
+function readString(record: TierYamlRecord, key: string): string | null {
   const value = record[key];
   return typeof value === "string" ? value : null;
 }
@@ -56,7 +58,7 @@ function isTierAccess(value: string): value is TierAccess {
   return ALLOWED_ACCESS.has(value);
 }
 
-function parseTierPreset(value: unknown, index: number, tierName: string): TierPreset {
+function parseTierPreset(value: TierYamlValue, index: number, tierName: string): TierPreset {
   if (!isRecord(value)) {
     throw new Error(`tiers.yaml: tier '${tierName}' preset ${String(index)} is not an object`);
   }
@@ -76,7 +78,7 @@ function parseTierPreset(value: unknown, index: number, tierName: string): TierP
   return { name, access };
 }
 
-function parseTierDefinition(value: unknown, index: number): TierDefinition {
+function parseTierDefinition(value: TierYamlValue, index: number): TierDefinition {
   if (!isRecord(value)) {
     throw new Error(`tiers.yaml: tier ${String(index)} is not an object`);
   }

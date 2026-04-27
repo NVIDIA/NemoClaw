@@ -4,10 +4,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { SpawnSyncReturns } from "node:child_process";
+import type { SpawnSyncOptions, SpawnSyncReturns } from "node:child_process";
 
 export function buildVersionedUninstallUrl(version: string): string {
-  const stableVersion = String(version || "").trim().replace(/^v/, "").replace(/-.*/, "");
+  const stableVersion = String(version || "")
+    .trim()
+    .replace(/^v/, "")
+    .replace(/-.*/, "");
   return `https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/tags/v${stableVersion}/uninstall.sh`;
 }
 
@@ -48,7 +51,7 @@ export interface RunUninstallCommandDeps {
   spawnSyncImpl: (
     file: string,
     args: string[],
-    options?: Record<string, unknown>,
+    options?: SpawnSyncOptions,
   ) => Pick<SpawnSyncReturns<string>, "status" | "signal">;
   existsSyncImpl?: (path: string) => boolean;
   log?: (message?: string) => void;

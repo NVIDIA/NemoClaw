@@ -32,6 +32,18 @@ export function classifyValidationFailure({
   if (httpStatus === 401 || httpStatus === 403) {
     return { kind: "credential", retry: "credential" };
   }
+  // Credential-bearing error messages take precedence over the HTTP 400
+  // "model" default because some providers (notably Google Gemini) return
+  // HTTP 400 with "API key expired. Please renew the API key." — without
+  // this check the onboard flow skips the key re-entry prompt and loops
+  // back to provider selection. See #1942.
+  if (
+    /api key (expired|not valid)|api[_ ]key[_ ]invalid|unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(
+      normalized,
+    )
+  ) {
+    return { kind: "credential", retry: "credential" };
+  }
   if (httpStatus === 400) {
     return { kind: "model", retry: "model" };
   }
@@ -40,9 +52,6 @@ export function classifyValidationFailure({
   }
   if (httpStatus === 404 || httpStatus === 405) {
     return { kind: "endpoint", retry: "selection" };
-  }
-  if (/unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(normalized)) {
-    return { kind: "credential", retry: "credential" };
   }
   return { kind: "unknown", retry: "selection" };
 }
@@ -69,12 +78,19 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
   return { kind: "unknown", uploadedToGateway };
 }
 
-export function validateNvidiaApiKeyValue(key: string): string | null {
+export function validateNvidiaApiKeyValue(
+  key: string,
+  credentialEnv: string = "NVIDIA_API_KEY",
+): string | null {
+  // The nvapi- prefix check is specific to NVIDIA keys; skip it for keys
+  // from other providers (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY) so that
+  // a valid Anthropic key is not rejected with an NVIDIA-specific error.
+  const isNvidia = credentialEnv === "NVIDIA_API_KEY";
   if (!key) {
-    return "  NVIDIA API Key is required.";
+    return isNvidia ? "  NVIDIA API Key is required." : "  API Key is required.";
   }
-  if (!key.startsWith("nvapi-")) {
-    return "  Invalid key. Must start with nvapi-";
+  if (isNvidia && !key.startsWith("nvapi-")) {
+    return "  Invalid NVIDIA API key. Must start with nvapi-";
   }
   return null;
 }

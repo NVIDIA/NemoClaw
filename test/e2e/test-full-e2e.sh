@@ -81,6 +81,10 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-nightly}"
 
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
 # ══════════════════════════════════════════════════════════════════
@@ -284,8 +288,13 @@ else
   fail "[LIVE] Direct API: empty response from curl"
 fi
 
-# ── Test 4b: Inference through the sandbox (THE definitive test) ──
-info "[LIVE] Sandbox inference test → user → sandbox → gateway → NVIDIA API..."
+# ── Test 4b: OpenShell DNS+proxy can route inference.local from the sandbox ──
+# This is a routing-layer check, not an openclaw check. The HTTP request is
+# made by `curl` from inside the sandbox; nothing in this path exercises
+# openclaw's HTTP client or its SSRF guard. See Phase 4c for the openclaw-
+# mediated assertion. (NemoClaw #2490 / openclaw 2026.4.9 SSRF regression
+# was invisible to this step because curl bypasses openclaw entirely.)
+info "[ROUTING] inference.local DNS + OpenShell proxy reachable from sandbox..."
 ssh_config="$(mktemp)"
 sandbox_response=""
 
@@ -345,10 +354,64 @@ for pong_attempt in 1 2 3; do
   rm -f "$ssh_config"
 done
 if $pong_ok; then
-  pass "[LIVE] Sandbox inference: model responded with PONG through sandbox"
-  info "Full path proven: user → sandbox → openshell gateway → NVIDIA Endpoints → response"
+  pass "[ROUTING] inference.local: OpenShell routed curl to NVIDIA Endpoints and returned PONG"
+  info "Routing path proven: sandbox curl → DNS forwarder → gateway proxy → NVIDIA Endpoints (does not exercise openclaw HTTP client; see Phase 4c)"
 else
-  fail "[LIVE] Sandbox inference: expected PONG after 3 attempts, got: ${sandbox_content:0:200}"
+  fail "[ROUTING] inference.local: expected PONG after 3 attempts, got: ${sandbox_content:0:200}"
+fi
+
+# ── Test 4c: openclaw-mediated turn against inference.local ──
+# This is the only assertion in this file that proves openclaw can complete
+# a turn against inference.local. Prior to this step, every "[LIVE] inference"
+# label in the suite was actually a [ROUTING] check via curl (see 4b above).
+#
+# Properties of this assertion that prevent the false-positive class that
+# masked the openclaw 2026.4.9 SSRF regression:
+#   * Uses `openclaw agent --json`. With --json the CLI calls
+#     routeLogsToStderr() (openclaw/src/commands/agent-via-gateway.ts:57),
+#     so stdout is a clean JSON envelope; prompt-echo on stderr cannot
+#     pollute the assertion.
+#   * Asserts on the model's reply text inside `result.payloads[].text`,
+#     not on the merged stdout/stderr.
+#   * The expected token (the integer 42) is not a literal substring of the
+#     prompt, so an error path that quoted the prompt back cannot satisfy
+#     the grep.
+info "[LIVE] openclaw agent → openclaw HTTP client → inference.local..."
+ssh_config="$(mktemp)"
+agent_response=""
+
+if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
+  agent_session_id="e2e-live-$(date +%s)-$$"
+  # 2>/dev/null discards stderr (progress + log lines) so stdout is JSON-only.
+  agent_response=$($TIMEOUT_CMD ssh -F "$ssh_config" \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 \
+    -o LogLevel=ERROR \
+    "openshell-${SANDBOX_NAME}" \
+    "openclaw agent --agent main --json --session-id '${agent_session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
+    2>/dev/null) || true
+fi
+rm -f "$ssh_config"
+
+agent_reply=$(echo "$agent_response" | python3 -c "
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+result = doc.get('result') or {}
+parts = []
+for p in result.get('payloads') or []:
+    if isinstance(p, dict) and isinstance(p.get('text'), str):
+        parts.append(p['text'])
+print('\n'.join(parts))
+" 2>/dev/null) || true
+
+if grep -qE "(^|[^0-9])42([^0-9]|$)" <<<"$agent_reply"; then
+  pass "[LIVE] openclaw agent: model answered 6×7=42 through openclaw → inference.local"
+else
+  fail "[LIVE] openclaw agent: expected '42' in agent reply, got: ${agent_reply:0:200}"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -376,7 +439,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 6: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 # Verify against the registry file directly.  `nemoclaw list` triggers

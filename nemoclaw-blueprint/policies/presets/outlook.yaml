@@ -17,6 +17,7 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+          - allow: { method: PATCH, path: "/**" }
       - host: login.microsoftonline.com
         port: 443
         protocol: rest

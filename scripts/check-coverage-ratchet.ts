@@ -9,11 +9,12 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const METRICS = ["lines", "functions", "branches", "statements"] as const;
+type MetricName = "lines" | "functions" | "branches" | "statements";
 
-type MetricName = (typeof METRICS)[number];
+const METRICS: readonly MetricName[] = ["lines", "functions", "branches", "statements"];
 
 type Thresholds = Record<MetricName, number>;
+type CoverageSummary = { total: Record<MetricName, { pct: number }> };
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TOLERANCE = 1;
@@ -22,26 +23,55 @@ const TOLERANCE = 1;
 function loadJSON<T>(repoRelative: string): T {
   const abs = join(REPO_ROOT, repoRelative);
   try {
-    return JSON.parse(readFileSync(abs, "utf-8")) as T;
+    return JSON.parse(readFileSync(abs, "utf-8"));
   } catch (cause) {
     throw new Error(`Failed to load ${abs}`, { cause });
   }
+}
+
+function isMetricSummary(value: { pct?: number } | null | undefined): value is { pct: number } {
+  return typeof value?.pct === "number";
+}
+
+function isCoverageSummary(
+  value: { total?: Record<MetricName, { pct: number }> } | null | undefined,
+): value is CoverageSummary {
+  const total = value?.total;
+  if (!total) {
+    return false;
+  }
+  return METRICS.every((metric) => isMetricSummary(total[metric]));
+}
+
+function isThresholds(value: Partial<Thresholds> | null | undefined): value is Thresholds {
+  if (!value) {
+    return false;
+  }
+  return METRICS.every((metric) => typeof value[metric] === "number");
 }
 
 function main(): void {
   const [summaryPath, thresholdPath, label = "coverage"] = process.argv.slice(2);
   if (!summaryPath || !thresholdPath) {
     throw new Error(
-      "Usage: check-coverage-ratchet.ts <coverage-summary.json> <coverage-threshold.json> [label]"
+      "Usage: check-coverage-ratchet.ts <coverage-summary.json> <coverage-threshold.json> [label]",
     );
   }
-  const summary = loadJSON<{ total: Record<string, { pct: number }> }>(summaryPath);
-  const thresholds = loadJSON<Thresholds>(thresholdPath);
+
+  const summaryValue = loadJSON<{ total?: Record<MetricName, { pct: number }> }>(summaryPath);
+  if (!isCoverageSummary(summaryValue)) {
+    throw new Error(`Invalid coverage summary: ${summaryPath}`);
+  }
+
+  const thresholdValue = loadJSON<Partial<Thresholds>>(thresholdPath);
+  if (!isThresholds(thresholdValue)) {
+    throw new Error(`Invalid coverage threshold: ${thresholdPath}`);
+  }
 
   const failures = METRICS.map((metric) => ({
     metric,
-    actual: summary.total[metric].pct,
-    threshold: thresholds[metric],
+    actual: summaryValue.total[metric].pct,
+    threshold: thresholdValue[metric],
   })).filter((r) => r.actual < r.threshold - TOLERANCE);
 
   if (failures.length === 0) return;

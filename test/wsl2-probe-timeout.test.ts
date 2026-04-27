@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -6,7 +5,31 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-import { getValidationProbeCurlArgs } from "../dist/lib/onboard";
+type OnboardValidationInternals = {
+  getValidationProbeCurlArgs: (opts?: { isWsl?: boolean }) => string[];
+};
+
+type OnboardValidationCandidate = {
+  getValidationProbeCurlArgs?: unknown;
+  default?: unknown;
+} | null;
+
+function isOnboardValidationInternals(
+  value: OnboardValidationCandidate,
+): value is OnboardValidationInternals {
+  return value !== null && typeof value.getValidationProbeCurlArgs === "function";
+}
+
+const loadedOnboardValidationModule = await import("../dist/lib/onboard.js");
+const onboardValidationInternals = isOnboardValidationInternals(loadedOnboardValidationModule)
+  ? loadedOnboardValidationModule
+  : isOnboardValidationInternals(loadedOnboardValidationModule.default)
+    ? loadedOnboardValidationModule.default
+    : null;
+if (!isOnboardValidationInternals(onboardValidationInternals)) {
+  throw new Error("Expected onboard validation internals to expose getValidationProbeCurlArgs");
+}
+const { getValidationProbeCurlArgs } = onboardValidationInternals;
 
 describe("WSL2 inference verification timeouts (issue #987)", () => {
   describe("getValidationProbeCurlArgs", () => {
@@ -42,8 +65,9 @@ describe("WSL2 inference verification timeouts (issue #987)", () => {
     // The retry logic is embedded in probeOpenAiLikeEndpoint which is not
     // exported. Verify the retry triggers on the correct curl exit codes by
     // scanning the compiled source for the guard condition.
+    // probeOpenAiLikeEndpoint moved to onboard-inference-probes.ts
     const onboardSrc = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "dist", "lib", "onboard.js"),
+      path.join(import.meta.dirname, "..", "dist", "lib", "onboard-inference-probes.js"),
       "utf-8",
     );
 
