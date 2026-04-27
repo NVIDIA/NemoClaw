@@ -283,9 +283,14 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   let dockerReachable = false;
   let dockerRunning = false;
   if (dockerInstalled && dockerInfoOutput === undefined) {
-    dockerInfoOutput = runCaptureImpl("docker info --format '{{json .}}' 2>/dev/null", {
-      ignoreError: true,
-    });
+      try {
+        runCaptureImpl("docker info", { ignoreError: false });
+        dockerInfoOutput = runCaptureImpl("docker info --format '{{json .}}'", {
+          ignoreError: true,
+        });
+      } catch {
+        dockerInfoOutput = "";
+      }
   }
   if (dockerInstalled && String(dockerInfoOutput || "").trim()) {
     dockerReachable = true;
