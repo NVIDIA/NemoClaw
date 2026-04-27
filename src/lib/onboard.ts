@@ -7919,6 +7919,7 @@ module.exports = {
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
   ensureOllamaAuthProxy,
+  fetchGatewayAuthTokenFromSandbox,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
   checkTelegramReachability,
