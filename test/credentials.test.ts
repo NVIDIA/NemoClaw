@@ -264,12 +264,14 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     // Capture the pre-unlink content via a wrapper that intercepts the unlink
     // call. After secureUnlink finishes the zero-fill but before the unlink
     // runs, the file should be all-zero bytes of the original size.
+    // The capture lives on a holder object so TypeScript doesn't narrow the
+    // closure-mutated slot to `never`.
     const originalUnlink = fs.unlinkSync;
-    let bytesAtUnlink: Buffer | null = null;
+    const captured: { bytes: Buffer | null } = { bytes: null };
     const spy = vi.spyOn(fs, "unlinkSync").mockImplementation((p) => {
-      if (typeof p === "string" && p === legacyFile && bytesAtUnlink === null) {
+      if (typeof p === "string" && p === legacyFile && captured.bytes === null) {
         try {
-          bytesAtUnlink = fs.readFileSync(p);
+          captured.bytes = fs.readFileSync(p);
         } catch {
           /* file already gone */
         }
@@ -284,8 +286,9 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
       spy.mockRestore();
     }
 
+    const bytesAtUnlink = captured.bytes;
     expect(bytesAtUnlink).not.toBeNull();
-    if (bytesAtUnlink) {
+    if (bytesAtUnlink !== null) {
       expect(bytesAtUnlink.length).toBe(Buffer.byteLength(cleartext));
       expect(bytesAtUnlink.every((b) => b === 0)).toBe(true);
     }
