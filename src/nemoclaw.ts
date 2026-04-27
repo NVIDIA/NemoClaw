@@ -1811,12 +1811,73 @@ function buildSandboxLogsArgs(sandboxName: string, follow: boolean): string[] {
   return args;
 }
 
+/**
+ * Handle `nemoclaw <sandbox> policy-add [flags]`. Supports three mutually
+ * exclusive modes: interactive preset picker (default), `--from-file <path>`
+ * for a single custom preset YAML, and `--from-dir <path>` for every
+ * `.yaml`/`.yml` file in a directory. `--dry-run` previews without applying,
+ * `--yes`/`-y`/`--force` (or `NEMOCLAW_NON_INTERACTIVE=1`) skips the
+ * confirmation prompt. `--from-dir` applies files in lexicographic order
+ * and aborts at the first failure (already-applied presets are not rolled
+ * back).
+ */
 async function sandboxPolicyAdd(sandboxName: string, args: string[] = []): Promise<void> {
   const dryRun = args.includes("--dry-run");
   const skipConfirm =
     args.includes("--yes") ||
+    args.includes("-y") ||
     args.includes("--force") ||
     process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+
+  const fromFileIdx = args.indexOf("--from-file");
+  const fromDirIdx = args.indexOf("--from-dir");
+
+  if (fromFileIdx >= 0 && fromDirIdx >= 0) {
+    console.error("  --from-file and --from-dir are mutually exclusive.");
+    process.exit(1);
+  }
+
+  if (fromFileIdx >= 0) {
+    const filePath = args[fromFileIdx + 1];
+    if (!filePath || filePath.startsWith("--")) {
+      console.error("  --from-file requires a path argument.");
+      process.exit(1);
+    }
+    const ok = await applyExternalPreset(sandboxName, filePath, { dryRun, yes: skipConfirm });
+    if (!ok) process.exit(1);
+    return;
+  }
+
+  if (fromDirIdx >= 0) {
+    const dirPath = args[fromDirIdx + 1];
+    if (!dirPath || dirPath.startsWith("--")) {
+      console.error("  --from-dir requires a directory path.");
+      process.exit(1);
+    }
+    const absDir = path.resolve(dirPath);
+    if (!fs.existsSync(absDir) || !fs.statSync(absDir).isDirectory()) {
+      console.error(`  Directory not found: ${dirPath}`);
+      process.exit(1);
+    }
+    const files = fs
+      .readdirSync(absDir, { withFileTypes: true })
+      .filter((ent: { name: string; isFile(): boolean }) => ent.isFile() && /\.ya?ml$/i.test(ent.name))
+      .map((ent: { name: string }) => path.join(absDir, ent.name))
+      .sort();
+    if (files.length === 0) {
+      console.error(`  No .yaml/.yml preset files in ${dirPath}`);
+      process.exit(1);
+    }
+    for (const f of files) {
+      const ok = await applyExternalPreset(sandboxName, f, { dryRun, yes: skipConfirm });
+      if (!ok) {
+        console.error(`  Aborting --from-dir: ${f} failed. Remaining presets not applied.`);
+        process.exit(1);
+      }
+    }
+    return;
+  }
+
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
@@ -1862,14 +1923,71 @@ async function sandboxPolicyAdd(sandboxName: string, args: string[] = []): Promi
 
   if (!skipConfirm) {
     const confirm = await askPrompt(`  Apply '${answer}' to sandbox '${sandboxName}'? [Y/n]: `);
-    if (confirm.toLowerCase() === "n") return;
+    if (confirm.trim().toLowerCase().startsWith("n")) return;
   }
 
   policies.applyPreset(sandboxName, answer);
 }
 
+/**
+ * Apply one custom preset file (`--from-file`, or one entry of `--from-dir`)
+ * to a sandbox. Loads and validates the file via `policies.loadPresetFromFile`,
+ * prints the egress endpoints with a warning that custom targets are not
+ * vetted, honors `dryRun` and `yes`, and delegates to
+ * `policies.applyPresetContent`. Returns `true` on success, `false` on any
+ * load/apply failure so the caller can decide whether to abort.
+ */
+async function applyExternalPreset(
+  sandboxName: string,
+  filePath: string,
+  { dryRun, yes }: { dryRun: boolean; yes: boolean },
+): Promise<boolean> {
+  let loaded;
+  try {
+    loaded = policies.loadPresetFromFile(filePath);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`  Failed to load preset ${filePath}: ${message}`);
+    return false;
+  }
+  if (!loaded) return false;
+
+  const endpoints = policies.getPresetEndpoints(loaded.content);
+  if (endpoints.length > 0) {
+    console.log(`  [${loaded.presetName}] Endpoints that would be opened: ${endpoints.join(", ")}`);
+    console.log(
+      `  ${YW}Warning: custom preset targets are not vetted. Review hosts before applying.${R}`,
+    );
+  }
+
+  if (dryRun) {
+    console.log(`  --dry-run: '${loaded.presetName}' not applied.`);
+    return true;
+  }
+
+  if (!yes) {
+    const confirm = await askPrompt(
+      `  Apply '${loaded.presetName}' from ${filePath} to sandbox '${sandboxName}'? [Y/n]: `,
+    );
+    if (confirm.trim().toLowerCase().startsWith("n")) return true; // user-cancel counts as success (no abort)
+  }
+
+  try {
+    const result = policies.applyPresetContent(sandboxName, loaded.presetName, loaded.content, {
+      custom: { sourcePath: path.resolve(filePath) },
+    });
+    return result !== false;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`  Failed to apply preset '${loaded.presetName}': ${message}`);
+    return false;
+  }
+}
+
 function sandboxPolicyList(sandboxName: string) {
-  const allPresets = policies.listPresets();
+  const builtin = policies.listPresets();
+  const custom = policies.listCustomPresets(sandboxName);
+  const allPresets = [...builtin, ...custom];
   const registryPresets = policies.getAppliedPresets(sandboxName);
 
   // getGatewayPresets returns null when gateway is unreachable, or an
@@ -2229,9 +2347,15 @@ async function sandboxPolicyRemove(sandboxName: string, args: string[] = []): Pr
   const dryRun = args.includes("--dry-run");
   const skipConfirm =
     args.includes("--yes") ||
+    args.includes("-y") ||
     args.includes("--force") ||
     process.env.NEMOCLAW_NON_INTERACTIVE === "1";
-  const allPresets = policies.listPresets();
+
+  // Remove-able presets = built-in presets + custom presets applied via
+  // --from-file / --from-dir (tracked in registry.customPolicies).
+  const builtinPresets = policies.listPresets();
+  const customPresets = policies.listCustomPresets(sandboxName);
+  const allPresets = [...builtinPresets, ...customPresets];
   const applied = policies.getAppliedPresets(sandboxName);
 
   const presetArg = args.find((arg) => !arg.startsWith("-"));
@@ -2242,7 +2366,7 @@ async function sandboxPolicyRemove(sandboxName: string, args: string[] = []): Pr
     if (!preset) {
       console.error(`  Unknown preset '${presetArg}'.`);
       console.error(
-        `  Valid presets: ${allPresets.map((item: { name: string }) => item.name).join(", ")}`,
+        `  Valid presets: ${allPresets.map((item: { name: string }) => item.name).join(", ") || "(none)"}`,
       );
       process.exit(1);
     }
@@ -2261,7 +2385,19 @@ async function sandboxPolicyRemove(sandboxName: string, args: string[] = []): Pr
   }
   if (!answer) return;
 
-  const presetContent = policies.loadPreset(answer);
+  // Resolve preset content: built-in first, then custom (persisted in
+  // registry). Needed only for the endpoint preview below — removePreset()
+  // itself re-resolves on the library side.
+  let presetContent: string | null = policies.loadPreset(answer);
+  if (!presetContent) {
+    const entry = customPresets.find((p: { name: string }) => p.name === answer);
+    if (entry) {
+      const persisted = registry
+        .getCustomPolicies(sandboxName)
+        .find((p: { name: string }) => p.name === answer);
+      presetContent = persisted ? persisted.content : null;
+    }
+  }
   if (!presetContent) return;
 
   const endpoints = policies.getPresetEndpoints(presetContent);
@@ -2276,7 +2412,7 @@ async function sandboxPolicyRemove(sandboxName: string, args: string[] = []): Pr
 
   if (!skipConfirm) {
     const confirm = await askPrompt(`  Remove '${answer}' from sandbox '${sandboxName}'? [Y/n]: `);
-    if (confirm.toLowerCase() === "n") return;
+    if (confirm.trim().toLowerCase().startsWith("n")) return;
   }
 
   if (!policies.removePreset(sandboxName, answer)) {

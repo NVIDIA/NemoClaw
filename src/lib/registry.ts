@@ -7,6 +7,13 @@ import path from "node:path";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "./errno";
 
+export interface CustomPolicyEntry {
+  name: string;
+  content: string;
+  sourcePath?: string;
+  appliedAt?: string;
+}
+
 export interface SandboxEntry {
   name: string;
   createdAt?: string;
@@ -15,6 +22,7 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[];
+  customPolicies?: CustomPolicyEntry[];
   policyTier?: string | null;
   agent?: string | null;
   dangerouslySkipPermissions?: boolean;
@@ -249,6 +257,41 @@ export function setDefault(name: string): boolean {
 export function clearAll(): void {
   withLock(() => {
     save({ sandboxes: {}, defaultSandbox: null });
+  });
+}
+
+/** Return the list of custom policy entries recorded for a sandbox (never null). */
+export function getCustomPolicies(name: string): CustomPolicyEntry[] {
+  const data = load();
+  return data.sandboxes[name]?.customPolicies ?? [];
+}
+
+/** Upsert a custom policy by name. Replaces any existing entry with the same name. */
+export function addCustomPolicy(name: string, entry: CustomPolicyEntry): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (!sandbox) return false;
+    const list = (sandbox.customPolicies ?? []).filter((p) => p.name !== entry.name);
+    list.push({ ...entry, appliedAt: entry.appliedAt ?? new Date().toISOString() });
+    sandbox.customPolicies = list;
+    save(data);
+    return true;
+  });
+}
+
+/** Remove a custom policy by name. Returns true if an entry was removed. */
+export function removeCustomPolicyByName(name: string, presetName: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (!sandbox) return false;
+    const list = sandbox.customPolicies ?? [];
+    const next = list.filter((p) => p.name !== presetName);
+    if (next.length === list.length) return false;
+    sandbox.customPolicies = next.length > 0 ? next : undefined;
+    save(data);
+    return true;
   });
 }
 
