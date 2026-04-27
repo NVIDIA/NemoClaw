@@ -337,6 +337,23 @@ function note(message: string): void {
   console.log(`${DIM}${message}${RESET}`);
 }
 
+function formatDefaultPromptEcho(question: string, value: string): string {
+  const match = question.trim().match(/\[([Yy])\/([Nn])\]:?$/);
+  if (!match) {
+    return value;
+  }
+
+  const [, yesToken, noToken] = match;
+  const normalizedValue = value.toLowerCase();
+  if (normalizedValue === "y" && yesToken === "Y") {
+    return "Y";
+  }
+  if (normalizedValue === "n" && noToken === "N") {
+    return "N";
+  }
+  return value;
+}
+
 // Prompt wrapper: returns env var value or default in non-interactive mode,
 // otherwise prompts the user interactively.
 async function promptOrDefault(
@@ -347,7 +364,8 @@ async function promptOrDefault(
   if (isNonInteractive()) {
     const val = envVar ? process.env[envVar] : null;
     const result = val || defaultValue;
-    note(`  [non-interactive] ${question.trim()} → ${result}`);
+    const displayResult = val ? result : formatDefaultPromptEcho(question, result);
+    note(`  [non-interactive] ${question.trim()} → ${displayResult}`);
     return result;
   }
   return prompt(question);
@@ -7843,6 +7861,7 @@ module.exports = {
   configureWebSearch,
   createSandbox,
   ensureValidatedBraveSearchCredential,
+  formatDefaultPromptEcho,
   formatEnvAssignment,
   getFutureShellPathHint,
   getGatewayBootstrapRepairPlan,

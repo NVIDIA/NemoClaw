@@ -43,6 +43,7 @@ type OnboardTestInternals = {
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
   compactText: (value?: string) => string;
   computeSetupPresetSuggestions: ShimFn<string[]>;
+  formatDefaultPromptEcho: (question: string, value: string) => string;
   formatEnvAssignment: (name: string, value: string) => string;
   findDashboardForwardOwner: (
     forwardListOutput: string | null | undefined,
@@ -125,6 +126,7 @@ const {
   classifySandboxCreateFailure,
   compactText,
   computeSetupPresetSuggestions,
+  formatDefaultPromptEcho,
   formatEnvAssignment,
   getNavigationChoice,
   getGatewayReuseState,
@@ -162,6 +164,13 @@ const {
 } = onboardTestInternals;
 
 describe("onboard helpers", () => {
+  it("formats non-interactive default yes/no echoes using the prompt default casing", () => {
+    expect(formatDefaultPromptEcho("  Apply this configuration? [Y/n]: ", "y")).toBe("Y");
+    expect(formatDefaultPromptEcho("  Continue anyway? [y/N]: ", "n")).toBe("N");
+    expect(formatDefaultPromptEcho("  Continue anyway? [y/N]: ", "yes")).toBe("yes");
+    expect(formatDefaultPromptEcho("  Enter sandbox name: ", "nemoclaw")).toBe("nemoclaw");
+  });
+
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
     expect(
       classifySandboxCreateFailure("Error: failed to read image export stream\nTimeout error").kind,
