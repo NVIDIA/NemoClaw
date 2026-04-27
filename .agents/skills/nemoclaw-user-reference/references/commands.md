@@ -407,7 +407,9 @@ Host-side removal is the supported path because `/sandbox/.openclaw/openclaw.jso
 
 ### `nemoclaw <name> channels stop <channel>`
 
-Pause a single messaging bridge (`telegram`, `discord`, or `slack`) without clearing its credentials. The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway. The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
+Pause a single messaging bridge (`telegram`, `discord`, or `slack`) without clearing its credentials.
+The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway.
+The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 
 ```console
 $ nemoclaw my-assistant channels stop telegram
@@ -662,13 +664,14 @@ Values are not printed.
 $ nemoclaw credentials list
 ```
 
-### `nemoclaw credentials reset <KEY>`
+### `nemoclaw credentials reset <PROVIDER>`
 
-Remove a stored credential by name.
-After removal, re-running `nemoclaw onboard` re-prompts for that key.
+Remove a provider credential from the OpenShell gateway by provider name.
+After removal, re-running `nemoclaw onboard` re-prompts for that provider's credential.
+Run `nemoclaw credentials list` first if you are not sure of the provider name.
 
 ```console
-$ nemoclaw credentials reset NVIDIA_API_KEY
+$ nemoclaw credentials reset nvidia-prod
 ```
 
 | Flag | Description |
