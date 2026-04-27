@@ -3,8 +3,10 @@
 
 import { execSync, spawn } from "node:child_process";
 import {
+  chmodSync,
   closeSync,
   existsSync,
+  fchmodSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -63,6 +65,7 @@ function ensurePidDir(pidDir: string): void {
   if (!existsSync(pidDir)) {
     mkdirSync(pidDir, { recursive: true, mode: 0o700 });
   }
+  chmodSync(pidDir, 0o700);
 }
 
 function readPid(pidDir: string, name: string): number | null {
@@ -124,6 +127,7 @@ function startService(
   // does not accept raw file descriptors for stdio.
   const logFile = join(pidDir, `${name}.log`);
   const logFd = openSync(logFile, "w", 0o600);
+  fchmodSync(logFd, 0o600);
   const subprocess = spawn(command, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
