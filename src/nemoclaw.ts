@@ -31,11 +31,16 @@ const {
 } = require("./lib/runner");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
 const {
+  fetchGatewayAuthTokenFromSandbox,
   startGatewayForRecovery,
   pruneKnownHostsEntries,
   ensureOllamaAuthProxy,
   isNonInteractive,
 } = require("./lib/onboard");
+const {
+  parseGatewayTokenArgs,
+  runGatewayTokenCommand,
+} = require("./lib/gateway-token-command");
 const {
   getCredential,
   deleteCredential,
@@ -3694,6 +3699,21 @@ const [cmd, ...args] = process.argv.slice(2);
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
+      case "gateway-token": {
+        const { options: gatewayTokenOpts, unknown: gatewayTokenUnknown } =
+          parseGatewayTokenArgs(actionArgs);
+        if (gatewayTokenUnknown.length > 0) {
+          console.error(`  Unknown flag: ${gatewayTokenUnknown[0]}`);
+          console.error("  Usage: nemoclaw <name> gateway-token [--quiet|-q]");
+          process.exit(1);
+        }
+        const exitCode = runGatewayTokenCommand(cmd, gatewayTokenOpts, {
+          getSandbox: registry.getSandbox,
+          fetchToken: fetchGatewayAuthTokenFromSandbox,
+        });
+        if (exitCode !== 0) process.exit(exitCode);
+        break;
+      }
       case "skill":
         await sandboxSkillInstall(cmd, actionArgs);
         break;
@@ -3852,7 +3872,7 @@ const [cmd, ...args] = process.argv.slice(2);
       default:
         console.error(`  Unknown action: ${action}`);
         console.error(
-          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, channels, destroy`,
+          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, channels, gateway-token, destroy`,
         );
         process.exit(1);
     }
