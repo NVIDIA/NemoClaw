@@ -2491,15 +2491,15 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
   if (gpu && gpu.type === "nvidia") {
     console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
     if (!gpu.nimCapable) {
-      console.log("  ⓘ GPU VRAM too small for local NIM — will use cloud inference");
+      console.log("  ⓘ Local NIM unavailable — GPU VRAM too small");
     }
   } else if (gpu && gpu.type === "apple") {
     console.log(
       `  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`,
     );
-    console.log("  ⓘ NIM requires NVIDIA GPU — will use cloud inference");
+    console.log("  ⓘ Local NIM unavailable — requires NVIDIA GPU");
   } else {
-    console.log("  ⓘ No GPU detected — will use cloud inference");
+    console.log("  ⓘ Local NIM unavailable — no GPU detected");
   }
 
   // Memory / swap check (Linux only)
