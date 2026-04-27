@@ -331,15 +331,15 @@ Refer to [Switch inference providers](../inference/switch-inference-providers.md
 
 ### Reset a Stored Credential
 
-If an API key was entered incorrectly during onboarding, clear the stored value and re-enter it on the next onboard run:
+If a provider credential was entered incorrectly during onboarding, clear the gateway-registered value and re-enter it on the next onboard run:
 
 ```console
-$ nemoclaw credentials list           # see which keys are stored
-$ nemoclaw credentials reset <KEY>    # clear a single key, for example NVIDIA_API_KEY
-$ nemoclaw onboard                    # re-run to re-enter the cleared key
+$ nemoclaw credentials list                # see which providers are registered
+$ nemoclaw credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
+$ nemoclaw onboard                         # re-run to re-enter the cleared provider
 ```
 
-The credentials command is documented in full at [`nemoclaw credentials reset <KEY>`](../reference/commands.md#nemoclaw-credentials-reset-key).
+The credentials command is documented in full at [`nemoclaw credentials reset <PROVIDER>`](../reference/commands.md#nemoclaw-credentials-reset-provider).
 
 ### Rebuild a Sandbox While Preserving Workspace State
 
