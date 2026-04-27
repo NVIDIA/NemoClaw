@@ -52,7 +52,7 @@ describe("runGatewayTokenCommand", () => {
     const exitCode = runGatewayTokenCommand(
       "alpha",
       { quiet: false },
-      { getSandbox: () => ({ name: "alpha" }), fetchToken, log: sinks.log, error: sinks.error },
+      { fetchToken, log: sinks.log, error: sinks.error },
     );
     expect(exitCode).toBe(0);
     expect(fetchToken).toHaveBeenCalledWith("alpha");
@@ -67,7 +67,6 @@ describe("runGatewayTokenCommand", () => {
       "alpha",
       { quiet: true },
       {
-        getSandbox: () => ({ name: "alpha" }),
         fetchToken: () => "secret-token-abc",
         log: sinks.log,
         error: sinks.error,
@@ -78,27 +77,12 @@ describe("runGatewayTokenCommand", () => {
     expect(sinks.err).toEqual([]);
   });
 
-  it("exits 1 when the sandbox is not registered", () => {
-    const sinks = makeSinks();
-    const fetchToken = vi.fn();
-    const exitCode = runGatewayTokenCommand(
-      "ghost",
-      { quiet: false },
-      { getSandbox: () => null, fetchToken, log: sinks.log, error: sinks.error },
-    );
-    expect(exitCode).toBe(1);
-    expect(fetchToken).not.toHaveBeenCalled();
-    expect(sinks.out).toEqual([]);
-    expect(sinks.err.join("\n")).toMatch(/not registered/);
-  });
-
   it("exits 1 with diagnostics when the token cannot be fetched", () => {
     const sinks = makeSinks();
     const exitCode = runGatewayTokenCommand(
       "alpha",
       { quiet: false },
       {
-        getSandbox: () => ({ name: "alpha" }),
         fetchToken: () => null,
         log: sinks.log,
         error: sinks.error,
@@ -116,7 +100,6 @@ describe("runGatewayTokenCommand", () => {
       "alpha",
       { quiet: true },
       {
-        getSandbox: () => ({ name: "alpha" }),
         fetchToken: () => {
           throw new Error("openshell offline");
         },
@@ -135,7 +118,6 @@ describe("runGatewayTokenCommand", () => {
       "alpha",
       { quiet: false },
       {
-        getSandbox: () => ({ name: "alpha" }),
         fetchToken: () => "",
         log: sinks.log,
         error: sinks.error,

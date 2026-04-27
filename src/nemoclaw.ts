@@ -3707,8 +3707,12 @@ const [cmd, ...args] = process.argv.slice(2);
           console.error("  Usage: nemoclaw <name> gateway-token [--quiet|-q]");
           process.exit(1);
         }
+        // Suppress EPIPE traces when the consumer closes the pipe early
+        // (e.g. `... | head -c 0`). The token has already been written.
+        process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+          if (err.code === "EPIPE") process.exit(0);
+        });
         const exitCode = runGatewayTokenCommand(cmd, gatewayTokenOpts, {
-          getSandbox: registry.getSandbox,
           fetchToken: fetchGatewayAuthTokenFromSandbox,
         });
         if (exitCode !== 0) process.exit(exitCode);

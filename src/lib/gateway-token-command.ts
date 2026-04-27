@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * `nemoclaw <name> gateway-token` — print the OpenClaw gateway auth token
+ * `nemoclaw <name> gateway-token` -- print the OpenClaw gateway auth token
  * for a running sandbox to stdout so automation can capture it.
  *
  * Output contract (intended to be pipe-friendly):
@@ -13,13 +13,11 @@
  */
 
 export interface GatewayTokenCommandDeps {
-  /** Look up a sandbox in the registry; returns null/undefined when unknown. */
-  getSandbox: (name: string) => unknown;
   /** Pull gateway.auth.token from the sandbox config (host-side helper). */
   fetchToken: (sandboxName: string) => string | null;
-  /** Optional stdout sink — defaults to console.log. */
+  /** Optional stdout sink -- defaults to console.log. */
   log?: (message: string) => void;
-  /** Optional stderr sink — defaults to console.error. */
+  /** Optional stderr sink -- defaults to console.error. */
   error?: (message: string) => void;
 }
 
@@ -29,11 +27,12 @@ export interface GatewayTokenCommandOptions {
 }
 
 const SECURITY_WARNING =
-  "Treat this token like a password — do not log, share, or commit it.";
+  "Treat this token like a password -- do not log, share, or commit it.";
 
 /**
  * Run the gateway-token command. Returns the process exit code (0 on success,
- * 1 on failure). The caller is responsible for invoking `process.exit`.
+ * 1 on failure). The caller is responsible for invoking `process.exit` and for
+ * having validated that the sandbox exists in the registry.
  */
 export function runGatewayTokenCommand(
   sandboxName: string,
@@ -42,12 +41,6 @@ export function runGatewayTokenCommand(
 ): number {
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
-
-  if (!deps.getSandbox(sandboxName)) {
-    error(`  Sandbox '${sandboxName}' is not registered.`);
-    error(`  Run 'nemoclaw list' to see registered sandboxes.`);
-    return 1;
-  }
 
   let token: string | null;
   try {
