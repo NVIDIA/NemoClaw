@@ -1496,5 +1496,23 @@ setImmediate(() => {
       expect(loads.length).toBe(1);
       expect(loads[0]).toMatch(/real\.yaml$/);
     });
+
+    it("--from-dir skips hidden dotfile yaml presets", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-dotfile-"));
+      fs.writeFileSync(
+        path.join(dir, ".bad.yaml"),
+        "preset:\n  name: bad\nnetwork_policies: {}\n",
+      );
+      fs.writeFileSync(
+        path.join(dir, "real.yaml"),
+        "preset:\n  name: real\nnetwork_policies: {}\n",
+      );
+      const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      const loads = calls.filter((c) => c.type === "load").map((c) => c.path);
+      expect(loads.length).toBe(1);
+      expect(loads[0]).toMatch(/real\.yaml$/);
+    });
   });
 });
