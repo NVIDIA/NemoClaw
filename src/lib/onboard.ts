@@ -671,13 +671,20 @@ const {
   parsePolicyPresetEnv,
 } = urlUtils;
 
+/**
+ * Resolve a credential into `process.env[envName]` so subsequent gateway
+ * upserts can read it via `--credential <ENV>`. Idempotently stages any
+ * pre-fix plaintext credentials.json (non-destructively) so callers that
+ * reach a credential check from outside the onboard entry point — such as
+ * rebuild preflight — can still find legacy values. The file itself is
+ * removed only after a full successful onboard, so an interrupted run can
+ * be retried without losing the user's only copy.
+ *
+ * @param envName Credential env variable name, e.g. `NVIDIA_API_KEY`.
+ * @returns The resolved value, or `null` if `envName` is empty/unstaged.
+ */
 function hydrateCredentialEnv(envName: string | null | undefined): string | null {
   if (!envName) return null;
-  // Non-destructively stage any pre-fix plaintext credentials.json into
-  // process.env so callers that reach a credential check from outside the
-  // onboard entry point (e.g. rebuild preflight) can find the legacy value.
-  // The file itself is removed only after a full successful onboard, so an
-  // interrupted run can be retried without losing the user's only copy.
   stageLegacyCredentialsToEnv();
   const value = getCredential(envName);
   if (value) {

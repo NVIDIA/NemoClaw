@@ -39,6 +39,11 @@ const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "SLACK_APP_TOKEN",
 ];
 
+/**
+ * Resolve the user's home directory and reject obviously unsafe choices
+ * (e.g. `/tmp`, `/`) so we never use a world-readable path for state.
+ * Throws if `HOME` cannot be determined or resolves to an unsafe location.
+ */
 export function resolveHomeDir(): string {
   const raw = process.env.HOME || os.homedir();
   if (!raw) {
@@ -81,6 +86,7 @@ let _cachedHome: string | null = null;
 let _credsDir: string | null = null;
 let _legacyCredsFile: string | null = null;
 
+/** Return `~/.nemoclaw`, resolving and validating `HOME` once per process. */
 export function getCredsDir(): string {
   const home = resolveHomeDir();
   if (_cachedHome !== home) {
@@ -91,23 +97,29 @@ export function getCredsDir(): string {
   return _credsDir || path.join(home, ".nemoclaw");
 }
 
-// Path of the pre-migration plaintext credentials file. Retained only so
-// migrateLegacyCredentialsFile() can find and securely delete it. New code
-// must NOT write to this path; the gateway is the system of record.
+/**
+ * Path of the pre-migration plaintext credentials file. Retained only so
+ * stageLegacyCredentialsToEnv() / removeLegacyCredentialsFile() can find it.
+ * New code must NOT write to this path; the gateway is the system of record.
+ */
 export function getCredsFile(): string {
   const dir = getCredsDir();
   if (!_legacyCredsFile) _legacyCredsFile = path.join(dir, "credentials.json");
   return _legacyCredsFile;
 }
 
+/** Trim whitespace and strip CR characters that shells often append on paste. */
 export function normalizeCredentialValue(value: CredentialInput): string {
   if (typeof value !== "string") return "";
   return value.replace(/\r/g, "").trim();
 }
 
-// Stage a credential for the current process. The OpenShell upsert that
-// follows in onboarding (`openshell provider create/update --credential KEY`)
-// reads the value from this env entry. Nothing is persisted to disk.
+/**
+ * Stage a credential for the current process. The OpenShell upsert that
+ * follows in onboarding (`openshell provider create/update --credential KEY`)
+ * reads the value from this env entry. Nothing is persisted to disk.
+ * An empty/whitespace value clears the env entry instead of staging blanks.
+ */
 export function saveCredential(key: string, value: CredentialInput): void {
   const normalized = normalizeCredentialValue(value);
   if (normalized) {
@@ -117,6 +129,7 @@ export function saveCredential(key: string, value: CredentialInput): void {
   }
 }
 
+/** Return the staged value for `key` from the current process env, or null. */
 export function getCredential(key: string): string | null {
   const raw = process.env[key];
   if (!raw) return null;
@@ -124,12 +137,17 @@ export function getCredential(key: string): string | null {
   return normalized || null;
 }
 
+/** Clear the staged credential from the current process env. */
 export function deleteCredential(key: string): boolean {
   if (!(key in process.env)) return false;
   delete process.env[key];
   return true;
 }
 
+/**
+ * Snapshot of credentials currently staged in `process.env`, projected
+ * through `KNOWN_CREDENTIAL_ENV_KEYS`. Unrelated env entries are not exposed.
+ */
 export function loadCredentials(): Record<string, string> {
   const result: Record<string, string> = {};
   for (const key of KNOWN_CREDENTIAL_ENV_KEYS) {
@@ -141,16 +159,19 @@ export function loadCredentials(): Record<string, string> {
   return result;
 }
 
+/** Sorted list of credential env-var names currently staged in this process. */
 export function listCredentialKeys(): string[] {
   return Object.keys(loadCredentials()).sort();
 }
 
-// Best-effort secure unlink: zero the file's bytes, fsync, then unlink.
-// Refuses to follow symlinks (lstat + O_NOFOLLOW) so a planted symlink
-// cannot redirect the zero-fill onto an unrelated file. Does not defeat
-// copy-on-write filesystems or prior backup snapshots, but removes the
-// cleartext from the typical ext4/HFS+/APFS-without-snapshot path that
-// backup tools and same-user processes tend to read.
+/**
+ * Best-effort secure unlink: zero the file's bytes, fsync, then unlink.
+ * Refuses to follow symlinks (lstat + O_NOFOLLOW) so a planted symlink
+ * cannot redirect the zero-fill onto an unrelated file. Does not defeat
+ * copy-on-write filesystems or prior backup snapshots, but removes the
+ * cleartext from the typical ext4/HFS+/APFS-without-snapshot path that
+ * backup tools and same-user processes tend to read.
+ */
 function secureUnlink(filePath: string): void {
   try {
     const stat = fs.lstatSync(filePath);
@@ -187,15 +208,18 @@ function secureUnlink(filePath: string): void {
   }
 }
 
-// Stage credential values from a pre-fix plaintext credentials.json into
-// process.env (non-destructive). Restricted to KNOWN_CREDENTIAL_ENV_KEYS so a
-// stale or tampered file cannot inject unrelated variables (PATH, NODE_OPTIONS,
-// OPENSHELL_GATEWAY, etc.) into later child processes. Returns the credential
-// keys that were staged, or [].
-//
-// The file is intentionally NOT removed here. The unlink runs only after
-// onboarding successfully registers the credentials with the OpenShell
-// gateway — see removeLegacyCredentialsFile().
+/**
+ * Stage credential values from a pre-fix plaintext credentials.json into
+ * `process.env` (non-destructive). Restricted to `KNOWN_CREDENTIAL_ENV_KEYS`
+ * so a stale or tampered file cannot inject unrelated variables (`PATH`,
+ * `NODE_OPTIONS`, `OPENSHELL_GATEWAY`, etc.) into later child processes.
+ *
+ * The file is intentionally NOT removed here. The unlink runs only after
+ * onboarding successfully registers the credentials with the OpenShell
+ * gateway — see {@link removeLegacyCredentialsFile}.
+ *
+ * @returns Sorted list of credential keys that were staged, or `[]`.
+ */
 export function stageLegacyCredentialsToEnv(): string[] {
   const legacyFile = getCredsFile();
   if (!fs.existsSync(legacyFile)) return [];
@@ -233,15 +257,22 @@ export function stageLegacyCredentialsToEnv(): string[] {
   return staged.sort();
 }
 
-// Securely remove the legacy plaintext credentials.json. Call this only
-// after the gateway has accepted the migrated values, so an interrupted or
-// failed onboard cannot leave the user with no copy of their credentials.
+/**
+ * Securely remove the legacy plaintext credentials.json. Call this only
+ * after the gateway has accepted the migrated values, so an interrupted or
+ * failed onboard cannot leave the user with no copy of their credentials.
+ */
 export function removeLegacyCredentialsFile(): void {
   const legacyFile = getCredsFile();
   if (!fs.existsSync(legacyFile)) return;
   secureUnlink(legacyFile);
 }
 
+/**
+ * Read a secret value from a TTY without echoing typed characters
+ * (asterisks are written instead). Resolves to the trimmed answer or
+ * rejects with `code: "SIGINT"` on Ctrl-C.
+ */
 export function promptSecret(question: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const input = process.stdin;
@@ -329,6 +360,11 @@ export function promptSecret(question: string): Promise<string> {
   });
 }
 
+/**
+ * Prompt the user on stderr and resolve to their trimmed answer. Pass
+ * `{ secret: true }` to mask input on a TTY (falls back to plain readline
+ * when stdin/stderr is non-interactive, e.g. in CI).
+ */
 export function prompt(question: string, opts: { secret?: boolean } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const silent = opts.secret === true && process.stdin.isTTY && process.stderr.isTTY;
@@ -385,6 +421,12 @@ export function prompt(question: string, opts: { secret?: boolean } = {}): Promi
   });
 }
 
+/**
+ * Ensure `NVIDIA_API_KEY` is staged for this process. Returns immediately
+ * if it is already in env, otherwise prompts interactively (validating
+ * the `nvapi-` prefix) and stages the result. Onboarding registers the
+ * value with the OpenShell gateway later in the flow.
+ */
 export async function ensureApiKey(): Promise<void> {
   let key = getCredential("NVIDIA_API_KEY");
   if (key) {
@@ -427,6 +469,11 @@ export async function ensureApiKey(): Promise<void> {
   console.log("");
 }
 
+/**
+ * Return true if `<owner>/<name>` is a private GitHub repository, using
+ * `gh api`. Returns false on any failure (no `gh`, not authenticated,
+ * network error) — callers must treat the result as a hint, not a proof.
+ */
 export function isRepoPrivate(repo: string): boolean {
   try {
     const json = execFileSync("gh", ["api", `repos/${repo}`, "--jq", ".private"], {
@@ -439,6 +486,12 @@ export function isRepoPrivate(repo: string): boolean {
   }
 }
 
+/**
+ * Ensure `GITHUB_TOKEN` is staged for this process when a private repo
+ * needs it. Tries `gh auth token` first (system keychain via the GitHub
+ * CLI); falls back to a session-only PAT prompt if `gh` is unavailable.
+ * The token is never persisted to host disk by NemoClaw.
+ */
 export async function ensureGithubToken(): Promise<void> {
   let token = getCredential("GITHUB_TOKEN");
   if (token) {
