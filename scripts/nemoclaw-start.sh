@@ -12,7 +12,8 @@
 # Optional env:
 #   NVIDIA_API_KEY                API key for NVIDIA-hosted inference
 #   CHAT_UI_URL                   Browser origin that will access the forwarded dashboard
-#   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth
+#   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth.
+#                                  Also auto-disabled when CHAT_UI_URL is non-loopback.
 #                                 (development/headless). Has no runtime effect — openclaw.json
 #                                 is baked at image build and verified by hash at startup.
 #   NEMOCLAW_MODEL_OVERRIDE       Override the primary model at startup without rebuilding
