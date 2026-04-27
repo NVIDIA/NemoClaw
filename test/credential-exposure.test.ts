@@ -12,6 +12,7 @@ import path from "node:path";
 import { describe, it, expect } from "vitest";
 
 const ONBOARD_JS = path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts");
+const ONBOARD_PROVIDERS_JS = path.join(import.meta.dirname, "..", "src", "lib", "onboard-providers.ts");
 const RUNNER_TS = path.join(import.meta.dirname, "..", "nemoclaw", "src", "blueprint", "runner.ts");
 const SERVICES_TS = path.join(import.meta.dirname, "..", "src", "lib", "services.ts");
 
@@ -64,7 +65,9 @@ describe("credential exposure in process arguments", () => {
   });
 
   it("onboard.js --credential flags pass env var names only", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
+    // buildProviderArgs lives in onboard-providers.ts; scan both files.
+    const src = fs.readFileSync(ONBOARD_JS, "utf-8") +
+      fs.readFileSync(ONBOARD_PROVIDERS_JS, "utf-8");
 
     expect(src).toMatch(/"--credential", credentialEnv/);
     expect(src).not.toMatch(/"--credential",\s*["'][A-Z_]+=/);
