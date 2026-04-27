@@ -191,7 +191,7 @@ After you enter the sandbox name, the wizard prints a review summary and asks fo
   ──────────────────────────────────────────────────
   Provider:      nvidia-api
   Model:         nvidia/nemotron-3-super-120b-a12b
-  API key:       NVIDIA_API_KEY (stored in ~/.nemoclaw/credentials.json)
+  API key:       NVIDIA_API_KEY (registered with the OpenShell gateway)
   Web search:    disabled
   Messaging:     none
   Sandbox name:  my-assistant
