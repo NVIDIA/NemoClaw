@@ -54,6 +54,30 @@
   }
   if (!proxyHost) return;
 
+  // Strip headers that were meaningful for the proxy hop only. Once we
+  // re-issue against the target via https.request and let
+  // NODE_USE_ENV_PROXY handle the CONNECT tunnel, the original Host
+  // points at the proxy and the Proxy-* hop-by-hop headers either leak
+  // proxy credentials or confuse the target server.
+  function sanitizeHeaders(headers) {
+    if (!headers || typeof headers !== 'object') return undefined;
+    var out = {};
+    for (var key in headers) {
+      if (!Object.prototype.hasOwnProperty.call(headers, key)) continue;
+      var lower = String(key).toLowerCase();
+      if (
+        lower === 'host' ||
+        lower === 'proxy-authorization' ||
+        lower === 'proxy-authenticate' ||
+        lower === 'proxy-connection'
+      ) {
+        continue;
+      }
+      out[key] = headers[key];
+    }
+    return out;
+  }
+
   http.request = function (options, callback) {
     if (typeof options === 'string' || !options) {
       return origRequest.apply(http, arguments);
@@ -70,10 +94,21 @@
         return origRequest.apply(http, arguments);
       }
       var https = require('https');
-      // Clone caller's options and overwrite only the proxy-specific
-      // routing fields. Preserves signal (AbortController), lookup,
-      // TLS fields (ca/cert/key/rejectUnauthorized), auth, timeout,
-      // and any other per-request setting the caller supplied.
+      // Clone caller's options and overwrite proxy-specific routing
+      // fields. Strip fields that were set up for the proxy hop and
+      // would misbehave on the rewritten https.request to the target:
+      //   - agent: a forward-proxy http.Agent cannot speak TLS. Leaving
+      //     it attached caused upstreams like deepinfra to surface as
+      //     "LLM request failed: network connection error" while other
+      //     upstreams that don't end up on this code path still worked
+      //     (Discord report #2344-followup).
+      //   - auth: basic-auth meant for the proxy hop. Leaving it on
+      //     would Basic-auth the target server with proxy credentials.
+      //   - Host / Proxy-* headers: stripped via sanitizeHeaders so
+      //     Node regenerates Host from `host`/`port` to point at the
+      //     real target.
+      // Signal (AbortController), lookup, TLS fields (ca/cert/key/
+      // rejectUnauthorized), and timeout are preserved.
       var rewritten = Object.assign({}, options, {
         method: options.method || 'GET',
         hostname: target.hostname,
@@ -81,7 +116,10 @@
         port: target.port || 443,
         path: target.pathname + target.search,
         protocol: 'https:',
+        headers: sanitizeHeaders(options.headers),
       });
+      delete rewritten.agent;
+      delete rewritten.auth;
       return https.request(rewritten, callback);
     }
     return origRequest.apply(http, arguments);
