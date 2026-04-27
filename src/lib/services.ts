@@ -61,7 +61,7 @@ function warn(msg: string): void {
 
 function ensurePidDir(pidDir: string): void {
   if (!existsSync(pidDir)) {
-    mkdirSync(pidDir, { recursive: true });
+    mkdirSync(pidDir, { recursive: true, mode: 0o700 });
   }
 }
 
@@ -123,7 +123,7 @@ function startService(
   // Uses child_process.spawn directly because execa's typed API
   // does not accept raw file descriptors for stdio.
   const logFile = join(pidDir, `${name}.log`);
-  const logFd = openSync(logFile, "w");
+  const logFd = openSync(logFile, "w", 0o600);
   const subprocess = spawn(command, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
