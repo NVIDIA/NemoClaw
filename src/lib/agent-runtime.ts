@@ -262,7 +262,10 @@ export function getGatewayCommand(agent: AgentDefinition | null): string {
  * log redirect → backgrounded`.
  */
 export function buildManualRecoveryCommand(agent: AgentDefinition | null, port: number): string {
-  const gatewayCmd = getGatewayCommand(agent).trim() || "openclaw gateway run";
+  const binaryPath = agent?.binary_path || "/usr/local/bin/openclaw";
+  const binaryName = binaryPath.split("/").pop() ?? "openclaw";
+  const defaultGatewayCommand = `${binaryName} gateway run`;
+  const gatewayCmd = agent?.gateway_command?.trim() || defaultGatewayCommand;
   const isHermes = agent?.name === "hermes";
   const envPrefix = isHermes ? "HERMES_HOME=/sandbox/.hermes-data " : "";
   const portFlag = isHermes ? "" : ` --port ${port}`;
