@@ -39,8 +39,20 @@ info() { printf '%s\n' "verify-sandbox-skill-via-agent: INFO: $*"; }
 [ -n "$SANDBOX_NAME" ] || die "set SANDBOX_NAME (or NEMOCLAW_SANDBOX_NAME)"
 [ -n "${NVIDIA_API_KEY:-}" ] || die "set NVIDIA_API_KEY (needed for inference inside sandbox)"
 
-DEFAULT_PROMPT="Use the OpenClaw managed skill named '${SKILL_ID}'. Read its SKILL.md. Reply with ONLY this exact verification token string and nothing else: ${VERIFY_TOKEN}"
+# Do NOT include ${VERIFY_TOKEN} in the prompt itself. The token must come
+# from the agent reading the skill's SKILL.md — that is the entire point of
+# this test. Embedding it in the prompt makes the downstream grep match any
+# error path that echoes the prompt back (e.g. the openclaw 4.9 SSRF
+# regression in NemoClaw #2490 was masked by exactly this antipattern in
+# TC-SBX-02). Override SKILL_VERIFY_PROMPT only if you know what you're
+# doing — overrides that re-introduce the literal token defeat the test.
+DEFAULT_PROMPT="Use the OpenClaw managed skill named '${SKILL_ID}'. Read its SKILL.md and reply with ONLY the agent verification token defined in that file. No quotes, no extra words."
 PROMPT="${SKILL_VERIFY_PROMPT:-$DEFAULT_PROMPT}"
+
+# Guard against an override that accidentally smuggles the token back in.
+if printf '%s' "$PROMPT" | grep -Fq "$VERIFY_TOKEN"; then
+  die "SKILL_VERIFY_PROMPT must not contain VERIFY_TOKEN ('${VERIFY_TOKEN}'); the agent must read it from SKILL.md so a prompt-echo error path cannot satisfy the assertion"
+fi
 
 command -v openshell >/dev/null 2>&1 || die "openshell not on PATH"
 command -v base64 >/dev/null 2>&1 || die "base64 not on PATH"
@@ -83,6 +95,14 @@ set -e
 printf '\n%s\n' "--- agent stdout/stderr (trimmed for display) ---"
 printf '%s' "$raw_out" | tail -c 12000
 printf '\n%s\n' "--- end ---"
+
+# Fail closed on provider/transport errors so a coincidental token match
+# (e.g. someone overrode SKILL_VERIFY_PROMPT to embed the token, or the
+# token leaked into a stack trace via the skill manifest path) cannot mask
+# an SSRF block, transport reset, or gateway error. See NemoClaw #2490.
+if printf '%s' "$raw_out" | grep -qiE "SsrFBlockedError|Blocked hostname|Blocked: resolves to|transport error|provider error|ECONNREFUSED|EAI_AGAIN|gateway unavailable"; then
+  die "agent failed before completing turn — provider/transport error in output (exit ${agent_rc}). Session: ${SESSION_ID}"
+fi
 
 # Collapse newlines so a model-wrapped token (e.g. "SKILL_SMOKE_VER\nIFY_K9X2") still matches.
 collapsed_out=$(printf '%s' "$raw_out" | tr -d '\n\r')
