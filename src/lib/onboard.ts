@@ -125,7 +125,8 @@ const {
   prompt,
   ensureApiKey,
   getCredential,
-  migrateLegacyCredentialsFile,
+  stageLegacyCredentialsToEnv,
+  removeLegacyCredentialsFile,
   normalizeCredentialValue,
   saveCredential,
 } = credentials;
@@ -672,11 +673,12 @@ const {
 
 function hydrateCredentialEnv(envName: string | null | undefined): string | null {
   if (!envName) return null;
-  // Idempotently migrate any pre-fix plaintext credentials.json into
+  // Non-destructively stage any pre-fix plaintext credentials.json into
   // process.env so callers that reach a credential check from outside the
-  // onboard entry point (e.g. rebuild preflight) also benefit from the
-  // one-time migration.
-  migrateLegacyCredentialsFile();
+  // onboard entry point (e.g. rebuild preflight) can find the legacy value.
+  // The file itself is removed only after a full successful onboard, so an
+  // interrupted run can be retried without losing the user's only copy.
+  stageLegacyCredentialsToEnv();
   const value = getCredential(envName);
   if (value) {
     process.env[envName] = value;
@@ -3027,7 +3029,7 @@ function formatOnboardConfigSummary({
   const webSearch =
     webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
   const apiKeyLine = credentialEnv
-    ? `  API key:       ${credentialEnv} (registered with the OpenShell gateway)`
+    ? `  API key:       ${credentialEnv} (staged for OpenShell gateway registration)`
     : `  API key:       (not required for ${provider ?? "this provider"})`;
   const noteLines = (Array.isArray(notes) ? notes : [])
     .filter((n) => typeof n === "string" && n.length > 0)
@@ -6484,14 +6486,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  // Hydrate this process from any pre-fix plaintext credentials.json and
-  // securely remove the file. Subsequent provider upserts in this onboard
-  // run register each migrated value with the OpenShell gateway; from then
-  // on the gateway is the only system of record.
-  const migratedKeys = migrateLegacyCredentialsFile();
-  if (migratedKeys.length > 0) {
+  // Stage any pre-fix plaintext credentials.json into process.env so the
+  // provider upserts later in this run can pick the values up. The file is
+  // NOT removed here — the secure unlink runs only after onboarding
+  // completes successfully, so an interrupted run can be retried.
+  const stagedLegacyKeys = stageLegacyCredentialsToEnv();
+  if (stagedLegacyKeys.length > 0) {
     console.error(
-      `  Migrated ${String(migratedKeys.length)} stored credential(s) to the OpenShell gateway and removed the legacy file.`,
+      `  Staged ${String(stagedLegacyKeys.length)} legacy credential(s) for migration to the OpenShell gateway.`,
     );
   }
 
@@ -6761,9 +6763,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           .toLowerCase();
         if (answer === "n" || answer === "no") {
           console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
-          console.log("  Credentials registered with the OpenShell gateway in this run remain there.");
+          console.log("  Credentials entered so far were only staged in memory for this run.");
           console.log(
-            "  Clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
+            "  No new gateway credential was registered because onboarding stopped here.",
           );
           process.exit(0);
         }
@@ -6975,6 +6977,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     onboardSession.completeSession(toSessionUpdates({ sandboxName, provider, model }));
     completed = true;
+    // Onboarding finished successfully and the gateway holds the migrated
+    // credentials. Now it is safe to securely delete the legacy plaintext
+    // ~/.nemoclaw/credentials.json. Done unconditionally so a long-stale
+    // file from a previous machine state is also cleaned up.
+    if (stagedLegacyKeys.length > 0) {
+      removeLegacyCredentialsFile();
+    }
     printDashboard(sandboxName, model, provider, nimContainer, agent);
   } finally {
     releaseOnboardLock();

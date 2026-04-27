@@ -2532,7 +2532,15 @@ const { setupInference } = require(${onboardPath});
       legacyFileGone: boolean;
     }>(result.stdout);
     assert.equal(payload.openai, "sk-stored-secret");
-    assert.equal(payload.legacyFileGone, true, "legacy credentials.json should be deleted by migration");
+    // setupInference's hydrateCredentialEnv only stages the legacy file
+    // (non-destructive). The secure unlink runs only after a full successful
+    // onboard, so an interrupted run can be retried without losing the
+    // user's only copy of their credentials.
+    assert.equal(
+      payload.legacyFileGone,
+      false,
+      "legacy credentials.json must survive the staging-only hydrate path",
+    );
     // commands[0]=gateway select, [1]=provider get, [2]=provider update
     const providerUpdate = payload.commands[2];
     assert.ok(providerUpdate, "expected provider update command");
@@ -5949,8 +5957,8 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(summary.includes("gemini-api"), "summary includes provider");
     assert.ok(summary.includes("gemini-2.5-flash"), "summary includes model");
     assert.ok(
-      summary.includes("GEMINI_API_KEY (registered with the OpenShell gateway)"),
-      "summary shows API key env var + storage location",
+      summary.includes("GEMINI_API_KEY (staged for OpenShell gateway registration)"),
+      "summary shows API key env var + staging state",
     );
     assert.ok(summary.includes("enabled"), "summary includes web-search enabled");
     assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");

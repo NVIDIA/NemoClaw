@@ -1187,14 +1187,21 @@ async function credentialsCommand(args: string[]): Promise<void> {
   }
 
   if (sub === "list") {
-    // The gateway is the system of record. List provider names registered there.
+    // Pin to the NemoClaw gateway so a different active gateway cannot make
+    // us list (or later delete) providers from the wrong place.
+    const recovery = await recoverNamedGatewayRuntime();
+    if (!recovery.recovered) {
+      console.error("  Could not query the NemoClaw OpenShell gateway. Is it running?");
+      console.error("  Run 'openshell gateway start --name nemoclaw' or 'nemoclaw onboard' first.");
+      process.exit(1);
+    }
     const result = runOpenshell(["provider", "list", "--names"], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
     if (result.status !== 0) {
       console.error("  Could not query OpenShell gateway. Is it running?");
-      console.error("  Run 'openshell gateway start' or 'nemoclaw onboard' first.");
+      console.error("  Run 'openshell gateway start --name nemoclaw' or 'nemoclaw onboard' first.");
       process.exit(1);
     }
     const names = String(result.stdout || "")
@@ -1242,6 +1249,14 @@ async function credentialsCommand(args: string[]): Promise<void> {
     // Forget any stale value held in this process so the gateway is
     // unambiguously the source of truth for the next run.
     deleteCredential(key);
+    // Pin to the NemoClaw gateway so we cannot accidentally delete a
+    // provider from a different active gateway.
+    const recovery = await recoverNamedGatewayRuntime();
+    if (!recovery.recovered) {
+      console.error("  Could not reach the NemoClaw OpenShell gateway. Is it running?");
+      console.error("  Run 'openshell gateway start --name nemoclaw' or 'nemoclaw onboard' first.");
+      process.exit(1);
+    }
     const result = runOpenshell(["provider", "delete", key], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],

@@ -146,14 +146,23 @@ export function listCredentialKeys(): string[] {
 }
 
 // Best-effort secure unlink: zero the file's bytes, fsync, then unlink.
-// Does not defeat copy-on-write filesystems or prior backup snapshots, but
-// removes the cleartext from the typical ext4/HFS+/APFS-without-snapshot
-// path that backup tools and same-user processes tend to read.
+// Refuses to follow symlinks (lstat + O_NOFOLLOW) so a planted symlink
+// cannot redirect the zero-fill onto an unrelated file. Does not defeat
+// copy-on-write filesystems or prior backup snapshots, but removes the
+// cleartext from the typical ext4/HFS+/APFS-without-snapshot path that
+// backup tools and same-user processes tend to read.
 function secureUnlink(filePath: string): void {
   try {
-    const stat = fs.statSync(filePath);
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink()) {
+      // The credentials path was a symlink; remove the link itself without
+      // touching whatever it pointed at.
+      fs.unlinkSync(filePath);
+      return;
+    }
+    if (!stat.isFile()) return;
     if (stat.size > 0) {
-      const fd = fs.openSync(filePath, "r+");
+      const fd = fs.openSync(filePath, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
       try {
         const chunkSize = Math.min(stat.size, 64 * 1024);
         const zeros = Buffer.alloc(chunkSize);
@@ -178,11 +187,16 @@ function secureUnlink(filePath: string): void {
   }
 }
 
-// Hydrate process.env from a pre-fix plaintext credentials.json (if one
-// exists), then securely remove the file. The next onboarding step pushes
-// each value into the OpenShell gateway via the existing upsertProvider
-// path. Returns the credential keys that were migrated, or [].
-export function migrateLegacyCredentialsFile(): string[] {
+// Stage credential values from a pre-fix plaintext credentials.json into
+// process.env (non-destructive). Restricted to KNOWN_CREDENTIAL_ENV_KEYS so a
+// stale or tampered file cannot inject unrelated variables (PATH, NODE_OPTIONS,
+// OPENSHELL_GATEWAY, etc.) into later child processes. Returns the credential
+// keys that were staged, or [].
+//
+// The file is intentionally NOT removed here. The unlink runs only after
+// onboarding successfully registers the credentials with the OpenShell
+// gateway — see removeLegacyCredentialsFile().
+export function stageLegacyCredentialsToEnv(): string[] {
   const legacyFile = getCredsFile();
   if (!fs.existsSync(legacyFile)) return [];
 
@@ -190,7 +204,6 @@ export function migrateLegacyCredentialsFile(): string[] {
   try {
     raw = fs.readFileSync(legacyFile, "utf-8");
   } catch {
-    secureUnlink(legacyFile);
     return [];
   }
 
@@ -198,28 +211,35 @@ export function migrateLegacyCredentialsFile(): string[] {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    secureUnlink(legacyFile);
     return [];
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    secureUnlink(legacyFile);
     return [];
   }
 
-  const migrated: string[] = [];
+  const allowed = new Set<string>(KNOWN_CREDENTIAL_ENV_KEYS);
+  const staged: string[] = [];
   for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!allowed.has(key)) continue;
     if (typeof value !== "string") continue;
     const normalized = normalizeCredentialValue(value);
     if (!normalized) continue;
     // Defer to env values that were already set (e.g. by the user) so the
     // file cannot silently override an explicit override.
     if (!process.env[key]) process.env[key] = normalized;
-    migrated.push(key);
+    staged.push(key);
   }
+  return staged.sort();
+}
 
+// Securely remove the legacy plaintext credentials.json. Call this only
+// after the gateway has accepted the migrated values, so an interrupted or
+// failed onboard cannot leave the user with no copy of their credentials.
+export function removeLegacyCredentialsFile(): void {
+  const legacyFile = getCredsFile();
+  if (!fs.existsSync(legacyFile)) return;
   secureUnlink(legacyFile);
-  return migrated.sort();
 }
 
 export function promptSecret(question: string): Promise<string> {

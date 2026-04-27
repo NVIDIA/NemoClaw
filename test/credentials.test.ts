@@ -15,7 +15,8 @@ function isCredentialsModule(value: object | null): value is CredentialsModule {
     typeof Reflect.get(value, "loadCredentials") === "function" &&
     typeof Reflect.get(value, "getCredential") === "function" &&
     typeof Reflect.get(value, "saveCredential") === "function" &&
-    typeof Reflect.get(value, "migrateLegacyCredentialsFile") === "function"
+    typeof Reflect.get(value, "stageLegacyCredentialsToEnv") === "function" &&
+    typeof Reflect.get(value, "removeLegacyCredentialsFile") === "function"
   );
 }
 
@@ -158,8 +159,8 @@ describe("host-side credential staging", () => {
   });
 });
 
-describe("legacy credentials.json migration", () => {
-  it("hydrates env from a pre-fix plaintext file and securely removes it", async () => {
+describe("legacy credentials.json migration (two-phase: stage then remove)", () => {
+  it("stages allowlisted keys into env without touching the file", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
@@ -175,20 +176,48 @@ describe("legacy credentials.json migration", () => {
     );
 
     const credentials = await importCredentialsModule(home);
-    const migrated = credentials.migrateLegacyCredentialsFile();
+    const staged = credentials.stageLegacyCredentialsToEnv();
 
-    expect(migrated).toEqual(["NVIDIA_API_KEY", "TELEGRAM_BOT_TOKEN"]);
+    expect(staged).toEqual(["NVIDIA_API_KEY", "TELEGRAM_BOT_TOKEN"]);
     expect(process.env.NVIDIA_API_KEY).toBe("nvapi-legacy");
     expect(process.env.TELEGRAM_BOT_TOKEN).toBe("tg-legacy");
 
-    // File is gone.
-    expect(fs.existsSync(legacyFile)).toBe(false);
+    // The file MUST still exist after staging — it is removed only after a
+    // successful gateway write so an interrupted onboard can be retried.
+    expect(fs.existsSync(legacyFile)).toBe(true);
+  });
+
+  it("ignores keys outside the credential allowlist (PATH, NODE_OPTIONS, etc.)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    const originalPath = process.env.PATH;
+    fs.writeFileSync(
+      legacyFile,
+      JSON.stringify({
+        PATH: "/attacker/bin:/usr/bin",
+        NODE_OPTIONS: "--require=/tmp/evil.js",
+        OPENSHELL_GATEWAY: "evil-gw",
+        NVIDIA_API_KEY: "nvapi-legitimate",
+      }),
+      { mode: 0o600 },
+    );
+
+    const credentials = await importCredentialsModule(home);
+    const staged = credentials.stageLegacyCredentialsToEnv();
+
+    expect(staged).toEqual(["NVIDIA_API_KEY"]);
+    expect(process.env.NVIDIA_API_KEY).toBe("nvapi-legitimate");
+    expect(process.env.PATH).toBe(originalPath);
+    expect(process.env.NODE_OPTIONS).toBeUndefined();
+    expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
   });
 
   it("returns [] when no legacy file is present", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credentials = await importCredentialsModule(home);
-    expect(credentials.migrateLegacyCredentialsFile()).toEqual([]);
+    expect(credentials.stageLegacyCredentialsToEnv()).toEqual([]);
   });
 
   it("does not override env values that the user explicitly set", async () => {
@@ -203,13 +232,14 @@ describe("legacy credentials.json migration", () => {
 
     vi.stubEnv("NVIDIA_API_KEY", "nvapi-from-env");
     const credentials = await importCredentialsModule(home);
-    credentials.migrateLegacyCredentialsFile();
+    credentials.stageLegacyCredentialsToEnv();
 
     expect(process.env.NVIDIA_API_KEY).toBe("nvapi-from-env");
-    expect(fs.existsSync(path.join(credsDir, "credentials.json"))).toBe(false);
+    // File still present — staging never deletes.
+    expect(fs.existsSync(path.join(credsDir, "credentials.json"))).toBe(true);
   });
 
-  it("deletes a corrupt legacy file without staging anything", async () => {
+  it("stages nothing from a corrupt legacy file and leaves it untouched", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
@@ -217,9 +247,72 @@ describe("legacy credentials.json migration", () => {
     fs.writeFileSync(legacyFile, "{not-json", { mode: 0o600 });
 
     const credentials = await importCredentialsModule(home);
-    expect(credentials.migrateLegacyCredentialsFile()).toEqual([]);
-    expect(fs.existsSync(legacyFile)).toBe(false);
+    expect(credentials.stageLegacyCredentialsToEnv()).toEqual([]);
+    // Corrupt input must not silently disappear — leave it for inspection.
+    expect(fs.existsSync(legacyFile)).toBe(true);
     expect(process.env.NVIDIA_API_KEY).toBeUndefined();
+  });
+
+  it("removeLegacyCredentialsFile zero-fills the file before unlinking", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    const cleartext = JSON.stringify({ NVIDIA_API_KEY: "nvapi-secret-payload" });
+    fs.writeFileSync(legacyFile, cleartext, { mode: 0o600 });
+
+    // Capture the pre-unlink content via a wrapper that intercepts the unlink
+    // call. After secureUnlink finishes the zero-fill but before the unlink
+    // runs, the file should be all-zero bytes of the original size.
+    const originalUnlink = fs.unlinkSync;
+    let bytesAtUnlink: Buffer | null = null;
+    const spy = vi.spyOn(fs, "unlinkSync").mockImplementation((p) => {
+      if (typeof p === "string" && p === legacyFile && bytesAtUnlink === null) {
+        try {
+          bytesAtUnlink = fs.readFileSync(p);
+        } catch {
+          /* file already gone */
+        }
+      }
+      return originalUnlink(p);
+    });
+
+    try {
+      const credentials = await importCredentialsModule(home);
+      credentials.removeLegacyCredentialsFile();
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(bytesAtUnlink).not.toBeNull();
+    if (bytesAtUnlink) {
+      expect(bytesAtUnlink.length).toBe(Buffer.byteLength(cleartext));
+      expect(bytesAtUnlink.every((b) => b === 0)).toBe(true);
+    }
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("removeLegacyCredentialsFile refuses to follow symlinks (deletes the link, not the target)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+
+    // The "victim" file is unrelated content the attacker wants overwritten.
+    const victimFile = path.join(home, "victim.txt");
+    const victimPayload = "important data the attacker should not touch";
+    fs.writeFileSync(victimFile, victimPayload);
+
+    // Plant the symlink at the credentials path.
+    fs.symlinkSync(victimFile, legacyFile);
+
+    const credentials = await importCredentialsModule(home);
+    credentials.removeLegacyCredentialsFile();
+
+    // The symlink itself is gone, but the victim file is intact.
+    expect(fs.existsSync(legacyFile)).toBe(false);
+    expect(fs.existsSync(victimFile)).toBe(true);
+    expect(fs.readFileSync(victimFile, "utf-8")).toBe(victimPayload);
   });
 });
 
