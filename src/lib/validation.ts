@@ -78,12 +78,19 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
   return { kind: "unknown", uploadedToGateway };
 }
 
-export function validateNvidiaApiKeyValue(key: string): string | null {
+export function validateNvidiaApiKeyValue(
+  key: string,
+  credentialEnv: string = "NVIDIA_API_KEY",
+): string | null {
+  // The nvapi- prefix check is specific to NVIDIA keys; skip it for keys
+  // from other providers (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY) so that
+  // a valid Anthropic key is not rejected with an NVIDIA-specific error.
+  const isNvidia = credentialEnv === "NVIDIA_API_KEY";
   if (!key) {
-    return "  NVIDIA API Key is required.";
+    return isNvidia ? "  NVIDIA API Key is required." : "  API Key is required.";
   }
-  if (!key.startsWith("nvapi-")) {
-    return "  Invalid key. Must start with nvapi-";
+  if (isNvidia && !key.startsWith("nvapi-")) {
+    return "  Invalid NVIDIA API key. Must start with nvapi-";
   }
   return null;
 }

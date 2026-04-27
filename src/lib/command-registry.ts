@@ -131,6 +131,13 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "sandbox",
   },
   {
+    usage: "nemoclaw <name> gateway-token",
+    description: "Print the OpenClaw gateway auth token to stdout",
+    flags: "[--quiet|-q]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
     usage: "nemoclaw <name> destroy",
     description: "Stop NIM + delete sandbox",
     flags: "(--yes to skip prompt)",

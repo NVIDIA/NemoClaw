@@ -27,6 +27,12 @@ For NemoClaw-managed environments, use `nemoclaw onboard` when you need to creat
 Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
 :::
 
+:::{note} Docker storage driver
+On Linux hosts running Docker 26 or later with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) enabled (the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros), `nemoclaw onboard` transparently builds a `fuse-overlayfs`-enabled cluster image to bypass a kernel-level nested-overlay limitation in k3s.
+No manual setup is required.
+See the troubleshooting guide (use the `nemoclaw-user-reference` skill) for the override knobs and a manual `daemon.json` alternative.
+:::
+
 ## Platforms
 
 The following table lists tested platform and runtime combinations.

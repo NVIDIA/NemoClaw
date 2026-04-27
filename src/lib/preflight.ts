@@ -96,6 +96,9 @@ export interface HostAssessment {
   dockerInfoSummary?: string;
   dockerCgroupVersion?: "v1" | "v2" | "unknown";
   dockerDefaultCgroupnsMode?: "host" | "private" | "unknown";
+  dockerStorageDriver?: string;
+  dockerUsesContainerdSnapshotter?: boolean;
+  hasNestedOverlayConflict: boolean;
   requiresHostCgroupnsFix: boolean;
   isUnsupportedRuntime: boolean;
   isHeadlessLikely: boolean;
@@ -178,6 +181,25 @@ function parseDockerInfoSummary(info = ""): string | undefined {
   const osMatch = info.match(/"OperatingSystem"\s*:\s*"([^"]+)"/);
   const parts = [versionMatch?.[1], osMatch?.[1]].filter(Boolean);
   return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+export function parseDockerStorageDriver(info = ""): string | undefined {
+  // JSON form (`docker info --format '{{json .}}'`) is the canonical caller
+  // path inside this file, but accept the plain-text `Storage Driver: <name>`
+  // form too so future callers that pass raw `docker info` don't silently
+  // miss the conflict and bypass the auto-fix.
+  const jsonMatch = info.match(/"Driver"\s*:\s*"([^"]+)"/);
+  if (jsonMatch) return jsonMatch[1];
+  const textMatch = info.match(/^\s*Storage Driver:\s*(\S+)\s*$/m);
+  return textMatch?.[1];
+}
+
+export function parseDockerUsesContainerdSnapshotter(info = ""): boolean {
+  // Docker 26+ defaults fresh installs to the containerd image store, surfaced
+  // via `docker info` DriverStatus entries that name the containerd snapshotter
+  // v1 plugin. Match either JSON or text form so we handle `--format '{{json
+  // .}}'` output and plain `docker info` alike.
+  return /io\.containerd\.snapshotter\.v1/.test(info);
 }
 
 function readDockerDefaultCgroupnsMode(
@@ -287,6 +309,33 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerCgroupVersion = dockerReachable
     ? parseDockerCgroupVersion(dockerInfoOutput)
     : "unknown";
+  const dockerStorageDriver = dockerReachable
+    ? parseDockerStorageDriver(dockerInfoOutput)
+    : undefined;
+  const dockerUsesContainerdSnapshotter = dockerReachable
+    ? parseDockerUsesContainerdSnapshotter(dockerInfoOutput)
+    : false;
+  // Nested-overlay break: Docker 26+ on Linux with the containerd image store
+  // (Driver=overlayfs + DriverStatus mentions io.containerd.snapshotter.v1)
+  // does not allow k3s-in-Docker to mount its own overlay snapshots. The
+  // legacy `overlay2` graph driver materializes layers as plain directory
+  // trees and is unaffected. Docker Desktop on macOS/Windows reports
+  // overlayfs through a Linux VM that does not exhibit the same kernel
+  // limitation, so we scope the conflict to platform === 'linux'.
+  //
+  // We additionally exclude WSL2 hosts. Native Docker inside WSL2 (without
+  // Docker Desktop integration) routes through the WSL kernel, which has
+  // a different overlay-mount story than bare Linux and is not part of
+  // the user-confirmed reproducer. Engaging the auto-fix there could
+  // build an unnecessary patched image; preferring to leave WSL alone
+  // until we have a confirmed repro is the conservative call.
+  const isWslHost = detectWsl({ platform, env, release, procVersion });
+  const hasNestedOverlayConflict =
+    platform === "linux" &&
+    !isWslHost &&
+    runtime === "docker" &&
+    dockerStorageDriver === "overlayfs" &&
+    dockerUsesContainerdSnapshotter;
   const dockerDefaultCgroupnsMode = readDockerDefaultCgroupnsMode(readFileImpl);
   const dockerServiceActive =
     platform === "linux" && systemctlAvailable && dockerInstalled
@@ -298,7 +347,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
       : null;
   const assessment: HostAssessment = {
     platform,
-    isWsl: detectWsl({ platform, env, release, procVersion }),
+    isWsl: isWslHost,
     runtime,
     packageManager,
     systemctlAvailable,
@@ -312,6 +361,9 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerInfoSummary: parseDockerInfoSummary(dockerInfoOutput),
     dockerCgroupVersion,
     dockerDefaultCgroupnsMode,
+    dockerStorageDriver,
+    dockerUsesContainerdSnapshotter,
+    hasNestedOverlayConflict,
     // Current OpenShell sets host cgroupns on its own cluster container.
     requiresHostCgroupnsFix: false,
     isUnsupportedRuntime: runtime === "podman",

@@ -261,6 +261,24 @@ Use `--follow` to stream output in real time.
 $ nemoclaw my-assistant logs [--follow]
 ```
 
+### `nemoclaw <name> gateway-token`
+
+Print the OpenClaw gateway auth token for a running sandbox to stdout.
+The token is required by `openclaw tui` and the OpenClaw dashboard URL, but onboarding only prints it once.
+Pipe it into automation or capture it into an environment variable:
+
+```console
+$ TOKEN=$(nemoclaw my-assistant gateway-token --quiet)
+$ export OPENCLAW_GATEWAY_TOKEN="$TOKEN"
+```
+
+The token is written to stdout with no surrounding text.
+A one-line security warning is written to stderr; pass `--quiet` (or `-q`) to suppress it.
+The command exits non-zero with a diagnostic on stderr when the sandbox is not registered or when the token cannot be retrieved (for example, if the sandbox is not running).
+
+> **Warning:** Treat the gateway token like a password.
+> Do not log it, share it, or commit it to version control.
+
 ### `nemoclaw <name> destroy`
 
 Stop the NIM container, remove the host-side Docker image built during onboard, and delete the sandbox.
