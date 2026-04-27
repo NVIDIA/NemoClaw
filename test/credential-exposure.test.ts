@@ -121,9 +121,12 @@ describe("credential exposure in process arguments", () => {
     expect(src).toMatch(/!choice\.includes\(" "\).*choice\.length > 40/);
     // Regex fallback for base64-safe tokens must be present (full shape)
     expect(src).toMatch(/\/\^\[A-Za-z0-9_\\-\\.\]\{20,\}\$\/\.test\(choice\)/);
-    // Validator must be hoisted (defined exactly once, not inside both branches)
+    // Validator must be hoisted (defined exactly once, not inside both branches).
+    // After PR #2389 the validator delegates to validateNvidiaApiKeyValue with
+    // credentialEnv so non-NVIDIA keys aren't rejected on retry, but the
+    // single-definition invariant from the original PR (#1313) still holds.
     const validatorCount = (
-      src.match(/const validator = credentialEnv === "NVIDIA_API_KEY"/g) || []
+      src.match(/const validator = .*validateNvidiaApiKeyValue\(key, credentialEnv\)/g) || []
     ).length;
     expect(validatorCount).toBe(1);
     // looksLikeToken variable must exist

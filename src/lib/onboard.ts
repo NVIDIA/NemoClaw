@@ -830,7 +830,10 @@ async function promptValidationRecovery(
       (!choice.includes(" ") && choice.length > 40) ||
       // Regex fallback: base64-safe token pattern (20+ chars, no spaces, mixed alphanum)
       /^[A-Za-z0-9_\-\.]{20,}$/.test(choice);
-    const validator = credentialEnv === "NVIDIA_API_KEY" ? validateNvidiaApiKeyValue : null;
+    // validateNvidiaApiKeyValue is provider-aware: it only enforces the
+    // nvapi- prefix when credentialEnv === "NVIDIA_API_KEY", so passing it
+    // unconditionally here is safe for Anthropic/OpenAI/Gemini too.
+    const validator = (key: string) => validateNvidiaApiKeyValue(key, credentialEnv);
     if (looksLikeToken) {
       console.log("  ⚠️  That looks like an API key — do not paste credentials here.");
       console.log("  Treating as 'retry'. You will be prompted to enter the key securely.");
