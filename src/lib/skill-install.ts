@@ -16,9 +16,17 @@ import YAML from "yaml";
 
 // ── Frontmatter parsing ──────────────────────────────────────────
 
+type FrontmatterScalar = string | number | boolean | null | undefined;
+type FrontmatterValue = FrontmatterScalar | FrontmatterRecord | FrontmatterValue[];
+type FrontmatterRecord = { [key: string]: FrontmatterValue };
+
+function isRecord(value: FrontmatterValue): value is FrontmatterRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export interface SkillFrontmatter {
   name: string;
-  [key: string]: unknown;
+  [key: string]: FrontmatterValue;
 }
 
 /**
@@ -44,20 +52,19 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 
   const fmRaw = lines.slice(1, closingIdx).join("\n");
 
-  let parsed: unknown;
+  let parsed: FrontmatterValue;
   try {
     parsed = YAML.parse(fmRaw);
-  } catch (err: unknown) {
+  } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`SKILL.md frontmatter is not valid YAML: ${msg}`);
   }
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isRecord(parsed)) {
     throw new Error("SKILL.md frontmatter must be a YAML mapping (key: value pairs)");
   }
 
-  const fm = parsed as Record<string, unknown>;
-  const nameValue = typeof fm.name === "string" ? fm.name.trim() : "";
+  const nameValue = typeof parsed.name === "string" ? parsed.name.trim() : "";
   if (!nameValue) {
     throw new Error("SKILL.md frontmatter is missing required 'name' field");
   }
@@ -158,11 +165,16 @@ export function sshExec(
     const result = spawnSync(
       "ssh",
       [
-        "-F", ctx.configFile,
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=10",
-        "-o", "LogLevel=ERROR",
+        "-F",
+        ctx.configFile,
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "LogLevel=ERROR",
         `openshell-${ctx.sandboxName}`,
         command,
       ],
@@ -254,9 +266,7 @@ export function uploadDirectory(
   const failed: string[] = [];
   for (const rel of files) {
     const localFile = path.join(localDir, rel);
-    const remoteSubdir = rel.includes("/")
-      ? `${remoteDir}/${path.dirname(rel)}`
-      : remoteDir;
+    const remoteSubdir = rel.includes("/") ? `${remoteDir}/${path.dirname(rel)}` : remoteDir;
     const result = uploadFile(ctx, localFile, remoteSubdir, path.basename(rel));
     if (!result || result.status !== 0) {
       failed.push(rel);
@@ -299,11 +309,9 @@ export function postInstall(
         // mirrorDir contains $HOME which must expand, so we use double
         // quotes (not shellQuote). Safe because validateRelativePath
         // restricts filenames to [A-Za-z0-9._-/] before we reach here.
-        const result = runSsh(
-          ctx,
-          `mkdir -p "${mirrorSubdir}" && cat > "${mirrorFile}"`,
-          { input: content },
-        );
+        const result = runSsh(ctx, `mkdir -p "${mirrorSubdir}" && cat > "${mirrorFile}"`, {
+          input: content,
+        });
         if (!result || result.status !== 0) {
           mirrorFailed = true;
         }

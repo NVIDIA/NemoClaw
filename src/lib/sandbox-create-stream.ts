@@ -38,10 +38,12 @@ export interface StreamableReadable {
   destroy?(): void;
 }
 
-export interface StreamableChildProcess
-  extends Pick<ChildProcess, "kill" | "removeAllListeners" | "unref"> {
+export interface StreamableChildProcess {
   stdout: StreamableReadable | null;
   stderr: StreamableReadable | null;
+  kill?(signal?: NodeJS.Signals | number): boolean;
+  removeAllListeners?(event?: string | symbol): void;
+  unref?(): void;
   on(event: "error", listener: (error: Error & { code?: string }) => void): this;
   on(event: "close", listener: (code: number | null) => void): this;
 }
@@ -51,11 +53,11 @@ export function streamSandboxCreate(
   env: NodeJS.ProcessEnv = process.env,
   options: StreamSandboxCreateOptions = {},
 ): Promise<StreamSandboxCreateResult> {
-  const child = (options.spawnImpl ?? spawn)("bash", ["-lc", command], {
+  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)("bash", ["-lc", command], {
     cwd: ROOT,
     env,
     stdio: ["ignore", "pipe", "pipe"],
-  }) as StreamableChildProcess;
+  });
 
   const logLine = options.logLine ?? console.log;
   const lines: string[] = [];
@@ -251,7 +253,9 @@ export function streamSandboxCreate(
     resolvePromise = resolve;
     child.on("error", (error) => {
       const code = error?.code;
-      const detail = code ? `spawn failed: ${error.message} (${code})` : `spawn failed: ${error.message}`;
+      const detail = code
+        ? `spawn failed: ${error.message} (${code})`
+        : `spawn failed: ${error.message}`;
       lines.push(detail);
       finish(1);
     });

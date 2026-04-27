@@ -10,18 +10,30 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { TOKEN_PREFIX_PATTERNS } from "./secret-patterns";
+import { redactSensitiveText, redactUrl } from "./redact";
+import { isErrnoException } from "./errno";
 import type { WebSearchConfig } from "./web-search";
 
 export const SESSION_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
-const STEP_STATES = ["pending", "in_progress", "complete", "failed", "skipped"] as const;
-const VALID_STEP_STATES = new Set<string>(STEP_STATES);
 
-type UnknownRecord = { [key: string]: unknown };
-type StepStatus = (typeof STEP_STATES)[number];
+import type { JsonValue, JsonObject } from "./json-types";
+
+// Session-specific aliases for the shared JSON types.
+type SessionJsonValue = JsonValue;
+type UnknownRecord = JsonObject;
+type StepStatus = "pending" | "in_progress" | "complete" | "failed" | "skipped";
+
+const STEP_STATES: readonly StepStatus[] = [
+  "pending",
+  "in_progress",
+  "complete",
+  "failed",
+  "skipped",
+];
+const VALID_STEP_STATES: ReadonlySet<string> = new Set(STEP_STATES);
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -151,33 +163,29 @@ export function isObject(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
-}
-
-function readString(value: unknown): string | null {
+function readString(value: SessionJsonValue | undefined): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function readStringArray(value: unknown): string[] | null {
+function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
-function readStepStatus(value: unknown): StepStatus | null {
-  if (value === "pending") return value;
-  if (value === "in_progress") return value;
-  if (value === "complete") return value;
-  if (value === "failed") return value;
-  if (value === "skipped") return value;
-  return null;
+function isStepStatus(value: string): value is StepStatus {
+  return VALID_STEP_STATES.has(value);
 }
 
-function parseWebSearchConfig(value: unknown): WebSearchConfig | null {
+function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null {
+  if (typeof value !== "string") return null;
+  return isStepStatus(value) ? value : null;
+}
+
+function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
   return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
 }
 
-function parseSessionMetadata(value: unknown): SessionMetadata | undefined {
+function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
@@ -185,7 +193,7 @@ function parseSessionMetadata(value: unknown): SessionMetadata | undefined {
   };
 }
 
-function parseStepState(value: unknown): StepState | null {
+function parseStepState(value: SessionJsonValue | undefined): StepState | null {
   if (!isObject(value)) return null;
   const status = readStepStatus(value.status);
   if (!status) return null;
@@ -197,7 +205,7 @@ function parseStepState(value: unknown): StepState | null {
   };
 }
 
-function parseLockInfo(value: unknown): LockInfo | null {
+function parseLockInfo(value: SessionJsonValue | undefined): LockInfo | null {
   if (!isObject(value) || typeof value.pid !== "number") return null;
   return {
     pid: value.pid,
@@ -206,28 +214,14 @@ function parseLockInfo(value: unknown): LockInfo | null {
   };
 }
 
-export function redactSensitiveText(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-
-  // Context-anchored patterns: preserve the key name for debuggability.
-  let result = value
-    .replace(
-      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN)=\S+/gi,
-      "$1=<REDACTED>",
-    )
-    .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>");
-
-  // Standalone token patterns — delegate to the canonical source of truth
-  // (secret-patterns.ts) instead of maintaining a duplicate regex list.
-  for (const pattern of TOKEN_PREFIX_PATTERNS) {
-    result = result.replace(pattern, "<REDACTED>");
-  }
-
-  return result.slice(0, 240);
-}
+// redactSensitiveText and redactUrl imported from ./redact (#2381).
+export { redactSensitiveText, redactUrl };
 
 export function sanitizeFailure(
-  input: { step?: unknown; message?: unknown; recordedAt?: unknown } | null | undefined,
+  input:
+    | { step?: SessionJsonValue; message?: SessionJsonValue; recordedAt?: SessionJsonValue }
+    | null
+    | undefined,
 ): SessionFailure | null {
   if (!input) return null;
   const step = readString(input.step);
@@ -236,28 +230,8 @@ export function sanitizeFailure(
   return step || message ? { step, message, recordedAt } : null;
 }
 
-export function validateStep(step: unknown): boolean {
+export function validateStep(step: SessionJsonValue | undefined): boolean {
   return parseStepState(step) !== null;
-}
-
-export function redactUrl(value: unknown): string | null {
-  if (typeof value !== "string" || value.length === 0) return null;
-  try {
-    const url = new URL(value);
-    if (url.username || url.password) {
-      url.username = "";
-      url.password = "";
-    }
-    for (const key of [...url.searchParams.keys()]) {
-      if (/(^|[-_])(?:signature|sig|token|auth|access_token)$/i.test(key)) {
-        url.searchParams.set(key, "<REDACTED>");
-      }
-    }
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return redactSensitiveText(value);
-  }
 }
 
 // ── Session CRUD ─────────────────────────────────────────────────
@@ -283,7 +257,8 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
     nimContainer: overrides.nimContainer ?? null,
-    webSearchConfig: parseWebSearchConfig(overrides.webSearchConfig),
+    webSearchConfig:
+      overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
     metadata: {
@@ -298,7 +273,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
 }
 
 // eslint-disable-next-line complexity
-export function normalizeSession(data: unknown): Session | null {
+export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
 
   const normalized = createSession({
@@ -387,7 +362,7 @@ function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch (error: unknown) {
+  } catch (error) {
     return isErrnoException(error) && error.code === "EPERM";
   }
 }
@@ -427,7 +402,7 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
       // releaseOnboardLock() can later confirm the on-disk path still
       // resolves to the same file we created (fstat ino vs stat ino).
       fd = fs.openSync(LOCK_FILE, "wx", 0o600);
-    } catch (error: unknown) {
+    } catch (error) {
       if (!isErrnoException(error) || error.code !== "EEXIST") {
         throw error;
       }
@@ -444,7 +419,7 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         const stat = fs.statSync(LOCK_FILE, { bigint: true });
         staleInode = stat.ino;
         existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
-      } catch (readError: unknown) {
+      } catch (readError) {
         if (isErrnoException(readError) && readError.code === "ENOENT") {
           continue;
         }
@@ -522,7 +497,7 @@ function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): v
       // Someone else replaced the file. Leave it alone.
       return;
     }
-  } catch (statError: unknown) {
+  } catch (statError) {
     if (isErrnoException(statError) && statError.code === "ENOENT") {
       return;
     }
@@ -530,7 +505,7 @@ function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): v
   }
   try {
     fs.unlinkSync(filePath);
-  } catch (unlinkError: unknown) {
+  } catch (unlinkError) {
     if (!isErrnoException(unlinkError) || unlinkError.code !== "ENOENT") {
       throw unlinkError;
     }
@@ -551,16 +526,16 @@ export function releaseOnboardLock(): void {
       try {
         const pathStat = fs.statSync(LOCK_FILE, { bigint: true });
         pathInode = pathStat.ino;
-      } catch (error: unknown) {
-        if (!isErrnoException(error) || error.code !== "ENOENT") {
+      } catch (error) {
+        if (!(isErrnoException(error) && error.code === "ENOENT")) {
           // Unexpected — fall through to closing the fd.
         }
       }
       if (pathInode !== null && pathInode === fdStat.ino) {
         try {
           fs.unlinkSync(LOCK_FILE);
-        } catch (unlinkError: unknown) {
-          if (!isErrnoException(unlinkError) || unlinkError.code !== "ENOENT") {
+        } catch (unlinkError) {
+          if (!(isErrnoException(unlinkError) && unlinkError.code === "ENOENT")) {
             // Best effort — surfacing this would mask the real error.
           }
         }
@@ -587,7 +562,7 @@ export function releaseOnboardLock(): void {
     let existing: LockInfo | null = null;
     try {
       existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
-    } catch (error: unknown) {
+    } catch (error) {
       if (isErrnoException(error) && error.code === "ENOENT") return;
       throw error;
     }

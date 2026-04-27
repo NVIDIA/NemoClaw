@@ -4,11 +4,11 @@
 /**
  * Canonical secret redaction patterns — single source of truth.
  *
- * Used by runner.ts (CLI output), debug.ts (diagnostic dumps), and
- * mirrored in debug.sh (shell diagnostics). If you add a pattern here,
- * also add it to scripts/debug.sh:redact() and update the consistency
- * test in test/secret-redaction.test.ts.
+ * All TypeScript consumers import through src/lib/redact.ts (#2381).
+ * debug.sh delegates to the compiled redact module when node is available;
+ * its sed fallback only covers the prefixes in EXPECTED_SHELL_PREFIXES.
  *
+ * Ref: https://github.com/NVIDIA/NemoClaw/issues/2381
  * Ref: https://github.com/NVIDIA/NemoClaw/issues/1736
  */
 
@@ -56,24 +56,13 @@ export const SECRET_PATTERNS: RegExp[] = [
 ];
 
 /**
- * Token prefixes that debug.sh must also handle.
- * Used by the consistency test to verify debug.sh stays in sync.
+ * Token prefixes covered by the debug.sh sed fallback.
+ * The primary path delegates to node; this fallback only runs when
+ * node or dist/ is unavailable. Consistency test verifies these appear.
  */
 export const EXPECTED_SHELL_PREFIXES = [
   "nvapi-",
   "nvcf-",
   "ghp_",
-  "github_pat_",
-  "sk-proj-",
-  "sk-ant-",
   "sk-",
-  "xox",
-  "xapp",
-  "AKIA",
-  "ASIA",
-  "hf_",
-  "glpat-",
-  "gsk_",
-  "pypi-",
-  "bot",
 ];

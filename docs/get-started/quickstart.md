@@ -22,55 +22,11 @@ status: published
 
 # Quickstart
 
-:::{admonition} Alpha software
-NemoClaw is in alpha, available as an early preview since March 16, 2026.
-APIs, configuration schemas, and runtime behavior are subject to breaking changes between releases.
-Do not use this software in production environments.
-File issues and feedback through the GitHub repository as the project continues to stabilize.
-:::
-
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
 
-## Prerequisites
-
-Before getting started, check the prerequisites to ensure you have the necessary software and hardware to run NemoClaw.
-
-### Hardware
-
-| Resource | Minimum        | Recommended      |
-|----------|----------------|------------------|
-| CPU      | 4 vCPU         | 4+ vCPU          |
-| RAM      | 8 GB           | 16 GB            |
-| Disk     | 20 GB free     | 40 GB free       |
-
-The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline. The pipeline buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer. If you cannot add memory, configuring at least 8 GB of swap can work around the issue at the cost of slower performance.
-
-### Software
-
-| Dependency | Version                          |
-|------------|----------------------------------|
-| Node.js    | 22.16 or later |
-| npm        | 10 or later |
-| Platform   | See below |
-
-:::{warning} OpenShell lifecycle
-For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
-Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
+:::{note}
+Make sure you have completed reviewing the [Prerequisites](prerequisites.md) before following this guide.
 :::
-
-### Container Runtimes
-
-The following table lists tested platform and runtime combinations.
-Availability is not limited to these entries, but untested configurations can have issues.
-
-<!-- platform-matrix:begin -->
-| OS | Container runtime | Status | Notes |
-|----|-------------------|--------|-------|
-| Linux | Docker | Tested | Primary tested path. |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| DGX Spark | Docker | Tested | Use the standard installer and `nemoclaw onboard`. |
-| Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
-<!-- platform-matrix:end -->
 
 ## Install NemoClaw and Onboard OpenClaw Agent
 
@@ -249,9 +205,31 @@ These options appear when `NEMOCLAW_EXPERIMENTAL=1` is set and the prerequisites
 For setup, refer to [Use a Local Inference Server](../inference/use-local-inference.md).
 :::
 
+### Review the Configuration Before the Sandbox Build
+
+After you enter the sandbox name, the wizard prints a review summary and asks for final confirmation before starting the destructive sandbox image build. For example, if you picked NVIDIA Endpoints, the summary looks like the following:
+
+```text
+  ──────────────────────────────────────────────────
+  Review configuration
+  ──────────────────────────────────────────────────
+  Provider:      nvidia-api
+  Model:         nvidia/nemotron-3-super-120b-a12b
+  API key:       NVIDIA_API_KEY (stored in ~/.nemoclaw/credentials.json)
+  Web search:    disabled
+  Messaging:     none
+  Sandbox name:  my-assistant
+  ──────────────────────────────────────────────────
+  Apply this configuration? [Y/n]:
+```
+
+The default is `Y`, so you can press Enter once to continue. Answer `n` to abort cleanly, fix the entries, and re-run `nemoclaw onboard`.
+
+Non-interactive runs (`NEMOCLAW_NON_INTERACTIVE=1`) print the summary for log clarity but skip the prompt.
+
 When the install completes, a summary confirms the running environment.
-The `Model` and provider line reflects whichever inference option you picked in the wizard.
-The example below shows the result if you accept the NVIDIA Endpoints default.
+The `Model` and provider line reflects the inference option you picked during onboarding.
+The example below shows the result if you picked NVIDIA Endpoints during onboarding.
 
 ```text
 ──────────────────────────────────────────────────
@@ -298,11 +276,17 @@ openshell forward list
 
 ### Run Multiple Sandboxes
 
-Each sandbox needs its own dashboard port, since `openshell forward` refuses to bind a port that another sandbox is already using. Override the port with `NEMOCLAW_DASHBOARD_PORT` at onboard time.
+Each sandbox needs its own dashboard port, since `openshell forward` refuses to bind a port that another sandbox is already using. Override the port with `CHAT_UI_URL` at onboard time — the dashboard port is derived automatically.
 
-```bash
-nemoclaw onboard                                     # first sandbox uses 18789
-NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard       # second sandbox uses 19000
+```console
+$ nemoclaw onboard                                            # first sandbox uses 18789
+$ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard         # second sandbox uses 19000
+```
+
+You can also use `NEMOCLAW_DASHBOARD_PORT` directly if you prefer:
+
+```console
+$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 ```
 
 For full details on port conflicts and overrides, refer to [Port already in use](../reference/troubleshooting.md#port-already-in-use).
@@ -379,10 +363,10 @@ Refer to [`nemoclaw <name> policy-add`](../reference/commands.md#nemoclaw-name-p
 
 ## Uninstall
 
-To remove NemoClaw and all resources created during setup, run the uninstall script:
+To remove NemoClaw and all resources created during setup, run the CLI's built-in uninstall command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
+nemoclaw uninstall
 ```
 
 | Flag               | Effect                                              |
@@ -390,6 +374,16 @@ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uni
 | `--yes`            | Skip the confirmation prompt.                       |
 | `--keep-openshell` | Leave the `openshell` binary installed.              |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
+
+`nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
+
+If the `nemoclaw` CLI is missing or broken, fall back to the hosted script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
+```
+
+For a full comparison of the two forms — what they fetch, what they trust, and when to prefer each — see [`nemoclaw uninstall` vs. the hosted `uninstall.sh`](../reference/commands.md#nemoclaw-uninstall-vs-the-hosted-uninstallsh).
 
 ## Next Steps
 

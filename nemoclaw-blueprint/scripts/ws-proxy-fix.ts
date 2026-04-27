@@ -37,6 +37,7 @@ import { URL } from "node:url";
 const _PATCHED = Symbol.for("nemoclaw.wsProxyFix");
 
 type RequestCallback = (res: http.IncomingMessage) => void;
+type TunnelConnectionOptions = { servername?: string };
 
 /**
  * Merged options after normalising the multiple call signatures of
@@ -54,7 +55,8 @@ interface ReqOpts extends https.RequestOptions {
   const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy;
   if (!proxyUrl) return;
 
-  if ((globalThis as Record<symbol, unknown>)[_PATCHED]) return;
+  const patchedFlag = Reflect.get(globalThis, _PATCHED) === true;
+  if (patchedFlag) return;
 
   let proxy: URL;
   try {
@@ -82,10 +84,13 @@ interface ReqOpts extends https.RequestOptions {
     // Override createConnection to route through the proxy's CONNECT tunnel.
     // The typing is intentionally loosened because the actual Node.js runtime
     // signature is broader than what @types/node declares.
-    (agent as unknown as Record<string, unknown>).createConnection = function (
-      options: Record<string, unknown>,
-      callback: (err: Error | null, socket?: tls.TLSSocket) => void,
-    ): net.Socket {
+    Reflect.set(
+      agent,
+      "createConnection",
+      function (
+        options: TunnelConnectionOptions,
+        callback: (err: Error | null, socket?: tls.TLSSocket) => void,
+      ): net.Socket {
       const connectReq = http.request({
         host: proxyHost,
         port: proxyPort,
@@ -112,7 +117,7 @@ interface ReqOpts extends https.RequestOptions {
           }
           const tlsSocket = tls.connect({
             socket,
-            servername: (options.servername as string) || targetHost,
+            servername: typeof options.servername === "string" ? options.servername : targetHost,
           });
           callback(null, tlsSocket);
         },
@@ -127,7 +132,8 @@ interface ReqOpts extends https.RequestOptions {
       // createConnection expects a synchronous return; the real socket arrives
       // via the callback.  Return a placeholder that Node.js will discard.
       return new net.Socket();
-    };
+    },
+    );
 
     return agent;
   }
@@ -158,12 +164,28 @@ interface ReqOpts extends https.RequestOptions {
 
   // ---------- Patch https.request() ---------------------------------------
 
-  // Capture the original — typed as a loose callable so we can invoke it
-  // with the normalised (options, cb) form without fighting overload resolution.
-  const origRequest = https.request as (
-    options: ReqOpts,
+  // Capture the original so we can call it after normalising arguments.
+  const requestRef = https.request;
+
+  function callOriginalRequest(
+    input: string | URL | ReqOpts,
+    options?: RequestCallback | ReqOpts,
     callback?: RequestCallback,
-  ) => http.ClientRequest;
+  ): http.ClientRequest {
+    if (typeof input === "string" || input instanceof URL) {
+      if (typeof options === "function") {
+        return requestRef(input, options);
+      }
+      if (options) {
+        return callback ? requestRef(input, options, callback) : requestRef(input, options);
+      }
+      return callback ? requestRef(input, {}, callback) : requestRef(input);
+    }
+    if (typeof options === "function") {
+      return requestRef(input, options);
+    }
+    return requestRef(input, callback);
+  }
 
   function wsProxyFixedRequest(
     input: string | URL | ReqOpts,
@@ -179,7 +201,7 @@ interface ReqOpts extends https.RequestOptions {
         cb = options;
         opts = {};
       } else {
-        opts = (options as ReqOpts) || {};
+        opts = options ?? {};
         cb = callback;
       }
       const url = typeof input === "string" ? new URL(input) : input;
@@ -202,24 +224,31 @@ interface ReqOpts extends https.RequestOptions {
       host = opts.host.replace(/:\d+$/, "");
     }
     if (isDiscordWsUpgrade(host, opts.headers)) {
+      // Guard: if isDiscordWsUpgrade matched but host resolved to
+      // undefined, we cannot construct a CONNECT tunnel (no target).
+      // Fall through to the original https.request unchanged.  Before
+      // PR #2422 this path would have attempted the tunnel with an
+      // undefined host, which would fail in createTunnelAgent anyway.
+      if (!host) {
+        return callOriginalRequest(input, options, callback);
+      }
       // Discord WebSocket upgrade — inject CONNECT tunnel agent unless the
       // caller already provides a custom (non-default) agent.
       if (!opts.agent || opts.agent === https.globalAgent) {
         const port = parseInt(String(opts.port), 10) || 443;
-        opts = { ...opts, agent: createTunnelAgent(host!, port) };
+        opts = { ...opts, agent: createTunnelAgent(host, port) };
       }
-      return origRequest.call(https, opts, cb);
+      return cb ? requestRef(opts, cb) : requestRef(opts);
     }
 
-    // Non-WebSocket — pass through original arguments unchanged.
-    // eslint-disable-next-line prefer-rest-params
-    return (origRequest as unknown as Function).apply(https, arguments);
+    // Non-WebSocket — pass through the original arguments unchanged.
+    return callOriginalRequest(input, options, callback);
   }
 
   // Replace https.request with our patched version.
-  (https as unknown as Record<string, unknown>).request = wsProxyFixedRequest;
+  Reflect.set(https, "request", wsProxyFixedRequest);
 
-  (globalThis as Record<symbol, unknown>)[_PATCHED] = true;
+  Reflect.set(globalThis, _PATCHED, true);
 })();
 
 export {};

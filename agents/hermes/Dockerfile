@@ -24,9 +24,11 @@ ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 
 # Copy NemoClaw plugin for Hermes (Python-based)
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
+RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 
 # Copy config generation script and URL-decode proxy
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-generate-config.ts
+RUN chmod 444 /opt/nemoclaw-generate-config.ts
 COPY agents/hermes/decode-proxy.py /usr/local/bin/nemoclaw-decode-proxy
 RUN chmod 755 /usr/local/bin/nemoclaw-decode-proxy
 

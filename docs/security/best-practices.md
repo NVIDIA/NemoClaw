@@ -229,18 +229,8 @@ The container mounts system directories read-only to prevent the agent from modi
 
 ### Read-Only `.openclaw` Config
 
-The `/sandbox/.openclaw` directory contains the OpenClaw gateway configuration (model routing, CORS settings, channel config).
-The gateway auth token is **not** stored in this directory — it is generated at container startup and passed via the `OPENCLAW_GATEWAY_TOKEN` environment variable only to the gateway process (which runs as the `gateway` user).
-
-The token file location depends on the startup mode:
-
-- **Root mode** (production): `/run/nemoclaw/gateway-token` (`gateway:gateway 0400`).
-  The sandbox user cannot read this file (different uid), cannot read the gateway process env (`/proc/pid/environ` is uid-gated), and `no-new-privileges` prevents escalation.
-- **Non-root mode** (dev/fallback): `/tmp/.runtime/nemoclaw/gateway-token` (`sandbox:sandbox 0400`).
-  Without uid separation the sandbox user owns the file, matching the pre-externalization security posture.
-  The token is not exported to the shell env or written to rc files.
-
-The container mounts `.openclaw` read-only while writable agent state (plugins, agent data) lives in `/sandbox/.openclaw-data` through symlinks.
+The `/sandbox/.openclaw` directory contains the OpenClaw gateway configuration, including auth tokens and CORS settings.
+The container mounts it read-only while writable agent state (plugins, agent data) lives in `/sandbox/.openclaw-data` through symlinks.
 
 Multiple defense layers protect this directory:
 
@@ -248,13 +238,12 @@ Multiple defense layers protect this directory:
 - **Immutable flag.** The entrypoint applies `chattr +i` to the directory and all symlinks, preventing modification even if other controls fail.
 - **Symlink validation.** At startup, the entrypoint verifies every symlink in `.openclaw` points to the expected `.openclaw-data` target. If any symlink points elsewhere, the container refuses to start.
 - **Config integrity hash.** The build process pins a SHA256 hash of `openclaw.json`. The entrypoint verifies it at startup and refuses to start if the hash does not match.
-- **Externalized gateway token.** The gateway auth token never appears in `openclaw.json`. It is generated at container startup, written to a mode-dependent token file, and passed to the gateway process via an environment variable. In root mode, the token file is owned by the `gateway` user and unreadable by the sandbox agent.
 
 | Aspect | Detail |
 |---|---|
-| Default | The container mounts `/sandbox/.openclaw` as read-only, root-owned, immutable, and integrity-verified at startup. `/sandbox/.openclaw-data` remains writable. The gateway auth token is stored separately: `/run/nemoclaw/gateway-token` in root mode (`gateway:gateway 0400`) or `/tmp/.runtime/nemoclaw/gateway-token` in non-root mode (`sandbox:sandbox 0400`). |
+| Default | The container mounts `/sandbox/.openclaw` as read-only, root-owned, immutable, and integrity-verified at startup. `/sandbox/.openclaw-data` remains writable. |
 | What you can change | Move `/sandbox/.openclaw` from `read_only` to `read_write` in the policy file. |
-| Risk if relaxed | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. This is the single most dangerous filesystem change. |
+| Risk if relaxed | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS, changing auth tokens, or redirecting inference to an attacker-controlled endpoint. This is the single most dangerous filesystem change. |
 | Recommendation | Never make `/sandbox/.openclaw` writable. |
 
 ### Writable Paths

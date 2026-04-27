@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -23,6 +22,9 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     // Extract the sandboxDestroy function body
     const destroyMatch = nemoclawSrc.match(/async function sandboxDestroy[\s\S]*?^}/m);
     expect(destroyMatch).toBeTruthy();
+    if (!destroyMatch) {
+      throw new Error("Expected sandboxDestroy() in src/nemoclaw.ts");
+    }
     const destroyBody = destroyMatch[0];
 
     // removeSandboxImage must appear before registry.removeSandbox
@@ -38,6 +40,9 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
       /async function sandboxRebuild[\s\S]*?^\s*console\.log\(`\s*\$\{G\}.*Sandbox.*rebuilt/m,
     );
     expect(rebuildMatch).toBeTruthy();
+    if (!rebuildMatch) {
+      throw new Error("Expected sandboxRebuild() in src/nemoclaw.ts");
+    }
     const rebuildBody = rebuildMatch[0];
 
     const removeImageIdx = rebuildBody.indexOf("removeSandboxImage(");
@@ -51,6 +56,9 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     // The function should check for imageTag before attempting removal
     const fnMatch = nemoclawSrc.match(/function removeSandboxImage[\s\S]*?^}/m);
     expect(fnMatch).toBeTruthy();
+    if (!fnMatch) {
+      throw new Error("Expected removeSandboxImage() in src/nemoclaw.ts");
+    }
     expect(fnMatch[0]).toContain("imageTag");
   });
 });
@@ -85,17 +93,21 @@ describe("image cleanup: registry stores imageTag (#2086)", () => {
     // The registerSandbox function should include imageTag in the stored entry
     const registerMatch = registrySrc.match(/function registerSandbox[\s\S]*?^}/m);
     expect(registerMatch).toBeTruthy();
+    if (!registerMatch) {
+      throw new Error("Expected registerSandbox() in src/lib/registry.ts");
+    }
     expect(registerMatch[0]).toContain("imageTag");
   });
 });
 
 describe("image cleanup: gc command exists (#2086)", () => {
   const nemoclawSrc = fs.readFileSync(path.join(ROOT, "src/nemoclaw.ts"), "utf-8");
+  const registrySrc = fs.readFileSync(path.join(ROOT, "src/lib/command-registry.ts"), "utf-8");
 
   it("gc is a global command", () => {
-    const globalBlock = nemoclawSrc.match(/GLOBAL_COMMANDS\s*=\s*new Set\(\[[\s\S]*?\]\)/);
-    expect(globalBlock).toBeTruthy();
-    expect(globalBlock[0]).toContain('"gc"');
+    // GLOBAL_COMMANDS is now derived from the command registry.
+    expect(registrySrc).toContain('"nemoclaw gc"');
+    expect(nemoclawSrc).toContain("globalCommandTokens()");
   });
 
   it("gc command is dispatched in the CLI switch", () => {
@@ -106,6 +118,9 @@ describe("image cleanup: gc command exists (#2086)", () => {
   it("garbageCollectImages lists sandbox-from images and cross-references registry", () => {
     const gcMatch = nemoclawSrc.match(/async function garbageCollectImages[\s\S]*?^}/m);
     expect(gcMatch).toBeTruthy();
+    if (!gcMatch) {
+      throw new Error("Expected garbageCollectImages() in src/nemoclaw.ts");
+    }
     const gcBody = gcMatch[0];
 
     // Must query docker for sandbox-from images
@@ -118,9 +133,8 @@ describe("image cleanup: gc command exists (#2086)", () => {
     expect(gcBody).toContain("--yes");
   });
 
-  it("gc appears in help text", () => {
-    const helpMatch = nemoclawSrc.match(/function help\(\)[\s\S]*?^}/m);
-    expect(helpMatch).toBeTruthy();
-    expect(helpMatch[0]).toContain("nemoclaw gc");
+  it("gc appears in help text via registry", () => {
+    expect(registrySrc).toContain('"nemoclaw gc"');
+    expect(nemoclawSrc).toContain("registryCommandsByGroup");
   });
 });

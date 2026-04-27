@@ -8,8 +8,9 @@ const SNAP = "/snap/20260323";
 // ── In-memory filesystem ────────────────────────────────────────
 
 interface FsEntry {
-  type: "file" | "dir";
+  type: "file" | "dir" | "symlink";
   content?: string;
+  target?: string;
 }
 
 const store = new Map<string, FsEntry>();
@@ -20,6 +21,10 @@ function addFile(p: string, content: string): void {
 
 function addDir(p: string): void {
   store.set(p, { type: "dir" });
+}
+
+function addSymlink(p: string, target: string): void {
+  store.set(p, { type: "symlink", target });
 }
 
 const FAKE_HOME = "/fakehome";
@@ -33,6 +38,28 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
+    lstatSync: (p: string) => {
+      const entry = store.get(p);
+      if (!entry) {
+        throw Object.assign(new Error(`ENOENT: no such file or directory, lstat '${p}'`), {
+          code: "ENOENT",
+        });
+      }
+      return {
+        isSymbolicLink: () => entry.type === "symlink",
+        isDirectory: () => entry.type === "dir",
+        isFile: () => entry.type === "file",
+      };
+    },
+    readlinkSync: (p: string) => {
+      const entry = store.get(p);
+      if (entry?.type !== "symlink") {
+        throw Object.assign(new Error(`EINVAL: invalid argument, readlink '${p}'`), {
+          code: "EINVAL",
+        });
+      }
+      return entry.target ?? "";
+    },
     mkdirSync: vi.fn((p: string) => {
       addDir(p);
     }),
@@ -70,7 +97,7 @@ vi.mock("node:fs", async (importOriginal) => {
     }),
     readdirSync: (p: string, opts?: { withFileTypes?: boolean }) => {
       const prefix = p.endsWith("/") ? p : p + "/";
-      const childTypes = new Map<string, "file" | "dir">();
+      const childTypes = new Map<string, "file" | "dir" | "symlink">();
       for (const [k, v] of store) {
         if (k.startsWith(prefix)) {
           const rest = k.slice(prefix.length);
@@ -92,6 +119,7 @@ vi.mock("node:fs", async (importOriginal) => {
           name,
           isDirectory: () => type === "dir",
           isFile: () => type === "file",
+          isSymbolicLink: () => type === "symlink",
         }));
       }
       return [...childTypes.keys()].sort();
@@ -152,6 +180,37 @@ describe("snapshot", () => {
       expect(manifest.file_count).toBe(2);
       expect(manifest.contents).toContain("openclaw.json");
       expect(manifest.contents).toContain("hooks/demo/HOOK.md");
+    });
+
+    it("rejects when ~/.openclaw is a symlink", () => {
+      addSymlink(OPENCLAW_DIR, "/etc");
+
+      expect(() => createSnapshot()).toThrow(/symbolic link/);
+    });
+
+    it("rejects when an ancestor of ~/.nemoclaw is a symlink", () => {
+      addDir(OPENCLAW_DIR);
+      addSymlink(`${FAKE_HOME}/.nemoclaw`, "/attacker-controlled");
+
+      expect(() => createSnapshot()).toThrow(/symbolic link/);
+    });
+
+    it("records symlinks in manifest when present in tree", () => {
+      addDir(OPENCLAW_DIR);
+      addFile(`${OPENCLAW_DIR}/openclaw.json`, '{"version":"1"}');
+      addSymlink(`${OPENCLAW_DIR}/evil`, "/etc/shadow");
+
+      const result = createSnapshot();
+      expect(result).not.toBeNull();
+      if (!result) throw new Error("createSnapshot returned null");
+
+      const manifestPath = `${result}/snapshot.json`;
+      const entry = store.get(manifestPath);
+      if (!entry?.content) throw new Error("manifest not written");
+      const manifest = JSON.parse(entry.content);
+      expect(manifest.file_count).toBe(1);
+      expect(manifest.contents).toContain("openclaw.json");
+      expect(manifest.symlinks).toContain("evil");
     });
   });
 
@@ -344,6 +403,14 @@ describe("snapshot", () => {
 
       const archived = [...store.keys()].find((k) => k.includes(".openclaw.nemoclaw-archived."));
       expect(archived).toBeDefined();
+    });
+
+    it("returns false when ~/.openclaw is a symlink", () => {
+      addDir(`${SNAP}/openclaw`);
+      addFile(`${SNAP}/openclaw/openclaw.json`, '{"restored":true}');
+      addSymlink(OPENCLAW_DIR, "/attacker-controlled");
+
+      expect(rollbackFromSnapshot(SNAP)).toBe(false);
     });
   });
 

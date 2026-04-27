@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +9,7 @@ import path from "node:path";
 
 const CHECK_DOCS = path.join(import.meta.dirname, "e2e", "e2e-cloud-experimental", "check-docs.sh");
 
-function runCheckDocs(filePath) {
+function runCheckDocs(filePath: string) {
   return spawnSync("bash", [CHECK_DOCS, "--only-links", "--local-only", filePath], {
     encoding: "utf-8",
   });

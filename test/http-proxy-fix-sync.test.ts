@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -34,13 +33,14 @@ describe("http-proxy-fix heredoc sync (#2109)", () => {
   it("embedded heredoc matches canonical file byte-for-byte", () => {
     const canonical = fs.readFileSync(CANONICAL_FIX, "utf-8");
     const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
-    const match = startScript.match(
-      /<<'HTTP_PROXY_FIX_EOF'\n([\s\S]*?)\nHTTP_PROXY_FIX_EOF/,
-    );
+    const match = startScript.match(/<<'HTTP_PROXY_FIX_EOF'\n([\s\S]*?)\nHTTP_PROXY_FIX_EOF/);
     expect(match).not.toBeNull();
+    if (!match) {
+      throw new Error("Expected HTTP_PROXY_FIX_EOF heredoc in scripts/nemoclaw-start.sh");
+    }
     // The heredoc capture excludes the final newline preceding the delimiter.
     // POSIX convention: the canonical file ends with a trailing newline.
-    const embedded = match[1] + "\n";
+    const embedded = `${match[1]}\n`;
     if (embedded !== canonical) {
       const embeddedLines = embedded.split("\n");
       const canonicalLines = canonical.split("\n");
@@ -66,7 +66,7 @@ describe("http-proxy-fix heredoc sync (#2109)", () => {
 
   it("validate_tmp_permissions is invoked with the fix path in both root and non-root branches", () => {
     const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
-    const calls = startScript.match(/validate_tmp_permissions "\$_PROXY_FIX_SCRIPT"/g) || [];
+    const calls = startScript.match(/validate_tmp_permissions\s+.*"\$_PROXY_FIX_SCRIPT"/g) || [];
     expect(calls.length).toBeGreaterThanOrEqual(2);
   });
 
