@@ -2781,8 +2781,9 @@ async function sandboxRebuild(
   // Force the sandbox name so onboard recreates with the same name.
   // Mark session resumable and point at this sandbox; set env var as fallback.
   const sessionBefore = onboardSession.loadSession();
+  const sessionMatchesSandbox = sessionBefore?.sandboxName === sandboxName;
   log(
-    `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}`,
+    `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
   );
 
   // Sync the session's agent field with the registry so onboard --resume
@@ -2810,7 +2811,11 @@ async function sandboxRebuild(
   // Forward the stored --from Dockerfile path so onboard --resume uses the
   // same custom image.  Without this, the conflict check rejects the resume
   // because requestedFrom (null) !== recordedFrom (the stored path).  (#2301)
-  const storedFromDockerfile = sessionAfter?.metadata?.fromDockerfile || null;
+  // Only read from the session when it belongs to this sandbox to avoid
+  // using config from a different sandbox's onboard run.
+  const storedFromDockerfile = sessionMatchesSandbox
+    ? sessionAfter?.metadata?.fromDockerfile || null
+    : null;
   log(
     `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
   );
@@ -2824,8 +2829,7 @@ async function sandboxRebuild(
   // call stack, which skips process.once("exit") listeners (lock
   // release, build context cleanup, session failure marking).  We
   // manually release the lock and mark the session failed in the
-  // onboardFailed block below.  Full fix is tracked in #2306 (extract
-  // rebuild-specific recreate path that throws instead of exiting).
+  // onboardFailed block below.
   const { onboard } = require("./lib/onboard");
   let onboardFailed = false;
   let onboardExitCode = 1;
