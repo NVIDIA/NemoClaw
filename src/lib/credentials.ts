@@ -152,6 +152,37 @@ export function getCredential(key: string): string | null {
   return normalized || null;
 }
 
+/**
+ * Canonical entry point for provider credential resolution (PR #2306).
+ * Resolves the credential for `envName` from `process.env`, falling back
+ * to a one-time on-demand stage of any pre-fix `~/.nemoclaw/credentials.json`,
+ * and writes the resolved value back into `process.env` so downstream
+ * code that reads `process.env[envName]` directly sees it.
+ *
+ * Returns the resolved value, or `null` if neither env nor the legacy
+ * file produced one.
+ *
+ * Note: this used to read the credentials file directly via
+ * `loadCredentials()` after #2306 landed on main, but that path is
+ * incompatible with the env-only contract introduced for the
+ * credentials-gateway-only security fix. The legacy file is now
+ * accessed only through `stageLegacyCredentialsToEnv()`, which
+ * allowlists keys, refuses ancestor symlinks, fstats by descriptor,
+ * caps file size, and is gated by the per-key fill-only-if-missing
+ * guard inside the staging helper itself.
+ */
+export function resolveProviderCredential(envName: string): string | null {
+  let value = getCredential(envName);
+  if (!value) {
+    stageLegacyCredentialsToEnv();
+    value = getCredential(envName);
+  }
+  if (value) {
+    process.env[envName] = value;
+  }
+  return value || null;
+}
+
 /** Clear the staged credential from the current process env. */
 export function deleteCredential(key: string): boolean {
   if (!(key in process.env)) return false;
