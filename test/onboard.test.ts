@@ -2565,9 +2565,12 @@ const { setupInference } = require(${onboardPath});
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    // Pre-seed a pre-fix plaintext credentials.json. The new credentials
-    // module migrates it into process.env and securely deletes the file
-    // the first time hydrateCredentialEnv runs.
+    // Pre-seed a pre-fix plaintext credentials.json. hydrateCredentialEnv
+    // stages it non-destructively into process.env via
+    // stageLegacyCredentialsToEnv(); the secure unlink only runs from the
+    // post-onboard cleanup gate when the staged values are confirmed
+    // migrated, so the legacy file must still exist after this test's
+    // setupInference call (asserted further down).
     const legacyDir = path.join(tmpDir, ".nemoclaw");
     fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(
