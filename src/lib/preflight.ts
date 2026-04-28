@@ -20,6 +20,13 @@ import { DASHBOARD_PORT } from "./ports";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { runCapture } = require("./runner");
 
+type RunCaptureFn = typeof import("./runner").runCapture;
+type RunCaptureOpts = Parameters<RunCaptureFn>[1];
+type NullableRunCaptureFn = (
+  command: Parameters<RunCaptureFn>[0],
+  options?: RunCaptureOpts,
+) => string | null;
+
 // ── Types ────────────────────────────────────────────────────────
 
 export interface PortProbeResult {
@@ -123,17 +130,18 @@ export interface AssessHostOpts {
   dockerInfoOutput?: string;
   dockerInfoError?: string;
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
-  runCaptureImpl?: (command: string, options?: { ignoreError?: boolean }) => string;
+  runCaptureImpl?: RunCaptureFn;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
 }
 
-function commandExists(
-  commandName: string,
-  runCaptureImpl: (command: string, options?: { ignoreError?: boolean }) => string,
-): boolean {
+function buildCommandVArgv(commandName: string): readonly string[] {
+  return ["sh", "-c", 'command -v "$1"', "--", commandName];
+}
+
+function commandExists(commandName: string, runCaptureImpl: RunCaptureFn): boolean {
   try {
-    const output = runCaptureImpl(`command -v ${commandName}`, { ignoreError: true });
+    const output = runCaptureImpl(buildCommandVArgv(commandName), { ignoreError: true });
     return Boolean(String(output || "").trim());
   } catch {
     return false;
@@ -225,18 +233,14 @@ function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
   return !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.TERM_PROGRAM;
 }
 
-function detectNvidiaGpu(
-  runCaptureImpl: (command: string, options?: { ignoreError?: boolean }) => string,
-): boolean {
+function detectNvidiaGpu(runCaptureImpl: RunCaptureFn): boolean {
   if (!commandExists("nvidia-smi", runCaptureImpl)) {
     return false;
   }
-  return Boolean(String(runCaptureImpl("nvidia-smi -L", { ignoreError: true }) || "").trim());
+  return Boolean(String(runCaptureImpl(["nvidia-smi", "-L"], { ignoreError: true }) || "").trim());
 }
 
-function detectPackageManager(
-  runCaptureImpl: (command: string, options?: { ignoreError?: boolean }) => string,
-): PackageManager {
+function detectPackageManager(runCaptureImpl: RunCaptureFn): PackageManager {
   if (commandExists("apt-get", runCaptureImpl)) return "apt";
   if (commandExists("dnf", runCaptureImpl)) return "dnf";
   if (commandExists("yum", runCaptureImpl)) return "yum";
@@ -267,7 +271,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const env = opts.env ?? process.env;
   const runCaptureImpl =
     opts.runCaptureImpl ??
-    ((command: string, options?: { ignoreError?: boolean }) =>
+    ((command: readonly string[], options?: { ignoreError?: boolean }) =>
       runCapture(command, { ignoreError: options?.ignoreError ?? false }));
   const readFileImpl = opts.readFileImpl ?? fs.readFileSync;
   const dockerInstalled =
@@ -283,7 +287,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   let dockerReachable = false;
   let dockerRunning = false;
   if (dockerInstalled && dockerInfoOutput === undefined) {
-    dockerInfoOutput = runCaptureImpl("docker info --format '{{json .}}' 2>/dev/null", {
+    dockerInfoOutput = runCaptureImpl(["docker", "info", "--format", "{{json .}}"], {
       ignoreError: true,
     });
   }
@@ -339,11 +343,15 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerDefaultCgroupnsMode = readDockerDefaultCgroupnsMode(readFileImpl);
   const dockerServiceActive =
     platform === "linux" && systemctlAvailable && dockerInstalled
-      ? parseSystemctlState(runCaptureImpl("systemctl is-active docker", { ignoreError: true }))
+      ? parseSystemctlState(
+          runCaptureImpl(["systemctl", "is-active", "docker"], { ignoreError: true }),
+        )
       : null;
   const dockerServiceEnabled =
     platform === "linux" && systemctlAvailable && dockerInstalled
-      ? parseSystemctlState(runCaptureImpl("systemctl is-enabled docker", { ignoreError: true }))
+      ? parseSystemctlState(
+          runCaptureImpl(["systemctl", "is-enabled", "docker"], { ignoreError: true }),
+        )
       : null;
   const assessment: HostAssessment = {
     platform,
@@ -573,8 +581,9 @@ export async function checkPortAvailable(
     if (typeof o.lsofOutput === "string") {
       lsofOut = o.lsofOutput;
     } else {
-      // "command -v" is a shell builtin — must go through bash.
-      const hasLsof = runCapture("command -v lsof", { ignoreError: true });
+      const hasLsof = commandExists("lsof", (command, options) =>
+        runCapture(command, { ignoreError: options?.ignoreError ?? false }),
+      );
       if (hasLsof) {
         lsofOut = runCapture(["lsof", "-i", `:${p}`, "-sTCP:LISTEN", "-P", "-n"], {
           ignoreError: true,
@@ -713,11 +722,10 @@ function getExistingSwapResult(mem: MemoryInfo): SwapResult | null {
 
 function checkSwapDiskSpace(): SwapResult | null {
   try {
-    // Pipe requires a shell: df ... | tail -1
-    const dfOut = runCapture("df / --output=avail -k 2>/dev/null | tail -1", {
+    const dfOut = runCapture(["df", "/", "--output=avail", "-k"], {
       ignoreError: true,
     });
-    const freeKB = parseInt((dfOut || "").trim(), 10);
+    const freeKB = parseInt((dfOut || "").split(/\r?\n/).at(-1)?.trim() || "", 10);
     if (!isNaN(freeKB) && freeKB < 5000000) {
       return {
         ok: false,
@@ -764,11 +772,17 @@ function createSwapfile(mem: MemoryInfo): SwapResult {
     runCapture(["sudo", "chmod", "600", "/swapfile"], { ignoreError: false });
     runCapture(["sudo", "mkswap", "/swapfile"], { ignoreError: false });
     runCapture(["sudo", "swapon", "/swapfile"], { ignoreError: false });
-    // Shell required: grep || echo | tee pipeline
-    runCapture(
-      "grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab",
-      { ignoreError: false },
-    );
+    const fstab = runCapture(["sudo", "cat", "/etc/fstab"], { ignoreError: true });
+    if (
+      !String(fstab || "")
+        .split(/\r?\n/)
+        .some((line) => /^\/swapfile\s/.test(line.trim()))
+    ) {
+      runCapture(["sudo", "tee", "-a", "/etc/fstab"], {
+        ignoreError: false,
+        input: "/swapfile none swap sw 0 0\n",
+      });
+    }
     writeManagedSwapMarker();
 
     return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
@@ -870,14 +884,11 @@ export interface DnsProbeResult {
 
 export interface ProbeContainerDnsOpts {
   /** Override the docker run command. */
-  command?: string;
-  /** Inject captured output (bypasses shell). */
+  command?: readonly string[];
+  /** Inject captured output (bypasses execution). */
   outputOverride?: string | null;
   /** Override runCapture. */
-  runCaptureImpl?: (
-    command: string,
-    opts?: { ignoreError?: boolean; timeout?: number },
-  ) => string | null;
+  runCaptureImpl?: NullableRunCaptureFn;
 }
 
 /**
@@ -896,15 +907,20 @@ const PROBE_TIMEOUT_MS = 20_000;
  * `172.17.0.1`.
  */
 export function getDockerBridgeGatewayIp(
-  runCaptureImpl: (command: string, opts?: { ignoreError?: boolean }) => string | null = (
-    cmd,
-    o,
-  ) => runCapture(cmd, { ignoreError: o?.ignoreError ?? false }),
+  runCaptureImpl: NullableRunCaptureFn = (cmd, o) =>
+    runCapture(cmd, { ignoreError: o?.ignoreError ?? false }),
 ): string | null {
   let raw: string | null;
   try {
     raw = runCaptureImpl(
-      "docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null",
+      [
+        "docker",
+        "network",
+        "inspect",
+        "bridge",
+        "--format",
+        "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
+      ],
       { ignoreError: true },
     );
   } catch {
@@ -946,17 +962,24 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
   // platform Node supports — no dependency on a host-side `timeout`
   // binary). Child process is killed, runCapture returns "" under
   // ignoreError, and we fall through to the `no_output` branch.
-  const command =
-    opts.command ??
-    "docker run --rm --pull=missing busybox:latest " +
-      "nslookup registry.npmjs.org 2>&1";
+  //
+  // We funnel through `sh -c` so we can `2>&1` the docker pull progress
+  // and busybox nslookup diagnostics into stdout — both write the
+  // signatures the parser below depends on (`Error response from daemon`,
+  // `no servers could be reached`) to stderr. Every token in the script
+  // is a fixed constant, so no shell injection surface.
+  const command = opts.command ?? [
+    "sh",
+    "-c",
+    "docker run --rm --pull=missing busybox:latest nslookup registry.npmjs.org 2>&1",
+  ];
 
   let output: string | null | undefined = opts.outputOverride;
   if (output === undefined) {
     try {
       const runCaptureImpl =
         opts.runCaptureImpl ??
-        ((cmd: string, o?: { ignoreError?: boolean; timeout?: number }) =>
+        ((cmd: readonly string[], o?: RunCaptureOpts) =>
           runCapture(cmd, {
             ignoreError: o?.ignoreError ?? false,
             timeout: o?.timeout,

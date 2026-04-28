@@ -150,9 +150,12 @@ describe("runner env merging", () => {
     const originalGateway = process.env.OPENSHELL_GATEWAY;
     process.env.OPENSHELL_GATEWAY = "nemoclaw";
     try {
-      const output = runCapture('printf \'%s %s\' "$OPENSHELL_GATEWAY" "$OPENAI_API_KEY"', {
-        env: { OPENAI_API_KEY: "sk-test-secret" },
-      });
+      const output = runCapture(
+        ["sh", "-c", 'printf "%s %s" "$OPENSHELL_GATEWAY" "$OPENAI_API_KEY"'],
+        {
+          env: { OPENAI_API_KEY: "sk-test-secret" },
+        },
+      );
       expect(output).toBe("nemoclaw sk-test-secret");
     } finally {
       if (originalGateway === undefined) {
@@ -388,13 +391,17 @@ describe("redact", () => {
 });
 
 describe("regression guards", () => {
-  it("runCapture redacts secrets before rethrowing errors", () => {
-    const originalExecSync = childProcess.execSync;
-    childProcess.execSync = () => {
-      throw new Error(
+  it("runCapture redacts secrets before rethrowing spawn errors", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => ({
+      error: new Error(
         'command failed: export SERVICE_KEY="supersecretvalue12345" ghp_abcdefghijklmnopqrstuvwxyz1234567890',
-      );
-    };
+      ),
+      status: null,
+      stdout: "",
+      stderr: "",
+    });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
@@ -402,7 +409,7 @@ describe("regression guards", () => {
 
       let error: Error | undefined;
       try {
-        runCapture("echo nope");
+        runCapture(["echo", "nope"]);
       } catch (err) {
         if (err instanceof Error) {
           error = err;
@@ -419,18 +426,24 @@ describe("regression guards", () => {
       expect(error.message).not.toContain("supersecretvalue12345");
       expect(error.message).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
     } finally {
-      childProcess.execSync = originalExecSync;
+      childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
     }
   });
 
-  it("runCapture redacts execSync error cmd/output fields", () => {
-    const originalExecSync = childProcess.execSync;
-    childProcess.execSync = () => {
+  it("runCapture redacts spawn error cmd/output fields", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => {
       const err: RedactedRunnerError = new Error("command failed");
       err.cmd = "echo nvapi-aaaabbbbcccc1111 && echo ghp_abcdefghijklmnopqrstuvwxyz123456";
       err.output = ["stdout: nvapi-aaaabbbbcccc1111", "stderr: PASSWORD=secret123456"];
-      throw err;
+      return {
+        error: err,
+        status: null,
+        stdout: "",
+        stderr: "",
+      };
     };
 
     try {
@@ -439,7 +452,7 @@ describe("regression guards", () => {
 
       let error: RedactedRunnerError | undefined;
       try {
-        runCapture("echo nope");
+        runCapture(["echo", "nope"]);
       } catch (err) {
         if (err instanceof Error) {
           error = err;
@@ -466,7 +479,7 @@ describe("regression guards", () => {
       expect(error.output[0]).toContain("****");
       expect(error.output[1]).toContain("****");
     } finally {
-      childProcess.execSync = originalExecSync;
+      childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
     }
   });
