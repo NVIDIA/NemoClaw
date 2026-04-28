@@ -105,8 +105,14 @@ if ! command -v openshell >/dev/null 2>&1; then
   }
 fi
 
-command -v openshell >/dev/null 2>&1 || { fail "openshell still missing after install"; exit 1; }
-command -v nemoclaw >/dev/null 2>&1 || { fail "nemoclaw still missing after install"; exit 1; }
+command -v openshell >/dev/null 2>&1 || {
+  fail "openshell still missing after install"
+  exit 1
+}
+command -v nemoclaw >/dev/null 2>&1 || {
+  fail "nemoclaw still missing after install"
+  exit 1
+}
 pass "openshell + nemoclaw on PATH"
 
 REAL_API_KEY="$NVIDIA_API_KEY"
