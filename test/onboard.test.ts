@@ -9,6 +9,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import type { AgentDefinition } from "../dist/lib/agent-defs.js";
+import { loadAgent } from "../dist/lib/agent-defs.js";
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard-contract.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context.js";
 
@@ -74,8 +76,15 @@ type OnboardTestInternals = {
   isGatewayHealthy: ShimFn<boolean>;
   classifyValidationFailure: ShimFn<ValidationClassification>;
   hasResponsesToolCall: (body?: string | null) => boolean;
-  agentSupportsWebSearch: ShimFn<boolean>;
-  configureWebSearch: ShimFn<Promise<ShimValue>>;
+  agentSupportsWebSearch: (
+    agent?: AgentDefinition | null,
+    dockerfilePathOverride?: string | null,
+  ) => boolean;
+  configureWebSearch: (
+    existingConfig?: ShimValue,
+    agent?: AgentDefinition | null,
+    dockerfilePathOverride?: string | null,
+  ) => Promise<ShimValue>;
   isLoopbackHostname: (hostname?: string) => boolean;
   normalizeProviderBaseUrl: (
     value: string | null | undefined,
@@ -108,6 +117,8 @@ function isOnboardTestInternals(
     value !== null &&
     typeof value.buildProviderArgs === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
+    typeof value.agentSupportsWebSearch === "function" &&
+    typeof value.configureWebSearch === "function" &&
     typeof value.writeSandboxConfigSyncFile === "function"
   );
 }
@@ -597,7 +608,9 @@ describe("onboard helpers", () => {
     // Forward target via buildChain replaces resolveDashboardForwardTarget
     expect(buildChain({ chatUiUrl: "http://127.0.0.1:18789" }).forwardTarget).toBe("18789");
     expect(buildChain({ chatUiUrl: "http://[::1]:18789" }).forwardTarget).toBe("18789");
-    expect(buildChain({ chatUiUrl: "https://chat.example.com:18789" }).forwardTarget).toBe("0.0.0.0:18789");
+    expect(buildChain({ chatUiUrl: "https://chat.example.com:18789" }).forwardTarget).toBe(
+      "0.0.0.0:18789",
+    );
     expect(buildChain({ chatUiUrl: "http://10.0.0.25:18789" }).forwardTarget).toBe("0.0.0.0:18789");
   });
 
@@ -1021,14 +1034,26 @@ describe("onboard helpers", () => {
     // OpenClaw Dockerfile has ARG NEMOCLAW_WEB_SEARCH_ENABLED → supported.
     // Hermes Dockerfile does not → not supported.
     // null agent (default) → supported (assumes OpenClaw).
-    const { loadAgent } = require("../dist/lib/agent-defs.js");
     expect(agentSupportsWebSearch(null)).toBe(true);
     expect(agentSupportsWebSearch(loadAgent("openclaw"))).toBe(true);
     expect(agentSupportsWebSearch(loadAgent("hermes"))).toBe(false);
   });
 
+  it("#2433: agentSupportsWebSearch honors the effective custom Dockerfile", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-web-search-custom-"));
+    const withoutArg = path.join(tmpDir, "Dockerfile.no-web");
+    const withArg = path.join(tmpDir, "Dockerfile.web");
+    fs.writeFileSync(withoutArg, "FROM scratch\n");
+    fs.writeFileSync(withArg, "FROM scratch\nARG NEMOCLAW_WEB_SEARCH_ENABLED=0\n");
+    try {
+      expect(agentSupportsWebSearch(loadAgent("openclaw"), withoutArg)).toBe(false);
+      expect(agentSupportsWebSearch(loadAgent("hermes"), withArg)).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("#2433: configureWebSearch skips unsupported Hermes instead of prompting for Brave", async () => {
-    const { loadAgent } = require("../dist/lib/agent-defs.js");
     const priorBraveKey = process.env.BRAVE_API_KEY;
     process.env.BRAVE_API_KEY = "brv-test-key";
     try {
@@ -5130,9 +5155,7 @@ const { setupMessagingChannels } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "slack-format-reject.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "credentials.js"),
-      );
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -5243,9 +5266,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "slack-app-format-reject.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "credentials.js"),
-      );
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -5305,9 +5326,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
         input: "\n",
       });
       assert.equal(introspect.status, 0, introspect.stderr);
-      const slackIdx = JSON.parse(
-        introspect.stdout.trim().split("\n").pop()!,
-      ).slackIndex1Based;
+      const slackIdx = JSON.parse(introspect.stdout.trim().split("\n").pop()!).slackIndex1Based;
       assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
 
       // Real run: toggle Slack on, exit UI, bot prompt returns valid, app

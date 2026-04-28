@@ -1384,8 +1384,11 @@ async function ensureValidatedBraveSearchCredential(
  * OpenClaw uses the root Dockerfile (not agents/openclaw/Dockerfile), so we
  * fall back to the root Dockerfile when the agent-specific one doesn't exist.
  */
-function agentSupportsWebSearch(agent: AgentDefinition | null | undefined): boolean {
-  const dockerfilePath = agent?.dockerfilePath || path.join(ROOT, "Dockerfile");
+function agentSupportsWebSearch(
+  agent: AgentDefinition | null | undefined,
+  dockerfilePathOverride: string | null = null,
+): boolean {
+  const dockerfilePath = dockerfilePathOverride || agent?.dockerfilePath || path.join(ROOT, "Dockerfile");
   try {
     const content = fs.readFileSync(dockerfilePath, "utf-8");
     return /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=/m.test(content);
@@ -1397,8 +1400,9 @@ function agentSupportsWebSearch(agent: AgentDefinition | null | undefined): bool
 async function configureWebSearch(
   existingConfig: WebSearchConfig | null = null,
   agent: AgentDefinition | null = null,
+  dockerfilePathOverride: string | null = null,
 ): Promise<WebSearchConfig | null> {
-  if (!agentSupportsWebSearch(agent)) {
+  if (!agentSupportsWebSearch(agent, dockerfilePathOverride)) {
     note(`  Web search is not yet supported by ${agent?.displayName ?? "this agent"}. Skipping.`);
     return null;
   }
@@ -7742,6 +7746,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       break;
     }
 
+    const webSearchSupportProbePath = fromDockerfile ? path.resolve(fromDockerfile) : null;
+    if (webSearchConfig && !agentSupportsWebSearch(agent, webSearchSupportProbePath)) {
+      note(`  Web search is not yet supported by ${agent?.displayName ?? "this sandbox image"}. Clearing stale config.`);
+      webSearchConfig = null;
+    }
+
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     const resumeSandbox =
@@ -7775,10 +7785,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
       }
       let nextWebSearchConfig = webSearchConfig;
-      if (nextWebSearchConfig && !agentSupportsWebSearch(agent)) {
-        note(`  Web search is not yet supported by ${agent?.displayName ?? "this agent"}. Clearing stale config.`);
-        nextWebSearchConfig = null;
-      } else if (nextWebSearchConfig) {
+      if (nextWebSearchConfig) {
         note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
         const braveApiKey = await ensureValidatedBraveSearchCredential();
         nextWebSearchConfig = braveApiKey ? { fetchEnabled: true } : null;
@@ -7786,7 +7793,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           note("  [resume] Reusing Brave Search configuration.");
         }
       } else {
-        nextWebSearchConfig = await configureWebSearch(null, agent);
+        nextWebSearchConfig = await configureWebSearch(null, agent, webSearchSupportProbePath);
       }
       startRecordedStep("sandbox", { sandboxName, provider, model });
       selectedMessagingChannels = await setupMessagingChannels();
