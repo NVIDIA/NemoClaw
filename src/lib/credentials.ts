@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
+import { rejectSymlinksOnPath } from "./config-io";
 import { isErrnoException } from "./errno";
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
@@ -237,6 +238,24 @@ function secureUnlink(filePath: string): void {
 export function stageLegacyCredentialsToEnv(): string[] {
   const legacyFile = getCredsFile();
 
+  // O_NOFOLLOW only protects the *final* path component. Walk every
+  // ancestor between HOME and ~/.nemoclaw and refuse if any of them is
+  // a symlink — otherwise a planted directory symlink at ~/.nemoclaw/
+  // would redirect the read into an attacker-controlled location even
+  // though the credentials.json open itself looks safe. config-io's
+  // rejectSymlinksOnPath throws when a planted link is found; treat
+  // that the same as "no migratable file" and bail.
+  try {
+    rejectSymlinksOnPath(path.dirname(legacyFile));
+  } catch (error) {
+    console.error(
+      `  Refusing to migrate legacy credentials: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return [];
+  }
+
   // Pin the file by descriptor before doing any checks. O_NOFOLLOW makes
   // the open() itself fail when the final path component is a symlink,
   // and fstat/read both target the same inode, so an attacker cannot
@@ -312,10 +331,23 @@ export function stageLegacyCredentialsToEnv(): string[] {
  *
  * `secureUnlink` is itself missing-file-tolerant and uses `lstatSync`, so
  * we deliberately do NOT pre-check with `existsSync` — that would follow a
- * planted symlink and skip cleanup of a dangling link.
+ * planted symlink and skip cleanup of a dangling link. Walk the ancestor
+ * directories between HOME and ~/.nemoclaw first so a planted directory
+ * symlink can't redirect the zero-fill into an unrelated tree.
  */
 export function removeLegacyCredentialsFile(): void {
-  secureUnlink(getCredsFile());
+  const legacyFile = getCredsFile();
+  try {
+    rejectSymlinksOnPath(path.dirname(legacyFile));
+  } catch (error) {
+    console.error(
+      `  Refusing to remove legacy credentials: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return;
+  }
+  secureUnlink(legacyFile);
 }
 
 /**

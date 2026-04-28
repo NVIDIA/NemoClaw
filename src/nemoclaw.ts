@@ -1181,6 +1181,12 @@ const BRIDGE_PROVIDER_SUFFIXES: readonly string[] = [
   "-telegram-bridge",
   "-discord-bridge",
   "-slack-bridge",
+  // Slack registers a second provider for the App-Level Token (used for
+  // Socket Mode). bridgeProviderName() emits `${sandbox}-slack-app` for
+  // SLACK_APP_TOKEN, so the guardrails must match that suffix too —
+  // otherwise the slack-app provider shows up as an ordinary credential
+  // and `credentials reset` would happily delete it.
+  "-slack-app",
 ];
 
 function isBridgeProviderName(name: string): boolean {
@@ -2197,12 +2203,33 @@ async function applyChannelRemoveToGatewayAndRegistry(
     console.error("  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.");
     process.exit(1);
   }
+  // Capture each delete's outcome. If any non-NotFound failure surfaces
+  // we must NOT update the registry — otherwise NemoClaw would record
+  // the channel as removed locally while the bridge is still live in
+  // the gateway, which produces a half-configured sandbox the user
+  // can't easily recover.
+  const failed: string[] = [];
   for (const envKey of channelTokenKeys) {
     const name = bridgeProviderName(sandboxName, channelName, envKey);
-    runOpenshell(["provider", "delete", name], {
+    const result = runOpenshell(["provider", "delete", name], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    if (result.status !== 0) {
+      const output = `${result.stdout || ""}${result.stderr || ""}`;
+      // Treat "not found" as success-equivalent — a previous run may
+      // have already deleted the provider.
+      if (!/\bNotFound\b|not found/i.test(output)) {
+        failed.push(name);
+      }
+    }
+  }
+  if (failed.length > 0) {
+    console.error(
+      `  Failed to delete bridge provider(s) from the OpenShell gateway: ${failed.join(", ")}.`,
+    );
+    console.error("  Registry not updated; re-run after resolving the gateway error.");
+    process.exit(1);
   }
 
   const entry = registry.getSandbox(sandboxName);

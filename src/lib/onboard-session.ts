@@ -77,6 +77,12 @@ export interface Session {
   webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
+  // Credential env-keys whose staged legacy value was successfully written
+  // to the OpenShell gateway during this onboard session. Persisted across
+  // process restarts so a `--resume` run that skips already-completed
+  // upserts still knows the migration completed earlier and can safely
+  // remove ~/.nemoclaw/credentials.json on the final completeSession.
+  migratedLegacyKeys: string[] | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
 }
@@ -107,6 +113,7 @@ export interface SessionUpdates {
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
   messagingChannels?: string[];
+  migratedLegacyKeys?: string[];
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
@@ -261,6 +268,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
+    migratedLegacyKeys: readStringArray(overrides.migratedLegacyKeys),
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
@@ -292,6 +300,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
+    migratedLegacyKeys: readStringArray(data.migratedLegacyKeys),
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
@@ -597,6 +606,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   }
   if (Array.isArray(updates.messagingChannels)) {
     safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
+  }
+  if (Array.isArray(updates.migratedLegacyKeys)) {
+    safe.migratedLegacyKeys = updates.migratedLegacyKeys.filter(
+      (value) => typeof value === "string",
+    );
   }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {

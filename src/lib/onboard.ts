@@ -873,12 +873,33 @@ const { buildProviderArgs } = onboardProviders;
 const stagedLegacyValues: Map<string, string> = new Map<string, string>();
 
 // Env-keys whose successful gateway upsert actually used the staged legacy
-// value. Cleared at every onboard() start. The post-onboard legacy-file
-// cleanup is gated on `stagedLegacyKeys ⊆ migratedLegacyKeys` so picking a
-// local inference provider, disabling a preselected messaging channel, or
-// any other path that upserts a different value under the same env-key name
-// leaves the file alone instead of stranding the user's only copy.
+// value. Seeded from the persisted onboard session at the start of every
+// run so a `--resume` invocation that skips already-completed upserts still
+// remembers the migrations the prior attempt committed. The post-onboard
+// legacy-file cleanup is gated on `stagedLegacyKeys ⊆ migratedLegacyKeys`
+// so picking a local inference provider, disabling a preselected messaging
+// channel, or any other path that upserts a different value under the same
+// env-key name leaves the file alone instead of stranding the user's only
+// copy.
 const migratedLegacyKeys: Set<string> = new Set<string>();
+
+// Mirror the in-memory set into the persisted onboard session so that a
+// later `--resume` invocation, which can skip the upsert wrappers
+// entirely, still inherits the migration outcome from the previous run.
+function persistMigratedLegacyKeys(): void {
+  try {
+    onboardSession.updateSession((current: Session) => {
+      current.migratedLegacyKeys = Array.from(migratedLegacyKeys).sort();
+      return current;
+    });
+  } catch {
+    // updateSession can throw if the session file isn't yet writable
+    // (e.g. very early in the run before lockless state is established).
+    // The cleanup gate in this same process still consults the in-memory
+    // set, so a missed write only matters if THIS run later crashes and
+    // a future --resume needs the persisted value. Best effort.
+  }
+}
 
 function upsertProvider(name: string, type: string, credentialEnv: string, baseUrl: string | null, env: NodeJS.ProcessEnv = {}) {
   const result = onboardProviders.upsertProvider(name, type, credentialEnv, baseUrl, env, runOpenshell);
@@ -901,6 +922,7 @@ function upsertProvider(name: string, type: string, credentialEnv: string, baseU
         // cleanup gate must keep the legacy file intact.
         migratedLegacyKeys.delete(credentialEnv);
       }
+      persistMigratedLegacyKeys();
     }
   }
   return result;
@@ -931,16 +953,20 @@ function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
   // Mirror upsertProvider's withdrawal logic so a later messaging upsert
   // that replaces the legacy value with something else cannot leave the
   // mark stuck on.
+  let mutated = false;
   for (const def of tokenDefs) {
     if (!def.token || !def.envKey) continue;
     const stagedValue = stagedLegacyValues.get(def.envKey);
     if (stagedValue === undefined) continue;
     if (def.token === stagedValue) {
       migratedLegacyKeys.add(def.envKey);
+      mutated = true;
     } else {
       migratedLegacyKeys.delete(def.envKey);
+      mutated = true;
     }
   }
+  if (mutated) persistMigratedLegacyKeys();
   return upserted;
 }
 function providerExistsInGateway(name: string) {
@@ -6563,15 +6589,18 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   // completes successfully and only when every staged value was actually
   // pushed to the gateway in this run.
   //
-  // Reset the per-run migration state so a previous invocation cannot
-  // contaminate the cleanup decision. Capture each staged key's value
-  // *now*, while process.env still mirrors what we just read from the
-  // legacy file — the upsertProvider wrapper compares against this
-  // snapshot so a vllm/ollama placeholder upserted under the same
-  // env-key name (e.g., `OPENAI_API_KEY: "dummy"`) does not falsely mark
-  // the staged cloud value as migrated.
+  // Reset stagedLegacyValues fresh from the file every run. For
+  // migratedLegacyKeys we seed from the persisted session: a previous
+  // attempt may have already upserted some keys before crashing, and a
+  // `--resume` invocation can skip the upsert wrappers entirely, so a
+  // blank-slate clear here would always conclude "no keys migrated in
+  // this run" and incorrectly keep the legacy file forever.
   stagedLegacyValues.clear();
   migratedLegacyKeys.clear();
+  const previousSession = onboardSession.loadSession();
+  for (const key of previousSession?.migratedLegacyKeys ?? []) {
+    if (typeof key === "string") migratedLegacyKeys.add(key);
+  }
   const stagedLegacyKeys = stageLegacyCredentialsToEnv();
   for (const key of stagedLegacyKeys) {
     const value = process.env[key];
