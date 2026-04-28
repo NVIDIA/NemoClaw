@@ -1043,11 +1043,13 @@ describe("onboard helpers", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-web-search-custom-"));
     const withoutArg = path.join(tmpDir, "Dockerfile.no-web");
     const withArg = path.join(tmpDir, "Dockerfile.web");
+    const missing = path.join(tmpDir, "Dockerfile.missing");
     fs.writeFileSync(withoutArg, "FROM scratch\n");
-    fs.writeFileSync(withArg, "FROM scratch\nARG NEMOCLAW_WEB_SEARCH_ENABLED=0\n");
+    fs.writeFileSync(withArg, "FROM scratch\n  ARG NEMOCLAW_WEB_SEARCH_ENABLED=0\n");
     try {
       expect(agentSupportsWebSearch(loadAgent("openclaw"), withoutArg)).toBe(false);
       expect(agentSupportsWebSearch(loadAgent("hermes"), withArg)).toBe(true);
+      expect(agentSupportsWebSearch(loadAgent("openclaw"), missing)).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

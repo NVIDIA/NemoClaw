@@ -1241,13 +1241,19 @@ function agentSupportsWebSearch(
   agent: AgentDefinition | null | undefined,
   dockerfilePathOverride: string | null = null,
 ): boolean {
-  const dockerfilePath = dockerfilePathOverride || agent?.dockerfilePath || path.join(ROOT, "Dockerfile");
-  try {
-    const content = fs.readFileSync(dockerfilePath, "utf-8");
-    return /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=/m.test(content);
-  } catch {
-    return false;
+  const candidates = [dockerfilePathOverride, agent?.dockerfilePath, path.join(ROOT, "Dockerfile")].filter(
+    (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
+  );
+
+  for (const dockerfilePath of candidates) {
+    try {
+      const content = fs.readFileSync(dockerfilePath, "utf-8");
+      return /^\s*ARG\s+NEMOCLAW_WEB_SEARCH_ENABLED=/m.test(content);
+    } catch {
+      // Try the next candidate; custom Dockerfile paths can disappear between resume runs.
+    }
   }
+  return false;
 }
 
 async function configureWebSearch(
