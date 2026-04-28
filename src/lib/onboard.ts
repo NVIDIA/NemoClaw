@@ -27,6 +27,21 @@ const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runShell, runCapture, runFile, shellQuote, validateName } = runner;
+const docker: typeof import("./docker") = require("./docker");
+const {
+  dockerContainerInspectFormat,
+  dockerExecArgv,
+  dockerImageInspect,
+  dockerImageInspectFormat,
+  dockerInfo,
+  dockerInfoFormat,
+  dockerInspect,
+  dockerPull,
+  dockerRemoveVolumesByPrefix,
+  dockerRm,
+  dockerRmi,
+  dockerStop,
+} = docker;
 const errnoUtils: typeof import("./errno") = require("./errno");
 const { isErrnoException } = errnoUtils;
 
@@ -242,8 +257,8 @@ const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
  */
 function verifyGatewayContainerRunning() {
   const containerName = `openshell-cluster-${GATEWAY_NAME}`;
-  const result = run(
-    ["docker", "inspect", "--type", "container", "--format", "{{.State.Running}}", containerName],
+  const result = dockerInspect(
+    ["--type", "container", "--format", "{{.State.Running}}", containerName],
     { ignoreError: true, suppressOutput: true },
   );
   if (result.status === 0 && String(result.stdout || "").trim() === "true") {
@@ -597,22 +612,16 @@ const SANDBOX_BASE_TAG = "latest";
  */
 function pullAndResolveBaseImageDigest(): { digest: string; ref: string } | null {
   const imageWithTag = `${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`;
-  try {
-    run(["docker", "pull", imageWithTag], { suppressOutput: true });
-  } catch {
+  const pullResult = dockerPull(imageWithTag, { ignoreError: true, suppressOutput: true });
+  if (pullResult.status !== 0) {
     // Pull failed — caller should fall back to unpin :latest
     return null;
   }
 
-  let inspectOutput;
-  try {
-    inspectOutput = runCapture(
-      ["docker", "inspect", "--format", "{{json .RepoDigests}}", imageWithTag],
-      { ignoreError: false },
-    );
-  } catch {
-    return null;
-  }
+  const inspectOutput = dockerImageInspectFormat("{{json .RepoDigests}}", imageWithTag, {
+    ignoreError: true,
+  });
+  if (!inspectOutput) return null;
 
   // RepoDigests is a JSON array like ["ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abc..."].
   // Filter to the entry matching our registry — index ordering is not guaranteed.
@@ -1825,7 +1834,7 @@ function getResumeConfigConflicts(
 }
 
 function getContainerRuntime(): ContainerRuntime {
-  const info = runCapture(["docker", "info"], { ignoreError: true });
+  const info = dockerInfo({ ignoreError: true });
   return inferContainerRuntime(info);
 }
 
@@ -1922,21 +1931,14 @@ function destroyGateway() {
   }
   // openshell gateway destroy doesn't remove Docker volumes, which leaves
   // corrupted cluster state that breaks the next gateway start. Clean them up.
-  removeGatewayClusterVolumes();
+  dockerRemoveVolumesByPrefix(`openshell-cluster-${GATEWAY_NAME}`, { ignoreError: true });
 }
 
 function getGatewayClusterContainerState(): string {
   const containerName = getGatewayClusterContainerName();
-  const state = runCapture(
-    [
-      "docker",
-      "inspect",
-      "--type",
-      "container",
-      "--format",
-      "{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}",
-      containerName,
-    ],
+  const state = dockerContainerInspectFormat(
+    "{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}",
+    containerName,
     { ignoreError: true },
   )
     .trim()
@@ -1969,25 +1971,7 @@ function getGatewayClusterContainerName(): string {
 }
 
 function buildGatewayClusterExecArgv(script: string): string[] {
-  return ["docker", "exec", getGatewayClusterContainerName(), "sh", "-lc", script];
-}
-
-function getGatewayClusterVolumeNames(): string[] {
-  return runCapture(["docker", "volume", "ls", "-q", "--filter", `name=${getGatewayClusterContainerName()}`], {
-    ignoreError: true,
-  })
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function removeGatewayClusterVolumes(opts: { suppressOutput?: boolean } = {}): void {
-  const names = getGatewayClusterVolumeNames();
-  if (names.length === 0) return;
-  run(["docker", "volume", "rm", ...names], {
-    ignoreError: true,
-    ...(opts.suppressOutput ? { suppressOutput: true } : {}),
-  });
+  return dockerExecArgv(getGatewayClusterContainerName(), ["sh", "-lc", script]);
 }
 
 function hostCommandExists(commandName: string): boolean {
@@ -2561,26 +2545,29 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
   // OpenShell has no metadata for it (gatewayReuseState === "missing").
   if (gatewayReuseState === "missing") {
     const containerName = `openshell-cluster-${GATEWAY_NAME}`;
-    const inspectResult = run(
-      ["docker", "inspect", "--type", "container", "--format", "{{.State.Status}}", containerName],
+    const inspectResult = dockerInspect(
+      ["--type", "container", "--format", "{{.State.Status}}", containerName],
       { ignoreError: true, suppressOutput: true },
     );
     if (inspectResult.status === 0) {
       console.log("  Cleaning up orphaned gateway container...");
-      run(["docker", "stop", containerName], {
+      dockerStop(containerName, {
         ignoreError: true,
         suppressOutput: true,
       });
-      run(["docker", "rm", containerName], {
+      dockerRm(containerName, {
         ignoreError: true,
         suppressOutput: true,
       });
-      const postInspectResult = run(["docker", "inspect", "--type", "container", containerName], {
+      const postInspectResult = dockerInspect(["--type", "container", containerName], {
         ignoreError: true,
         suppressOutput: true,
       });
       if (postInspectResult.status !== 0) {
-        removeGatewayClusterVolumes({ suppressOutput: true });
+        dockerRemoveVolumesByPrefix(`openshell-cluster-${GATEWAY_NAME}`, {
+          ignoreError: true,
+          suppressOutput: true,
+        });
         registry.clearAll();
         console.log("  ✓ Orphaned gateway container removed");
       } else {
@@ -3542,7 +3529,7 @@ async function createSandbox(
     // Destroy old sandbox and clean up its host-side Docker image.
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     if (previousEntry?.imageTag) {
-      const rmiResult = run(["docker", "rmi", previousEntry.imageTag], {
+      const rmiResult = dockerRmi(previousEntry.imageTag, {
         ignoreError: true,
         suppressOutput: true,
       });
@@ -3744,11 +3731,11 @@ async function createSandbox(
     // Check if the image exists locally before falling back to unpinned :latest.
     // On a first-time install behind a firewall with no cached image, warn early
     // so the user knows the build will likely fail.
-    const localCheck = runCapture(
-      ["docker", "image", "inspect", `${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`],
-      { ignoreError: true },
-    );
-    if (localCheck) {
+    const localCheck = dockerImageInspect(`${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    if (localCheck.status === 0) {
       console.warn("  Warning: could not pull base image from registry; using cached :latest.");
     } else {
       console.warn(
@@ -4029,7 +4016,7 @@ async function createSandbox(
 
   try {
     if (process.platform === "darwin") {
-      const vmKernel = runCapture(["docker", "info", "--format", "{{.KernelVersion}}"], {
+      const vmKernel = dockerInfoFormat("{{.KernelVersion}}", {
         ignoreError: true,
       }).trim();
       if (vmKernel) {

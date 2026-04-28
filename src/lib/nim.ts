@@ -4,7 +4,18 @@
 // NIM container management — pull, start, stop, health-check NIM images.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { run, runCapture } = require("./runner");
+const { runCapture } = require("./runner");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const {
+  dockerContainerInspectFormat,
+  dockerForceRm,
+  dockerLoginPasswordStdin,
+  dockerPort,
+  dockerPull,
+  dockerRm,
+  dockerRunDetached,
+  dockerStop,
+} = require("./docker");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { sleepSeconds } = require("./wait");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -203,12 +214,7 @@ export function isNgcLoggedIn(): boolean {
 
 // NGC expects literal "$oauthtoken" as the username for API key authentication.
 export function dockerLoginNgc(apiKey: string): boolean {
-  const { spawnSync } = require("child_process");
-  const result = spawnSync("docker", ["login", "nvcr.io", "-u", "$oauthtoken", "--password-stdin"], {
-    input: apiKey,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const result = dockerLoginPasswordStdin("nvcr.io", "$oauthtoken", apiKey);
   if (result.error) {
     console.error(`  Docker error: ${result.error.message}`);
     return false;
@@ -226,7 +232,7 @@ export function pullNimImage(model: string): string {
     process.exit(1);
   }
   console.log(`  Pulling NIM image: ${image}`);
-  run(["docker", "pull", image]);
+  dockerPull(image);
   return image;
 }
 
@@ -242,14 +248,18 @@ export function startNimContainerByName(name: string, model: string, port = VLLM
     process.exit(1);
   }
 
-  run(["docker", "rm", "-f", name], { ignoreError: true });
+  dockerForceRm(name, { ignoreError: true });
 
   console.log(`  Starting NIM container: ${name}`);
-  run([
-    "docker", "run", "-d", "--gpus", "all",
-    "-p", `${Number(port)}:8000`,
-    "--name", name,
-    "--shm-size", "16g",
+  dockerRunDetached([
+    "--gpus",
+    "all",
+    "-p",
+    `${Number(port)}:8000`,
+    "--name",
+    name,
+    "--shm-size",
+    "16g",
     image,
   ]);
   return name;
@@ -302,8 +312,8 @@ export function stopNimContainerByName(
 ): void {
   if (!silent) console.log(`  Stopping NIM container: ${name}`);
   const stdio = silent ? ["ignore", "ignore", "ignore"] : undefined;
-  run(["docker", "stop", name], { ignoreError: true, ...(stdio && { stdio }) });
-  run(["docker", "rm", name], { ignoreError: true, ...(stdio && { stdio }) });
+  dockerStop(name, { ignoreError: true, ...(stdio && { stdio }) });
+  dockerRm(name, { ignoreError: true, ...(stdio && { stdio }) });
 }
 
 export function nimStatus(sandboxName: string, port?: number): NimStatus {
@@ -313,19 +323,14 @@ export function nimStatus(sandboxName: string, port?: number): NimStatus {
 
 export function nimStatusByName(name: string, port?: number): NimStatus {
   try {
-    const state = runCapture(
-      ["docker", "inspect", "--format", "{{.State.Status}}", name],
-      { ignoreError: true },
-    );
+    const state = dockerContainerInspectFormat("{{.State.Status}}", name, { ignoreError: true });
     if (!state) return { running: false, container: name };
 
     let healthy = false;
     if (state === "running") {
       let resolvedHostPort = port != null ? Number(port) : 0;
       if (!resolvedHostPort) {
-        const mapping = runCapture(["docker", "port", name, "8000"], {
-          ignoreError: true,
-        });
+        const mapping = dockerPort(name, "8000", { ignoreError: true });
         const m = mapping && mapping.match(/:(\d+)\s*$/);
         resolvedHostPort = m ? Number(m[1]) : VLLM_PORT;
       }
