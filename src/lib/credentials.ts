@@ -494,9 +494,11 @@ export function isRepoPrivate(repo: string): boolean {
 
 /**
  * Ensure `GITHUB_TOKEN` is staged for this process when a private repo
- * needs it. Tries `gh auth token` first (system keychain via the GitHub
- * CLI); falls back to a session-only PAT prompt if `gh` is unavailable.
- * The token is never persisted to host disk by NemoClaw.
+ * needs it. Tries `gh auth token` first (which returns whatever the
+ * GitHub CLI has stored — system keychain when reachable, otherwise a
+ * gh-managed file); falls back to a session-only PAT prompt if `gh` is
+ * unavailable or not logged in. The token is never persisted to host
+ * disk by NemoClaw itself.
  */
 export async function ensureGithubToken(): Promise<void> {
   let token = getCredential("GITHUB_TOKEN");
@@ -523,8 +525,9 @@ export async function ensureGithubToken(): Promise<void> {
   console.log("  ┌────────────────────────────────────────────────────────────────┐");
   console.log("  │  GitHub token required (private repo detected)                 │");
   console.log("  │                                                                │");
-  console.log("  │  Recommended: run 'gh auth login' so the token is stored in    │");
-  console.log("  │  the system keychain. NemoClaw will pick it up automatically.  │");
+  console.log("  │  Recommended: run 'gh auth login'. NemoClaw picks up whatever  │");
+  console.log("  │  the GitHub CLI stores (system keychain when reachable; a      │");
+  console.log("  │  gh-managed file otherwise).                                   │");
   console.log("  │                                                                │");
   console.log("  │  Otherwise, paste a PAT below for this run only.               │");
   console.log("  └────────────────────────────────────────────────────────────────┘");
@@ -540,7 +543,8 @@ export async function ensureGithubToken(): Promise<void> {
   saveCredential("GITHUB_TOKEN", token);
   process.env.GITHUB_TOKEN = token;
   console.log("");
-  console.log("  Token loaded for this session only. Run 'gh auth login' to persist");
-  console.log("  it in the system keychain so future runs do not prompt.");
+  console.log("  Token loaded for this session only. Run 'gh auth login' to let");
+  console.log("  the GitHub CLI persist it (system keychain when reachable;");
+  console.log("  gh-managed file otherwise) so future runs do not prompt.");
   console.log("");
 }

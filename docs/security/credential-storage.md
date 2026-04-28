@@ -75,10 +75,14 @@ If a required credential is missing the deploy aborts before any remote work beg
 ## GitHub Tokens
 
 NemoClaw never persists `GITHUB_TOKEN` itself.
-When a private repo requires authentication NemoClaw first runs `gh auth token`, which delegates to the GitHub CLI's own keychain integration (macOS Keychain, Windows Credential Manager, Linux Secret Service).
+When a private repo requires authentication NemoClaw runs `gh auth token`, which returns whatever the GitHub CLI has stored — without caring about the storage backend.
 
-If `gh auth token` is unavailable NemoClaw will prompt for a personal access token for that single run.
-Run `gh auth login` to persist the token in the system keychain so future runs do not prompt.
+The GitHub CLI prefers an OS keychain when one is reachable: macOS Keychain on macOS, Windows Credential Manager on Windows, and Linux Secret Service (libsecret + a running D-Bus session) on Linux.
+On hosts where no keychain is reachable (CI runners, headless launches, WSL without a session bus, macOS contexts where Keychain access is blocked, etc.) `gh auth login` falls back to a `gh`-managed file under `~/.config/gh/` with mode `0600`.
+NemoClaw treats both backends identically: `gh auth token` returns the value, and NemoClaw stages it in `process.env` for the current run only.
+
+If `gh` is not installed or not logged in, NemoClaw prompts for a personal access token for that single run; the prompted value is held in process memory and is not written to host disk.
+Run `gh auth login` if you want a persistent backing store (whichever one applies on your host) so future runs do not prompt.
 
 ## Migration From Earlier Releases
 
