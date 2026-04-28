@@ -1078,11 +1078,20 @@ describe("onboard helpers", () => {
     const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent-defs.js"));
 
     const script = `
-const credentials = require(${credentialsPath});
 let promptCalls = 0;
-credentials.prompt = async () => {
+const actualCredentials = require(${credentialsPath});
+const mockedCredentials = {
+  ...actualCredentials,
+  prompt: async () => {
   promptCalls += 1;
   throw new Error("prompt should not be called");
+  },
+};
+require.cache[require.resolve(${credentialsPath})] = {
+  id: require.resolve(${credentialsPath}),
+  filename: require.resolve(${credentialsPath}),
+  loaded: true,
+  exports: mockedCredentials,
 };
 process.env.BRAVE_API_KEY = "brv-test-key";
 const { configureWebSearch } = require(${onboardPath});
