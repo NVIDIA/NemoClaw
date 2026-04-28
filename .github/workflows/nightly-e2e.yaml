@@ -35,6 +35,19 @@ on:
   schedule:
     - cron: "0 0 * * *"
   workflow_dispatch:
+    inputs:
+      jobs:
+        description: >-
+          Comma-separated job names to run (empty = all).
+          Valid: cloud-e2e, messaging-providers-e2e, token-rotation-e2e,
+          sandbox-survival-e2e, hermes-e2e, skip-permissions-e2e,
+          sandbox-operations-e2e, inference-routing-e2e, network-policy-e2e,
+          deployment-services-e2e, diagnostics-e2e, snapshot-commands-e2e,
+          shields-config-e2e, rebuild-openclaw-e2e, upgrade-stale-sandbox-e2e,
+          rebuild-hermes-e2e, overlayfs-autofix-e2e, gpu-e2e
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -45,7 +58,11 @@ concurrency:
 
 jobs:
   cloud-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',cloud-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -76,7 +93,11 @@ jobs:
   # proxy rewrites placeholders and the real API returns 401, proving the
   # chain works. See: PR #1081
   messaging-providers-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',messaging-providers-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -110,7 +131,11 @@ jobs:
   # rotation and reused when unchanged.
   # See: issue #1903
   token-rotation-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',token-rotation-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -140,7 +165,11 @@ jobs:
 
   # ── Sandbox survival (gateway restart recovery) ──────────────
   sandbox-survival-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',sandbox-survival-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -169,7 +198,11 @@ jobs:
   # verifying the Hermes health probe, and running live inference through the
   # Hermes sandbox. See: PR #1618
   hermes-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',hermes-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -201,7 +234,11 @@ jobs:
   # Reproduces the exact scenario from the bug report: onboard, verify
   # policy is Active, curl from inside sandbox must not return 403.
   skip-permissions-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',skip-permissions-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -231,7 +268,11 @@ jobs:
   # auto-recovery after docker kill, registry rebuild, process recovery,
   # multi-sandbox metadata, and cross-sandbox network isolation.
   sandbox-operations-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',sandbox-operations-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -260,7 +301,11 @@ jobs:
   # TC-INF-06: invalid API key → classified credential error (PR-safe)
   # TC-INF-07: unreachable endpoint → classified transport error (PR-safe)
   inference-routing-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',inference-routing-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -287,7 +332,11 @@ jobs:
   # TC-NET-01..07, TC-NET-09: deny-by-default, whitelist, live policy-add,
   # dry-run, hot-reload, inference exemption, permissive mode, SSRF validation.
   network-policy-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',network-policy-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -316,7 +365,11 @@ jobs:
   # TC-DEPLOY-01: nemoclaw start/stop (cloudflared tunnel)
   # TC-DEPLOY-03: uninstall --keep-openshell (destructive, runs last in script)
   deployment-services-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',deployment-services-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -344,7 +397,11 @@ jobs:
   # TC-DIAG-01: debug tarball + credential sanitization,
   # TC-DIAG-05: sandbox config, TC-DIAG-03: credentials list
   diagnostics-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',diagnostics-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -371,7 +428,11 @@ jobs:
   # Validates snapshot create/list/restore lifecycle: create a snapshot,
   # list it, delete state, restore from snapshot, verify state recovered.
   snapshot-commands-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',snapshot-commands-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -399,7 +460,11 @@ jobs:
   # Validates shields down/up controls config mutability, config get/set/
   # rotate-token, audit trail, and auto-restore timer.
   shields-config-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',shields-config-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -427,7 +492,11 @@ jobs:
   # Reproduces NVBug 6076156: onboard with an older OpenClaw version,
   # then rebuild to verify workspace state survives the upgrade.
   rebuild-openclaw-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',rebuild-openclaw-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -456,7 +525,11 @@ jobs:
   # NemoClaw, create a sandbox, upgrade to current, verify the old
   # sandbox is detected as stale and rebuilt with the new image.
   upgrade-stale-sandbox-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -485,7 +558,11 @@ jobs:
   # ── Hermes rebuild upgrade E2E ──────────────────────────────
   # Same upgrade scenario as OpenClaw but for Hermes Agent.
   rebuild-hermes-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',rebuild-hermes-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -516,7 +593,11 @@ jobs:
   # same PR that deletes cluster-image-patch.ts when the OpenShell
   # roadmap migration off k3s (NVIDIA/OpenShell#873) lands.
   overlayfs-autofix-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',overlayfs-autofix-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -547,7 +628,12 @@ jobs:
   # Runs on an NVKS ephemeral GPU runner (RTX Pro 6000, 36 GB VRAM).
   # Each job gets a fresh VM — no state leakage between runs.
   gpu-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      vars.GPU_E2E_ENABLED == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',gpu-e2e,'))
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 30
     env:
@@ -595,7 +681,12 @@ jobs:
   # proxy running with a different token than what's persisted to disk.
   # Runs on its own ephemeral VM — no dependency on gpu-e2e.
   gpu-double-onboard-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      vars.GPU_E2E_ENABLED == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',gpu-double-onboard-e2e,'))
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 30
     env:
@@ -714,3 +805,90 @@ jobs:
                 labels: ['bug', 'CI/CD'],
               });
             }
+
+  report-to-pr:
+    runs-on: ubuntu-latest
+    needs:
+      [
+        cloud-e2e,
+        messaging-providers-e2e,
+        token-rotation-e2e,
+        sandbox-survival-e2e,
+        hermes-e2e,
+        skip-permissions-e2e,
+        sandbox-operations-e2e,
+        inference-routing-e2e,
+        network-policy-e2e,
+        deployment-services-e2e,
+        diagnostics-e2e,
+        snapshot-commands-e2e,
+        shields-config-e2e,
+        rebuild-openclaw-e2e,
+        upgrade-stale-sandbox-e2e,
+        rebuild-hermes-e2e,
+        overlayfs-autofix-e2e,
+        gpu-e2e,
+      ]
+    if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Post E2E results to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const needs = ${{ toJSON(needs) }};
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const branch = context.ref.replace('refs/heads/', '');
+            const requestedJobs = ${{ toJSON(inputs.jobs) }} || "";
+
+            // Find open PR for this branch
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${branch}`,
+              state: 'open',
+            });
+
+            if (prs.length === 0) {
+              core.info(`No open PR found for branch ${branch} — skipping comment.`);
+              return;
+            }
+
+            const pr = prs[0];
+
+            // Build results table
+            const emoji = { success: '✅', failure: '❌', cancelled: '⚠️', skipped: '⏭️' };
+            const rows = Object.entries(needs)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([name, { result }]) => `| ${name} | ${emoji[result] || '❓'} ${result} |`);
+
+            const ran = Object.entries(needs).filter(([, v]) => v.result !== 'skipped');
+            const passed = ran.filter(([, v]) => v.result === 'success');
+            const failed = ran.filter(([, v]) => v.result === 'failure');
+
+            const status = failed.length > 0 ? '❌ Some jobs failed' : '✅ All requested jobs passed';
+
+            const body = [
+              `### Selective E2E Results — ${status}`,
+              '',
+              `**Run:** [${context.runId}](${runUrl})`,
+              `**Branch:** \`${branch}\``,
+              requestedJobs ? `**Requested jobs:** \`${requestedJobs}\`` : '**Requested jobs:** all (no filter)',
+              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${Object.entries(needs).filter(([, v]) => v.result === 'skipped').length} skipped`,
+              '',
+              '| Job | Result |',
+              '|-----|--------|',
+              ...rows,
+              '',
+              failed.length > 0
+                ? `> **Failed jobs:** ${failed.map(([k]) => k).join(', ')}. Check [run artifacts](${runUrl}) for logs.`
+                : '',
+            ].filter((line) => line !== undefined).join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body,
+            });
