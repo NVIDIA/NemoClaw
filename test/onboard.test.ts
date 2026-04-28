@@ -1069,6 +1069,52 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("#2433: configureWebSearch does not call the prompt helper for unsupported Hermes", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-web-search-prompt-"));
+    const scriptPath = path.join(tmpDir, "web-search-prompt-check.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent-defs.js"));
+
+    const script = `
+const credentials = require(${credentialsPath});
+let promptCalls = 0;
+credentials.prompt = async () => {
+  promptCalls += 1;
+  throw new Error("prompt should not be called");
+};
+process.env.BRAVE_API_KEY = "brv-test-key";
+const { configureWebSearch } = require(${onboardPath});
+const { loadAgent } = require(${agentDefsPath});
+
+(async () => {
+  const result = await configureWebSearch(null, loadAgent("hermes"));
+  console.log(JSON.stringify({ result, promptCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+        },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = parseStdoutJson<{ result: null; promptCalls: number }>(result.stdout);
+      assert.equal(payload.result, null);
+      assert.equal(payload.promptCalls, 0);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("maps Gemini to the routed inference provider with supportsStore disabled", () => {
     assert.deepEqual(getSandboxInferenceConfig("gemini-2.5-flash", "gemini-api"), {
       providerKey: "inference",

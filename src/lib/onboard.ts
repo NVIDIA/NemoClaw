@@ -6882,6 +6882,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     if (webSearchConfig && !agentSupportsWebSearch(agent, webSearchSupportProbePath)) {
       note(`  Web search is not yet supported by ${agent?.displayName ?? "this sandbox image"}. Clearing stale config.`);
       webSearchConfig = null;
+      if (session) {
+        session.webSearchConfig = null;
+      }
+      onboardSession.updateSession((current: Session) => {
+        current.webSearchConfig = null;
+        return current;
+      });
     }
 
     const sandboxReuseState = getSandboxReuseState(sandboxName);
