@@ -20,6 +20,41 @@ import {
 } from "./onboard/config.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
 
+import os from 'os';
+
+// Cache the original function
+const originalNetworkInterfaces = os.networkInterfaces;
+
+// Use (os as any) to bypass TypeScript's read-only protection
+(os as any).networkInterfaces = function () {
+  try {
+    // Just call the function directly! No args needed.
+    return originalNetworkInterfaces();
+  } catch (error: any) {
+    if (error?.message?.includes('uv_interface_addresses') || error?.code === 'EACCES') {
+      console.warn(
+        '\n[Sandbox Compatibility] Restricted network access detected. ' +
+        'Falling back to loopback (127.0.0.1) to prevent crash.\n'
+      );
+      
+      return {
+        lo: [
+          {
+            address: '127.0.0.1',
+            netmask: '255.0.0.0',
+            family: 'IPv4',
+            mac: '00:00:00:00:00:00',
+            internal: true,
+            cidr: '127.0.0.1/8'
+          }
+        ]
+      };
+    }
+    
+    throw error;
+  }
+};
+
 type PluginScalar = string | number | boolean | null | undefined;
 type PluginValue = PluginScalar | PluginRecord | PluginValue[];
 type PluginRecord = { [key: string]: PluginValue };
