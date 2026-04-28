@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -12,7 +11,7 @@ import { describe, it } from "vitest";
 describe("nemoclaw CLI runtime recovery", () => {
   it(
     "recovers sandbox status when openshell is only available via the resolved fallback path",
-    { timeout: 15_000 },
+    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 15_000) },
     () => {
       const repoRoot = path.join(import.meta.dirname, "..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-recovery-"));

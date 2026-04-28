@@ -4,15 +4,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { OpenClawPluginApi } from "./index.js";
 
+vi.mock("node:child_process", () => ({
+  execFileSync: vi.fn(),
+}));
+
 vi.mock("./onboard/config.js", () => ({
   loadOnboardConfig: vi.fn(),
   describeOnboardEndpoint: vi.fn(() => "build.nvidia.com"),
   describeOnboardProvider: vi.fn(() => "NVIDIA Endpoint API"),
 }));
 
+import { execFileSync } from "node:child_process";
 import register, { getPluginConfig } from "./index.js";
 import { loadOnboardConfig } from "./onboard/config.js";
 
+const mockedExecFileSync = vi.mocked(execFileSync);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
 
 function createMockApi(): OpenClawPluginApi {
@@ -39,6 +45,7 @@ function createMockApi(): OpenClawPluginApi {
 describe("plugin registration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedExecFileSync.mockReset();
     mockedLoadOnboardConfig.mockReturnValue(null);
   });
 
@@ -76,6 +83,50 @@ describe("plugin registration", () => {
     expect(providerArg.models?.chat).toEqual([
       expect.objectContaining({ id: "inference/nvidia/custom-model" }),
     ]);
+  });
+
+  it("uses probed OpenShell provider and model when onboard config is unavailable", () => {
+    mockedExecFileSync.mockReturnValue(
+      JSON.stringify({
+        provider: "Ollama",
+        endpoint: "http://host.docker.internal:11434/v1",
+        model: "llama3.2:latest",
+      }),
+    );
+
+    const api = createMockApi();
+    register(api);
+
+    const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
+    expect(providerArg.models?.chat).toEqual([
+      expect.objectContaining({
+        id: "inference/llama3.2:latest",
+        label: "llama3.2:latest",
+      }),
+    ]);
+
+    const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
+    expect(
+      logLines.some((line) => line.includes("Endpoint:  http://host.docker.internal:11434/v1")),
+    ).toBe(true);
+    expect(logLines.some((line) => line.includes("Provider:  Ollama"))).toBe(true);
+    expect(logLines.some((line) => line.includes("Model:     llama3.2:latest"))).toBe(true);
+  });
+
+  it("does not treat the provider name as a fallback endpoint", () => {
+    mockedExecFileSync.mockReturnValue(
+      JSON.stringify({
+        provider: "Ollama",
+        model: "llama3.2:latest",
+      }),
+    );
+
+    const api = createMockApi();
+    register(api);
+
+    const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
+    expect(logLines.some((line) => line.includes("Endpoint:  build.nvidia.com"))).toBe(true);
+    expect(logLines.some((line) => line.includes("Endpoint:  Ollama"))).toBe(false);
   });
 });
 

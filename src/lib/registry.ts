@@ -5,6 +5,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
+import { isErrnoException } from "./errno";
+
+export interface CustomPolicyEntry {
+  name: string;
+  content: string;
+  sourcePath?: string;
+  appliedAt?: string;
+}
 
 export interface SandboxEntry {
   name: string;
@@ -14,10 +22,16 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[];
+  customPolicies?: CustomPolicyEntry[];
   policyTier?: string | null;
   agent?: string | null;
   dangerouslySkipPermissions?: boolean;
   agentVersion?: string | null;
+  imageTag?: string | null;
+  providerCredentialHashes?: Record<string, string>;
+  messagingChannels?: string[];
+  disabledChannels?: string[];
+  dashboardPort?: number | null;
 }
 
 export interface SandboxRegistry {
@@ -63,8 +77,12 @@ export function acquireLock(): void {
       }
       return;
     } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code !== "EEXIST") throw err;
+      if (
+        !isErrnoException(error) ||
+        error.code !== "EEXIST"
+      ) {
+        throw error;
+      }
       let ownerChecked = false;
       try {
         const ownerPid = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
@@ -75,7 +93,10 @@ export function acquireLock(): void {
             process.kill(ownerPid, 0);
             alive = true;
           } catch (killErr) {
-            alive = (killErr as NodeJS.ErrnoException).code === "EPERM";
+            alive =
+              isErrnoException(killErr)
+                ? killErr.code === "EPERM"
+                : false;
           }
           if (!alive) {
             const recheck = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
@@ -109,12 +130,22 @@ export function releaseLock(): void {
   try {
     fs.unlinkSync(LOCK_OWNER);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (
+      !isErrnoException(error) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
   }
   try {
     fs.rmSync(LOCK_DIR, { recursive: true, force: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (
+      !isErrnoException(error) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
   }
 }
 
@@ -162,9 +193,16 @@ export function registerSandbox(entry: SandboxEntry): void {
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
       agent: entry.agent || null,
-      dangerouslySkipPermissions:
-        entry.dangerouslySkipPermissions === true ? true : undefined,
+      dangerouslySkipPermissions: entry.dangerouslySkipPermissions === true ? true : undefined,
       agentVersion: entry.agentVersion || null,
+      imageTag: entry.imageTag || null,
+      providerCredentialHashes: entry.providerCredentialHashes || undefined,
+      messagingChannels: entry.messagingChannels || [],
+      disabledChannels:
+        Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
+          ? [...entry.disabledChannels]
+          : undefined,
+      dashboardPort: entry.dashboardPort ?? undefined,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;
@@ -221,5 +259,59 @@ export function setDefault(name: string): boolean {
 export function clearAll(): void {
   withLock(() => {
     save({ sandboxes: {}, defaultSandbox: null });
+  });
+}
+
+/** Return the list of custom policy entries recorded for a sandbox (never null). */
+export function getCustomPolicies(name: string): CustomPolicyEntry[] {
+  const data = load();
+  return data.sandboxes[name]?.customPolicies ?? [];
+}
+
+/** Upsert a custom policy by name. Replaces any existing entry with the same name. */
+export function addCustomPolicy(name: string, entry: CustomPolicyEntry): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (!sandbox) return false;
+    const list = (sandbox.customPolicies ?? []).filter((p) => p.name !== entry.name);
+    list.push({ ...entry, appliedAt: entry.appliedAt ?? new Date().toISOString() });
+    sandbox.customPolicies = list;
+    save(data);
+    return true;
+  });
+}
+
+/** Remove a custom policy by name. Returns true if an entry was removed. */
+export function removeCustomPolicyByName(name: string, presetName: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (!sandbox) return false;
+    const list = sandbox.customPolicies ?? [];
+    const next = list.filter((p) => p.name !== presetName);
+    if (next.length === list.length) return false;
+    sandbox.customPolicies = next.length > 0 ? next : undefined;
+    save(data);
+    return true;
+  });
+}
+
+export function getDisabledChannels(name: string): string[] {
+  const data = load();
+  return data.sandboxes[name]?.disabledChannels ?? [];
+}
+
+export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
+  return withLock(() => {
+    const data = load();
+    const entry = data.sandboxes[name];
+    if (!entry) return false;
+    const current = new Set(entry.disabledChannels ?? []);
+    if (disabled) current.add(channel);
+    else current.delete(channel);
+    entry.disabledChannels = current.size > 0 ? Array.from(current).sort() : undefined;
+    save(data);
+    return true;
   });
 }

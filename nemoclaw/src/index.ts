@@ -11,6 +11,7 @@
  * time.
  */
 
+import { execFileSync } from "node:child_process";
 import { handleSlashCommand } from "./commands/slash.js";
 import {
   describeOnboardEndpoint,
@@ -19,13 +20,72 @@ import {
 } from "./onboard/config.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
 
+type PluginScalar = string | number | boolean | null | undefined;
+type PluginValue = PluginScalar | PluginRecord | PluginValue[];
+type PluginRecord = { [key: string]: PluginValue };
+
+function isToolParams(value: PluginValue | object | null | undefined): value is ToolParams {
+  return (
+    value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value)
+  );
+}
+
+function readStringProperty(
+  value: PluginValue | object | null | undefined,
+  key: string,
+): string | undefined {
+  if (!isToolParams(value)) {
+    return undefined;
+  }
+  const property = value[key];
+  return typeof property === "string" ? property : undefined;
+}
+
+function readBeforeToolCallEvent(
+  value: PluginValue | object | null | undefined,
+): Partial<BeforeToolCallEvent> | undefined {
+  if (!isToolParams(value)) {
+    return undefined;
+  }
+  const params = value["params"];
+  return {
+    toolName: readStringProperty(value, "toolName"),
+    params: isToolParams(params) ? params : undefined,
+  };
+}
+
+// Resolve live inference config from OpenShell as a fallback when the
+// onboard config file is not available (e.g. when running inside the
+// sandbox). Returns empty strings if the probe fails.
+function probeOpenShellInference(): { endpoint: string; provider: string; model: string } {
+  try {
+    const raw = execFileSync("openshell", ["inference", "get", "--json"], {
+      encoding: "utf-8",
+      timeout: 3000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const parsed: unknown = JSON.parse(raw);
+    const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
+    const endpoint = readStringProperty(parsedObject, "endpoint");
+    const provider = readStringProperty(parsedObject, "provider");
+    const model = readStringProperty(parsedObject, "model");
+    return {
+      endpoint: endpoint ?? "",
+      provider: provider ?? "",
+      model: model ?? "",
+    };
+  } catch {
+    return { endpoint: "", provider: "", model: "" };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // OpenClaw Plugin SDK compatible types (mirrors openclaw/plugin-sdk)
 // ---------------------------------------------------------------------------
 
 /** Subset of OpenClawConfig that we actually read. */
 export interface OpenClawConfig {
-  [key: string]: unknown;
+  [key: string]: PluginValue;
 }
 
 /** Logger provided by the plugin host. */
@@ -35,6 +95,8 @@ export interface PluginLogger {
   error(message: string): void;
   debug(message: string): void;
 }
+
+type ToolParams = { [key: string]: PluginValue };
 
 /** Context passed to slash-command handlers. */
 export interface PluginCommandContext {
@@ -108,14 +170,14 @@ export interface PluginService {
 /** Event payload for before_tool_call hooks. */
 export interface BeforeToolCallEvent {
   toolName: string;
-  params: Record<string, unknown>;
+  params: ToolParams;
   runId?: string;
   toolCallId?: string;
 }
 
 /** Return value from a before_tool_call hook. */
 export interface BeforeToolCallResult {
-  params?: Record<string, unknown>;
+  params?: ToolParams;
   block?: boolean;
   blockReason?: string;
 }
@@ -129,13 +191,16 @@ export interface OpenClawPluginApi {
   name: string;
   version?: string;
   config: OpenClawConfig;
-  pluginConfig?: Record<string, unknown>;
+  pluginConfig?: OpenClawConfig;
   logger: PluginLogger;
   registerCommand: (command: PluginCommandDefinition) => void;
   registerProvider: (provider: ProviderPlugin) => void;
   registerService: (service: PluginService) => void;
   resolvePath: (input: string) => string;
-  on: (hookName: string, handler: (...args: unknown[]) => BeforeToolCallResult | undefined) => void;
+  on: (
+    hookName: string,
+    handler: (...args: readonly PluginValue[]) => BeforeToolCallResult | undefined,
+  ) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,8 +216,10 @@ export interface NemoClawConfig {
 
 function activeModelEntries(
   onboardCfg: ReturnType<typeof loadOnboardConfig>,
+  fallbackModel = "",
 ): ModelProviderEntry[] {
-  if (!onboardCfg?.model) {
+  const activeModel = onboardCfg?.model ?? fallbackModel;
+  if (!activeModel) {
     return [
       {
         id: "nvidia/nemotron-3-super-120b-a12b",
@@ -183,8 +250,8 @@ function activeModelEntries(
 
   return [
     {
-      id: `inference/${onboardCfg.model}`,
-      label: onboardCfg.model,
+      id: `inference/${activeModel}`,
+      label: activeModel,
       contextWindow: 131072,
       maxOutput: 8192,
     },
@@ -194,6 +261,7 @@ function activeModelEntries(
 function registeredProviderForConfig(
   onboardCfg: ReturnType<typeof loadOnboardConfig>,
   providerCredentialEnv: string,
+  fallbackModel = "",
 ): ProviderPlugin {
   const authLabel =
     providerCredentialEnv === "NVIDIA_API_KEY"
@@ -205,7 +273,7 @@ function registeredProviderForConfig(
     label: "Managed Inference Route",
     aliases: ["inference-local", "nemoclaw"],
     envVars: [providerCredentialEnv],
-    models: { chat: activeModelEntries(onboardCfg) },
+    models: { chat: activeModelEntries(onboardCfg, fallbackModel) },
     auth: [
       {
         type: "bearer",
@@ -264,12 +332,29 @@ export default function register(api: OpenClawPluginApi): void {
 
   // 2. Register nvidia-nim provider — use onboard config if available
   const onboardCfg = loadOnboardConfig();
-  const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
-  api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));
 
-  const bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "build.nvidia.com";
-  const bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "NVIDIA Endpoints";
-  const bannerModel = onboardCfg?.model ?? "nvidia/nemotron-3-super-120b-a12b";
+  // Prefer onboard config; fall back to live OpenShell inference state when
+  // the config file is unavailable (e.g. inside the sandbox). Only resort to
+  // hardcoded defaults if both lookups fail.
+  let bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "";
+  let bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "";
+  let bannerModel = onboardCfg?.model ?? "";
+  let probedModel = "";
+
+  if (!bannerEndpoint || !bannerProvider || !bannerModel) {
+    const probed = probeOpenShellInference();
+    if (!bannerEndpoint) bannerEndpoint = probed.endpoint;
+    if (!bannerProvider) bannerProvider = probed.provider;
+    if (!bannerModel) bannerModel = probed.model;
+    probedModel = probed.model;
+  }
+
+  if (!bannerEndpoint) bannerEndpoint = "build.nvidia.com";
+  if (!bannerProvider) bannerProvider = "NVIDIA Endpoints";
+  if (!bannerModel) bannerModel = "nvidia/nemotron-3-super-120b-a12b";
+
+  const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
+  api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv, probedModel));
 
   // 3. Register before_tool_call hook to block secrets in memory writes (#1233)
   // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract
@@ -279,38 +364,41 @@ export default function register(api: OpenClawPluginApi): void {
   // a no-op. Verify after OpenClaw upgrades that blocked writes still show
   // the expected error message.
   try {
-    api.on("before_tool_call", (...args: unknown[]): BeforeToolCallResult | undefined => {
-      const event = args[0] as Partial<BeforeToolCallEvent> | undefined;
-      if (!event?.toolName || !event.params) return undefined;
+    api.on(
+      "before_tool_call",
+      (...args: readonly PluginValue[]): BeforeToolCallResult | undefined => {
+        const event = readBeforeToolCallEvent(args[0]);
+        if (!event?.toolName || !event.params) return undefined;
 
-      const toolName = event.toolName.toLowerCase();
-      if (!WRITE_TOOL_NAMES.has(toolName)) return undefined;
+        const toolName = event.toolName.toLowerCase();
+        if (!WRITE_TOOL_NAMES.has(toolName)) return undefined;
 
-      const rawPath = event.params["file_path"] ?? event.params["path"];
-      if (typeof rawPath !== "string" || rawPath.length === 0) return undefined;
-      // Resolve symlinks and traversal before checking — prevents bypasses like
-      // /sandbox/project/../../.openclaw-data/memory/secrets.md
-      const filePath = api.resolvePath(rawPath);
-      if (!isMemoryPath(filePath)) return undefined;
+        const rawPath = event.params["file_path"] ?? event.params["path"];
+        if (typeof rawPath !== "string" || rawPath.length === 0) return undefined;
+        // Resolve symlinks and traversal before checking — prevents bypasses like
+        // /sandbox/project/../../.openclaw-data/memory/secrets.md
+        const filePath = api.resolvePath(rawPath);
+        if (!isMemoryPath(filePath)) return undefined;
 
-      const content =
-        event.params["content"] ?? event.params["new_string"] ?? event.params["patch"];
-      if (typeof content !== "string" || content.length === 0) return undefined;
+        const content =
+          event.params["content"] ?? event.params["new_string"] ?? event.params["patch"];
+        if (typeof content !== "string" || content.length === 0) return undefined;
 
-      const matches = scanForSecrets(content);
-      if (matches.length === 0) return undefined;
+        const matches = scanForSecrets(content);
+        if (matches.length === 0) return undefined;
 
-      const summary = matches.map((m) => `  - ${m.pattern} (${m.redacted})`).join("\n");
-      api.logger.warn(`[SECURITY] Blocked memory write to ${filePath} — secrets detected`);
+        const summary = matches.map((m) => `  - ${m.pattern} (${m.redacted})`).join("\n");
+        api.logger.warn(`[SECURITY] Blocked memory write to ${filePath} — secrets detected`);
 
-      return {
-        block: true,
-        blockReason:
-          `Memory write blocked: detected ${String(matches.length)} likely secret(s):\n${summary}\n\n` +
-          "Remove secrets before saving to persistent memory. " +
-          "Use environment variables or credential stores instead.",
-      };
-    });
+        return {
+          block: true,
+          blockReason:
+            `Memory write blocked: detected ${String(matches.length)} likely secret(s):\n${summary}\n\n` +
+            "Remove secrets before saving to persistent memory. " +
+            "Use environment variables or credential stores instead.",
+        };
+      },
+    );
   } catch (err) {
     api.logger.warn(
       `[SECURITY] Could not register secret scanner hook: ${err instanceof Error ? err.message : String(err)}`,

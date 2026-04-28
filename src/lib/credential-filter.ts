@@ -12,6 +12,27 @@
 
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+/**
+ * JSON-like configuration value supported by credential stripping.
+ */
+export type ConfigValue =
+  | null
+  | undefined
+  | boolean
+  | number
+  | string
+  | ConfigValue[]
+  | ConfigObject;
+
+/**
+ * JSON-like configuration object supported by credential stripping.
+ */
+export type ConfigObject = { [key: string]: ConfigValue };
+
 const CREDENTIAL_PLACEHOLDER = "[STRIPPED_BY_MIGRATION]";
 
 /**
@@ -40,26 +61,66 @@ const CREDENTIAL_FIELDS = new Set([
 const CREDENTIAL_FIELD_PATTERN =
   /(?:access|refresh|client|bearer|auth|api|private|public|signing|session)(?:Token|Key|Secret|Password)$/;
 
+/**
+ * Check whether a field name should be treated as credential-bearing.
+ */
 export function isCredentialField(key: string): boolean {
   return CREDENTIAL_FIELDS.has(key) || CREDENTIAL_FIELD_PATTERN.test(key);
+}
+
+/**
+ * Narrow an unknown value to a JSON-like configuration object.
+ */
+export function isConfigObject(value: ConfigValue | object): value is ConfigObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Narrow an unknown value to a JSON-like configuration value.
+ */
+export function isConfigValue(value: ConfigValue | object): value is ConfigValue {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every((entry) => isConfigValue(entry));
+  }
+  if (!isConfigObject(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+
+  return Object.values(value).every((entry) => isConfigValue(entry));
 }
 
 /**
  * Recursively strip credential fields from a JSON-like object.
  * Returns a new object with sensitive values replaced by a placeholder.
  */
-export function stripCredentials(obj: unknown): unknown {
+export function stripCredentials(obj: null): null;
+export function stripCredentials(obj: undefined): undefined;
+export function stripCredentials(obj: boolean): boolean;
+export function stripCredentials(obj: number): number;
+export function stripCredentials(obj: string): string;
+export function stripCredentials<T extends ConfigValue[]>(obj: T): T;
+export function stripCredentials<T extends ConfigObject>(obj: T): T;
+export function stripCredentials(obj: ConfigValue): ConfigValue;
+export function stripCredentials(obj: ConfigValue): ConfigValue {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj !== "object") return obj;
-  if (Array.isArray(obj)) return obj.map(stripCredentials);
+  if (Array.isArray(obj)) {
+    return obj.map((value) => stripCredentials(value));
+  }
+  if (!isConfigObject(obj)) return obj;
 
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-    if (isCredentialField(key)) {
-      result[key] = CREDENTIAL_PLACEHOLDER;
-    } else {
-      result[key] = stripCredentials(value);
-    }
+  const result: ConfigObject = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[key] = isCredentialField(key) ? CREDENTIAL_PLACEHOLDER : stripCredentials(value);
   }
   return result;
 }
@@ -70,16 +131,16 @@ export function stripCredentials(obj: unknown): unknown {
  */
 export function sanitizeConfigFile(configPath: string): void {
   if (!existsSync(configPath)) return;
-  let parsed: unknown;
+  let parsed: ConfigValue;
   try {
-    parsed = JSON.parse(readFileSync(configPath, "utf-8"));
+    parsed = parseJson<ConfigValue>(readFileSync(configPath, "utf-8"));
   } catch {
     return; // Not valid JSON — skip (may be YAML for Hermes)
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
-  const config = parsed as Record<string, unknown>;
-  delete config["gateway"];
-  const sanitized = stripCredentials(config) as Record<string, unknown>;
+  if (!isConfigObject(parsed)) return;
+
+  const { gateway: _gateway, ...config } = parsed;
+  const sanitized = stripCredentials(config);
   writeFileSync(configPath, JSON.stringify(sanitized, null, 2));
   chmodSync(configPath, 0o600);
 }

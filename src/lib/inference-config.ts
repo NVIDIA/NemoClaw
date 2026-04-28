@@ -14,7 +14,7 @@ export const CLOUD_MODEL_OPTIONS = [
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
   { id: "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b", label: "Nemotron 3 Nano Omni 30B" },
   { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
-  { id: "z-ai/glm5", label: "GLM-5" },
+  { id: "z-ai/glm-5.1", label: "GLM-5" },
   { id: "minimaxai/minimax-m2.5", label: "MiniMax M2.5" },
   { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
 ];
@@ -43,8 +43,8 @@ export function getProviderSelectionConfig(
   provider: string,
   model?: string,
 ): ProviderSelectionConfig | null {
-  const base = {
-    endpointType: "custom" as const,
+  const base: Omit<ProviderSelectionConfig, "model" | "credentialEnv" | "providerLabel"> = {
+    endpointType: "custom",
     endpointUrl: INFERENCE_ROUTE_URL,
     ncpPartner: null,
     profile: DEFAULT_ROUTE_PROFILE,

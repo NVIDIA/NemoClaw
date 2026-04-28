@@ -73,7 +73,7 @@ vi.mock("execa", () => ({
 
 vi.mock("./ssrf.js", () => ({
   // eslint-disable-next-line @typescript-eslint/require-await
-  validateEndpointUrl: vi.fn(async (url: string) => url),
+  validateEndpointUrl: vi.fn(async (url: string) => ({ url, pinnedUrl: url })),
 }));
 
 const { validateEndpointUrl } = await import("./ssrf.js");
@@ -165,10 +165,131 @@ describe("runner", () => {
       expect(loadBlueprint()).toEqual({ version: "2.0" });
     });
 
+    it("parses nested policy additions with object and array values", () => {
+      addFile(
+        "blueprint.yaml",
+        YAML.stringify({
+          version: "2.0",
+          components: {
+            policy: {
+              additions: {
+                extra: {
+                  enabled: true,
+                  paths: ["/tmp", "/var/tmp"],
+                },
+              },
+            },
+          },
+        }),
+      );
+      expect(loadBlueprint()).toEqual({
+        version: "2.0",
+        components: {
+          policy: {
+            additions: {
+              extra: {
+                enabled: true,
+                paths: ["/tmp", "/var/tmp"],
+              },
+            },
+          },
+        },
+      });
+    });
+
     it("respects NEMOCLAW_BLUEPRINT_PATH env var", () => {
       process.env.NEMOCLAW_BLUEPRINT_PATH = "/custom/path";
       addFile("/custom/path/blueprint.yaml", YAML.stringify({ version: "3.0" }));
       expect(loadBlueprint()).toEqual({ version: "3.0" });
+    });
+
+    it("rejects a YAML sequence at the root", () => {
+      addFile("blueprint.yaml", YAML.stringify(["not", "a", "mapping"]));
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+    });
+
+    it("rejects a non-string version", () => {
+      addFile("blueprint.yaml", YAML.stringify({ version: 2 }));
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+    });
+
+    it("rejects a non-object components block", () => {
+      addFile("blueprint.yaml", YAML.stringify({ components: [] }));
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+    });
+
+    it("rejects a non-object inference block", () => {
+      addFile(
+        "blueprint.yaml",
+        YAML.stringify({
+          components: {
+            inference: [],
+          },
+        }),
+      );
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+    });
+
+    it("rejects nested component shapes that do not match the blueprint schema", () => {
+      addFile(
+        "blueprint.yaml",
+        YAML.stringify({
+          version: "2.0",
+          components: {
+            inference: { profiles: 1 },
+          },
+        }),
+      );
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+    });
+
+    it("rejects invalid inference profile field types", () => {
+      addFile(
+        "blueprint.yaml",
+        YAML.stringify({
+          version: "2.0",
+          components: {
+            inference: {
+              profiles: {
+                default: {
+                  timeout_secs: Number.POSITIVE_INFINITY,
+                },
+              },
+            },
+          },
+        }),
+      );
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+    });
+
+    it("rejects invalid sandbox forward ports", () => {
+      addFile(
+        "blueprint.yaml",
+        YAML.stringify({
+          version: "2.0",
+          components: {
+            sandbox: {
+              forward_ports: [70000],
+            },
+          },
+        }),
+      );
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+    });
+
+    it("rejects non-plain policy additions values", () => {
+      addFile(
+        "blueprint.yaml",
+        [
+          'version: "2.0"',
+          "components:",
+          "  policy:",
+          "    additions:",
+          "      extra: !!set",
+          "        ? /tmp",
+        ].join("\n"),
+      );
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
     });
   });
 
@@ -705,16 +826,17 @@ describe("runner", () => {
     beforeEach(() => {
       captureStdout();
       mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
-      // main() calls loadBlueprint() before dispatching the action
       seedBlueprintFile();
     });
 
-    it("throws on unknown action", async () => {
-      await expect(main(["bogus"])).rejects.toThrow(/Unknown action/);
+    it("throws on unknown action with the raw invalid token", async () => {
+      store.clear();
+      await expect(main(["bogus"])).rejects.toThrow(/Unknown action 'bogus'/);
     });
 
-    it("throws on missing action", async () => {
-      await expect(main([])).rejects.toThrow(/Unknown action/);
+    it("throws on missing action with a clear marker", async () => {
+      store.clear();
+      await expect(main([])).rejects.toThrow(/Unknown action '\(missing\)'/);
     });
 
     it("parses plan with --profile and --dry-run", async () => {

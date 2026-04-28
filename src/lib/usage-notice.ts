@@ -9,7 +9,14 @@ import noticeConfig from "../../bin/lib/usage-notice.json";
 
 export const NOTICE_ACCEPT_FLAG = "--yes-i-accept-third-party-software";
 export const NOTICE_ACCEPT_ENV = "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE";
-export const NOTICE_CONFIG_FILE = path.join(__dirname, "..", "..", "bin", "lib", "usage-notice.json");
+export const NOTICE_CONFIG_FILE = path.join(
+  __dirname,
+  "..",
+  "..",
+  "bin",
+  "lib",
+  "usage-notice.json",
+);
 
 const OSC8_OPEN = "\u001B]8;;";
 const OSC8_CLOSE = "\u001B]8;;\u001B\\";
@@ -39,20 +46,77 @@ type EnsureUsageNoticeConsentOptions = {
   writeLine?: WriteLineFn;
 };
 
+type NoticeConfigSource = {
+  version?: string;
+  title?: string;
+  referenceUrl?: string;
+  body?: string[];
+  links?: NoticeLink[];
+  interactivePrompt?: string;
+};
+
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+// Reflect.get is used throughout the codebase as a type-safe alternative to
+// direct property access on loosely-typed objects.  Unlike an `as Record<…>`
+// cast it never widens the target type and avoids eslint no-unsafe-member-access
+// warnings.  See also: deploy.ts, onboard.ts, ws-proxy-fix.ts.
+function readStringProperty(value: object | null, key: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const property = Reflect.get(value, key);
+  return typeof property === "string" ? property : undefined;
+}
+
+function readStringArrayProperty(value: object | null, key: string): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const property = Reflect.get(value, key);
+  return Array.isArray(property)
+    ? property.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
+}
+
+function readLinksProperty(value: object | null, key: string): NoticeLink[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const property = Reflect.get(value, key);
+  if (!Array.isArray(property)) {
+    return undefined;
+  }
+  return property.map((entry) => ({
+    label: readStringProperty(typeof entry === "object" && entry !== null ? entry : null, "label"),
+    url: readStringProperty(typeof entry === "object" && entry !== null ? entry : null, "url"),
+  }));
+}
+
 export function getUsageNoticeStateFile(): string {
   return path.join(process.env.HOME || os.homedir(), ".nemoclaw", "usage-notice.json");
 }
 
 export function loadUsageNoticeConfig(): NoticeConfig {
-  return noticeConfig as NoticeConfig;
+  const rawConfig: NoticeConfigSource = noticeConfig;
+  return {
+    version: rawConfig.version || "",
+    title: rawConfig.title || "",
+    referenceUrl: rawConfig.referenceUrl,
+    body: rawConfig.body,
+    links: rawConfig.links,
+    interactivePrompt: rawConfig.interactivePrompt || "",
+  };
 }
 
 export function hasAcceptedUsageNotice(version: string): boolean {
   try {
-    const saved = JSON.parse(fs.readFileSync(getUsageNoticeStateFile(), "utf8")) as {
-      acceptedVersion?: string;
-    };
-    return saved?.acceptedVersion === version;
+    const saved = parseJson<{ acceptedVersion?: string }>(
+      fs.readFileSync(getUsageNoticeStateFile(), "utf8"),
+    );
+    return saved.acceptedVersion === version;
   } catch {
     return false;
   }
@@ -101,7 +165,7 @@ export function printUsageNotice(
     writeLine("");
     const label =
       supportsTerminalHyperlinks() && link?.url && link?.label
-        ? formatTerminalHyperlink(link.url, link.url)
+        ? formatTerminalHyperlink(link.label, link.url)
         : link?.label || "";
     if (label) {
       writeLine(`  ${label}`);

@@ -59,7 +59,15 @@ fi
 # ── Helper: kubectl via gateway ─────────────────────────────────────
 
 kctl() {
-  docker exec "$CLUSTER" kubectl "$@"
+  # Target the `agent` container explicitly for `exec` so kubectl stops
+  # emitting `Defaulted container "agent" out of: agent, workspace-init (init)`
+  # on every call.
+  if [ "${1:-}" = "exec" ]; then
+    shift
+    docker exec "$CLUSTER" kubectl exec -c agent "$@"
+  else
+    docker exec "$CLUSTER" kubectl "$@"
+  fi
 }
 
 # ── Discover CoreDNS pod IP ─────────────────────────────────────────
@@ -158,7 +166,32 @@ kctl exec -n openshell "$POD" -- \
   sh -c "nohup python3 -u /tmp/dns-proxy.py '${DNS_UPSTREAM}' '${VETH_GW}' \
     > /tmp/dns-proxy.log 2>&1 &"
 
-sleep 2
+# Wait for forwarder to actually be serving (up to 10s).
+# The PID file is written before the socket is bound, so we probe
+# with a real DNS query instead of just checking the file. See #2017.
+_dns_ready=0
+for _i in $(seq 1 10); do
+  # Probe via python3, not socat — socat is not installed in the sandbox image.
+  if kctl exec -n openshell "$POD" -- python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(1)
+try:
+    s.sendto(b'\x00\x1e\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06google\x03com\x00\x00\x01\x00\x01',
+             ('${VETH_GW}', 53))
+    data, _ = s.recvfrom(4096)
+    sys.stdout.write('ok' if data else '')
+except Exception:
+    pass
+" 2>/dev/null | grep -q ok; then
+    _dns_ready=1
+    break
+  fi
+  sleep 1
+done
+if [ "$_dns_ready" -eq 0 ]; then
+  echo "WARNING: DNS forwarder not responding after 10s — verification may fail"
+fi
 
 # ── Step 4: Allow UDP DNS in sandbox iptables ───────────────────────
 #
@@ -272,12 +305,19 @@ if [ -n "$SANDBOX_NS" ]; then
   fi
 
   # 6d. Actual DNS resolution from sandbox (getent hosts)
-  DNS_RESULT="$(sb_exec getent hosts github.com 2>/dev/null || true)"
+  # Retry up to 3 times — on slower hardware (Jetson ARM64) the forwarder
+  # may need a few extra seconds after binding. See #2017.
+  DNS_RESULT=""
+  for _dns_try in 1 2 3; do
+    DNS_RESULT="$(sb_exec getent hosts github.com 2>/dev/null || true)"
+    [ -n "$DNS_RESULT" ] && break
+    [ "$_dns_try" -lt 3 ] && sleep 2
+  done
   if [ -n "$DNS_RESULT" ]; then
     echo "  [PASS] getent hosts github.com -> ${DNS_RESULT}"
     VERIFY_PASS=$((VERIFY_PASS + 1))
   else
-    echo "  [FAIL] getent hosts github.com returned empty (DNS not resolving)"
+    echo "  [FAIL] getent hosts github.com returned empty after 3 attempts (DNS not resolving)"
     VERIFY_FAIL=$((VERIFY_FAIL + 1))
   fi
 else

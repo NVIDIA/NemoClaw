@@ -21,15 +21,15 @@ The prefix in each skill name indicates who it is for.
 For end users operating a NemoClaw sandbox.
 Covers installation, inference configuration, network policy management, monitoring, remote deployment, security configuration, workspace management, and reference material.
 
-### `nemoclaw-maintainer-*` (6 skills)
+### `nemoclaw-maintainer-*` (7 skills)
 
 For project maintainers.
-Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), cutting releases, finding PRs to review, and performing security code reviews.
+Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), cutting releases, finding PRs to review, normalizing issue and PR title tags, and performing security code reviews.
 
-### `nemoclaw-contributor-*` (1 skill)
+### `nemoclaw-contributor-*` (2 skills)
 
 For contributors to the NemoClaw codebase.
-Covers drafting documentation updates from recent commits.
+Covers creating pull requests that follow the project template and drafting documentation updates from recent commits.
 
 ## Skill Catalog
 
@@ -58,12 +58,14 @@ Covers drafting documentation updates from recent commits.
 | `nemoclaw-maintainer-evening` | End-of-day handoff: check version progress, bump stragglers to the next patch, generate a QA handoff summary, and cut the release tag. |
 | `nemoclaw-maintainer-cut-release-tag` | Cut an annotated semver tag on main, move the `latest` floating tag, and push both to origin. |
 | `nemoclaw-maintainer-find-review-pr` | Find open PRs labeled security + priority-high, link each to its issue, detect duplicates, and present a review summary. |
+| `nemoclaw-maintainer-normalize-title-tags` | Preview and remove bracketed `NemoClaw` title tags from issues and PRs case-insensitively, even when the tag appears later in the title. |
 | `nemoclaw-maintainer-security-code-review` | Perform a 9-category security review of a PR or issue, producing per-category PASS/WARNING/FAIL verdicts. |
 
 ### Contributor Skills
 
 | Skill | Summary |
 |-------|---------|
+| `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, and DCO sign-off. |
 | `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes and draft or update the corresponding documentation pages. |
 
 ## Getting Started
@@ -79,7 +81,7 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 | Role | Skills included | Count | Start with |
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 9 | `nemoclaw-user-get-started` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 10 | `nemoclaw-user-overview` |
-| Maintainer | All skills | 16 | `nemoclaw-maintainer-morning` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 11 | `nemoclaw-user-overview` |
+| Maintainer | All skills | 18 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

@@ -34,6 +34,11 @@ set -euo pipefail
 
 # ── Config ──────────────────────────────────────────────────────────
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-rebuild}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 TIMEOUT="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-1200}"
 MARKER_FILE="/sandbox/.openclaw-data/workspace/rebuild-marker.txt"
 MARKER_CONTENT="REBUILD_E2E_$(date +%s)"
@@ -96,12 +101,12 @@ fi
 # ── Step 3: Write marker files into sandbox ─────────────────────────
 info "Step 3: Writing marker files into sandbox workspace..."
 
-openshell sandbox exec "$SANDBOX_NAME" -- \
+openshell sandbox exec --name "$SANDBOX_NAME" -- \
   sh -c "mkdir -p /sandbox/.openclaw-data/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
   || fail "Failed to write marker file"
 
 # Verify the marker file was written
-VERIFY=$(openshell sandbox exec "$SANDBOX_NAME" -- cat "$MARKER_FILE" 2>/dev/null || true)
+VERIFY=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat "$MARKER_FILE" 2>/dev/null || true)
 [ "$VERIFY" = "$MARKER_CONTENT" ] || fail "Marker file verification failed: got '$VERIFY'"
 
 pass "Marker file written and verified"
@@ -144,7 +149,7 @@ pass "Rebuild completed"
 # ── Step 6: Verify marker files survived ────────────────────────────
 info "Step 6: Verifying marker files survived rebuild..."
 
-RESTORED=$(openshell sandbox exec "$SANDBOX_NAME" -- cat "$MARKER_FILE" 2>/dev/null || true)
+RESTORED=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat "$MARKER_FILE" 2>/dev/null || true)
 if [ "$RESTORED" = "$MARKER_CONTENT" ]; then
   pass "Marker file survived rebuild"
 else
@@ -186,7 +191,7 @@ fi
 
 # ── Cleanup ─────────────────────────────────────────────────────────
 info "Cleaning up..."
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}All rebuild E2E tests passed.${NC}"

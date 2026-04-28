@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +9,17 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 const ONBOARD_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
 const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials.js"));
 
-const SAMPLE_PRESETS = [
+type Preset = {
+  name: string;
+  description: string;
+};
+
+type SelectorOptions = {
+  presets?: Preset[];
+  initialSelected?: string[];
+};
+
+const SAMPLE_PRESETS: Preset[] = [
   { name: "npm", description: "npm and Yarn registry access" },
   { name: "pypi", description: "Python Package Index (PyPI) access" },
   { name: "slack", description: "Slack API access" },
@@ -21,9 +30,12 @@ const SAMPLE_PRESETS = [
  * The subprocess writes console.log output (preset listing, messages) to
  * stdout before the final JSON line, so we must look at only the last line.
  */
-function parseResult(stdout) {
+function parseResult(stdout: string): string[] {
   const lines = stdout.trim().split("\n").filter(Boolean);
-  return JSON.parse(lines[lines.length - 1]);
+  const parsed: Array<string | null> = JSON.parse(lines[lines.length - 1]);
+  return Array.isArray(parsed)
+    ? parsed.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 /**
@@ -34,8 +46,8 @@ function parseResult(stdout) {
  * user would have typed at the "Select presets" prompt.
  */
 function runCheckboxSelector(
-  promptResponse,
-  { presets = SAMPLE_PRESETS, initialSelected = [] } = {},
+  promptResponse: string,
+  { presets = SAMPLE_PRESETS, initialSelected = [] }: SelectorOptions = {},
 ) {
   // Stub credentials.prompt BEFORE requiring onboard so the destructured
   // binding inside onboard.js picks up the stub at load time.
@@ -60,7 +72,7 @@ presetsCheckboxSelector(presets, initialSelected)
   return spawnSync(process.execPath, ["-e", script], {
     cwd: REPO_ROOT,
     encoding: "utf-8",
-    timeout: 5000,
+    timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 5000),
     env: {
       ...process.env,
       NEMOCLAW_TEST_PRESETS: JSON.stringify(presets),

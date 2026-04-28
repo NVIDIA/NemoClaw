@@ -12,38 +12,23 @@
 # Test ordering:
 #   Phase 1 — Basic operations (sandbox A alive)
 #   Phase 2 — Non-destructive recovery (sandbox A alive)
-#   Phase 3 — Destructive gateway kill (destroys sandbox A, then re-onboards)
-#   Phase 4 — Multi-sandbox (onboards sandbox B alongside re-onboarded A)
-#   Phase 5 — Cleanup verification
+#   Phase 3 — Multi-sandbox (onboards sandbox B alongside A)
+#   Phase 4 — Cleanup verification (destroys sandbox B)
+#   Phase 5 — Gateway kill recovery (destructive — runs last)
 # =============================================================================
 
 set -euo pipefail
 
 # ── Overall timeout (prevents hung CI jobs) ──────────────────────────────────
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-1800}"
-  if command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  fi
-fi
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1800
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 # ── Config ───────────────────────────────────────────────────────────────────
 SANDBOX_A="test-sbx-a"
 SANDBOX_B="test-sbx-b"
 LOG_FILE="test-sandbox-operations-$(date +%Y%m%d-%H%M%S).log"
-
-# macOS uses gtimeout (from coreutils); Linux uses timeout
-if command -v gtimeout &>/dev/null; then
-  TIMEOUT_CMD="gtimeout"
-elif command -v timeout &>/dev/null; then
-  TIMEOUT_CMD="timeout"
-else
-  echo "ERROR: Neither timeout nor gtimeout found. Install coreutils: brew install coreutils"
-  exit 1
-fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -104,7 +89,7 @@ sandbox_exec_for() {
     return 1
   fi
   local result exit_code=0
-  result=$($TIMEOUT_CMD 60 ssh -F "$ssh_cfg" \
+  result=$(run_with_timeout 60 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${name}" "$cmd" 2>&1) || exit_code=$?
@@ -286,18 +271,64 @@ test_sbx_01_list_sandboxes() {
 }
 
 # ── TC-SBX-02: Connect & Chat ───────────────────────────────────────────────
+# Drives one openclaw-mediated turn through the sandbox and asserts the
+# model produced a real answer. Three properties keep this honest:
+#
+#   1. Uses `openclaw agent --json`, which calls routeLogsToStderr() in
+#      openclaw/src/commands/agent-via-gateway.ts:57 so stdout is a clean
+#      JSON envelope. Stderr is dropped (2>/dev/null) so any prompt-echo
+#      or wrapped error there cannot satisfy the assertion.
+#   2. The expected token (the integer 42) is not a literal substring of
+#      the prompt, so an error path that quoted the prompt back cannot
+#      false-positive the grep — which is what masked the openclaw 4.9
+#      SSRF regression from the prior `Say exactly: HELLO_E2E` assertion.
+#   3. Asserts on `result.payloads[].text` from the JSON envelope, not on
+#      merged stdout/stderr.
 test_sbx_02_connect_chat() {
   log "=== TC-SBX-02: Connect & Chat ==="
   require_sandbox "$SANDBOX_A" "TC-SBX-02" || return
 
-  log "  Sending one-shot message to agent via SSH..."
-  local reply
-  reply=$(sandbox_exec "openclaw agent --agent main --local -m 'Say exactly: HELLO_E2E' --session-id e2e-test" 2>&1) || true
+  log "  Sending one-shot message to agent via SSH (openclaw agent --json)..."
+  local session_id raw ssh_cfg
+  session_id="e2e-sbx-02-$(date +%s)-$$"
+  # Use a direct ssh invocation rather than sandbox_exec(): sandbox_exec_for
+  # merges stderr into stdout via 2>&1 so it can log non-zero exits, which
+  # would pollute the JSON document we need to parse below. Drop stderr at
+  # the source so node deprecation warnings (UNDICI-EHPA, etc.) and
+  # progress-bar bytes from openclaw cannot trip up json.load().
+  ssh_cfg="$(mktemp)"
+  if ! openshell sandbox ssh-config "$SANDBOX_A" >"$ssh_cfg" 2>/dev/null; then
+    rm -f "$ssh_cfg"
+    fail "TC-SBX-02: Connect & Chat" "Failed to fetch SSH config for '$SANDBOX_A'"
+    return
+  fi
+  raw=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 -o LogLevel=ERROR \
+    "openshell-${SANDBOX_A}" \
+    "openclaw agent --agent main --json --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
+    2>/dev/null) || true
+  rm -f "$ssh_cfg"
 
-  if echo "$reply" | grep -qi "HELLO_E2E"; then
-    pass "TC-SBX-02: Agent replied with expected token"
+  local reply
+  reply=$(echo "$raw" | python3 -c "
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+result = doc.get('result') or {}
+parts = []
+for p in result.get('payloads') or []:
+    if isinstance(p, dict) and isinstance(p.get('text'), str):
+        parts.append(p['text'])
+print('\n'.join(parts))
+" 2>/dev/null) || true
+
+  if [[ -n "$reply" ]] && echo "$reply" | grep -qE "(^|[^0-9])42([^0-9]|$)"; then
+    pass "TC-SBX-02: Agent computed 6×7=42 through openclaw → inference.local"
   else
-    fail "TC-SBX-02: Connect & Chat" "Got: $(echo "$reply" | head -3)"
+    fail "TC-SBX-02: Connect & Chat" "Expected '42' in agent reply; reply='${reply:0:200}'; raw stdout='${raw:0:200}'"
   fi
 }
 
@@ -332,7 +363,7 @@ test_sbx_04_log_streaming() {
   require_sandbox "$SANDBOX_A" "TC-SBX-04" || return
 
   local output logs_exit=0
-  output=$($TIMEOUT_CMD 10 nemoclaw "$SANDBOX_A" logs 2>&1) || logs_exit=$?
+  output=$(run_with_timeout 10 nemoclaw "$SANDBOX_A" logs 2>&1) || logs_exit=$?
 
   if [[ $logs_exit -ne 0 ]]; then
     fail "TC-SBX-04: Log Streaming" "nemoclaw logs exited with code $logs_exit"
@@ -342,7 +373,7 @@ test_sbx_04_log_streaming() {
     fail "TC-SBX-04: Log Streaming" "nemoclaw logs succeeded but produced no output"
   fi
 
-  $TIMEOUT_CMD 5 nemoclaw "$SANDBOX_A" logs --follow &>/dev/null &
+  run_with_timeout 5 nemoclaw "$SANDBOX_A" logs --follow &>/dev/null &
   local pid=$!
   sleep 3
 
@@ -379,7 +410,7 @@ test_sbx_07_registry_rebuild() {
   rm -f "$registry"
 
   local output
-  output=$($TIMEOUT_CMD 60 nemoclaw list 2>&1) || true
+  output=$(run_with_timeout 60 nemoclaw list 2>&1) || true
 
   if echo "$output" | grep -q "$SANDBOX_A"; then
     pass "TC-SBX-07: Registry rebuilt — '$SANDBOX_A' found after deletion"
@@ -408,7 +439,7 @@ test_sbx_08_process_recovery() {
 
   log "  Running nemoclaw status (expect process recovery)..."
   local status_output status_exit=0
-  status_output=$($TIMEOUT_CMD 120 nemoclaw "$SANDBOX_A" status 2>&1) || status_exit=$?
+  status_output=$(run_with_timeout 120 nemoclaw "$SANDBOX_A" status 2>&1) || status_exit=$?
 
   if [[ $status_exit -ne 0 ]]; then
     fail "TC-SBX-08: Process Recovery (status)" "nemoclaw status exited with code $status_exit"
@@ -460,11 +491,11 @@ test_sbx_05_destroy_cleanup() {
 }
 
 # =============================================================================
-# Phase 3: Destructive gateway kill (destroys sandbox A, then re-onboards)
+# Phase 5: Gateway kill recovery (destructive — runs last)
 # =============================================================================
 
 test_sbx_06_gateway_recovery() {
-  log "=== TC-SBX-06: Gateway Auto-Recovery (destructive) ==="
+  log "=== TC-SBX-06: Gateway Auto-Recovery ==="
   require_sandbox "$SANDBOX_A" "TC-SBX-06" || return
 
   local container="openshell-cluster-nemoclaw"
@@ -477,37 +508,62 @@ test_sbx_06_gateway_recovery() {
   docker kill "$container" 2>/dev/null || true
   sleep 5
 
-  # Verify the container is actually stopped
   local container_state
   container_state=$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || echo "removed")
-  log "  Gateway container state after kill: $container_state"
+  log "  Container state after kill: $container_state"
   if [[ "$container_state" == "true" ]]; then
-    skip "TC-SBX-06" "Container still running after docker kill — cannot test recovery"
+    skip "TC-SBX-06" "Container still running after docker kill"
     return
   fi
 
-  log "  Running nemoclaw status (expect recovery attempt — may take several minutes)..."
-  local status_output status_exit=0
-  status_output=$($TIMEOUT_CMD 600 nemoclaw "$SANDBOX_A" status 2>&1) || status_exit=$?
-  log "  Status output (exit $status_exit): $(echo "$status_output" | head -5)"
+  local status_output
+  status_output=$(mktemp /tmp/sbx06-status-output.XXXXXX)
 
-  if echo "$status_output" | grep -qiE "recover|healthy|Ready|running|gateway"; then
-    pass "TC-SBX-06: Status handled gateway kill gracefully"
-  else
-    fail "TC-SBX-06: Gateway Recovery (status)" "No recovery indication (exit $status_exit). Output: $(echo "$status_output" | head -5)"
+  log "  Running nemoclaw status in background..."
+  nemoclaw "$SANDBOX_A" status >"$status_output" 2>&1 &
+  local status_pid=$!
+
+  local recovered=false
+  local docker_restarted=false
+  for i in $(seq 1 40); do
+    sleep 15
+    local cstate
+    cstate=$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || echo "removed")
+    [[ "$cstate" == "true" ]] && docker_restarted=true
+
+    if ! kill -0 "$status_pid" 2>/dev/null; then
+      local exit_code=0
+      wait "$status_pid" 2>/dev/null || exit_code=$?
+      log "  nemoclaw status exited with code $exit_code after $((i * 15))s"
+      if [[ $exit_code -eq 0 ]]; then
+        recovered=true
+      fi
+      break
+    fi
+    log "  [${i}] +$((i * 15))s | container: $cstate"
+  done
+
+  if kill -0 "$status_pid" 2>/dev/null; then
+    log "  nemoclaw status still running after 10 min — killing"
+    kill "$status_pid" 2>/dev/null || true
+    wait "$status_pid" 2>/dev/null || true
   fi
 
-  # Re-onboard to restore sandbox A for subsequent tests
-  log "  Re-onboarding sandbox A after gateway destruction..."
-  if onboard_sandbox "$SANDBOX_A"; then
-    pass "TC-SBX-06: Re-onboard after gateway kill succeeded"
+  log "  Output:"
+  head -20 "$status_output" 2>/dev/null | while IFS= read -r line; do log "    $line"; done
+  rm -f "$status_output"
+
+  if $recovered; then
+    pass "TC-SBX-06: Gateway recovered after docker kill"
+  elif ! $docker_restarted; then
+    skip "TC-SBX-06" "Docker did not restart gateway container on this runner"
   else
-    fail "TC-SBX-06: Re-onboard" "Could not re-onboard after gateway kill"
+    fail "TC-SBX-06: Gateway Recovery" "nemoclaw status did not recover the gateway"
   fi
 }
 
 # =============================================================================
-# Phase 4: Multi-sandbox (onboards sandbox B alongside A)
+# Phase 3: Multi-sandbox (onboards sandbox B alongside A)
 # =============================================================================
 
 test_sbx_10_multi_sandbox_metadata() {
@@ -515,7 +571,7 @@ test_sbx_10_multi_sandbox_metadata() {
   require_sandbox "$SANDBOX_A" "TC-SBX-10" || return
 
   log "  Onboarding second sandbox '$SANDBOX_B'..."
-  if ! onboard_sandbox "$SANDBOX_B"; then
+  if ! CHAT_UI_URL="http://127.0.0.1:18790" onboard_sandbox "$SANDBOX_B"; then
     fail "TC-SBX-10: Multi-Sandbox" "Sandbox '$SANDBOX_B' failed to onboard"
     return
   fi
@@ -629,7 +685,9 @@ teardown() {
   done
   # Clean up gateway if no sandboxes remain
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
+  # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
+  # test/e2e/lib/sandbox-teardown.sh — the lock is PID-ownership-aware
+  # and onboard cleans up stale locks itself.
   log "Teardown complete"
   set -e
 }
@@ -677,15 +735,15 @@ main() {
   test_sbx_07_registry_rebuild
   test_sbx_08_process_recovery
 
-  # Phase 3: Destructive gateway kill (destroys + re-onboards sandbox A)
-  test_sbx_06_gateway_recovery
-
-  # Phase 4: Multi-sandbox (onboards sandbox B)
+  # Phase 3: Multi-sandbox (onboards sandbox B alongside A)
   test_sbx_10_multi_sandbox_metadata
   test_sbx_11_network_isolation
 
-  # Phase 5: Cleanup verification (destroys sandbox B)
+  # Phase 4: Cleanup verification (destroys sandbox B)
   test_sbx_05_destroy_cleanup "$SANDBOX_B"
+
+  # Phase 5: Gateway kill recovery (destructive — runs last)
+  test_sbx_06_gateway_recovery
 
   # Report — teardown runs via EXIT trap, no need to call explicitly
   trap - EXIT

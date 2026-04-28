@@ -18,6 +18,13 @@ export interface StreamSandboxCreateOptions {
   heartbeatIntervalMs?: number;
   silentPhaseMs?: number;
   logLine?: (line: string) => void;
+  // Initial progress phase:
+  //   build  — docker-building the sandbox image
+  //   upload — pushing the built image into the gateway registry
+  //   create — k3s provisioning the pod from the image
+  //   ready  — waiting for the pod to reach Ready state
+  // Defaults to "build".
+  initialPhase?: "build" | "upload" | "create" | "ready";
   spawnImpl?: (
     command: string,
     args: readonly string[],
@@ -31,10 +38,12 @@ export interface StreamableReadable {
   destroy?(): void;
 }
 
-export interface StreamableChildProcess
-  extends Pick<ChildProcess, "kill" | "removeAllListeners" | "unref"> {
+export interface StreamableChildProcess {
   stdout: StreamableReadable | null;
   stderr: StreamableReadable | null;
+  kill?(signal?: NodeJS.Signals | number): boolean;
+  removeAllListeners?(event?: string | symbol): void;
+  unref?(): void;
   on(event: "error", listener: (error: Error & { code?: string }) => void): this;
   on(event: "close", listener: (code: number | null) => void): this;
 }
@@ -44,11 +53,11 @@ export function streamSandboxCreate(
   env: NodeJS.ProcessEnv = process.env,
   options: StreamSandboxCreateOptions = {},
 ): Promise<StreamSandboxCreateResult> {
-  const child = (options.spawnImpl ?? spawn)("bash", ["-lc", command], {
+  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)("bash", ["-lc", command], {
     cwd: ROOT,
     env,
     stdio: ["ignore", "pipe", "pipe"],
-  }) as StreamableChildProcess;
+  });
 
   const logLine = options.logLine ?? console.log;
   const lines: string[] = [];
@@ -214,7 +223,7 @@ export function streamSandboxCreate(
     : null;
   readyTimer?.unref?.();
 
-  setPhase("build");
+  setPhase(options.initialPhase ?? "build");
   const heartbeatTimer = setInterval(() => {
     if (settled) return;
     const silentForMs = Date.now() - lastOutputAt;
@@ -244,7 +253,9 @@ export function streamSandboxCreate(
     resolvePromise = resolve;
     child.on("error", (error) => {
       const code = error?.code;
-      const detail = code ? `spawn failed: ${error.message} (${code})` : `spawn failed: ${error.message}`;
+      const detail = code
+        ? `spawn failed: ${error.message} (${code})`
+        : `spawn failed: ${error.message}`;
       lines.push(detail);
       finish(1);
     });

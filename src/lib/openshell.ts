@@ -4,13 +4,20 @@
 import {
   spawnSync,
   type SpawnSyncOptions,
+  type SpawnSyncOptionsWithStringEncoding,
   type SpawnSyncReturns,
 } from "node:child_process";
+
+export type OpenshellSpawnSync = (
+  command: string,
+  args: readonly string[],
+  options: SpawnSyncOptionsWithStringEncoding,
+) => SpawnSyncReturns<string>;
 
 interface OpenshellSpawnOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  spawnSyncImpl?: typeof spawnSync;
+  spawnSyncImpl?: OpenshellSpawnSync;
   errorLine?: (message: string) => void;
   exit?: (code: number) => never;
 }

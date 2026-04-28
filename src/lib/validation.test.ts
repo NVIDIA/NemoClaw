@@ -58,6 +58,60 @@ describe("classifyValidationFailure", () => {
     });
   });
 
+  it("classifies 400 + expired key message as credential (#1942 — Gemini)", () => {
+    // Gemini returns HTTP 400 with this exact message when the API key has expired.
+    // Must classify as "credential" so the onboard wizard prompts to re-enter the
+    // key instead of looping back to provider selection.
+    expect(
+      classifyValidationFailure({
+        httpStatus: 400,
+        message: "API key expired. Please renew the API key.",
+      }),
+    ).toEqual({
+      kind: "credential",
+      retry: "credential",
+    });
+  });
+
+  it("classifies 400 + API_KEY_INVALID message as credential (#1942 — Gemini)", () => {
+    // Gemini also uses "API_KEY_INVALID" as the status string for revoked keys.
+    expect(
+      classifyValidationFailure({
+        httpStatus: 400,
+        message: "API_KEY_INVALID: API key not valid. Please pass a valid API key.",
+      }),
+    ).toEqual({
+      kind: "credential",
+      retry: "credential",
+    });
+  });
+
+  it("classifies bare 'API key not valid' message as credential (#1942 — Gemini .message only)", () => {
+    // When the message field is extracted without the API_KEY_INVALID status
+    // prefix, the bare wording must still classify as credential. Flagged by
+    // CodeRabbit on #2132.
+    expect(
+      classifyValidationFailure({
+        httpStatus: 400,
+        message: "API key not valid. Please pass a valid API key.",
+      }),
+    ).toEqual({
+      kind: "credential",
+      retry: "credential",
+    });
+  });
+
+  it("classifies 400 without credential message as model (regression guard)", () => {
+    // HTTP 400 without a credential-bearing message still routes to "model"
+    // so existing gemini model-selection retry behavior stays intact.
+    expect(
+      classifyValidationFailure({ httpStatus: 400, message: "model xyz not found" }),
+    ).toEqual({
+      kind: "model",
+      retry: "model",
+    });
+  });
+
   it("classifies model-not-found message as model", () => {
     expect(classifyValidationFailure({ message: "model xyz not found" })).toEqual({
       kind: "model",
@@ -142,6 +196,16 @@ describe("validateNvidiaApiKeyValue", () => {
   it("rejects key without nvapi- prefix", () => {
     expect(validateNvidiaApiKeyValue("sk-abc123")).toBeTruthy();
   });
+
+  it("accepts non-nvapi keys when credentialEnv is not NVIDIA_API_KEY", () => {
+    expect(validateNvidiaApiKeyValue("sk-ant-abc123", "ANTHROPIC_API_KEY")).toBeNull();
+    expect(validateNvidiaApiKeyValue("sk-openai-xyz", "OPENAI_API_KEY")).toBeNull();
+    expect(validateNvidiaApiKeyValue("AIza-gemini", "GEMINI_API_KEY")).toBeNull();
+  });
+
+  it("still rejects empty keys for non-NVIDIA providers", () => {
+    expect(validateNvidiaApiKeyValue("", "ANTHROPIC_API_KEY")).toBeTruthy();
+  });
 });
 
 describe("isSafeModelId", () => {
@@ -216,9 +280,17 @@ describe("shouldSkipResponsesProbe", () => {
     expect(shouldSkipResponsesProbe("nvidia-prod")).toBe(true);
   });
 
+  it("skips the Responses probe for nvidia-nim (same endpoint as nvidia-prod, no /v1/responses)", () => {
+    expect(shouldSkipResponsesProbe("nvidia-nim")).toBe(true);
+  });
+
+  it("skips the Responses probe for gemini-api (Gemini does not support /v1/responses)", () => {
+    expect(shouldSkipResponsesProbe("gemini-api")).toBe(true);
+  });
+
   it("does not skip the Responses probe for other providers", () => {
     expect(shouldSkipResponsesProbe("openai-api")).toBe(false);
-    expect(shouldSkipResponsesProbe("anthropic-api")).toBe(false);
+    expect(shouldSkipResponsesProbe("anthropic-prod")).toBe(false);
     expect(shouldSkipResponsesProbe("compatible-endpoint")).toBe(false);
     expect(shouldSkipResponsesProbe("")).toBe(false);
   });

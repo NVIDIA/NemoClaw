@@ -3,6 +3,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { PluginLogger } from "../index.js";
+import { setConfigValue } from "./migration-state.js";
 
 // ---------------------------------------------------------------------------
 // fs mock — thin in-memory store keyed by absolute path
@@ -303,6 +304,21 @@ describe("commands/migration-state", () => {
       addDir("/external/skills1");
       const result = detectHostOpenClaw(env);
       expect(result.externalRoots.some((r) => r.kind === "skillsExtraDir")).toBe(true);
+    });
+
+    it("resolves external roots against the provided env", () => {
+      const env = { HOME: "/home/user", OPENCLAW_HOME: "/custom/home" };
+      addDir("/custom/home/.openclaw");
+      addFile(
+        "/custom/home/.openclaw/openclaw.json",
+        JSON.stringify({
+          skills: { load: { extraDirs: ["~/skills-extra"] } },
+        }),
+      );
+      addDir("/custom/home/skills-extra");
+
+      const result = detectHostOpenClaw(env);
+      expect(result.externalRoots[0]?.sourcePath).toBe("/custom/home/skills-extra");
     });
 
     it("warns about symlinks in workspace", () => {
@@ -889,12 +905,56 @@ describe("commands/migration-state", () => {
         stateDir: "/home/user/.openclaw",
         configPath: null,
         hasExternalConfig: false,
-        externalRoots: [],
-        warnings: [],
+        externalRoots: [
+          {
+            id: "workspace-root",
+            kind: "workspace",
+            label: "Workspace",
+            sourcePath: "/host/workspace",
+            snapshotRelativePath: "external/workspace",
+            sandboxPath: "/sandbox/workspace",
+            symlinkPaths: ["/sandbox/.openclaw/workspace-link"],
+            bindings: [{ configPath: "workspace.path" }],
+          },
+        ],
+        warnings: ["workspace root was remapped"],
       };
       addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
       const loaded = loadSnapshotManifest("/snapshots/snap1");
       expect(loaded).toEqual(manifest);
+    });
+
+    it("rejects a snapshot manifest whose JSON root is not an object", () => {
+      addFile("/snapshots/snap1/snapshot.json", JSON.stringify(["not", "an", "object"]));
+      expect(() => loadSnapshotManifest("/snapshots/snap1")).toThrow(/Invalid snapshot manifest/);
+    });
+
+    it("rejects malformed externalRoots and warnings entries", () => {
+      addFile(
+        "/snapshots/snap1/snapshot.json",
+        JSON.stringify({
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [
+            {
+              id: "workspace-root",
+              kind: "workspace",
+              label: "Workspace",
+              sourcePath: "/host/workspace",
+              snapshotRelativePath: "external/workspace",
+              sandboxPath: "/sandbox/workspace",
+              symlinkPaths: ["/sandbox/.openclaw/workspace-link"],
+              bindings: [1],
+            },
+          ],
+          warnings: [null],
+        }),
+      );
+      expect(() => loadSnapshotManifest("/snapshots/snap1")).toThrow(/Invalid snapshot manifest/);
     });
   });
 
@@ -1416,6 +1476,62 @@ describe("commands/migration-state", () => {
           process.env.HOME = origHome;
         }
       }
+    });
+  });
+
+  // ── setConfigValue prototype pollution guard ─────────────────────
+
+  describe("setConfigValue", () => {
+    const expectPrototypeClean = (): void => {
+      const probe: Record<string, unknown> = {};
+      for (const key of ["polluted", "isAdmin", "bar"]) {
+        expect(Object.prototype.hasOwnProperty.call(Object.prototype, key)).toBe(false);
+        expect(probe[key]).toBeUndefined();
+      }
+    };
+
+    it.each(["__proto__", "constructor", "prototype"])(
+      "rejects unsafe path segment: %s",
+      (segment) => {
+        const doc: Record<string, unknown> = {};
+        expect(() => {
+          setConfigValue(doc, `${segment}.polluted`, "true");
+        }).toThrow(/Unsafe config path segment/);
+        expectPrototypeClean();
+      },
+    );
+
+    it("rejects __proto__ in nested position", () => {
+      const doc: Record<string, unknown> = {};
+      expect(() => {
+        setConfigValue(doc, "agents.__proto__.isAdmin", "true");
+      }).toThrow(/Unsafe config path segment/);
+      expectPrototypeClean();
+    });
+
+    it.each(["foo.prototype.bar", "foo.constructor.bar"])(
+      "rejects unsafe segment in nested path: %s",
+      (configPath) => {
+        const doc: Record<string, unknown> = {};
+        expect(() => {
+          setConfigValue(doc, configPath, "true");
+        }).toThrow(/Unsafe config path segment/);
+        expectPrototypeClean();
+      },
+    );
+
+    it("allows legitimate dotted paths", () => {
+      const doc: Record<string, unknown> = {};
+      setConfigValue(doc, "agents.list[0].workspace", "/tmp/ws");
+      const agents = doc.agents as Record<string, unknown>;
+      const list = agents.list as Record<string, unknown>[];
+      expect(list[0].workspace).toBe("/tmp/ws");
+    });
+
+    it("allows simple top-level keys", () => {
+      const doc: Record<string, unknown> = {};
+      setConfigValue(doc, "theme", "dark");
+      expect(doc.theme).toBe("dark");
     });
   });
 });

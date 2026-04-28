@@ -16,47 +16,41 @@ RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
     && apt-get autoremove --purge -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Patch: disable Hermes's TelegramFallbackTransport inside the sandbox.
-# The fallback transport rewrites api.telegram.org to raw IPs, which
-# OpenShell's L7 proxy rejects (hostname-based policy). Without it,
-# python-telegram-bot uses default httpx transport which respects
-# HTTPS_PROXY and routes through the proxy correctly.
-# Must run as root before USER sandbox.
-# Replace _fallback_ips method to always return empty list, which
-# skips the entire fallback transport code path.
-RUN python3 -c "\
-import pathlib, re; \
-p = pathlib.Path('/usr/local/lib/python3.11/dist-packages/gateway/platforms/telegram.py'); \
-src = p.read_text(); \
-patched = src.replace( \
-    'fallback_ips = self._fallback_ips()', \
-    'fallback_ips = []  # NemoClaw: disabled for sandbox proxy compatibility'); \
-patched = patched.replace( \
-    'if not fallback_ips:', \
-    'if False:  # NemoClaw: skip fallback discovery'); \
-assert 'NemoClaw: disabled' in patched, 'Patch failed: _fallback_ips line not found'; \
-p.write_text(patched); \
-print('[patch] Disabled TelegramFallbackTransport for sandbox proxy compatibility')"
+# Hermes v2026.4.13+ auto-detects HTTPS_PROXY and skips fallback-IP
+# transport when a proxy is present. The sandbox proxy chain
+# (decode-proxy → OpenShell L7 proxy) handles credential placeholder
+# rewriting and hostname-based policy enforcement. No monkey patch needed.
+ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 
 # Copy NemoClaw plugin for Hermes (Python-based)
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
+RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 
 # Copy config generation script and URL-decode proxy
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-generate-config.ts
+RUN chmod 444 /opt/nemoclaw-generate-config.ts
 COPY agents/hermes/decode-proxy.py /usr/local/bin/nemoclaw-decode-proxy
 RUN chmod 755 /usr/local/bin/nemoclaw-decode-proxy
 
 # Copy blueprint (shared infrastructure)
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+# Ensure sandbox user can read blueprint files copied as root
+RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 
 # Copy startup script
+COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
-RUN chmod 755 /usr/local/bin/nemoclaw-start
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
 
 # Build args for config that varies per deployment.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=custom
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
+# CHAT_UI_URL is a legacy name shared with the OpenClaw build arg. For
+# Hermes this URL points at the OpenAI-compatible API server (port 8642,
+# exposing /v1 and /health), NOT a browser chat UI. Callers authenticate
+# via a bearer token in the Authorization header. See
+# agents/hermes/manifest.yaml (dashboard.kind: api).
 ARG CHAT_UI_URL=http://127.0.0.1:8642
 ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=

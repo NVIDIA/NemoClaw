@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -29,13 +28,17 @@
  *   BREV_MIN_DISK          — Minimum disk size in GB (default: 50)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
  *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
+ *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
+ *   SLACK_APP_TOKEN          — Slack app token for messaging-providers test (fake OK)
+ *   SLACK_BOT_TOKEN_REVOKED  — Revoked xoxb- token to test auth pre-validation (#2340)
+ *   SLACK_APP_TOKEN_REVOKED  — Paired xapp- token for the revoked bot token
  *   TELEGRAM_BOT_TOKEN_REAL  — Real Telegram token for optional live round-trip
  *   DISCORD_BOT_TOKEN_REAL   — Real Discord token for optional live round-trip
  *   TELEGRAM_CHAT_ID_E2E     — Telegram chat ID for optional sendMessage test
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync, execFileSync } from "node:child_process";
+import { execSync, execFileSync, type StdioOptions } from "node:child_process";
 import path from "node:path";
 
 // Instance configuration
@@ -47,6 +50,13 @@ const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 const CLI_PATH = path.join(REPO_DIR, "bin", "nemoclaw.js");
+
+function requireInstanceName(): string {
+  if (!INSTANCE_NAME) {
+    throw new Error("INSTANCE_NAME is required for Brev E2E tests");
+  }
+  return INSTANCE_NAME;
+}
 
 // Launchable configuration
 // CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, npm deps, Docker images.
@@ -60,12 +70,16 @@ const DEFAULT_SETUP_SCRIPT_PATH =
 // More reliable than grepping log files.
 const LAUNCHABLE_SENTINEL = "/var/run/nemoclaw-launchable-ready";
 
-let remoteDir;
+let remoteDir = "";
 let instanceCreated = false;
 
-// --- helpers ----------------------------------------------------------------
+const STREAM_STDIO: StdioOptions = ["inherit", "inherit", "inherit"];
+const CAPTURE_STDIO: StdioOptions = ["pipe", "pipe", "pipe"];
+const PIPE_INPUT_STDIO: StdioOptions = ["pipe", "inherit", "inherit"];
 
-function brev(...args) {
+// --- low-level helpers ------------------------------------------------------
+
+function brev(...args: string[]): string {
   return execFileSync("brev", args, {
     encoding: "utf-8",
     timeout: 60_000,
@@ -73,11 +87,7 @@ function brev(...args) {
   }).trim();
 }
 
-function sleep(seconds) {
-  execSync(`sleep ${seconds}`);
-}
-
-function listBrevInstances() {
+function listBrevInstances(): Array<{ name: string; status?: string }> {
   try {
     return JSON.parse(brev("ls", "--json"));
   } catch {
@@ -85,17 +95,19 @@ function listBrevInstances() {
   }
 }
 
-function hasBrevInstance(instanceName) {
+function hasBrevInstance(instanceName: string): boolean {
   return listBrevInstances().some((instance) => instance.name === instanceName);
 }
 
-function isBrevInstanceDeleting(instanceName) {
+function isBrevInstanceDeleting(instanceName: string): boolean {
   const instances = listBrevInstances();
-  const instance = instances.find((i) => i.name === instanceName);
-  return instance && (instance.status === "DELETING" || instance.status === "STOPPING");
+  const instance = instances.find(
+    (i: { name: string; status?: string }) => i.name === instanceName,
+  );
+  return Boolean(instance && (instance.status === "DELETING" || instance.status === "STOPPING"));
 }
 
-function deleteBrevInstance(instanceName) {
+function deleteBrevInstance(instanceName: string): boolean {
   if (!hasBrevInstance(instanceName)) {
     return true;
   }
@@ -115,10 +127,12 @@ function deleteBrevInstance(instanceName) {
   return false;
 }
 
-function ssh(cmd, { timeout = 120_000, stream = false } = {}) {
+function ssh(
+  cmd: string,
+  { timeout = 120_000, stream = false }: { timeout?: number; stream?: boolean } = {},
+): string {
   const escaped = cmd.replace(/'/g, "'\\''");
-  /** @type {import("child_process").StdioOptions} */
-  const stdio = stream ? ["inherit", "inherit", "inherit"] : ["pipe", "pipe", "pipe"];
+  const stdio = stream ? STREAM_STDIO : CAPTURE_STDIO;
   const result = execSync(
     `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" '${escaped}'`,
     { encoding: "utf-8", timeout, stdio },
@@ -130,12 +144,15 @@ function ssh(cmd, { timeout = 120_000, stream = false } = {}) {
  * Escape a value for safe inclusion in a single-quoted shell string.
  * Replaces single quotes with the shell-safe sequence: '\''
  */
-function shellEscape(value) {
+function shellEscape(value: string | null | undefined): string {
   return String(value).replace(/'/g, "'\\''");
 }
 
 /** Run a command on the remote VM with env vars set for NemoClaw. */
-function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
+function sshEnv(
+  cmd: string,
+  { timeout = 600_000, stream = false }: { timeout?: number; stream?: boolean } = {},
+): string {
   const envParts = [
     `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
@@ -147,6 +164,10 @@ function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
   for (const key of [
     "TELEGRAM_BOT_TOKEN",
     "DISCORD_BOT_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
+    "SLACK_BOT_TOKEN_REVOKED",
+    "SLACK_APP_TOKEN_REVOKED",
     "TELEGRAM_BOT_TOKEN_REAL",
     "DISCORD_BOT_TOKEN_REAL",
     "TELEGRAM_CHAT_ID_E2E",
@@ -160,13 +181,16 @@ function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
   return ssh(`${envPrefix} && ${cmd}`, { timeout, stream });
 }
 
-function waitForSsh(maxAttempts = 40, intervalMs = 5_000) {
+function waitForSsh(maxAttempts = 40, intervalMs = 5_000): void {
   for (let i = 1; i <= maxAttempts; i++) {
     try {
       ssh("echo ok", { timeout: 10_000 });
       return;
     } catch {
-      if (i === maxAttempts) throw new Error(`SSH not ready after ${maxAttempts} attempts (~${Math.round(maxAttempts * (intervalMs + 10_000) / 60_000)} min)`);
+      if (i === maxAttempts)
+        throw new Error(
+          `SSH not ready after ${maxAttempts} attempts (~${Math.round((maxAttempts * (intervalMs + 10_000)) / 60_000)} min)`,
+        );
       console.log(`  SSH attempt ${i}/${maxAttempts} failed, retrying in ${intervalMs / 1000}s...`);
       if (i % 5 === 0) {
         console.log(`  Refreshing brev SSH config...`);
@@ -185,7 +209,7 @@ function waitForSsh(maxAttempts = 40, intervalMs = 5_000) {
  * Wait for the launchable setup script to finish by checking a sentinel file.
  * Much more reliable than grepping log files.
  */
-function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000) {
+function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000): void {
   const start = Date.now();
   const elapsed = () => `${Math.round((Date.now() - start) / 1000)}s`;
   let consecutiveSshFailures = 0;
@@ -237,7 +261,7 @@ function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000) 
   );
 }
 
-function runRemoteTest(scriptPath) {
+function runRemoteTest(scriptPath: string): string {
   const cmd = [
     `set -o pipefail`,
     `source ~/.nvm/nvm.sh 2>/dev/null || true`,
@@ -255,7 +279,7 @@ function runRemoteTest(scriptPath) {
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
 
-function runLocalDeploy(instanceName) {
+function runLocalDeploy(instanceName: string): void {
   const env = {
     ...process.env,
     NEMOCLAW_NON_INTERACTIVE: "1",
@@ -271,6 +295,355 @@ function runLocalDeploy(instanceName) {
     env,
     stdio: "inherit",
   });
+}
+
+// --- beforeAll orchestration helpers ----------------------------------------
+
+/**
+ * Delete any leftover instance with the same name.
+ * This can happen when a previous run's create succeeded on the backend
+ * but the CLI got a network error (unexpected EOF) before confirming,
+ * then the retry/fallback fails with "duplicate workspace".
+ */
+function cleanupLeftoverInstance(elapsed: () => string): void {
+  const instanceName = requireInstanceName();
+  if (hasBrevInstance(instanceName)) {
+    if (!deleteBrevInstance(instanceName)) {
+      throw new Error(`Failed to delete leftover instance "${instanceName}"`);
+    }
+    console.log(`[${elapsed()}] Deleted leftover instance "${instanceName}"`);
+  }
+}
+
+/**
+ * Refresh brev SSH config and wait for SSH connectivity.
+ * Shared by both the deploy-cli and launchable paths.
+ */
+function refreshAndWaitForSsh(elapsed: () => string): void {
+  try {
+    brev("refresh");
+  } catch {
+    /* ignore */
+  }
+  waitForSsh();
+  console.log(`[${elapsed()}] SSH is up`);
+}
+
+/**
+ * Create a Brev instance via `brev search cpu | brev create` with a startup script.
+ *
+ * The Brev API sometimes returns "unexpected EOF" after the instance is actually
+ * created server-side. The CLI then falls back to the next instance type, which
+ * fails with "duplicate workspace". To handle this, we catch create failures and
+ * check if the instance exists anyway.
+ */
+function createBrevInstance(elapsed: () => string): void {
+  console.log(
+    `[${elapsed()}] Creating instance via launchable (brev search cpu | brev create + startup-script)...`,
+  );
+  console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
+  console.log(
+    `[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM, ${BREV_MIN_DISK} GB disk, provider: ${BREV_PROVIDER}`,
+  );
+
+  // Resolve the setup script to a local file path.
+  // Default: repo-local scripts/brev-launchable-ci-cpu.sh (hermetic).
+  // Override: set LAUNCHABLE_SETUP_SCRIPT to a URL and it gets downloaded.
+  let setupScriptPath: string;
+  if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
+    setupScriptPath = "/tmp/brev-ci-setup.sh";
+    execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_PATH}"`, {
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+    console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
+  } else {
+    setupScriptPath = DEFAULT_SETUP_SCRIPT_PATH;
+    console.log(`[${elapsed()}] Using repo-local setup script`);
+  }
+
+  try {
+    execSync(
+      `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
+        `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
+      { encoding: "utf-8", timeout: 180_000, stdio: PIPE_INPUT_STDIO },
+    );
+  } catch (createErr) {
+    console.log(
+      `[${elapsed()}] brev create exited with error — checking if instance was created anyway...`,
+    );
+    try {
+      brev("refresh");
+    } catch {
+      /* ignore */
+    }
+    const lsOutput = execSync(`brev ls 2>&1 || true`, { encoding: "utf-8", timeout: 30_000 });
+    const instanceName = requireInstanceName();
+    if (!lsOutput.includes(instanceName)) {
+      const createMessage = createErr instanceof Error ? createErr.message : String(createErr);
+      throw new Error(
+        `brev create failed and instance "${instanceName}" not found in brev ls. ` +
+          `Original error: ${createMessage}`,
+        { cause: createErr },
+      );
+    }
+    console.log(
+      `[${elapsed()}] Instance "${INSTANCE_NAME}" found in brev ls despite create error — proceeding`,
+    );
+  }
+  console.log(`[${elapsed()}] brev create returned (instance provisioning in background)`);
+}
+
+/**
+ * Bootstrap the launchable environment on the remote VM:
+ * rsync branch code, install deps, build plugin, and npm link the CLI.
+ *
+ * Returns { remoteDir, needsOnboard } so the caller can see what was
+ * resolved without relying on hidden side-effects.
+ */
+function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsOnboard: boolean } {
+  // The launchable clones NemoClaw to ~/NemoClaw
+  const remoteHome = ssh("echo $HOME");
+  const resolvedRemoteDir = `${remoteHome}/NemoClaw`;
+
+  // Rsync PR branch code over the launchable's clone
+  console.log(`[${elapsed()}] Syncing PR branch code over launchable's clone...`);
+  execSync(
+    `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv "${REPO_DIR}/" "${INSTANCE_NAME}:${resolvedRemoteDir}/"`,
+    { encoding: "utf-8", timeout: 120_000 },
+  );
+  console.log(`[${elapsed()}] Code synced`);
+
+  // Re-install deps for our branch (most already cached by launchable).
+  // Use `npm install` instead of `npm ci` because the rsync'd branch code
+  // may have a package.json/package-lock.json that are slightly out of sync
+  // (e.g. new transitive deps). npm install is more forgiving and still
+  // benefits from the launchable's pre-cached node_modules.
+  // Always run this even for TEST_SUITE=full — it primes the cache so
+  // install.sh's npm install is a fast no-op.
+  console.log(`[${elapsed()}] Running npm install to sync dependencies...`);
+  ssh(
+    [
+      `set -o pipefail`,
+      `source ~/.nvm/nvm.sh 2>/dev/null || true`,
+      `cd ${resolvedRemoteDir}`,
+      `npm install --ignore-scripts 2>&1 | tail -5`,
+    ].join(" && "),
+    { timeout: 300_000, stream: true },
+  );
+  console.log(`[${elapsed()}] Dependencies synced`);
+
+  // When TEST_SUITE=full, test-full-e2e.sh runs install.sh which handles
+  // plugin build, npm link, and onboard from scratch. Skip those steps
+  // to avoid ~8 min of redundant work.
+  if (TEST_SUITE === "full") {
+    console.log(
+      `[${elapsed()}] Skipping plugin build, npm link, and onboard (TEST_SUITE=full — install.sh handles it)`,
+    );
+    return { remoteDir: resolvedRemoteDir, needsOnboard: false };
+  }
+
+  // Rebuild CLI dist/ for our branch. The rsync above excludes dist/, so
+  // without this step bin/nemoclaw.js would `require("../dist/nemoclaw")`
+  // against the launchable's main-branch build and crash with
+  // MODULE_NOT_FOUND if main differs from the PR branch. `npm install
+  // --ignore-scripts` skipped the `prepare` lifecycle that normally runs
+  // `build:cli`, so do it explicitly.
+  console.log(`[${elapsed()}] Building CLI (dist/) for PR branch...`);
+  ssh(`source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${resolvedRemoteDir} && npm run build:cli`, {
+    timeout: 120_000,
+    stream: true,
+  });
+  console.log(`[${elapsed()}] CLI built`);
+
+  // Rebuild TS plugin for our branch (reinstall plugin deps in case they changed)
+  console.log(`[${elapsed()}] Building TypeScript plugin...`);
+  ssh(
+    `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${resolvedRemoteDir}/nemoclaw && npm install && npm run build`,
+    {
+      timeout: 120_000,
+      stream: true,
+    },
+  );
+  console.log(`[${elapsed()}] Plugin built`);
+
+  // Expose the nemoclaw CLI on PATH. The launchable setup script already
+  // creates /usr/local/bin/nemoclaw → $NEMOCLAW_CLONE_DIR/bin/nemoclaw.js
+  // as a direct symlink, and rsync above preserves that path, so this is
+  // an idempotent re-link to make local dev runs (that skip the launchable)
+  // still work. Avoid `sudo npm link` on cold CPU Brev — it routinely
+  // hangs inside npm's global-prefix housekeeping.
+  console.log(`[${elapsed()}] Linking nemoclaw CLI (direct symlink)...`);
+  ssh(
+    `sudo ln -sf ${resolvedRemoteDir}/bin/nemoclaw.js /usr/local/bin/nemoclaw && sudo chmod +x ${resolvedRemoteDir}/bin/nemoclaw.js`,
+    {
+      timeout: 30_000,
+      stream: true,
+    },
+  );
+  console.log(`[${elapsed()}] nemoclaw CLI linked`);
+
+  return { remoteDir: resolvedRemoteDir, needsOnboard: true };
+}
+
+/**
+ * Launch nemoclaw onboard in background and poll until the sandbox is Ready.
+ *
+ * The `nemoclaw onboard` process hangs after sandbox creation because
+ * `openshell sandbox create` keeps a long-lived SSH connection to the sandbox
+ * entrypoint, and the dashboard port-forward also blocks. We launch it in
+ * background, poll for sandbox readiness via `openshell sandbox list`, then
+ * hand off to writeManualRegistry() to kill the hung process.
+ */
+function pollForSandboxReady(elapsed: () => string): void {
+  // Launch onboard fully detached. We chmod the docker socket so we don't
+  // need sg docker (which complicates backgrounding). nohup + </dev/null +
+  // disown ensures the SSH session can exit cleanly without waiting for
+  // the background process.
+  console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
+  ssh(`sudo chmod 666 /var/run/docker.sock 2>/dev/null || true`, { timeout: 10_000 });
+  // Launch onboard in background. The SSH command may exit with code 255
+  // (SSH error) because background processes keep file descriptors open.
+  // That's fine — we just need the process to start; we'll poll for
+  // sandbox readiness separately.
+  try {
+    sshEnv(
+      [
+        `source ~/.nvm/nvm.sh 2>/dev/null || true`,
+        `cd ${remoteDir}`,
+        `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
+        `sleep 2`,
+        `echo "onboard launched"`,
+      ].join(" && "),
+      { timeout: 30_000 },
+    );
+  } catch (bgErr) {
+    // SSH exit 255 or ETIMEDOUT is expected when backgrounding processes.
+    // Verify the process actually started by checking the log file.
+    try {
+      const check = ssh("test -f /tmp/nemoclaw-onboard.log && echo OK || echo MISSING", {
+        timeout: 10_000,
+      });
+      if (check.includes("OK")) {
+        console.log(
+          `[${elapsed()}] Background launch returned non-zero but log file exists — continuing`,
+        );
+      } else {
+        throw bgErr;
+      }
+    } catch {
+      throw bgErr;
+    }
+  }
+  console.log(`[${elapsed()}] Onboard launched in background`);
+
+  // Poll until openshell reports the sandbox as Ready (or onboard fails).
+  // The sandbox step is the slow part (~5-10 min for image build + upload).
+  const maxOnboardWaitMs = 1_200_000; // 20 min
+  const onboardPollMs = 15_000;
+  const onboardStart = Date.now();
+  const onboardElapsed = () => `${Math.round((Date.now() - onboardStart) / 1000)}s`;
+
+  while (Date.now() - onboardStart < maxOnboardWaitMs) {
+    try {
+      const sandboxList = ssh(`openshell sandbox list 2>/dev/null || true`, {
+        timeout: 15_000,
+      });
+      if (sandboxList.includes("e2e-test") && sandboxList.includes("Ready")) {
+        console.log(`[${onboardElapsed()}] Sandbox e2e-test is Ready!`);
+        break;
+      }
+      // Show onboard progress from the log
+      try {
+        const tail = ssh("tail -2 /tmp/nemoclaw-onboard.log 2>/dev/null || echo '(no log yet)'", {
+          timeout: 10_000,
+        });
+        console.log(`[${onboardElapsed()}] Onboard in progress... ${tail.replace(/\n/g, " | ")}`);
+      } catch {
+        /* ignore */
+      }
+    } catch {
+      console.log(`[${onboardElapsed()}] Poll: SSH command failed, retrying...`);
+    }
+
+    // Check if onboard failed (process exited and no sandbox)
+    try {
+      const session = ssh("cat ~/.nemoclaw/onboard-session.json 2>/dev/null || echo '{}'", {
+        timeout: 10_000,
+      });
+      const parsed = JSON.parse(session);
+      if (parsed.status === "failed") {
+        const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+          timeout: 10_000,
+        });
+        throw new Error(`Onboard failed: ${parsed.failure || "unknown"}\n${failLog}`);
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("Onboard failed")) throw e;
+      /* ignore parse errors */
+    }
+
+    execSync(`sleep ${onboardPollMs / 1000}`);
+  }
+
+  // Verify sandbox is actually ready
+  const finalList = ssh(`openshell sandbox list 2>/dev/null`, { timeout: 15_000 });
+  if (!finalList.includes("e2e-test") || !finalList.includes("Ready")) {
+    const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+      timeout: 10_000,
+    });
+    throw new Error(`Sandbox not ready after ${maxOnboardWaitMs / 60_000} min.\n${failLog}`);
+  }
+}
+
+/**
+ * Kill the hung onboard process tree and write the sandbox registry manually.
+ *
+ * The onboard hangs on the dashboard port-forward step and never writes
+ * sandboxes.json. We kill it and write the registry ourselves.
+ *
+ * Note: The registry shape matches SandboxRegistry from src/lib/registry.ts
+ * (sandboxes + defaultSandbox only — no version field).
+ */
+function writeManualRegistry(elapsed: () => string): void {
+  console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
+  // Kill hung onboard processes. pkill may kill the SSH connection itself
+  // if the pattern matches too broadly, so wrap in try/catch.
+  try {
+    ssh(
+      `pkill -f "nemoclaw onboard" 2>/dev/null; pkill -f "openshell sandbox create" 2>/dev/null; sleep 1; true`,
+      { timeout: 15_000 },
+    );
+  } catch {
+    // SSH exit 255 is expected — pkill may terminate the connection
+    console.log(
+      `[${elapsed()}] pkill returned non-zero (expected — SSH connection may have been affected)`,
+    );
+  }
+  // Write the sandbox registry using printf to avoid heredoc quoting issues over SSH
+  const registryJson = JSON.stringify(
+    {
+      defaultSandbox: "e2e-test",
+      sandboxes: {
+        "e2e-test": {
+          name: "e2e-test",
+          createdAt: new Date().toISOString(),
+          model: null,
+          nimContainer: null,
+          provider: null,
+          gpuEnabled: false,
+          policies: ["pypi", "npm"],
+        },
+      },
+    },
+    null,
+    2,
+  );
+  ssh(
+    `mkdir -p ~/.nemoclaw && printf '%s' '${shellEscape(registryJson)}' > ~/.nemoclaw/sandboxes.json`,
+    { timeout: 15_000 },
+  );
+  console.log(`[${elapsed()}] Registry written, onboard workaround complete`);
 }
 
 // --- suite ------------------------------------------------------------------
@@ -291,28 +664,13 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     const bootstrapStart = Date.now();
     const elapsed = () => `${Math.round((Date.now() - bootstrapStart) / 1000)}s`;
 
-    // Pre-cleanup: delete any leftover instance with the same name.
-    // This can happen when a previous run's create succeeded on the backend
-    // but the CLI got a network error (unexpected EOF) before confirming,
-    // then the retry/fallback fails with "duplicate workspace".
-    if (hasBrevInstance(INSTANCE_NAME)) {
-      if (!deleteBrevInstance(INSTANCE_NAME)) {
-        throw new Error(`Failed to delete leftover instance "${INSTANCE_NAME}"`);
-      }
-      console.log(`[${elapsed()}] Deleted leftover instance "${INSTANCE_NAME}"`);
-    }
+    cleanupLeftoverInstance(elapsed);
 
     if (TEST_SUITE === "deploy-cli") {
       console.log(`[${elapsed()}] Running nemoclaw deploy end to end...`);
       instanceCreated = true;
-      runLocalDeploy(INSTANCE_NAME);
-      try {
-        brev("refresh");
-      } catch {
-        /* ignore */
-      }
-      waitForSsh();
-      console.log(`[${elapsed()}] SSH is up after deploy`);
+      runLocalDeploy(requireInstanceName());
+      refreshAndWaitForSsh(elapsed);
       const remoteHome = ssh("echo $HOME");
       remoteDir = `${remoteHome}/nemoclaw`;
     } else {
@@ -321,304 +679,21 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       // The script pre-installs Docker, Node.js, OpenShell CLI, npm deps,
       // and pre-pulls Docker images. We just need to rsync branch code and
       // run onboard.
-      //
-      // brev create (v0.6.322+) accepts --startup-script as a string or
-      // @filepath — not a URL. So we download the script first.
-      console.log(
-        `[${elapsed()}] Creating instance via launchable (brev search cpu | brev create + startup-script)...`,
-      );
-      console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
-      console.log(
-        `[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM, ${BREV_MIN_DISK} GB disk, provider: ${BREV_PROVIDER}`,
-      );
-
-      // Resolve the setup script to a local file path.
-      // Default: repo-local scripts/brev-launchable-ci-cpu.sh (hermetic).
-      // Override: set LAUNCHABLE_SETUP_SCRIPT to a URL and it gets downloaded.
-      let setupScriptPath;
-      if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
-        setupScriptPath = "/tmp/brev-ci-setup.sh";
-        execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_PATH}"`, {
-          encoding: "utf-8",
-          timeout: 30_000,
-        });
-        console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
-      } else {
-        setupScriptPath = DEFAULT_SETUP_SCRIPT_PATH;
-        console.log(`[${elapsed()}] Using repo-local setup script`);
-      }
-
-      // brev search cpu | brev create: finds cheapest CPU instance matching
-      // our specs and creates it with the setup script attached.
-      //
-      // The Brev API sometimes returns "unexpected EOF" after the instance
-      // is actually created server-side. The CLI then falls back to the next
-      // instance type, which fails with "duplicate workspace". To handle this,
-      // we catch create failures and check if the instance exists anyway.
-      try {
-        execSync(
-          `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
-            `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
-          { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
-        );
-      } catch (createErr) {
-        console.log(
-          `[${elapsed()}] brev create exited with error — checking if instance was created anyway...`,
-        );
-        try {
-          brev("refresh");
-        } catch {
-          /* ignore */
-        }
-        const lsOutput = execSync(`brev ls 2>&1 || true`, { encoding: "utf-8", timeout: 30_000 });
-        if (!lsOutput.includes(INSTANCE_NAME)) {
-          throw new Error(
-            `brev create failed and instance "${INSTANCE_NAME}" not found in brev ls. ` +
-              `Original error: ${createErr.message}`,
-            { cause: createErr },
-          );
-        }
-        console.log(
-          `[${elapsed()}] Instance "${INSTANCE_NAME}" found in brev ls despite create error — proceeding`,
-        );
-      }
+      createBrevInstance(elapsed);
       instanceCreated = true;
-      console.log(`[${elapsed()}] brev create returned (instance provisioning in background)`);
-
-      // Wait for SSH
-      try {
-        brev("refresh");
-      } catch {
-        /* ignore */
-      }
-      waitForSsh();
-      console.log(`[${elapsed()}] SSH is up`);
+      refreshAndWaitForSsh(elapsed);
 
       // Wait for launchable setup to finish (sentinel file)
       console.log(`[${elapsed()}] Waiting for launchable setup to complete...`);
       waitForLaunchableReady();
 
-      // The launchable clones NemoClaw to ~/NemoClaw
-      const remoteHome = ssh("echo $HOME");
-      remoteDir = `${remoteHome}/NemoClaw`;
+      const result = bootstrapLaunchable(elapsed);
+      remoteDir = result.remoteDir;
 
-      // Rsync PR branch code over the launchable's clone
-      console.log(`[${elapsed()}] Syncing PR branch code over launchable's clone...`);
-      execSync(
-        `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv "${REPO_DIR}/" "${INSTANCE_NAME}:${remoteDir}/"`,
-        { encoding: "utf-8", timeout: 120_000 },
-      );
-      console.log(`[${elapsed()}] Code synced`);
-
-      // Re-install deps for our branch (most already cached by launchable).
-      // Use `npm install` instead of `npm ci` because the rsync'd branch code
-      // may have a package.json/package-lock.json that are slightly out of sync
-      // (e.g. new transitive deps). npm install is more forgiving and still
-      // benefits from the launchable's pre-cached node_modules.
-      // Always run this even for TEST_SUITE=full — it primes the cache so
-      // install.sh's npm install is a fast no-op.
-      console.log(`[${elapsed()}] Running npm install to sync dependencies...`);
-      ssh(
-        [
-          `set -o pipefail`,
-          `source ~/.nvm/nvm.sh 2>/dev/null || true`,
-          `cd ${remoteDir}`,
-          `npm install --ignore-scripts 2>&1 | tail -5`,
-        ].join(" && "),
-        { timeout: 300_000, stream: true },
-      );
-      console.log(`[${elapsed()}] Dependencies synced`);
-
-      // When TEST_SUITE=full, test-full-e2e.sh runs install.sh which handles
-      // plugin build, npm link, and onboard from scratch. Skip those steps
-      // to avoid ~8 min of redundant work.
-      const needsBeforeAllSetup = TEST_SUITE !== "full";
-
-      if (!needsBeforeAllSetup) {
-        console.log(
-          `[${elapsed()}] Skipping plugin build, npm link, and onboard (TEST_SUITE=full — install.sh handles it)`,
-        );
+      if (result.needsOnboard) {
+        pollForSandboxReady(elapsed);
+        writeManualRegistry(elapsed);
       }
-
-      if (needsBeforeAllSetup) {
-      // Rebuild TS plugin for our branch (reinstall plugin deps in case they changed)
-      console.log(`[${elapsed()}] Building TypeScript plugin...`);
-      ssh(
-        `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir}/nemoclaw && npm install && npm run build`,
-        {
-          timeout: 120_000,
-          stream: true,
-        },
-      );
-      console.log(`[${elapsed()}] Plugin built`);
-
-      // Install nemoclaw CLI.
-      // Use `sudo npm link` because Node.js is installed system-wide via
-      // nodesource (global prefix is /usr), so creating the global symlink
-      // requires elevated permissions.
-      console.log(`[${elapsed()}] Installing nemoclaw CLI (npm link)...`);
-      ssh(
-        `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && sudo npm link && sudo chown -R $(whoami):$(whoami) ${remoteDir}`,
-        {
-          timeout: 120_000,
-          stream: true,
-        },
-      );
-      console.log(`[${elapsed()}] nemoclaw CLI linked`);
-
-        // Run onboard in the background. The `nemoclaw onboard` process hangs
-        // after sandbox creation because `openshell sandbox create` keeps a
-        // long-lived SSH connection to the sandbox entrypoint, and the dashboard
-        // port-forward also blocks. We launch it in background, poll for sandbox
-        // readiness via `openshell sandbox list`, then kill the hung process and
-        // write the registry file ourselves.
-        // Launch onboard fully detached. We chmod the docker socket so we don't
-        // need sg docker (which complicates backgrounding). nohup + </dev/null +
-        // disown ensures the SSH session can exit cleanly without waiting for
-        // the background process.
-        console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
-        ssh(`sudo chmod 666 /var/run/docker.sock 2>/dev/null || true`, { timeout: 10_000 });
-        // Launch onboard in background. The SSH command may exit with code 255
-        // (SSH error) because background processes keep file descriptors open.
-        // That's fine — we just need the process to start; we'll poll for
-        // sandbox readiness separately.
-        try {
-          sshEnv(
-            [
-              `source ~/.nvm/nvm.sh 2>/dev/null || true`,
-              `cd ${remoteDir}`,
-              `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
-              `sleep 2`,
-              `echo "onboard launched"`,
-            ].join(" && "),
-            { timeout: 30_000 },
-          );
-        } catch (bgErr) {
-          // SSH exit 255 or ETIMEDOUT is expected when backgrounding processes.
-          // Verify the process actually started by checking the log file.
-          try {
-            const check = ssh("test -f /tmp/nemoclaw-onboard.log && echo OK || echo MISSING", {
-              timeout: 10_000,
-            });
-            if (check.includes("OK")) {
-              console.log(
-                `[${elapsed()}] Background launch returned non-zero but log file exists — continuing`,
-              );
-            } else {
-              throw bgErr;
-            }
-          } catch {
-            throw bgErr;
-          }
-        }
-        console.log(`[${elapsed()}] Onboard launched in background`);
-
-        // Poll until openshell reports the sandbox as Ready (or onboard fails).
-        // The sandbox step is the slow part (~5-10 min for image build + upload).
-        const maxOnboardWaitMs = 1_200_000; // 20 min
-        const onboardPollMs = 15_000;
-        const onboardStart = Date.now();
-        const onboardElapsed = () => `${Math.round((Date.now() - onboardStart) / 1000)}s`;
-
-        while (Date.now() - onboardStart < maxOnboardWaitMs) {
-          try {
-            const sandboxList = ssh(`openshell sandbox list 2>/dev/null || true`, {
-              timeout: 15_000,
-            });
-            if (sandboxList.includes("e2e-test") && sandboxList.includes("Ready")) {
-              console.log(`[${onboardElapsed()}] Sandbox e2e-test is Ready!`);
-              break;
-            }
-            // Show onboard progress from the log
-            try {
-              const tail = ssh(
-                "tail -2 /tmp/nemoclaw-onboard.log 2>/dev/null || echo '(no log yet)'",
-                {
-                  timeout: 10_000,
-                },
-              );
-              console.log(
-                `[${onboardElapsed()}] Onboard in progress... ${tail.replace(/\n/g, " | ")}`,
-              );
-            } catch {
-              /* ignore */
-            }
-          } catch {
-            console.log(`[${onboardElapsed()}] Poll: SSH command failed, retrying...`);
-          }
-
-          // Check if onboard failed (process exited and no sandbox)
-          try {
-            const session = ssh("cat ~/.nemoclaw/onboard-session.json 2>/dev/null || echo '{}'", {
-              timeout: 10_000,
-            });
-            const parsed = JSON.parse(session);
-            if (parsed.status === "failed") {
-              const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
-                timeout: 10_000,
-              });
-              throw new Error(`Onboard failed: ${parsed.failure || "unknown"}\n${failLog}`);
-            }
-          } catch (e) {
-            if (e.message.startsWith("Onboard failed")) throw e;
-            /* ignore parse errors */
-          }
-
-          execSync(`sleep ${onboardPollMs / 1000}`);
-        }
-
-        // Verify sandbox is actually ready
-        const finalList = ssh(`openshell sandbox list 2>/dev/null`, { timeout: 15_000 });
-        if (!finalList.includes("e2e-test") || !finalList.includes("Ready")) {
-          const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
-            timeout: 10_000,
-          });
-          throw new Error(`Sandbox not ready after ${maxOnboardWaitMs / 60_000} min.\n${failLog}`);
-        }
-
-        // Kill the hung onboard process tree and write the sandbox registry
-        // manually. The onboard hangs on the dashboard port-forward step and
-        // never writes sandboxes.json.
-        console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
-        // Kill hung onboard processes. pkill may kill the SSH connection itself
-        // if the pattern matches too broadly, so wrap in try/catch.
-        try {
-          ssh(
-            `pkill -f "nemoclaw onboard" 2>/dev/null; pkill -f "openshell sandbox create" 2>/dev/null; sleep 1; true`,
-            { timeout: 15_000 },
-          );
-        } catch {
-          // SSH exit 255 is expected — pkill may terminate the connection
-          console.log(
-            `[${elapsed()}] pkill returned non-zero (expected — SSH connection may have been affected)`,
-          );
-        }
-        // Write the sandbox registry using printf to avoid heredoc quoting issues over SSH
-        const registryJson = JSON.stringify(
-          {
-            version: 1,
-            defaultSandbox: "e2e-test",
-            sandboxes: {
-              "e2e-test": {
-                name: "e2e-test",
-                createdAt: new Date().toISOString(),
-                model: null,
-                nimContainer: null,
-                provider: null,
-                gpuEnabled: false,
-                policies: ["pypi", "npm"],
-              },
-            },
-          },
-          null,
-          2,
-        );
-        ssh(
-          `mkdir -p ~/.nemoclaw && printf '%s' '${shellEscape(registryJson)}' > ~/.nemoclaw/sandboxes.json`,
-          { timeout: 15_000 },
-        );
-        console.log(`[${elapsed()}] Registry written, onboard workaround complete`);
-      } // end if (needsBeforeAllSetup)
     }
 
     // Verify sandbox registry (only when beforeAll created a sandbox)
@@ -647,7 +722,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       console.log(`  To delete:  brev delete ${INSTANCE_NAME}\n`);
       return;
     }
-    deleteBrevInstance(INSTANCE_NAME);
+    deleteBrevInstance(requireInstanceName());
   }, 120_000); // 2 min for cleanup
 
   // NOTE: The full E2E test runs install.sh --non-interactive which destroys and

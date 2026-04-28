@@ -51,12 +51,24 @@ describe("isPrivateIp", () => {
   it.each([
     "8.8.8.8",
     "1.1.1.1",
-    "203.0.113.1",
     "2607:f8b0:4004:800::200e",
     "2607:f8b0:4004:0800:0000:0000:0000:200e", // fully-expanded IPv6 (no ::)
     "::ffff:8.8.8.8", // IPv4-mapped IPv6 — public
   ])("allows public IP: %s", (ip) => {
     expect(isPrivateIp(ip)).toBe(false);
+  });
+
+  it.each([
+    "192.0.2.1", // TEST-NET-1 (RFC 5737)
+    "198.51.100.1", // TEST-NET-2 (RFC 5737)
+    "203.0.113.1", // TEST-NET-3 (RFC 5737)
+    "192.0.0.1", // IETF protocol assignments (incl. DS-Lite)
+    "64:ff9b::a00:1", // NAT64 well-known, embedding 10.0.0.1
+    "64:ff9b:1::a00:1", // NAT64 local-use
+    "2001::1", // Teredo
+    "2002:0a00:0001::", // 6to4 embedding 10.0.0.1
+  ])("detects translation/reserved range as private: %s", (ip) => {
+    expect(isPrivateIp(ip)).toBe(true);
   });
 
   it("returns false for invalid IP", () => {
@@ -83,16 +95,16 @@ describe("validateEndpointUrl", () => {
 
   it("allows https", async () => {
     mockPublicDns();
-    await expect(validateEndpointUrl("https://api.nvidia.com/v1")).resolves.toBe(
-      "https://api.nvidia.com/v1",
-    );
+    const result = await validateEndpointUrl("https://api.nvidia.com/v1");
+    expect(result.url).toBe("https://api.nvidia.com/v1");
+    expect(result.pinnedUrl).toBe("https://93.184.216.34/v1");
   });
 
   it("allows http", async () => {
     mockPublicDns();
-    await expect(validateEndpointUrl("http://api.nvidia.com/v1")).resolves.toBe(
-      "http://api.nvidia.com/v1",
-    );
+    const result = await validateEndpointUrl("http://api.nvidia.com/v1");
+    expect(result.url).toBe("http://api.nvidia.com/v1");
+    expect(result.pinnedUrl).toBe("http://93.184.216.34/v1");
   });
 
   it("rejects file:// scheme", async () => {
@@ -170,19 +182,25 @@ describe("validateEndpointUrl", () => {
   it("allows NVIDIA API endpoint", async () => {
     mockPublicDns();
     const url = "https://integrate.api.nvidia.com/v1";
-    await expect(validateEndpointUrl(url)).resolves.toBe(url);
+    const result = await validateEndpointUrl(url);
+    expect(result.url).toBe(url);
+    expect(result.pinnedUrl).toBe("https://93.184.216.34/v1");
   });
 
   it("allows URL with port", async () => {
     mockPublicDns();
     const url = "https://api.example.com:8443/v1";
-    await expect(validateEndpointUrl(url)).resolves.toBe(url);
+    const result = await validateEndpointUrl(url);
+    expect(result.url).toBe(url);
+    expect(result.pinnedUrl).toBe("https://93.184.216.34:8443/v1");
   });
 
   it("preserves URL path", async () => {
     mockPublicDns();
     const url = "https://api.example.com/v1/chat/completions";
-    await expect(validateEndpointUrl(url)).resolves.toBe(url);
+    const result = await validateEndpointUrl(url);
+    expect(result.url).toBe(url);
+    expect(result.pinnedUrl).toBe("https://93.184.216.34/v1/chat/completions");
   });
 });
 
@@ -269,9 +287,41 @@ describe("validateEndpointUrl – DNS rebinding", () => {
       { address: "93.184.216.34", family: 4 },
       { address: "2607:f8b0:4004:800::200e", family: 6 },
     ]);
-    await expect(validateEndpointUrl("https://cdn.example.com/v1")).resolves.toBe(
-      "https://cdn.example.com/v1",
-    );
+    const result = await validateEndpointUrl("https://cdn.example.com/v1");
+    expect(result.url).toBe("https://cdn.example.com/v1");
+    expect(result.pinnedUrl).toBe("https://93.184.216.34/v1");
+  });
+});
+
+describe("validateEndpointUrl – DNS pinning", () => {
+  it("pins HTTP URL to resolved IP (prevents rebinding)", async () => {
+    mockPublicDns();
+    const result = await validateEndpointUrl("http://attacker.com:8080/v1");
+    // pinnedUrl has IP instead of hostname — downstream connects to validated IP
+    expect(result.pinnedUrl).toBe("http://93.184.216.34:8080/v1");
+    // original URL preserved for reference
+    expect(result.url).toBe("http://attacker.com:8080/v1");
+  });
+
+  it("pins HTTPS URL to resolved IP", async () => {
+    mockPublicDns();
+    const result = await validateEndpointUrl("https://api.example.com/v1");
+    expect(result.pinnedUrl).toBe("https://93.184.216.34/v1");
+  });
+
+  it("pins IPv6 address with brackets", async () => {
+    mockLookup.mockResolvedValue([{ address: "2607:f8b0:4004:800::200e", family: 6 }]);
+    const result = await validateEndpointUrl("https://ipv6host.example.com/v1");
+    expect(result.pinnedUrl).toBe("https://[2607:f8b0:4004:800::200e]/v1");
+  });
+
+  it("uses first resolved address for pinning", async () => {
+    mockLookup.mockResolvedValue([
+      { address: "1.2.3.4", family: 4 },
+      { address: "5.6.7.8", family: 4 },
+    ]);
+    const result = await validateEndpointUrl("http://multi.example.com/v1");
+    expect(result.pinnedUrl).toBe("http://1.2.3.4/v1");
   });
 });
 
@@ -285,19 +335,22 @@ describe("validateEndpointUrl – URL parsing edge cases", () => {
   it("allows URL with query parameters", async () => {
     mockPublicDns();
     const url = "https://api.example.com/v1?key=abc&model=gpt";
-    await expect(validateEndpointUrl(url)).resolves.toBe(url);
+    const result = await validateEndpointUrl(url);
+    expect(result.url).toBe(url);
   });
 
   it("allows URL with fragment", async () => {
     mockPublicDns();
     const url = "https://api.example.com/v1#section";
-    await expect(validateEndpointUrl(url)).resolves.toBe(url);
+    const result = await validateEndpointUrl(url);
+    expect(result.url).toBe(url);
   });
 
   it("allows URL with userinfo/basic auth", async () => {
     mockPublicDns();
     // URL parser extracts hostname correctly even with userinfo
     const url = "https://user:pass@api.example.com/v1";
-    await expect(validateEndpointUrl(url)).resolves.toBe(url);
+    const result = await validateEndpointUrl(url);
+    expect(result.url).toBe(url);
   });
 });

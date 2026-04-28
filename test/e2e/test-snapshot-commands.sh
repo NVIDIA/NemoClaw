@@ -25,6 +25,11 @@
 set -euo pipefail
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-snapshot}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 MARKER_FILE="/sandbox/.openclaw-data/workspace/snapshot-marker.txt"
 MARKER_CONTENT="SNAPSHOT_E2E_$(date +%s)"
 SECOND_MARKER="/sandbox/.openclaw-data/workspace/snapshot-marker-2.txt"
@@ -36,15 +41,43 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 pass() { echo -e "${GREEN}[PASS]${NC} $1"; }
+
+# Shared diagnostics — called by fail() and Phase 2b.
+# Intentionally non-reentrant (single-threaded bash).
+dump_diagnostics() {
+  local _fd="${1:-2}" # default to stderr
+  echo -e "${YELLOW}[DIAG]${NC} --- Diagnostics ---" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} nemoclaw path: $(command -v nemoclaw 2>&1 || echo 'not found')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} nemoclaw version: $(nemoclaw --version 2>&1 || echo 'failed')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} node version: $(node --version 2>&1 || echo 'not found')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Sandboxes: $(openshell sandbox list 2>&1 || echo 'unavailable')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Backup dir: $(ls -la "$HOME/.nemoclaw/rebuild-backups/${SANDBOX_NAME}/" 2>&1 || echo 'not found')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Registry: $(cat "$HOME/.nemoclaw/sandboxes.json" 2>&1 || echo 'not found')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Registry lock: $(ls -la "$HOME/.nemoclaw/sandboxes.json.lock" 2>&1 || echo 'no lock')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Config dir: $(ls -la "$HOME/.nemoclaw/" 2>&1 || echo 'not found')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} Docker ps: $(docker ps --format '{{.Names}} {{.Status}}' 2>&1 || echo 'unavailable')" >&"$_fd"
+  echo -e "${YELLOW}[DIAG]${NC} --- End diagnostics ---" >&"$_fd"
+}
+
 fail() {
   echo -e "${RED}[FAIL]${NC} $1" >&2
-  echo -e "${YELLOW}[DIAG]${NC} --- Failure diagnostics ---" >&2
-  echo -e "${YELLOW}[DIAG]${NC} Sandboxes: $(openshell sandbox list 2>&1 || echo 'unavailable')" >&2
-  echo -e "${YELLOW}[DIAG]${NC} Backup dir: $(ls -la "$HOME/.nemoclaw/rebuild-backups/${SANDBOX_NAME}/" 2>&1 || echo 'not found')" >&2
-  echo -e "${YELLOW}[DIAG]${NC} --- End diagnostics ---" >&2
+  dump_diagnostics 2
   exit 1
 }
 info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
+
+# Run a command, capture its output and exit code without set -e killing us.
+# Usage: run_capture VAR_NAME command [args...]
+#   Sets $VAR_NAME to the combined stdout+stderr and $_CAPTURE_RC to the exit code.
+_CAPTURE_RC=0
+run_capture() {
+  local _var_name="$1"
+  shift
+  _CAPTURE_RC=0
+  local _output
+  _output=$("$@" 2>&1) || _CAPTURE_RC=$?
+  printf -v "$_var_name" '%s' "$_output"
+}
 
 # ── Preflight ───────────────────────────────────────────────────────
 [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY is required"
@@ -98,13 +131,28 @@ VERIFY=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}"
 
 pass "Marker file written"
 
+# ── Phase 2b: Pre-snapshot diagnostics ─────────────────────────────
+# Collect state that helps diagnose Phase 3 failures (see #2350).
+info "Phase 2b: Pre-snapshot diagnostics..."
+dump_diagnostics 1 # stdout — informational, not a failure
+
 # ── Phase 3: snapshot create ────────────────────────────────────────
 info "Phase 3: Creating snapshot..."
 
-SNAPSHOT_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot create 2>&1)
+# Use run_capture to prevent set -e from swallowing error output.
+# Previously, $(nemoclaw ... 2>&1) would exit the script immediately on
+# failure, hiding the actual error message. See #2350.
+run_capture SNAPSHOT_OUTPUT nemoclaw "${SANDBOX_NAME}" snapshot create
 echo "$SNAPSHOT_OUTPUT"
 
-if echo "$SNAPSHOT_OUTPUT" | grep -q "Snapshot created"; then
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "snapshot create exited with code $_CAPTURE_RC: ${SNAPSHOT_OUTPUT}"
+fi
+
+# The success marker is `✓ Snapshot v<N> created (<count> directories)` — the
+# version token between "Snapshot" and "created" broke the old literal grep
+# for "Snapshot created". Use a regex that tolerates the version field.
+if echo "$SNAPSHOT_OUTPUT" | grep -qE "Snapshot v[0-9]+.*created"; then
   pass "snapshot create succeeded"
 else
   fail "snapshot create did not report success: ${SNAPSHOT_OUTPUT}"
@@ -117,8 +165,12 @@ info "Snapshot path: ${SNAPSHOT_PATH:-unknown}"
 # ── Phase 4: snapshot list ──────────────────────────────────────────
 info "Phase 4: Listing snapshots..."
 
-LIST_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot list 2>&1)
+run_capture LIST_OUTPUT nemoclaw "${SANDBOX_NAME}" snapshot list
 echo "$LIST_OUTPUT"
+
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "snapshot list exited with code $_CAPTURE_RC: ${LIST_OUTPUT}"
+fi
 
 if echo "$LIST_OUTPUT" | grep -q "snapshot(s)"; then
   pass "snapshot list shows snapshots"
@@ -127,7 +179,7 @@ else
 fi
 
 # Extract the timestamp from list output for targeted restore later
-SNAPSHOT_TIMESTAMP=$(echo "$LIST_OUTPUT" | grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}" | head -1 || true)
+SNAPSHOT_TIMESTAMP=$(echo "$LIST_OUTPUT" | grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]+Z" | head -1 || true)
 [ -n "${SNAPSHOT_TIMESTAMP}" ] || fail "Failed to parse a snapshot timestamp from list output: ${LIST_OUTPUT}"
 info "Snapshot timestamp: ${SNAPSHOT_TIMESTAMP}"
 
@@ -142,7 +194,10 @@ openshell sandbox exec --name "${SANDBOX_NAME}" -- \
 GONE=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}" 2>/dev/null || echo "GONE")
 [ "$GONE" = "GONE" ] || fail "First marker should be deleted but got: ${GONE}"
 
-nemoclaw "${SANDBOX_NAME}" snapshot create >/dev/null 2>&1 || fail "Second snapshot create failed"
+run_capture _SECOND_SNAP nemoclaw "${SANDBOX_NAME}" snapshot create
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "Second snapshot create failed (code $_CAPTURE_RC): ${_SECOND_SNAP}"
+fi
 pass "State modified, second snapshot created"
 
 # Perturb workspace so restore has to do real work
@@ -153,11 +208,15 @@ openshell sandbox exec --name "${SANDBOX_NAME}" -- \
 # ── Phase 6: snapshot restore (latest) ──────────────────────────────
 info "Phase 6: Restoring latest snapshot..."
 
-RESTORE_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot restore 2>&1)
+run_capture RESTORE_OUTPUT nemoclaw "${SANDBOX_NAME}" snapshot restore
 echo "$RESTORE_OUTPUT"
 
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "snapshot restore exited with code $_CAPTURE_RC: ${RESTORE_OUTPUT}"
+fi
+
 if ! echo "$RESTORE_OUTPUT" | grep -q "Restored"; then
-  fail "snapshot restore failed: ${RESTORE_OUTPUT}"
+  fail "snapshot restore did not report success: ${RESTORE_OUTPUT}"
 fi
 
 SECOND_CHECK=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${SECOND_MARKER}" 2>/dev/null || echo "MISSING")
@@ -167,11 +226,15 @@ pass "Latest snapshot restored expected state"
 # ── Phase 7: snapshot restore with timestamp (first snapshot) ───────
 info "Phase 7: Restoring first snapshot by timestamp..."
 
-TARGETED_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot restore "${SNAPSHOT_TIMESTAMP}" 2>&1)
+run_capture TARGETED_OUTPUT nemoclaw "${SANDBOX_NAME}" snapshot restore "${SNAPSHOT_TIMESTAMP}"
 echo "$TARGETED_OUTPUT"
 
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "targeted snapshot restore exited with code $_CAPTURE_RC: ${TARGETED_OUTPUT}"
+fi
+
 if ! echo "$TARGETED_OUTPUT" | grep -q "Restored"; then
-  fail "Targeted snapshot restore failed: ${TARGETED_OUTPUT}"
+  fail "targeted snapshot restore did not report success: ${TARGETED_OUTPUT}"
 fi
 
 FIRST_CHECK=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}" 2>/dev/null || echo "MISSING")
@@ -198,7 +261,10 @@ fi
 # ── Phase 9: snapshot help ──────────────────────────────────────────
 info "Phase 9: Verifying snapshot help output..."
 
-HELP_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot 2>&1)
+run_capture HELP_OUTPUT nemoclaw "${SANDBOX_NAME}" snapshot
+if [ "$_CAPTURE_RC" -ne 0 ]; then
+  fail "snapshot help exited with code $_CAPTURE_RC: ${HELP_OUTPUT}"
+fi
 if echo "$HELP_OUTPUT" | grep -q "snapshot create" \
   && echo "$HELP_OUTPUT" | grep -q "snapshot list" \
   && echo "$HELP_OUTPUT" | grep -q "snapshot restore"; then
@@ -209,7 +275,7 @@ fi
 
 # ── Cleanup ─────────────────────────────────────────────────────────
 info "Cleaning up..."
-nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "${SANDBOX_NAME}" destroy --yes 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}Snapshot commands E2E passed.${NC}"

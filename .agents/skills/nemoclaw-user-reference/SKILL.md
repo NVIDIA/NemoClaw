@@ -1,18 +1,16 @@
 ---
 name: "nemoclaw-user-reference"
-description: "Describes how NemoClaw combines a CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Use when looking up NemoClaw architecture, plugin structure, or blueprint design. Lists all slash commands and standalone NemoClaw CLI commands. Use when looking up a command, checking command syntax, or browsing the CLI reference. Documents baseline network policy, filesystem rules, and operator approval flow. Use when reviewing default network policies, understanding egress controls, or looking up the approval flow. Diagnoses and resolves common NemoClaw installation, onboarding, and runtime issues. Use when troubleshooting errors, debugging sandbox problems, or resolving setup failures."
+description: "Describes the NemoClaw plugin and blueprint architecture and how they orchestrate the OpenClaw sandbox. Use when looking up architecture, plugin structure, or blueprint design. Trigger keywords - nemoclaw architecture, nemoclaw plugin blueprint structure, nemoclaw cli commands, nemoclaw command reference, nemoclaw network policy, sandbox egress control operator approval, nemoclaw troubleshooting, nemoclaw debug sandbox issues."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw User Reference
+# NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure
 
-Describes how NemoClaw combines a CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Use when looking up NemoClaw architecture, plugin structure, or blueprint design.
+## References
 
-## Reference
-
-- [NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure](references/architecture.md)
-- [NemoClaw CLI Commands Reference](references/commands.md)
-- [NemoClaw Network Policies: Baseline Rules and Operator Approval](references/network-policies.md)
-- [NemoClaw Troubleshooting Guide](references/troubleshooting.md)
+- **Load [references/architecture.md](references/architecture.md)** when looking up architecture, plugin structure, or blueprint design. Describes the NemoClaw plugin and blueprint architecture and how they orchestrate the OpenClaw sandbox.
+- **Load [references/commands.md](references/commands.md)** when looking up a specific `nemoclaw` or `/nemoclaw` subcommand, flag, argument, or exit code. Includes the full CLI reference for slash commands and standalone NemoClaw commands.
+- **Load [references/network-policies.md](references/network-policies.md)** when looking up a specific default endpoint, filesystem path, or the runtime approval sequence NemoClaw applies on blocked requests. Covers the baseline network policy, filesystem rules, and operator approval flow.
+- **Load [references/troubleshooting.md](references/troubleshooting.md)** when diagnosing a reported NemoClaw error, a failed onboard, or unexpected sandbox behavior. Lists fixes for common installation, onboarding, and runtime issues.

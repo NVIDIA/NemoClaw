@@ -82,6 +82,10 @@ fi
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-hermes}"
 export NEMOCLAW_AGENT="${NEMOCLAW_AGENT:-hermes}"
 
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 # Hermes health probe endpoint (from agents/hermes/manifest.yaml)
 HERMES_HEALTH_URL="http://localhost:8642/health"
 
@@ -419,7 +423,11 @@ else
 fi
 
 # ── Test 5b: Inference through the sandbox (THE definitive test) ──
-info "[LIVE] Sandbox inference test → user → sandbox → gateway → NVIDIA API..."
+# Routing-layer check, not a Hermes/openclaw check. The HTTP request is made
+# by curl from inside the sandbox; nothing in this path exercises the Hermes
+# agent runtime or openclaw's HTTP client. See NemoClaw #2490 for the
+# openclaw 4.9 SSRF regression that was invisible to assertions of this shape.
+info "[ROUTING] inference.local DNS + OpenShell proxy reachable from Hermes sandbox..."
 ssh_config="$(mktemp)"
 sandbox_response=""
 
@@ -444,13 +452,13 @@ rm -f "$ssh_config"
 if [ -n "$sandbox_response" ]; then
   sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
   if grep -qi "PONG" <<<"$sandbox_content"; then
-    pass "[LIVE] Sandbox inference: model responded with PONG through Hermes sandbox"
-    info "Full path proven: user → Hermes sandbox → openshell gateway → NVIDIA Endpoints → response"
+    pass "[ROUTING] inference.local: OpenShell routed curl to NVIDIA Endpoints and returned PONG"
+    info "Routing path proven: sandbox curl → DNS forwarder → gateway proxy → NVIDIA Endpoints (does not exercise the Hermes agent runtime or openclaw HTTP client)"
   else
-    fail "[LIVE] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}"
+    fail "[ROUTING] inference.local: expected PONG, got: ${sandbox_content:0:200}"
   fi
 else
-  fail "[LIVE] Sandbox inference: no response from inference.local inside Hermes sandbox"
+  fail "[ROUTING] inference.local: no response from inference.local inside Hermes sandbox"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -512,7 +520,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 8: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 # Verify against the registry file directly.  `nemoclaw list` triggers
