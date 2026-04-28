@@ -3239,18 +3239,22 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
     }
   }
 
-  // Required ports — gateway and the dashboard port.
-  // When --control-ui-port is set, check that port instead of the default.
-  // When auto-allocation is possible (no explicit port), skip the dashboard
-  // port check entirely — ensureDashboardForward will find a free port.
+  // Required ports — gateway, plus the dashboard port when an explicit one
+  // is requested. envVar is the override env var documented in
+  // src/lib/ports.ts; surfacing it in the preflight error gives users a clear
+  // escape hatch when an unrelated process is holding the default port
+  // (closes #2497). When --control-ui-port is set, check that port instead
+  // of the default. When auto-allocation is possible (no explicit port),
+  // skip the dashboard port check entirely — ensureDashboardForward will
+  // find a free port.
   const dashboardPortToCheck = _preflightDashboardPort ?? null;
   const requiredPorts = [
-    { port: GATEWAY_PORT, label: "OpenShell gateway" },
+    { port: GATEWAY_PORT, label: "OpenShell gateway", envVar: "NEMOCLAW_GATEWAY_PORT" },
     ...(dashboardPortToCheck !== null
-      ? [{ port: dashboardPortToCheck, label: `${cliDisplayName()} dashboard` }]
+      ? [{ port: dashboardPortToCheck, label: `${cliDisplayName()} dashboard`, envVar: "NEMOCLAW_DASHBOARD_PORT" }]
       : []),
   ];
-  for (const { port, label } of requiredPorts) {
+  for (const { port, label, envVar } of requiredPorts) {
     let portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
       if ((port === GATEWAY_PORT || port === DASHBOARD_PORT) && gatewayReuseState === "healthy") {
@@ -3302,6 +3306,9 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
         console.error(`     Could not identify the process using port ${port}.`);
         console.error(`     Run: sudo lsof -i :${port} -sTCP:LISTEN`);
       }
+      console.error("");
+      console.error(`     Or rerun with a different port:`);
+      console.error(`       ${envVar}=<port> nemoclaw onboard`);
       console.error("");
       console.error(`     Detail: ${portCheck.reason}`);
       process.exit(1);
