@@ -85,6 +85,11 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "sandbox-init.sh"),
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );
+  // OpenClaw config generator extracted in #2449
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "generate-openclaw-config.py"),
+    path.join(stagedScriptsDir, "generate-openclaw-config.py"),
+  );
 
   return { buildCtx, stagedDockerfile };
 }
