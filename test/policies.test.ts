@@ -192,6 +192,7 @@ describe("policies", () => {
       expect(content).toContain("/usr/local/bin/claude");
       // node, curl, and python3 are needed for direct inference access (#2199)
       expect(content).toContain("/usr/local/bin/node");
+      expect(content).toContain("/usr/bin/node");
       expect(content).toContain("/usr/bin/curl");
       expect(content).toContain("/usr/bin/python3");
     });

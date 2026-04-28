@@ -9,6 +9,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import type { AgentDefinition } from "../dist/lib/agent-defs.js";
+import { loadAgent } from "../dist/lib/agent-defs.js";
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard-contract.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context.js";
 
@@ -74,6 +76,15 @@ type OnboardTestInternals = {
   isGatewayHealthy: ShimFn<boolean>;
   classifyValidationFailure: ShimFn<ValidationClassification>;
   hasResponsesToolCall: (body?: string | null) => boolean;
+  agentSupportsWebSearch: (
+    agent?: AgentDefinition | null,
+    dockerfilePathOverride?: string | null,
+  ) => boolean;
+  configureWebSearch: (
+    existingConfig?: ShimValue,
+    agent?: AgentDefinition | null,
+    dockerfilePathOverride?: string | null,
+  ) => Promise<ShimValue>;
   isLoopbackHostname: (hostname?: string) => boolean;
   normalizeProviderBaseUrl: (
     value: string | null | undefined,
@@ -106,6 +117,8 @@ function isOnboardTestInternals(
     value !== null &&
     typeof value.buildProviderArgs === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
+    typeof value.agentSupportsWebSearch === "function" &&
+    typeof value.configureWebSearch === "function" &&
     typeof value.writeSandboxConfigSyncFile === "function"
   );
 }
@@ -146,6 +159,8 @@ const {
   isGatewayHealthy,
   classifyValidationFailure,
   hasResponsesToolCall,
+  agentSupportsWebSearch,
+  configureWebSearch,
   isLoopbackHostname,
   normalizeProviderBaseUrl,
   parsePolicyPresetEnv,
@@ -593,7 +608,9 @@ describe("onboard helpers", () => {
     // Forward target via buildChain replaces resolveDashboardForwardTarget
     expect(buildChain({ chatUiUrl: "http://127.0.0.1:18789" }).forwardTarget).toBe("18789");
     expect(buildChain({ chatUiUrl: "http://[::1]:18789" }).forwardTarget).toBe("18789");
-    expect(buildChain({ chatUiUrl: "https://chat.example.com:18789" }).forwardTarget).toBe("0.0.0.0:18789");
+    expect(buildChain({ chatUiUrl: "https://chat.example.com:18789" }).forwardTarget).toBe(
+      "0.0.0.0:18789",
+    );
     expect(buildChain({ chatUiUrl: "http://10.0.0.25:18789" }).forwardTarget).toBe("0.0.0.0:18789");
   });
 
@@ -1009,6 +1026,100 @@ describe("onboard helpers", () => {
       } else {
         process.env.BRAVE_API_KEY = priorBraveKey;
       }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#2433: agentSupportsWebSearch detects whether agent Dockerfile declares the web search ARG", () => {
+    // OpenClaw Dockerfile has ARG NEMOCLAW_WEB_SEARCH_ENABLED → supported.
+    // Hermes Dockerfile does not → not supported.
+    // null agent (default) → supported (assumes OpenClaw).
+    expect(agentSupportsWebSearch(null)).toBe(true);
+    expect(agentSupportsWebSearch(loadAgent("openclaw"))).toBe(true);
+    expect(agentSupportsWebSearch(loadAgent("hermes"))).toBe(false);
+  });
+
+  it("#2433: agentSupportsWebSearch honors the effective custom Dockerfile", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-web-search-custom-"));
+    const withoutArg = path.join(tmpDir, "Dockerfile.no-web");
+    const withArg = path.join(tmpDir, "Dockerfile.web");
+    const missing = path.join(tmpDir, "Dockerfile.missing");
+    fs.writeFileSync(withoutArg, "FROM scratch\n");
+    fs.writeFileSync(withArg, "FROM scratch\n  ARG NEMOCLAW_WEB_SEARCH_ENABLED=0\n");
+    try {
+      expect(agentSupportsWebSearch(loadAgent("openclaw"), withoutArg)).toBe(false);
+      expect(agentSupportsWebSearch(loadAgent("hermes"), withArg)).toBe(true);
+      expect(agentSupportsWebSearch(loadAgent("openclaw"), missing)).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#2433: configureWebSearch skips unsupported Hermes instead of prompting for Brave", async () => {
+    const priorBraveKey = process.env.BRAVE_API_KEY;
+    process.env.BRAVE_API_KEY = "brv-test-key";
+    try {
+      await expect(configureWebSearch(null, loadAgent("hermes"))).resolves.toBeNull();
+    } finally {
+      if (priorBraveKey === undefined) {
+        delete process.env.BRAVE_API_KEY;
+      } else {
+        process.env.BRAVE_API_KEY = priorBraveKey;
+      }
+    }
+  });
+
+  it("#2433: configureWebSearch does not call the prompt helper for unsupported Hermes", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-web-search-prompt-"));
+    const scriptPath = path.join(tmpDir, "web-search-prompt-check.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent-defs.js"));
+
+    const script = `
+let promptCalls = 0;
+const actualCredentials = require(${credentialsPath});
+const mockedCredentials = {
+  ...actualCredentials,
+  prompt: async () => {
+  promptCalls += 1;
+  throw new Error("prompt should not be called");
+  },
+};
+require.cache[require.resolve(${credentialsPath})] = {
+  id: require.resolve(${credentialsPath}),
+  filename: require.resolve(${credentialsPath}),
+  loaded: true,
+  exports: mockedCredentials,
+};
+process.env.BRAVE_API_KEY = "brv-test-key";
+const { configureWebSearch } = require(${onboardPath});
+const { loadAgent } = require(${agentDefsPath});
+
+(async () => {
+  const result = await configureWebSearch(null, loadAgent("hermes"));
+  console.log(JSON.stringify({ result, promptCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+        },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = parseStdoutJson<{ result: null; promptCalls: number }>(result.stdout);
+      assert.equal(payload.result, null);
+      assert.equal(payload.promptCalls, 0);
+    } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
@@ -2394,7 +2505,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*opts\.controlUiPort \|\| null,\s*\);/,
     );
   });
 
@@ -5102,9 +5213,7 @@ const { setupMessagingChannels } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "slack-format-reject.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "credentials.js"),
-      );
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -5215,9 +5324,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "slack-app-format-reject.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "credentials.js"),
-      );
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -5277,9 +5384,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
         input: "\n",
       });
       assert.equal(introspect.status, 0, introspect.stderr);
-      const slackIdx = JSON.parse(
-        introspect.stdout.trim().split("\n").pop()!,
-      ).slackIndex1Based;
+      const slackIdx = JSON.parse(introspect.stdout.trim().split("\n").pop()!).slackIndex1Based;
       assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
 
       // Real run: toggle Slack on, exit UI, bot prompt returns valid, app
