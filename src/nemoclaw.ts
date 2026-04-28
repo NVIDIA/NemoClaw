@@ -98,6 +98,7 @@ import {
   knownChannelNames,
   persistChannelTokens,
 } from "./lib/sandbox-channels";
+const onboardProviders = require("./lib/onboard-providers");
 
 // ── Global commands (derived from command registry) ──────────────
 
@@ -2130,6 +2131,87 @@ function sandboxChannelsList(sandboxName: string) {
   console.log("");
 }
 
+// Map a channel + token-env-key to the OpenShell provider name onboarding
+// uses for it. Mirrors the names in src/lib/onboard.ts:3201-3221 so a
+// channels-add upsert collides with (i.e. updates) the same provider that
+// a later rebuild would have created from scratch.
+function bridgeProviderName(sandboxName: string, channelName: string, envKey: string): string {
+  if (channelName === "slack" && envKey === "SLACK_APP_TOKEN") {
+    return `${sandboxName}-slack-app`;
+  }
+  return `${sandboxName}-${channelName}-bridge`;
+}
+
+// Push channel tokens to the OpenShell gateway and add the channel to the
+// sandbox registry's messagingChannels list. Done eagerly at `channels
+// add` time (not deferred to rebuild) because the host-side credential
+// helpers are env-only after the fix — without an immediate gateway
+// upsert plus registry update, a "rebuild later" answer would drop the
+// queued change since process.env disappears when the CLI exits.
+async function applyChannelAddToGatewayAndRegistry(
+  sandboxName: string,
+  channelName: string,
+  acquired: Record<string, string>,
+): Promise<void> {
+  const recovery = await recoverNamedGatewayRuntime();
+  if (!recovery.recovered) {
+    console.error("  Could not reach the NemoClaw OpenShell gateway. Tokens were staged");
+    console.error("  in env for this run only — re-run after starting the gateway, or run");
+    console.error("  'openshell gateway start --name nemoclaw' manually.");
+    process.exit(1);
+  }
+  const tokenDefs = Object.entries(acquired).map(([envKey, token]) => ({
+    name: bridgeProviderName(sandboxName, channelName, envKey),
+    envKey,
+    token,
+  }));
+  // upsertMessagingProviders handles create-or-update and process.exits on
+  // failure, so reaching the next line means every entry is registered.
+  onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
+
+  // Persist the enabled-channels list in the registry so a deferred
+  // `nemoclaw <sandbox> rebuild` knows the channel set without needing
+  // tokens on disk.
+  const entry = registry.getSandbox(sandboxName);
+  if (entry) {
+    const enabled = new Set(entry.messagingChannels || []);
+    enabled.add(channelName);
+    const disabled = (entry.disabledChannels || []).filter((c: string) => c !== channelName);
+    registry.updateSandbox(sandboxName, {
+      messagingChannels: Array.from(enabled).sort(),
+      disabledChannels: disabled,
+    });
+  }
+}
+
+// Remove a channel's bridge providers from the gateway and drop it from the
+// registry's messagingChannels list. Mirrors applyChannelAddToGatewayAndRegistry.
+async function applyChannelRemoveToGatewayAndRegistry(
+  sandboxName: string,
+  channelName: string,
+  channelTokenKeys: string[],
+): Promise<void> {
+  const recovery = await recoverNamedGatewayRuntime();
+  if (!recovery.recovered) {
+    console.error("  Could not reach the NemoClaw OpenShell gateway to delete the bridge.");
+    console.error("  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.");
+    process.exit(1);
+  }
+  for (const envKey of channelTokenKeys) {
+    const name = bridgeProviderName(sandboxName, channelName, envKey);
+    runOpenshell(["provider", "delete", name], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
+
+  const entry = registry.getSandbox(sandboxName);
+  if (entry) {
+    const enabled = (entry.messagingChannels || []).filter((c: string) => c !== channelName);
+    registry.updateSandbox(sandboxName, { messagingChannels: enabled });
+  }
+}
+
 async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<void> {
   if (isNonInteractive()) {
     console.log("");
@@ -2198,7 +2280,13 @@ async function sandboxChannelsAdd(sandboxName: string, args: string[] = []): Pro
   }
 
   persistChannelTokens(acquired);
-  console.log(`  ${G}✓${R} Saved ${channelArg} credentials.`);
+  // Push to the gateway and update the registry NOW so that answering
+  // "rebuild later" (or running non-interactively) does not silently
+  // discard the change. Pre-fix this was safe because saveCredential()
+  // wrote credentials.json; with env-only persistence, exiting before
+  // the rebuild used to drop the queued token.
+  await applyChannelAddToGatewayAndRegistry(sandboxName, channelArg, acquired);
+  console.log(`  ${G}✓${R} Registered ${channelArg} bridge with the OpenShell gateway.`);
   await promptAndRebuild(sandboxName, `add '${channelArg}'`);
 }
 
@@ -2224,7 +2312,16 @@ async function sandboxChannelsRemove(sandboxName: string, args: string[] = []): 
   }
 
   clearChannelTokens(channel);
-  console.log(`  ${G}✓${R} Cleared stored ${channelArg} credentials.`);
+  // Same rationale as channels-add: tear down the gateway providers and
+  // drop the channel from the registry NOW so a deferred rebuild does
+  // not leave a stale bridge running against a token NemoClaw has
+  // already "removed" from the user's perspective.
+  await applyChannelRemoveToGatewayAndRegistry(
+    sandboxName,
+    channelArg,
+    getChannelTokenKeys(channel),
+  );
+  console.log(`  ${G}✓${R} Removed ${channelArg} bridge from the OpenShell gateway.`);
   await promptAndRebuild(sandboxName, `remove '${channelArg}'`);
 }
 
