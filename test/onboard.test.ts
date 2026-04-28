@@ -74,6 +74,8 @@ type OnboardTestInternals = {
   isGatewayHealthy: ShimFn<boolean>;
   classifyValidationFailure: ShimFn<ValidationClassification>;
   hasResponsesToolCall: (body?: string | null) => boolean;
+  agentSupportsWebSearch: ShimFn<boolean>;
+  configureWebSearch: ShimFn<Promise<ShimValue>>;
   isLoopbackHostname: (hostname?: string) => boolean;
   normalizeProviderBaseUrl: (
     value: string | null | undefined,
@@ -146,6 +148,8 @@ const {
   isGatewayHealthy,
   classifyValidationFailure,
   hasResponsesToolCall,
+  agentSupportsWebSearch,
+  configureWebSearch,
   isLoopbackHostname,
   normalizeProviderBaseUrl,
   parsePolicyPresetEnv,
@@ -1010,6 +1014,31 @@ describe("onboard helpers", () => {
         process.env.BRAVE_API_KEY = priorBraveKey;
       }
       fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#2433: agentSupportsWebSearch detects whether agent Dockerfile declares the web search ARG", () => {
+    // OpenClaw Dockerfile has ARG NEMOCLAW_WEB_SEARCH_ENABLED → supported.
+    // Hermes Dockerfile does not → not supported.
+    // null agent (default) → supported (assumes OpenClaw).
+    const { loadAgent } = require("../dist/lib/agent-defs.js");
+    expect(agentSupportsWebSearch(null)).toBe(true);
+    expect(agentSupportsWebSearch(loadAgent("openclaw"))).toBe(true);
+    expect(agentSupportsWebSearch(loadAgent("hermes"))).toBe(false);
+  });
+
+  it("#2433: configureWebSearch skips unsupported Hermes instead of prompting for Brave", async () => {
+    const { loadAgent } = require("../dist/lib/agent-defs.js");
+    const priorBraveKey = process.env.BRAVE_API_KEY;
+    process.env.BRAVE_API_KEY = "brv-test-key";
+    try {
+      await expect(configureWebSearch(null, loadAgent("hermes"))).resolves.toBeNull();
+    } finally {
+      if (priorBraveKey === undefined) {
+        delete process.env.BRAVE_API_KEY;
+      } else {
+        process.env.BRAVE_API_KEY = priorBraveKey;
+      }
     }
   });
 
