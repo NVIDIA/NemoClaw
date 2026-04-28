@@ -68,6 +68,32 @@ describe("sandbox-create-stream", () => {
     expect(logLine).toHaveBeenCalledWith("Created sandbox: demo");
   });
 
+  it("streams BuildKit progress lines as build output", async () => {
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      logLine,
+      spawnImpl: () => child as never,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+    });
+
+    child.stdout.emit(
+      "data",
+      Buffer.from("#1 [internal] load build definition from Dockerfile\n#2 CACHED\n#3 DONE 0.1s\n"),
+    );
+    child.emit("close", 0);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      sawProgress: true,
+      output: expect.stringContaining("#1 [internal] load build definition from Dockerfile"),
+    });
+    expect(logLine).toHaveBeenCalledWith("#1 [internal] load build definition from Dockerfile");
+    expect(logLine).toHaveBeenCalledWith("#2 CACHED");
+    expect(logLine).toHaveBeenCalledWith("#3 DONE 0.1s");
+  });
+
   it("forces success when the sandbox becomes ready before the stream exits", async () => {
     vi.useFakeTimers();
 

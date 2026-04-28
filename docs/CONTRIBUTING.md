@@ -48,11 +48,13 @@ The current generated skills and their source pages are:
 
 ### Regenerating skills after doc changes
 
-A pre-commit hook regenerates skills automatically whenever you commit changes to `docs/**/*.md` files.
-The hook runs `scripts/docs-to-skills.py` and stages the updated skills so they are included in the same commit.
-No manual step is needed for normal workflows.
+Pull requests that change docs should normally include only the source pages under `docs/`, not the generated `.agents/skills/nemoclaw-user-*` output.
+Local hooks and PR CI run `scripts/docs-to-skills.py --dry-run` to confirm the docs still convert cleanly without writing files.
 
-To regenerate skills manually (for example, after rebasing or outside of a commit), run from the repo root:
+After a docs change merges to `main`, the `Docs to Skills` workflow regenerates `.agents/skills/nemoclaw-user-*` from `docs/` and publishes the generated update.
+The workflow pushes the generated commit directly when branch protection allows it; otherwise it opens or updates a small sync PR for maintainers to merge.
+
+To regenerate skills manually (for example, when reviewing the sync workflow output), run from the repo root:
 
 ```bash
 python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user

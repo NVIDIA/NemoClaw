@@ -4335,8 +4335,19 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("discord-bridge") }
 
     const script = `
 const credentials = require(${credentialsPath});
-// Mock getCredential to return a stored value
-credentials.getCredential = (name) => name === "TELEGRAM_BOT_TOKEN" ? "stored-telegram-token" : null;
+// Mock getCredential and resolveProviderCredential to return a stored value.
+// hydrateCredentialEnv delegates to resolveProviderCredential which calls
+// getCredential internally.  Since resolveProviderCredential uses the local
+// function reference (not module.exports.getCredential), we must also mock
+// resolveProviderCredential on the module object so the onboard.ts import
+// picks up the mock.  See #2306.
+const mockGetCredential = (name) => name === "TELEGRAM_BOT_TOKEN" ? "stored-telegram-token" : null;
+credentials.getCredential = mockGetCredential;
+credentials.resolveProviderCredential = (envName) => {
+  const value = mockGetCredential(envName);
+  if (value) process.env[envName] = value;
+  return value || null;
+};
 const { hydrateCredentialEnv } = require(${onboardPath});
 
 // Should return null for falsy input
