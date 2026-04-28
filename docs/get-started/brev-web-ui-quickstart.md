@@ -1,21 +1,29 @@
 ---
-title: Get Started with NemoClaw on Brev (Web UI)
-description: Run a sandboxed NemoClaw agent in minutes using the Brev web interface with no CLI installation or local setup required.
-keywords: NemoClaw, Brev, OpenClaw, getting started, quickstart, web UI, NVIDIA Cloud, Nemotron
-topics: [NemoClaw, Brev, OpenClaw, deployment]
-tags: [getting-started, brev, web-ui, nemoclaw]
-content_type: tutorial
-difficulty: beginner
-audience: developers
+title:
+  page: "Get Started with NemoClaw on Brev (Web UI)"
+  nav: "Brev Web UI"
+description:
+  main: "Run a sandboxed NemoClaw agent in minutes using the Brev web interface with no CLI installation or local setup required."
+  agent: "Guides users through deploying NemoClaw using the Brev web UI. Use when a user wants to try NemoClaw without installing the CLI, or asks how to get started on Brev."
+keywords: ["nemoclaw brev web ui", "nemoclaw getting started", "brev quickstart", "nvidia nemotron agent"]
+topics: ["generative_ai", "ai_agents"]
+tags: ["brev", "openclaw", "getting-started", "web-ui", "nemoclaw"]
+content:
+  type: get_started
+  difficulty: technical_beginner
+  audience: ["developer", "engineer"]
 status: published
 ---
 
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
 
 # Get Started with NemoClaw on Brev (Web UI)
 
 Run a sandboxed NemoClaw agent in minutes using the Brev web interface.
-No CLI installation, no local setup, no GPU required on your machine.
+No CLI installation, no local setup, and no GPU required on your machine.
 
 :::{note}
 This guide covers the Brev web UI flow, which is the fastest way to try NemoClaw.
@@ -91,11 +99,11 @@ Model: nemotron-3-super-120b
 Provider: NVIDIA Cloud
 ```
 
-Click **Chat With Agent** to open the OpenClaw Gateway Dashboard.
+Click **Chat With Agent** to open the OpenClaw gateway dashboard.
 
 ## Understand the Dashboard
 
-The OpenClaw Gateway Dashboard has the following sections.
+The OpenClaw gateway dashboard has the following sections.
 
 **Chat.**
 Direct chat interface for talking to your agent.
@@ -204,7 +212,7 @@ Type a message and wait a few seconds for the first response.
 
 ## Next Steps
 
+- [Prerequisites](prerequisites.md) -- System requirements before getting started.
 - [Quickstart](quickstart.md) -- CLI-based local setup.
 - [Deploy to a Remote GPU Instance](../deployment/deploy-to-remote-gpu.md) -- CLI-based Brev deployment.
-- [Set Up the Telegram Bridge](../deployment/set-up-telegram-bridge.md)
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md)
