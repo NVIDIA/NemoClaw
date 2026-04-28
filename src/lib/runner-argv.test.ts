@@ -23,26 +23,23 @@ describe("run with argv array", () => {
   });
 
   it("passes extra env vars to the child process", () => {
-    const result = runner.run(
-      ["env"],
-      { env: { NEMOCLAW_TEST_VAR: "injection-safe" }, suppressOutput: true },
-    );
+    const result = runner.run(["env"], {
+      env: { NEMOCLAW_TEST_VAR: "injection-safe" },
+      suppressOutput: true,
+    });
     expect(result.status).toBe(0);
     expect(result.stdout.toString()).toContain("NEMOCLAW_TEST_VAR=injection-safe");
   });
 
   it("rejects shell: true to prevent security bypass", () => {
-    expect(() => runner.run(["echo", "hi"], { shell: true })).toThrow(
-      /shell option is forbidden/,
-    );
+    expect(() => runner.run(["echo", "hi"], { shell: true })).toThrow(/shell option is forbidden/);
   });
 
   it("does not interpret shell metacharacters in arguments", () => {
     // If shell interpretation occurred, $(whoami) would be expanded
-    const result = runner.runCapture(
-      ["echo", "$(whoami)", "&&", "rm", "-rf", "/"],
-      { ignoreError: true },
-    );
+    const result = runner.runCapture(["echo", "$(whoami)", "&&", "rm", "-rf", "/"], {
+      ignoreError: true,
+    });
     // echo receives literal argv — no shell expansion
     expect(result).toContain("$(whoami)");
     expect(result).toContain("&&");
@@ -55,10 +52,10 @@ describe("run with argv array", () => {
   });
 
   it("surfaces ENOENT error for missing executables", () => {
-    const result = runner.run(
-      ["nonexistent-binary-xyz-12345"],
-      { ignoreError: true, suppressOutput: true },
-    );
+    const result = runner.run(["nonexistent-binary-xyz-12345"], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
     // spawnSync sets result.error for missing executables
     expect(result.error).toBeDefined();
     expect(result.error.code).toBe("ENOENT");
@@ -74,6 +71,15 @@ describe("runCapture with argv array", () => {
   it("trims whitespace from output", () => {
     const output = runner.runCapture(["echo", "  trimmed  "]);
     expect(output).toBe("trimmed");
+  });
+
+  it("trims trailing blank lines so callers can safely parse the last line", () => {
+    const output = runner.runCapture([
+      process.execPath,
+      "-e",
+      'process.stdout.write("2048\\n\\n")',
+    ]);
+    expect(output).toBe("2048");
   });
 
   it("throws when argv array is empty", () => {
@@ -121,16 +127,12 @@ describe("runCapture with argv array", () => {
   });
 
   it("passes extra env to the child process", () => {
-    const output = runner.runCapture(
-      ["env"],
-      { env: { TEST_ARGV_ENV: "captured" } },
-    );
+    const output = runner.runCapture(["env"], { env: { TEST_ARGV_ENV: "captured" } });
     expect(output).toContain("TEST_ARGV_ENV=captured");
   });
 
-  it("still works with string commands (legacy path)", () => {
-    const output = runner.runCapture("echo hello");
-    expect(output).toBe("hello");
+  it("rejects string commands", () => {
+    expect(() => runner.runCapture("echo hello")).toThrow(/argv array instead/);
   });
 
   it("throws ENOENT for missing executables", () => {
@@ -147,12 +149,12 @@ describe("shell injection regression tests", () => {
   it("sandbox names with shell metacharacters are safe with argv arrays", () => {
     // These names would cause injection if passed through bash -c
     const dangerousNames = [
-      'my-sandbox; rm -rf /',
-      'test$(whoami)',
-      'sandbox`id`',
+      "my-sandbox; rm -rf /",
+      "test$(whoami)",
+      "sandbox`id`",
       "sandbox' || echo pwned",
       'sandbox" && echo pwned',
-      'sandbox\necho pwned',
+      "sandbox\necho pwned",
     ];
 
     for (const name of dangerousNames) {
@@ -163,9 +165,7 @@ describe("shell injection regression tests", () => {
   });
 
   it("model names with shell metacharacters are safe with argv arrays", () => {
-    const output = runner.runCapture(
-      ["echo", 'nvidia/model;curl http://evil.com'],
-    );
-    expect(output).toBe('nvidia/model;curl http://evil.com');
+    const output = runner.runCapture(["echo", "nvidia/model;curl http://evil.com"]);
+    expect(output).toBe("nvidia/model;curl http://evil.com");
   });
 });

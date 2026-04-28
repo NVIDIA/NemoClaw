@@ -1876,14 +1876,15 @@ async function sandboxStatus(sandboxName: string) {
     }
   }
 
-  // NIM health
   const nimStat =
     sb && sb.nimContainer ? nim.nimStatusByName(sb.nimContainer) : nim.nimStatus(sandboxName);
-  console.log(
-    `    NIM:      ${nimStat.running ? `running (${nimStat.container})` : "not running"}`,
-  );
-  if (nimStat.running) {
-    console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
+  if (nim.shouldShowNimLine(sb && sb.nimContainer, nimStat.running)) {
+    console.log(
+      `    NIM:      ${nimStat.running ? `running (${nimStat.container})` : "not running"}`,
+    );
+    if (nimStat.running) {
+      console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
+    }
   }
   console.log("");
 }
