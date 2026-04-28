@@ -96,6 +96,8 @@ const {
   GEMINI_ENDPOINT_URL,
   REMOTE_PROVIDER_CONFIG,
   LOCAL_INFERENCE_PROVIDERS,
+  OLLAMA_PROXY_CREDENTIAL_ENV,
+  VLLM_LOCAL_CREDENTIAL_ENV,
   DISCORD_SNOWFLAKE_RE,
   getProviderLabel,
   getEffectiveProviderName,
@@ -109,6 +111,8 @@ const {
   GEMINI_ENDPOINT_URL: string;
   REMOTE_PROVIDER_CONFIG: Record<string, RemoteProviderConfigEntry>;
   LOCAL_INFERENCE_PROVIDERS: string[];
+  OLLAMA_PROXY_CREDENTIAL_ENV: string;
+  VLLM_LOCAL_CREDENTIAL_ENV: string;
   DISCORD_SNOWFLAKE_RE: RegExp;
   getProviderLabel: (key: string) => string;
   getEffectiveProviderName: (key: string | null | undefined) => string | null;
@@ -123,8 +127,14 @@ const platformUtils: typeof import("./platform") = require("./platform");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
 const { resolveOpenshell } = require("./resolve-openshell");
 const credentials: typeof import("./credentials") = require("./credentials");
-const { prompt, ensureApiKey, getCredential, normalizeCredentialValue, saveCredential, resolveProviderCredential } =
-  credentials;
+const {
+  prompt,
+  ensureApiKey,
+  getCredential,
+  normalizeCredentialValue,
+  saveCredential,
+  resolveProviderCredential,
+} = credentials;
 const registry: typeof import("./registry") = require("./registry");
 const nim: typeof import("./nim") = require("./nim");
 const onboardSession: typeof import("./onboard-session") = require("./onboard-session");
@@ -4593,7 +4603,10 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
             nimContainer = null;
           } else {
             provider = "vllm-local";
-            credentialEnv = "OPENAI_API_KEY";
+            // Local NIM (vLLM under the hood) does not require a host API key —
+            // setupInference registers the gateway provider with an internal
+            // credential env (NEMOCLAW_VLLM_LOCAL_TOKEN). See GH #2519.
+            credentialEnv = null;
             endpointUrl = getLocalProviderBaseUrl(provider);
             if (!endpointUrl) {
               console.error("  Local NVIDIA NIM base URL could not be determined.");
@@ -4603,7 +4616,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
               "Local NVIDIA NIM",
               endpointUrl,
               requireValue(model, "Expected a Local NVIDIA NIM model after startup"),
-              credentialEnv,
+              null,
             );
             if (validation.retry === "selection" || validation.retry === "model") {
               continue selectionLoop;
@@ -4648,7 +4661,12 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           );
         }
         provider = "ollama-local";
-        credentialEnv = "OPENAI_API_KEY";
+        // Local Ollama needs no user-supplied API key — the auth proxy uses
+        // an internal token (NEMOCLAW_OLLAMA_PROXY_TOKEN, set in setupInference).
+        // Leaving this null prevents the wizard from prompting for / caching
+        // OPENAI_API_KEY and prevents the rebuild preflight from requiring it.
+        // See GH #2519.
+        credentialEnv = null;
         endpointUrl = getLocalProviderBaseUrl(provider);
         if (!endpointUrl) {
           console.error("  Local Ollama base URL could not be determined.");
@@ -4728,7 +4746,8 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
         );
         provider = "ollama-local";
-        credentialEnv = "OPENAI_API_KEY";
+        // See above ollama branch — internal proxy token, no user API key.
+        credentialEnv = null;
         endpointUrl = getLocalProviderBaseUrl(provider);
         if (!endpointUrl) {
           console.error("  Local Ollama base URL could not be determined.");
@@ -4789,7 +4808,8 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
       } else if (selected.key === "vllm") {
         console.log(`  ✓ Using existing vLLM on localhost:${VLLM_PORT}`);
         provider = "vllm-local";
-        credentialEnv = "OPENAI_API_KEY";
+        // See NIM branch above — internal credential env, no user API key.
+        credentialEnv = null;
         endpointUrl = getLocalProviderBaseUrl(provider);
         if (!endpointUrl) {
           console.error("  Local vLLM base URL could not be determined.");
@@ -4832,7 +4852,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           "Local vLLM",
           validationBaseUrl,
           requireValue(model, "Expected a detected vLLM model"),
-          credentialEnv,
+          null,
         );
         if (validation.retry === "selection" || validation.retry === "model") {
           continue selectionLoop;
@@ -4959,9 +4979,17 @@ async function setupInference(
       process.exit(1);
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
-    const providerResult = upsertProvider("vllm-local", "openai", "OPENAI_API_KEY", baseUrl, {
-      OPENAI_API_KEY: "dummy",
-    });
+    // Use a dedicated internal credential env so the gateway does not pick
+    // up the user's host OPENAI_API_KEY for local vLLM. vLLM does not enforce
+    // the bearer at runtime, but a dedicated env name prevents accidental
+    // hijacking. See GH #2519.
+    const providerResult = upsertProvider(
+      "vllm-local",
+      "openai",
+      VLLM_LOCAL_CREDENTIAL_ENV,
+      baseUrl,
+      { [VLLM_LOCAL_CREDENTIAL_ENV]: "dummy" },
+    );
     if (!providerResult.ok) {
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
@@ -4977,6 +5005,9 @@ async function setupInference(
       "--timeout",
       String(LOCAL_INFERENCE_TIMEOUT_SECS),
     ]);
+    // Do not mutate ~/.nemoclaw/credentials.json here: local vLLM now uses
+    // VLLM_LOCAL_CREDENTIAL_ENV, so any saved OPENAI_API_KEY remains available
+    // to unrelated OpenAI-backed sandboxes.
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider);
     if (!validation.ok) {
@@ -5004,9 +5035,17 @@ async function setupInference(
       // Not persisted earlier in case the user backs out to a different provider.
       persistProxyToken(proxyToken);
     }
-    const providerResult = upsertProvider("ollama-local", "openai", "OPENAI_API_KEY", baseUrl, {
-      OPENAI_API_KEY: ollamaCredential,
-    });
+    // Use a dedicated internal credential env (NEMOCLAW_OLLAMA_PROXY_TOKEN)
+    // so the gateway never reads the user's host OPENAI_API_KEY for local
+    // Ollama. GH #2519: a stale host OPENAI_API_KEY was leaking into the
+    // inference path and producing 401s.
+    const providerResult = upsertProvider(
+      "ollama-local",
+      "openai",
+      OLLAMA_PROXY_CREDENTIAL_ENV,
+      baseUrl,
+      { [OLLAMA_PROXY_CREDENTIAL_ENV]: ollamaCredential },
+    );
     if (!providerResult.ok) {
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
@@ -5029,6 +5068,9 @@ async function setupInference(
       console.error(`  ${probe.message}`);
       process.exit(1);
     }
+    // Do not mutate ~/.nemoclaw/credentials.json here: local Ollama now uses
+    // OLLAMA_PROXY_CREDENTIAL_ENV, so any saved OPENAI_API_KEY remains available
+    // to unrelated OpenAI-backed sandboxes.
   }
 
   verifyInferenceRoute(provider, model);

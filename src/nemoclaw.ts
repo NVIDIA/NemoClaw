@@ -2745,6 +2745,25 @@ async function sandboxRebuild(
   } else {
     rebuildCredentialEnv = session?.credentialEnv || null;
   }
+  // Legacy migration: pre-fix local-inference sandboxes (GH #2519) recorded
+  // credentialEnv="OPENAI_API_KEY" in onboard-session.json even though the
+  // sandbox does not actually need a host OpenAI key (ollama-local uses an
+  // auth proxy with an internal token; vllm-local accepts a static dummy
+  // bearer). Treat the legacy value as null so rebuild does not demand a
+  // credential that was never actually used.
+  if (
+    (session?.provider === "ollama-local" || session?.provider === "vllm-local") &&
+    rebuildCredentialEnv === "OPENAI_API_KEY"
+  ) {
+    console.log(
+      `  ${D}Note: migrating ${session.provider} sandbox off OPENAI_API_KEY (GH #2519). ` +
+        `Local inference does not require a host API key.${R}`,
+    );
+    log(
+      `Preflight: legacy ${session.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
+    );
+    rebuildCredentialEnv = null;
+  }
   if (rebuildCredentialEnv) {
     const credentialValue = getCredential(rebuildCredentialEnv);
     log(

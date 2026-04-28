@@ -5,7 +5,11 @@
 // Provider metadata, lookup helpers, and gateway provider CRUD.
 
 const { redact } = require("./runner");
-const { DEFAULT_CLOUD_MODEL } = require("./inference-config");
+const {
+  DEFAULT_CLOUD_MODEL,
+  OLLAMA_LOCAL_CREDENTIAL_ENV,
+  VLLM_LOCAL_CREDENTIAL_ENV,
+} = require("./inference-config");
 const { isSafeModelId } = require("./validation");
 const { compactText } = require("./url-utils");
 
@@ -85,6 +89,12 @@ const REMOTE_PROVIDER_CONFIG = {
 
 // Providers that run on the host and need the local-inference policy preset.
 const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
+
+// Re-exported alias matching the existing onboard.ts call sites. The canonical
+// definitions live in inference-config.ts so that getProviderSelectionConfig
+// (which writes the sandbox-side config) and the gateway-registration path
+// here stay in sync. See GH #2519.
+const OLLAMA_PROXY_CREDENTIAL_ENV = OLLAMA_LOCAL_CREDENTIAL_ENV;
 
 const DISCORD_SNOWFLAKE_RE = /^[0-9]{17,19}$/;
 
@@ -332,6 +342,8 @@ module.exports = {
   GEMINI_ENDPOINT_URL,
   REMOTE_PROVIDER_CONFIG,
   LOCAL_INFERENCE_PROVIDERS,
+  OLLAMA_PROXY_CREDENTIAL_ENV,
+  VLLM_LOCAL_CREDENTIAL_ENV,
   DISCORD_SNOWFLAKE_RE,
   getProviderLabel,
   getEffectiveProviderName,
