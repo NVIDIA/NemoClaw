@@ -45,6 +45,12 @@ function onboardUsageLines(noticeAcceptFlag: string): string[] {
   return [
     `  Usage: nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
     "",
+    "  --from <Dockerfile> uses the Dockerfile's parent directory as the Docker build context.",
+    "  Put files referenced by COPY/ADD next to that Dockerfile, or move the Dockerfile into",
+    "  a dedicated build directory to avoid sending unrelated files to Docker.",
+    "  Common large directories are skipped: node_modules, .git, .venv, __pycache__.",
+    "  Generated output directories such as dist/, build/, and target/ are still included.",
+    "",
   ];
 }
 

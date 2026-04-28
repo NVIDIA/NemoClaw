@@ -5852,6 +5852,9 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
     const payload = JSON.parse(payloadLine);
     assert.equal(payload.sandboxName, "my-assistant");
+    assert.match(result.stdout, /Using custom Dockerfile:/);
+    assert.match(result.stdout, /Docker build context:/);
+    assert.match(result.stdout, /custom-image/);
     assert.equal(
       payload.hasExtraFile,
       true,

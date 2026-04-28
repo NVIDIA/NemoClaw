@@ -116,6 +116,8 @@ describe("onboard command", () => {
     expect(lines.join("\n")).toContain("Usage: nemoclaw onboard");
     expect(lines.join("\n")).toContain("--from <Dockerfile>");
     expect(lines.join("\n")).toContain("--name <sandbox>");
+    expect(lines.join("\n")).toContain("Dockerfile's parent directory");
+    expect(lines.join("\n")).toContain("node_modules, .git, .venv, __pycache__");
     expect(lines.join("\n")).toContain("--agent <name>");
     expect(lines.join("\n")).toContain("--dangerously-skip-permissions");
   });
