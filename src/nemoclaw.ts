@@ -1169,6 +1169,23 @@ function uninstall(args: string[]) {
   });
 }
 
+// Suffixes that mark a per-sandbox messaging integration in the gateway's
+// provider list, not a NemoClaw-managed credential. The bridge providers are
+// created during onboarding (see src/lib/onboard.ts:3203,3208,3218) and torn
+// down by the channels/sandbox-delete flows. `nemoclaw credentials list`
+// hides them and `nemoclaw credentials reset` refuses to touch them so
+// users cannot accidentally break a live integration via the credentials
+// surface.
+const BRIDGE_PROVIDER_SUFFIXES: readonly string[] = [
+  "-telegram-bridge",
+  "-discord-bridge",
+  "-slack-bridge",
+];
+
+function isBridgeProviderName(name: string): boolean {
+  return BRIDGE_PROVIDER_SUFFIXES.some((suffix) => name.endsWith(suffix));
+}
+
 async function credentialsCommand(args: string[]): Promise<void> {
   const sub = args[0];
   if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
@@ -1203,18 +1220,32 @@ async function credentialsCommand(args: string[]): Promise<void> {
       console.error("  Run 'openshell gateway start --name nemoclaw' or 'nemoclaw onboard' first.");
       process.exit(1);
     }
-    const names = String(result.stdout || "")
+    const allNames = String(result.stdout || "")
       .split("\n")
       .map((s) => s.trim())
-      .filter((s) => s.length > 0)
-      .sort();
-    if (names.length === 0) {
+      .filter((s) => s.length > 0);
+    // Show only credential providers. Per-sandbox messaging bridges are
+    // live integrations managed by the channels surface; surfacing them
+    // here would invite users to "reset" what looks like a credential and
+    // accidentally destroy a running bridge.
+    const credentialNames = allNames.filter((n) => !isBridgeProviderName(n)).sort();
+    const bridgeNames = allNames.filter((n) => isBridgeProviderName(n));
+    if (credentialNames.length === 0) {
       console.log("  No provider credentials registered.");
-      return;
+    } else {
+      console.log("  Providers registered with the OpenShell gateway:");
+      for (const name of credentialNames) {
+        console.log(`    ${name}`);
+      }
     }
-    console.log("  Providers registered with the OpenShell gateway:");
-    for (const name of names) {
-      console.log(`    ${name}`);
+    if (bridgeNames.length > 0) {
+      console.log("");
+      console.log(
+        `  ${String(bridgeNames.length)} per-sandbox messaging bridge(s) are also registered.`,
+      );
+      console.log(
+        "  Manage those with `nemoclaw <sandbox> channels list/remove/stop` — not this command.",
+      );
     }
     return;
   }
@@ -1233,6 +1264,26 @@ async function credentialsCommand(args: string[]): Promise<void> {
     if (extraArgs.length > 0) {
       console.error(`  Unknown argument(s) for credentials reset: ${extraArgs.join(", ")}`);
       console.error("  Usage: nemoclaw credentials reset <PROVIDER> [--yes]");
+      process.exit(1);
+    }
+    // Refuse to delete a per-sandbox messaging bridge — those are live
+    // integrations created/destroyed by the channels surface, not
+    // NemoClaw-managed credentials. Without this guard, scripting against
+    // the gateway provider list could tear down a running bridge and
+    // leave the sandbox in a half-configured state.
+    if (isBridgeProviderName(key)) {
+      console.error(
+        `  '${key}' is a per-sandbox messaging bridge, not a credential.`,
+      );
+      console.error(
+        "  Use `nemoclaw <sandbox> channels remove <telegram|discord|slack>` to retire",
+      );
+      console.error(
+        "  the integration (it tears down the bridge provider and rebuilds the sandbox),",
+      );
+      console.error(
+        "  or `nemoclaw <sandbox> channels stop <…>` to pause it without clearing tokens.",
+      );
       process.exit(1);
     }
     const skipPrompt = args.includes("--yes") || args.includes("-y");
