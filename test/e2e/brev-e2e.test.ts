@@ -51,6 +51,13 @@ const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 const CLI_PATH = path.join(REPO_DIR, "bin", "nemoclaw.js");
 
+// Single source of truth for the sandbox name used throughout this suite —
+// shell exports, registry writes, polling, assertions, and the launchable
+// background onboard path all reference it. Keep them aligned through this
+// constant rather than inline literals so renames stay safe (CR follow-up
+// on #2618).
+const E2E_SANDBOX_NAME = "e2e-test";
+
 function requireInstanceName(): string {
   if (!INSTANCE_NAME) {
     throw new Error("INSTANCE_NAME is required for Brev E2E tests");
@@ -158,7 +165,7 @@ function sshEnv(
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
-    `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
+    `export NEMOCLAW_SANDBOX_NAME=${E2E_SANDBOX_NAME}`,
   ];
   // Forward optional messaging tokens for the messaging-providers test
   for (const key of [
@@ -284,7 +291,7 @@ function runLocalDeploy(instanceName: string): void {
     ...process.env,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_SANDBOX_NAME: "e2e-test",
+    NEMOCLAW_SANDBOX_NAME: E2E_SANDBOX_NAME,
     NEMOCLAW_PROVIDER: process.env.NEMOCLAW_PROVIDER || "build",
     NEMOCLAW_DEPLOY_NO_CONNECT: "1",
     NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
@@ -511,7 +518,7 @@ function pollForSandboxReady(elapsed: () => string): void {
       [
         `source ~/.nvm/nvm.sh 2>/dev/null || true`,
         `cd ${remoteDir}`,
-        `NEMOCLAW_SANDBOX_NAME="e2e-test" nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
+        `NEMOCLAW_SANDBOX_NAME="${E2E_SANDBOX_NAME}" nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
         `sleep 2`,
         `echo "onboard launched"`,
       ].join(" && "),
@@ -549,8 +556,8 @@ function pollForSandboxReady(elapsed: () => string): void {
       const sandboxList = ssh(`openshell sandbox list 2>/dev/null || true`, {
         timeout: 15_000,
       });
-      if (sandboxList.includes("e2e-test") && sandboxList.includes("Ready")) {
-        console.log(`[${onboardElapsed()}] Sandbox e2e-test is Ready!`);
+      if (sandboxList.includes(E2E_SANDBOX_NAME) && sandboxList.includes("Ready")) {
+        console.log(`[${onboardElapsed()}] Sandbox ${E2E_SANDBOX_NAME} is Ready!`);
         break;
       }
       // Show onboard progress from the log
@@ -588,7 +595,7 @@ function pollForSandboxReady(elapsed: () => string): void {
 
   // Verify sandbox is actually ready
   const finalList = ssh(`openshell sandbox list 2>/dev/null`, { timeout: 15_000 });
-  if (!finalList.includes("e2e-test") || !finalList.includes("Ready")) {
+  if (!finalList.includes(E2E_SANDBOX_NAME) || !finalList.includes("Ready")) {
     const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
       timeout: 10_000,
     });
@@ -623,10 +630,10 @@ function writeManualRegistry(elapsed: () => string): void {
   // Write the sandbox registry using printf to avoid heredoc quoting issues over SSH
   const registryJson = JSON.stringify(
     {
-      defaultSandbox: "e2e-test",
+      defaultSandbox: E2E_SANDBOX_NAME,
       sandboxes: {
-        "e2e-test": {
-          name: "e2e-test",
+        [E2E_SANDBOX_NAME]: {
+          name: E2E_SANDBOX_NAME,
           createdAt: new Date().toISOString(),
           model: null,
           nimContainer: null,
@@ -700,11 +707,11 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     if (TEST_SUITE !== "full") {
       console.log(`[${elapsed()}] Verifying sandbox registry...`);
       const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
-      expect(registry.defaultSandbox).toBe("e2e-test");
-      expect(registry.sandboxes).toHaveProperty("e2e-test");
-      const sandbox = registry.sandboxes["e2e-test"];
+      expect(registry.defaultSandbox).toBe(E2E_SANDBOX_NAME);
+      expect(registry.sandboxes).toHaveProperty(E2E_SANDBOX_NAME);
+      const sandbox = registry.sandboxes[E2E_SANDBOX_NAME];
       expect(sandbox).toMatchObject({
-        name: "e2e-test",
+        name: E2E_SANDBOX_NAME,
         gpuEnabled: false,
         policies: ["pypi", "npm"],
       });
@@ -766,12 +773,12 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
         "export PATH=$HOME/.local/bin:$PATH && openshell sandbox list 2>/dev/null",
         { timeout: 30_000 },
       );
-      expect(sandboxList).toContain("e2e-test");
+      expect(sandboxList).toContain(E2E_SANDBOX_NAME);
       expect(sandboxList).toContain("Ready");
 
       const registry = JSON.parse(ssh("cat ~/.nemoclaw/sandboxes.json", { timeout: 10_000 }));
-      expect(registry.defaultSandbox).toBe("e2e-test");
-      expect(registry.sandboxes).toHaveProperty("e2e-test");
+      expect(registry.defaultSandbox).toBe(E2E_SANDBOX_NAME);
+      expect(registry.sandboxes).toHaveProperty(E2E_SANDBOX_NAME);
     },
     120_000,
   );
