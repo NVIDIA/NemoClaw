@@ -123,7 +123,7 @@ const platformUtils: typeof import("./platform") = require("./platform");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
 const { resolveOpenshell } = require("./resolve-openshell");
 const credentials: typeof import("./credentials") = require("./credentials");
-const { prompt, ensureApiKey, getCredential, normalizeCredentialValue, saveCredential } =
+const { prompt, ensureApiKey, getCredential, normalizeCredentialValue, saveCredential, resolveProviderCredential } =
   credentials;
 const registry: typeof import("./registry") = require("./registry");
 const nim: typeof import("./nim") = require("./nim");
@@ -672,11 +672,7 @@ const {
 
 function hydrateCredentialEnv(envName: string | null | undefined): string | null {
   if (!envName) return null;
-  const value = getCredential(envName);
-  if (value) {
-    process.env[envName] = value;
-  }
-  return value || null;
+  return resolveProviderCredential(envName);
 }
 
 const {
@@ -1234,9 +1230,44 @@ async function ensureValidatedBraveSearchCredential(
   }
 }
 
+/**
+ * Check whether the agent's Dockerfile declares ARG NEMOCLAW_WEB_SEARCH_ENABLED.
+ * If the ARG is absent, the patchStagedDockerfile replace is a silent no-op and
+ * the config generator has no code path to emit a web search block — so offering
+ * the Brave prompt would mislead the user.
+ *
+ * OpenClaw uses the root Dockerfile (not agents/openclaw/Dockerfile), so we
+ * fall back to the root Dockerfile when the agent-specific one doesn't exist.
+ */
+function agentSupportsWebSearch(
+  agent: AgentDefinition | null | undefined,
+  dockerfilePathOverride: string | null = null,
+): boolean {
+  const candidates = [dockerfilePathOverride, agent?.dockerfilePath, path.join(ROOT, "Dockerfile")].filter(
+    (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
+  );
+
+  for (const dockerfilePath of candidates) {
+    try {
+      const content = fs.readFileSync(dockerfilePath, "utf-8");
+      return /^\s*ARG\s+NEMOCLAW_WEB_SEARCH_ENABLED=/m.test(content);
+    } catch {
+      // Try the next candidate; custom Dockerfile paths can disappear between resume runs.
+    }
+  }
+  return false;
+}
+
 async function configureWebSearch(
   existingConfig: WebSearchConfig | null = null,
+  agent: AgentDefinition | null = null,
+  dockerfilePathOverride: string | null = null,
 ): Promise<WebSearchConfig | null> {
+  if (!agentSupportsWebSearch(agent, dockerfilePathOverride)) {
+    note(`  Web search is not yet supported by ${agent?.displayName ?? "this agent"}. Skipping.`);
+    return null;
+  }
+
   if (existingConfig) {
     return { fetchEnabled: true };
   }
@@ -1272,6 +1303,75 @@ async function configureWebSearch(
   console.log("  ✓ Enabled Brave Web Search");
   console.log("");
   return { fetchEnabled: true };
+}
+
+/**
+ * Post-creation probe: verify web search is actually functional inside the
+ * sandbox. Hermes silently ignores unknown web.backend values, so checking
+ * the config file alone is insufficient — we need to ask the runtime.
+ *
+ * For Hermes: runs `hermes dump` and checks for an active web backend.
+ * For OpenClaw: checks that the tools.web.search block is present in the config.
+ *
+ * This is a best-effort warning — it does not abort onboarding.
+ */
+function verifyWebSearchInsideSandbox(
+  sandboxName: string,
+  agent: AgentDefinition | null | undefined,
+): void {
+  const agentName = agent?.name || "openclaw";
+  try {
+    if (agentName === "hermes") {
+      // `hermes dump` outputs config_overrides and active toolsets.
+      // Look for the web backend in its output.
+      const dump = runCaptureOpenshell(
+        ["sandbox", "exec", sandboxName, "hermes", "dump"],
+        { ignoreError: true, timeout: 10_000 },
+      );
+      if (!dump) {
+        console.warn("  ⚠ Could not verify web search config inside sandbox (hermes dump failed).");
+        return;
+      }
+      // A working web backend shows as an explicit config override or active-toolset entry.
+      // Avoid broad /web.*search/ matching so warning text never looks like success.
+      const hasWebBackend =
+        /^\s*web\.backend:\s*\S+/m.test(dump) ||
+        /^\s*active toolsets:\s*.*\bweb\b/im.test(dump) ||
+        /^\s*toolsets:\s*.*\bweb\b/im.test(dump);
+      if (!hasWebBackend) {
+        console.warn("  ⚠ Web search was configured but Hermes does not report an active web backend.");
+        console.warn("    The agent may not have accepted the web search configuration.");
+        console.warn("    Check: nemoclaw " + sandboxName + " exec hermes dump");
+      } else {
+        console.log("  ✓ Web search is active inside sandbox");
+      }
+    } else if (agentName === "openclaw") {
+      // OpenClaw: verify tools.web.search block exists in the baked config.
+      const configCheck = runCaptureOpenshell(
+        ["sandbox", "exec", sandboxName, "cat", "/sandbox/.openclaw/openclaw.json"],
+        { ignoreError: true, timeout: 10_000 },
+      );
+      if (!configCheck) {
+        console.warn("  ⚠ Could not verify web search config inside sandbox.");
+        return;
+      }
+      try {
+        const parsed = JSON.parse(configCheck);
+        if (parsed?.tools?.web?.search?.enabled) {
+          console.log("  ✓ Web search is active inside sandbox");
+        } else {
+          console.warn("  ⚠ Web search was configured but tools.web.search is not enabled in openclaw.json.");
+        }
+      } catch {
+        console.warn("  ⚠ Could not parse openclaw.json to verify web search config.");
+      }
+    } else {
+      console.warn(`  ⚠ Web search verification is not implemented for agent '${agentName}'.`);
+    }
+  } catch {
+    // Best-effort — don't let probe failures derail onboarding.
+    console.warn("  ⚠ Web search verification probe failed (non-fatal).");
+  }
 }
 
 // getSandboxInferenceConfig — moved to onboard-providers.ts
@@ -3823,6 +3923,15 @@ async function createSandbox(
     }
   }
 
+  // Verify web search config was actually accepted by the agent runtime.
+  // Hermes silently ignores unknown web.backend values (e.g. "brave" before
+  // upstream support lands), so we exec into the sandbox and check for a
+  // recognizable signal. OpenClaw validates at config-generation time, but
+  // this probe catches drift for all agents.
+  if (webSearchConfig?.fetchEnabled) {
+    verifyWebSearchInsideSandbox(sandboxName, agent);
+  }
+
   // Release any stale forward on the dashboard port before claiming it for the new sandbox.
   // A previous onboard run may have left the port forwarded to a different sandbox,
   // which would silently prevent the new sandbox's dashboard from being reachable.
@@ -4141,19 +4250,23 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
         hydrateCredentialEnv(credentialEnv);
 
         if (selected.key === "build") {
-          // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_API_KEY
+          // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_API_KEY.
+          // Check raw process.env first — NEMOCLAW_PROVIDER_KEY is a user-facing
+          // override that should take precedence before resolving from credentials.json.
           const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
+          // eslint-disable-next-line nemoclaw/no-direct-credential-env -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
           if (_nvProviderKey && !process.env.NVIDIA_API_KEY) {
             process.env.NVIDIA_API_KEY = _nvProviderKey;
           }
           if (isNonInteractive()) {
-            if (!process.env.NVIDIA_API_KEY) {
+            const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_API_KEY");
+            if (!resolvedNvidiaKey) {
               console.error(
                 "  NVIDIA_API_KEY (or NEMOCLAW_PROVIDER_KEY) is required for NVIDIA Endpoints in non-interactive mode.",
               );
               process.exit(1);
             }
-            const keyError = validateNvidiaApiKeyValue(process.env.NVIDIA_API_KEY);
+            const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
             if (keyError) {
               console.error(keyError);
               console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
@@ -4177,13 +4290,15 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
         } else {
           // NEMOCLAW_PROVIDER_KEY is a universal alias: if the specific credential env
           // isn't already set, use NEMOCLAW_PROVIDER_KEY as the API key for this provider.
+          // Check raw process.env — the override must apply before resolving from credentials.json.
           const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-          if (_providerKeyHint && !process.env[credentialEnv]) {
+          // eslint-disable-next-line nemoclaw/no-direct-credential-env -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
+          if (_providerKeyHint && credentialEnv && !process.env[credentialEnv]) {
             process.env[credentialEnv] = _providerKeyHint;
           }
 
           if (isNonInteractive()) {
-            if (!process.env[credentialEnv]) {
+            if (!resolveProviderCredential(credentialEnv)) {
               console.error(
                 `  ${credentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
               );
@@ -6962,6 +7077,19 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       break;
     }
 
+    const webSearchSupportProbePath = fromDockerfile ? path.resolve(fromDockerfile) : null;
+    if (webSearchConfig && !agentSupportsWebSearch(agent, webSearchSupportProbePath)) {
+      note(`  Web search is not yet supported by ${agent?.displayName ?? "this sandbox image"}. Clearing stale config.`);
+      webSearchConfig = null;
+      if (session) {
+        session.webSearchConfig = null;
+      }
+      onboardSession.updateSession((current: Session) => {
+        current.webSearchConfig = null;
+        return current;
+      });
+    }
+
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     const resumeSandbox =
@@ -7003,7 +7131,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           note("  [resume] Reusing Brave Search configuration.");
         }
       } else {
-        nextWebSearchConfig = await configureWebSearch(null);
+        nextWebSearchConfig = await configureWebSearch(null, agent, webSearchSupportProbePath);
       }
       startRecordedStep("sandbox", { sandboxName, provider, model });
       selectedMessagingChannels = await setupMessagingChannels();
@@ -7210,6 +7338,7 @@ module.exports = {
   findDashboardForwardOwner,
   startGatewayForRecovery,
   runCaptureOpenshell,
+  agentSupportsWebSearch,
   setupInference,
   setupMessagingChannels,
   MESSAGING_CHANNELS,
