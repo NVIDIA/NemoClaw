@@ -214,7 +214,8 @@ SLACK_PRESET="$REPO/nemoclaw-blueprint/policies/presets/slack.yaml"
 if [ -f "$BASE_POLICY" ] && [ -f "$SLACK_PRESET" ] && ! grep -q "api.slack.com" "$BASE_POLICY"; then
   BASE_POLICY_BAK="$(mktemp)"
   cp "$BASE_POLICY" "$BASE_POLICY_BAK"
-  trap 'cp "$BASE_POLICY_BAK" "$BASE_POLICY" 2>/dev/null || true; rm -f "$BASE_POLICY_BAK"' EXIT
+  _previous_exit_trap=$(trap -p EXIT | sed "s/^trap -- '//;s/' EXIT$//")
+  trap ''"${_previous_exit_trap:+$_previous_exit_trap;}"' cp "$BASE_POLICY_BAK" "$BASE_POLICY" 2>/dev/null || true; rm -f "$BASE_POLICY_BAK"' EXIT
   info "Pre-merging Slack network policy into base sandbox policy..."
   cat >>"$BASE_POLICY" <<'SLACK_POLICY_EOF'
 

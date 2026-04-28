@@ -419,7 +419,20 @@ is_installer_managed_nemoclaw_shim() {
   return 1
 }
 
+# Source nvm so npm resolves to the same prefix that installed nemoclaw.
+# When running via `curl | bash`, nvm is not loaded and `command -v npm`
+# may find a system npm whose global prefix differs from the nvm-managed
+# one, leaving the nemoclaw binary behind.  See: #1959
+ensure_nvm_for_uninstall() {
+  local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [ -s "$nvm_dir/nvm.sh" ]; then
+    # shellcheck disable=SC1091
+    \. "$nvm_dir/nvm.sh"
+  fi
+}
+
 remove_nemoclaw_cli() {
+  ensure_nvm_for_uninstall
   if command -v npm >/dev/null 2>&1; then
     npm unlink -g nemoclaw >/dev/null 2>&1 || true
     if npm uninstall -g --loglevel=error nemoclaw >/dev/null 2>&1; then
@@ -437,6 +450,22 @@ remove_nemoclaw_cli() {
     remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
   elif [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
     warn "Leaving ${NEMOCLAW_SHIM_DIR}/nemoclaw in place because it is not an installer-managed shim."
+  fi
+
+  # Belt-and-suspenders: clean any leftover nemoclaw installs from nvm-managed
+  # node prefixes, even if the active PATH no longer points at them.
+  local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [ -d "$nvm_dir/versions/node" ]; then
+    local remaining mod_dir
+    while IFS= read -r -d '' remaining; do
+      rm -f "$remaining"
+      info "Removed leftover nemoclaw binary at $remaining"
+    done < <(find "$nvm_dir/versions/node" -path '*/bin/nemoclaw' -print0 2>/dev/null)
+
+    while IFS= read -r -d '' mod_dir; do
+      rm -rf "$mod_dir"
+      info "Removed leftover nemoclaw module at $mod_dir"
+    done < <(find "$nvm_dir/versions/node" -path '*/lib/node_modules/nemoclaw' -print0 2>/dev/null)
   fi
 
   remove_nemoclaw_alias_from_profile

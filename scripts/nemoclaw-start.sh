@@ -939,6 +939,16 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
+# Git TLS CA bundle fix (NemoClaw#2270).
+# OpenShell's L7 proxy does MITM TLS termination and re-signs with its own CA.
+# OpenShell injects SSL_CERT_FILE and CURL_CA_BUNDLE pointing at the CA bundle,
+# but git does not read those — it needs GIT_SSL_CAINFO.  Without it, git clone
+# fails with "server certificate verification failed".
+# Use SSL_CERT_FILE (set by OpenShell) as the canonical CA bundle path.
+if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
+  export GIT_SSL_CAINFO="$SSL_CERT_FILE"
+fi
+
 # HTTP library + NODE_USE_ENV_PROXY double-proxy fix (NemoClaw#2109).
 # Node.js 22 sets NODE_USE_ENV_PROXY=1 in the OpenShell base image, which
 # intercepts https.request() calls and handles proxying via CONNECT tunnel.
@@ -1470,6 +1480,10 @@ PROXYEOF
   # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
   if [ -f "$_WS_FIX_SCRIPT" ]; then
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
+  fi
+  # Git TLS CA bundle for connect sessions (NemoClaw#2270)
+  if [ -n "${GIT_SSL_CAINFO:-}" ]; then
+    printf 'export GIT_SSL_CAINFO=%q\n' "$GIT_SSL_CAINFO"
   fi
   # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
   echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
