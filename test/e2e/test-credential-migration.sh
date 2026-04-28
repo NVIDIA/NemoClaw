@@ -50,7 +50,6 @@ source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 PASS=0
 FAIL=0
-SKIP=0
 TOTAL=0
 
 pass() {
@@ -63,16 +62,12 @@ fail() {
   ((TOTAL++))
   printf '\033[31m  FAIL: %s\033[0m\n' "$1"
 }
-skip() {
-  ((SKIP++))
-  ((TOTAL++))
-  printf '\033[33m  SKIP: %s\033[0m\n' "$1"
-}
 section() {
   echo ""
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+indent() { awk '{print "    " $0}'; }
 
 # Resolve repo root the same way the other E2E scripts do.
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
@@ -188,7 +183,7 @@ section "Phase 2: Gateway provider registration"
 
 PROVIDERS_OUT=$(openshell -g nemoclaw provider list --names 2>&1 || true)
 info "Providers in nemoclaw gateway:"
-echo "$PROVIDERS_OUT" | sed 's/^/    /'
+printf '%s\n' "$PROVIDERS_OUT" | indent
 
 # The legacy NVIDIA_API_KEY should have been registered as one of the
 # inference providers (nvidia-prod, nvidia-nim, etc. — the exact name
@@ -220,7 +215,7 @@ section "Phase 3: nemoclaw credentials list"
 
 CREDS_LIST_OUT=$(nemoclaw credentials list 2>&1 || true)
 info "Output:"
-echo "$CREDS_LIST_OUT" | sed 's/^/    /'
+printf '%s\n' "$CREDS_LIST_OUT" | indent
 
 if echo "$CREDS_LIST_OUT" | grep -q "Providers registered with the OpenShell gateway"; then
   pass "credentials list surfaces gateway-registered providers"
@@ -278,10 +273,9 @@ rm -f "$VICTIM_FILE"
 # Summary
 # ══════════════════════════════════════════════════════════════════
 section "Summary"
-echo "  Total:    $TOTAL"
-echo "  Passed:   $PASS"
-echo "  Failed:   $FAIL"
-echo "  Skipped:  $SKIP"
+echo "  Total:   $TOTAL"
+echo "  Passed:  $PASS"
+echo "  Failed:  $FAIL"
 
 if [ "$FAIL" -gt 0 ]; then
   exit 1
