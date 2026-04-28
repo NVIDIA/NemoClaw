@@ -278,7 +278,7 @@ export async function ensureApiKey(): Promise<void> {
     }
 
     if (!key.startsWith("nvapi-")) {
-      console.error("  Invalid key. Must start with nvapi-");
+      console.error("  Invalid NVIDIA API key. Must start with nvapi-");
       continue;
     }
 

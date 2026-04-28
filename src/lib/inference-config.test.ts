@@ -21,7 +21,7 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toEqual([
       "nvidia/nemotron-3-super-120b-a12b",
       "moonshotai/kimi-k2.5",
-      "z-ai/glm5",
+      "z-ai/glm-5.1",
       "minimaxai/minimax-m2.5",
       "openai/gpt-oss-120b",
     ]);

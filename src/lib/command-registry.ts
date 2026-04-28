@@ -131,6 +131,13 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "sandbox",
   },
   {
+    usage: "nemoclaw <name> gateway-token",
+    description: "Print the OpenClaw gateway auth token to stdout",
+    flags: "[--quiet|-q]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
     usage: "nemoclaw <name> destroy",
     description: "Stop NIM + delete sandbox",
     flags: "(--yes to skip prompt)",
@@ -150,14 +157,14 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> policy-add",
     description: "Add a network or filesystem policy preset",
-    flags: "(--yes, --dry-run)",
+    flags: "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>)",
     group: "Policy Presets",
     scope: "sandbox",
   },
   {
     usage: "nemoclaw <name> policy-remove",
-    description: "Remove an applied policy preset",
-    flags: "(--yes, --dry-run)",
+    description: "Remove an applied policy preset (built-in or custom)",
+    flags: "(--yes, -y, --dry-run)",
     group: "Policy Presets",
     scope: "sandbox",
   },

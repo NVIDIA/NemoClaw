@@ -142,7 +142,7 @@ describe("config set nested URL SSRF enforcement", () => {
       expect(lookupSpy).not.toHaveBeenCalled();
       expect(execSpy).not.toHaveBeenCalled();
       expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Key validation failed"),
+        expect.stringContaining("does not currently exist"),
       );
     } finally {
       exitSpy.mockRestore();

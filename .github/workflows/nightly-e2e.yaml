@@ -511,6 +511,39 @@ jobs:
           path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
 
+  # ── Docker 26+ overlayfs nested-mount auto-fix (#2481) ──────
+  # TEMPORARY: validates the auto-fix in src/lib/cluster-image-patch.ts.
+  # Remove this job — and the matching notify-on-failure entry — in the
+  # same PR that deletes cluster-image-patch.ts when the OpenShell
+  # roadmap migration off k3s (NVIDIA/OpenShell#873) lands.
+  overlayfs-autofix-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run overlayfs auto-fix E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-overlayfs"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-overlayfs-autofix.sh
+
+      - name: Upload onboard logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: overlayfs-autofix-logs
+          path: |
+            /tmp/nemoclaw-e2e-install.log
+            /tmp/nemoclaw-e2e-onboard-positive.log
+            /tmp/nemoclaw-e2e-onboard-negative.log
+          if-no-files-found: ignore
+
   # ── GPU E2E (Ollama local inference) ──────────────────────────
   # Enable by setting repository variable GPU_E2E_ENABLED=true
   # (Settings → Secrets and variables → Actions → Variables)
@@ -581,6 +614,7 @@ jobs:
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         rebuild-hermes-e2e,
+        overlayfs-autofix-e2e,
         gpu-e2e,
       ]
     if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}

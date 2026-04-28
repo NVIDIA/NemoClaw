@@ -229,6 +229,50 @@ $ nemoclaw onboard
 Podman is not a tested runtime.
 If onboarding or sandbox lifecycle fails, switch to a tested runtime (Docker Desktop, Colima, or Docker Engine) and rerun onboarding.
 
+### Cluster fails with `overlayfs snapshotter cannot be enabled` on Docker 26+
+
+Docker Engine 26 and later default fresh installations to the [containerd image store](https://docs.docker.com/engine/storage/containerd/), which exposes its layers via the `overlayfs` snapshotter rather than the legacy `overlay2` graph driver.
+The k3s server inside the OpenShell cluster image needs to mount its own overlay filesystem on top, and the kernel rejects nesting two non-trivial overlay mounts.
+The cluster container then loops with:
+
+```text
+"overlayfs" snapshotter cannot be enabled for "/var/lib/rancher/k3s/agent/containerd",
+try using "fuse-overlayfs" or "native":
+failed to mount overlay: ... err: invalid argument
+```
+
+This is a Docker default-driver change, not a NemoClaw or OpenShell regression.
+The same hardware running Docker 25 or earlier — or any Docker version with the containerd image store disabled — uses the legacy `overlay2` driver and is unaffected.
+
+NemoClaw detects the Docker 26+ containerd-snapshotter overlayfs configuration during onboarding and transparently builds a small drop-in replacement for the cluster image on the local Docker engine.
+The patched image installs `fuse-overlayfs` and selects it as the k3s snapshotter, bypassing the kernel-level nested-overlay limitation.
+No host configuration changes, sudo, or Docker restart required.
+
+The auto-fix runs once per OpenShell version on the affected host.
+Subsequent onboarding runs reuse the cached patched image.
+Hosts without the conflict (`Driver: overlay2` in `docker info`, macOS Docker Desktop, or Linux installations that disable the containerd image store) see no change in behavior.
+
+Override knobs:
+
+- `NEMOCLAW_DISABLE_OVERLAY_FIX=1` — skip the auto-fix and run against the unmodified upstream cluster image.
+  Useful for diagnosis or when you have already applied the manual workaround below.
+- `NEMOCLAW_OVERLAY_SNAPSHOTTER=native` — build the patched image with k3s's `native` snapshotter instead of `fuse-overlayfs`.
+  The `native` snapshotter copies image layers instead of overlaying them, so it uses more disk but does not depend on FUSE.
+  Default is `fuse-overlayfs`.
+
+If you prefer to disable the new Docker storage driver instead of running the patched image, edit `/etc/docker/daemon.json`:
+
+```json
+{
+  "storage-driver": "overlay2",
+  "features": { "containerd-snapshotter": false }
+}
+```
+
+Then restart Docker (`sudo systemctl restart docker`) and re-run `nemoclaw onboard`.
+This restores the legacy `overlay2` driver host-wide, which kills any other running containers — prefer the auto-fix unless you need the change for unrelated reasons.
+Switching storage drivers also rebuilds the entire local image graph: previously-pulled images become unusable and Docker re-pulls them on first reference, so expect a cold cache and additional disk usage right after the restart.
+
 ### OpenShell version above maximum
 
 Each NemoClaw release validates against a range of tested OpenShell versions.
@@ -452,6 +496,24 @@ The status command detects the sandbox context and reports "active (inside sandb
 
 Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
+### Git clone fails with a certificate verification error
+
+In networks that inspect TLS, OpenShell injects a proxy CA bundle into the sandbox.
+Current NemoClaw exports that bundle as `GIT_SSL_CAINFO` during sandbox startup and persists it for `nemoclaw <name> connect` sessions, so Git can trust the proxy CA.
+It also forwards standard CA bundle variables for subprocesses, including `GIT_SSL_CAPATH`, `CURL_CA_BUNDLE`, and `REQUESTS_CA_BUNDLE`.
+
+If Git still reports `server certificate verification failed`, reconnect to the sandbox and check that the CA variables are present:
+
+```console
+$ env | grep -E 'SSL_CERT_FILE|GIT_SSL_CAINFO|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE'
+```
+
+If they are missing on an older sandbox, upgrade NemoClaw and run:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
 ### `openclaw update` hangs or times out inside the sandbox
 
 This is expected for the current NemoClaw deployment model.
@@ -538,6 +600,19 @@ $ nemoclaw <sandbox> channels remove <telegram|discord|slack>
 
 `channels add` stores credentials under `~/.nemoclaw/credentials.json` and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
+
+### `nemoclaw <sandbox> config set` refuses a key that does not currently exist
+
+This is intentional.
+The host-side `config set` does not maintain a copy of OpenClaw's config schema, so it cannot tell a typo'd key path apart from a schema-valid path that has not been written yet.
+To make typos visible without blocking documented first-time writes (such as `provider.compatible-endpoint.timeoutSeconds`), it asks before creating a brand-new key.
+
+In an interactive terminal, accept the prompt to proceed.
+
+In non-interactive mode (CI or `NEMOCLAW_NON_INTERACTIVE=1`), pass `--config-accept-new-path` or set `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1`.
+Modifying a key that already exists in the config never triggers this gate.
+
+Numeric path segments are also refused because `config set` only writes plain objects and would silently overwrite array elements; replace the array as a whole with `--value '[...]'` instead.
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
