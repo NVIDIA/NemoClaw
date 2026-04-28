@@ -44,7 +44,6 @@ const {
 } = require("./lib/gateway-token-command");
 const {
   getCredential,
-  deleteCredential,
   prompt: askPrompt,
 } = require("./lib/credentials");
 const registry = require("./lib/registry");
@@ -1246,11 +1245,12 @@ async function credentialsCommand(args: string[]): Promise<void> {
         return;
       }
     }
-    // Forget any stale value held in this process so the gateway is
-    // unambiguously the source of truth for the next run.
-    deleteCredential(key);
     // Pin to the NemoClaw gateway so we cannot accidentally delete a
-    // provider from a different active gateway.
+    // provider from a different active gateway. We deliberately do NOT
+    // touch process.env here — `key` is an OpenShell provider name, and
+    // calling deleteCredential on it would silently strip an unrelated
+    // env entry whenever a provider name happens to share the shape of
+    // a credential env variable.
     const recovery = await recoverNamedGatewayRuntime();
     if (!recovery.recovered) {
       console.error("  Could not reach the NemoClaw OpenShell gateway. Is it running?");

@@ -234,6 +234,28 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     expect(fs.existsSync(path.join(credsDir, "credentials.json"))).toBe(true);
   });
 
+  it("treats a blank/whitespace env entry as unset and stages the legacy value", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(credsDir, "credentials.json"),
+      JSON.stringify({ NVIDIA_API_KEY: "nvapi-from-disk" }),
+      { mode: 0o600 },
+    );
+
+    // A whitespace-only env entry — for example a CI step that exports
+    // an empty value — must not block staging the legacy file value, or
+    // rebuild/onboard preflight will fail with a credential the user
+    // demonstrably has on disk.
+    vi.stubEnv("NVIDIA_API_KEY", "   ");
+    const credentials = await importCredentialsModule(home);
+    const staged = credentials.stageLegacyCredentialsToEnv();
+
+    expect(staged).toEqual(["NVIDIA_API_KEY"]);
+    expect(process.env.NVIDIA_API_KEY).toBe("nvapi-from-disk");
+  });
+
   it("stages nothing from a corrupt legacy file and leaves it untouched", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credsDir = path.join(home, ".nemoclaw");

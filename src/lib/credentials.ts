@@ -291,10 +291,13 @@ export function stageLegacyCredentialsToEnv(): string[] {
     const normalized = normalizeCredentialValue(value);
     if (!normalized) continue;
     // Defer to env values that were already set (e.g. by the user) so the
-    // file cannot silently override an explicit override. Track only the
-    // keys we actually imported from the file — `staged.length > 0` is the
-    // signal callers use to decide it is safe to delete the legacy file.
-    if (!process.env[key]) {
+    // file cannot silently override an explicit override. Use getCredential
+    // for the existence check so a blank or whitespace-only env entry —
+    // which `getCredential` normalizes to null — counts as unset and the
+    // legacy value is staged. Track only the keys we actually imported
+    // from the file — `staged.length > 0` is the signal callers use to
+    // decide it is safe to delete the legacy file.
+    if (!getCredential(key)) {
       process.env[key] = normalized;
       staged.push(key);
     }
