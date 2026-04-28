@@ -883,13 +883,32 @@ const stagedLegacyValues: Map<string, string> = new Map<string, string>();
 // copy.
 const migratedLegacyKeys: Set<string> = new Set<string>();
 
-// Mirror the in-memory set into the persisted onboard session so that a
-// later `--resume` invocation, which can skip the upsert wrappers
-// entirely, still inherits the migration outcome from the previous run.
+// SHA-256 hex digest of `value`. Used to fingerprint migrated legacy
+// secrets in the persisted onboard session so a later `--resume` can
+// detect when the legacy file value was edited between runs (or another
+// session is on disk with stale entries) and refuse to inherit a stale
+// "migrated" mark.
+function legacyValueHash(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+// Mirror the in-memory `migratedLegacyKeys` set into the persisted onboard
+// session along with each entry's value hash. `--resume` invocations that
+// skip the upsert wrappers entirely use this to inherit migration state
+// from the previous attempt — but only when the staged value at restore
+// time still hashes to the same digest, so an edit to the legacy file or
+// an out-of-band gateway reset cannot satisfy the cleanup gate.
 function persistMigratedLegacyKeys(): void {
   try {
+    const hashes: Record<string, string> = {};
+    for (const key of migratedLegacyKeys) {
+      const stagedValue = stagedLegacyValues.get(key);
+      if (stagedValue !== undefined) {
+        hashes[key] = legacyValueHash(stagedValue);
+      }
+    }
     onboardSession.updateSession((current: Session) => {
-      current.migratedLegacyKeys = Array.from(migratedLegacyKeys).sort();
+      current.migratedLegacyValueHashes = hashes;
       return current;
     });
   } catch {
@@ -6588,24 +6607,36 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   // NOT removed here — the secure unlink runs only after onboarding
   // completes successfully and only when every staged value was actually
   // pushed to the gateway in this run.
-  //
-  // Reset stagedLegacyValues fresh from the file every run. For
-  // migratedLegacyKeys we seed from the persisted session: a previous
-  // attempt may have already upserted some keys before crashing, and a
-  // `--resume` invocation can skip the upsert wrappers entirely, so a
-  // blank-slate clear here would always conclude "no keys migrated in
-  // this run" and incorrectly keep the legacy file forever.
   stagedLegacyValues.clear();
   migratedLegacyKeys.clear();
-  const previousSession = onboardSession.loadSession();
-  for (const key of previousSession?.migratedLegacyKeys ?? []) {
-    if (typeof key === "string") migratedLegacyKeys.add(key);
-  }
+
   const stagedLegacyKeys = stageLegacyCredentialsToEnv();
   for (const key of stagedLegacyKeys) {
     const value = process.env[key];
     if (value) stagedLegacyValues.set(key, value);
   }
+
+  // Only carry forward migration state across processes when the user is
+  // explicitly continuing the same attempt via `--resume`. Even then,
+  // validate each persisted entry against the *current* staged value: if
+  // the legacy file was edited between runs (so the staged secret no
+  // longer matches what the gateway holds), the hash mismatch drops that
+  // key from migratedLegacyKeys and the cleanup gate forces a fresh
+  // upsert before the file can be removed. A fresh / non-resume run
+  // ignores prior persisted state entirely so a stale or unrelated
+  // session record cannot satisfy the cleanup gate.
+  if (resume) {
+    const previousSession = onboardSession.loadSession();
+    const persistedHashes = previousSession?.migratedLegacyValueHashes ?? {};
+    for (const [key, hash] of Object.entries(persistedHashes)) {
+      if (typeof key !== "string" || typeof hash !== "string") continue;
+      const currentValue = stagedLegacyValues.get(key);
+      if (currentValue === undefined) continue;
+      if (legacyValueHash(currentValue) !== hash) continue;
+      migratedLegacyKeys.add(key);
+    }
+  }
+
   if (stagedLegacyKeys.length > 0) {
     console.error(
       `  Staged ${String(stagedLegacyKeys.length)} legacy credential(s) for migration to the OpenShell gateway.`,
