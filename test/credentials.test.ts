@@ -234,6 +234,15 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     expect(fs.existsSync(path.join(credsDir, "credentials.json"))).toBe(true);
   });
 
+  it("staging is a no-op once the file is gone (idempotent across runs)", async () => {
+    // Subsequent CLI invocations after the legacy file has been
+    // unlinked must short-circuit without rebuilding env from disk.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.stageLegacyCredentialsToEnv()).toEqual([]);
+    expect(process.env.NVIDIA_API_KEY).toBeUndefined();
+  });
+
   it("treats a blank/whitespace env entry as unset and stages the legacy value", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credsDir = path.join(home, ".nemoclaw");

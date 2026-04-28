@@ -887,11 +887,19 @@ function upsertProvider(name: string, type: string, credentialEnv: string, baseU
     if (stagedValue !== undefined) {
       // openshell receives `--credential <ENV>` and reads the value from the
       // `env` block passed here, falling back to the inherited process.env.
-      // Mark as migrated only when the value the gateway actually got is
-      // the same value we read from the legacy file.
       const upsertedValue = env[credentialEnv] ?? process.env[credentialEnv];
       if (upsertedValue === stagedValue) {
+        // The gateway received the staged legacy value verbatim — count
+        // this key as migrated.
         migratedLegacyKeys.add(credentialEnv);
+      } else {
+        // A later upsert under the same env-key wrote a different value
+        // (e.g. a retry-loop after validation failure replaced the legacy
+        // key with a freshly entered one, or a placeholder like "dummy"
+        // for vllm-local). The gateway no longer holds the staged legacy
+        // value under this env-key, so withdraw the migration mark — the
+        // cleanup gate must keep the legacy file intact.
+        migratedLegacyKeys.delete(credentialEnv);
       }
     }
   }
@@ -920,11 +928,17 @@ function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
   // Mark migrated only when the registered token equals the staged legacy
   // value — a token rotated since staging (or a fresh prompt) is not a
   // legacy migration even if it happens to use the same env-key name.
+  // Mirror upsertProvider's withdrawal logic so a later messaging upsert
+  // that replaces the legacy value with something else cannot leave the
+  // mark stuck on.
   for (const def of tokenDefs) {
     if (!def.token || !def.envKey) continue;
     const stagedValue = stagedLegacyValues.get(def.envKey);
-    if (stagedValue !== undefined && def.token === stagedValue) {
+    if (stagedValue === undefined) continue;
+    if (def.token === stagedValue) {
       migratedLegacyKeys.add(def.envKey);
+    } else {
+      migratedLegacyKeys.delete(def.envKey);
     }
   }
   return upserted;
