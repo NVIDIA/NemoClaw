@@ -67,15 +67,16 @@ Run `gh auth login` if you want a persistent backing store (whichever one applie
 ## Migration From Earlier Releases
 
 Earlier NemoClaw releases stored credentials as plaintext JSON in `~/.nemoclaw/credentials.json` with mode `0600`.
-On first run after upgrading, NemoClaw automatically:
+On first `nemoclaw onboard` after upgrading, NemoClaw automatically:
 
 1. Reads the legacy file.
-2. Stages each value into `process.env` for the rest of the run.
+2. Stages allowlisted credential values into `process.env` for the rest of the run.
 3. Re-registers each value with the OpenShell gateway through the normal onboarding path.
-4. Securely overwrites and deletes `~/.nemoclaw/credentials.json`.
+4. Securely overwrites and deletes `~/.nemoclaw/credentials.json` only after every staged value has been verified as migrated to the gateway.
 
 You will see a one-line stderr notice the first time this happens.
-The migration runs at the start of `nemoclaw onboard` and on any rebuild path that needs to look up a credential, so users on either flow are covered without manual intervention.
+Credential lookup paths such as rebuild also stage allowlisted legacy values so interrupted upgrades can keep working, but those staging-only paths do not delete the plaintext file because they cannot prove every legacy value was registered with the gateway.
+If `~/.nemoclaw/credentials.json` remains after a rebuild or other credential lookup, run `nemoclaw onboard` to complete the verified gateway migration and cleanup.
 
 ## Rotate or Remove a Stored Credential
 

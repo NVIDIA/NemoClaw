@@ -117,6 +117,21 @@ describe("resolveProviderCredential — canonical credential resolution (#2306)"
     expect(result).toBe("from-env");
   });
 
+  it("stages legacy credentials through the resolver without deleting the legacy file", async () => {
+    const tmpDir = createFixtureHome("NVIDIA_API_KEY", "nvapi-staged-only");
+    const legacyFile = path.join(tmpDir, ".nemoclaw", "credentials.json");
+    delete process.env["NVIDIA_API_KEY"];
+
+    const credentials = await importCredentialsModule(tmpDir);
+    const result = credentials.resolveProviderCredential("NVIDIA_API_KEY");
+
+    expect(result).toBe("nvapi-staged-only");
+    expect(process.env["NVIDIA_API_KEY"]).toBe("nvapi-staged-only");
+    // Generic lookup cannot prove every legacy value reached the gateway.
+    // Only onboard's verified migration gate may remove this plaintext file.
+    expect(fs.existsSync(legacyFile)).toBe(true);
+  });
+
   it("returns null when credential exists nowhere", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2306-missing-"));
     tmpFixtures.push(tmpDir);
