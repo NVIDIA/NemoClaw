@@ -52,8 +52,9 @@ jobs:
 
       - name: Reject banned files in PR diff
         run: |
-          git fetch --no-tags origin "${{ github.base_ref }}" --depth=1
-          node scripts/check-banned-files.mjs "origin/${{ github.base_ref }}" HEAD
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          git fetch --no-tags origin "${BASE_SHA}"
+          node scripts/check-banned-files.mjs "${BASE_SHA}" HEAD
 
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
