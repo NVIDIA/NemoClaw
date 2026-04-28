@@ -171,7 +171,10 @@ function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
 }
 
 function cleanupGatewayAfterLastSandbox() {
-  runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], { ignoreError: true });
+  runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], {
+    ignoreError: true,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
   runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], { ignoreError: true });
   run(
     `docker volume ls -q --filter "name=openshell-cluster-${NEMOCLAW_GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${NEMOCLAW_GATEWAY_NAME}" | xargs docker volume rm || true`,
@@ -2435,9 +2438,13 @@ function cleanupSandboxServices(
     // PID directory may not exist — ignore.
   }
 
-  // Delete messaging providers created during onboard.
+  // Delete messaging providers created during onboard. Suppress stderr so
+  // "! Provider not found" noise doesn't appear when messaging was never configured.
   for (const suffix of ["telegram-bridge", "discord-bridge", "slack-bridge"]) {
-    runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], { ignoreError: true });
+    runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
+      ignoreError: true,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
   }
 }
 
