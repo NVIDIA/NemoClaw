@@ -927,7 +927,11 @@ function upsertProvider(name: string, type: string, credentialEnv: string, baseU
     if (stagedValue !== undefined) {
       // openshell receives `--credential <ENV>` and reads the value from the
       // `env` block passed here, falling back to the inherited process.env.
-      const upsertedValue = env[credentialEnv] ?? process.env[credentialEnv];
+      // Use getCredential() for the env-fallback branch (per the
+      // no-direct-credential-env eslint rule from PR #2306) — it mirrors
+      // openshell's resolution order while the staging contract has
+      // already populated the same value into process.env.
+      const upsertedValue = env[credentialEnv] ?? getCredential(credentialEnv);
       if (upsertedValue === stagedValue) {
         // The gateway received the staged legacy value verbatim — count
         // this key as migrated.
