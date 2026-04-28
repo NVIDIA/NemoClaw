@@ -37,10 +37,7 @@ const {
   ensureOllamaAuthProxy,
   isNonInteractive,
 } = require("./lib/onboard");
-const {
-  parseGatewayTokenArgs,
-  runGatewayTokenCommand,
-} = require("./lib/gateway-token-command");
+const { parseGatewayTokenArgs, runGatewayTokenCommand } = require("./lib/gateway-token-command");
 const {
   getCredential,
   deleteCredential,
@@ -1865,7 +1862,9 @@ async function sandboxPolicyAdd(sandboxName: string, args: string[] = []): Promi
     }
     const files = fs
       .readdirSync(absDir, { withFileTypes: true })
-      .filter((ent: { name: string; isFile(): boolean }) => ent.isFile() && /\.ya?ml$/i.test(ent.name))
+      .filter(
+        (ent: { name: string; isFile(): boolean }) => ent.isFile() && /\.ya?ml$/i.test(ent.name),
+      )
       .map((ent: { name: string }) => path.join(absDir, ent.name))
       .sort();
     if (files.length === 0) {
@@ -2192,6 +2191,56 @@ async function sandboxChannelsStart(sandboxName: string, args: string[] = []): P
   await sandboxChannelsSetEnabled(sandboxName, args, false);
 }
 
+function printSkillInstallUsage(): void {
+  console.log("");
+  console.log("  Usage: nemoclaw <sandbox> skill install <path>");
+  console.log("");
+  console.log("  Deploy a skill directory to a running sandbox.");
+  console.log(
+    "  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
+  );
+  console.log(
+    "  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
+  );
+  console.log("");
+}
+
+function looksLikeOpenClawPlugin(candidatePath: string): boolean {
+  const dir =
+    fs.existsSync(candidatePath) && fs.statSync(candidatePath).isDirectory()
+      ? candidatePath
+      : path.dirname(candidatePath);
+  if (!fs.existsSync(dir)) return false;
+  if (fs.existsSync(path.join(dir, "openclaw.plugin.json"))) return true;
+
+  const packageJsonPath = path.join(dir, "package.json");
+  if (!fs.existsSync(packageJsonPath)) return false;
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    const openclawBlock = packageJson?.openclaw;
+    return Boolean(
+      packageJson?.["openclaw.plugin"] === true ||
+      openclawBlock === true ||
+      (typeof openclawBlock === "object" &&
+        openclawBlock !== null &&
+        (openclawBlock.plugin === true ||
+          typeof openclawBlock.entry === "string" ||
+          typeof openclawBlock.main === "string" ||
+          (Array.isArray(openclawBlock.extensions) && openclawBlock.extensions.length > 0))),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function printPluginInstallHint(): void {
+  console.error("  This looks like an OpenClaw plugin, not a SKILL.md agent skill.");
+  console.error("  `skill install` only accepts skill directories or direct SKILL.md paths.");
+  console.error(
+    "  To use an OpenClaw plugin today, bake it into a custom sandbox image with `nemoclaw onboard --from <Dockerfile>`.",
+  );
+}
+
 /**
  * Install or update a local skill directory into a live sandbox and perform
  * any agent-specific post-install refresh needed for the new content to load.
@@ -2199,17 +2248,7 @@ async function sandboxChannelsStart(sandboxName: string, args: string[] = []): P
 async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Promise<void> {
   const sub = args[0];
   if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
-    console.log("");
-    console.log("  Usage: nemoclaw <sandbox> skill install <path>");
-    console.log("");
-    console.log("  Deploy a skill directory to a running sandbox.");
-    console.log(
-      "  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
-    );
-    console.log(
-      "  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
-    );
-    console.log("");
+    printSkillInstallUsage();
     return;
   }
 
@@ -2221,6 +2260,10 @@ async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Pr
 
   const skillPath = args[1];
   const extraArgs = args.slice(2);
+  if (skillPath === "--help" || skillPath === "-h" || skillPath === "help") {
+    printSkillInstallUsage();
+    return;
+  }
   if (extraArgs.length > 0) {
     console.error(`  Unknown argument(s) for skill install: ${extraArgs.join(", ")}`);
     console.error("  Usage: nemoclaw <sandbox> skill install <path>");
@@ -2246,12 +2289,18 @@ async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Pr
   } else {
     console.error(`  No SKILL.md found at '${resolvedPath}'.`);
     console.error("  <path> must be a skill directory or a direct path to SKILL.md.");
+    if (looksLikeOpenClawPlugin(resolvedPath)) {
+      printPluginInstallHint();
+    }
     process.exit(1);
   }
 
   if (!fs.existsSync(skillMdPath)) {
     console.error(`  No SKILL.md found in '${skillDir}'.`);
     console.error("  The skill directory must contain a SKILL.md file.");
+    if (looksLikeOpenClawPlugin(skillDir)) {
+      printPluginInstallHint();
+    }
     process.exit(1);
   }
 
