@@ -11,6 +11,7 @@ export interface OnboardCommandOptions {
   agent: string | null;
   dangerouslySkipPermissions: boolean;
   controlUiPort: number | null;
+  sandboxName: string | null;
 }
 
 export interface RunOnboardCommandDeps {
@@ -39,7 +40,7 @@ const ONBOARD_BASE_ARGS = [
 
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   return [
-    `  Usage: nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--control-ui-port <N>] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
+    `  Usage: nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox-name>] [--agent <name>] [--control-ui-port <N>] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
     "",
   ];
 }
@@ -110,6 +111,24 @@ export function parseOnboardArgs(
     parsedArgs.splice(portIdx, 2);
   }
 
+  // --name <sandbox-name> — surface NEMOCLAW_SANDBOX_NAME via a discoverable
+  // CLI flag. Detailed validation (lowercase, leading-letter, hyphen rules,
+  // reserved-name list) still happens later in promptValidatedSandboxName;
+  // here we only reject the obviously-broken cases so the flag fails fast.
+  // See #2543.
+  let sandboxName: string | null = null;
+  const nameIdx = parsedArgs.indexOf("--name");
+  if (nameIdx !== -1) {
+    const nameValue = parsedArgs[nameIdx + 1];
+    if (typeof nameValue !== "string" || nameValue.startsWith("--") || nameValue.length === 0) {
+      error("  --name requires a sandbox name");
+      printOnboardUsage(error, noticeAcceptFlag);
+      exit(1);
+    }
+    sandboxName = nameValue;
+    parsedArgs.splice(nameIdx, 2);
+  }
+
   const allowedArgs = new Set([...ONBOARD_BASE_ARGS, noticeAcceptFlag]);
   const unknownArgs = parsedArgs.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
@@ -137,6 +156,7 @@ export function parseOnboardArgs(
     agent,
     dangerouslySkipPermissions: parsedArgs.includes("--dangerously-skip-permissions"),
     controlUiPort,
+    sandboxName,
   };
 }
 
@@ -148,6 +168,15 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
   }
 
   const options = parseOnboardArgs(deps.args, deps.noticeAcceptFlag, deps.noticeAcceptEnv, deps);
+  // --name <foo> piggybacks on the existing NEMOCLAW_SANDBOX_NAME env-var
+  // path that promptValidatedSandboxName already honors in non-interactive
+  // mode and uses as the prompt default in interactive mode. Setting the
+  // env var here keeps the wizard's validation/reserved-name checks intact
+  // while making the name discoverable from `nemoclaw onboard --help`.
+  // See #2543.
+  if (options.sandboxName) {
+    deps.env.NEMOCLAW_SANDBOX_NAME = options.sandboxName;
+  }
   await deps.runOnboard(options);
 }
 

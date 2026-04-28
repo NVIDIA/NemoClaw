@@ -40,6 +40,7 @@ describe("onboard command", () => {
       agent: null,
       dangerouslySkipPermissions: false,
       controlUiPort: null,
+      sandboxName: null,
     });
   });
 
@@ -65,6 +66,7 @@ describe("onboard command", () => {
       agent: null,
       dangerouslySkipPermissions: false,
       controlUiPort: null,
+      sandboxName: null,
     });
   });
 
@@ -89,6 +91,7 @@ describe("onboard command", () => {
       agent: null,
       dangerouslySkipPermissions: false,
       controlUiPort: null,
+      sandboxName: null,
     });
   });
 
@@ -134,6 +137,7 @@ describe("onboard command", () => {
       agent: null,
       dangerouslySkipPermissions: false,
       controlUiPort: null,
+      sandboxName: null,
     });
   });
 
@@ -159,6 +163,7 @@ describe("onboard command", () => {
       agent: null,
       dangerouslySkipPermissions: false,
       controlUiPort: null,
+      sandboxName: null,
     });
   });
 
@@ -235,6 +240,7 @@ describe("onboard command", () => {
       agent: "openclaw",
       dangerouslySkipPermissions: true,
       controlUiPort: null,
+      sandboxName: null,
     });
   });
 
@@ -369,6 +375,7 @@ describe("onboard command", () => {
       agent: null,
       dangerouslySkipPermissions: false,
       controlUiPort: null,
+      sandboxName: null,
     });
   });
 
@@ -390,4 +397,91 @@ describe("onboard command", () => {
     expect(lines.join("\n")).toContain("Use `nemoclaw onboard` instead");
     expect(runOnboard).toHaveBeenCalledTimes(1);
   });
+  it("parses --name <sandbox-name>", () => {
+    const result = parseOnboardArgs(
+      ["--non-interactive", "--name", "deepobs", "--from", "/path/to/Dockerfile"],
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.sandboxName).toBe("deepobs");
+    expect(result.fromDockerfile).toBe("/path/to/Dockerfile");
+    expect(result.nonInteractive).toBe(true);
+  });
+
+  it("rejects --name with no following value", () => {
+    const errorMessages: string[] = [];
+    expect(() =>
+      parseOnboardArgs(
+        ["--name"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: (msg) => {
+            errorMessages.push(String(msg ?? ""));
+          },
+          exit: exitWithCode,
+        },
+      ),
+    ).toThrow();
+    expect(errorMessages.join("\n")).toMatch(/--name requires a sandbox name/);
+  });
+
+  it("rejects --name <flag> (treats next flag as missing value)", () => {
+    const errorMessages: string[] = [];
+    expect(() =>
+      parseOnboardArgs(
+        ["--name", "--from", "/path/to/Dockerfile"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: (msg) => {
+            errorMessages.push(String(msg ?? ""));
+          },
+          exit: exitWithCode,
+        },
+      ),
+    ).toThrow();
+    expect(errorMessages.join("\n")).toMatch(/--name requires a sandbox name/);
+  });
+
+  it("propagates --name to NEMOCLAW_SANDBOX_NAME so promptValidatedSandboxName picks it up", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const runOnboard = vi.fn(async () => {});
+    await runOnboardCommand({
+      args: ["--non-interactive", "--name", "my-deepobs"],
+      noticeAcceptFlag: "--yes-i-accept-third-party-software",
+      noticeAcceptEnv: "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      env,
+      runOnboard,
+      error: () => {},
+      exit: exitWithCode,
+    });
+    expect(env.NEMOCLAW_SANDBOX_NAME).toBe("my-deepobs");
+    expect(runOnboard).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "my-deepobs" }),
+    );
+  });
+
+  it("does not touch NEMOCLAW_SANDBOX_NAME when --name is absent", async () => {
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_SANDBOX_NAME: "existing-default" };
+    const runOnboard = vi.fn(async () => {});
+    await runOnboardCommand({
+      args: ["--non-interactive"],
+      noticeAcceptFlag: "--yes-i-accept-third-party-software",
+      noticeAcceptEnv: "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      env,
+      runOnboard,
+      error: () => {},
+      exit: exitWithCode,
+    });
+    expect(env.NEMOCLAW_SANDBOX_NAME).toBe("existing-default");
+  });
+
 });
