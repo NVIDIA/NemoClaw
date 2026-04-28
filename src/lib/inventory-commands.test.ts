@@ -344,7 +344,7 @@ describe("inventory commands", () => {
           },
           {
             name: "beta",
-            model: "z-ai/glm5",
+            model: "z-ai/glm-5.1",
           },
         ],
         defaultSandbox: "alpha",
@@ -361,7 +361,7 @@ describe("inventory commands", () => {
     expect(lines).toContain("      (onboarded: nvidia/nemotron-3-super-120b-a12b)");
     // Non-default sandbox keeps its stored model — the gateway only applies
     // to whichever sandbox is currently connected.
-    expect(lines).toContain("    beta (z-ai/glm5)");
+    expect(lines).toContain("    beta (z-ai/glm-5.1)");
     expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 

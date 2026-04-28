@@ -10,6 +10,7 @@ export interface OnboardCommandOptions {
   acceptThirdPartySoftware: boolean;
   agent: string | null;
   dangerouslySkipPermissions: boolean;
+  controlUiPort: number | null;
 }
 
 export interface RunOnboardCommandDeps {
@@ -38,7 +39,7 @@ const ONBOARD_BASE_ARGS = [
 
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   return [
-    `  Usage: nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
+    `  Usage: nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--control-ui-port <N>] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
     "",
   ];
 }
@@ -90,6 +91,25 @@ export function parseOnboardArgs(
     parsedArgs.splice(agentIdx, 2);
   }
 
+  let controlUiPort: number | null = null;
+  const portIdx = parsedArgs.indexOf("--control-ui-port");
+  if (portIdx !== -1) {
+    const portValue = parsedArgs[portIdx + 1];
+    if (typeof portValue !== "string" || portValue.startsWith("--")) {
+      error("  --control-ui-port requires a port number");
+      printOnboardUsage(error, noticeAcceptFlag);
+      exit(1);
+    }
+    const parsed = Number(portValue);
+    if (!Number.isInteger(parsed) || parsed < 1024 || parsed > 65535) {
+      error(`  --control-ui-port: ${portValue} is not a valid port (1024-65535)`);
+      printOnboardUsage(error, noticeAcceptFlag);
+      exit(1);
+    }
+    controlUiPort = parsed;
+    parsedArgs.splice(portIdx, 2);
+  }
+
   const allowedArgs = new Set([...ONBOARD_BASE_ARGS, noticeAcceptFlag]);
   const unknownArgs = parsedArgs.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
@@ -116,6 +136,7 @@ export function parseOnboardArgs(
       parsedArgs.includes(noticeAcceptFlag) || String(deps.env[noticeAcceptEnv] || "") === "1",
     agent,
     dangerouslySkipPermissions: parsedArgs.includes("--dangerously-skip-permissions"),
+    controlUiPort,
   };
 }
 

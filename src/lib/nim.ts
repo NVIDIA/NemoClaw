@@ -348,3 +348,14 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
     return { running: false, container: name };
   }
 }
+
+// Cloud-only providers leave nimContainer unset; printing "NIM: not running"
+// for those sandboxes implies a fault when NIM is simply not part of the
+// deployment. Still surface the line if a container is unexpectedly alive,
+// so an orphan NIM is not silently hidden.
+export function shouldShowNimLine(
+  nimContainer: string | null | undefined,
+  nimRunning: boolean,
+): boolean {
+  return Boolean(nimContainer) || nimRunning;
+}
