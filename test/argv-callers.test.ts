@@ -49,7 +49,8 @@ describe("argv callsites", () => {
           return '{"ServerVersion":"27.0.0","OperatingSystem":"Docker Engine"}';
         if (key === "systemctl is-active docker") return "active\n";
         if (key === "systemctl is-enabled docker") return "enabled\n";
-        return options?.ignoreError ? "" : "";
+        if (options?.ignoreError) return "";
+        throw new Error(`unexpected command in test stub: ${key}`);
       },
     });
 
