@@ -48,9 +48,9 @@ function requireCall(calls: SpawnCall[], index: number): SpawnCall {
 describe("runner helpers", () => {
   it("does not let child commands consume installer stdin", () => {
     const script = `
-      const { run } = require(${JSON.stringify(runnerPath)});
+      const { runShell } = require(${JSON.stringify(runnerPath)});
       process.stdin.setEncoding("utf8");
-      run("cat >/dev/null || true");
+      runShell("cat >/dev/null || true");
       process.stdin.once("data", (chunk) => {
         process.stdout.write(chunk);
       });
@@ -75,8 +75,8 @@ describe("runner helpers", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { run, runInteractive } = require(runnerPath);
-      run("echo noninteractive");
-      runInteractive("echo interactive");
+      run(["echo", "noninteractive"]);
+      runInteractive(["echo", "interactive"]);
     } finally {
       childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
@@ -177,7 +177,7 @@ describe("runner env merging", () => {
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
       process.env.PATH = "/usr/local/bin:/usr/bin";
-      run("echo test", {
+      run(["echo", "test"], {
         env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" },
       });
     } finally {
@@ -504,7 +504,7 @@ describe("regression guards", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
-      expect(() => run("echo fail")).toThrow("exit:1");
+      expect(() => run(["echo", "fail"])).toThrow("exit:1");
       expect(stdoutSpy).toHaveBeenCalledWith("token ghp_********************\n");
       expect(stderrSpy).toHaveBeenCalledWith('export SERVICE_KEY="supe*****************"\n');
       expect(errorSpy).toHaveBeenCalledWith("  Command failed (exit 1): echo fail");
@@ -534,7 +534,7 @@ describe("regression guards", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { runInteractive } = require(runnerPath);
-      runInteractive("echo interactive");
+      runInteractive(["echo", "interactive"]);
       const firstCall = requireCall(calls, 0);
       expect(firstCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
       expect(stdoutSpy).toHaveBeenCalledWith("visit https://****:****@example.com/?token=****\n");
@@ -834,10 +834,10 @@ describe("regression guards", () => {
         "utf-8",
       );
       expect(src).not.toContain("--exclude src");
-      expect(src).toContain('"${rootDir}/"');
-      expect(src).toContain("--exclude dist");
+      expect(src).toContain("`${rootDir}/`");
+      expect(src).toMatch(/"--exclude",\s*"dist"/);
       expect(src).toContain('const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp")');
-      expect(src).toContain("--provider ${shellQuote(brevProvider)}");
+      expect(src).toContain('"--provider", brevProvider');
     });
 
     it("deploy supports test-friendly non-interactive skip flags", () => {

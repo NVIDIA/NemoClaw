@@ -26,7 +26,7 @@ const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 
  *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
-const { ROOT, SCRIPTS, redact, run, runCapture, runFile, shellQuote, validateName } = runner;
+const { ROOT, SCRIPTS, redact, run, runShell, runCapture, runFile, shellQuote, validateName } = runner;
 const errnoUtils: typeof import("./errno") = require("./errno");
 const { isErrnoException } = errnoUtils;
 
@@ -233,7 +233,7 @@ const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
 function verifyGatewayContainerRunning() {
   const containerName = `openshell-cluster-${GATEWAY_NAME}`;
   const result = run(
-    `docker inspect --type container --format '{{.State.Running}}' ${containerName}`,
+    ["docker", "inspect", "--type", "container", "--format", "{{.State.Running}}", containerName],
     { ignoreError: true, suppressOutput: true },
   );
   if (result.status === 0 && String(result.stdout || "").trim() === "true") {
@@ -1912,11 +1912,7 @@ function destroyGateway() {
   }
   // openshell gateway destroy doesn't remove Docker volumes, which leaves
   // corrupted cluster state that breaks the next gateway start. Clean them up.
-  // Shell required: pipe (|), && chaining, || fallback.
-  run(
-    `docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm || true`,
-    { ignoreError: true },
-  );
+  removeGatewayClusterVolumes();
 }
 
 function getGatewayClusterContainerState(): string {
@@ -1964,6 +1960,24 @@ function getGatewayClusterContainerName(): string {
 
 function buildGatewayClusterExecArgv(script: string): string[] {
   return ["docker", "exec", getGatewayClusterContainerName(), "sh", "-lc", script];
+}
+
+function getGatewayClusterVolumeNames(): string[] {
+  return runCapture(["docker", "volume", "ls", "-q", "--filter", `name=${getGatewayClusterContainerName()}`], {
+    ignoreError: true,
+  })
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function removeGatewayClusterVolumes(opts: { suppressOutput?: boolean } = {}): void {
+  const names = getGatewayClusterVolumeNames();
+  if (names.length === 0) return;
+  run(["docker", "volume", "rm", ...names], {
+    ignoreError: true,
+    ...(opts.suppressOutput ? { suppressOutput: true } : {}),
+  });
 }
 
 function hostCommandExists(commandName: string): boolean {
@@ -2556,10 +2570,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
         suppressOutput: true,
       });
       if (postInspectResult.status !== 0) {
-        run(
-          `docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm 2>/dev/null || true`,
-          { ignoreError: true, suppressOutput: true },
-        );
+        removeGatewayClusterVolumes({ suppressOutput: true });
         registry.clearAll();
         console.log("  ✓ Orphaned gateway container removed");
       } else {
@@ -2597,7 +2608,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
           console.log(
             `  Cleaning up orphaned SSH port-forward on port ${port} (PID ${portCheck.pid})...`,
           );
-          run(`kill ${portCheck.pid} 2>/dev/null || true`, { ignoreError: true });
+          run(["kill", String(portCheck.pid)], { ignoreError: true });
           sleep(1);
           portCheck = await checkPortAvailable(port);
           if (portCheck.ok) {
@@ -4621,7 +4632,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           // because WSL2 relays IPv4-only sockets to the Windows host.
           // Shell required: backgrounding (&), env var prefix, output redirection.
           const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
-          run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
           sleep(2);
           if (!isWsl()) printOllamaExposureWarning();
         }
@@ -4702,11 +4713,11 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           run(["brew", "install", "ollama"], { ignoreError: true });
         } else {
           console.log("  Installing Ollama via official installer...");
-          run("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
+          runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
         }
         console.log("  Starting Ollama...");
         // Shell required: backgrounding (&), env var prefix, output redirection.
-        run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+        runShell(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
           ignoreError: true,
         });
         sleep(2);

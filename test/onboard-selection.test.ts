@@ -3308,6 +3308,9 @@ runner.runCapture = (command) => {
 runner.run = (command, opts) => {
   runCommands.push(typeof command === "string" ? command : command.join(" "));
 };
+runner.runShell = (command, opts) => {
+  runCommands.push(command);
+};
 registry.updateSandbox = (_name, update) => updates.push(update);
 
 // Force platform to linux for this test
