@@ -279,11 +279,39 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
         const stat = lstatSync(fullPath);
         if (stat.isSymbolicLink()) {
           const linkTarget = readlinkSync(fullPath);
-          const resolvedTarget = path.resolve(path.dirname(fullPath), linkTarget);
-          const inAnyAllowedRoot = allowedRoots.some((root) => isWithinRoot(resolvedTarget, root));
+
+          // Resolve relative to the symlink's containing directory (standard).
+          const resolvedRelative = path.resolve(path.dirname(fullPath), linkTarget);
+
+          // For absolute symlinks that point into the canonical sandbox data
+          // directory (/sandbox/.openclaw-data/** or /sandbox/.hermes-data/**),
+          // also check whether the target falls within the extraction root when
+          // the leading /sandbox/ prefix is mapped onto the archive root. This
+          // mirrors how the symlink resolves once the backup is restored inside
+          // the sandbox container (where /sandbox/.openclaw-data/* exists).
+          //
+          // Only /sandbox/ prefixed targets receive this treatment so that
+          // symlinks pointing to arbitrary absolute paths (e.g. /etc/passwd)
+          // are still rejected. Fixes #2317.
+          const SANDBOX_DATA_PREFIXES = ["/sandbox/.openclaw-data/", "/sandbox/.hermes-data/"];
+          // Normalize the target first to collapse any .. traversal segments
+          // (e.g. /sandbox/.openclaw-data/../../etc/passwd → /etc/passwd).
+          // Only then check the prefix — this prevents a traversal bypass
+          // where a crafted target starts with an allowed prefix but escapes it.
+          const normalizedTarget = path.posix.normalize(linkTarget);
+          const resolvedInArchive =
+            path.isAbsolute(normalizedTarget) &&
+            SANDBOX_DATA_PREFIXES.some((p) => normalizedTarget.startsWith(p))
+              ? path.resolve(dirPath, normalizedTarget.replace(/^\//, ""))
+              : null;
+
+          const inAnyAllowedRoot =
+            allowedRoots.some((root) => isWithinRoot(resolvedRelative, root)) ||
+            (resolvedInArchive !== null && isWithinRoot(resolvedInArchive, dirPath));
+
           if (!inAnyAllowedRoot) {
             violations.push(
-              `symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedTarget})`,
+              `symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedRelative})`,
             );
           }
         } else if (stat.isDirectory()) {
