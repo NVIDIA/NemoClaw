@@ -1330,9 +1330,12 @@ function verifyWebSearchInsideSandbox(
         console.warn("  ⚠ Could not verify web search config inside sandbox (hermes dump failed).");
         return;
       }
-      // A working web backend shows as "web.backend: <name>" in config_overrides
-      // or as "web" in the active toolsets section.
-      const hasWebBackend = /web\.backend:\s*\S+/.test(dump) || /\bweb\b.*\bsearch\b/i.test(dump);
+      // A working web backend shows as an explicit config override or active-toolset entry.
+      // Avoid broad /web.*search/ matching so warning text never looks like success.
+      const hasWebBackend =
+        /^\s*web\.backend:\s*\S+/m.test(dump) ||
+        /^\s*active toolsets:\s*.*\bweb\b/im.test(dump) ||
+        /^\s*toolsets:\s*.*\bweb\b/im.test(dump);
       if (!hasWebBackend) {
         console.warn("  ⚠ Web search was configured but Hermes does not report an active web backend.");
         console.warn("    The agent may not have accepted the web search configuration.");
@@ -1340,7 +1343,7 @@ function verifyWebSearchInsideSandbox(
       } else {
         console.log("  ✓ Web search is active inside sandbox");
       }
-    } else {
+    } else if (agentName === "openclaw") {
       // OpenClaw: verify tools.web.search block exists in the baked config.
       const configCheck = runCaptureOpenshell(
         ["sandbox", "exec", sandboxName, "cat", "/sandbox/.openclaw/openclaw.json"],
@@ -1360,6 +1363,8 @@ function verifyWebSearchInsideSandbox(
       } catch {
         console.warn("  ⚠ Could not parse openclaw.json to verify web search config.");
       }
+    } else {
+      console.warn(`  ⚠ Web search verification is not implemented for agent '${agentName}'.`);
     }
   } catch {
     // Best-effort — don't let probe failures derail onboarding.
