@@ -283,7 +283,7 @@ info "CLI built"
 
 info "Building TypeScript plugin..."
 cd "$NEMOCLAW_CLONE_DIR/nemoclaw"
-npm install 2>&1 | tail -3
+npm install --ignore-scripts 2>&1 | tail -3
 npm run build 2>&1 | tail -3
 cd "$NEMOCLAW_CLONE_DIR"
 info "Plugin built"
