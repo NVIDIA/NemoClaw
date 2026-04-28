@@ -72,7 +72,7 @@ Channel entries in `/sandbox/.openclaw/openclaw.json` are fixed at image build t
 If you add or change `TELEGRAM_BOT_TOKEN` (or toggle channels) after a sandbox already exists, you typically need to run `nemoclaw onboard` again so the image and provider attachments are rebuilt with the new settings.
 
 NemoClaw stores a SHA-256 hash of each messaging token in the sandbox registry at creation time.
-When you re-run `nemoclaw onboard --non-interactive` with a new token, NemoClaw detects the change, backs up workspace state, deletes the sandbox, recreates it with the new credential, and restores the backup.
+When you re-run `nemoclaw onboard --non-interactive --name <sandbox-name>` with a new token, NemoClaw detects the change, backs up workspace state, deletes the sandbox, recreates it with the new credential, and restores the backup.
 This makes credential rotation safe to script.
 
 Telegram, Discord, and Slack each allow only one active consumer per bot token.

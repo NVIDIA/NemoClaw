@@ -114,7 +114,7 @@ Tier definitions are stored in `nemoclaw-blueprint/policies/tiers.yaml`.
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER`:
 
 ```console
-$ NEMOCLAW_POLICY_TIER=open nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+$ NEMOCLAW_POLICY_TIER=open NEMOCLAW_SANDBOX_NAME=my-assistant nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
 If the value does not match a known tier, onboarding exits with an error listing the valid options.

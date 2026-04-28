@@ -337,7 +337,7 @@ Then re-run `nemoclaw onboard`.
 
 ### Updated messaging token is not picked up
 
-Re-running `nemoclaw onboard --non-interactive` with a new
+Re-running `nemoclaw onboard --non-interactive --name <sandbox-name>` with a new
 `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, or `SLACK_BOT_TOKEN` previously
 reported success while the sandbox kept polling with the old credential.
 Current NemoClaw stores SHA-256 hashes of messaging credentials in the
@@ -350,7 +350,7 @@ If you suspect a sandbox is still using a stale token, re-run onboarding so
 the credential check runs:
 
 ```console
-$ nemoclaw onboard --non-interactive
+$ NEMOCLAW_SANDBOX_NAME=my-assistant nemoclaw onboard --non-interactive
 ```
 
 ### Sandbox creation killed by OOM (exit 137)

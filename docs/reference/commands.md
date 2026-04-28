@@ -64,7 +64,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--dangerously-skip-permissions] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox-name>] [--agent <name>] [--dangerously-skip-permissions] [--yes-i-accept-third-party-software]
 ```
 
 :::{warning}
@@ -99,7 +99,7 @@ For details on tiers and the presets each includes, see [Network Policies](netwo
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
 
 ```console
-$ NEMOCLAW_POLICY_TIER=restricted nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+$ NEMOCLAW_POLICY_TIER=restricted NEMOCLAW_SANDBOX_NAME=my-assistant nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
 If you enable Brave Search during onboarding, NemoClaw currently stores the Brave API key in the sandbox's OpenClaw configuration.
@@ -110,19 +110,20 @@ Treat Brave Search as an explicit opt-in and use a dedicated low-privilege Brave
 For non-interactive onboarding, you must explicitly accept the third-party software notice:
 
 ```console
-$ nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+$ nemoclaw onboard --non-interactive --name my-assistant --yes-i-accept-third-party-software
 ```
 
 or:
 
 ```console
-$ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
+$ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NEMOCLAW_SANDBOX_NAME=my-assistant nemoclaw onboard --non-interactive
 ```
 
 To enable Brave Search in non-interactive mode, set:
 
 ```console
 $ BRAVE_API_KEY=... \
+  NEMOCLAW_SANDBOX_NAME=my-assistant \
   nemoclaw onboard --non-interactive
 ```
 
@@ -193,7 +194,7 @@ $ nemoclaw onboard --dangerously-skip-permissions
 Onboarding prints an explicit warning at start so the reduced security posture is visible in logs. The flag is also honored via `NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS=1` for non-interactive runs:
 
 ```console
-$ NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS=1 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+$ NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS=1 NEMOCLAW_SANDBOX_NAME=my-assistant nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
 The flag is persisted on the sandbox registry entry, so `nemoclaw <sandbox> status` surfaces `Permissions: dangerously-skip-permissions (shields permanently down)` for sandboxes created this way. To tighten a sandbox after the fact, re-run `nemoclaw onboard` without the flag.

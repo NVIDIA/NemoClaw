@@ -88,6 +88,7 @@ path to the model server.
 ```console
 $ NEMOCLAW_PROVIDER=ollama \
   NEMOCLAW_MODEL=qwen2.5:14b \
+  NEMOCLAW_SANDBOX_NAME=my-assistant \
   nemoclaw onboard --non-interactive
 ```
 
@@ -137,6 +138,7 @@ $ NEMOCLAW_PROVIDER=custom \
   NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
   NEMOCLAW_MODEL=meta-llama/Llama-3.1-8B-Instruct \
   COMPATIBLE_API_KEY=dummy \
+  NEMOCLAW_SANDBOX_NAME=my-assistant \
   nemoclaw onboard --non-interactive
 ```
 
@@ -189,6 +191,7 @@ $ NEMOCLAW_PROVIDER=anthropicCompatible \
   NEMOCLAW_ENDPOINT_URL=http://localhost:8080 \
   NEMOCLAW_MODEL=my-model \
   COMPATIBLE_ANTHROPIC_API_KEY=dummy \
+  NEMOCLAW_SANDBOX_NAME=my-assistant \
   nemoclaw onboard --non-interactive
 ```
 
@@ -215,6 +218,7 @@ The vLLM `/v1/responses` endpoint does not run the `--tool-call-parser`, so tool
 ```console
 $ NEMOCLAW_EXPERIMENTAL=1 \
   NEMOCLAW_PROVIDER=vllm \
+  NEMOCLAW_SANDBOX_NAME=my-assistant \
   nemoclaw onboard --non-interactive
 ```
 
@@ -237,7 +241,7 @@ NemoClaw filters available models by GPU VRAM, pulls the NIM container image, st
 NIM container images are hosted on `nvcr.io` and require NGC registry authentication before `docker pull` succeeds.
 If Docker is not already logged in to `nvcr.io`, onboard prompts for an [NGC API key](https://org.ngc.nvidia.com/setup/api-key) and runs `docker login nvcr.io` over `--password-stdin` so the key is never written to disk or shell history.
 The prompt masks the key during input and retries once on a bad key before failing.
-In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run `docker login nvcr.io` yourself, then re-run `nemoclaw onboard --non-interactive`.
+In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run `docker login nvcr.io` yourself, then re-run `nemoclaw onboard --non-interactive` (with `--name <sandbox-name>` or `NEMOCLAW_SANDBOX_NAME` set).
 
 :::{note}
 NIM uses vLLM internally.
@@ -249,6 +253,7 @@ The same `chat/completions` API path restriction applies.
 ```console
 $ NEMOCLAW_EXPERIMENTAL=1 \
   NEMOCLAW_PROVIDER=nim \
+  NEMOCLAW_SANDBOX_NAME=my-assistant \
   nemoclaw onboard --non-interactive
 ```
 
