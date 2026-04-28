@@ -40,12 +40,13 @@ on:
         description: >-
           Comma-separated job names to run (empty = all).
           Valid: cloud-e2e, cloud-experimental-e2e, messaging-providers-e2e,
-          token-rotation-e2e, sandbox-survival-e2e, hermes-e2e,
-          skip-permissions-e2e, sandbox-operations-e2e, inference-routing-e2e,
-          network-policy-e2e, deployment-services-e2e, diagnostics-e2e,
-          snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
-          upgrade-stale-sandbox-e2e, rebuild-hermes-e2e, double-onboard-e2e,
-          onboard-repair-e2e, onboard-resume-e2e, runtime-overrides-e2e,
+          token-rotation-e2e, sandbox-survival-e2e,
+          issue-2478-crash-loop-recovery-e2e, hermes-e2e, skip-permissions-e2e,
+          sandbox-operations-e2e, inference-routing-e2e, network-policy-e2e,
+          deployment-services-e2e, diagnostics-e2e, snapshot-commands-e2e,
+          shields-config-e2e, rebuild-openclaw-e2e, upgrade-stale-sandbox-e2e,
+          rebuild-hermes-e2e, double-onboard-e2e, onboard-repair-e2e,
+          onboard-resume-e2e, runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, gpu-e2e
         required: false
@@ -258,6 +259,39 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sandbox-survival-install-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  # ── #2478 crash-loop recovery (STAYS_IN_PR_UNTIL_SHIP) ───────
+  # Soak test for the gateway recovery preload chain hardening.
+  # Removed in the same commit that deletes
+  # test/e2e/test-issue-2478-crash-loop-recovery.sh before merge.
+  issue-2478-crash-loop-recovery-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',issue-2478-crash-loop-recovery-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run #2478 crash-loop recovery E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-2478"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-issue-2478-crash-loop-recovery.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-2478-crash-loop-recovery-install-log
           path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
 

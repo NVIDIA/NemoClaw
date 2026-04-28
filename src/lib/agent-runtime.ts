@@ -72,18 +72,44 @@ export function buildRecoveryScript(agent: AgentDefinition | null, port: number)
         `GATEWAY_CMD_BIN=${shellQuote(customGatewayExecutable)};`,
         'case "$GATEWAY_CMD_BIN" in */*) [ -x "$GATEWAY_CMD_BIN" ] || { echo AGENT_MISSING; exit 1; } ;; *) command -v "$GATEWAY_CMD_BIN" >/dev/null 2>&1 || { echo AGENT_MISSING; exit 1; } ;; esac;',
       ];
+  // Append (>>) rather than truncate (>) so the [gateway-recovery] WARNING
+  // lines that the recovery script writes to gateway.log moments earlier
+  // survive past the gateway launch — otherwise the warning explaining
+  // *why* the gateway is about to crash gets wiped by the same launch
+  // that's about to crash on a missing guard. (#2478)
   const launchCommand = usesValidatedBinary
-    ? `nohup "$AGENT_BIN" gateway run --port ${port} > /tmp/gateway.log 2>&1 &`
-    : `nohup ${configuredGatewayCommand} --port ${port} > /tmp/gateway.log 2>&1 &`;
+    ? `nohup "$AGENT_BIN" gateway run --port ${port} >> /tmp/gateway.log 2>&1 &`
+    : `nohup ${configuredGatewayCommand} --port ${port} >> /tmp/gateway.log 2>&1 &`;
   const isHermes = agent.name === "hermes";
   const hermesHome = isHermes ? "export HERMES_HOME=/sandbox/.hermes-data; " : "";
 
+  // Source /tmp/nemoclaw-proxy-env.sh explicitly before launching. That file
+  // is the single source of truth for NODE_OPTIONS preload guards (safety-net,
+  // ciao networkInterfaces, slack, http-proxy, ws-proxy, nemotron). On the
+  // first start it reaches the gateway transitively via .bashrc, but on
+  // gateway respawn (laptop sleep, health-monitor restart) silent sourcing
+  // failures left guards out of NODE_OPTIONS and the gateway crash-looped
+  // on the next library error (#2478). Source it explicitly, log when the
+  // file is missing, and warn when the safety-net preload is not in the
+  // resulting NODE_OPTIONS so future regressions stay observable instead
+  // of silently regressing into a crash loop.
+  // Source proxy-env.sh and check NODE_OPTIONS first, but defer warning
+  // emission until AFTER touch+chmod gateway.log so warnings land in the
+  // fresh log a sysadmin would tail. Writing to stderr alone hides them
+  // because the recovery script's stderr is captured by executeSandboxCommand
+  // (returned to nemoclaw status, not displayed). Routing them through
+  // /tmp/gateway.log makes the diagnostic discoverable for both real users
+  // and the #2478 e2e regression test.
   return [
-    "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
+    "if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; else _PE_MISSING=1; fi;",
+    "[ -f ~/.bashrc ] && . ~/.bashrc;",
+    'case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _GUARDS_MISSING=0 ;; *) _GUARDS_MISSING=1 ;; esac;',
     hermesHome,
     `if curl -sf --max-time 3 ${shellQuote(probeUrl)} > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
     "rm -f /tmp/gateway.log;",
     "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
+    '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing — gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
+    '[ "$_GUARDS_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: NODE_OPTIONS missing safety-net preload — gateway may crash on unhandled library errors (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
     ...validationSteps,
     launchCommand,
     "GPID=$!; sleep 2;",
