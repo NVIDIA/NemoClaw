@@ -167,16 +167,25 @@ function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
   });
 }
 
+function removeGatewayClusterVolumes(): void {
+  const prefix = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
+  const names = _runCapture(["docker", "volume", "ls", "-q", "--filter", `name=${prefix}`], {
+    ignoreError: true,
+  })
+    .split(/\r?\n/)
+    .map((line: string) => line.trim())
+    .filter((line: string) => line.startsWith(prefix));
+  if (names.length === 0) return;
+  run(["docker", "volume", "rm", ...names], { ignoreError: true });
+}
+
 function cleanupGatewayAfterLastSandbox() {
   runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], {
     ignoreError: true,
     stdio: ["ignore", "ignore", "ignore"],
   });
   runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], { ignoreError: true });
-  run(
-    `docker volume ls -q --filter "name=openshell-cluster-${NEMOCLAW_GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${NEMOCLAW_GATEWAY_NAME}" | xargs docker volume rm || true`,
-    { ignoreError: true },
-  );
+  removeGatewayClusterVolumes();
 }
 
 function hasNoLiveSandboxes() {
@@ -286,15 +295,31 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
   const script =
     agentScript ||
     [
-      "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
+      // Source /tmp/nemoclaw-proxy-env.sh explicitly so NODE_OPTIONS preload
+      // guards (safety-net, ciao, slack, …) survive gateway respawn. Without
+      // this, library errors crash-loop the gateway because the original
+      // .bashrc-only path silently failed when the env file was unreadable
+      // or the shell did not source ~/.bashrc. See #2478. Mirrors the
+      // hardened block in src/lib/agent-runtime.ts:buildRecoveryScript.
+      // Defer warning emission until AFTER touch+chmod gateway.log so
+      // warnings land in the persistent log a sysadmin would tail. Stderr
+      // alone hides them because executeSandboxCommand captures stderr
+      // without surfacing it. Mirrors src/lib/agent-runtime.ts.
+      "if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; else _PE_MISSING=1; fi;",
+      "[ -f ~/.bashrc ] && . ~/.bashrc;",
+      'case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _GUARDS_MISSING=0 ;; *) _GUARDS_MISSING=1 ;; esac;',
       `if curl -sf --max-time 3 http://127.0.0.1:${DASHBOARD_PORT}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
       "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
       "rm -f /tmp/gateway.log /tmp/auto-pair.log;",
       "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
       "touch /tmp/auto-pair.log; chmod 600 /tmp/auto-pair.log;",
+      '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing — gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
+      '[ "$_GUARDS_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: NODE_OPTIONS missing safety-net preload — gateway may crash on unhandled library errors (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
       'OPENCLAW="$(command -v openclaw)";',
       'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
-      `nohup "$OPENCLAW" gateway run --port ${DASHBOARD_PORT} > /tmp/gateway.log 2>&1 &`,
+      // Append rather than truncate so [gateway-recovery] WARNING lines
+      // written above survive past the launch. (#2478)
+      `nohup "$OPENCLAW" gateway run --port ${DASHBOARD_PORT} >> /tmp/gateway.log 2>&1 &`,
       "GPID=$!; sleep 2;",
       'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
     ].join(" ");
@@ -2935,6 +2960,25 @@ async function sandboxRebuild(
     );
   } else {
     rebuildCredentialEnv = session?.credentialEnv || null;
+  }
+  // Legacy migration: pre-fix local-inference sandboxes (GH #2519) recorded
+  // credentialEnv="OPENAI_API_KEY" in onboard-session.json even though the
+  // sandbox does not actually need a host OpenAI key (ollama-local uses an
+  // auth proxy with an internal token; vllm-local accepts a static dummy
+  // bearer). Treat the legacy value as null so rebuild does not demand a
+  // credential that was never actually used.
+  if (
+    (session?.provider === "ollama-local" || session?.provider === "vllm-local") &&
+    rebuildCredentialEnv === "OPENAI_API_KEY"
+  ) {
+    console.log(
+      `  ${D}Note: migrating ${session.provider} sandbox off OPENAI_API_KEY (GH #2519). ` +
+        `Local inference does not require a host API key.${R}`,
+    );
+    log(
+      `Preflight: legacy ${session.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
+    );
+    rebuildCredentialEnv = null;
   }
   if (rebuildCredentialEnv) {
     // hydrateCredentialEnv migrates any pre-fix legacy credentials.json

@@ -1973,6 +1973,97 @@ const { setupInference } = require(${onboardPath});
     assert.match(commands[3].command, /inference set/);
   });
 
+  it("does not delete saved OpenAI credentials when configuring local vLLM", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-local-vllm-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-local-vllm-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "local-inference.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const credentials = require(${credentialsPath});
+const localInference = require(${localInferencePath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("inference") && cmd.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: vllm-local",
+      "  Model: meta-llama",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+localInference.validateLocalProvider = () => ({ ok: true });
+localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:8000/v1";
+
+credentials.saveCredential("OPENAI_API_KEY", "sk-existing");
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference("test-box", "meta-llama", "vllm-local");
+  console.log(JSON.stringify({
+    commands,
+    savedOpenAiKey: credentials.getCredential("OPENAI_API_KEY"),
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const payload = parseStdoutJson<{ commands: CommandEntry[]; savedOpenAiKey: string }>(
+      result.stdout,
+    );
+    const providerCommand = payload.commands.find((entry) =>
+      entry.command.includes("provider create"),
+    );
+    assert.ok(providerCommand, "expected local vLLM provider create command");
+    assert.match(providerCommand.command, /--credential NEMOCLAW_VLLM_LOCAL_TOKEN/);
+    assert.doesNotMatch(providerCommand.command, /--credential OPENAI_API_KEY/);
+    assert.equal(providerCommand.env?.NEMOCLAW_VLLM_LOCAL_TOKEN, "dummy");
+    assert.equal(payload.savedOpenAiKey, "sk-existing");
+  });
+
   it("detects when the live inference route already matches the requested provider and model", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-ready-"));

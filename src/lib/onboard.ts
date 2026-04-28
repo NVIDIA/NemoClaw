@@ -26,7 +26,7 @@ const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 
  *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
-const { ROOT, SCRIPTS, redact, run, runCapture, runFile, shellQuote, validateName } = runner;
+const { ROOT, SCRIPTS, redact, run, runShell, runCapture, runFile, shellQuote, validateName } = runner;
 const errnoUtils: typeof import("./errno") = require("./errno");
 const { isErrnoException } = errnoUtils;
 
@@ -96,6 +96,8 @@ const {
   GEMINI_ENDPOINT_URL,
   REMOTE_PROVIDER_CONFIG,
   LOCAL_INFERENCE_PROVIDERS,
+  OLLAMA_PROXY_CREDENTIAL_ENV,
+  VLLM_LOCAL_CREDENTIAL_ENV,
   DISCORD_SNOWFLAKE_RE,
   getProviderLabel,
   getEffectiveProviderName,
@@ -109,6 +111,8 @@ const {
   GEMINI_ENDPOINT_URL: string;
   REMOTE_PROVIDER_CONFIG: Record<string, RemoteProviderConfigEntry>;
   LOCAL_INFERENCE_PROVIDERS: string[];
+  OLLAMA_PROXY_CREDENTIAL_ENV: string;
+  VLLM_LOCAL_CREDENTIAL_ENV: string;
   DISCORD_SNOWFLAKE_RE: RegExp;
   getProviderLabel: (key: string) => string;
   getEffectiveProviderName: (key: string | null | undefined) => string | null;
@@ -241,7 +245,7 @@ const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
 function verifyGatewayContainerRunning() {
   const containerName = `openshell-cluster-${GATEWAY_NAME}`;
   const result = run(
-    `docker inspect --type container --format '{{.State.Running}}' ${containerName}`,
+    ["docker", "inspect", "--type", "container", "--format", "{{.State.Running}}", containerName],
     { ignoreError: true, suppressOutput: true },
   );
   if (result.status === 0 && String(result.stdout || "").trim() === "true") {
@@ -2043,11 +2047,7 @@ function destroyGateway() {
   }
   // openshell gateway destroy doesn't remove Docker volumes, which leaves
   // corrupted cluster state that breaks the next gateway start. Clean them up.
-  // Shell required: pipe (|), && chaining, || fallback.
-  run(
-    `docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm || true`,
-    { ignoreError: true },
-  );
+  removeGatewayClusterVolumes();
 }
 
 function getGatewayClusterContainerState(): string {
@@ -2095,6 +2095,24 @@ function getGatewayClusterContainerName(): string {
 
 function buildGatewayClusterExecArgv(script: string): string[] {
   return ["docker", "exec", getGatewayClusterContainerName(), "sh", "-lc", script];
+}
+
+function getGatewayClusterVolumeNames(): string[] {
+  return runCapture(["docker", "volume", "ls", "-q", "--filter", `name=${getGatewayClusterContainerName()}`], {
+    ignoreError: true,
+  })
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function removeGatewayClusterVolumes(opts: { suppressOutput?: boolean } = {}): void {
+  const names = getGatewayClusterVolumeNames();
+  if (names.length === 0) return;
+  run(["docker", "volume", "rm", ...names], {
+    ignoreError: true,
+    ...(opts.suppressOutput ? { suppressOutput: true } : {}),
+  });
 }
 
 function hostCommandExists(commandName: string): boolean {
@@ -2687,10 +2705,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
         suppressOutput: true,
       });
       if (postInspectResult.status !== 0) {
-        run(
-          `docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm 2>/dev/null || true`,
-          { ignoreError: true, suppressOutput: true },
-        );
+        removeGatewayClusterVolumes({ suppressOutput: true });
         registry.clearAll();
         console.log("  ✓ Orphaned gateway container removed");
       } else {
@@ -2728,7 +2743,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
           console.log(
             `  Cleaning up orphaned SSH port-forward on port ${port} (PID ${portCheck.pid})...`,
           );
-          run(`kill ${portCheck.pid} 2>/dev/null || true`, { ignoreError: true });
+          run(["kill", String(portCheck.pid)], { ignoreError: true });
           sleep(1);
           portCheck = await checkPortAvailable(port);
           if (portCheck.ok) {
@@ -4713,7 +4728,10 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
             nimContainer = null;
           } else {
             provider = "vllm-local";
-            credentialEnv = "OPENAI_API_KEY";
+            // Local NIM (vLLM under the hood) does not require a host API key —
+            // setupInference registers the gateway provider with an internal
+            // credential env (NEMOCLAW_VLLM_LOCAL_TOKEN). See GH #2519.
+            credentialEnv = null;
             endpointUrl = getLocalProviderBaseUrl(provider);
             if (!endpointUrl) {
               console.error("  Local NVIDIA NIM base URL could not be determined.");
@@ -4723,7 +4741,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
               "Local NVIDIA NIM",
               endpointUrl,
               requireValue(model, "Expected a Local NVIDIA NIM model after startup"),
-              credentialEnv,
+              null,
             );
             if (validation.retry === "selection" || validation.retry === "model") {
               continue selectionLoop;
@@ -4752,7 +4770,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           // because WSL2 relays IPv4-only sockets to the Windows host.
           // Shell required: backgrounding (&), env var prefix, output redirection.
           const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
-          run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
           sleep(2);
           if (!isWsl()) printOllamaExposureWarning();
         }
@@ -4768,7 +4786,12 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           );
         }
         provider = "ollama-local";
-        credentialEnv = "OPENAI_API_KEY";
+        // Local Ollama needs no user-supplied API key — the auth proxy uses
+        // an internal token (NEMOCLAW_OLLAMA_PROXY_TOKEN, set in setupInference).
+        // Leaving this null prevents the wizard from prompting for / caching
+        // OPENAI_API_KEY and prevents the rebuild preflight from requiring it.
+        // See GH #2519.
+        credentialEnv = null;
         endpointUrl = getLocalProviderBaseUrl(provider);
         if (!endpointUrl) {
           console.error("  Local Ollama base URL could not be determined.");
@@ -4833,11 +4856,11 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           run(["brew", "install", "ollama"], { ignoreError: true });
         } else {
           console.log("  Installing Ollama via official installer...");
-          run("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
+          runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
         }
         console.log("  Starting Ollama...");
         // Shell required: backgrounding (&), env var prefix, output redirection.
-        run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+        runShell(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
           ignoreError: true,
         });
         sleep(2);
@@ -4848,7 +4871,8 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
         );
         provider = "ollama-local";
-        credentialEnv = "OPENAI_API_KEY";
+        // See above ollama branch — internal proxy token, no user API key.
+        credentialEnv = null;
         endpointUrl = getLocalProviderBaseUrl(provider);
         if (!endpointUrl) {
           console.error("  Local Ollama base URL could not be determined.");
@@ -4909,7 +4933,8 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
       } else if (selected.key === "vllm") {
         console.log(`  ✓ Using existing vLLM on localhost:${VLLM_PORT}`);
         provider = "vllm-local";
-        credentialEnv = "OPENAI_API_KEY";
+        // See NIM branch above — internal credential env, no user API key.
+        credentialEnv = null;
         endpointUrl = getLocalProviderBaseUrl(provider);
         if (!endpointUrl) {
           console.error("  Local vLLM base URL could not be determined.");
@@ -4952,7 +4977,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           "Local vLLM",
           validationBaseUrl,
           requireValue(model, "Expected a detected vLLM model"),
-          credentialEnv,
+          null,
         );
         if (validation.retry === "selection" || validation.retry === "model") {
           continue selectionLoop;
@@ -5079,9 +5104,17 @@ async function setupInference(
       process.exit(1);
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
-    const providerResult = upsertProvider("vllm-local", "openai", "OPENAI_API_KEY", baseUrl, {
-      OPENAI_API_KEY: "dummy",
-    });
+    // Use a dedicated internal credential env so the gateway does not pick
+    // up the user's host OPENAI_API_KEY for local vLLM. vLLM does not enforce
+    // the bearer at runtime, but a dedicated env name prevents accidental
+    // hijacking. See GH #2519.
+    const providerResult = upsertProvider(
+      "vllm-local",
+      "openai",
+      VLLM_LOCAL_CREDENTIAL_ENV,
+      baseUrl,
+      { [VLLM_LOCAL_CREDENTIAL_ENV]: "dummy" },
+    );
     if (!providerResult.ok) {
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
@@ -5097,6 +5130,9 @@ async function setupInference(
       "--timeout",
       String(LOCAL_INFERENCE_TIMEOUT_SECS),
     ]);
+    // Do not mutate ~/.nemoclaw/credentials.json here: local vLLM now uses
+    // VLLM_LOCAL_CREDENTIAL_ENV, so any saved OPENAI_API_KEY remains available
+    // to unrelated OpenAI-backed sandboxes.
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider);
     if (!validation.ok) {
@@ -5124,9 +5160,17 @@ async function setupInference(
       // Not persisted earlier in case the user backs out to a different provider.
       persistProxyToken(proxyToken);
     }
-    const providerResult = upsertProvider("ollama-local", "openai", "OPENAI_API_KEY", baseUrl, {
-      OPENAI_API_KEY: ollamaCredential,
-    });
+    // Use a dedicated internal credential env (NEMOCLAW_OLLAMA_PROXY_TOKEN)
+    // so the gateway never reads the user's host OPENAI_API_KEY for local
+    // Ollama. GH #2519: a stale host OPENAI_API_KEY was leaking into the
+    // inference path and producing 401s.
+    const providerResult = upsertProvider(
+      "ollama-local",
+      "openai",
+      OLLAMA_PROXY_CREDENTIAL_ENV,
+      baseUrl,
+      { [OLLAMA_PROXY_CREDENTIAL_ENV]: ollamaCredential },
+    );
     if (!providerResult.ok) {
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
@@ -5149,6 +5193,9 @@ async function setupInference(
       console.error(`  ${probe.message}`);
       process.exit(1);
     }
+    // Do not mutate ~/.nemoclaw/credentials.json here: local Ollama now uses
+    // OLLAMA_PROXY_CREDENTIAL_ENV, so any saved OPENAI_API_KEY remains available
+    // to unrelated OpenAI-backed sandboxes.
   }
 
   verifyInferenceRoute(provider, model);

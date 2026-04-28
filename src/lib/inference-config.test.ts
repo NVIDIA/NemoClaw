@@ -11,6 +11,8 @@ import {
   DEFAULT_ROUTE_PROFILE,
   INFERENCE_ROUTE_URL,
   MANAGED_PROVIDER_ID,
+  OLLAMA_LOCAL_CREDENTIAL_ENV,
+  VLLM_LOCAL_CREDENTIAL_ENV,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
   parseGatewayInference,
@@ -28,16 +30,19 @@ describe("inference selection config", () => {
   });
 
   it("maps ollama-local to the sandbox inference route and default model", () => {
+    // Local Ollama uses a dedicated credential env so the sandbox-side
+    // config never points at OPENAI_API_KEY (GH #2519).
     expect(getProviderSelectionConfig("ollama-local")).toEqual({
       endpointType: "custom",
       endpointUrl: INFERENCE_ROUTE_URL,
       ncpPartner: null,
       model: DEFAULT_OLLAMA_MODEL,
       profile: DEFAULT_ROUTE_PROFILE,
-      credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+      credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
       provider: "ollama-local",
       providerLabel: "Local Ollama",
     });
+    expect(OLLAMA_LOCAL_CREDENTIAL_ENV).not.toBe(DEFAULT_ROUTE_CREDENTIAL_ENV);
   });
 
   it("maps nvidia-nim to the sandbox inference route", () => {
@@ -92,17 +97,19 @@ describe("inference selection config", () => {
         providerLabel: "Other OpenAI-compatible endpoint",
       }),
     );
-    // Full-object assertion for one local provider
+    // Full-object assertion for one local provider — uses dedicated
+    // credential env, not OPENAI_API_KEY (GH #2519).
     expect(getProviderSelectionConfig("vllm-local", "meta-llama")).toEqual({
       endpointType: "custom",
       endpointUrl: INFERENCE_ROUTE_URL,
       ncpPartner: null,
       model: "meta-llama",
       profile: DEFAULT_ROUTE_PROFILE,
-      credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+      credentialEnv: VLLM_LOCAL_CREDENTIAL_ENV,
       provider: "vllm-local",
       providerLabel: "Local vLLM",
     });
+    expect(VLLM_LOCAL_CREDENTIAL_ENV).not.toBe(DEFAULT_ROUTE_CREDENTIAL_ENV);
   });
 
   it("returns null for unknown providers", () => {
