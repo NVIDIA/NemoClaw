@@ -39,13 +39,13 @@ on:
       jobs:
         description: >-
           Comma-separated job names to run (empty = all).
-          Valid: cloud-e2e, messaging-providers-e2e, token-rotation-e2e,
-          sandbox-survival-e2e, hermes-e2e, skip-permissions-e2e,
-          sandbox-operations-e2e, inference-routing-e2e, network-policy-e2e,
-          deployment-services-e2e, diagnostics-e2e, snapshot-commands-e2e,
-          shields-config-e2e, rebuild-openclaw-e2e, upgrade-stale-sandbox-e2e,
-          rebuild-hermes-e2e, double-onboard-e2e, onboard-repair-e2e,
-          onboard-resume-e2e, runtime-overrides-e2e,
+          Valid: cloud-e2e, cloud-experimental-e2e, messaging-providers-e2e,
+          token-rotation-e2e, sandbox-survival-e2e, hermes-e2e,
+          skip-permissions-e2e, sandbox-operations-e2e, inference-routing-e2e,
+          network-policy-e2e, deployment-services-e2e, diagnostics-e2e,
+          snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
+          upgrade-stale-sandbox-e2e, rebuild-hermes-e2e, double-onboard-e2e,
+          onboard-repair-e2e, onboard-resume-e2e, runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, gpu-e2e
         required: false
@@ -88,6 +88,71 @@ jobs:
         with:
           name: install-log
           path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  # ── Cloud Experimental E2E ────────────────────────────────────
+  # Landlock read-only enforcement, API key leak detection, openclaw tui smoke,
+  # live chat via openclaw agent, skill injection, inference.local HTTPS.
+  # Restored after accidental deletion in #2472.
+  cloud-experimental-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',cloud-experimental-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run cloud-experimental E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL: "0"
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_POLICY_MODE: "custom"
+          NEMOCLAW_POLICY_PRESETS: "npm,pypi"
+          RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_CHECK_DOCS: "1"
+          RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_FINAL_CLEANUP: "1"
+        run: bash test/e2e/test-e2e-cloud-experimental.sh
+
+      - name: Documentation checks (check-docs.sh)
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/e2e-cloud-experimental/check-docs.sh
+
+      - name: Tear down cloud-experimental sandbox (always)
+        if: always()
+        env:
+          SANDBOX_NAME: e2e-cloud-experimental
+          NEMOCLAW_SANDBOX_NAME: e2e-cloud-experimental
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/e2e-cloud-experimental/cleanup.sh --verify
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-cloud-experimental
+          path: /tmp/nemoclaw-e2e-cloud-experimental-install.log
           if-no-files-found: ignore
 
   # ── Messaging Providers E2E ──────────────────────────────────
@@ -975,6 +1040,7 @@ jobs:
     needs:
       [
         cloud-e2e,
+        cloud-experimental-e2e,
         messaging-providers-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
@@ -1050,6 +1116,7 @@ jobs:
     needs:
       [
         cloud-e2e,
+        cloud-experimental-e2e,
         messaging-providers-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
