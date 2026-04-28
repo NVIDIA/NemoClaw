@@ -10,6 +10,7 @@ import os from "os";
 import path from "path";
 
 import { ROOT, run } from "./runner";
+import { dockerBuild, dockerImageInspect } from "./docker";
 import { loadAgent, resolveAgentName, type AgentDefinition } from "./agent-defs";
 import { getProviderSelectionConfig } from "./inference-config";
 import * as onboardSession from "./onboard-session";
@@ -61,13 +62,13 @@ export function createAgentSandbox(agent: AgentDefinition): {
 
   if (baseDockerfile) {
     const baseImageTag = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base:latest`;
-    const inspectResult = run(["docker", "image", "inspect", baseImageTag], {
+    const inspectResult = dockerImageInspect(baseImageTag, {
       ignoreError: true,
       suppressOutput: true,
     });
     if (inspectResult.status !== 0) {
       console.log(`  Building ${agent.displayName} base image (first time only)...`);
-      run(["docker", "build", "-f", baseDockerfile, "-t", baseImageTag, ROOT], {
+      dockerBuild(baseDockerfile, baseImageTag, ROOT, {
         stdio: ["ignore", "inherit", "inherit"],
       });
       console.log(`  \u2713 Base image built: ${baseImageTag}`);

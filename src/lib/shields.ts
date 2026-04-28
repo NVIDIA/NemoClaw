@@ -11,8 +11,9 @@
 
 const fs = require("fs");
 const path = require("path");
-const { fork, execFileSync } = require("child_process");
+const { fork } = require("child_process");
 const { run, runCapture, validateName, shellQuote } = require("./runner");
+const { dockerExecFileSync } = require("./docker/exec");
 const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
@@ -36,46 +37,34 @@ const STATE_DIR = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state");
 
 const K3S_CONTAINER = "openshell-cluster-nemoclaw";
 
+function kubectlExecArgv(sandboxName: string, cmd: string[]): string[] {
+  return [
+    "exec",
+    K3S_CONTAINER,
+    "kubectl",
+    "exec",
+    "-n",
+    "openshell",
+    sandboxName,
+    "-c",
+    "agent",
+    "--",
+    ...cmd,
+  ];
+}
+
 function kubectlExec(sandboxName: string, cmd: string[]): void {
-  execFileSync(
-    "docker",
-    [
-      "exec",
-      K3S_CONTAINER,
-      "kubectl",
-      "exec",
-      "-n",
-      "openshell",
-      sandboxName,
-      "-c",
-      "agent",
-      "--",
-      ...cmd,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-  );
+  dockerExecFileSync(kubectlExecArgv(sandboxName, cmd), {
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 15000,
+  });
 }
 
 function kubectlExecCapture(sandboxName: string, cmd: string[]): string {
-  return execFileSync(
-    "docker",
-    [
-      "exec",
-      K3S_CONTAINER,
-      "kubectl",
-      "exec",
-      "-n",
-      "openshell",
-      sandboxName,
-      "-c",
-      "agent",
-      "--",
-      ...cmd,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-  )
-    .toString()
-    .trim();
+  return dockerExecFileSync(kubectlExecArgv(sandboxName, cmd), {
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 15000,
+  }).trim();
 }
 
 // Re-export for tests and external consumers
