@@ -11,6 +11,7 @@ export interface SandboxEntry {
   policies?: string[] | null;
   messagingChannels?: string[] | null;
   agent?: string | null;
+  dashboardPort?: number | null;
 }
 
 export interface MessagingBridgeHealth {
@@ -123,6 +124,9 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
       if (providerDrifted) parts.push(`provider=${sb.provider || "unknown"}`);
       log(`      (onboarded: ${parts.join(", ")})`);
     }
+    if (sb.dashboardPort != null) {
+      log(`      dashboard: http://127.0.0.1:${sb.dashboardPort}/`);
+    }
   }
   log("");
   log("  * = default sandbox");
@@ -151,7 +155,8 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       // agrees with `openshell inference get` (#2369).
       const liveModel = isDefault && live ? live.model : null;
       const model = liveModel || sb.model;
-      log(`    ${sb.name}${def}${model ? ` (${model})` : ""}`);
+      const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
+      log(`    ${sb.name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
       if (isDefault && liveModel && liveModel !== sb.model) {
         log(`      (onboarded: ${sb.model || "unknown"})`);
       }

@@ -399,7 +399,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"moonshotai/kimi-k2.5"},{"id":"z-ai/glm5"}]}'
+  body='{"data":[{"id":"moonshotai/kimi-k2.5"},{"id":"z-ai/glm-5.1"}]}'
 fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
@@ -411,7 +411,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "bad/model", "z-ai/glm5"];
+const answers = ["1", "7", "bad/model", "z-ai/glm-5.1"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -463,7 +463,7 @@ const { setupNim } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.model, "z-ai/glm5");
+    assert.equal(payload.result.model, "z-ai/glm-5.1");
     assert.equal(
       payload.messages.filter((message: string) => /NVIDIA Endpoints model id:/.test(message))
         .length,

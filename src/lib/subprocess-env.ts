@@ -28,7 +28,15 @@ const LOCALE = ["LANG"]; // LC_* handled via prefix
 
 const PROXY = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
 
-const TLS = ["SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS"];
+const TLS = [
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "GIT_SSL_CAINFO",
+  "GIT_SSL_CAPATH",
+  "CURL_CA_BUNDLE",
+  "REQUESTS_CA_BUNDLE",
+];
 
 const TOOLCHAIN = ["DOCKER_HOST", "KUBECONFIG", "SSH_AUTH_SOCK", "RUST_LOG", "RUST_BACKTRACE"];
 
