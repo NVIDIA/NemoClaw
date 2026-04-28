@@ -44,7 +44,10 @@ on:
           sandbox-operations-e2e, inference-routing-e2e, network-policy-e2e,
           deployment-services-e2e, diagnostics-e2e, snapshot-commands-e2e,
           shields-config-e2e, rebuild-openclaw-e2e, upgrade-stale-sandbox-e2e,
-          rebuild-hermes-e2e, overlayfs-autofix-e2e, gpu-e2e
+          rebuild-hermes-e2e, double-onboard-e2e, onboard-repair-e2e,
+          onboard-resume-e2e, runtime-overrides-e2e,
+          credential-sanitization-e2e, telegram-injection-e2e,
+          overlayfs-autofix-e2e, gpu-e2e
         required: false
         type: string
         default: ""
@@ -591,7 +594,11 @@ jobs:
   # TEMPORARY: validates the auto-fix in src/lib/cluster-image-patch.ts.
   # ── Double Onboard / Lifecycle Recovery E2E ──────────────────
   double-onboard-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',double-onboard-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -624,7 +631,11 @@ jobs:
 
   # ── Onboard Repair E2E ─────────────────────────────────────
   onboard-repair-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',onboard-repair-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -657,7 +668,11 @@ jobs:
 
   # ── Onboard Resume E2E ─────────────────────────────────────
   onboard-resume-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',onboard-resume-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -690,7 +705,11 @@ jobs:
 
   # ── Runtime Overrides E2E ──────────────────────────────────
   runtime-overrides-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',runtime-overrides-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -724,7 +743,11 @@ jobs:
   # ── Credential Sanitization E2E ────────────────────────────
   # Requires a running sandbox. Bootstraps via install.sh then runs tests.
   credential-sanitization-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',credential-sanitization-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -761,7 +784,11 @@ jobs:
   # ── Telegram Injection E2E ─────────────────────────────────
   # Requires a running sandbox. Bootstraps via install.sh then runs tests.
   telegram-injection-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',telegram-injection-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
