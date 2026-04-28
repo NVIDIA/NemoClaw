@@ -16,8 +16,8 @@ const readline = require("readline");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
 const { promises: dnsPromises } = require("node:dns");
+const { isIP } = require("node:net");
 const { validateName } = require("./runner");
 const { dockerExecFileSync } = require("./docker/exec");
 const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
@@ -368,6 +368,10 @@ function assertPublicHost(hostname: string): void {
   }
 }
 
+function hostnameForDnsLookup(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+}
+
 function validateUrlValue(value: string): void {
   const parsed = parseHttpUrl(value);
   if (!parsed) return;
@@ -383,10 +387,12 @@ async function validateUrlValueWithDns(
 
   const hostname = parsed.hostname;
   assertPublicHost(hostname);
+  const lookupHostname = hostnameForDnsLookup(hostname);
+  if (isIP(lookupHostname)) return;
 
   let addresses: Array<{ address: string }>;
   try {
-    addresses = await lookup(hostname, { all: true });
+    addresses = await lookup(lookupHostname, { all: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Cannot resolve hostname "${hostname}": ${message}`);

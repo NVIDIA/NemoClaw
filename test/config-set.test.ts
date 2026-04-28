@@ -344,6 +344,24 @@ describe("config set helpers", () => {
       );
     });
 
+    it("allows public IPv4 literals without DNS lookup", async () => {
+      const lookup = async () => {
+        throw new Error("lookup should not run for IP literals");
+      };
+      await expect(validateUrlValueWithDns("https://93.184.216.34/v1", lookup)).resolves.toBe(
+        undefined,
+      );
+    });
+
+    it("allows public bracketed IPv6 literals without DNS lookup", async () => {
+      const lookup = async () => {
+        throw new Error("lookup should not run for IP literals");
+      };
+      await expect(
+        validateUrlValueWithDns("https://[2606:4700:4700::1111]/v1", lookup),
+      ).resolves.toBe(undefined);
+    });
+
     it("fails closed when DNS lookup errors", async () => {
       const lookup = async () => {
         throw new Error("NXDOMAIN");
