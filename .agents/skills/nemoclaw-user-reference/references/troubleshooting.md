@@ -466,6 +466,24 @@ The status command detects the sandbox context and reports "active (inside sandb
 
 Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
+### Git clone fails with a certificate verification error
+
+In networks that inspect TLS, OpenShell injects a proxy CA bundle into the sandbox.
+Current NemoClaw exports that bundle as `GIT_SSL_CAINFO` during sandbox startup and persists it for `nemoclaw <name> connect` sessions, so Git can trust the proxy CA.
+It also forwards standard CA bundle variables for subprocesses, including `GIT_SSL_CAPATH`, `CURL_CA_BUNDLE`, and `REQUESTS_CA_BUNDLE`.
+
+If Git still reports `server certificate verification failed`, reconnect to the sandbox and check that the CA variables are present:
+
+```console
+$ env | grep -E 'SSL_CERT_FILE|GIT_SSL_CAINFO|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE'
+```
+
+If they are missing on an older sandbox, upgrade NemoClaw and run:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
 ### `openclaw update` hangs or times out inside the sandbox
 
 This is expected for the current NemoClaw deployment model.
