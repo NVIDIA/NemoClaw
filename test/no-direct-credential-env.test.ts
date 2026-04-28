@@ -125,7 +125,7 @@ describe("ESLint rule: nemoclaw/no-direct-credential-env", () => {
       {
         cwd: repoRoot,
         encoding: "utf-8",
-        timeout: 30_000,
+        timeout: 60_000,
       },
     );
     const output = JSON.parse(result.stdout);

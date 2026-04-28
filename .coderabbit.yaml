@@ -289,6 +289,21 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=network-policy-e2e,skip-permissions-e2e
         ```
 
+    - path: "test/e2e/test-issue-2478-crash-loop-recovery.sh"
+      instructions: |
+        STAYS_IN_PR_UNTIL_SHIP — long-running soak test for the gateway
+        recovery preload chain hardening (issue #2478). Removed in the
+        same commit that drops the test file before merge.
+
+        **E2E test recommendation:**
+        - `issue-2478-crash-loop-recovery-e2e` — gateway recovery preload
+          chain hardening soak
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=issue-2478-crash-loop-recovery-e2e
+        ```
+
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |
         This is the nightly E2E workflow definition. Changes here affect
