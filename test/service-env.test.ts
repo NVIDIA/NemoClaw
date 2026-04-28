@@ -165,6 +165,116 @@ describe("service environment", () => {
     });
   });
 
+  describe("GIT_SSL_CAINFO for proxy CA trust (issue #2270)", () => {
+    const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;
+
+    it("entrypoint exports GIT_SSL_CAINFO when SSL_CERT_FILE points to a real file", () => {
+      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+      const src = readFileSync(scriptPath, "utf-8");
+      // The fix must detect SSL_CERT_FILE and set GIT_SSL_CAINFO so git trusts
+      // the OpenShell L7 proxy's re-signed certificate.
+      expect(src).toContain('GIT_SSL_CAINFO="$SSL_CERT_FILE"');
+    });
+
+    it("proxy-env.sh includes GIT_SSL_CAINFO when set", () => {
+      const fakeDataDir = join(tmpdir(), `nemoclaw-git-ssl-test-${process.pid}`);
+      const fakeCaBundle = join(fakeDataDir, "ca-bundle.pem");
+      execFileSync("mkdir", ["-p", fakeDataDir]);
+      const tmpFile = join(tmpdir(), `nemoclaw-git-ssl-env-${process.pid}.sh`);
+      try {
+        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+        const persistBlock = execFileSync(
+          "sed",
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\\$_PROXY_ENV_FILE/p", scriptPath],
+          { encoding: "utf-8" },
+        );
+        if (!persistBlock.trim()) {
+          throw new Error(
+            "sed anchors (_PROXY_ENV_FILE…emit_sandbox_sourced_file) not found in nemoclaw-start.sh — test cannot run",
+          );
+        }
+        // Create a fake CA bundle so the -f check passes
+        writeFileSync(fakeCaBundle, "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n");
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          sandboxInitSource,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          '_TOOL_REDIRECTS=()',
+          `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
+          `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
+          // Simulate OpenShell injecting SSL_CERT_FILE and the entrypoint setting GIT_SSL_CAINFO
+          `export SSL_CERT_FILE="${fakeCaBundle}"`,
+          `export GIT_SSL_CAINFO="${fakeCaBundle}"`,
+          "set +u  # array expansion safe on macOS bash",
+          persistBlock
+            .trimEnd()
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        expect(envFile).toContain("GIT_SSL_CAINFO");
+        expect(envFile).toContain(fakeCaBundle);
+      } finally {
+        try {
+          execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("proxy-env.sh omits GIT_SSL_CAINFO when not set", () => {
+      const fakeDataDir = join(tmpdir(), `nemoclaw-git-ssl-noop-test-${process.pid}`);
+      execFileSync("mkdir", ["-p", fakeDataDir]);
+      const tmpFile = join(tmpdir(), `nemoclaw-git-ssl-noop-env-${process.pid}.sh`);
+      try {
+        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+        const persistBlock = execFileSync(
+          "sed",
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\\$_PROXY_ENV_FILE/p", scriptPath],
+          { encoding: "utf-8" },
+        );
+        if (!persistBlock.trim()) {
+          throw new Error("sed anchors not found in nemoclaw-start.sh — test cannot run");
+        }
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          sandboxInitSource,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          '_TOOL_REDIRECTS=()',
+          `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
+          `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
+          // GIT_SSL_CAINFO intentionally NOT set
+          "set +u  # array expansion safe on macOS bash",
+          persistBlock
+            .trimEnd()
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        expect(envFile).not.toContain("GIT_SSL_CAINFO");
+      } finally {
+        try {
+          execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+  });
+
   describe("XDG and tool cache redirects (issue #804)", () => {
     it("entrypoint exports redirect all XDG and tool dirs to /tmp", () => {
       const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
