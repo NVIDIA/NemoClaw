@@ -363,7 +363,7 @@ Refer to [`nemoclaw <name> policy-add`](../reference/commands.md#nemoclaw-name-p
 
 ## Update to the Latest Version
 
-When a new NemoClaw release becomes available, two things need to update: the `nemoclaw` CLI on your host, and the sandbox images your agents are running in.
+When a new NemoClaw release becomes available, update the `nemoclaw` CLI on your host and check existing sandboxes for stale agent/runtime versions.
 
 ### Update the NemoClaw CLI
 
@@ -374,21 +374,22 @@ Before it onboards anything, the installer calls [`nemoclaw backup-all`](../refe
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-### Upgrade your sandboxes to the new image
+### Upgrade sandboxes with stale agent and runtime versions
 
-Re-running the installer updates the CLI, but existing sandboxes continue running on whatever base image you used to create them. The upgrade flow is non-destructive by default — NemoClaw automatically preserves your workspace data — but a manual snapshot before any major upgrade gives you a fast undo button.
+The installer checks registered sandboxes after onboarding succeeds and runs `nemoclaw upgrade-sandboxes --auto` for stale running sandboxes. Use `upgrade-sandboxes` directly to verify the result, rebuild when you skipped the installer or onboarding step, or handle sandboxes that were stopped or could not be version-checked. The upgrade flow is non-destructive by default because NemoClaw preserves manifest-defined workspace state, but a manual snapshot before any major upgrade gives you a state restore point.
 
 **Safe upgrade flow:**
 
 ```console
 $ nemoclaw <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
-$ nemoclaw upgrade-sandboxes --check                            # list stale sandboxes without rebuilding
-$ nemoclaw upgrade-sandboxes                                    # rebuild with confirmation
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash          # updates CLI; auto-upgrades stale running sandboxes
+$ nemoclaw upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
+$ nemoclaw upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
 ```
 
-For scripted use, replace the rebuild command with `nemoclaw upgrade-sandboxes --auto` to skip the confirmation prompt.
+For scripted manual rebuilds, use `nemoclaw upgrade-sandboxes --auto` to skip the confirmation prompt.
 
-If anything looks wrong after the upgrade, roll back to the snapshot:
+If the upgraded sandbox needs its workspace state reverted, restore the pre-upgrade snapshot into the running sandbox. This restores saved state directories only; it does not downgrade the sandbox image or agent/runtime:
 
 ```console
 $ nemoclaw <sandbox-name> snapshot restore pre-upgrade
@@ -396,10 +397,10 @@ $ nemoclaw <sandbox-name> snapshot restore pre-upgrade
 
 #### What changes during a rebuild
 
-Each rebuild **destroys the existing container and creates a new one** on the upgraded base image. NemoClaw protects your data through the same backup-and-restore flow as [`nemoclaw <name> rebuild`](../reference/commands.md#nemoclaw-name-rebuild):
+Each rebuild destroys the existing container and creates a new one. NemoClaw protects your data through the same backup-and-restore flow as [`nemoclaw <name> rebuild`](../reference/commands.md#nemoclaw-name-rebuild):
 
-- **Preserved automatically.** Before deleting the old container, NemoClaw snapshots the workspace state directories defined in the agent manifest (typically `/sandbox/.openclaw/workspace/`) and restores them into the new container. Stored credentials (`~/.nemoclaw/credentials.json`) and registered policy presets live on the host the entire time, so they are never at risk and are re-applied to the new sandbox automatically.
-- **Not preserved.** Anything written outside the workspace state directories: packages installed inside the running container with `apt`/`pip`, files in non-workspace paths, and in-memory or process state. If you have customized the running container at runtime, capture that as `Dockerfile` changes (for `nemoclaw onboard --from`) or a manual `openshell sandbox download` before the rebuild starts.
+- NemoClaw preserves manifest-defined workspace state. Before deleting the old container, NemoClaw snapshots the state directories defined in the agent manifest (typically `/sandbox/.openclaw/workspace/`) and restores them into the new container. Stored credentials (`~/.nemoclaw/credentials.json`) and registered policy presets live on the host and are re-applied to the new sandbox automatically.
+- NemoClaw does not preserve runtime changes outside the workspace state directories. This includes packages installed inside the running container with `apt` or `pip`, files in non-workspace paths, and in-memory or process state. If you have customized the running container at runtime, capture that as `Dockerfile` changes (for `nemoclaw onboard --from`) or a manual `openshell sandbox download` before the rebuild starts.
 
 Aborts before the destroy step are non-destructive. The flow refuses to proceed past preflight if a credential is missing (see below) or past backup if the snapshot fails (with `"Aborting rebuild to prevent data loss"`), so a botched run leaves the original sandbox intact and ready to retry.
 
@@ -408,7 +409,7 @@ See [Backup and Restore](../workspace/backup-restore.md) for the full list of st
 :::{note} If the rebuild aborts with `Missing credential: <KEY>`
 The rebuild preflight reads the provider credential recorded by your last `nemoclaw onboard` session. If you have switched providers since onboarding (for example, from a remote API to a local Ollama setup) the preflight may still reference the old key and fail before any destroy step runs.
 
-To recover: re-run `nemoclaw onboard` and select your current provider — that refreshes the session metadata. Your existing container keeps serving traffic until the new image is ready.
+To recover, re-run `nemoclaw onboard` and select your current provider. This refreshes the session metadata. Your existing container keeps serving traffic until the new image is ready.
 :::
 
 ## Uninstall
