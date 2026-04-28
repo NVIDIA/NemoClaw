@@ -376,27 +376,39 @@ $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 ### Upgrade your sandboxes to the new image
 
-Re-running the installer updates the CLI, but existing sandboxes continue running on whatever base image you used to create them.
-Use [`nemoclaw upgrade-sandboxes`](../reference/commands.md#nemoclaw-upgrade-sandboxes) to rebuild any sandbox whose base image is older than the one currently pinned by NemoClaw:
+Re-running the installer updates the CLI, but existing sandboxes continue running on whatever base image you used to create them. The upgrade flow is non-destructive by default — NemoClaw automatically preserves your workspace data — but a manual snapshot before any major upgrade gives you a fast undo button.
+
+**Safe upgrade flow:**
 
 ```console
-$ nemoclaw upgrade-sandboxes --check    # list stale sandboxes without rebuilding
-$ nemoclaw upgrade-sandboxes            # rebuild with confirmation prompt
-$ nemoclaw upgrade-sandboxes --auto     # rebuild without prompting
+$ nemoclaw <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
+$ nemoclaw upgrade-sandboxes --check                            # list stale sandboxes without rebuilding
+$ nemoclaw upgrade-sandboxes                                    # rebuild with confirmation
 ```
 
-Each rebuild follows the same backup-and-restore flow as [`nemoclaw <name> rebuild`](../reference/commands.md#nemoclaw-name-rebuild). NemoClaw reapplies workspace files, credentials, and policy presets to the new sandbox automatically.
-See [Backup and Restore](../workspace/backup-restore.md) for the full state-preservation guarantees.
+For scripted use, replace the rebuild command with `nemoclaw upgrade-sandboxes --auto` to skip the confirmation prompt.
 
-:::{tip} Manual snapshot for major upgrades
-For releases that change schemas or break compatibility, take a manual snapshot first:
+If anything looks wrong after the upgrade, roll back to the snapshot:
 
 ```console
-$ nemoclaw my-assistant snapshot create
+$ nemoclaw <sandbox-name> snapshot restore pre-upgrade
 ```
 
-If the upgrade goes badly, roll back with `nemoclaw my-assistant snapshot restore`.
-See [Commands &rarr; `nemoclaw <name> snapshot create`](../reference/commands.md#nemoclaw-name-snapshot-create) for details.
+#### What changes during a rebuild
+
+Each rebuild **destroys the existing container and creates a new one** on the upgraded base image. NemoClaw protects your data through the same backup-and-restore flow as [`nemoclaw <name> rebuild`](../reference/commands.md#nemoclaw-name-rebuild):
+
+- **Preserved automatically.** Before deleting the old container, NemoClaw snapshots the workspace state directories defined in the agent manifest (typically `/sandbox/.openclaw/workspace/`) and restores them into the new container. Stored credentials (`~/.nemoclaw/credentials.json`) and registered policy presets live on the host the entire time, so they are never at risk and are re-applied to the new sandbox automatically.
+- **Not preserved.** Anything written outside the workspace state directories: packages installed inside the running container with `apt`/`pip`, files in non-workspace paths, and in-memory or process state. If you have customized the running container at runtime, capture that as `Dockerfile` changes (for `nemoclaw onboard --from`) or a manual `openshell sandbox download` before the rebuild starts.
+
+Aborts before the destroy step are non-destructive. The flow refuses to proceed past preflight if a credential is missing (see below) or past backup if the snapshot fails (with `"Aborting rebuild to prevent data loss"`), so a botched run leaves the original sandbox intact and ready to retry.
+
+See [Backup and Restore](../workspace/backup-restore.md) for the full list of state-preservation guarantees, snapshot retention, and instructions for manual backups when the auto-flow is not enough.
+
+:::{note} If the rebuild aborts with `Missing credential: <KEY>`
+The rebuild preflight reads the provider credential recorded by your last `nemoclaw onboard` session. If you have switched providers since onboarding (for example, from a remote API to a local Ollama setup) the preflight may still reference the old key and fail before any destroy step runs.
+
+To recover: re-run `nemoclaw onboard` and select your current provider — that refreshes the session metadata. Your existing container keeps serving traffic until the new image is ready.
 :::
 
 ## Uninstall
