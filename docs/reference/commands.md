@@ -489,6 +489,7 @@ $ nemoclaw my-assistant skill install ./my-skill/
 
 The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field.
 Skill names must contain only alphanumeric characters, dots, hyphens, and underscores.
+OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, see [Install OpenClaw Plugins](../deployment/install-openclaw-plugins.md).
 
 Files with names starting with `.` (dotfiles) are skipped and listed in the output.
 Files with unsafe path characters are rejected to prevent shell injection.
