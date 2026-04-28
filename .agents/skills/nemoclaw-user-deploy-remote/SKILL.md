@@ -106,8 +106,8 @@ default), so no extra configuration is needed.
 > set on a headless host, the compatibility wrapper prints a warning.
 >
 > `NEMOCLAW_DISABLE_DEVICE_AUTH` is also evaluated at image build time.
-> If you disable device auth for a remote deployment, any device that can reach the dashboard origin can connect without pairing.
-> Avoid this on internet-reachable or shared-network deployments.
+> When `CHAT_UI_URL` points at a non-loopback origin, NemoClaw disables OpenClaw device pairing in the generated sandbox configuration because browser-only remote users cannot complete terminal-based pairing.
+> Any device that can reach the configured dashboard origin can connect without pairing, so avoid exposing that origin on internet-reachable or shared-network deployments.
 
 ## Step 7: Proxy Configuration
 

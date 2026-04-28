@@ -75,7 +75,9 @@ For setup instructions, refer to Use a Local Inference Server (use the `nemoclaw
 ## Validation
 
 NemoClaw validates the selected provider and model before creating the sandbox.
-If validation fails, the wizard returns to provider selection.
+If credential validation fails, the wizard asks whether to re-enter the API key, choose a different provider, retry, or exit.
+The `nvapi-` prefix check applies only to `NVIDIA_API_KEY`.
+Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and compatible endpoint keys, use provider-aware validation during retry.
 
 | Provider type | Validation method |
 |---|---|
