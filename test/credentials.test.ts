@@ -232,10 +232,14 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
 
     vi.stubEnv("NVIDIA_API_KEY", "nvapi-from-env");
     const credentials = await importCredentialsModule(home);
-    credentials.stageLegacyCredentialsToEnv();
+    const staged = credentials.stageLegacyCredentialsToEnv();
 
     expect(process.env.NVIDIA_API_KEY).toBe("nvapi-from-env");
-    // File still present — staging never deletes.
+    // The legacy value was skipped, so it must NOT be reported as staged.
+    // Onboard uses the staged length to decide whether to delete the file;
+    // a false-positive entry here would unlink credentials we never
+    // actually migrated.
+    expect(staged).toEqual([]);
     expect(fs.existsSync(path.join(credsDir, "credentials.json"))).toBe(true);
   });
 

@@ -685,8 +685,14 @@ const {
  */
 function hydrateCredentialEnv(envName: string | null | undefined): string | null {
   if (!envName) return null;
-  stageLegacyCredentialsToEnv();
-  const value = getCredential(envName);
+  // Skip the legacy-file read entirely when the env already carries a
+  // value. Avoids redundant I/O on the hot path and removes any window in
+  // which legacy state could shadow a freshly-entered credential.
+  let value = getCredential(envName);
+  if (!value) {
+    stageLegacyCredentialsToEnv();
+    value = getCredential(envName);
+  }
   if (value) {
     process.env[envName] = value;
   }
@@ -6984,10 +6990,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     onboardSession.completeSession(toSessionUpdates({ sandboxName, provider, model }));
     completed = true;
-    // Onboarding finished successfully and the gateway holds the migrated
-    // credentials. Now it is safe to securely delete the legacy plaintext
-    // ~/.nemoclaw/credentials.json. Done unconditionally so a long-stale
-    // file from a previous machine state is also cleaned up.
+    // Onboarding finished successfully and the gateway now holds every
+    // value we pulled from the legacy plaintext file in this run. Securely
+    // delete the file only when this run actually imported something from
+    // it, so an unrelated invocation (or a run that never touched the file)
+    // never destroys a user's only copy of credentials we did not migrate.
     if (stagedLegacyKeys.length > 0) {
       removeLegacyCredentialsFile();
     }

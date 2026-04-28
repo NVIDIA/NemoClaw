@@ -250,9 +250,13 @@ export function stageLegacyCredentialsToEnv(): string[] {
     const normalized = normalizeCredentialValue(value);
     if (!normalized) continue;
     // Defer to env values that were already set (e.g. by the user) so the
-    // file cannot silently override an explicit override.
-    if (!process.env[key]) process.env[key] = normalized;
-    staged.push(key);
+    // file cannot silently override an explicit override. Track only the
+    // keys we actually imported from the file — `staged.length > 0` is the
+    // signal callers use to decide it is safe to delete the legacy file.
+    if (!process.env[key]) {
+      process.env[key] = normalized;
+      staged.push(key);
+    }
   }
   return staged.sort();
 }
@@ -261,11 +265,13 @@ export function stageLegacyCredentialsToEnv(): string[] {
  * Securely remove the legacy plaintext credentials.json. Call this only
  * after the gateway has accepted the migrated values, so an interrupted or
  * failed onboard cannot leave the user with no copy of their credentials.
+ *
+ * `secureUnlink` is itself missing-file-tolerant and uses `lstatSync`, so
+ * we deliberately do NOT pre-check with `existsSync` — that would follow a
+ * planted symlink and skip cleanup of a dangling link.
  */
 export function removeLegacyCredentialsFile(): void {
-  const legacyFile = getCredsFile();
-  if (!fs.existsSync(legacyFile)) return;
-  secureUnlink(legacyFile);
+  secureUnlink(getCredsFile());
 }
 
 /**

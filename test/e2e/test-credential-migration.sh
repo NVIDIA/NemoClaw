@@ -181,7 +181,11 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 2: Gateway provider registration"
 
-PROVIDERS_OUT=$(openshell -g nemoclaw provider list --names 2>&1 || true)
+if ! PROVIDERS_OUT=$(openshell -g nemoclaw provider list --names 2>&1); then
+  fail "openshell -g nemoclaw provider list --names failed"
+  printf '%s\n' "$PROVIDERS_OUT" | indent
+  exit 1
+fi
 info "Providers in nemoclaw gateway:"
 printf '%s\n' "$PROVIDERS_OUT" | indent
 
@@ -213,7 +217,11 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 3: nemoclaw credentials list"
 
-CREDS_LIST_OUT=$(nemoclaw credentials list 2>&1 || true)
+if ! CREDS_LIST_OUT=$(nemoclaw credentials list 2>&1); then
+  fail "nemoclaw credentials list failed"
+  printf '%s\n' "$CREDS_LIST_OUT" | indent
+  exit 1
+fi
 info "Output:"
 printf '%s\n' "$CREDS_LIST_OUT" | indent
 
