@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -113,9 +117,13 @@ describe("onboard command", () => {
   });
 
   it("parses --from <Dockerfile>", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-parse-"));
+    const dockerfilePath = path.join(tmpDir, "Custom.Dockerfile");
+    fs.writeFileSync(dockerfilePath, "FROM scratch\n");
+
     expect(
       parseOnboardArgs(
-        ["--resume", "--from", "/tmp/Custom.Dockerfile"],
+        ["--resume", "--from", dockerfilePath],
         "--yes-i-accept-third-party-software",
         "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
         {
@@ -129,7 +137,7 @@ describe("onboard command", () => {
       resume: true,
       fresh: false,
       recreateSandbox: false,
-      fromDockerfile: "/tmp/Custom.Dockerfile",
+      fromDockerfile: dockerfilePath,
       acceptThirdPartySoftware: false,
       agent: null,
       dangerouslySkipPermissions: false,
@@ -192,6 +200,27 @@ describe("onboard command", () => {
         },
       ),
     ).toThrow("exit:1");
+  });
+
+  it("exits before onboarding when --from points to a missing Dockerfile", async () => {
+    const runOnboard = vi.fn(async () => {});
+    const errors: string[] = [];
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-missing-"));
+
+    await expect(
+      runOnboardCommand({
+        args: ["--from", path.join(tmpDir, "no-such-dockerfile-2589")],
+        noticeAcceptFlag: "--yes-i-accept-third-party-software",
+        noticeAcceptEnv: "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        env: {},
+        runOnboard,
+        error: (message = "") => errors.push(message),
+        exit: exitWithPrefixedCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(runOnboard).not.toHaveBeenCalled();
+    expect(errors.join("\n")).toContain("--from path not found:");
   });
 
   it("exits with usage on unknown args", () => {
