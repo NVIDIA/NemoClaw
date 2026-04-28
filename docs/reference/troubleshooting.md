@@ -350,7 +350,7 @@ If you suspect a sandbox is still using a stale token, re-run onboarding so
 the credential check runs:
 
 ```console
-$ NEMOCLAW_SANDBOX_NAME=my-assistant nemoclaw onboard --non-interactive
+$ NEMOCLAW_SANDBOX_NAME=my-assistant nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
 ### Sandbox creation killed by OOM (exit 137)
