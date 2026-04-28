@@ -5854,7 +5854,7 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(payload.sandboxName, "my-assistant");
     assert.match(result.stdout, /Using custom Dockerfile:/);
     assert.match(result.stdout, /Docker build context:/);
-    assert.match(result.stdout, /custom-image/);
+    assert.match(result.stdout, /Docker build context:.*custom-image/);
     assert.equal(
       payload.hasExtraFile,
       true,

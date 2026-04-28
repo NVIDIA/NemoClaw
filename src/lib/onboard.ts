@@ -95,7 +95,12 @@ const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference }
 
 const onboardProviders = require("./onboard-providers");
 
-const CUSTOM_BUILD_CONTEXT_WARN_BYTES = 100 * 1024 * 1024;
+const CUSTOM_BUILD_CONTEXT_WARN_BYTES = 100_000_000;
+const CUSTOM_BUILD_CONTEXT_IGNORES = new Set(["node_modules", ".git", ".venv", "__pycache__"]);
+
+function shouldIncludeCustomBuildContextPath(src: string): boolean {
+  return !CUSTOM_BUILD_CONTEXT_IGNORES.has(path.basename(src));
+}
 
 type RemoteProviderConfigEntry = {
   label: string;
@@ -3719,6 +3724,22 @@ async function createSandbox(
       console.error(`  Custom Dockerfile not found: ${fromResolved}`);
       process.exit(1);
     }
+    const buildContextDir = path.dirname(fromResolved);
+    console.log(`  Using custom Dockerfile: ${fromResolved}`);
+    console.log(`  Docker build context: ${buildContextDir}`);
+    const buildContextStats = collectBuildContextStats(
+      buildContextDir,
+      shouldIncludeCustomBuildContextPath,
+    );
+    if (buildContextStats.totalBytes > CUSTOM_BUILD_CONTEXT_WARN_BYTES) {
+      const sizeMb = (buildContextStats.totalBytes / 1_000_000).toFixed(1);
+      console.warn(
+        `  WARN: build context contains about ${sizeMb} MB across ${buildContextStats.fileCount} files.`,
+      );
+      console.warn(
+        "  The --from flag sends the Dockerfile's parent directory to Docker; use a dedicated directory if this is not intentional.",
+      );
+    }
     buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
     stagedDockerfile = path.join(buildCtx, "Dockerfile");
     const cleanupCustomBuildCtx = (): void => {
@@ -3730,36 +3751,21 @@ async function createSandbox(
     };
     // Copy the entire parent directory as build context.
     try {
-      fs.cpSync(path.dirname(fromResolved), buildCtx, {
+      fs.cpSync(buildContextDir, buildCtx, {
         recursive: true,
-        filter: (src: string) => {
-          const base = path.basename(src);
-          return !["node_modules", ".git", ".venv", "__pycache__"].includes(base);
-        },
+        filter: shouldIncludeCustomBuildContextPath,
       });
       // If the caller pointed at a file not named "Dockerfile", copy it to the
       // location openshell expects (buildCtx/Dockerfile).
       if (path.basename(fromResolved) !== "Dockerfile") {
         fs.copyFileSync(fromResolved, stagedDockerfile);
       }
-      console.log(`  Using custom Dockerfile: ${fromResolved}`);
-      console.log(`  Docker build context: ${path.dirname(fromResolved)}`);
-      const buildContextStats = collectBuildContextStats(buildCtx);
-      if (buildContextStats.totalBytes > CUSTOM_BUILD_CONTEXT_WARN_BYTES) {
-        const sizeMb = Math.round(buildContextStats.totalBytes / (1024 * 1024));
-        console.warn(
-          `  WARN: build context contains about ${sizeMb} MB across ${buildContextStats.fileCount} files.`,
-        );
-        console.warn(
-          "  The --from flag sends the Dockerfile's parent directory to Docker; use a dedicated directory if this is not intentional.",
-        );
-      }
     } catch (err) {
       cleanupCustomBuildCtx();
       const errorObject = typeof err === "object" && err !== null ? err : null;
       if (isErrnoException(errorObject) && errorObject.code === "EACCES") {
         console.error(
-          `  Permission denied while copying build context from: ${path.dirname(fromResolved)}`,
+          `  Permission denied while copying build context from: ${buildContextDir}`,
         );
         console.error(
           "  The --from flag uses the Dockerfile's parent directory as the Docker build context.",
