@@ -298,6 +298,7 @@ Release Notes <about/release-notes>
 
 Prerequisites <get-started/prerequisites>
 Quickstart <get-started/quickstart>
+Brev Web UI <get-started/brev-web-ui-quickstart>
 ```
 
 ```{toctree}
