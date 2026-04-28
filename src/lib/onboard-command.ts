@@ -139,14 +139,33 @@ export function parseOnboardArgs(
 
   const resume = parsedArgs.includes("--resume");
   const fresh = parsedArgs.includes("--fresh");
+  const nonInteractive = parsedArgs.includes("--non-interactive");
   if (resume && fresh) {
     error("  --resume and --fresh are mutually exclusive.");
     printOnboardUsage(error, noticeAcceptFlag);
     exit(1);
   }
 
+  // Non-interactive without --name (and without NEMOCLAW_SANDBOX_NAME) silently
+  // defaulted to "my-assistant", which collides with the most common existing
+  // sandbox name when the user is trying to spin up a second one (the case
+  // #2543 reports). Resume flows are exempt — the sandbox name is recorded in
+  // the session and re-derived from there. CodeRabbit follow-up on #2618.
+  if (
+    nonInteractive &&
+    !resume &&
+    !sandboxName &&
+    !String(deps.env.NEMOCLAW_SANDBOX_NAME ?? "").trim()
+  ) {
+    error(
+      "  --non-interactive requires --name <sandbox-name> (or NEMOCLAW_SANDBOX_NAME).",
+    );
+    printOnboardUsage(error, noticeAcceptFlag);
+    exit(1);
+  }
+
   return {
-    nonInteractive: parsedArgs.includes("--non-interactive"),
+    nonInteractive,
     resume,
     fresh,
     recreateSandbox: parsedArgs.includes("--recreate-sandbox"),

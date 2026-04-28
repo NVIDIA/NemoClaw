@@ -484,4 +484,92 @@ describe("onboard command", () => {
     expect(env.NEMOCLAW_SANDBOX_NAME).toBe("existing-default");
   });
 
+  it("rejects --non-interactive without --name and without NEMOCLAW_SANDBOX_NAME", () => {
+    const errorMessages: string[] = [];
+    expect(() =>
+      parseOnboardArgs(
+        ["--non-interactive", "--from", "/path/to/Dockerfile"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: (msg) => {
+            errorMessages.push(String(msg ?? ""));
+          },
+          exit: exitWithCode,
+        },
+      ),
+    ).toThrow();
+    expect(errorMessages.join("\n")).toMatch(
+      /--non-interactive requires --name <sandbox-name>/,
+    );
+  });
+
+  it("accepts --non-interactive when --name is provided", () => {
+    const result = parseOnboardArgs(
+      ["--non-interactive", "--name", "my-deepobs"],
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.nonInteractive).toBe(true);
+    expect(result.sandboxName).toBe("my-deepobs");
+  });
+
+  it("accepts --non-interactive when NEMOCLAW_SANDBOX_NAME env var is set", () => {
+    const result = parseOnboardArgs(
+      ["--non-interactive"],
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: { NEMOCLAW_SANDBOX_NAME: "from-env" },
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.nonInteractive).toBe(true);
+    expect(result.sandboxName).toBe(null);
+  });
+
+  it("treats whitespace-only NEMOCLAW_SANDBOX_NAME as missing", () => {
+    const errorMessages: string[] = [];
+    expect(() =>
+      parseOnboardArgs(
+        ["--non-interactive"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: { NEMOCLAW_SANDBOX_NAME: "   " },
+          error: (msg) => {
+            errorMessages.push(String(msg ?? ""));
+          },
+          exit: exitWithCode,
+        },
+      ),
+    ).toThrow();
+    expect(errorMessages.join("\n")).toMatch(
+      /--non-interactive requires --name <sandbox-name>/,
+    );
+  });
+
+  it("exempts --resume from the non-interactive name requirement (session has the name)", () => {
+    const result = parseOnboardArgs(
+      ["--non-interactive", "--resume"],
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.nonInteractive).toBe(true);
+    expect(result.resume).toBe(true);
+    expect(result.sandboxName).toBe(null);
+  });
+
 });

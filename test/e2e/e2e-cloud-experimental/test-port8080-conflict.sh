@@ -75,7 +75,7 @@ PASS "Port 8080 occupied by dummy process (PID ${occupier_pid})"
 P4_LOG="$(mktemp)"
 INFO "Running nemoclaw onboard --non-interactive (expect preflight to fail on port 8080)..."
 set +e
-NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive >"$P4_LOG" 2>&1
+NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" nemoclaw onboard --non-interactive >"$P4_LOG" 2>&1
 p4_exit=$?
 set -euo pipefail
 p4_out="$(cat "$P4_LOG")"
@@ -124,7 +124,7 @@ else
   INFO "Sandbox missing after gateway destroy/recreate — re-onboarding with NEMOCLAW_RECREATE_SANDBOX=1..."
   P4R_LOG="$(mktemp)"
   set +e
-  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NEMOCLAW_RECREATE_SANDBOX=1 nemoclaw onboard --non-interactive >"$P4R_LOG" 2>&1
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NEMOCLAW_RECREATE_SANDBOX=1 NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" nemoclaw onboard --non-interactive >"$P4R_LOG" 2>&1
   p4r_exit=$?
   set -euo pipefail
   if [ "$p4r_exit" -ne 0 ]; then

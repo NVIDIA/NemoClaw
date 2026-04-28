@@ -511,7 +511,7 @@ function pollForSandboxReady(elapsed: () => string): void {
       [
         `source ~/.nvm/nvm.sh 2>/dev/null || true`,
         `cd ${remoteDir}`,
-        `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
+        `NEMOCLAW_SANDBOX_NAME="e2e-brev" nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
         `sleep 2`,
         `echo "onboard launched"`,
       ].join(" && "),

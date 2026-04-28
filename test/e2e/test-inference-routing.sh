@@ -205,6 +205,7 @@ test_inf_05_credential_isolation() {
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="open" \
+    NEMOCLAW_SANDBOX_NAME="e2e-inf-routing" \
     nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | redact_stream "$real_key" | tee -a "$LOG_FILE" || onboard_exit=$?
   if [[ $onboard_exit -ne 0 ]]; then
@@ -366,6 +367,7 @@ test_inf_07_unreachable_endpoint() {
     NEMOCLAW_ENDPOINT_URL="https://nemoclaw-e2e.invalid/v1" \
     NEMOCLAW_MODEL="test-model" \
     COMPATIBLE_API_KEY="fake-key-for-unreachable-test" \
+    NEMOCLAW_SANDBOX_NAME="e2e-unreachable" \
     run_with_timeout 120 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1) || exit_code=$?
 
@@ -433,6 +435,7 @@ test_inf_02_openai() {
     NEMOCLAW_PROVIDER="openai" \
     NEMOCLAW_MODEL="$model" \
     OPENAI_API_KEY="$api_key" \
+    NEMOCLAW_SANDBOX_NAME="e2e-inf-openai" \
     run_with_timeout 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | redact_stream "$api_key" | tee -a "$LOG_FILE" || onboard_exit=$?
 
@@ -507,6 +510,7 @@ test_inf_03_anthropic() {
     NEMOCLAW_PROVIDER="anthropic" \
     NEMOCLAW_MODEL="$model" \
     ANTHROPIC_API_KEY="$api_key" \
+    NEMOCLAW_SANDBOX_NAME="e2e-inf-anthropic" \
     run_with_timeout 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | redact_stream "$api_key" | tee -a "$LOG_FILE" || onboard_exit=$?
 
@@ -594,6 +598,7 @@ test_inf_09_compatible_endpoint() {
     NEMOCLAW_ENDPOINT_URL="$endpoint_url" \
     NEMOCLAW_MODEL="$endpoint_model" \
     COMPATIBLE_API_KEY="$endpoint_key" \
+    NEMOCLAW_SANDBOX_NAME="e2e-inf-custom" \
     run_with_timeout 300 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | redact_stream "$endpoint_key" | tee -a "$LOG_FILE" || onboard_exit=$?
 
