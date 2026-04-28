@@ -143,7 +143,7 @@ export function nvcfFunctionNotFoundMessage(model: string): string {
  * See issue #1601 (Bug 1) and issue #1960.
  */
 export function shouldSkipResponsesProbe(provider: string): boolean {
-  return provider === "nvidia-prod" || provider === "gemini-api";
+  return provider === "nvidia-prod" || provider === "nvidia-nim" || provider === "gemini-api";
 }
 
 /**

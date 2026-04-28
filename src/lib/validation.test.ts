@@ -280,6 +280,10 @@ describe("shouldSkipResponsesProbe", () => {
     expect(shouldSkipResponsesProbe("nvidia-prod")).toBe(true);
   });
 
+  it("skips the Responses probe for nvidia-nim (same endpoint as nvidia-prod, no /v1/responses)", () => {
+    expect(shouldSkipResponsesProbe("nvidia-nim")).toBe(true);
+  });
+
   it("skips the Responses probe for gemini-api (Gemini does not support /v1/responses)", () => {
     expect(shouldSkipResponsesProbe("gemini-api")).toBe(true);
   });
