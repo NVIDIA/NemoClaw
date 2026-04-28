@@ -23,7 +23,9 @@ type CredentialInput = string | null | undefined;
 // Credential env keys NemoClaw knows how to round-trip. listCredentialKeys()
 // projects the in-process env through this set; entries not in the set are
 // invisible to `nemoclaw credentials list` even if exported.
-const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
+// Exported so tests can import the same source-of-truth list and stay in
+// sync without a second hand-maintained copy.
+export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "NVIDIA_API_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
@@ -38,6 +40,13 @@ const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "SLACK_BOT_TOKEN",
   "SLACK_APP_TOKEN",
 ];
+
+// Hard upper bound on the legacy credentials.json size we are willing to
+// read into memory. The largest realistic credential set NemoClaw has ever
+// shipped is well under 1 KiB; the cap exists purely so an attacker who
+// can write to ~/.nemoclaw/ cannot OOM the next onboard by planting a
+// huge file. 1 MiB leaves plenty of headroom over any plausible mutation.
+const LEGACY_CREDS_FILE_MAX_BYTES = 1 * 1024 * 1024;
 
 /**
  * Resolve the user's home directory and reject obviously unsafe choices
@@ -119,6 +128,11 @@ export function normalizeCredentialValue(value: CredentialInput): string {
  * follows in onboarding (`openshell provider create/update --credential KEY`)
  * reads the value from this env entry. Nothing is persisted to disk.
  * An empty/whitespace value clears the env entry instead of staging blanks.
+ *
+ * NOTE for tests: this mutates `process.env` directly (not via vitest's
+ * `vi.stubEnv`), so callers that pollute the env in a unit test must
+ * clean up themselves — see `test/credentials.test.ts` for the
+ * `clearTrackedEnv` pattern.
  */
 export function saveCredential(key: string, value: CredentialInput): void {
   const normalized = normalizeCredentialValue(value);
@@ -222,7 +236,23 @@ function secureUnlink(filePath: string): void {
  */
 export function stageLegacyCredentialsToEnv(): string[] {
   const legacyFile = getCredsFile();
-  if (!fs.existsSync(legacyFile)) return [];
+  // lstatSync (not statSync) so a planted symlink doesn't redirect us to
+  // an unrelated file we then read into memory.
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(legacyFile);
+  } catch {
+    return [];
+  }
+  if (!stat.isFile()) return [];
+  if (stat.size > LEGACY_CREDS_FILE_MAX_BYTES) {
+    console.error(
+      `  Refusing to migrate ${legacyFile}: file is ${String(stat.size)} bytes, ` +
+        `exceeding the ${String(LEGACY_CREDS_FILE_MAX_BYTES)}-byte sanity cap. ` +
+        `Inspect the file manually and remove it if it does not contain credentials.`,
+    );
+    return [];
+  }
 
   let raw: string;
   try {

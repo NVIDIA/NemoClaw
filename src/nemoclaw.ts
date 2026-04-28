@@ -1266,6 +1266,17 @@ async function credentialsCommand(args: string[]): Promise<void> {
       console.log("  Re-run 'nemoclaw onboard' to enter a new value.");
     } else {
       console.error(`  Could not remove provider '${key}'.`);
+      // Earlier releases accepted a credential env-var name (e.g.
+      // NVIDIA_API_KEY) here; the API now takes an OpenShell provider
+      // name (nvidia-prod, openai-api, telegram-bridge, …). Surface the
+      // rename to anyone whose script is still passing the old shape.
+      if (/^[A-Z][A-Z0-9_]+$/.test(key)) {
+        console.error("");
+        console.error(`  '${key}' looks like a credential env variable name.`);
+        console.error("  As of this release, 'credentials reset' takes an OpenShell");
+        console.error("  provider name. Run 'nemoclaw credentials list' to see the");
+        console.error("  registered providers, then retry with one of those names.");
+      }
       const stderr = String(result.stderr || "").trim();
       if (stderr) console.error(`  ${stderr}`);
       process.exit(1);

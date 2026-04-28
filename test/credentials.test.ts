@@ -20,26 +20,12 @@ function isCredentialsModule(value: object | null): value is CredentialsModule {
   );
 }
 
-const TRACKED_ENV_KEYS = [
-  "NVIDIA_API_KEY",
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "GEMINI_API_KEY",
-  "COMPATIBLE_API_KEY",
-  "COMPATIBLE_ANTHROPIC_API_KEY",
-  "BRAVE_API_KEY",
-  "GITHUB_TOKEN",
-  "TELEGRAM_BOT_TOKEN",
-  "ALLOWED_CHAT_IDS",
-  "DISCORD_BOT_TOKEN",
-  "SLACK_BOT_TOKEN",
-  "SLACK_APP_TOKEN",
-  "TEST_API_KEY",
-  "OTHER_KEY",
-  "EMPTY_VALUE",
-  "ZETA",
-  "ALPHA",
-];
+// Pull the credential-env-key allowlist from the production module so
+// future additions only need to be made in one place. Plus a few
+// fixture-only names this suite mutates directly.
+import { KNOWN_CREDENTIAL_ENV_KEYS } from "../dist/lib/credentials.js";
+const TEST_FIXTURE_ENV_KEYS = ["TEST_API_KEY", "OTHER_KEY", "EMPTY_VALUE", "ZETA", "ALPHA"];
+const TRACKED_ENV_KEYS = [...KNOWN_CREDENTIAL_ENV_KEYS, ...TEST_FIXTURE_ENV_KEYS];
 
 function clearTrackedEnv() {
   for (const key of TRACKED_ENV_KEYS) {
@@ -255,6 +241,96 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     // Corrupt input must not silently disappear — leave it for inspection.
     expect(fs.existsSync(legacyFile)).toBe(true);
     expect(process.env.NVIDIA_API_KEY).toBeUndefined();
+  });
+
+  it("refuses to migrate an oversized legacy file (DoS guard)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    // Two megabytes of valid JSON, well above the 1 MiB sanity cap.
+    const filler = "x".repeat(2 * 1024 * 1024);
+    fs.writeFileSync(
+      legacyFile,
+      JSON.stringify({ NVIDIA_API_KEY: `nvapi-${filler}` }),
+      { mode: 0o600 },
+    );
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const credentials = await importCredentialsModule(home);
+
+    try {
+      expect(credentials.stageLegacyCredentialsToEnv()).toEqual([]);
+      expect(process.env.NVIDIA_API_KEY).toBeUndefined();
+      // File is left in place so the user can inspect or delete it.
+      expect(fs.existsSync(legacyFile)).toBe(true);
+      // The user gets a diagnostic on stderr explaining the refusal.
+      const messages = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(messages).toMatch(/sanity cap/);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("refuses to follow a symlink at the legacy path (no value reads past the link)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+
+    // A real credentials file at an unrelated path; the attacker plants a
+    // symlink at credentials.json that points at it.
+    const realFile = path.join(home, "real-creds.json");
+    fs.writeFileSync(
+      realFile,
+      JSON.stringify({ NVIDIA_API_KEY: "nvapi-attacker-controlled" }),
+    );
+    fs.symlinkSync(realFile, legacyFile);
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.stageLegacyCredentialsToEnv()).toEqual([]);
+    expect(process.env.NVIDIA_API_KEY).toBeUndefined();
+    // The pointee is intact; we never read or modified it.
+    expect(fs.existsSync(realFile)).toBe(true);
+  });
+
+  it("survives a crash between stage and remove (interrupted-onboard regression)", async () => {
+    // Simulates: process A stages legacy values into env then dies before
+    // completeSession + removeLegacyCredentialsFile run. Process B starts
+    // fresh (no env) and must successfully re-stage from the still-present
+    // file, then cleanly remove it on its own success path.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(
+      legacyFile,
+      JSON.stringify({ NVIDIA_API_KEY: "nvapi-survives-crash" }),
+      { mode: 0o600 },
+    );
+
+    // --- Process A: stage, then "crash" (we just abandon the env). ---
+    {
+      const credentials = await importCredentialsModule(home);
+      const stagedA = credentials.stageLegacyCredentialsToEnv();
+      expect(stagedA).toEqual(["NVIDIA_API_KEY"]);
+      expect(process.env.NVIDIA_API_KEY).toBe("nvapi-survives-crash");
+      // Mid-onboard crash — file MUST still exist.
+      expect(fs.existsSync(legacyFile)).toBe(true);
+    }
+
+    // Wipe env so nothing carries over from "process A" into "process B".
+    delete process.env.NVIDIA_API_KEY;
+
+    // --- Process B: fresh start, re-stage idempotently, then succeed. ---
+    {
+      const credentials = await importCredentialsModule(home);
+      const stagedB = credentials.stageLegacyCredentialsToEnv();
+      expect(stagedB).toEqual(["NVIDIA_API_KEY"]);
+      expect(process.env.NVIDIA_API_KEY).toBe("nvapi-survives-crash");
+      credentials.removeLegacyCredentialsFile();
+      expect(fs.existsSync(legacyFile)).toBe(false);
+    }
   });
 
   it("removeLegacyCredentialsFile zero-fills the file before unlinking", async () => {
