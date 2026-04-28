@@ -20,6 +20,7 @@ describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toEqual([
       "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b",
       "moonshotai/kimi-k2.5",
       "z-ai/glm5",
       "minimaxai/minimax-m2.5",
