@@ -3,14 +3,13 @@
 
 /**
  * Tests for issue #2273 Layer 1: non-interactive provider selection
- * resolves credentials from ~/.nemoclaw/credentials.json.
+ * can stage pre-fix legacy credentials from ~/.nemoclaw/credentials.json.
  *
  * Verifies that the non-interactive code path in setupNim() hydrates
- * provider credentials from saved storage (via hydrateCredentialEnv)
- * BEFORE checking process.env.  This prevents the bug where rebuild
- * calls onboard non-interactively and fails because the API key was
- * entered interactively during the original onboard and only exists
- * in credentials.json, not in the current process environment.
+ * provider credentials through the canonical resolver
+ * (via hydrateCredentialEnv) before checking process.env.  This preserves
+ * rebuild compatibility for users who still have a pre-fix legacy
+ * credentials.json while keeping new credential persistence env-only.
  *
  * This test covers all remote providers in REMOTE_PROVIDER_CONFIG.
  *
@@ -30,6 +29,19 @@ import { afterEach, describe, expect, it } from "vitest";
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const tmpFixtures: string[] = [];
 
+function parsePositiveInt(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+const CHILD_PROCESS_TIMEOUT_MS = Math.max(
+  10_000,
+  parsePositiveInt(process.env.NEMOCLAW_EXEC_TIMEOUT) ?? 0,
+  parsePositiveInt(process.env.NEMOCLAW_TEST_TIMEOUT) ?? 0,
+);
+const TEST_TIMEOUT_MS = Math.max(30_000, CHILD_PROCESS_TIMEOUT_MS + 10_000);
+
 afterEach(() => {
   for (const dir of tmpFixtures.splice(0)) {
     try {
@@ -42,7 +54,7 @@ afterEach(() => {
 
 /**
  * Parametric test: for a given credentialEnv, verify that onboard
- * non-interactive mode can resolve the key from credentials.json
+ * non-interactive mode can resolve a pre-fix legacy credentials.json key
  * when process.env does NOT have it set.
  *
  * We run a small script that:
@@ -58,7 +70,7 @@ function verifyCredentialHydration(credentialEnv: string, credentialValue: strin
   const nemoclawDir = path.join(tmpDir, ".nemoclaw");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
 
-  // Save credential in credentials.json
+  // Seed a pre-fix legacy credentials.json.
   fs.writeFileSync(
     path.join(nemoclawDir, "credentials.json"),
     JSON.stringify({ [credentialEnv]: credentialValue }),
@@ -76,7 +88,7 @@ const { hydrateCredentialEnv } = require(onboardPath);
 // Ensure the env var is NOT set
 delete process.env[${JSON.stringify(credentialEnv)}];
 
-// Hydrate from credentials.json
+// Hydrate through the canonical resolver.
 const result = hydrateCredentialEnv(${JSON.stringify(credentialEnv)});
 
 // Report
@@ -96,13 +108,13 @@ process.stdout.write(JSON.stringify(payload));
       PATH: path.dirname(process.execPath) + ":/usr/bin:/bin",
       NO_COLOR: "1",
     },
-    timeout: 10_000,
+    timeout: CHILD_PROCESS_TIMEOUT_MS,
   });
 
   return { result, tmpDir };
 }
 
-describe("Issue #2273 Layer 1: credential hydration from saved storage", () => {
+describe("Issue #2273 Layer 1: credential hydration from legacy storage", () => {
   // Test each provider's credential env to ensure parametric coverage
   const providers = [
     { name: "NVIDIA Endpoints", credentialEnv: "NVIDIA_API_KEY", value: "nvapi-test-hydrate" },
@@ -115,8 +127,8 @@ describe("Issue #2273 Layer 1: credential hydration from saved storage", () => {
 
   for (const { name, credentialEnv, value } of providers) {
     it(
-      `hydrates ${credentialEnv} (${name}) from credentials.json when not in process.env`,
-      { timeout: 30_000 },
+      `hydrates ${credentialEnv} (${name}) from legacy credentials.json when not in process.env`,
+      { timeout: TEST_TIMEOUT_MS },
       () => {
         const { result } = verifyCredentialHydration(credentialEnv, value);
 
