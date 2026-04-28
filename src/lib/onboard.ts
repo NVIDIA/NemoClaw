@@ -863,8 +863,23 @@ async function promptValidationRecovery(
 
 // Provider CRUD — thin wrappers that inject runOpenshell to avoid circular deps.
 const { buildProviderArgs } = onboardProviders;
+
+// Credential env keys that were successfully upserted to the OpenShell
+// gateway during the current onboard run. Reset at the top of `onboard()`
+// (which holds a process-wide lock, so concurrent invocations cannot
+// contaminate each other). The post-onboard cleanup uses this to gate the
+// legacy-file unlink: we only delete the file when every key we staged
+// from it was actually registered with the gateway, so disabling a
+// messaging channel or picking a local provider cannot strand secrets the
+// user still needs.
+const registeredCredentialEnvKeys: Set<string> = new Set<string>();
+
 function upsertProvider(name: string, type: string, credentialEnv: string, baseUrl: string | null, env: NodeJS.ProcessEnv = {}) {
-  return onboardProviders.upsertProvider(name, type, credentialEnv, baseUrl, env, runOpenshell);
+  const result = onboardProviders.upsertProvider(name, type, credentialEnv, baseUrl, env, runOpenshell);
+  if (result.ok && credentialEnv) {
+    registeredCredentialEnvKeys.add(credentialEnv);
+  }
+  return result;
 }
 
 type MessagingTokenDef = { name: string; envKey: string; token: string | null };
@@ -883,7 +898,13 @@ type SelectionDrift = {
 };
 
 function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
-  return onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
+  const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
+  // upsertMessagingProviders process.exits on failure, so reaching this
+  // point means every entry in tokenDefs that had a token was registered.
+  for (const def of tokenDefs) {
+    if (def.token && def.envKey) registeredCredentialEnvKeys.add(def.envKey);
+  }
+  return upserted;
 }
 function providerExistsInGateway(name: string) {
   return onboardProviders.providerExistsInGateway(name, runOpenshell);
@@ -6502,7 +6523,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   // Stage any pre-fix plaintext credentials.json into process.env so the
   // provider upserts later in this run can pick the values up. The file is
   // NOT removed here — the secure unlink runs only after onboarding
-  // completes successfully, so an interrupted run can be retried.
+  // completes successfully and only when every staged key was actually
+  // registered with the gateway in this run. Reset the registered-set at
+  // the start of every onboard so a previous invocation's results never
+  // contaminate the cleanup decision (we hold a process-wide lock here,
+  // but defensively clearing keeps the contract obvious).
+  registeredCredentialEnvKeys.clear();
   const stagedLegacyKeys = stageLegacyCredentialsToEnv();
   if (stagedLegacyKeys.length > 0) {
     console.error(
@@ -6990,13 +7016,29 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     onboardSession.completeSession(toSessionUpdates({ sandboxName, provider, model }));
     completed = true;
-    // Onboarding finished successfully and the gateway now holds every
-    // value we pulled from the legacy plaintext file in this run. Securely
-    // delete the file only when this run actually imported something from
-    // it, so an unrelated invocation (or a run that never touched the file)
-    // never destroys a user's only copy of credentials we did not migrate.
-    if (stagedLegacyKeys.length > 0) {
+    // Onboarding finished successfully. Delete the legacy plaintext
+    // credentials.json only when every key we staged from it was actually
+    // registered with the OpenShell gateway in this run. Picking a local
+    // provider, disabling a preselected messaging channel, or any other
+    // path that skips an upsert leaves the file intact so the user still
+    // has their only copy of those secrets — they can re-run onboard with
+    // the relevant providers/channels enabled to migrate them, or remove
+    // the file manually.
+    const allStagedRegistered =
+      stagedLegacyKeys.length > 0 &&
+      stagedLegacyKeys.every((k) => registeredCredentialEnvKeys.has(k));
+    if (allStagedRegistered) {
       removeLegacyCredentialsFile();
+    } else if (stagedLegacyKeys.length > 0) {
+      const unregistered = stagedLegacyKeys.filter(
+        (k) => !registeredCredentialEnvKeys.has(k),
+      );
+      console.error(
+        `  Kept ~/.nemoclaw/credentials.json: ${String(unregistered.length)} ` +
+          `legacy credential(s) not registered with the gateway in this run ` +
+          `(${unregistered.join(", ")}). Re-run onboard with the relevant ` +
+          `providers/channels enabled to migrate them, then the file is removed automatically.`,
+      );
     }
     printDashboard(sandboxName, model, provider, nimContainer, agent);
   } finally {

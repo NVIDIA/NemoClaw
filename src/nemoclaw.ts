@@ -1178,7 +1178,7 @@ async function credentialsCommand(args: string[]): Promise<void> {
     console.log("");
     console.log("  Subcommands:");
     console.log("    list                  List provider credentials registered with the OpenShell gateway");
-    console.log("    reset <KEY> [--yes]   Remove a provider credential so onboard re-prompts");
+    console.log("    reset <PROVIDER> [--yes]   Remove a provider credential so onboard re-prompts");
     console.log("");
     console.log("  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.");
     console.log("  Nothing is persisted to host disk; deploy/non-onboard commands read from env vars.");
@@ -1222,10 +1222,10 @@ async function credentialsCommand(args: string[]): Promise<void> {
 
   if (sub === "reset") {
     const key = args[1];
-    // Validate that <KEY> is a real positional argument, not a flag like
+    // Validate that <PROVIDER> is a real positional argument, not a flag like
     // `--yes` that the user passed without a key.
     if (!key || key.startsWith("-")) {
-      console.error("  Usage: nemoclaw credentials reset <KEY> [--yes]");
+      console.error("  Usage: nemoclaw credentials reset <PROVIDER> [--yes]");
       console.error("  KEY is an OpenShell provider name. Run 'nemoclaw credentials list' first.");
       process.exit(1);
     }
@@ -1233,7 +1233,7 @@ async function credentialsCommand(args: string[]): Promise<void> {
     const extraArgs = args.slice(2).filter((arg) => arg !== "--yes" && arg !== "-y");
     if (extraArgs.length > 0) {
       console.error(`  Unknown argument(s) for credentials reset: ${extraArgs.join(", ")}`);
-      console.error("  Usage: nemoclaw credentials reset <KEY> [--yes]");
+      console.error("  Usage: nemoclaw credentials reset <PROVIDER> [--yes]");
       process.exit(1);
     }
     const skipPrompt = args.includes("--yes") || args.includes("-y");
@@ -3730,7 +3730,7 @@ function help() {
     `    ${D}• Change inference model:  openshell inference set -g nemoclaw --model <model> --provider <provider>${R}`,
   );
   lines.push(`    ${D}• Add network presets:     use the policy-add command on your sandbox${R}`);
-  lines.push(`    ${D}• Change credentials:      credentials reset <KEY>, then re-run onboard${R}`);
+  lines.push(`    ${D}• Change credentials:      credentials reset <PROVIDER>, then re-run onboard${R}`);
   lines.push(`    ${D}• openclaw.json is read-only inside the sandbox (Landlock enforced).${R}`);
   lines.push(`    ${D}  To change OpenClaw settings, re-run onboard to rebuild the sandbox.${R}`);
 

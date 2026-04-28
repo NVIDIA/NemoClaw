@@ -236,29 +236,40 @@ function secureUnlink(filePath: string): void {
  */
 export function stageLegacyCredentialsToEnv(): string[] {
   const legacyFile = getCredsFile();
-  // lstatSync (not statSync) so a planted symlink doesn't redirect us to
-  // an unrelated file we then read into memory.
-  let stat: fs.Stats;
+
+  // Pin the file by descriptor before doing any checks. O_NOFOLLOW makes
+  // the open() itself fail when the final path component is a symlink,
+  // and fstat/read both target the same inode, so an attacker cannot
+  // swap the file between checks (TOCTOU) or redirect us through a
+  // symlink planted at the credentials path.
+  let fd: number;
   try {
-    stat = fs.lstatSync(legacyFile);
+    fd = fs.openSync(legacyFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   } catch {
-    return [];
-  }
-  if (!stat.isFile()) return [];
-  if (stat.size > LEGACY_CREDS_FILE_MAX_BYTES) {
-    console.error(
-      `  Refusing to migrate ${legacyFile}: file is ${String(stat.size)} bytes, ` +
-        `exceeding the ${String(LEGACY_CREDS_FILE_MAX_BYTES)}-byte sanity cap. ` +
-        `Inspect the file manually and remove it if it does not contain credentials.`,
-    );
     return [];
   }
 
   let raw: string;
   try {
-    raw = fs.readFileSync(legacyFile, "utf-8");
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return [];
+    if (stat.size > LEGACY_CREDS_FILE_MAX_BYTES) {
+      console.error(
+        `  Refusing to migrate ${legacyFile}: file is ${String(stat.size)} bytes, ` +
+          `exceeding the ${String(LEGACY_CREDS_FILE_MAX_BYTES)}-byte sanity cap. ` +
+          `Inspect the file manually and remove it if it does not contain credentials.`,
+      );
+      return [];
+    }
+    raw = fs.readFileSync(fd, "utf-8");
   } catch {
     return [];
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* fd already closed; ignore */
+    }
   }
 
   let parsed: unknown;

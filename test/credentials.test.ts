@@ -178,7 +178,12 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
     fs.mkdirSync(credsDir, { recursive: true });
+    // Capture what the runner already exports so the assertions don't
+    // assume `undefined` on hosts that legitimately set NODE_OPTIONS or
+    // OPENSHELL_GATEWAY (CI runners, dev shells with debug flags, etc.).
     const originalPath = process.env.PATH;
+    const originalNodeOptions = process.env.NODE_OPTIONS;
+    const originalOpenshellGateway = process.env.OPENSHELL_GATEWAY;
     fs.writeFileSync(
       legacyFile,
       JSON.stringify({
@@ -196,8 +201,8 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     expect(staged).toEqual(["NVIDIA_API_KEY"]);
     expect(process.env.NVIDIA_API_KEY).toBe("nvapi-legitimate");
     expect(process.env.PATH).toBe(originalPath);
-    expect(process.env.NODE_OPTIONS).toBeUndefined();
-    expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
+    expect(process.env.NODE_OPTIONS).toBe(originalNodeOptions);
+    expect(process.env.OPENSHELL_GATEWAY).toBe(originalOpenshellGateway);
   });
 
   it("returns [] when no legacy file is present", async () => {
