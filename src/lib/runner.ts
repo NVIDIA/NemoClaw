@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
-  ExecSyncOptionsWithStringEncoding,
   SpawnSyncOptions,
   SpawnSyncOptionsWithStringEncoding,
   SpawnSyncReturns,
 } from "node:child_process";
 
-const { execSync, spawnSync } = require("child_process");
+const { spawnSync } = require("child_process");
 const path = require("path");
 const { detectDockerHost } = require("./platform");
 
@@ -22,11 +21,7 @@ type RunnerOptions = SpawnSyncOptions & {
   suppressOutput?: boolean;
 };
 
-type CaptureOptions = Omit<ExecSyncOptionsWithStringEncoding, "encoding"> & {
-  ignoreError?: boolean;
-};
-
-type ArrayCaptureOptions = Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> & {
+type CaptureOptions = Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> & {
   ignoreError?: boolean;
 };
 
@@ -177,40 +172,17 @@ function runFile(
 }
 
 /**
- * Run a command and return its stdout as a trimmed string.
+ * Run a program directly with argv-style arguments and capture trimmed stdout.
  * Throws a redacted error on failure, or returns '' when opts.ignoreError is true.
  *
- * Accepts two forms:
- *   runCapture("some shell command")  — legacy: passes the string to execSync (shell)
- *   runCapture(["curl", "-sf", url])  — safe: calls spawnSync(exe, args) with no shell
- *
- * When an argv array is passed, the shell option is forbidden to prevent
- * callers from accidentally re-enabling shell interpretation.
+ * Shell-string capture is intentionally unsupported. If you truly need shell
+ * parsing, spell it out explicitly at the call site (for example
+ * ["sh", "-c", script]) so reviews and static checks can see the boundary.
  */
-function runCapture(cmd: string | readonly string[], opts: CaptureOptions = {}): string {
-  if (Array.isArray(cmd)) {
-    return runArrayCapture(cmd, opts);
+function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
+  if (!Array.isArray(cmd)) {
+    throw new Error("runCapture no longer accepts shell strings; pass an argv array instead");
   }
-  const shellCmd = String(cmd);
-  try {
-    return execSync(shellCmd, {
-      ...opts,
-      encoding: "utf-8",
-      cwd: ROOT,
-      env: { ...process.env, ...opts.env },
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-  } catch (err) {
-    if (opts.ignoreError) return "";
-    throw redactError(err);
-  }
-}
-
-/**
- * Internal: capture stdout from an argv array via spawnSync with no shell.
- * Shared by runCapture() and kept separate for clarity.
- */
-function runArrayCapture(cmd: readonly string[], opts: ArrayCaptureOptions = {}): string {
   if (cmd.length === 0) {
     throw new Error("runCapture: argv array must not be empty");
   }
