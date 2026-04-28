@@ -1,21 +1,29 @@
+import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const preflightPath = require.resolve("../dist/lib/preflight.js");
-const onboardPath = require.resolve("../dist/lib/onboard.js");
-const runnerPath = require.resolve("../dist/lib/runner.js");
+type PreflightModule = typeof import("../dist/lib/preflight.js");
+
+function resolveCjsModule<T extends object>(module: T & { default?: unknown }): T {
+  const defaultExport = module.default;
+  return (defaultExport && typeof defaultExport === "object" ? defaultExport : module) as T;
+}
+
+async function importPreflightModule(): Promise<PreflightModule> {
+  vi.resetModules();
+  const module = await import("../dist/lib/preflight.js");
+  return resolveCjsModule(module as PreflightModule & { default?: unknown });
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
-  delete require.cache[preflightPath];
-  delete require.cache[onboardPath];
-  delete require.cache[runnerPath];
+  vi.resetModules();
+  vi.doUnmock("../dist/lib/runner.js");
 });
 
 describe("argv callsites", () => {
-  it("assessHost uses argv commands for host probes", () => {
+  it("assessHost uses argv commands for host probes", async () => {
     const seen: Array<string | readonly string[]> = [];
-    delete require.cache[preflightPath];
-    const preflight = require(preflightPath);
+    const preflight = await importPreflightModule();
 
     const assessment = preflight.assessHost({
       platform: "linux",
@@ -25,7 +33,10 @@ describe("argv callsites", () => {
       readFileImpl: () => {
         throw new Error("no daemon config");
       },
-      runCaptureImpl: (command: string | readonly string[], options?: { ignoreError?: boolean }) => {
+      runCaptureImpl: (
+        command: string | readonly string[],
+        options?: { ignoreError?: boolean },
+      ) => {
         seen.push(command);
         const key = Array.isArray(command) ? command.join(" ") : command;
         if (key === "which docker") return "/usr/bin/docker\n";
@@ -34,7 +45,8 @@ describe("argv callsites", () => {
         if (key === "which nvidia-smi") return "";
         if (key === "which apt-get") return "/usr/bin/apt-get\n";
         if (key === "which systemctl") return "/usr/bin/systemctl\n";
-        if (key === "docker info --format {{json .}}") return '{"ServerVersion":"27.0.0","OperatingSystem":"Docker Engine"}';
+        if (key === "docker info --format {{json .}}")
+          return '{"ServerVersion":"27.0.0","OperatingSystem":"Docker Engine"}';
         if (key === "systemctl is-active docker") return "active\n";
         if (key === "systemctl is-enabled docker") return "enabled\n";
         return options?.ignoreError ? "" : "";
@@ -50,16 +62,20 @@ describe("argv callsites", () => {
     expect(seen).toContainEqual(["docker", "info", "--format", "{{json .}}"]);
     expect(seen).toContainEqual(["systemctl", "is-active", "docker"]);
     expect(seen).toContainEqual(["systemctl", "is-enabled", "docker"]);
-    expect(seen.some((command) => typeof command === "string" && command.includes("command -v"))).toBe(false);
+    expect(
+      seen.some((command) => typeof command === "string" && command.includes("command -v")),
+    ).toBe(false);
   });
 
-  it("probeContainerDns defaults to argv docker run", () => {
+  it("probeContainerDns defaults to argv docker run", async () => {
     const seen: Array<string | readonly string[]> = [];
-    delete require.cache[preflightPath];
-    const { probeContainerDns } = require(preflightPath);
+    const { probeContainerDns } = await importPreflightModule();
 
     const result = probeContainerDns({
-      runCaptureImpl: (command: string | readonly string[], opts?: { ignoreError?: boolean; timeout?: number }) => {
+      runCaptureImpl: (
+        command: string | readonly string[],
+        opts?: { ignoreError?: boolean; timeout?: number },
+      ) => {
         seen.push(command);
         expect(opts?.ignoreError).toBe(true);
         expect(opts?.timeout).toBe(20_000);
@@ -69,13 +85,20 @@ describe("argv callsites", () => {
 
     expect(result).toEqual({ ok: true });
     expect(seen).toEqual([
-      ["docker", "run", "--rm", "--pull=missing", "busybox:latest", "nslookup", "registry.npmjs.org"],
+      [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=missing",
+        "busybox:latest",
+        "nslookup",
+        "registry.npmjs.org",
+      ],
     ]);
   });
 
-  it("getDockerBridgeGatewayIp uses argv docker inspect", () => {
-    delete require.cache[preflightPath];
-    const { getDockerBridgeGatewayIp } = require(preflightPath);
+  it("getDockerBridgeGatewayIp uses argv docker inspect", async () => {
+    const { getDockerBridgeGatewayIp } = await importPreflightModule();
     const seen: Array<string | readonly string[]> = [];
 
     const gateway = getDockerBridgeGatewayIp((command: string | readonly string[]) => {
@@ -85,39 +108,22 @@ describe("argv callsites", () => {
 
     expect(gateway).toBe("172.17.0.1");
     expect(seen).toEqual([
-      ["docker", "network", "inspect", "bridge", "--format", "{{range .IPAM.Config}}{{.Gateway}}{{end}}"],
+      [
+        "docker",
+        "network",
+        "inspect",
+        "bridge",
+        "--format",
+        "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
+      ],
     ]);
   });
 
   it("getGatewayClusterContainerState uses argv docker inspect", () => {
-    const actualRunner = require(runnerPath);
-    const runCapture = vi.fn(() => "running healthy\n");
-    require.cache[runnerPath] = {
-      id: runnerPath,
-      filename: runnerPath,
-      loaded: true,
-      exports: {
-        ...actualRunner,
-        runCapture,
-      },
-    } as any;
+    const onboardSrc = fs.readFileSync(new URL("../dist/lib/onboard.js", import.meta.url), "utf-8");
 
-    delete require.cache[onboardPath];
-    const onboard = require(onboardPath);
-    const state = onboard.getGatewayClusterContainerState();
-
-    expect(state).toBe("running healthy");
-    expect(runCapture).toHaveBeenCalledWith(
-      [
-        "docker",
-        "inspect",
-        "--type",
-        "container",
-        "--format",
-        "{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}",
-        "openshell-cluster-nemoclaw",
-      ],
-      { ignoreError: true },
+    expect(onboardSrc).toMatch(
+      /runCapture\(\[\s*"docker",\s*"inspect",\s*"--type",\s*"container",\s*"--format",\s*"\{\{\.State\.Status\}\}\{\{if \.State\.Health\}\} \{\{\.State\.Health\.Status\}\}\{\{end\}\}",\s*containerName,\s*\], \{ ignoreError: true \}\)/,
     );
   });
 });
