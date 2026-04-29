@@ -732,9 +732,7 @@ fi`,
     });
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(
-      /Previous onboarding session failed/,
-    );
+    expect(`${result.stdout}${result.stderr}`).toMatch(/Previous onboarding session failed/);
     expect(`${result.stdout}${result.stderr}`).toMatch(/--fresh/);
     // The installer must have bailed out before invoking nemoclaw onboard.
     expect(fs.existsSync(onboardLog)).toBe(false);
@@ -826,18 +824,14 @@ fi`,
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(
-      /Starting a fresh onboarding session/,
-    );
+    expect(`${result.stdout}${result.stderr}`).toMatch(/Starting a fresh onboarding session/);
     expect(`${result.stdout}${result.stderr}`).not.toMatch(
       /Found an interrupted onboarding session/,
     );
     // onboard was called with --fresh (forwarded so the CLI clears the
     // existing session file) and without --resume.
     const log = fs.readFileSync(onboardLog, "utf-8");
-    expect(log).toMatch(
-      /^onboard --fresh --non-interactive --yes-i-accept-third-party-software$/m,
-    );
+    expect(log).toMatch(/^onboard --fresh --non-interactive --yes-i-accept-third-party-software$/m);
     expect(log).not.toMatch(/--resume/);
   });
 
@@ -2340,6 +2334,36 @@ exit 0`,
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/curl should not hit the releases API/);
+  });
+
+  it("piped root installer does not source a local payload from the caller cwd", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-piped-root-cwd-"));
+    const repoLike = path.join(tmp, "repo");
+    fs.mkdirSync(path.join(repoLike, "scripts"), { recursive: true });
+    const rootInstaller = path.join(repoLike, "install.sh");
+    fs.copyFileSync(CURL_PIPE_INSTALLER, rootInstaller);
+    writeExecutable(
+      path.join(repoLike, "scripts", "install.sh"),
+      `#!/usr/bin/env bash
+# NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1
+main() {
+  printf 'LOCAL_PAYLOAD_USED\\n'
+}`,
+    );
+
+    const result = spawnSync("bash", ["-s", "--", "--version"], {
+      cwd: repoLike,
+      input: fs.readFileSync(rootInstaller, "utf-8"),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NEMOCLAW_INSTALL_TAG: "v0.0.29",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/^nemoclaw-installer\s*$/m);
+    expect(`${result.stdout}${result.stderr}`).not.toMatch(/LOCAL_PAYLOAD_USED/);
   });
 
   it("falls back to the legacy root installer when the selected ref only has the old scripts/install.sh wrapper", () => {

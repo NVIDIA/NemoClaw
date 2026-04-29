@@ -25,6 +25,7 @@
 #   NEMOCLAW_POLICY_PRESETS=npm,pypi                   — policy presets
 #   RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL=0        — set 0 for non-interactive (default), 1 for expect
 #   NEMOCLAW_INSTALL_SCRIPT_URL                        — override public installer URL
+#   NEMOCLAW_PUBLIC_INSTALL_CWD                        — override temp cwd for public install
 #   E2E_CLOUD_ONBOARD_INSTALL_LOG                      — install log path
 #
 # Usage:
@@ -78,6 +79,7 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}"
 CLOUD_MODEL="${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-moonshotai/kimi-k2.5}"
 INSTALL_LOG="${E2E_CLOUD_ONBOARD_INSTALL_LOG:-/tmp/nemoclaw-e2e-cloud-onboard-install.log}"
 INTERACTIVE_INSTALL="${RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL:-0}"
+PUBLIC_INSTALL_CWD="${NEMOCLAW_PUBLIC_INSTALL_CWD:-}"
 
 # Source shared teardown helper
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
@@ -144,11 +146,6 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 section "Phase 3: Install via public URL"
 
-cd "$REPO" || {
-  fail "Could not cd to repo root: $REPO"
-  exit 1
-}
-
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_EXPERIMENTAL=1
 export NEMOCLAW_PROVIDER=cloud
@@ -169,8 +166,17 @@ if [ "$INTERACTIVE_INSTALL" = "1" ]; then
   fail "Interactive install (RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL=1) is not yet supported — use non-interactive mode"
   exit 1
 else
+  if [ -z "$PUBLIC_INSTALL_CWD" ]; then
+    PUBLIC_INSTALL_CWD="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-public-install.XXXXXX")"
+  else
+    mkdir -p "$PUBLIC_INSTALL_CWD"
+  fi
   info "Installing (non-interactive): curl -fsSL ${NEMOCLAW_INSTALL_SCRIPT_URL} | bash"
-  curl -fsSL "$NEMOCLAW_INSTALL_SCRIPT_URL" | bash >"$INSTALL_LOG" 2>&1 &
+  info "Public install cwd: ${PUBLIC_INSTALL_CWD}"
+  (
+    cd "$PUBLIC_INSTALL_CWD" || exit 1
+    curl -fsSL "$NEMOCLAW_INSTALL_SCRIPT_URL" | bash
+  ) >"$INSTALL_LOG" 2>&1 &
   install_pid=$!
   tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
   tail_pid=$!
@@ -198,6 +204,24 @@ else
   fail "Public install failed (exit $install_exit)"
   info "Last 30 lines of install log:"
   tail -30 "$INSTALL_LOG"
+  exit 1
+fi
+
+if grep -q "NemoClaw package.json found in the selected source checkout" "$INSTALL_LOG"; then
+  fail "Public install unexpectedly used the local source checkout"
+  info "Last 30 lines of install log:"
+  tail -30 "$INSTALL_LOG"
+  exit 1
+fi
+
+if grep -q "Installing NemoClaw from GitHub" "$INSTALL_LOG" \
+  && grep -q "Resolved install ref:" "$INSTALL_LOG" \
+  && grep -q "Cloning NemoClaw source" "$INSTALL_LOG"; then
+  pass "Public install used the GitHub clone path"
+else
+  fail "Public install did not show the GitHub clone path"
+  info "Last 40 lines of install log:"
+  tail -40 "$INSTALL_LOG"
   exit 1
 fi
 
