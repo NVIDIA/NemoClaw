@@ -294,7 +294,7 @@ export function validateLocalProvider(
     case "ollama-local":
       return {
         ok: false,
-        message: `Local Ollama is responding on 127.0.0.1, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
+        message: `Local Ollama is responding on ${getResolvedOllamaHost()}, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
       };
     default:
       return {
