@@ -2116,9 +2116,9 @@ function buildSandboxLogsArgs(sandboxName: string, follow: boolean): string[] {
  * for a single custom preset YAML, and `--from-dir <path>` for every
  * `.yaml`/`.yml` file in a directory. `--dry-run` previews without applying,
  * `--yes`/`-y`/`--force` (or `NEMOCLAW_NON_INTERACTIVE=1`) skips the
- * confirmation prompt. `--from-dir` applies files in lexicographic order
- * and aborts at the first failure (already-applied presets are not rolled
- * back).
+ * confirmation prompt. `--from-dir` applies non-hidden files in lexicographic
+ * order and aborts at the first failure (already-applied presets are not
+ * rolled back).
  */
 async function sandboxPolicyAdd(sandboxName: string, args: string[] = []): Promise<void> {
   const dryRun = args.includes("--dry-run");
@@ -2161,7 +2161,8 @@ async function sandboxPolicyAdd(sandboxName: string, args: string[] = []): Promi
     const files = fs
       .readdirSync(absDir, { withFileTypes: true })
       .filter(
-        (ent: { name: string; isFile(): boolean }) => ent.isFile() && /\.ya?ml$/i.test(ent.name),
+        (ent: { name: string; isFile(): boolean }) =>
+          ent.isFile() && !ent.name.startsWith(".") && /\.ya?ml$/i.test(ent.name),
       )
       .map((ent: { name: string }) => path.join(absDir, ent.name))
       .sort();
