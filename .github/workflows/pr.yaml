@@ -15,167 +15,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
+  # Detect which files changed so we can skip expensive jobs for docs-only PRs.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+
+  checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
+      - name: Run basic checks
+        uses: ./.github/actions/basic-checks
+
+      - name: Verify platform matrix is in sync
+        run: python3 scripts/generate-platform-docs.py --check
+
+  test-e2e-ollama-proxy:
+    needs: [checks, changes]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: "22"
-          cache: npm
+      - name: Run Ollama auth proxy E2E tests
+        run: bash test/e2e-ollama-proxy.sh
 
-      - name: Install hadolint
-        run: |
-          HADOLINT_URL="https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64"
-          curl -fsSL -o /usr/local/bin/hadolint "$HADOLINT_URL"
-          EXPECTED=$(curl -fsSL "${HADOLINT_URL}.sha256" | awk '{print $1}')
-          ACTUAL=$(sha256sum /usr/local/bin/hadolint | awk '{print $1}')
-          [ "$EXPECTED" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
-          chmod +x /usr/local/bin/hadolint
-
-      - name: Install dependencies
-        run: |
-          npm install --ignore-scripts
-          cd nemoclaw && npm install
-
-      - name: Build TypeScript plugin
-        run: cd nemoclaw && npm run build
-
-      - name: Run all hooks (pre-commit + pre-push)
-        run: npx prek run --all-files --stage pre-push
-
-  test-unit:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: |
-          npm install --ignore-scripts
-          cd nemoclaw && npm install
-
-      - name: Build TypeScript plugin
-        run: cd nemoclaw && npm run build
-
-      - name: Run all unit tests with coverage
-        run: npx vitest run --coverage
-
-      - name: Check coverage ratchet
-        run: npx tsx scripts/check-coverage-ratchet.ts
-
-  build-sandbox-images:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Pull base image from GHCR (fall back to local build)
-        run: |
-          if docker pull ghcr.io/nvidia/nemoclaw/sandbox-base:latest 2>/dev/null; then
-            echo "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest" >> "$GITHUB_ENV"
-          else
-            echo "::warning::GHCR base image not available, building locally"
-            docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
-            echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
-          fi
-
-      - name: Build production image
-        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production .
-
-      - name: Build sandbox test image (fixtures layered on production)
-        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
-
-      - name: Save images to tarballs
-        run: |
-          docker save nemoclaw-sandbox-test | gzip > /tmp/sandbox-test-image.tar.gz
-          docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
-
-      - name: Upload sandbox test image
-        uses: actions/upload-artifact@v4
-        with:
-          name: sandbox-test-image
-          path: /tmp/sandbox-test-image.tar.gz
-          retention-days: 1
-
-      - name: Upload isolation image
-        uses: actions/upload-artifact@v4
-        with:
-          name: isolation-image
-          path: /tmp/isolation-image.tar.gz
-          retention-days: 1
-
-  build-sandbox-images-arm64:
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Pull base image from GHCR (fall back to local build)
-        run: |
-          if docker pull ghcr.io/nvidia/nemoclaw/sandbox-base:latest 2>/dev/null; then
-            echo "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest" >> "$GITHUB_ENV"
-          else
-            echo "::warning::GHCR base image not available, building locally"
-            docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
-            echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
-          fi
-
-      - name: Build production image on arm64
-        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production-arm64 .
-
-      - name: Build sandbox test image on arm64
-        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .
-
-  test-e2e-sandbox:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: build-sandbox-images
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: sandbox-test-image
-          path: /tmp
-
-      - name: Load image
-        run: gunzip -c /tmp/sandbox-test-image.tar.gz | docker load
-
-      - name: Run sandbox E2E tests
-        run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
-
-  test-e2e-gateway-isolation:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: build-sandbox-images
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: isolation-image
-          path: /tmp
-
-      - name: Load image
-        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
-
-      - name: Run gateway isolation E2E tests
-        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
+  # Sandbox image builds and E2E tests have moved to pr-self-hosted.yaml,
+  # which runs on NVIDIA self-hosted runners via copy-pr-bot.
+  # See: .github/workflows/pr-self-hosted.yaml

@@ -1,0 +1,17 @@
+{
+  "renameTests": [
+    "test/cli.test.js",
+    "test/install-preflight.test.js",
+    "test/onboard-readiness.test.js",
+    "test/onboard-selection.test.js",
+    "test/onboard.test.js"
+  ],
+  "moveRuntime": {
+    "bin/lib/onboard.js": "src/lib/onboard.ts",
+    "bin/nemoclaw.js": "src/nemoclaw.ts"
+  },
+  "shimStrategy": {
+    "bin/lib/onboard.js": "simple",
+    "bin/nemoclaw.js": "cli-launcher"
+  }
+}

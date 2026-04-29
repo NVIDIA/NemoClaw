@@ -1,11 +1,13 @@
 ---
 title:
-  page: "Back Up and Restore Workspace Files"
-  nav: "Back Up & Restore"
-description: "How to back up and restore OpenClaw workspace files before destructive operations."
+  page: "Backup and Restore Workspace Files"
+  nav: "Backup & Restore"
+description:
+  main: "How to back up and restore OpenClaw workspace files before destructive operations."
+  agent: "Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds. Use when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds."
 keywords: ["nemoclaw backup", "nemoclaw restore", "workspace backup", "openshell sandbox download upload"]
 topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "sandboxing", "workspace", "backup", "nemoclaw"]
+tags: ["openclaw", "openshell", "sandboxing", "workspace", "backup"]
 content:
   type: how_to
   difficulty: technical_beginner
@@ -14,28 +16,54 @@ status: published
 ---
 
 <!--
-  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Back Up and Restore Workspace Files
+# Backup and Restore Workspace Files
 
 Workspace files define your agent's personality, memory, and user context.
 They persist across sandbox restarts but are **permanently deleted** when you run `nemoclaw <name> destroy`.
 
-This guide covers manual backup with CLI commands and an automated script.
-
-## Prerequisites
-
-- A running NemoClaw sandbox (for backup) or a freshly created sandbox (for restore).
-- The OpenShell CLI on your `PATH`.
-- The sandbox name (shown by `nemoclaw list`).
+This guide covers snapshot commands, manual backup with CLI commands, and an automated script.
 
 ## When to Back Up
 
-- Before running `nemoclaw <name> destroy`.
-- Before major NemoClaw version upgrades.
-- Periodically, if you have invested time customizing your agent.
+- **Before running `nemoclaw <name> destroy`**
+- Before major NemoClaw version upgrades
+- Periodically, if you've invested time customizing your agent
+
+## Snapshot Commands
+
+The fastest way to back up and restore sandbox state is with the built-in snapshot commands.
+Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
+
+```console
+$ nemoclaw my-assistant snapshot create
+$ nemoclaw my-assistant snapshot list
+$ nemoclaw my-assistant snapshot restore
+```
+
+`snapshot list` prints a table of version, name, timestamp, and path. Versions (`v1`, `v2`, ..., `vN`) are computed from the timestamp order, so `vN` is always the newest snapshot.
+
+To tag a snapshot with a human-readable label, pass `--name`:
+
+```console
+$ nemoclaw my-assistant snapshot create --name before-upgrade
+```
+
+To restore a specific snapshot instead of the latest, pass a version, name, or timestamp prefix:
+
+```console
+$ nemoclaw my-assistant snapshot restore v3
+$ nemoclaw my-assistant snapshot restore before-upgrade
+$ nemoclaw my-assistant snapshot restore 2026-04-14T
+```
+
+The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
+Snapshot restore accepts symlinks that resolve to NemoClaw-managed sandbox data paths such as `/sandbox/.openclaw-data/`.
+Symlinks that point outside the known sandbox data paths are still rejected during extraction.
+For full details, see the [Commands reference](../reference/commands.md).
 
 ## Manual Backup
 
@@ -101,7 +129,7 @@ $ ./scripts/backup-workspace.sh restore my-assistant 20260320-120000
 List backed-up files to confirm completeness:
 
 ```console
-$ ls ~/.nemoclaw/backups/20260320-120000/
+$ ls -la ~/.nemoclaw/backups/20260320-120000/
 AGENTS.md
 IDENTITY.md
 MEMORY.md
@@ -110,17 +138,32 @@ USER.md
 memory/
 ```
 
-## Inspecting Files Inside the Sandbox
+## Multi-Agent Deployments
 
-Connect to the sandbox to list or view workspace files directly:
+When OpenClaw is configured with multiple named agents, each agent has its own
+workspace directory (`workspace-main/`, `workspace-support/`, `workspace-ops/`,
+and so on — see [Multi-Agent Deployments](workspace-files.md#multi-agent-deployments)).
 
-```console
-$ openshell sandbox connect my-assistant
-$ ls -la /sandbox/.openclaw/workspace/
-```
+`nemoclaw <name> snapshot create` automatically discovers every `workspace-*/`
+directory under the sandbox state tree and includes it in the snapshot bundle
+alongside the default `workspace/`. `snapshot restore` re-applies the full
+per-agent set. No manual per-workspace backup pattern is needed.
+
+The sandbox entrypoint ensures every per-agent workspace is backed by the
+persistent `.openclaw-data/` tree (via a symlink from
+`.openclaw/workspace-<name>/`) so state also survives `openshell sandbox restart`.
+
+### Shared files across agents
+
+Files that operators typically want consistent across every per-agent workspace
+(`AGENTS.md`, shared skills, common templates) are **not** synced automatically.
+Each workspace is independent; changes in one don't propagate. Operators that
+need this either copy the shared files explicitly to each workspace after
+editing, or maintain a host-side sync layer. Tracking shared-file tooling
+(shared mount, `workspaces list` command) in
+[#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
 
 ## Next Steps
 
-- [Workspace Files overview](workspace-files.md) — learn what each file does
+- [Workspace Files overview](workspace-files.md) to learn what each file does
 - [Commands reference](../reference/commands.md)
-- [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md)

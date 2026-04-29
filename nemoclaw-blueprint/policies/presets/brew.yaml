@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: brew
+  description: "Homebrew (Linuxbrew) package manager access"
+
+network_policies:
+  brew:
+    name: brew
+    endpoints:
+      - host: formulae.brew.sh
+        port: 443
+        access: full
+        tls: skip
+      - host: github.com
+        port: 443
+        access: full
+        tls: skip
+      - host: ghcr.io
+        port: 443
+        access: full
+        tls: skip
+      - host: pkg-containers.githubusercontent.com
+        port: 443
+        access: full
+        tls: skip
+      - host: objects.githubusercontent.com
+        port: 443
+        access: full
+        tls: skip
+      - host: raw.githubusercontent.com
+        port: 443
+        access: full
+        tls: skip
+    binaries:
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/git }
+      - { path: /home/linuxbrew/.linuxbrew/bin/brew }
+      - { path: /home/linuxbrew/.linuxbrew/bin/* }
+      - { path: /home/linuxbrew/.linuxbrew/Homebrew/bin/* }

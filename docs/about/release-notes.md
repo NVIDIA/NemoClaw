@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Release Notes"
   nav: "Release Notes"
-description: "Changelog and feature history for NemoClaw releases."
+description:
+  main: "Changelog and feature history for NemoClaw releases."
+  agent: "Includes the NemoClaw release notes. Use when users ask about recent changes, the release cadence, or where to track versioned assets on GitHub."
 keywords: ["nemoclaw release notes", "nemoclaw changelog"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["nemoclaw", "releases"]
@@ -19,9 +21,6 @@ status: published
 -->
 
 # Release Notes
-
-```{include} ../_includes/alpha-statement.md
-```
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use the following GitHub resources to track changes.
 

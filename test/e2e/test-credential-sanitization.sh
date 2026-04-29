@@ -25,7 +25,7 @@
 #   NVIDIA_API_KEY         — required
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-credential-sanitization.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-credential-sanitization.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/pull/156
 
@@ -68,6 +68,10 @@ else
 fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-test}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # Run a command inside the sandbox and capture output.
 # Returns __PROBE_FAILED__ and exit 1 if SSH setup or execution fails,

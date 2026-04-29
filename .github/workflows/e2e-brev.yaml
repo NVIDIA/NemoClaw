@@ -19,6 +19,10 @@ name: e2e-brev
 #                              through $(cmd), backticks, quote breakout, ${VAR} expansion,
 #                              process table leak checks, and SANDBOX_NAME validation.
 #                              Requires running sandbox.
+#   messaging-providers      — 20+ tests validating PR #1081: provider creation, credential
+#                              isolation, openclaw.json config patching, network reachability,
+#                              and L7 proxy token rewriting for Telegram + Discord. Creates
+#                              its own sandbox (e2e-msg-provider). (~15 min)
 #   all                      — Runs credential-sanitization + telegram-injection (NOT full,
 #                              which destroys the sandbox the security tests need).
 #
@@ -28,12 +32,8 @@ name: e2e-brev
 on:
   workflow_dispatch:
     inputs:
-      branch:
-        description: "Branch to test"
-        required: true
-        default: "main"
       pr_number:
-        description: "PR number (for status reporting, optional)"
+        description: "PR number (resolves branch automatically)"
         required: false
         default: ""
       test_suite:
@@ -45,9 +45,10 @@ on:
           - full
           - credential-sanitization
           - telegram-injection
+          - messaging-providers
           - all
       use_launchable:
-        description: "Use NemoClaw launchable (true) or bare brev-setup.sh (false)"
+        description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
         required: false
         type: boolean
         default: true
@@ -55,7 +56,11 @@ on:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
         type: boolean
-        default: true
+        default: false
+      brev_token:
+        description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
+        required: false
+        default: ""
   workflow_call:
     inputs:
       branch:
@@ -73,6 +78,10 @@ on:
         required: false
         type: boolean
         default: true
+      setup_script_url:
+        required: false
+        type: string
+        default: ""
       keep_alive:
         required: false
         type: boolean
@@ -94,14 +103,23 @@ concurrency:
 
 jobs:
   e2e-brev:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    # if: github.repository == 'NVIDIA/NemoClaw'  # Disabled for fork testing — re-enable before merge
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
+      - name: Resolve branch from PR number
+        if: inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH=$(gh pr view ${{ inputs.pr_number }} --repo ${{ github.repository }} --json headRefName -q .headRefName)
+          echo "Resolved PR #${{ inputs.pr_number }} → branch: $BRANCH"
+          echo "RESOLVED_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
       - name: Checkout target branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ env.RESOLVED_BRANCH || inputs.branch || 'main' }}
 
       - name: Create check run (pending)
         if: inputs.pr_number != ''
@@ -126,23 +144,43 @@ jobs:
           cache: npm
 
       - name: Install Brev CLI
+        env:
+          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
         run: |
-          # Pin to v0.6.310 — v0.6.322 removed --cpu flag and defaults to GPU instances
-          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
+          # Brev CLI v0.6.322+ — CPU instances use `brev search cpu | brev create`
+          # Startup scripts use `brev create --startup-script @file` (not brev start --cpu)
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
+          # Brev CLI does not read BREV_API_TOKEN from env — it requires
+          # ~/.brev/credentials.json. The login call was removed in #1470
+          # (374a847d), breaking CI. Write the credentials file so `brev ls`
+          # works in the test harness's hasAuthenticatedBrev check.
+          if [ -z "${BREV_API_TOKEN:-}" ]; then
+            echo "::error::BREV_API_TOKEN is empty — cannot authenticate Brev CLI."
+            exit 1
+          fi
+          mkdir -p ~/.brev
+          umask 077
+          printf '{"refresh_token":"%s"}' "$BREV_API_TOKEN" > ~/.brev/credentials.json
+          chmod 600 ~/.brev/credentials.json
+          # Skip the first-run onboarding wizard that blocks on stdin (also removed in #1470)
+          printf '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
+          brev ls >/dev/null
 
       - name: Install dependencies
         run: npm install --ignore-scripts
 
       - name: Run ephemeral Brev E2E
         env:
-          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
           TEST_SUITE: ${{ inputs.test_suite }}
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
+          LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
+          BREV_PROVIDER: gcp
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-brev --reporter=verbose
 
@@ -172,7 +210,8 @@ jobs:
             STATUS="FAILED"
           fi
           INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
-          BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${{ inputs.branch }}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          BRANCH="${RESOLVED_BRANCH:-${{ inputs.branch || 'main' }}}"
+          BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${BRANCH}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           if [ "${{ inputs.keep_alive }}" = "true" ]; then
             BODY="${BODY}
 
@@ -183,6 +222,39 @@ jobs:
           > When done, delete it: \`brev delete ${INSTANCE}\`"
           fi
           gh pr comment ${{ inputs.pr_number }} --repo ${{ github.repository }} --body "$BODY"
+
+      # Collect debugging artifacts from the Brev VM on failure before the
+      # instance gets torn down. Captures the onboard log, sandbox list,
+      # docker state, and gateway status so downstream onboard failures are
+      # diagnosable without re-running with keep_alive=true.
+      - name: Collect Brev debug bundle on failure
+        if: failure()
+        continue-on-error: true
+        run: |
+          INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
+          mkdir -p brev-debug-bundle
+          brev refresh >/dev/null 2>&1 || true
+          ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR \
+              -o ConnectTimeout=10 "${INSTANCE}" \
+              'set +e
+               mkdir -p /tmp/nc-debug
+               cp /tmp/nemoclaw-onboard.log /tmp/nc-debug/ 2>/dev/null || true
+               timeout 15s openshell sandbox list  > /tmp/nc-debug/sandbox-list.txt 2>&1
+               timeout 15s openshell gateway status > /tmp/nc-debug/gateway-status.txt 2>&1
+               timeout 15s docker ps -a             > /tmp/nc-debug/docker-ps.txt 2>&1
+               timeout 30s tar -C /tmp -czf /tmp/nc-debug.tar.gz nc-debug
+              ' || true
+          scp -o StrictHostKeyChecking=no -o LogLevel=ERROR \
+              "${INSTANCE}:/tmp/nc-debug.tar.gz" brev-debug-bundle/ 2>/dev/null || true
+          ls -la brev-debug-bundle/ || true
+
+      - name: Upload Brev debug bundle on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brev-debug-bundle
+          path: brev-debug-bundle/
+          if-no-files-found: ignore
 
       - name: Upload test logs
         if: failure()

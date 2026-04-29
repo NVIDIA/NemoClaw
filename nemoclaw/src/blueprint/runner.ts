@@ -15,14 +15,151 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { execa } from "execa";
 import YAML from "yaml";
 
 import { validateEndpointUrl } from "./ssrf.js";
+import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import { DASHBOARD_PORT } from "../lib/ports.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
+
+type BlueprintDataScalar = string | number | boolean | null;
+type BlueprintDataValue = BlueprintDataScalar | PolicyAdditions | BlueprintDataValue[];
+type RollbackPlanSource = { sandbox_name?: string };
+type UnknownRecord = { [key: string]: unknown };
+
+function isAction(value: string | undefined): value is Action {
+  return value === "plan" || value === "apply" || value === "status" || value === "rollback";
+}
+
+function isObjectLike(value: unknown): value is UnknownRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null;
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalFiniteNumber(value: unknown): value is number | undefined {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isValidPort(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
+}
+
+function isOptionalPortList(value: unknown): value is number[] | undefined {
+  return (
+    value === undefined || (Array.isArray(value) && value.every((entry) => isValidPort(entry)))
+  );
+}
+
+function isBlueprintDataValue(value: unknown): value is BlueprintDataValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every((entry) => isBlueprintDataValue(entry));
+  }
+  if (!isObjectLike(value)) {
+    return false;
+  }
+  return Object.values(value).every((entry) => isBlueprintDataValue(entry));
+}
+
+function isInferenceProfile(value: unknown): value is InferenceProfile {
+  if (!isObjectLike(value)) {
+    return false;
+  }
+
+  return (
+    isOptionalString(value.provider_type) &&
+    isOptionalString(value.provider_name) &&
+    isOptionalString(value.endpoint) &&
+    isOptionalString(value.model) &&
+    isOptionalString(value.credential_env) &&
+    isOptionalString(value.credential_default) &&
+    isOptionalFiniteNumber(value.timeout_secs)
+  );
+}
+
+function isBlueprint(value: unknown): value is Blueprint {
+  if (!isObjectLike(value)) {
+    return false;
+  }
+
+  const version = value.version;
+  if (!isOptionalString(version)) {
+    return false;
+  }
+
+  const components = value.components;
+  if (components === undefined) {
+    return true;
+  }
+  if (!isObjectLike(components)) {
+    return false;
+  }
+
+  const inference = components.inference;
+  if (inference !== undefined) {
+    if (!isObjectLike(inference)) {
+      return false;
+    }
+    const profiles = inference.profiles;
+    if (profiles !== undefined) {
+      if (
+        !isObjectLike(profiles) ||
+        !Object.values(profiles).every((entry) => isInferenceProfile(entry))
+      ) {
+        return false;
+      }
+    }
+  }
+
+  const sandbox = components.sandbox;
+  if (sandbox !== undefined) {
+    if (!isObjectLike(sandbox)) {
+      return false;
+    }
+    if (
+      !isOptionalString(sandbox.image) ||
+      !isOptionalString(sandbox.name) ||
+      !isOptionalPortList(sandbox.forward_ports)
+    ) {
+      return false;
+    }
+  }
+
+  const policy = components.policy;
+  if (policy !== undefined) {
+    if (!isObjectLike(policy)) {
+      return false;
+    }
+    const additions = policy.additions;
+    if (additions !== undefined) {
+      if (
+        !isObjectLike(additions) ||
+        !Object.values(additions).every((entry) => isBlueprintDataValue(entry))
+      ) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
 
 // ── Logging helpers ─────────────────────────────────────────────
 
@@ -32,6 +169,10 @@ function log(msg: string): void {
 
 function progress(pct: number, label: string): void {
   process.stdout.write(`PROGRESS:${String(pct)}:${label}\n`);
+}
+
+function readRollbackSandboxName(value: RollbackPlanSource | null): string {
+  return value && typeof value.sandbox_name === "string" ? value.sandbox_name : "openclaw";
 }
 
 // ── Utilities ───────────────────────────────────────────────────
@@ -48,15 +189,18 @@ export function emitRunId(): string {
   return rid;
 }
 
+type InferenceProfileMap = { [profileName: string]: InferenceProfile };
+type PolicyAdditions = { [name: string]: BlueprintDataValue };
+
 interface Blueprint {
   version?: string;
   components?: {
     inference?: {
-      profiles?: Record<string, InferenceProfile>;
+      profiles?: InferenceProfileMap;
     };
     sandbox?: SandboxConfig;
     policy?: {
-      additions?: Record<string, unknown>;
+      additions?: PolicyAdditions;
     };
   };
 }
@@ -68,6 +212,7 @@ interface InferenceProfile {
   model?: string;
   credential_env?: string;
   credential_default?: string;
+  timeout_secs?: number;
 }
 
 interface SandboxConfig {
@@ -85,7 +230,13 @@ export function loadBlueprint(): Blueprint {
   } catch {
     throw new Error(`blueprint.yaml not found at ${bpFile}`);
   }
-  return YAML.parse(content) as Blueprint;
+  const parsed: unknown = YAML.parse(content);
+  if (!isBlueprint(parsed)) {
+    throw new Error(
+      `blueprint.yaml at ${bpFile} must contain a YAML mapping with valid nested component shapes`,
+    );
+  }
+  return parsed;
 }
 
 async function runCmd(
@@ -118,7 +269,7 @@ async function resolveRunConfig(
   blueprint: Blueprint,
   endpointUrl?: string,
 ): Promise<{
-  inferenceProfiles: Record<string, InferenceProfile>;
+  inferenceProfiles: InferenceProfileMap;
   inferenceCfg: InferenceProfile;
   sandboxCfg: SandboxConfig;
 }> {
@@ -130,13 +281,19 @@ async function resolveRunConfig(
 
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {
-    await validateEndpointUrl(endpointUrl);
-    inferenceCfg = { ...inferenceCfg, endpoint: endpointUrl };
+    const validated = await validateEndpointUrl(endpointUrl);
+    // Use DNS-pinned URL for HTTP (full SSRF/rebinding protection). For HTTPS,
+    // keep the original hostname — TLS certificate validation prevents rebinding
+    // since the attacker cannot present a valid cert for the target.
+    const safe = endpointUrl.startsWith("https:") ? validated.url : validated.pinnedUrl;
+    inferenceCfg = { ...inferenceCfg, endpoint: safe };
   }
 
   // Validate the final endpoint (whether from CLI override or blueprint profile)
   if (inferenceCfg.endpoint) {
-    await validateEndpointUrl(inferenceCfg.endpoint);
+    const validated = await validateEndpointUrl(inferenceCfg.endpoint);
+    const safe = inferenceCfg.endpoint.startsWith("https:") ? validated.url : validated.pinnedUrl;
+    inferenceCfg = { ...inferenceCfg, endpoint: safe };
   }
 
   const sandboxCfg = blueprint.components?.sandbox ?? {};
@@ -160,7 +317,7 @@ export interface RunPlan {
     model: string | undefined;
     credential_env: string | undefined;
   };
-  policy_additions: Record<string, unknown>;
+  policy_additions: PolicyAdditions;
   dry_run: boolean;
 }
 
@@ -191,7 +348,7 @@ export async function actionPlan(
     sandbox: {
       image: sandboxCfg.image ?? "openclaw",
       name: sandboxCfg.name ?? "openclaw",
-      forward_ports: sandboxCfg.forward_ports ?? [18789],
+      forward_ports: sandboxCfg.forward_ports ?? [DASHBOARD_PORT],
     },
     inference: {
       provider_type: inferenceCfg.provider_type,
@@ -230,7 +387,7 @@ export async function actionApply(
 
   const sandboxName = sandboxCfg.name ?? "openclaw";
   const sandboxImage = sandboxCfg.image ?? "openclaw";
-  const forwardPorts = sandboxCfg.forward_ports ?? [18789];
+  const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
 
   progress(20, "Creating OpenClaw sandbox");
   const createArgs = [
@@ -292,13 +449,23 @@ export async function actionApply(
     reject: false,
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, ...credEnv },
+    env: buildSubprocessEnv(credEnv),
   });
 
   progress(70, "Setting inference route");
-  await runCmd(["openshell", "inference", "set", "--provider", providerName, "--model", model], {
-    reject: false,
-  });
+  const inferenceArgs = [
+    "openshell",
+    "inference",
+    "set",
+    "--provider",
+    providerName,
+    "--model",
+    model,
+  ];
+  if (inferenceCfg.timeout_secs !== undefined) {
+    inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
+  }
+  await runCmd(inferenceArgs, { reject: false });
 
   progress(85, "Saving run state");
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
@@ -329,13 +496,30 @@ export async function actionApply(
   log(`Inference: ${providerName} -> ${model} @ ${endpoint}`);
 }
 
+function validateRunId(rid: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(rid)) {
+    throw new Error(
+      `Invalid run ID: must contain only alphanumeric characters, hyphens, and underscores`,
+    );
+  }
+}
+
+function safeRunDir(runsDir: string, rid: string): string {
+  validateRunId(rid);
+  const resolved = join(runsDir, rid);
+  if (!resolved.startsWith(runsDir + sep)) {
+    throw new Error("Run ID resolves outside expected directory");
+  }
+  return resolved;
+}
+
 export function actionStatus(rid?: string): void {
   emitRunId();
   const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
 
   let runDir: string;
   if (rid) {
-    runDir = join(runsDir, rid);
+    runDir = safeRunDir(runsDir, rid);
   } else {
     let runs: string[];
     try {
@@ -362,7 +546,8 @@ export function actionStatus(rid?: string): void {
 export async function actionRollback(rid: string): Promise<void> {
   emitRunId();
 
-  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
+  const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
+  const stateDir = safeRunDir(runsDir, rid);
   try {
     readdirSync(stateDir);
   } catch {
@@ -372,8 +557,12 @@ export async function actionRollback(rid: string): Promise<void> {
   const planFile = join(stateDir, "plan.json");
   try {
     const planData = readFileSync(planFile, "utf-8");
-    const plan = JSON.parse(planData) as { sandbox_name?: string };
-    const sandboxName = plan.sandbox_name ?? "openclaw";
+    const parsedPlan: unknown = JSON.parse(planData);
+    const rollbackPlan: RollbackPlanSource | null =
+      typeof parsedPlan === "object" && parsedPlan !== null && !Array.isArray(parsedPlan)
+        ? parsedPlan
+        : null;
+    const sandboxName = readRollbackSandboxName(rollbackPlan);
 
     progress(30, `Stopping sandbox ${sandboxName}`);
     await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
@@ -393,7 +582,8 @@ export async function actionRollback(rid: string): Promise<void> {
 // ── CLI ─────────────────────────────────────────────────────────
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
-  const action = argv[0] as Action | undefined;
+  const rawAction = argv.at(0);
+  const action = isAction(rawAction) ? rawAction : undefined;
   let profile = "default";
   let planPath: string | undefined;
   let runId: string | undefined;
@@ -403,6 +593,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   function requireValue(flag: string, i: number): string {
     if (i >= argv.length) throw new Error(`${flag} requires a value`);
     return argv[i];
+  }
+
+  if (!action) {
+    throw new Error(
+      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, rollback`,
+    );
   }
 
   for (let i = 1; i < argv.length; i++) {
@@ -425,15 +621,17 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     }
   }
 
-  const blueprint = loadBlueprint();
-
   switch (action) {
-    case "plan":
+    case "plan": {
+      const blueprint = loadBlueprint();
       await actionPlan(profile, blueprint, { dryRun, endpointUrl });
       break;
-    case "apply":
+    }
+    case "apply": {
+      const blueprint = loadBlueprint();
       await actionApply(profile, blueprint, { planPath, endpointUrl });
       break;
+    }
     case "status":
       actionStatus(runId);
       break;
@@ -443,8 +641,5 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       }
       await actionRollback(runId);
       break;
-    case undefined:
-    default:
-      throw new Error(`Unknown action '${String(action)}'. Use: plan, apply, status, rollback`);
   }
 }

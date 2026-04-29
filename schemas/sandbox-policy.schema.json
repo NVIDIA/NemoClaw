@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/schemas/sandbox-policy.schema.json",
+  "title": "NemoClaw Sandbox Policy",
+  "description": "Schema for the base sandbox policy (openclaw-sandbox.yaml) — defines filesystem, process, and network egress rules.",
+  "type": "object",
+  "required": ["version", "network_policies"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "filesystem_policy": {
+      "type": "object",
+      "properties": {
+        "include_workdir": { "type": "boolean" },
+        "read_only": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "read_write": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "landlock": {
+      "type": "object",
+      "properties": {
+        "compatibility": {
+          "type": "string",
+          "enum": ["strict", "best_effort"]
+        }
+      }
+    },
+    "process": {
+      "type": "object",
+      "properties": {
+        "run_as_user": { "type": "string" },
+        "run_as_group": { "type": "string" }
+      }
+    },
+    "network_policies": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/networkPolicyEntry"
+      }
+    }
+  },
+  "$defs": {
+    "networkPolicyEntry": {
+      "type": "object",
+      "required": ["name", "endpoints"],
+      "properties": {
+        "name": { "type": "string" },
+        "endpoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/endpoint" },
+          "minItems": 1
+        },
+        "binaries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/binary" }
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "required": ["host", "port"],
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "protocol": { "type": "string", "enum": ["rest"] },
+        "enforcement": { "type": "string", "enum": ["enforce", "audit"] },
+        "tls": { "type": "string", "enum": ["terminate", "passthrough", "skip"] },
+        "access": { "type": "string", "enum": ["full"] },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rule" },
+          "minItems": 1
+        }
+      },
+      "if": {
+        "properties": { "protocol": { "const": "rest" } },
+        "required": ["protocol"]
+      },
+      "then": {
+        "anyOf": [
+          { "required": ["rules"] },
+          { "required": ["access"] }
+        ]
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["allow"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "object",
+          "required": ["method", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+            },
+            "path": {
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        }
+      }
+    },
+    "binary": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    }
+  }
+}

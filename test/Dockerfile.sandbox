@@ -41,6 +41,11 @@ RUN mkdir -p /sandbox/.openclaw/workspace /sandbox/.openclaw/extensions /sandbox
         '  }' \
         '}' > /sandbox/.openclaw/openclaw.json \
     && chmod 600 /sandbox/.openclaw/openclaw.json \
+    && rm -f /sandbox/.openclaw/openclaw.json.bak* \
+        /sandbox/.openclaw/openclaw.json.last-good \
+        /sandbox/.openclaw/openclaw.json.clobbered.* \
+        /sandbox/.openclaw-data/logs/config-health.json \
+        /sandbox/.openclaw-data/logs/config-audit.jsonl \
     && echo "test-skill" > /sandbox/.openclaw/skills/test.md \
     && echo "test-workspace-file" > /sandbox/.openclaw/workspace/project.md \
     && printf '%s\n' '---' 'name: demo-hook' 'description: Demo hook fixture' '---' > /sandbox/.openclaw/hooks/demo-hook/HOOK.md \

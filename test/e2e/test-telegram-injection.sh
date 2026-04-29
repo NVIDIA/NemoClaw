@@ -32,7 +32,7 @@
 #   NVIDIA_API_KEY         — required
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-telegram-injection.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-telegram-injection.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/issues/118
 #      https://github.com/NVIDIA/NemoClaw/pull/119
@@ -76,6 +76,10 @@ else
 fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-test}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # ══════════════════════════════════════════════════════════════════
 # Helper: send a message to the agent inside the sandbox using the
@@ -345,7 +349,7 @@ info "T6: Testing SANDBOX_NAME with shell metacharacters..."
 # alphanumeric with optional internal hyphens, max 63 chars.
 # Test by running the validation directly via node.
 t6_result=$(cd "$REPO" && node -e "
-  const { validateName } = require('./bin/lib/runner');
+  const { validateName } = require('./dist/lib/runner');
   try {
     validateName('foo;rm -rf /', 'SANDBOX_NAME');
     console.log('ACCEPTED');
@@ -364,7 +368,7 @@ fi
 info "T7: Testing SANDBOX_NAME with leading hyphen (option injection)..."
 
 t7_result=$(cd "$REPO" && node -e "
-  const { validateName } = require('./bin/lib/runner');
+  const { validateName } = require('./dist/lib/runner');
   try {
     validateName('--help', 'SANDBOX_NAME');
     console.log('ACCEPTED');
@@ -383,7 +387,7 @@ fi
 # backticks and $() in double-quoted node -e strings.
 for invalid_name in '$(whoami)' '`id`' 'foo bar' '../etc/passwd' 'UPPERCASE'; do
   t_result=$(cd "$REPO" && node -e "
-    const { validateName } = require('./bin/lib/runner');
+    const { validateName } = require('./dist/lib/runner');
     try {
       validateName(process.argv[1], 'SANDBOX_NAME');
       console.log('ACCEPTED');

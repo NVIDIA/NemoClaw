@@ -85,10 +85,14 @@ done
 TMPDIR_BASE="${TMPDIR:-/tmp}"
 COLLECT_DIR=$(mktemp -d "${TMPDIR_BASE}/nemoclaw-debug-XXXXXX")
 SANDBOX_SSH_CONFIG=""
+SANDBOX_SSH_KNOWN=""
 cleanup() {
   rm -rf "$COLLECT_DIR"
   if [ -n "$SANDBOX_SSH_CONFIG" ]; then
     rm -f "$SANDBOX_SSH_CONFIG"
+  fi
+  if [ -n "$SANDBOX_SSH_KNOWN" ]; then
+    rm -f "$SANDBOX_SSH_KNOWN"
   fi
 }
 trap cleanup EXIT
@@ -114,16 +118,30 @@ SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
   SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
   REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-  ONBOARD_SESSION_HELPER="${REPO_ROOT}/bin/lib/onboard-session.js"
+  ONBOARD_SESSION_HELPER="${REPO_ROOT}/dist/lib/onboard-session.js"
 fi
 
-# Redact known sensitive patterns (API keys, tokens, passwords in env/args).
+# Redact known sensitive patterns from stdin.
+# Primary path: delegate to the compiled TypeScript redact module.
+# Fallback: minimal sed for environments without node or dist/.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2381
 redact() {
-  sed -E \
-    -e 's/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/\1=<REDACTED>/gi' \
-    -e 's/(nvapi-[A-Za-z0-9_-]{10,})/<REDACTED>/g' \
-    -e 's/(ghp_[A-Za-z0-9]{30,})/<REDACTED>/g' \
-    -e 's/(Bearer )[^ ]+/\1<REDACTED>/gi'
+  if command -v node &>/dev/null && [ -n "$REPO_ROOT" ] && [ -f "${REPO_ROOT}/dist/lib/redact.js" ]; then
+    node -e "
+      const {redactFull} = require(process.argv[1]);
+      let d = '';
+      process.stdin.on('data', c => d += c);
+      process.stdin.on('end', () => process.stdout.write(redactFull(d)));
+    " "${REPO_ROOT}/dist/lib/redact"
+  else
+    sed -E \
+      -e 's/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/\1=<REDACTED>/gi' \
+      -e 's/nvapi-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+      -e 's/nvcf-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+      -e 's/ghp_[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+      -e 's/sk-[A-Za-z0-9_-]{20,}/<REDACTED>/g' \
+      -e 's/(Bearer )[^ ]+/\1<REDACTED>/gi'
+  fi
 }
 
 # Run a command, print output, and save to a file in the collect dir.
@@ -284,7 +302,8 @@ if command -v openshell &>/dev/null \
   SANDBOX_SSH_CONFIG=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-XXXXXX")
   if openshell sandbox ssh-config "$SANDBOX_NAME" >"$SANDBOX_SSH_CONFIG" 2>/dev/null; then
     SANDBOX_SSH_HOST="openshell-${SANDBOX_NAME}"
-    SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
+    SANDBOX_SSH_KNOWN=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-known-XXXXXX")
+    SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$SANDBOX_SSH_KNOWN" -o ConnectTimeout=10)
 
     collect "sandbox-ps" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" ps -ef
     collect "sandbox-free" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" free -m
@@ -316,7 +335,10 @@ if [ "$QUICK" = false ]; then
   # shellcheck disable=SC2016
   collect "curl-models" sh -c 'code=$(curl -s -o /dev/null -w "%{http_code}" https://integrate.api.nvidia.com/v1/models); echo "HTTP $code"; if [ "$code" -ge 200 ] && [ "$code" -lt 500 ]; then echo "NIM API reachable"; else echo "NIM API unreachable"; exit 1; fi'
   collect "lsof-net" sh -c 'lsof -i -P -n 2>/dev/null | head -50'
-  collect "lsof-18789" lsof -i :18789
+  _dp="$(printf '%s' "${NEMOCLAW_DASHBOARD_PORT:-18789}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "$_dp" in *[!0-9]* | '') _dp=18789 ;; esac
+  [ "$_dp" -ge 1024 ] && [ "$_dp" -le 65535 ] 2>/dev/null || _dp=18789
+  collect "lsof-dashboard" lsof -i ":${_dp}"
 fi
 
 # -- Kernel / IO (full mode only) --

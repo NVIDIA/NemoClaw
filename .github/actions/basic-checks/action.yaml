@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: basic-checks
+description: Run the shared Node.js, hadolint, build, and prek-based checks used by CI.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: "22"
+        cache: npm
+
+    - name: Install hadolint
+      shell: bash
+      run: |
+        HADOLINT_VERSION="v2.14.0"
+        HADOLINT_URL="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64"
+        curl -fsSL -o /usr/local/bin/hadolint "$HADOLINT_URL"
+        EXPECTED=$(curl -fsSL "${HADOLINT_URL}.sha256" | awk '{print $1}')
+        ACTUAL=$(sha256sum /usr/local/bin/hadolint | awk '{print $1}')
+        [ "$EXPECTED" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
+        chmod +x /usr/local/bin/hadolint
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        npm install --ignore-scripts
+        cd nemoclaw && npm install
+
+    - name: Build TypeScript plugin
+      shell: bash
+      run: cd nemoclaw && npm run build
+
+    - name: Build CLI TypeScript modules
+      shell: bash
+      run: npm run build:cli
+
+    - name: Typecheck CLI + tests (strict)
+      # Explicit gate independent of the prek tsc-cli hook's file-pattern filter.
+      # The hook's `files:` scope excludes test/ and src/, which let #2130 +
+      # #2422 interact to ship a strict-mode regression onto main silently.
+      # Running this unconditionally here catches that class of drift.
+      shell: bash
+      run: npm run typecheck:cli
+
+    - name: Validate config schemas
+      shell: bash
+      run: npm run validate:configs
+
+    - name: Run checks
+      shell: bash
+      run: npx prek run --all-files --stage pre-push

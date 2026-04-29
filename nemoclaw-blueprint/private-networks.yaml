@@ -1,0 +1,123 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# IPv4 and IPv6 networks that SSRF validation must reject. Consumed by:
+#   - src/lib/sandbox-config.ts            (CLI `config set` literal-IP gate)
+#   - nemoclaw/src/blueprint/ssrf.ts       (plugin endpoint URL validator)
+# Both consumers build a node:net BlockList from this data at module load.
+#
+# When adding an entry, prefer the allocated prefix over the assigned
+# sub-prefix (block fe80::/10, not fe80::/64) — the larger block catches
+# malformed-but-parseable addresses and defends against non-conformant
+# network stacks.
+#
+# Translation prefixes (NAT64, 6to4, Teredo, DS-Lite) are included because
+# naming an address inside them reaches an IPv4 destination via the kernel,
+# the CPE, or an external translator — same attack class as ::ffff:x.x.x.x,
+# which node:net BlockList auto-matches against IPv4 rules (no explicit
+# entry needed).
+#
+# Schema:
+#   ipv4, ipv6 — each entry has `address`, `prefix`, and a non-empty
+#                `purpose` describing the attack surface the block defends.
+#   names      — each entry has `name` and a non-empty `purpose`. Match
+#                the exact label and any *.name subdomain, case-
+#                insensitive, with a trailing FQDN dot normalised away.
+# The parity test enforces non-empty `purpose` on every entry so no block
+# lands without a human-reviewable rationale.
+#
+# Scope: these blocks gate fields like `inference.endpoint` that name a
+# service the gateway will actually dial on behalf of the agent. They
+# are not a universal "don't-route-there" list. 240.0.0.0/4 is included
+# because no legitimate inference endpoint lives there — even in setups
+# that repurpose the range for internal unicast (Kubernetes distributions,
+# experimental overlays), nobody points a public-facing config key at a
+# 240/4 address.
+ipv4:
+  - address: 0.0.0.0
+    prefix: 8
+    purpose: This network
+  - address: 10.0.0.0
+    prefix: 8
+    purpose: Private /8 (enterprise-scale)
+  - address: 100.64.0.0
+    prefix: 10
+    purpose: CGNAT shared address space
+  - address: 127.0.0.0
+    prefix: 8
+    purpose: Loopback
+  - address: 169.254.0.0
+    prefix: 16
+    purpose: Link-local
+  - address: 172.16.0.0
+    prefix: 12
+    purpose: Private /12
+  - address: 192.0.0.0
+    prefix: 24
+    purpose: IETF protocol assignments (includes DS-Lite)
+  # Note: 192.0.1.0/24 is intentionally absent — it is globally routable
+  # space (assigned via APNIC), not a reserved range. The two /24 blocks
+  # on either side are IANA SPECIAL-PURPOSE REGISTRY entries; the gap
+  # between them is deliberate and must not be filled.
+  - address: 192.0.2.0
+    prefix: 24
+    purpose: TEST-NET-1 documentation
+  - address: 192.168.0.0
+    prefix: 16
+    purpose: Private /16 (home/small-network default)
+  - address: 198.18.0.0
+    prefix: 15
+    purpose: Benchmark testing
+  - address: 198.51.100.0
+    prefix: 24
+    purpose: TEST-NET-2 documentation
+  - address: 203.0.113.0
+    prefix: 24
+    purpose: TEST-NET-3 documentation
+  - address: 224.0.0.0
+    prefix: 4
+    purpose: Multicast
+  - address: 240.0.0.0
+    prefix: 4
+    purpose: Reserved for future use (includes 255.255.255.255 limited broadcast)
+ipv6:
+  - address: "::"
+    prefix: 128
+    purpose: Unspecified
+  - address: "::1"
+    prefix: 128
+    purpose: Loopback
+  - address: "64:ff9b::"
+    prefix: 96
+    purpose: NAT64 well-known prefix
+  - address: "64:ff9b:1::"
+    prefix: 48
+    purpose: NAT64 local-use prefix
+  - address: "100::"
+    prefix: 64
+    purpose: Discard prefix
+  - address: "2001::"
+    prefix: 32
+    purpose: Teredo tunneling
+  - address: "2001:db8::"
+    prefix: 32
+    purpose: Documentation
+  - address: "2002::"
+    prefix: 16
+    purpose: 6to4
+  - address: "fc00::"
+    prefix: 7
+    purpose: Unique local addresses
+  - address: "fe80::"
+    prefix: 10
+    purpose: Link-local
+  - address: "ff00::"
+    prefix: 8
+    purpose: Multicast
+names:
+  - name: localhost
+    purpose: RFC 6761 loopback special-use name
+  - name: local
+    purpose: RFC 6762 mDNS link-local names (Bonjour / Avahi / zeroconf)
+  - name: internal
+    purpose: ICANN-reserved private-use TLD (2024-02-11 Board Resolution)

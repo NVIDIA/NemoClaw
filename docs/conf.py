@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import sys
 from datetime import date
 from pathlib import Path
@@ -10,9 +11,19 @@ sys.path.insert(0, str(Path(__file__).parent / "_ext"))
 
 project = "NVIDIA NemoClaw Developer Guide"
 this_year = date.today().year
-copyright = f"2025-{this_year}, NVIDIA Corporation"
+copyright = f"{this_year}, NVIDIA Corporation"
 author = "NVIDIA Corporation"
-release = "latest"
+
+# Read the preferred version from versions1.json so the version switcher
+# can match it.  versions1.json is the source of truth for the switcher
+# dropdown; reading from it keeps conf.py in sync automatically.
+_versions = json.loads((Path(__file__).parent / "versions1.json").read_text())
+_preferred = [v["version"] for v in _versions if v.get("preferred")]
+assert len(_preferred) == 1, (
+    f"docs/versions1.json must have exactly one entry with preferred: true; found {len(_preferred)}"
+)
+release = _preferred[0]
+
 
 extensions = [
     "myst_parser",
@@ -26,7 +37,18 @@ extensions = [
     "sphinxcontrib.mermaid",
     "json_output",
     "search_assets",
+    "sphinx_reredirects",
 ]
+
+redirects = {
+    "reference/inference-profiles": "../inference/inference-options.html",
+    # Get Started reorganization (April 2026): the Windows pre-setup page
+    # moved out of its earlier locations and is now get-started/
+    # windows-preparation.html. The short-lived platform-setup hub and
+    # tutorials/dgx-spark pages were removed; DGX Spark content now lives
+    # in the NVIDIA Spark playbook (https://build.nvidia.com/spark/nemoclaw).
+    "get-started/windows-setup": "windows-preparation.html",
+}
 
 autodoc_default_options = {
     "members": True,
@@ -90,11 +112,19 @@ mermaid_init_js = (
 
 html_domain_indices = False
 html_use_index = False
-html_extra_path = ["project.json"]
+html_extra_path = ["project.json", "versions1.json"]
 highlight_language = "console"
 
 html_theme_options = {
     # "public_docs_features": True, # TODO: Uncomment this when the docs are public
+    "announcement": (
+        "&#x1F514; NVIDIA NemoClaw is <strong>alpha software</strong>. APIs and behavior"
+        " may change without notice. Do not use in production."
+    ),
+    "switcher": {
+        "json_url": "../versions1.json",
+        "version_match": release,
+    },
     "icon_links": [
         {
             "name": "NemoClaw GitHub",
@@ -112,3 +142,12 @@ html_theme_options = {
 }
 
 html_baseurl = "https://docs.nvidia.com/nemoclaw/latest/"
+
+# Keep project.json in sync with the resolved release version so the
+# static copy served alongside the docs always reports the correct version.
+# Write only when the contents change so sphinx-autobuild does not detect
+# a self-induced source change and rebuild in an infinite loop.
+_project_json = Path(__file__).parent / "project.json"
+_project_json_contents = json.dumps({"name": "nemoclaw", "version": release}) + "\n"
+if not _project_json.exists() or _project_json.read_text() != _project_json_contents:
+    _project_json.write_text(_project_json_contents)

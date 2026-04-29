@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# GitHub access preset.
+#
+# Until #1583 was fixed, github.com / api.github.com plus the git and gh
+# binaries were silently included in the base sandbox policy, so every
+# sandbox could clone, push, and call the GitHub API regardless of what
+# the user opted into. Moving the entry into a discoverable preset
+# restores least-privilege: a sandbox only gets GitHub if the user
+# explicitly selects this preset during `nemoclaw onboard` (or applies
+# it later via `openshell policy set`).
+
+preset:
+  name: github
+  description: "GitHub.com and GitHub API access (git, gh)"
+
+network_policies:
+  github:
+    name: github
+    endpoints:
+      - host: github.com
+        port: 443
+        access: full
+      - host: api.github.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/bin/gh }
+      - { path: /usr/bin/git }
