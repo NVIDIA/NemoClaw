@@ -161,7 +161,9 @@ If the installed OpenShell version falls outside this range, onboarding exits wi
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
-Onboarding skips common large directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context, but other build outputs such as `dist/`, `target/`, or `build/` are still included.
+Onboarding skips common large directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context.
+It also skips credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`.
+Other build outputs such as `dist/`, `target/`, or `build/` are still included.
 If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts.
 If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 

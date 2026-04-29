@@ -96,10 +96,57 @@ const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference }
 const onboardProviders = require("./onboard-providers");
 
 const CUSTOM_BUILD_CONTEXT_WARN_BYTES = 100_000_000;
-const CUSTOM_BUILD_CONTEXT_IGNORES = new Set(["node_modules", ".git", ".venv", "__pycache__"]);
+const CUSTOM_BUILD_CONTEXT_IGNORES = new Set([
+  "node_modules",
+  ".git",
+  ".venv",
+  "__pycache__",
+  ".aws",
+  ".credentials",
+  ".direnv",
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  ".ssh",
+  "credentials.json",
+  "key.json",
+  "secrets",
+  "secrets.json",
+  "secrets.yaml",
+  "token.json",
+]);
+
+function isIgnoredCustomBuildContextName(name: string): boolean {
+  const lowerName = name.toLowerCase();
+  return (
+    CUSTOM_BUILD_CONTEXT_IGNORES.has(lowerName) ||
+    lowerName === ".env" ||
+    lowerName === ".envrc" ||
+    lowerName.startsWith(".env.") ||
+    lowerName.endsWith(".key") ||
+    lowerName.endsWith(".pem") ||
+    lowerName.endsWith(".pfx") ||
+    lowerName.endsWith(".p12") ||
+    lowerName.endsWith(".jks") ||
+    lowerName.endsWith(".keystore") ||
+    lowerName.endsWith(".tfvars") ||
+    lowerName.endsWith("_ecdsa") ||
+    lowerName.endsWith("_ed25519") ||
+    lowerName.endsWith("_rsa") ||
+    (lowerName.startsWith("service-account") && lowerName.endsWith(".json"))
+  );
+}
 
 function shouldIncludeCustomBuildContextPath(src: string): boolean {
-  return !CUSTOM_BUILD_CONTEXT_IGNORES.has(path.basename(src));
+  return !isIgnoredCustomBuildContextName(path.basename(src));
+}
+
+function isInsideIgnoredCustomBuildContextPath(src: string): boolean {
+  return path
+    .normalize(src)
+    .split(path.sep)
+    .filter(Boolean)
+    .some((part: string) => isIgnoredCustomBuildContextName(part));
 }
 
 type RemoteProviderConfigEntry = {
@@ -3724,7 +3771,18 @@ async function createSandbox(
       console.error(`  Custom Dockerfile not found: ${fromResolved}`);
       process.exit(1);
     }
+    if (!fs.statSync(fromResolved).isFile()) {
+      console.error(`  Custom Dockerfile path is not a file: ${fromResolved}`);
+      process.exit(1);
+    }
     const buildContextDir = path.dirname(fromResolved);
+    if (isInsideIgnoredCustomBuildContextPath(buildContextDir)) {
+      console.error(
+        `  Custom Dockerfile is inside an ignored build-context path: ${buildContextDir}`,
+      );
+      console.error("  Move your Dockerfile to a dedicated directory and retry.");
+      process.exit(1);
+    }
     console.log(`  Using custom Dockerfile: ${fromResolved}`);
     console.log(`  Docker build context: ${buildContextDir}`);
     const buildContextStats = collectBuildContextStats(
