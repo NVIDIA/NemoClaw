@@ -9,6 +9,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
+const http = require("http");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("./ports");
 const {
@@ -339,6 +340,64 @@ function prepareOllamaModel(model, installedModels = []) {
   return validateOllamaModel(model);
 }
 
+/**
+ * Unload all running Ollama models from GPU memory.
+ * Best-effort operation: silently ignores errors if Ollama is not running.
+ */
+function unloadOllamaModels() {
+  try {
+    const req = http.get(
+      {
+        hostname: "localhost",
+        port: OLLAMA_PORT,
+        path: "/api/ps",
+        timeout: 3000,
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          if (res.statusCode !== 200) return;
+          try {
+            const parsed = JSON.parse(data);
+            const models = parsed.models || [];
+            for (const entry of models) {
+              if (!entry.name) continue;
+              const unloadReq = http.request(
+                {
+                  hostname: "localhost",
+                  port: OLLAMA_PORT,
+                  path: "/api/generate",
+                  method: "POST",
+                  timeout: 3000,
+                  headers: { "Content-Type": "application/json" },
+                },
+                () => {
+                  /* ignore response */
+                },
+              );
+              unloadReq.on("error", () => {
+                /* best-effort */
+              });
+              unloadReq.write(JSON.stringify({ model: entry.name, keep_alive: 0 }));
+              unloadReq.end();
+            }
+          } catch {
+            /* best-effort */
+          }
+        });
+      },
+    );
+    req.on("error", () => {
+      /* best-effort */
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
 module.exports = {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
@@ -350,4 +409,5 @@ module.exports = {
   printOllamaExposureWarning,
   pullOllamaModel,
   prepareOllamaModel,
+  unloadOllamaModels,
 };
