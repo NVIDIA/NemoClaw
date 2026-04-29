@@ -2368,7 +2368,7 @@ function sleep(seconds) {
   sleepSeconds(seconds);
 }
 
-function destroyGateway() {
+function destroyGateway(): boolean {
   const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
     ignoreError: true,
   });
@@ -2383,6 +2383,7 @@ function destroyGateway() {
     `docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm || true`,
     { ignoreError: true },
   );
+    return true;
 }
 
 function getGatewayClusterContainerState() {
@@ -3129,8 +3130,15 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
       }
       console.error("  Troubleshooting:");
               console.error("  nemoclau onboard");
-              destroyGateway();
-              console.error(" Gateway cleanup completed after failed start.");
+                      const cleanupOk = destroyGateway();
+        if (cleanupOk) {
+            console.error(" Gateway cleanup completed after failed start.");
+        } else {
+            console.error("  Automatic gateway cleanup failed.");
+            console.error("  Recovery:");
+            console.error("    openshell gateway destroy -g nemoclau");
+            console.error("    docker volume ls -q --filter \"name=openshell-cluster-nemoclau\"");
+        }
       process.exit(1);
     }
     throw new Error("Gateway failed to start");
