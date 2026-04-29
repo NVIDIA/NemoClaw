@@ -2110,7 +2110,8 @@ function destroyGateway(): boolean {
   // corrupted cluster state that breaks the next gateway start. Clean them up.
   dockerRemoveVolumesByPrefix(`openshell-cluster-${GATEWAY_NAME}`, { ignoreError: true });
     
-}
+    return true;
+
 }
 
 function getGatewayClusterContainerState(): string {
