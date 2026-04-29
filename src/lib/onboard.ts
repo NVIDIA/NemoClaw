@@ -3106,7 +3106,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   } catch {
     if (exitOnFailure) {
       console.error(`  Gateway failed to start after ${retries + 1} attempts.`);
-      console.error("  Gateway state preserved for diagnostics.");
+          console.error(" Gateway cleanup completed after failed start.");
       console.error("");
       try {
         const logs = redact(
@@ -3128,8 +3128,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
         // doctor logs unavailable — fall through to manual instructions
       }
       console.error("  Troubleshooting:");
-      console.error("    openshell doctor logs --name nemoclaw");
-      console.error("    openshell doctor check");
+          console.error("  nemoclau onboard");
               destroyGateway();
       process.exit(1);
     }
