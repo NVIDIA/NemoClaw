@@ -1475,6 +1475,21 @@ setImmediate(() => {
       expect(result.stderr).toMatch(/Aborting --from-dir/);
     });
 
+    it("--from-dir skips hidden dotfile yaml presets", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-hidden-"));
+      fs.writeFileSync(
+        path.join(dir, ".bad.yaml"),
+        "preset:\n  name: bad\nnetwork_policies: {}\n",
+      );
+      fs.writeFileSync(path.join(dir, "real.yaml"), "preset:\n  name: real\nnetwork_policies: {}\n");
+      const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      const loads = calls.filter((c) => c.type === "load").map((c) => c.path);
+      expect(loads.length).toBe(1);
+      expect(loads[0]).toMatch(/real\.yaml$/);
+    });
+
     it("errors when --from-dir points at a non-directory", () => {
       const result = runPolicyAddExternal(["--from-dir", "/does/not/exist"]);
       expect(result.status).not.toBe(0);
@@ -1496,6 +1511,38 @@ setImmediate(() => {
       const loads = calls.filter((c) => c.type === "load").map((c) => c.path);
       expect(loads.length).toBe(1);
       expect(loads[0]).toMatch(/real\.yaml$/);
+    });
+  });
+
+  describe("interactive prompt cleanup", () => {
+    it("releases stdin after preset prompts so the event loop drains on a TTY", () => {
+      const source = fs.readFileSync(
+        path.join(REPO_ROOT, "src", "lib", "policies.ts"),
+        "utf-8",
+      );
+      // A TTY-only guard around pause/unref pins the event loop on
+      // interactive runs and stops the wizard from exiting after its last
+      // prompt resolves.
+      expect(source).not.toMatch(/rl\.close\(\);\s*if\s*\(\s*!process\.stdin\.isTTY\s*\)/);
+      // Both prompt callbacks must release stdin after `rl.close()`.
+      const cleanupMatches = source.match(
+        /rl\.close\(\);[\s\S]*?process\.stdin\.pause\(\)[\s\S]*?process\.stdin\.unref\(\)/g,
+      );
+      expect(cleanupMatches?.length ?? 0).toBeGreaterThanOrEqual(2);
+    });
+
+    it("re-refs stdin before each preset prompt so a follow-up prompt is not stranded by a sticky unref()", () => {
+      const source = fs.readFileSync(
+        path.join(REPO_ROOT, "src", "lib", "policies.ts"),
+        "utf-8",
+      );
+      // unref() above is sticky — a subsequent createInterface will not
+      // re-ref by itself; an explicit ref() before each one keeps follow-up
+      // prompts able to wait for input.
+      const refMatches = source.match(
+        /process\.stdin\.ref\(\)[\s\S]*?readline\.createInterface\(\{\s*input:\s*process\.stdin/g,
+      );
+      expect(refMatches?.length ?? 0).toBeGreaterThanOrEqual(2);
     });
   });
 });

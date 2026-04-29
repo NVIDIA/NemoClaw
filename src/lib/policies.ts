@@ -440,13 +440,16 @@ function selectForRemoval(
     });
     process.stderr.write("\n");
     const question = "  Choose preset to remove: ";
+    // Re-attach stdin to the event loop — unref() on exit is sticky and
+    // would otherwise leave a follow-up prompt waiting on a detached handle.
+    if (typeof process.stdin.ref === "function") process.stdin.ref();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer: string) => {
       rl.close();
-      if (!process.stdin.isTTY) {
-        if (typeof process.stdin.pause === "function") process.stdin.pause();
-        if (typeof process.stdin.unref === "function") process.stdin.unref();
-      }
+      // pause+unref so the process exits naturally after the last prompt.
+      // The matching ref() above keeps subsequent prompts working.
+      if (typeof process.stdin.pause === "function") process.stdin.pause();
+      if (typeof process.stdin.unref === "function") process.stdin.unref();
       const trimmed = answer.trim();
       if (!trimmed) {
         resolve(null);
@@ -764,13 +767,16 @@ function selectFromList(
     const defaultIdx = items.findIndex((item) => !applied.includes(item.name));
     const defaultNum = defaultIdx >= 0 ? defaultIdx + 1 : null;
     const question = defaultNum ? `  Choose preset [${defaultNum}]: ` : "  Choose preset: ";
+    // Re-attach stdin to the event loop — unref() on exit is sticky and
+    // would otherwise leave a follow-up prompt waiting on a detached handle.
+    if (typeof process.stdin.ref === "function") process.stdin.ref();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer: string) => {
       rl.close();
-      if (!process.stdin.isTTY) {
-        if (typeof process.stdin.pause === "function") process.stdin.pause();
-        if (typeof process.stdin.unref === "function") process.stdin.unref();
-      }
+      // pause+unref so the process exits naturally after the last prompt.
+      // The matching ref() above keeps subsequent prompts working.
+      if (typeof process.stdin.pause === "function") process.stdin.pause();
+      if (typeof process.stdin.unref === "function") process.stdin.unref();
       const trimmed = answer.trim();
       const effectiveInput = trimmed || (defaultNum ? String(defaultNum) : "");
       if (!effectiveInput) {

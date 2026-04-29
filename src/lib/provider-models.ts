@@ -195,7 +195,7 @@ export function validateAnthropicModel(
   options: ProviderModelOptions = {},
 ): ModelValidationResult {
   const normalizedEndpointUrl = String(endpointUrl).replace(/\/+$/, "");
-  const available = fetchAnthropicModels(endpointUrl, apiKey, options);
+  const available = fetchAnthropicModels(normalizedEndpointUrl, apiKey, options);
   if (!available.ok) {
     if (available.httpStatus === 404 || available.httpStatus === 405) {
       return { ok: true, validated: false };
@@ -226,7 +226,7 @@ export function validateOpenAiLikeModel(
   options: ProviderModelOptions = {},
 ): ModelValidationResult {
   const normalizedEndpointUrl = String(endpointUrl).replace(/\/+$/, "");
-  const available = fetchOpenAiLikeModels(endpointUrl, apiKey, options);
+  const available = fetchOpenAiLikeModels(normalizedEndpointUrl, apiKey, options);
   if (!available.ok) {
     if (available.httpStatus === 404 || available.httpStatus === 405) {
       return { ok: true, validated: false };

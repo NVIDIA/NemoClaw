@@ -401,16 +401,25 @@ describe("runtime model override (#759)", () => {
     expect(fn[1]).toContain('NEMOCLAW_REASONING must be "true" or "false"');
   });
 
-  it("triggers on any override env var, not just MODEL_OVERRIDE", () => {
+  it("triggers only on explicit override env vars (MODEL_OVERRIDE or INFERENCE_API_OVERRIDE)", () => {
     const fn = src.match(/apply_model_override\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
-    // The guard should check all five env vars
+    // The guard should only check the two explicit override env vars (#2653).
+    // NEMOCLAW_CONTEXT_WINDOW, NEMOCLAW_MAX_TOKENS, and NEMOCLAW_REASONING are
+    // promoted from Dockerfile ARGs to ENV and always set — they should only
+    // take effect alongside an explicit model or API override.
     const guard = fn[1].split("return 0")[0];
     expect(guard).toContain("NEMOCLAW_MODEL_OVERRIDE");
     expect(guard).toContain("NEMOCLAW_INFERENCE_API_OVERRIDE");
-    expect(guard).toContain("NEMOCLAW_CONTEXT_WINDOW");
-    expect(guard).toContain("NEMOCLAW_MAX_TOKENS");
-    expect(guard).toContain("NEMOCLAW_REASONING");
+    expect(guard).not.toMatch(
+      /\[\s*-n\s*"\$\{NEMOCLAW_CONTEXT_WINDOW:-\}"/,
+    );
+    expect(guard).not.toMatch(
+      /\[\s*-n\s*"\$\{NEMOCLAW_MAX_TOKENS:-\}"/,
+    );
+    expect(guard).not.toMatch(
+      /\[\s*-n\s*"\$\{NEMOCLAW_REASONING:-\}"/,
+    );
   });
 });
 
