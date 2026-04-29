@@ -19,6 +19,16 @@ type Options = {
   apply: boolean;
 };
 
+type ManifestSource = Partial<Manifest>;
+
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+function isManifest(value: object | null): value is Manifest {
+  return value !== null && !Array.isArray(value);
+}
+
 const REPO_ROOT = process.cwd();
 const DIST_ROOT = path.join(REPO_ROOT, "dist");
 const SRC_ROOT = path.join(REPO_ROOT, "src");
@@ -79,14 +89,18 @@ function loadManifest(manifestPath: string): Manifest {
   if (!fs.existsSync(manifestPath)) {
     fail(`manifest not found: ${path.relative(REPO_ROOT, manifestPath)}`);
   }
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Manifest;
+  const manifest = parseJson<ManifestSource>(fs.readFileSync(manifestPath, "utf8"));
+  const manifestObject = typeof manifest === "object" && manifest !== null ? manifest : null;
+  if (!isManifest(manifestObject)) {
+    fail(`manifest must be a JSON object: ${path.relative(REPO_ROOT, manifestPath)}`);
+  }
   const allowedKeys = new Set(["renameTests", "moveRuntime", "rewriteSourcePaths", "shimStrategy"]);
-  for (const key of Object.keys(manifest)) {
+  for (const key of Object.keys(manifestObject)) {
     if (!allowedKeys.has(key)) {
       fail(`unsupported manifest key '${key}' in ${path.relative(REPO_ROOT, manifestPath)}`);
     }
   }
-  return manifest;
+  return manifestObject;
 }
 
 function normalizeRel(filePath: string): string {

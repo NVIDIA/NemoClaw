@@ -18,6 +18,13 @@ export interface StreamSandboxCreateOptions {
   heartbeatIntervalMs?: number;
   silentPhaseMs?: number;
   logLine?: (line: string) => void;
+  // Initial progress phase:
+  //   build  — docker-building the sandbox image
+  //   upload — pushing the built image into the gateway registry
+  //   create — k3s provisioning the pod from the image
+  //   ready  — waiting for the pod to reach Ready state
+  // Defaults to "build".
+  initialPhase?: "build" | "upload" | "create" | "ready";
   spawnImpl?: (
     command: string,
     args: readonly string[],
@@ -31,12 +38,43 @@ export interface StreamableReadable {
   destroy?(): void;
 }
 
-export interface StreamableChildProcess
-  extends Pick<ChildProcess, "kill" | "removeAllListeners" | "unref"> {
+export interface StreamableChildProcess {
   stdout: StreamableReadable | null;
   stderr: StreamableReadable | null;
+  kill?(signal?: NodeJS.Signals | number): boolean;
+  removeAllListeners?(event?: string | symbol): void;
+  unref?(): void;
   on(event: "error", listener: (error: Error & { code?: string }) => void): this;
   on(event: "close", listener: (code: number | null) => void): this;
+}
+
+export const BUILD_PROGRESS_PATTERNS: readonly RegExp[] = [
+  /^ {2}Building image /,
+  /^ {2}Step \d+\/\d+ : /,
+  /^#\d+ \[/,
+  /^#\d+ (DONE|CACHED)\b/,
+];
+
+const UPLOAD_PROGRESS_PATTERNS: readonly RegExp[] = [
+  /^ {2}Pushing image /,
+  /^\s*\[progress\]/,
+  /^ {2}Image .*available in the gateway/,
+];
+
+const VISIBLE_PROGRESS_PATTERNS: readonly RegExp[] = [
+  ...BUILD_PROGRESS_PATTERNS,
+  /^ {2}Context: /,
+  /^ {2}Gateway: /,
+  /^Successfully built /,
+  /^Successfully tagged /,
+  /^ {2}Built image /,
+  ...UPLOAD_PROGRESS_PATTERNS,
+  /^Created sandbox: /,
+  /^✓ /,
+];
+
+function matchesAny(line: string, patterns: readonly RegExp[]) {
+  return patterns.some((pattern) => pattern.test(line));
 }
 
 export function streamSandboxCreate(
@@ -44,11 +82,11 @@ export function streamSandboxCreate(
   env: NodeJS.ProcessEnv = process.env,
   options: StreamSandboxCreateOptions = {},
 ): Promise<StreamSandboxCreateResult> {
-  const child = (options.spawnImpl ?? spawn)("bash", ["-lc", command], {
+  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)("bash", ["-lc", command], {
     cwd: ROOT,
     env,
     stdio: ["ignore", "pipe", "pipe"],
-  }) as StreamableChildProcess;
+  });
 
   const logLine = options.logLine ?? console.log;
   const lines: string[] = [];
@@ -115,13 +153,9 @@ export function streamSandboxCreate(
     if (!line) return;
     lines.push(line);
     lastOutputAt = Date.now();
-    if (/^ {2}Building image /.test(line) || /^ {2}Step \d+\/\d+ : /.test(line)) {
+    if (matchesAny(line, BUILD_PROGRESS_PATTERNS)) {
       setPhase("build");
-    } else if (
-      /^ {2}Pushing image /.test(line) ||
-      /^\s*\[progress\]/.test(line) ||
-      /^ {2}Image .*available in the gateway/.test(line)
-    ) {
+    } else if (matchesAny(line, UPLOAD_PROGRESS_PATTERNS)) {
       setPhase("upload");
     } else if (/^Created sandbox: /.test(line)) {
       setPhase("create");
@@ -133,20 +167,7 @@ export function streamSandboxCreate(
   }
 
   function shouldShowLine(line: string) {
-    return (
-      /^ {2}Building image /.test(line) ||
-      /^ {2}Step \d+\/\d+ : /.test(line) ||
-      /^ {2}Context: /.test(line) ||
-      /^ {2}Gateway: /.test(line) ||
-      /^Successfully built /.test(line) ||
-      /^Successfully tagged /.test(line) ||
-      /^ {2}Built image /.test(line) ||
-      /^ {2}Pushing image /.test(line) ||
-      /^\s*\[progress\]/.test(line) ||
-      /^ {2}Image .*available in the gateway/.test(line) ||
-      /^Created sandbox: /.test(line) ||
-      /^✓ /.test(line)
-    );
+    return matchesAny(line, VISIBLE_PROGRESS_PATTERNS);
   }
 
   function onChunk(chunk: Buffer | string) {
@@ -214,7 +235,7 @@ export function streamSandboxCreate(
     : null;
   readyTimer?.unref?.();
 
-  setPhase("build");
+  setPhase(options.initialPhase ?? "build");
   const heartbeatTimer = setInterval(() => {
     if (settled) return;
     const silentForMs = Date.now() - lastOutputAt;
@@ -244,7 +265,9 @@ export function streamSandboxCreate(
     resolvePromise = resolve;
     child.on("error", (error) => {
       const code = error?.code;
-      const detail = code ? `spawn failed: ${error.message} (${code})` : `spawn failed: ${error.message}`;
+      const detail = code
+        ? `spawn failed: ${error.message} (${code})`
+        : `spawn failed: ${error.message}`;
       lines.push(detail);
       finish(1);
     });

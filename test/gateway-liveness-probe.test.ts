@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -19,11 +18,13 @@ describe("gateway liveness probe (#2020)", () => {
   const content = fs.readFileSync(path.join(ROOT, "src/lib/onboard.ts"), "utf-8");
 
   it("verifyGatewayContainerRunning() helper exists and checks Docker state", () => {
-    expect(content).toContain("function verifyGatewayContainerRunning()");
-    // Must use docker inspect to probe container state
-    expect(content).toContain("docker inspect --type container");
+    const match = content.match(/function verifyGatewayContainerRunning\([\s\S]*?^}/m);
+    expect(match).toBeTruthy();
+    if (!match) throw new Error("Expected verifyGatewayContainerRunning() in src/lib/onboard.ts");
+    // Must use a Docker inspect helper to probe container state
+    expect(match[0]).toMatch(/docker(?:Inspect|ContainerInspectFormat)\(/);
     // Must check .State.Running, not just container existence
-    expect(content).toContain("{{.State.Running}}");
+    expect(match[0]).toContain("{{.State.Running}}");
   });
 
   it("preflight probes the container when gatewayReuseState is 'healthy'", () => {
@@ -56,6 +57,9 @@ describe("gateway liveness probe (#2020)", () => {
     // Both probe sites must check containerState === "missing" before cleanup
     const downgrades = content.match(/containerState === "missing"/g);
     expect(downgrades).toBeTruthy();
+    if (!downgrades) {
+      throw new Error('Expected containerState === "missing" checks in src/lib/onboard.ts');
+    }
     expect(downgrades.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -71,14 +75,14 @@ describe("gateway liveness probe (#2020)", () => {
   it("does not modify isGatewayHealthy() in gateway-state.ts", () => {
     // isGatewayHealthy() must remain a pure function — no I/O.
     // Scope the check to the function body so unrelated helpers don't cause false failures.
-    const gsContent = fs.readFileSync(
-      path.join(ROOT, "src/lib/gateway-state.ts"),
-      "utf-8",
-    );
+    const gsContent = fs.readFileSync(path.join(ROOT, "src/lib/gateway-state.ts"), "utf-8");
     const fnMatch = gsContent.match(
       /(?:function isGatewayHealthy|const isGatewayHealthy\b)[\s\S]*?\n\}/,
     );
     expect(fnMatch).toBeTruthy();
+    if (!fnMatch) {
+      throw new Error("Expected isGatewayHealthy() in src/lib/gateway-state.ts");
+    }
     const fnBody = fnMatch[0];
     expect(fnBody).not.toContain("docker");
     expect(fnBody).not.toContain("spawn");

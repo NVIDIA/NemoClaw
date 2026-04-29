@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -23,7 +22,7 @@ import path from "node:path";
  * normalizeHostPath — mirrors migration-state.ts:115-118
  * On Windows, lowercases the resolved path for case-insensitive comparison.
  */
-function normalizeHostPath(p) {
+function normalizeHostPath(p: string): string {
   const resolved = path.resolve(p);
   if (process.platform === "win32") {
     return resolved.toLowerCase();
@@ -34,7 +33,7 @@ function normalizeHostPath(p) {
 /**
  * isWithinRoot — same logic as migration-state.ts:120-125
  */
-function isWithinRoot(candidatePath, rootPath) {
+function isWithinRoot(candidatePath: string, rootPath: string): boolean {
   const candidate = normalizeHostPath(candidatePath);
   const root = normalizeHostPath(rootPath);
   const relative = path.relative(root, candidate);
@@ -44,14 +43,32 @@ function isWithinRoot(candidatePath, rootPath) {
 /**
  * copyDirectory — minimal recursive copy matching migration-state.ts:476
  */
-function copyDirectory(src, dest) {
+function copyDirectory(src: string, dest: string): void {
   fs.cpSync(src, dest, { recursive: true });
 }
 
 /**
  * Build a minimal snapshot directory with a tampered manifest.
  */
-function buildSnapshotDir(parentDir, manifest) {
+type SnapshotManifest = {
+  version?: number;
+  createdAt?: string;
+  homeDir: string;
+  stateDir: string;
+  configPath: string | null;
+  hasExternalConfig: boolean;
+  externalRoots?: object[];
+  warnings?: string[];
+};
+
+function readSnapshotManifest(snapshotDir: string): SnapshotManifest {
+  const manifest: SnapshotManifest = JSON.parse(
+    fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"),
+  );
+  return manifest;
+}
+
+function buildSnapshotDir(parentDir: string, manifest: SnapshotManifest): string {
   const snapshotDir = path.join(parentDir, "snapshot");
   fs.mkdirSync(path.join(snapshotDir, "openclaw"), { recursive: true });
   fs.writeFileSync(
@@ -71,10 +88,14 @@ function buildSnapshotDir(parentDir, manifest) {
  * Simulate restoreSnapshotToHost WITHOUT the fix (vulnerable).
  * Returns { result, errors, written }.
  */
-function restoreVulnerable(snapshotDir) {
-  const manifest = JSON.parse(fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"));
+function restoreVulnerable(snapshotDir: string): {
+  result: boolean;
+  errors: string[];
+  written: boolean;
+} {
+  const manifest = readSnapshotManifest(snapshotDir);
   const snapshotStateDir = path.join(snapshotDir, "openclaw");
-  const errors = [];
+  const errors: string[] = [];
   let written = false;
 
   try {
@@ -90,7 +111,7 @@ function restoreVulnerable(snapshotDir) {
     }
     return { result: true, errors, written };
   } catch (err) {
-    errors.push(err.message);
+    errors.push(err instanceof Error ? err.message : String(err));
     return { result: false, errors, written };
   }
 }
@@ -102,10 +123,13 @@ function restoreVulnerable(snapshotDir) {
  * @param {string} snapshotDir
  * @param {string} [trustedRoot] - trusted host root (defaults to os.homedir())
  */
-function restoreFixed(snapshotDir, trustedRoot) {
-  const manifest = JSON.parse(fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"));
+function restoreFixed(
+  snapshotDir: string,
+  trustedRoot?: string,
+): { result: boolean; errors: string[]; written: boolean } {
+  const manifest = readSnapshotManifest(snapshotDir);
   const snapshotStateDir = path.join(snapshotDir, "openclaw");
-  const errors = [];
+  const errors: string[] = [];
   let written = false;
   const root = trustedRoot || os.homedir();
 
@@ -161,7 +185,7 @@ function restoreFixed(snapshotDir, trustedRoot) {
     }
     return { result: true, errors, written };
   } catch (err) {
-    errors.push(err.message);
+    errors.push(err instanceof Error ? err.message : String(err));
     return { result: false, errors, written };
   }
 }

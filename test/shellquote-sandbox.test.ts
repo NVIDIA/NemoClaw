@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -25,8 +24,8 @@ describe("sandboxName command hardening in onboard.js", () => {
     // Regression guard: runOpenshell and runCaptureOpenshell must pass opts
     // through to openshellArgv. Without this, callers that supply
     // { openshellBinary: customPath } silently fall back to the default binary.
-    expect(src).toMatch(/function runOpenshell\(args, opts[^)]*\)\s*\{[^}]*openshellArgv\(args,\s*opts\)/s);
-    expect(src).toMatch(/function runCaptureOpenshell\(args, opts[^)]*\)\s*\{[^}]*openshellArgv\(args,\s*opts\)/s);
+    expect(src).toMatch(/function runOpenshell\([\s\S]*?openshellArgv\(args,\s*opts\)/s);
+    expect(src).toMatch(/function runCaptureOpenshell\([\s\S]*?openshellArgv\(args,\s*opts\)/s);
   });
 
   it("does not have raw sandboxName interpolation in run or runCapture template literals", () => {

@@ -8,12 +8,39 @@ import os from "node:os";
 import path from "node:path";
 
 import { shellQuote } from "./shell-quote";
+import { isErrnoException, isPermissionError } from "./errno";
+
+// Strict JSON types for file serialization — unlike json-types.ts,
+// these exclude undefined since actual JSON cannot contain it.
+type JsonScalar = string | number | boolean | null;
+type JsonValue = JsonScalar | JsonObject | JsonValue[];
+type JsonObject = { [key: string]: JsonValue };
+type SerializableConfig = JsonScalar | JsonValue[] | object;
+
+function toError(error: Error | string | number | boolean | null | undefined): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+function cleanupTempFile(filePath: string): void {
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    // Best effort — cleanup only.
+  }
+}
 
 function buildRemediation(): string {
-  const home = process.env.HOME || os.homedir();
+  const home = process.env.HOME ?? os.homedir();
   const nemoclawDir = path.join(home, ".nemoclaw");
-  const backupDir = `${nemoclawDir}.backup.${process.pid}`;
-  const recoveryHome = path.join(os.tmpdir(), `nemoclaw-home-${process.getuid?.() ?? "user"}`);
+  const backupDir = `${nemoclawDir}.backup.${String(process.pid)}`;
+  const recoveryHome = path.join(
+    os.tmpdir(),
+    `nemoclaw-home-${String(process.getuid?.() ?? "user")}`,
+  );
 
   return [
     "  To fix, try one of these recovery paths:",
@@ -34,15 +61,6 @@ function buildRemediation(): string {
     "  This usually happens when NemoClaw was first run with sudo",
     "  or the config directory was created by a different user.",
   ].join("\n");
-}
-
-function isPermissionError(error: unknown): error is NodeJS.ErrnoException {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error.code === "EACCES" || error.code === "EPERM"),
-  );
 }
 
 export class ConfigPermissionError extends Error {
@@ -80,7 +98,57 @@ export class ConfigPermissionError extends Error {
   }
 }
 
+/**
+ * Reject a path if it — or any ancestor up to the user's home — is a symlink.
+ * This prevents an attacker from planting e.g. ~/.nemoclaw as a symlink to an
+ * attacker-controlled directory, which would cause credentials to be written
+ * to the wrong location. Throws when a planted symlink is found; returns
+ * normally otherwise.
+ */
+export function rejectSymlinksOnPath(dirPath: string): void {
+  const home = process.env.HOME || os.homedir();
+  const resolved = path.resolve(dirPath);
+  const resolvedHome = path.resolve(home);
+
+  // Only check the path components between HOME and dirPath — those are
+  // the user-controllable segments where a symlink attack could be planted.
+  // System-level symlinks above HOME (e.g. /var -> private/var on macOS)
+  // are legitimate and must not trigger rejection.
+  const relToHome = path.relative(resolvedHome, resolved);
+  if (relToHome === "" || relToHome.startsWith("..") || path.isAbsolute(relToHome)) {
+    // dirPath is not under HOME — nothing user-controllable to check.
+    return;
+  }
+
+  // Walk from dirPath up to (but not including) HOME.
+  let current = resolved;
+  while (current !== resolvedHome && current !== path.dirname(current)) {
+    try {
+      const stat = fs.lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        const target = fs.readlinkSync(current);
+        throw new Error(
+          `Refusing to use config directory: ${current} is a symbolic link ` +
+            `(target: ${target}). This may indicate a symlink attack. ` +
+            `Remove the symlink and retry: rm ${shellQuote(current)}`,
+        );
+      }
+    } catch (error) {
+      const errnoError = error instanceof Error ? error : null;
+      // ENOENT is fine — the directory doesn't exist yet; keep walking up
+      // to check ancestors that DO exist (an ancestor might be a symlink).
+      if (!(isErrnoException(errnoError) && errnoError.code === "ENOENT")) {
+        throw error;
+      }
+    }
+    current = path.dirname(current);
+  }
+}
+
 export function ensureConfigDir(dirPath: string): void {
+  // SECURITY: Block symlink attacks before creating or writing to the directory.
+  rejectSymlinksOnPath(dirPath);
+
   try {
     fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
 
@@ -89,8 +157,13 @@ export function ensureConfigDir(dirPath: string): void {
       fs.chmodSync(dirPath, 0o700);
     }
   } catch (error) {
-    if (isPermissionError(error)) {
-      throw new ConfigPermissionError(`Cannot create config directory: ${dirPath}`, dirPath, error as Error);
+    const errnoError = error instanceof Error ? error : null;
+    if (isPermissionError(errnoError)) {
+      throw new ConfigPermissionError(
+        `Cannot create config directory: ${dirPath}`,
+        dirPath,
+        toError(errnoError),
+      );
     }
     throw error;
   }
@@ -98,11 +171,12 @@ export function ensureConfigDir(dirPath: string): void {
   try {
     fs.accessSync(dirPath, fs.constants.W_OK);
   } catch (error) {
-    if (isPermissionError(error)) {
+    const errnoError = error instanceof Error ? error : null;
+    if (isPermissionError(errnoError)) {
       throw new ConfigPermissionError(
         `Config directory exists but is not writable: ${dirPath}`,
         dirPath,
-        error as Error,
+        toError(errnoError),
       );
     }
     throw error;
@@ -111,34 +185,40 @@ export function ensureConfigDir(dirPath: string): void {
 
 export function readConfigFile<T>(filePath: string, fallback: T): T {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+    return parseJson<T>(fs.readFileSync(filePath, "utf-8"));
   } catch (error) {
-    if (isPermissionError(error)) {
-      throw new ConfigPermissionError(`Cannot read config file: ${filePath}`, filePath, error as Error);
+    const errnoError = error instanceof Error ? error : null;
+    if (isPermissionError(errnoError)) {
+      throw new ConfigPermissionError(
+        `Cannot read config file: ${filePath}`,
+        filePath,
+        toError(errnoError),
+      );
     }
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isErrnoException(errnoError) && errnoError.code === "ENOENT") {
       return fallback;
     }
     return fallback;
   }
 }
 
-export function writeConfigFile(filePath: string, data: unknown): void {
+export function writeConfigFile(filePath: string, data: SerializableConfig): void {
   const dirPath = path.dirname(filePath);
   ensureConfigDir(dirPath);
 
-  const tmpFile = `${filePath}.tmp.${process.pid}`;
+  const tmpFile = `${filePath}.tmp.${String(process.pid)}`;
   try {
     fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), { mode: 0o600 });
     fs.renameSync(tmpFile, filePath);
   } catch (error) {
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      /* best effort */
-    }
-    if (isPermissionError(error)) {
-      throw new ConfigPermissionError(`Cannot write config file: ${filePath}`, filePath, error as Error);
+    cleanupTempFile(tmpFile);
+    const errnoError = error instanceof Error ? error : null;
+    if (isPermissionError(errnoError)) {
+      throw new ConfigPermissionError(
+        `Cannot write config file: ${filePath}`,
+        filePath,
+        toError(errnoError),
+      );
     }
     throw error;
   }

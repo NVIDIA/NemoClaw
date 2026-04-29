@@ -137,39 +137,35 @@ run_cli_check() {
   local _tmp
   _tmp="$(mktemp -d)"
 
-  log "[cli] comparing: NO_COLOR=1 $NODE bin/nemoclaw.js --help"
+  log "[cli] comparing: $NODE bin/nemoclaw.js --dump-commands"
   # shellcheck disable=SC2016
   # log text: backticks are documentation markers, not command substitution
   log '[cli]        vs: docs/reference/commands.md (### `nemoclaw …` headings only)'
-  log "[cli] excluded: openshell, /nemoclaw slash, deprecated nemoclaw setup (not in --help)"
 
-  log "[cli] phase 1/2: extract normalized usage lines from --help"
-  NO_COLOR=1 "$NODE" "$CLI_JS" --help 2>&1 | LC_ALL=C perl -CS -ne '
-    s/\e\[[0-9;]*m//g;
-    next unless /^\s*nemoclaw\s+/;
-    if (/^\s*nemoclaw\s+(.+)/) {
-      my $c = $1;
-      $c =~ s/\s{2,}.*$//;
-      $c =~ s/\s+$//;
-      $c =~ s/\s*\[[^\]]*\]\s*$//;
-      $c =~ s/\s*--output\s+FILE\s*$//;
-      while ($c =~ s/\s+<[^>]+>\s*$//) {}
-      my $k = "nemoclaw $c";
-      $k =~ s/^nemoclaw debug.*/nemoclaw debug/;
-      print "$k\n";
-    }
-  ' | LC_ALL=C sort -u >"$_tmp/help.txt"
+  log "[cli] phase 1/2: dump canonical command list from registry"
+  if ! "$NODE" "$CLI_JS" --dump-commands >"$_tmp/help.txt" 2>"$_tmp/help.err"; then
+    cat "$_tmp/help.err" >&2
+    return 1
+  fi
+  LC_ALL=C sort -u -o "$_tmp/help.txt" "$_tmp/help.txt"
 
   local _n_help
   _n_help="$(wc -l <"$_tmp/help.txt" | tr -d " ")"
-  log "[cli] phase 1: extracted ${_n_help} unique command line(s) from --help"
+  log "[cli] phase 1: extracted ${_n_help} unique command line(s) from --dump-commands"
 
   # shellcheck disable=SC2016
   # log text: backticks are documentation markers, not command substitution
   log '[cli] phase 2/2: extract ### `nemoclaw …` headings from commands reference'
   # Allow optional MyST suffix on the same line, e.g. ### `nemoclaw onboard` {#anchor}
+  # Strip argument placeholders (<arg>, [optional]) to match canonical usage signatures.
   grep -E '^### `nemoclaw ' "$COMMANDS_MD" | LC_ALL=C perl -CS -ne '
-    if (/^### `([^`]+)`\s*(?:\{[^}]+\})?\s*$/) { print "$1\n"; }
+    if (/^### `([^`]+)`\s*(?:\{[^}]+\})?\s*$/) {
+      my $c = $1;
+      while ($c =~ s/\s*\[[^\]]*\]\s*$//) {}
+      while ($c =~ s/\s+<[^>]+>\s*$//) {}
+      $c =~ s/\s+$//;
+      print "$c\n";
+    }
   ' | LC_ALL=C sort -u >"$_tmp/doc.txt"
 
   local _n_doc

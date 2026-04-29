@@ -1,0 +1,242 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Nightly E2E Scorecard
+#
+# Aggregates overnight nightly-e2e workflow results into a scorecard
+# published to $GITHUB_STEP_SUMMARY. Identifies flaky jobs, computes
+# pass/fail/cancel breakdowns, and compares trends against the prior day.
+#
+# Runs daily at 12:00 UTC (8:00 AM ET), after the nightly suite completes.
+# Also supports manual dispatch for testing.
+#
+# Phase 3 adds an optional Slack webhook: if SLACK_WEBHOOK_URL is set in
+# repository secrets, the scorecard is POSTed to Slack. If absent, the
+# step succeeds silently.
+
+name: nightly-scorecard
+
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  scorecard:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate nightly scorecard
+        id: scorecard
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // ── Config ──────────────────────────────────────────────
+            const WORKFLOW_FILE = 'nightly-e2e.yaml';
+            const EXCLUDED_JOBS = new Set(['gpu-e2e', 'notify-on-failure']);
+
+            // ── Helpers ─────────────────────────────────────────────
+            function dateRange(hoursAgo) {
+              const now = new Date();
+              const since = new Date(now.getTime() - hoursAgo * 60 * 60 * 1000);
+              return since.toISOString();
+            }
+
+            function formatDate(date) {
+              return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }
+
+            async function fetchRuns(since) {
+              const runs = [];
+              let page = 1;
+              while (true) {
+                const { data } = await github.rest.actions.listWorkflowRuns({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: WORKFLOW_FILE,
+                  created: `>=${since}`,
+                  per_page: 100,
+                  page,
+                });
+                runs.push(...data.workflow_runs);
+                if (data.workflow_runs.length < 100) break;
+                page++;
+              }
+              // Only include completed runs
+              return runs.filter(r => r.status === 'completed');
+            }
+
+            async function fetchJobs(runId) {
+              const jobs = [];
+              let page = 1;
+              while (true) {
+                const { data } = await github.rest.actions.listJobsForWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: runId,
+                  per_page: 100,
+                  page,
+                });
+                jobs.push(...data.jobs);
+                if (data.jobs.length < 100) break;
+                page++;
+              }
+              return jobs.filter(j => !EXCLUDED_JOBS.has(j.name));
+            }
+
+            function analyzeRuns(runs, jobDetails) {
+              let success = 0;
+              let failure = 0;
+              let cancelled = 0;
+              const jobFailures = {};
+
+              for (const run of runs) {
+                if (run.conclusion === 'success') {
+                  success++;
+                } else if (run.conclusion === 'failure') {
+                  failure++;
+                } else if (run.conclusion === 'cancelled') {
+                  cancelled++;
+                }
+
+                const jobs = jobDetails.get(run.id) || [];
+                for (const job of jobs) {
+                  if (job.conclusion === 'failure') {
+                    jobFailures[job.name] = (jobFailures[job.name] || 0) + 1;
+                  }
+                }
+              }
+
+              // Jobs failing 2+ times, sorted by frequency descending
+              const flaky = Object.entries(jobFailures)
+                .filter(([, count]) => count >= 2)
+                .sort((a, b) => b[1] - a[1]);
+
+              return { total: runs.length, success, failure, cancelled, flaky };
+            }
+
+            // ── Phase 1: Fetch today's runs (last 24h) ─────────────
+            const todaySince = dateRange(24);
+            const todayRuns = await fetchRuns(todaySince);
+
+            const today = formatDate(new Date());
+
+            if (todayRuns.length === 0) {
+              const noRunsCard = [
+                `## 🌅 NemoClaw Nightly Scorecard — ${today}`,
+                '',
+                'No nightly E2E runs completed in the last 24 hours.',
+                '',
+                `🔗 [Nightly E2E workflow](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/workflows/${WORKFLOW_FILE})`,
+              ].join('\n');
+              core.summary.addRaw(noRunsCard);
+              await core.summary.write();
+              core.setOutput('scorecard', noRunsCard);
+              return;
+            }
+
+            // Fetch job details for today's runs
+            const todayJobDetails = new Map();
+            for (const run of todayRuns) {
+              todayJobDetails.set(run.id, await fetchJobs(run.id));
+            }
+            const todayStats = analyzeRuns(todayRuns, todayJobDetails);
+
+            // ── Phase 2: Fetch yesterday's runs (24–48h ago) ────────
+            const yesterdaySince = dateRange(48);
+            const allRuns48h = await fetchRuns(yesterdaySince);
+            // Filter to only runs from the 24–48h window (exclude today's)
+            const todayRunIds = new Set(todayRuns.map(r => r.id));
+            const yesterdayRuns = allRuns48h.filter(r => !todayRunIds.has(r.id));
+
+            let trendLine = '';
+            if (yesterdayRuns.length > 0) {
+              const yesterdayJobDetails = new Map();
+              for (const run of yesterdayRuns) {
+                yesterdayJobDetails.set(run.id, await fetchJobs(run.id));
+              }
+              const yesterdayStats = analyzeRuns(yesterdayRuns, yesterdayJobDetails);
+
+              if (todayStats.success > yesterdayStats.success) {
+                trendLine = `Trend: ↗️ Improving (yesterday: ${yesterdayStats.success} perfect → today: ${todayStats.success} perfect)`;
+              } else if (todayStats.success < yesterdayStats.success) {
+                trendLine = `Trend: ↘️ Degrading (yesterday: ${yesterdayStats.success} perfect → today: ${todayStats.success} perfect)`;
+              } else {
+                trendLine = `Trend: ➡️ Stable (${todayStats.success} perfect both days)`;
+              }
+            } else {
+              trendLine = 'Trend: ⊘ No prior-day data for comparison';
+            }
+
+            // ── Build scorecard ─────────────────────────────────────
+            // Determine the total jobs per run from the first run's job list
+            const firstRunJobs = todayJobDetails.get(todayRuns[0].id) || [];
+            const jobCount = firstRunJobs.length;
+
+            const lines = [
+              `## 🌅 NemoClaw Nightly Scorecard — ${today}`,
+              '',
+              `**Overnight runs:** ${todayStats.total} completed`,
+              `  ✅ ${todayStats.success} perfect` + (jobCount > 0 ? ` (${jobCount}/${jobCount})` : ''),
+              `  ❌ ${todayStats.failure} failures`,
+              `  ⊘  ${todayStats.cancelled} cancelled`,
+            ];
+
+            if (todayStats.flaky.length > 0) {
+              lines.push('');
+              lines.push('**Top flaky jobs** (failed 2+ times):');
+              const maxNameLen = Math.max(...todayStats.flaky.map(([name]) => name.length));
+              for (const [name, count] of todayStats.flaky) {
+                const padded = name.padEnd(maxNameLen);
+                lines.push(`  \`${padded}\` — ${count} failure${count === 1 ? '' : 's'}`);
+              }
+            }
+
+            lines.push('');
+            lines.push(trendLine);
+            lines.push('');
+            lines.push(`🔗 [Nightly E2E workflow](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/workflows/${WORKFLOW_FILE})`);
+
+            const scorecard = lines.join('\n');
+            core.summary.addRaw(scorecard);
+            await core.summary.write();
+            core.setOutput('scorecard', scorecard);
+
+      # ── Phase 3: Optional Slack notification ───────────────────
+      - name: Post scorecard to Slack
+        if: ${{ steps.scorecard.outputs.scorecard != '' }}
+        uses: actions/github-script@v7
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SCORECARD_TEXT: ${{ steps.scorecard.outputs.scorecard }}
+        with:
+          script: |
+            const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+            if (!webhookUrl) {
+              core.info('SLACK_WEBHOOK_URL not configured — skipping Slack notification');
+              return;
+            }
+
+            const scorecard = process.env.SCORECARD_TEXT;
+
+            // Strip markdown formatting for Slack plain-text rendering
+            const slackText = scorecard
+              .replace(/^## /gm, '')
+              .replace(/\*\*/g, '*')
+              .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
+
+            const resp = await fetch(webhookUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: slackText }),
+            });
+
+            if (!resp.ok) {
+              core.warning(`Slack webhook returned ${resp.status}: ${await resp.text()}`);
+            } else {
+              core.info('Scorecard posted to Slack');
+            }

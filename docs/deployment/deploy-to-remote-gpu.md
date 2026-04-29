@@ -65,7 +65,7 @@ The legacy compatibility flow performs the following steps on the VM:
 1. Installs Docker and the NVIDIA Container Toolkit if a GPU is present.
 2. Installs the OpenShell CLI.
 3. Runs `nemoclaw onboard` (the setup wizard) to create the gateway, register providers, and launch the sandbox.
-4. Starts optional host auxiliary services (for example the cloudflared tunnel) when `cloudflared` is available. Channel messaging is configured during onboarding and runs through OpenShell-managed processes, not through `nemoclaw start`.
+4. Starts optional host auxiliary services (for example the cloudflared tunnel) when `cloudflared` is available. Channel messaging is configured during onboarding and runs through OpenShell-managed processes, not through `nemoclaw tunnel start`.
 
 By default, the compatibility wrapper asks Brev to provision on `gcp`. Override this with `NEMOCLAW_BREV_PROVIDER` if you need a different Brev cloud provider.
 
@@ -116,8 +116,8 @@ available when the installer builds the sandbox image. If `CHAT_UI_URL` is not
 set on a headless host, the compatibility wrapper prints a warning.
 
 `NEMOCLAW_DISABLE_DEVICE_AUTH` is also evaluated at image build time.
-If you disable device auth for a remote deployment, any device that can reach the dashboard origin can connect without pairing.
-Avoid this on internet-reachable or shared-network deployments.
+When `CHAT_UI_URL` points at a non-loopback origin, NemoClaw disables OpenClaw device pairing in the generated sandbox configuration because browser-only remote users cannot complete terminal-based pairing.
+Any device that can reach the configured dashboard origin can connect without pairing, so avoid exposing that origin on internet-reachable or shared-network deployments.
 :::
 
 ## Proxy Configuration
@@ -132,6 +132,7 @@ $ nemoclaw onboard
 ```
 
 These values are baked into the sandbox image at build time.
+They are also forwarded into the runtime container during sandbox creation, so `/tmp/nemoclaw-proxy-env.sh` uses the same host and port that the image build used.
 Only alphanumeric characters, dots, hyphens, and colons are accepted for the host.
 The port must be numeric (0-65535).
 Changing the proxy after onboarding requires re-running `nemoclaw onboard`.

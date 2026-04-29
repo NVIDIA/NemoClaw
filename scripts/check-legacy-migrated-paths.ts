@@ -1,8 +1,8 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+
 import moveMap from "./ts-migration/move-map.json";
 
 type Options = {
@@ -22,7 +22,7 @@ type GuardedPath = {
   kind: "migrated-runtime" | "removed-shim" | "migrated-test";
 };
 
-const RUNTIME_MOVES = moveMap.runtimeMoves as Record<string, string>;
+const RUNTIME_MOVES: Record<string, string> = moveMap.runtimeMoves;
 const REMOVED_SHIM_MOVES: Record<string, string> = {
   "bin/lib/chat-filter.js": "src/lib/chat-filter.ts",
   "bin/lib/config-io.js": "src/lib/config-io.ts",
@@ -70,12 +70,28 @@ function parseArgs(argv: string[]): Options {
   return { base, head };
 }
 
-function printHelp() {
-  console.log(`Usage: npm run ts-migration:guard -- --base origin/main [--head HEAD]\n\nFails when a PR edits migrated legacy JS paths or removed compatibility shims instead of the canonical TS files.`);
+function printHelp(): void {
+  console.log(
+    "Usage: npm run ts-migration:guard -- --base origin/main [--head HEAD]\n\nFails when a PR edits migrated legacy JS paths or removed compatibility shims instead of the canonical TS files.",
+  );
 }
 
 function runGit(args: string[]): string {
   return String(execFileSync("git", args, { encoding: "utf8" })).trim();
+}
+
+function parseChangedFileLine(line: string): ChangedFile | null {
+  const [status = "", firstPath = "", secondPath = ""] = line.split("\t");
+  if (!status || !firstPath) {
+    return null;
+  }
+
+  const isRenameOrCopy = /^[RC]/.test(status);
+  return {
+    status,
+    oldPath: isRenameOrCopy ? firstPath : null,
+    newPath: isRenameOrCopy ? secondPath || firstPath : firstPath,
+  };
 }
 
 function getChangedFiles(base: string, head: string): ChangedFile[] {
@@ -83,19 +99,12 @@ function getChangedFiles(base: string, head: string): ChangedFile[] {
   if (!output) {
     return [];
   }
+
   return output
     .split("\n")
     .filter(Boolean)
-    .map((line) => {
-      const [status = "", firstPath = "", secondPath = ""] = line.split("\t");
-      const isRenameOrCopy = /^[RC]/.test(status);
-      return {
-        status,
-        oldPath: isRenameOrCopy ? firstPath : null,
-        newPath: isRenameOrCopy ? secondPath : firstPath,
-      };
-    })
-    .filter((entry) => Boolean(entry.newPath));
+    .map(parseChangedFileLine)
+    .filter((entry): entry is ChangedFile => entry !== null);
 }
 
 function classifyGuardedPath(filePath: string): GuardedPath | null {
@@ -123,7 +132,7 @@ function classifyGuardedPath(filePath: string): GuardedPath | null {
   return null;
 }
 
-function main() {
+function main(): void {
   const options = parseArgs(process.argv.slice(2));
 
   if (process.env.NEMOCLAW_ALLOW_LEGACY_PATHS === "1") {

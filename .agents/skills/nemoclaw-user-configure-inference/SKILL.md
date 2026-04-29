@@ -119,7 +119,7 @@ This variable is only needed when switching between provider families.
 
 ## Step 3: Tune Model Metadata
 
-The sandbox image bakes model metadata (context window, max output tokens, and reasoning mode) into `openclaw.json` at build time.
+The sandbox image bakes model metadata (context window, max output tokens, reasoning mode, and accepted input modalities) into `openclaw.json` at build time.
 To change these values, set the corresponding environment variables before running `nemoclaw onboard` so they patch into the Dockerfile before the image builds.
 
 | Variable | Values | Default |
@@ -127,15 +127,26 @@ To change these values, set the corresponding environment variables before runni
 | `NEMOCLAW_CONTEXT_WINDOW` | Positive integer (tokens) | `131072` |
 | `NEMOCLAW_MAX_TOKENS` | Positive integer (tokens) | `4096` |
 | `NEMOCLAW_REASONING` | `true` or `false` | `false` |
+| `NEMOCLAW_INFERENCE_INPUTS` | `text` or `text,image` | `text` |
+| `NEMOCLAW_AGENT_TIMEOUT` | Positive integer (seconds) | `600` |
 
 Invalid values are ignored, and the default bakes into the image.
+Use `NEMOCLAW_INFERENCE_INPUTS=text,image` only for a model that accepts image input through the selected provider.
 
 ```console
 $ export NEMOCLAW_CONTEXT_WINDOW=65536
 $ export NEMOCLAW_MAX_TOKENS=8192
 $ export NEMOCLAW_REASONING=true
+$ export NEMOCLAW_INFERENCE_INPUTS=text,image
+$ export NEMOCLAW_AGENT_TIMEOUT=1800
 $ nemoclaw onboard
 ```
+
+`NEMOCLAW_AGENT_TIMEOUT` controls the per-request inference timeout baked into
+`agents.defaults.timeoutSeconds`. Increase it for slow local inference (for
+example, CPU-only Ollama or vLLM on modest hardware). `openclaw.json` is
+immutable at runtime, so this value can only be changed by rebuilding the
+sandbox via `nemoclaw onboard`.
 
 These variables are build-time settings.
 If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:

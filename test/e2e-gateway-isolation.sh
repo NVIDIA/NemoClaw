@@ -214,8 +214,9 @@ info "14. Entrypoint drops dangerous capabilities from bounding set"
 # Run capsh directly with the same --drop flags as the entrypoint, then
 # check CapBnd. This avoids running the full entrypoint which starts
 # gateway services that fail in CI without a running OpenShell environment.
-# Extract the --drop list from the entrypoint to stay in sync.
-DROP_LIST=$(run_as_root "grep -oP '(?<=--drop=)[^ \\\\]+' /usr/local/bin/nemoclaw-start")
+# Extract the --drop list from the shared sandbox-init library to stay in sync.
+# The drop_capabilities() function lives in sandbox-init.sh (not the entrypoint).
+DROP_LIST=$(run_as_root "grep -oP '(?<=--drop=)[^ \\\\]+' /usr/local/lib/nemoclaw/sandbox-init.sh")
 if [ -z "$DROP_LIST" ]; then
   fail "could not extract --drop list from entrypoint"
 else

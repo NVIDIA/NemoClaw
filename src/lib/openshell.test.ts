@@ -1,16 +1,51 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SpawnSyncReturns } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
 import {
   captureOpenshellCommand,
   getInstalledOpenshellVersion,
+  type OpenshellSpawnSync,
   parseVersionFromText,
   runOpenshellCommand,
   stripAnsi,
   versionGte,
 } from "./openshell";
+
+interface SpawnResultSpec {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+  signal?: NodeJS.Signals | null;
+}
+
+function makeSpawnResult(spec: SpawnResultSpec): SpawnSyncReturns<string> {
+  return {
+    pid: 123,
+    output: [spec.stdout, spec.stderr],
+    stdout: spec.stdout,
+    stderr: spec.stderr,
+    status: spec.status,
+    signal: spec.signal ?? null,
+    error: spec.error,
+  };
+}
+
+function stubSpawnSync(spec: SpawnResultSpec): OpenshellSpawnSync {
+  return () => makeSpawnResult(spec);
+}
+
+function timeoutError(): Error {
+  return Object.assign(new Error("spawnSync openshell ETIMEDOUT"), { code: "ETIMEDOUT" });
+}
+
+function exitWithCode(code: number): never {
+  throw new Error(`exit:${code}`);
+}
 
 describe("openshell helpers", () => {
   it("strips ANSI sequences", () => {
@@ -31,11 +66,11 @@ describe("openshell helpers", () => {
 
   it("captures stdout and stderr like the legacy helper", () => {
     const result = captureOpenshellCommand("openshell", ["status"], {
-      spawnSyncImpl: (() => ({
+      spawnSyncImpl: stubSpawnSync({
         status: 1,
         stdout: "hello\n",
         stderr: "boom\n",
-      })) as never,
+      }),
     });
     expect(result).toEqual({ status: 1, output: "hello\nboom" });
   });
@@ -43,38 +78,90 @@ describe("openshell helpers", () => {
   it("omits stderr from capture output when ignoreError is set", () => {
     const result = captureOpenshellCommand("openshell", ["status"], {
       ignoreError: true,
-      spawnSyncImpl: (() => ({
+      spawnSyncImpl: stubSpawnSync({
         status: 1,
         stdout: "hello\n",
         stderr: "boom\n",
-      })) as never,
+      }),
     });
     expect(result).toEqual({ status: 1, output: "hello" });
   });
 
   it("returns the spawn result when the command succeeds", () => {
     const result = runOpenshellCommand("openshell", ["status"], {
-      spawnSyncImpl: (() => ({
+      spawnSyncImpl: stubSpawnSync({
         status: 0,
         stdout: "ok\n",
         stderr: "",
-      })) as never,
+      }),
     });
     expect(result.status).toBe(0);
+  });
+
+  it("passes timeout options through to OpenShell spawn calls", () => {
+    const timeouts: Array<number | undefined> = [];
+    const spawnSyncImpl: OpenshellSpawnSync = (_command, _args, options) => {
+      timeouts.push(options.timeout);
+      return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
+    };
+
+    runOpenshellCommand("openshell", ["status"], { timeout: 4321, spawnSyncImpl });
+    captureOpenshellCommand("openshell", ["status"], { timeout: 9876, spawnSyncImpl });
+
+    expect(timeouts).toEqual([4321, 9876]);
+  });
+
+  it("returns ignored run timeouts so callers can fall back", () => {
+    const result = runOpenshellCommand("openshell", ["status"], {
+      ignoreError: true,
+      timeout: 1,
+      spawnSyncImpl: stubSpawnSync({
+        status: null,
+        stdout: "",
+        stderr: "",
+        error: timeoutError(),
+        signal: "SIGTERM",
+      }),
+      exit: exitWithCode,
+    });
+
+    expect(result.status).toBeNull();
+    expect(result.signal).toBe("SIGTERM");
+    expect(result.error?.message).toContain("ETIMEDOUT");
+  });
+
+  it("returns ignored capture timeouts with timeout metadata", () => {
+    const result = captureOpenshellCommand("openshell", ["sandbox", "list"], {
+      ignoreError: true,
+      timeout: 1,
+      spawnSyncImpl: stubSpawnSync({
+        status: null,
+        stdout: "partial\n",
+        stderr: "timeout detail\n",
+        error: timeoutError(),
+        signal: "SIGTERM",
+      }),
+      exit: exitWithCode,
+    });
+
+    expect(result).toEqual({
+      status: null,
+      output: "partial",
+      error: expect.objectContaining({ message: expect.stringContaining("ETIMEDOUT") }),
+      signal: "SIGTERM",
+    });
   });
 
   it("uses the injected exit handler on failure", () => {
     expect(() =>
       runOpenshellCommand("openshell", ["status"], {
-        spawnSyncImpl: (() => ({
+        spawnSyncImpl: stubSpawnSync({
           status: 17,
           stdout: "",
           stderr: "bad\n",
-        })) as never,
+        }),
         errorLine: () => {},
-        exit: ((code: number) => {
-          throw new Error(`exit:${code}`);
-        }) as never,
+        exit: exitWithCode,
       }),
     ).toThrow("exit:17");
   });
@@ -83,16 +170,14 @@ describe("openshell helpers", () => {
     const errors: string[] = [];
     expect(() =>
       runOpenshellCommand("openshell", ["status"], {
-        spawnSyncImpl: (() => ({
+        spawnSyncImpl: stubSpawnSync({
           status: null,
           stdout: "",
           stderr: "",
           error: new Error("spawn EACCES"),
-        })) as never,
+        }),
         errorLine: (message) => errors.push(message),
-        exit: ((code: number) => {
-          throw new Error(`exit:${code}`);
-        }) as never,
+        exit: exitWithCode,
       }),
     ).toThrow("exit:1");
     expect(errors).toEqual(["  Failed to start openshell status: spawn EACCES"]);
@@ -102,16 +187,14 @@ describe("openshell helpers", () => {
     const errors: string[] = [];
     expect(() =>
       captureOpenshellCommand("openshell", ["status"], {
-        spawnSyncImpl: (() => ({
+        spawnSyncImpl: stubSpawnSync({
           status: null,
           stdout: "",
           stderr: "",
           error: new Error("spawn ENOENT"),
-        })) as never,
+        }),
         errorLine: (message) => errors.push(message),
-        exit: ((code: number) => {
-          throw new Error(`exit:${code}`);
-        }) as never,
+        exit: exitWithCode,
       }),
     ).toThrow("exit:1");
     expect(errors).toEqual(["  Failed to start openshell status: spawn ENOENT"]);
@@ -119,11 +202,11 @@ describe("openshell helpers", () => {
 
   it("reads the installed openshell version through the capture helper", () => {
     const version = getInstalledOpenshellVersion("openshell", {
-      spawnSyncImpl: (() => ({
+      spawnSyncImpl: stubSpawnSync({
         status: 0,
         stdout: "openshell 0.0.11\n",
         stderr: "",
-      })) as never,
+      }),
     });
     expect(version).toBe("0.0.11");
   });

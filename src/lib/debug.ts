@@ -3,6 +3,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { dockerExecFileSync } from "./docker/exec";
 import { platform, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -50,30 +51,11 @@ function section(title: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Secret redaction
+// Secret redaction — delegates to unified redact module (#2381).
 // ---------------------------------------------------------------------------
 
-// Import canonical patterns from single source of truth (secret-patterns.ts).
-// debug.ts uses [pattern, replacement] tuples for full-replacement redaction,
-// while runner.ts uses the raw patterns with partial-redaction (keep first 4 chars).
-import { TOKEN_PREFIX_PATTERNS } from "./secret-patterns";
-
-const REDACT_PATTERNS: [RegExp, string][] = [
-  [/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/gi, "$1=<REDACTED>"],
-  ...TOKEN_PREFIX_PATTERNS.map(
-    (p): [RegExp, string] => [new RegExp(p.source, p.flags), "<REDACTED>"],
-  ),
-  [/(Bearer )\S+/gi, "$1<REDACTED>"],
-  [/\/bot[^/\s]+\//g, "/bot<REDACTED>/"],
-];
-
-export function redact(text: string): string {
-  let result = text;
-  for (const [pattern, replacement] of REDACT_PATTERNS) {
-    result = result.replace(pattern, replacement);
-  }
-  return result;
-}
+import { redactFull as redact } from "./redact";
+export { redact };
 
 // ---------------------------------------------------------------------------
 // Command runner
@@ -274,10 +256,9 @@ function collectDocker(collectDir: string, quick: boolean): void {
   // NemoClaw-labelled containers
   if (commandExists("docker")) {
     try {
-      const output = execFileSync(
-        "docker",
+      const output = dockerExecFileSync(
         ["ps", "-a", "--filter", "label=com.nvidia.nemoclaw", "--format", "{{.Names}}"],
-        { encoding: "utf-8", timeout: TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] },
+        { timeout: TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] },
       );
       const containers = output.split("\n").filter((c) => c.trim().length > 0);
       for (const cid of containers) {

@@ -66,9 +66,6 @@ jobs:
       - name: Run Ollama auth proxy E2E tests
         run: bash test/e2e-ollama-proxy.sh
 
-  sandbox-images-and-e2e:
-    needs: [checks, changes]
-    if: needs.changes.outputs.code == 'true'
-    uses: ./.github/workflows/sandbox-images-and-e2e.yaml
-    with:
-      run_arm64: true
+  # Sandbox image builds and E2E tests have moved to pr-self-hosted.yaml,
+  # which runs on NVIDIA self-hosted runners via copy-pr-bot.
+  # See: .github/workflows/pr-self-hosted.yaml

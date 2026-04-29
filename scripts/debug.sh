@@ -121,17 +121,27 @@ if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
   ONBOARD_SESSION_HELPER="${REPO_ROOT}/dist/lib/onboard-session.js"
 fi
 
-# Redact known sensitive patterns (API keys, tokens, passwords in env/args).
-# Keep in sync with src/lib/secret-patterns.ts — consistency test enforces this.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/1736
+# Redact known sensitive patterns from stdin.
+# Primary path: delegate to the compiled TypeScript redact module.
+# Fallback: minimal sed for environments without node or dist/.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2381
 redact() {
-  sed -E \
-    -e 's/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/\1=<REDACTED>/gi' \
-    -e 's/nvapi-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
-    -e 's/nvcf-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
-    -e 's/ghp_[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
-    -e 's/github_pat_[A-Za-z0-9_]{30,}/<REDACTED>/g' \
-    -e 's/(Bearer )[^ ]+/\1<REDACTED>/gi'
+  if command -v node &>/dev/null && [ -n "$REPO_ROOT" ] && [ -f "${REPO_ROOT}/dist/lib/redact.js" ]; then
+    node -e "
+      const {redactFull} = require(process.argv[1]);
+      let d = '';
+      process.stdin.on('data', c => d += c);
+      process.stdin.on('end', () => process.stdout.write(redactFull(d)));
+    " "${REPO_ROOT}/dist/lib/redact"
+  else
+    sed -E \
+      -e 's/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/\1=<REDACTED>/gi' \
+      -e 's/nvapi-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+      -e 's/nvcf-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+      -e 's/ghp_[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+      -e 's/sk-[A-Za-z0-9_-]{20,}/<REDACTED>/g' \
+      -e 's/(Bearer )[^ ]+/\1<REDACTED>/gi'
+  fi
 }
 
 # Run a command, print output, and save to a file in the collect dir.

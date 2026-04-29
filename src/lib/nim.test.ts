@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { Mock } from "vitest";
 
 // Import from compiled dist/ for coverage attribution.
-import nim from "../../dist/lib/nim";
+import * as nim from "../../dist/lib/nim";
 
 const require = createRequire(import.meta.url);
 const NIM_DIST_PATH = require.resolve("../../dist/lib/nim");
@@ -300,6 +300,24 @@ describe("nim", () => {
       } finally {
         restore();
       }
+    });
+  });
+
+  describe("shouldShowNimLine", () => {
+    it("hides the line for cloud-only sandboxes (no container, nothing running)", () => {
+      expect(nim.shouldShowNimLine(null, false)).toBe(false);
+      expect(nim.shouldShowNimLine(undefined, false)).toBe(false);
+      expect(nim.shouldShowNimLine("", false)).toBe(false);
+    });
+
+    it("shows the line when the sandbox is bound to a NIM container", () => {
+      expect(nim.shouldShowNimLine("nim-foo", false)).toBe(true);
+      expect(nim.shouldShowNimLine("nim-foo", true)).toBe(true);
+    });
+
+    it("still surfaces an orphan NIM container even when none is registered", () => {
+      expect(nim.shouldShowNimLine(null, true)).toBe(true);
+      expect(nim.shouldShowNimLine(undefined, true)).toBe(true);
     });
   });
 

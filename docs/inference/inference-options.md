@@ -34,6 +34,8 @@ OpenShell intercepts inference traffic on the host and forwards it to the provid
 
 Provider credentials stay on the host.
 The sandbox does not receive your API key.
+Local Ollama and local vLLM do not require your host `OPENAI_API_KEY`.
+NemoClaw uses provider-specific local tokens for those routes, and rebuilds of legacy local-inference sandboxes migrate away from stale OpenAI credential requirements.
 
 ## Provider Status
 
@@ -59,13 +61,27 @@ Ollama appears when it is installed or running on the host.
 
 | Option | Description | Curated models |
 |--------|-------------|----------------|
-| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_API_KEY`. | Nemotron 3 Super 120B, Kimi K2.5, GLM-5, MiniMax M2.5, GPT-OSS 120B |
+| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_API_KEY`. | Nemotron 3 Super 120B, Kimi K2.5, GLM-5.1, MiniMax M2.5, GPT-OSS 120B |
 | OpenAI | Routes to the OpenAI API. Set `OPENAI_API_KEY`. | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro-2026-03-05` |
 | Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. If the endpoint also supports `/responses` with OpenClaw-style tool calling, NemoClaw can use that path; otherwise it falls back to `/chat/completions`. The wizard prompts for a base URL and model name. Works with OpenRouter, LocalAI, llama.cpp, or any compatible proxy. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
 | Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
 | Other Anthropic-compatible endpoint | Routes to any server that implements the Anthropic Messages API (`/v1/messages`). The wizard prompts for a base URL and model name. Set `COMPATIBLE_ANTHROPIC_API_KEY`. | You provide the model name. |
 | Google Gemini | Routes to Google's OpenAI-compatible endpoint. NemoClaw prefers `/responses` only when the endpoint proves it can handle tool calling in a way OpenClaw uses; otherwise it falls back to `/chat/completions`. Set `GEMINI_API_KEY`. | `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` |
 | Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to [Use a Local Inference Server](use-local-inference.md). |
+
+## Choosing the Right Option for Nemotron
+
+NVIDIA Nemotron models expose OpenAI-compatible APIs across every supported deployment surface, so two onboarding options can route to Nemotron.
+
+| Where Nemotron is hosted | Onboard wizard option | Why |
+|---|---|---|
+| `build.nvidia.com` (NVIDIA-hosted) | **Option 1: NVIDIA Endpoints** | NemoClaw sets the base URL to `https://integrate.api.nvidia.com/v1` for you and validates the model against the build catalog. |
+| Self-hosted NIM container | **Option 3: Other OpenAI-compatible endpoint** | NIM exposes an OpenAI-compatible `/v1/chat/completions` route. Point the base URL at your NIM service and enter the Nemotron model ID. |
+| Enterprise NVIDIA AI Enterprise gateway | **Option 3: Other OpenAI-compatible endpoint** | Enterprise gateways front Nemotron with the same OpenAI-compatible contract. Use the gateway's base URL and your enterprise token. |
+| vLLM, SGLang, or TRT-LLM serving Nemotron weights | **Option 3: Other OpenAI-compatible endpoint** | Each runtime exposes Nemotron through `/v1/chat/completions`. Use the runtime's base URL and the model ID it reports. |
+| Local NIM started by the wizard | **Local NVIDIA NIM** (experimental) | Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU. NemoClaw pulls and manages the container for you. |
+
+For Option 3, the API key environment variable is `COMPATIBLE_API_KEY`. Set it to whatever credential your endpoint expects, or any non-empty placeholder if your endpoint does not require auth.
 
 ## Experimental Options
 
@@ -81,7 +97,9 @@ For setup instructions, refer to [Use a Local Inference Server](use-local-infere
 ## Validation
 
 NemoClaw validates the selected provider and model before creating the sandbox.
-If validation fails, the wizard returns to provider selection.
+If credential validation fails, the wizard asks whether to re-enter the API key, choose a different provider, retry, or exit.
+The `nvapi-` prefix check applies only to `NVIDIA_API_KEY`.
+Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and compatible endpoint keys, use provider-aware validation during retry.
 
 | Provider type | Validation method |
 |---|---|
@@ -92,6 +110,7 @@ If validation fails, the wizard returns to provider selection.
 | Anthropic-compatible | Tries `/v1/messages`. |
 | NVIDIA Endpoints (manual model entry) | Validates the model name against the catalog API. |
 | Compatible endpoints | Sends a real inference request because many proxies do not expose a `/models` endpoint. For OpenAI-compatible endpoints, the probe includes tool calling before NemoClaw favors `/responses`. |
+| Local NVIDIA NIM | Uses the same validation behavior as NVIDIA Endpoints and skips the `/v1/responses` probe for endpoints that do not expose it. |
 
 ## Next Steps
 

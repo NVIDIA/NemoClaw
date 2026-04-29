@@ -4,29 +4,37 @@
 import {
   spawnSync,
   type SpawnSyncOptions,
+  type SpawnSyncOptionsWithStringEncoding,
   type SpawnSyncReturns,
 } from "node:child_process";
+
+export type OpenshellSpawnSync = (
+  command: string,
+  args: readonly string[],
+  options: SpawnSyncOptionsWithStringEncoding,
+) => SpawnSyncReturns<string>;
 
 interface OpenshellSpawnOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  spawnSyncImpl?: typeof spawnSync;
+  timeout?: number;
+  ignoreError?: boolean;
+  spawnSyncImpl?: OpenshellSpawnSync;
   errorLine?: (message: string) => void;
   exit?: (code: number) => never;
 }
 
 export interface RunOpenshellOptions extends OpenshellSpawnOptions {
   stdio?: SpawnSyncOptions["stdio"];
-  ignoreError?: boolean;
 }
 
-export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
-  ignoreError?: boolean;
-}
+export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {}
 
 export interface CaptureOpenshellResult {
-  status: number;
+  status: number | null;
   output: string;
+  error?: Error;
+  signal?: NodeJS.Signals | null;
 }
 
 // eslint-disable-next-line no-control-regex
@@ -69,6 +77,10 @@ function handleSpawnError(
   return (opts.exit ?? ((code) => process.exit(code)))(1);
 }
 
+function isIgnoredTimeout(error: Error, opts: OpenshellSpawnOptions): boolean {
+  return opts.ignoreError === true && (error as NodeJS.ErrnoException).code === "ETIMEDOUT";
+}
+
 export function runOpenshellCommand(
   binary: string,
   args: string[],
@@ -80,8 +92,12 @@ export function runOpenshellCommand(
     env: { ...process.env, ...opts.env },
     encoding: "utf-8",
     stdio: opts.stdio ?? "inherit",
+    timeout: opts.timeout,
   });
   if (result.error) {
+    if (isIgnoredTimeout(result.error, opts)) {
+      return result;
+    }
     return handleSpawnError(binary, args, result.error, opts);
   }
   if (result.status !== 0 && !opts.ignoreError) {
@@ -104,8 +120,17 @@ export function captureOpenshellCommand(
     env: { ...process.env, ...opts.env },
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: opts.timeout,
   });
   if (result.error) {
+    if (isIgnoredTimeout(result.error, opts)) {
+      return {
+        status: result.status,
+        output: `${result.stdout || ""}${opts.ignoreError ? "" : result.stderr || ""}`.trim(),
+        error: result.error,
+        signal: result.signal,
+      };
+    }
     return handleSpawnError(binary, args, result.error, opts);
   }
   return {

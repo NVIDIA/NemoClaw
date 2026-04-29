@@ -25,10 +25,22 @@ RUN npm ci && npm run build
 FROM ${BASE_IMAGE}
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
-RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
+# Protect procps before autoremove — the GHCR base may predate the procps
+# addition, leaving it absent or auto-marked. apt-mark + conditional install
+# guarantees ps/top/kill are present regardless of base image staleness.
+# Ref: #2343
+# hadolint ignore=DL3001
+RUN apt-mark manual procps 2>/dev/null || true \
+    && (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
         netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
     && apt-get autoremove --purge -y \
-    && rm -rf /var/lib/apt/lists/*
+    && if ! command -v ps >/dev/null 2>&1; then \
+        apt-get update && apt-get install -y --no-install-recommends procps=2:4.0.2-3 \
+        && rm -rf /var/lib/apt/lists/*; \
+    else \
+        rm -rf /var/lib/apt/lists/*; \
+    fi \
+    && ps --version
 
 
 # Copy built plugin and blueprint into the sandbox
@@ -67,7 +79,17 @@ RUN set -eu; \
         # rmdir failure inside npm's own install path.
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
         npm install -g --no-audit --no-fund --no-progress "openclaw@${MIN_VER}"; \
-    fi
+    fi; \
+    # Pre-install the codex-acp package so the embedded ACPx runtime can
+    # call the local binary instead of `npx @zed-industries/codex-acp`.
+    # The sandbox's L7 proxy denies @zed-industries/* package URLs
+    # (403 policy_denied), and npm still refreshes registry metadata for
+    # versioned npx package specs even when the package is globally installed.
+    # Installing the binary at build time and configuring ACPx to use it
+    # directly keeps TC-SBX-02 off the runtime npm path.
+    npm install -g --no-audit --no-fund --no-progress \
+        '@zed-industries/codex-acp@0.11.1'; \
+    command -v codex-acp >/dev/null
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
 #
@@ -141,7 +163,57 @@ RUN set -eu; \
     fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' "$OC_DIST")"; \
     test -n "$fg_assert"; \
     printf '%s\n' "$fg_assert" | xargs sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 if (process.env.OPENSHELL_SANDBOX === "1") return; /* nemoclaw: env-gated bypass, see Dockerfile */ |'; \
-    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' "$OC_DIST"
+    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' "$OC_DIST"; \
+    # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \
+    # OpenClaw's install-safe-path and install-package-dir reject symlinked \
+    # directories via lstat.  NemoClaw symlinks ~/.openclaw/extensions → \
+    # ~/.openclaw-data/extensions for writable persistence across sandbox \
+    # rebuilds.  Changing lstat → stat in these two modules lets symlinks \
+    # resolve; the real security gates (realpath + isPathInside containment) \
+    # remain intact — a symlink escaping the base tree is still caught. \
+    # Scoped to install-safe-path + install-package-dir only. \
+    isp_file="$(grep -RIlE --include='*.js' 'const baseLstat = await fs\.lstat\(baseDir\)' "$OC_DIST/install-safe-path-"*.js)"; \
+    test -n "$isp_file" || { echo "ERROR: install-safe-path baseLstat pattern not found" >&2; exit 1; }; \
+    sed -i 's/const baseLstat = await fs\.lstat(baseDir)/const baseLstat = await fs.stat(baseDir)/' "$isp_file"; \
+    if grep -q 'const baseLstat = await fs\.lstat(baseDir)' "$isp_file"; then echo "ERROR: Patch 3a (install-safe-path) left baseLstat lstat call" >&2; exit 1; fi; \
+    ipd_file="$(grep -RIlE --include='*.js' 'assertInstallBaseStable' "$OC_DIST/install-package-dir-"*.js)"; \
+    test -n "$ipd_file" || { echo "ERROR: install-package-dir assertInstallBaseStable not found" >&2; exit 1; }; \
+    sed -i 's/const baseLstat = await fs\.lstat(params\.installBaseDir)/const baseLstat = await fs.stat(params.installBaseDir)/' "$ipd_file"; \
+    sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
+    if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
+    # --- Patch 4: graceful EACCES in replaceConfigFile for sandbox (#2254) --- \
+    # Plugin install persists metadata via replaceConfigFile. In the sandbox, \
+    # openclaw.json is immutable (444 root:root) by design.  OpenClaw 2026.4.24 \
+    # restructured config writes: replaceConfigFile now first attempts a \
+    # single-key include-file mutation (tryWriteSingleTopLevelIncludeMutation), \
+    # falling back to writeConfigFile for the full config.  Both paths can hit \
+    # EACCES in the read-only sandbox tree.  This patch wraps the entire \
+    # write block in a try/catch that catches EACCES when OPENSHELL_SANDBOX=1 \
+    # and emits a warning instead of crashing.  Plugins still load via \
+    # auto-discovery from the extensions directory. \
+    rcf_file="$(grep -RIlE --include='*.js' 'async function replaceConfigFile\(params\)' "$OC_DIST" | head -n 1)"; \
+    test -n "$rcf_file" || { echo "ERROR: replaceConfigFile function not found in OpenClaw dist" >&2; exit 1; }; \
+    python3 -c "import sys; p=sys.argv[1]; f=open(p); src=f.read(); f.close(); old='\tif (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t});'; new='\ttry { if (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t}); } catch(_rcfErr) { if (process.env.OPENSHELL_SANDBOX === \"1\" && _rcfErr.code === \"EACCES\") { console.error(\"[nemoclaw] Config is read-only in sandbox \\u2014 plugin metadata not persisted (plugins auto-load from extensions/)\"); } else { throw _rcfErr; } }'; assert old in src, 'tryWriteSingleTopLevelIncludeMutation/writeConfigFile pattern not found in replaceConfigFile'; f=open(p,'w'); f.write(src.replace(old,new,1)); f.close()" "$rcf_file"; \
+    grep -REq --include='*.js' 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }; \
+    # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
+    # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
+    # client and server. Server-side connect-handler processing can exceed \
+    # 10s under load (multiple concurrent connects on slow CI infra), \
+    # causing `openclaw agent --json` to fail with "gateway timeout after \
+    # 10000ms" and TC-SBX-02 to hit its 90s SSH timeout. \
+    # \
+    # Both env vars (OPENCLAW_HANDSHAKE_TIMEOUT_MS, \
+    # OPENCLAW_CONNECT_CHALLENGE_TIMEOUT_MS) are clamped at the same \
+    # DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS constant, so we patch the \
+    # constant itself.  Affects both client.js (used by openclaw CLI) and \
+    # server.impl.js (gateway side). \
+    # \
+    # Removal criteria: drop when openclaw fixes the underlying connect \
+    # latency, or exposes the timeout as an unbounded env override. \
+    hto_files="$(grep -RIlE --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4' "$OC_DIST")"; \
+    test -n "$hto_files" || { echo "ERROR: handshake-timeout constant not found" >&2; exit 1; }; \
+    printf '%s\n' "$hto_files" | xargs sed -i -E 's|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4|g'; \
+    if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4' "$OC_DIST"; then echo "ERROR: Patch 5 left a 1e4 constant" >&2; exit 1; fi
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
@@ -149,9 +221,12 @@ RUN set -eu; \
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Copy startup script
+# Copy startup script and shared sandbox initialisation library
+COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-RUN chmod 755 /usr/local/bin/nemoclaw-start
+COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
+COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp /usr/local/lib/nemoclaw/sandbox-init.sh
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
@@ -165,6 +240,15 @@ ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_CONTEXT_WINDOW=131072
 ARG NEMOCLAW_MAX_TOKENS=4096
 ARG NEMOCLAW_REASONING=false
+# Comma-separated list of input modalities accepted by the primary model
+# (e.g. "text" or "text,image" for vision-capable models). OpenClaw's
+# model schema currently accepts "text" and "image". See #2421.
+ARG NEMOCLAW_INFERENCE_INPUTS=text
+# Per-request inference timeout (seconds) baked into agents.defaults.timeoutSeconds.
+# Increase for slow local inference (e.g., CPU Ollama). openclaw.json is
+# immutable at runtime (Landlock read-only), so this can only be changed by
+# rebuilding via `nemoclaw onboard`. Ref: issue #2281
+ARG NEMOCLAW_AGENT_TIMEOUT=600
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Base64-encoded JSON list of messaging channel names to pre-configure
 # (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
@@ -178,10 +262,13 @@ ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).
 # Used to enable guild-channel responses for native Discord. Default: empty map.
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
-# Set to "1" to disable device-pairing auth (development/headless only).
-# Default: "0" (device auth enabled — secure by default).
+# Set to "1" to force-disable device-pairing auth. Also auto-disabled when
+# CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
+# since terminal-based pairing is impossible in those contexts.
+# Default: "0" (device auth enabled for local deployments — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
-# Unique per build to ensure each image gets a fresh auth token.
+# Unique per build — busts the Docker cache for the token-injection layer
+# so each image gets a fresh gateway auth token.
 # Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
 ARG NEMOCLAW_BUILD_ID=default
 # Sandbox egress proxy host/port. Defaults match the OpenShell-injected
@@ -208,6 +295,8 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_CONTEXT_WINDOW=${NEMOCLAW_CONTEXT_WINDOW} \
     NEMOCLAW_MAX_TOKENS=${NEMOCLAW_MAX_TOKENS} \
     NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
+    NEMOCLAW_INFERENCE_INPUTS=${NEMOCLAW_INFERENCE_INPUTS} \
+    NEMOCLAW_AGENT_TIMEOUT=${NEMOCLAW_AGENT_TIMEOUT} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
@@ -220,11 +309,10 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
 WORKDIR /sandbox
 USER sandbox
 
-# Write the COMPLETE openclaw.json including gateway config and auth token.
-# This file is immutable at runtime (Landlock read-only on /sandbox/.openclaw).
-# No runtime writes to openclaw.json are needed or possible.
+# Write openclaw.json with gateway config and a placeholder auth token.
+# The real token is injected in a later layer (see "Inject gateway auth
+# token" below) so this expensive layer stays cached across builds.
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
-# Auth token is generated per build so each image has a unique token.
 #
 # Temporary workaround for NemoClaw#1738: the OpenClaw Discord extension's
 # gateway uses `ws` (via @buape/carbon), which ignores HTTPS_PROXY/HTTP_PROXY
@@ -236,76 +324,39 @@ USER sandbox
 # the OpenShell proxy. Mirror of the Telegram treatment immediately below.
 # Remove once OpenClaw lands an env-var-honouring fix for the Discord
 # gateway equivalent to openclaw/openclaw#62878 (Slack Socket Mode).
-RUN python3 -c "\
-import base64, json, os, secrets; \
-from urllib.parse import urlparse; \
-proxy_url = f\"http://{os.environ['NEMOCLAW_PROXY_HOST']}:{os.environ['NEMOCLAW_PROXY_PORT']}\"; \
-model = os.environ['NEMOCLAW_MODEL']; \
-chat_ui_url = os.environ['CHAT_UI_URL']; \
-provider_key = os.environ['NEMOCLAW_PROVIDER_KEY']; \
-primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
-inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
-inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
-context_window = int(os.environ.get('NEMOCLAW_CONTEXT_WINDOW', '131072')); \
-max_tokens = int(os.environ.get('NEMOCLAW_MAX_TOKENS', '4096')); \
-reasoning = os.environ.get('NEMOCLAW_REASONING', 'false') == 'true'; \
-inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
-msg_channels = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_CHANNELS_B64', 'W10=') or 'W10=').decode('utf-8')); \
-_allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_ALLOWED_IDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
-_discord_guilds = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_DISCORD_GUILDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
-_token_keys = {'discord': 'token', 'telegram': 'botToken', 'slack': 'botToken'}; \
-_env_keys = {'discord': 'DISCORD_BOT_TOKEN', 'telegram': 'TELEGRAM_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
-_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'appToken': 'openshell:resolve:env:SLACK_APP_TOKEN'} if ch == 'slack' else {}), **({'proxy': proxy_url} if ch in ('telegram', 'discord') else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
-_ch_cfg['discord'].update({'groupPolicy': 'allowlist', 'guilds': _discord_guilds}) if 'discord' in _ch_cfg and _discord_guilds else None; \
-parsed = urlparse(chat_ui_url); \
-chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
-origins = ['http://127.0.0.1:18789']; \
-origins = list(dict.fromkeys(origins + [chat_origin])); \
-disable_device_auth = os.environ.get('NEMOCLAW_DISABLE_DEVICE_AUTH', '') == '1'; \
-allow_insecure = parsed.scheme == 'http'; \
-providers = { \
-    provider_key: { \
-        'baseUrl': inference_base_url, \
-        'apiKey': 'unused', \
-        'api': inference_api, \
-        'models': [{**({'compat': inference_compat} if inference_compat else {}), 'id': model, 'name': primary_model_ref, 'reasoning': reasoning, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': context_window, 'maxTokens': max_tokens}] \
-    } \
-}; \
-config = { \
-    'agents': {'defaults': {'model': {'primary': primary_model_ref}}}, \
-    'models': {'mode': 'merge', 'providers': providers}, \
-    'channels': dict({'defaults': {'configWrites': False}}, **_ch_cfg), \
-    'update': {'checkOnStart': False}, \
-    'gateway': { \
-        'mode': 'local', \
-        'controlUi': { \
-            'allowInsecureAuth': allow_insecure, \
-            'dangerouslyDisableDeviceAuth': disable_device_auth, \
-            'allowedOrigins': origins, \
-        }, \
-        'trustedProxies': ['127.0.0.1', '::1'], \
-        'auth': {'token': secrets.token_hex(32)} \
-    } \
-}; \
-config.update({ \
-    'tools': { \
-        'web': { \
-            'search': { \
-                'enabled': True, \
-                'provider': 'brave', \
-                'apiKey': 'openshell:resolve:env:BRAVE_API_KEY' \
-            }, \
-            'fetch': {'enabled': True} \
-        } \
-    } \
-}) if os.environ.get('NEMOCLAW_WEB_SEARCH_ENABLED', '') == '1' else None; \
-path = os.path.expanduser('~/.openclaw/openclaw.json'); \
-json.dump(config, open(path, 'w'), indent=2); \
-os.chmod(path, 0o600)"
+# Generate openclaw.json from environment variables. Config generation logic
+# lives in scripts/generate-openclaw-config.py — see that file for the full
+# list of env vars and derivation rules.
+RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 
-# Install NemoClaw plugin into OpenClaw
-RUN openclaw doctor --fix > /dev/null 2>&1 || true \
-    && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
+# Install NemoClaw plugin into OpenClaw. Prune non-runtime metadata from
+# staged bundled plugin dependencies before this layer is committed; deleting
+# it in a later layer would not reduce the OCI image imported by k3s.
+RUN (openclaw doctor --fix > /dev/null 2>&1 || true) \
+    && (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
+    && if [ -d /sandbox/.openclaw-data/plugin-runtime-deps ]; then \
+        find /sandbox/.openclaw-data/plugin-runtime-deps -type f \( \
+            -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o \
+            -name '*.map' -o -name '*.tsbuildinfo' \
+        \) -delete; \
+        find /sandbox/.openclaw-data/plugin-runtime-deps -type d \( \
+            -name __tests__ -o -name test -o -name tests -o -name docs -o \
+            -name examples \
+        \) -prune -exec rm -rf {} +; \
+    fi
+
+# Inject gateway auth token into openclaw.json.
+# NEMOCLAW_BUILD_ID busts the Docker cache so each image gets a unique token.
+# This is the ONLY layer that rebuilds on every build — the expensive
+# doctor/plugins layer above stays cached.
+# openclaw doctor --fix may auto-generate a token; this overwrites it.
+RUN NEMOCLAW_BUILD_ID="${NEMOCLAW_BUILD_ID}" python3 -c "\
+import json, os, secrets; \
+path = os.path.expanduser('~/.openclaw/openclaw.json'); \
+cfg = json.load(open(path)); \
+cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = secrets.token_hex(32); \
+json.dump(cfg, open(path, 'w'), indent=2); \
+os.chmod(path, 0o600)"
 
 # Lock openclaw.json via DAC: chown to root so the sandbox user cannot modify
 # it at runtime.  This works regardless of Landlock enforcement status.
@@ -320,19 +371,28 @@ RUN openclaw doctor --fix > /dev/null 2>&1 || true \
 # hadolint ignore=DL3002
 USER root
 
-# Ensure .openclaw-data subdirs and symlinks exist for logs, credentials, and
-# sandbox. These are defined in Dockerfile.base but the GHCR base image may
-# not have been rebuilt yet. Idempotent — harmless once the base catches up.
+# Ensure .openclaw-data subdirs and symlinks exist for logs, credentials,
+# sandbox, and plugin-runtime-deps. These are defined in Dockerfile.base but
+# the GHCR base image may not have been rebuilt yet. Idempotent — harmless
+# once the base catches up.
+#
+# plugin-runtime-deps was added in OpenClaw 2026.4.24: the CLI lazy-installs
+# bundled plugin runtime dependencies into ~/.openclaw/plugin-runtime-deps/
+# on first invocation (Jiti loader). Without a writable target every bundled
+# plugin (nvidia, openai, anthropic, ollama, …) fails to load with EACCES,
+# leaving the agent CLI with no providers. See PluginLoadFailureError in #2484.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/804
 RUN mkdir -p /sandbox/.openclaw-data/logs \
         /sandbox/.openclaw-data/credentials \
         /sandbox/.openclaw-data/sandbox \
         /sandbox/.openclaw-data/media \
+        /sandbox/.openclaw-data/plugin-runtime-deps \
     && chown sandbox:sandbox /sandbox/.openclaw-data/logs \
         /sandbox/.openclaw-data/credentials \
         /sandbox/.openclaw-data/sandbox \
         /sandbox/.openclaw-data/media \
-    && for dir in logs credentials sandbox media; do \
+        /sandbox/.openclaw-data/plugin-runtime-deps \
+    && for dir in logs credentials sandbox media plugin-runtime-deps; do \
         if [ -L "/sandbox/.openclaw/$dir" ]; then true; \
         elif [ -e "/sandbox/.openclaw/$dir" ]; then \
             cp -a "/sandbox/.openclaw/$dir/." "/sandbox/.openclaw-data/$dir/" 2>/dev/null || true; \
