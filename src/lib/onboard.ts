@@ -3106,11 +3106,11 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   } catch {
     if (exitOnFailure) {
       console.error(`  Gateway failed to start after ${retries + 1} attempts.`);
-          console.error(" Gateway cleanup completed after failed start.");
+          
       console.error("");
       try {
         const logs = redact(
-          runCaptureOpenshell(["doctor", "logs", "--name", GATEWAY_NAME], {
+          
             ignoreError: true,
           }),
         );
@@ -3130,6 +3130,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
       console.error("  Troubleshooting:");
               console.error("  nemoclau onboard");
               destroyGateway();
+              console.error(" Gateway cleanup completed after failed start.");
       process.exit(1);
     }
     throw new Error("Gateway failed to start");
