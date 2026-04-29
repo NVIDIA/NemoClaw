@@ -1561,3 +1561,200 @@ jobs:
               issue_number: pr.number,
               body,
             });
+
+  # ── Nightly Scorecard ──────────────────────────────────────────────────
+  # Aggregates overnight results into a scorecard published to
+  # $GITHUB_STEP_SUMMARY. Identifies flaky jobs, computes pass/fail/cancel
+  # breakdowns, and compares trends against the prior day.
+  # Only runs on schedule (not workflow_dispatch — that uses report-to-pr).
+  scorecard:
+    runs-on: ubuntu-latest
+    needs:
+      [
+        cloud-e2e,
+        cloud-onboard-e2e,
+        cloud-inference-e2e,
+        skill-agent-e2e,
+        docs-validation-e2e,
+        messaging-providers-e2e,
+        token-rotation-e2e,
+        sandbox-survival-e2e,
+        hermes-e2e,
+        skip-permissions-e2e,
+        sandbox-operations-e2e,
+        inference-routing-e2e,
+        network-policy-e2e,
+        deployment-services-e2e,
+        diagnostics-e2e,
+        credential-migration-e2e,
+        snapshot-commands-e2e,
+        shields-config-e2e,
+        rebuild-openclaw-e2e,
+        upgrade-stale-sandbox-e2e,
+        rebuild-hermes-e2e,
+        double-onboard-e2e,
+        onboard-repair-e2e,
+        onboard-resume-e2e,
+        runtime-overrides-e2e,
+        credential-sanitization-e2e,
+        telegram-injection-e2e,
+        overlayfs-autofix-e2e,
+        gpu-e2e,
+        gpu-double-onboard-e2e,
+      ]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    permissions:
+      actions: read
+    steps:
+      - name: Generate nightly scorecard
+        id: scorecard
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // ── Config ──────────────────────────────────────────────
+            const EXCLUDED_JOBS = new Set(['gpu-e2e', 'notify-on-failure', 'report-to-pr', 'scorecard']);
+
+            // ── Helpers ─────────────────────────────────────────────
+            function formatDate(date) {
+              return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }
+
+            // ── Gather results from the current run's needs context ─
+            const needs = ${{ toJSON(needs) }};
+            const today = formatDate(new Date());
+
+            const entries = Object.entries(needs).filter(([name]) => !EXCLUDED_JOBS.has(name));
+            let success = 0;
+            let failure = 0;
+            let cancelled = 0;
+            let skipped = 0;
+
+            for (const [, { result }] of entries) {
+              if (result === 'success') success++;
+              else if (result === 'failure') failure++;
+              else if (result === 'cancelled') cancelled++;
+              else if (result === 'skipped') skipped++;
+            }
+
+            const total = entries.length;
+            const ran = total - skipped;
+            const perfect = failure === 0 && cancelled === 0 && ran > 0;
+
+            // ── Identify failed jobs ────────────────────────────────
+            const failedJobs = entries
+              .filter(([, { result }]) => result === 'failure')
+              .map(([name]) => name)
+              .sort();
+
+            // ── Fetch prior-day run for trend comparison ────────────
+            let trendLine = '';
+            try {
+              const WORKFLOW_FILE = 'nightly-e2e.yaml';
+              const now = new Date();
+              const since48h = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+              const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: WORKFLOW_FILE,
+                created: `>=${since48h}`,
+                per_page: 50,
+              });
+
+              // Find completed scheduled runs from 24–48h ago
+              const priorRuns = data.workflow_runs.filter(r =>
+                r.status === 'completed' &&
+                r.event === 'schedule' &&
+                new Date(r.created_at) < new Date(since24h)
+              );
+
+              if (priorRuns.length > 0) {
+                // Check the most recent prior run
+                const priorRun = priorRuns[0];
+                const priorPerfect = priorRun.conclusion === 'success';
+                if (perfect && priorPerfect) {
+                  trendLine = 'Trend: ➡️ Stable (perfect both days)';
+                } else if (perfect && !priorPerfect) {
+                  trendLine = 'Trend: ↗️ Improving (yesterday had failures → today perfect)';
+                } else if (!perfect && priorPerfect) {
+                  trendLine = 'Trend: ↘️ Degrading (yesterday perfect → today has failures)';
+                } else {
+                  trendLine = 'Trend: ➡️ Stable (failures both days)';
+                }
+              } else {
+                trendLine = 'Trend: ⊘ No prior-day data for comparison';
+              }
+            } catch (e) {
+              trendLine = `Trend: ⊘ Could not fetch prior-day data (${e.message})`;
+            }
+
+            // ── Build scorecard ─────────────────────────────────────
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const lines = [
+              `## 🌅 NemoClaw Nightly Scorecard — ${today}`,
+              '',
+              `**Jobs run:** ${ran} of ${total}`,
+              `  ✅ ${success} passed`,
+              `  ❌ ${failure} failed`,
+              `  ⊘  ${cancelled} cancelled`,
+              `  ⏭️  ${skipped} skipped`,
+            ];
+
+            if (failedJobs.length > 0) {
+              lines.push('');
+              lines.push('**Failed jobs:**');
+              for (const name of failedJobs) {
+                lines.push(`  - \`${name}\``);
+              }
+            }
+
+            if (perfect) {
+              lines.push('');
+              lines.push('🎉 **All jobs passed!**');
+            }
+
+            lines.push('');
+            lines.push(trendLine);
+            lines.push('');
+            lines.push(`🔗 [Full run details](${runUrl})`);
+
+            const scorecard = lines.join('\n');
+            core.summary.addRaw(scorecard);
+            await core.summary.write();
+            core.setOutput('scorecard', scorecard);
+
+      # ── Optional Slack notification ────────────────────────────
+      - name: Post scorecard to Slack
+        if: ${{ steps.scorecard.outputs.scorecard != '' }}
+        uses: actions/github-script@v7
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SCORECARD_TEXT: ${{ steps.scorecard.outputs.scorecard }}
+        with:
+          script: |
+            const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+            if (!webhookUrl) {
+              core.info('SLACK_WEBHOOK_URL not configured — skipping Slack notification');
+              return;
+            }
+
+            const scorecard = process.env.SCORECARD_TEXT;
+
+            // Strip markdown formatting for Slack plain-text rendering
+            const slackText = scorecard
+              .replace(/^## /gm, '')
+              .replace(/\*\*/g, '*')
+              .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
+
+            const resp = await fetch(webhookUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: slackText }),
+            });
+
+            if (!resp.ok) {
+              core.warning(`Slack webhook returned ${resp.status}: ${await resp.text()}`);
+            } else {
+              core.info('Scorecard posted to Slack');
+            }
