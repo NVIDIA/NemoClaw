@@ -2513,12 +2513,19 @@ exit 0`,
 
     fs.writeFileSync(path.join(sourceRoot, "bin", "lib", "usage-notice.js"), "// stub\n");
 
-    // Source scripts/install.sh and invoke show_usage_notice with stdin closed
-    // so [ -t 0 ] is false (curl|bash mode). 2>/dev/null suppresses any
-    // top-level top-of-file noise that the source may emit before main() guard.
+    // Source scripts/install.sh and invoke show_usage_notice in a fresh
+    // session with no controlling TTY (setsid). Without setsid, WSL CI
+    // runners keep /dev/tty openable from the child process even when
+    // stdin is /dev/null — `(: </dev/tty)` succeeds and show_usage_notice
+    // takes its TTY-fallback branch instead of the `else error` we mean to
+    // exercise. setsid creates a new session with no controlling terminal,
+    // making /dev/tty deterministically unopenable across Linux/WSL/macOS.
+    // 2>/dev/null suppresses any top-level noise the source may emit
+    // before main()'s guard.
     const result = spawnSync(
-      "bash",
+      "setsid",
       [
+        "bash",
         "-c",
         `source ${JSON.stringify(INSTALLER_PAYLOAD)} 2>/dev/null; show_usage_notice </dev/null`,
       ],
