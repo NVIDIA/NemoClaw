@@ -291,6 +291,7 @@ type OnboardOptions = {
   resume?: boolean;
   fresh?: boolean;
   fromDockerfile?: string | null;
+  sandboxName?: string | null;
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   controlUiPort?: number | null;
@@ -1868,15 +1869,27 @@ const {
   prepareOllamaModel,
 } = require("./onboard-ollama-proxy");
 
-function getRequestedSandboxNameHint(): string | null {
-  const raw = process.env.NEMOCLAW_SANDBOX_NAME;
+function getRequestedSandboxNameHint(opts: { sandboxName?: string | null } = {}): string | null {
+  const raw =
+    typeof opts.sandboxName === "string" && opts.sandboxName.length > 0
+      ? opts.sandboxName
+      : process.env.NEMOCLAW_SANDBOX_NAME;
   if (typeof raw !== "string") return null;
   const normalized = raw.trim().toLowerCase();
   return normalized || null;
 }
 
-function getResumeSandboxConflict(session: Session | null) {
-  const requestedSandboxName = getRequestedSandboxNameHint();
+function getResumeSandboxConflict(
+  session: Session | null,
+  opts: { sandboxName?: string | null } = {},
+) {
+  // Use opts.sandboxName as the sole source — the caller has already
+  // resolved it (--name first, NEMOCLAW_SANDBOX_NAME only when prompting
+  // is impossible). Falling back to the env var here would fire spurious
+  // conflicts for interactive resume runs whose shell happens to export
+  // NEMOCLAW_SANDBOX_NAME but which never actually consult it.
+  const raw = typeof opts.sandboxName === "string" ? opts.sandboxName.trim().toLowerCase() : "";
+  const requestedSandboxName = raw || null;
   if (!requestedSandboxName || !session?.sandboxName) {
     return null;
   }
@@ -1896,12 +1909,17 @@ function getRequestedModelHint(nonInteractive = isNonInteractive()) {
 
 function getResumeConfigConflicts(
   session: Session | null,
-  opts: { nonInteractive?: boolean; fromDockerfile?: string | null; agent?: string | null } = {},
+  opts: {
+    nonInteractive?: boolean;
+    fromDockerfile?: string | null;
+    sandboxName?: string | null;
+    agent?: string | null;
+  } = {},
 ) {
   const conflicts = [];
   const nonInteractive = opts.nonInteractive ?? isNonInteractive();
 
-  const sandboxConflict = getResumeSandboxConflict(session);
+  const sandboxConflict = getResumeSandboxConflict(session, { sandboxName: opts.sandboxName });
   if (sandboxConflict) {
     conflicts.push({
       field: "sandbox",
@@ -3190,6 +3208,25 @@ async function recoverGatewayRuntime() {
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
 
+// Names that collide with global CLI commands. A sandbox named 'status'
+// makes 'nemoclaw status connect' route to the global status command
+// instead of the sandbox, so reject these wherever a sandbox name enters
+// the system (interactive prompt, --name flag, NEMOCLAW_SANDBOX_NAME).
+const RESERVED_SANDBOX_NAMES = new Set([
+  "onboard",
+  "list",
+  "deploy",
+  "setup",
+  "setup-spark",
+  "start",
+  "stop",
+  "status",
+  "debug",
+  "uninstall",
+  "credentials",
+  "help",
+]);
+
 async function promptValidatedSandboxName() {
   const MAX_ATTEMPTS = 3;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -3202,24 +3239,7 @@ async function promptValidatedSandboxName() {
 
     try {
       const validatedSandboxName = validateName(sandboxName, "sandbox name");
-      // Reject names that collide with global CLI commands.
-      // A sandbox named 'status' makes 'nemoclaw status connect' route to
-      // the global status command instead of the sandbox.
-      const RESERVED_NAMES = new Set([
-        "onboard",
-        "list",
-        "deploy",
-        "setup",
-        "setup-spark",
-        "start",
-        "stop",
-        "status",
-        "debug",
-        "uninstall",
-        "credentials",
-        "help",
-      ]);
-      if (RESERVED_NAMES.has(sandboxName)) {
+      if (RESERVED_SANDBOX_NAMES.has(sandboxName)) {
         console.error(`  Reserved name: '${sandboxName}' is a NemoClaw CLI command.`);
         console.error("  Choose a different name to avoid routing conflicts.");
         if (isNonInteractive()) {
@@ -6962,6 +6982,60 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   const requestedFromDockerfile =
     opts.fromDockerfile ||
     (isNonInteractive() ? process.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
+  // Resolve the explicit sandbox name early so both validation and the
+  // --from guard work off the same source. --name always counts; the env
+  // var only counts when we cannot prompt (otherwise interactive runs would
+  // bypass the prompt UX), since the existing prompt path already seeds
+  // from the env var via promptOrDefault when --non-interactive is set.
+  // Cover both --non-interactive and missing-TTY runs (CI scripts, piped
+  // stdin) — the issue's test plan asks for both.
+  const stdinIsTty = Boolean(process.stdin && process.stdin.isTTY);
+  const stdoutIsTty = Boolean(process.stdout && process.stdout.isTTY);
+  const cannotPrompt = isNonInteractive() || !stdinIsTty || !stdoutIsTty;
+  let requestedSandboxName: string | null =
+    typeof opts.sandboxName === "string" && opts.sandboxName.length > 0
+      ? opts.sandboxName
+      : null;
+  let requestedSandboxSource: "--name" | "NEMOCLAW_SANDBOX_NAME" | null = requestedSandboxName
+    ? "--name"
+    : null;
+  if (!requestedSandboxName && cannotPrompt) {
+    const envName = process.env.NEMOCLAW_SANDBOX_NAME;
+    if (typeof envName === "string" && envName.trim().length > 0) {
+      requestedSandboxName = envName.trim();
+      requestedSandboxSource = "NEMOCLAW_SANDBOX_NAME";
+    }
+  }
+  if (requestedSandboxName) {
+    try {
+      const validated = validateName(requestedSandboxName, "sandbox name");
+      if (RESERVED_SANDBOX_NAMES.has(validated)) {
+        console.error(`  Reserved name: '${validated}' is a NemoClaw CLI command.`);
+        console.error(
+          `  Choose a different sandbox name (passed via ${requestedSandboxSource}) to avoid routing conflicts.`,
+        );
+        process.exit(1);
+      }
+      requestedSandboxName = validated;
+    } catch (error) {
+      console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  }
+  // The downstream prompt path silently defaults to 'my-assistant' when no
+  // input arrives. With --from in play that would clobber the default
+  // sandbox, so refuse to proceed unless the caller has supplied a name
+  // out-of-band. Cover both --non-interactive and missing-TTY runs (CI
+  // scripts, piped stdin) — the issue's test plan asks for both. The resume
+  // case is handled separately after session load (see below) because its
+  // recorded sandboxName may already satisfy the requirement.
+  if (cannotPrompt && !resume && requestedFromDockerfile && !requestedSandboxName) {
+    console.error(
+      "  --from <Dockerfile> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.",
+    );
+    console.error("  A sandbox name cannot be prompted for in this context.");
+    process.exit(1);
+  }
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
     acceptedByFlag: opts.acceptThirdPartySoftware === true,
@@ -7065,6 +7139,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       const resumeConflicts = getResumeConfigConflicts(session, {
         nonInteractive: isNonInteractive(),
         fromDockerfile: requestedFromDockerfile,
+        sandboxName: requestedSandboxName,
         agent: opts.agent || null,
       });
       if (resumeConflicts.length > 0) {
@@ -7123,6 +7198,28 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
         }),
       );
+    }
+
+    // Backstop for the resume path: a session may exist (so the early guard
+    // skipped because resume === true) but never have recorded a sandboxName
+    // — sandbox creation could have failed before that step ran. Without a
+    // --name or env-var seed, the downstream prompt path would fall back to
+    // 'my-assistant' under no TTY, exactly the silent-default the early
+    // guard is meant to prevent.
+    if (
+      resume &&
+      cannotPrompt &&
+      fromDockerfile &&
+      !requestedSandboxName &&
+      !session?.sandboxName
+    ) {
+      console.error(
+        "  --from <Dockerfile> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.",
+      );
+      console.error(
+        "  The resumed session has no recorded sandbox name, so one cannot be inferred.",
+      );
+      process.exit(1);
     }
 
     let completed = false;
@@ -7211,7 +7308,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSession.markStepComplete("gateway");
     }
 
-    let sandboxName = session?.sandboxName || null;
+    let sandboxName = session?.sandboxName || requestedSandboxName || null;
+    if (sandboxName && RESERVED_SANDBOX_NAMES.has(sandboxName)) {
+      console.error(
+        `  Reserved name in resumed session: '${sandboxName}' is a NemoClaw CLI command.`,
+      );
+      console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
+      process.exit(1);
+    }
     let model = session?.model || null;
     let provider = session?.provider || null;
     let endpointUrl = session?.endpointUrl || null;

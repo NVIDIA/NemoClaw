@@ -1591,15 +1591,56 @@ startGateway(null).catch(() => {});
     }
   });
 
+  it("prefers the explicit --name option over NEMOCLAW_SANDBOX_NAME", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    process.env.NEMOCLAW_SANDBOX_NAME = "from-env";
+    try {
+      expect(getRequestedSandboxNameHint({ sandboxName: "From-Flag" })).toBe("from-flag");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
+      }
+    }
+  });
+
+  it("detects resume conflicts when --name does not match the recorded sandbox", () => {
+    expect(
+      getResumeConfigConflicts(
+        { sandboxName: "my-assistant" },
+        { sandboxName: "second-assistant" },
+      ),
+    ).toEqual([
+      {
+        field: "sandbox",
+        requested: "second-assistant",
+        recorded: "my-assistant",
+      },
+    ]);
+  });
+
   it("detects resume conflicts when a different sandbox is requested", () => {
+    expect(
+      getResumeSandboxConflict({ sandboxName: "my-assistant" }, { sandboxName: "other-sandbox" }),
+    ).toEqual({
+      requestedSandboxName: "other-sandbox",
+      recordedSandboxName: "my-assistant",
+    });
+    expect(
+      getResumeSandboxConflict({ sandboxName: "other-sandbox" }, { sandboxName: "other-sandbox" }),
+    ).toBe(null);
+  });
+
+  it("does not fire a resume conflict from NEMOCLAW_SANDBOX_NAME alone", () => {
+    // Interactive resume runs never consult the env var (sandbox creation
+    // is already complete in the session, so promptOrDefault is skipped).
+    // Reading it here would surface a spurious conflict whenever a user
+    // happens to export NEMOCLAW_SANDBOX_NAME in their shell rc.
     const previous = process.env.NEMOCLAW_SANDBOX_NAME;
     process.env.NEMOCLAW_SANDBOX_NAME = "other-sandbox";
     try {
-      expect(getResumeSandboxConflict({ sandboxName: "my-assistant" })).toEqual({
-        requestedSandboxName: "other-sandbox",
-        recordedSandboxName: "my-assistant",
-      });
-      expect(getResumeSandboxConflict({ sandboxName: "other-sandbox" })).toBe(null);
+      expect(getResumeSandboxConflict({ sandboxName: "my-assistant" })).toBe(null);
     } finally {
       if (previous === undefined) {
         delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -2634,6 +2675,18 @@ const { setupInference } = require(${onboardPath});
     assert.doesNotMatch(
       source,
       /dangerouslySkipPermissions\)[\s\S]*?Skipped —.*permissive base policy/,
+    );
+  });
+
+  it("re-checks RESERVED_SANDBOX_NAMES against a resumed session's sandboxName", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(
+      source,
+      /let sandboxName = session\?\.sandboxName \|\| requestedSandboxName \|\| null;\s*if \(sandboxName && RESERVED_SANDBOX_NAMES\.has\(sandboxName\)\) \{[\s\S]*?process\.exit\(1\);\s*\}/,
     );
   });
 
