@@ -1661,6 +1661,25 @@ main() {
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
+  # Fail-fast license-acceptance check (#2671). If we already know
+  # show_usage_notice() will hit the "requires a TTY" branch later in
+  # phase 3, surface that error NOW — before phases 1/2 install Node.js
+  # and put the nemoclaw CLI on PATH. Otherwise the user is left in a
+  # partial install that they have to manually `rm -rf` before retry,
+  # while their license has not actually been accepted.
+  #
+  # Skipped (and the install proceeds) when any of:
+  #  - NON_INTERACTIVE=1 — license helper runs non-interactively in phase 3
+  #  - ACCEPT_THIRD_PARTY_SOFTWARE=1 — license is auto-accepted in phase 3 (#2670)
+  #  - stdin is a TTY — license helper prompts the user directly
+  #  - /dev/tty is openable — show_usage_notice falls back to /dev/tty input
+  if [ "${NON_INTERACTIVE:-}" != "1" ] \
+    && [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ] \
+    && [ ! -t 0 ] \
+    && ! (: </dev/tty) 2>/dev/null; then
+    error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
+  fi
+
   _INSTALL_START=$SECONDS
   print_banner
   bash "${SCRIPT_DIR}/setup-jetson.sh"
