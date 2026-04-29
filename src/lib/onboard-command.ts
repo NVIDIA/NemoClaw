@@ -10,6 +10,7 @@ export interface OnboardCommandOptions {
   fresh: boolean;
   recreateSandbox: boolean;
   fromDockerfile: string | null;
+  share: string | null;
   sandboxName: string | null;
   acceptThirdPartySoftware: boolean;
   agent: string | null;
@@ -43,7 +44,7 @@ const ONBOARD_BASE_ARGS = [
 
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   return [
-    `  Usage: nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
+    `  Usage: nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--share <host-dir>[:<sandbox-path>]] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
     "",
   ];
 }
@@ -80,6 +81,19 @@ export function parseOnboardArgs(
     }
     fromDockerfile = requestedFromDockerfile;
     parsedArgs.splice(fromIdx, 2);
+  }
+
+  let share: string | null = null;
+  const shareIdx = parsedArgs.indexOf("--share");
+  if (shareIdx !== -1) {
+    const shareValue = parsedArgs[shareIdx + 1];
+    if (typeof shareValue !== "string" || shareValue.length === 0 || shareValue.startsWith("--")) {
+      error("  --share requires a host directory");
+      printOnboardUsage(error, noticeAcceptFlag);
+      exit(1);
+    }
+    share = normalizeShareSpec(shareValue, { error, exit });
+    parsedArgs.splice(shareIdx, 2);
   }
 
   let sandboxName: string | null = null;
@@ -155,6 +169,7 @@ export function parseOnboardArgs(
     fresh,
     recreateSandbox: parsedArgs.includes("--recreate-sandbox"),
     fromDockerfile,
+    share,
     sandboxName,
     acceptThirdPartySoftware:
       parsedArgs.includes(noticeAcceptFlag) || String(deps.env[noticeAcceptEnv] || "") === "1",
@@ -162,6 +177,49 @@ export function parseOnboardArgs(
     dangerouslySkipPermissions: parsedArgs.includes("--dangerously-skip-permissions"),
     controlUiPort,
   };
+}
+
+export const DEFAULT_SHARE_DESTINATION = "/sandbox/shared";
+
+function splitShareSpec(spec: string): { localPath: string; sandboxPath: string } {
+  const trimmed = spec.trim();
+  for (let i = 0; i < trimmed.length; i++) {
+    if (trimmed[i] === ":" && trimmed.slice(i + 1).startsWith("/")) {
+      return {
+        localPath: trimmed.slice(0, i),
+        sandboxPath: trimmed.slice(i + 1),
+      };
+    }
+  }
+  return { localPath: trimmed, sandboxPath: DEFAULT_SHARE_DESTINATION };
+}
+
+export function normalizeShareSpec(
+  spec: string,
+  deps: Pick<RunOnboardCommandDeps, "error" | "exit">,
+): string {
+  const error = deps.error ?? console.error;
+  const exit = deps.exit ?? ((code: number) => process.exit(code));
+  const { localPath, sandboxPath } = splitShareSpec(spec);
+  if (!localPath) {
+    error("  --share requires a host directory");
+    exit(1);
+  }
+  if (!sandboxPath.startsWith("/")) {
+    error(`  --share sandbox path must be absolute: ${sandboxPath}`);
+    exit(1);
+  }
+  const resolvedLocalPath = path.resolve(localPath);
+  if (!fs.existsSync(resolvedLocalPath)) {
+    error(`  --share path not found: ${resolvedLocalPath}`);
+    exit(1);
+  }
+  const stat = fs.statSync(resolvedLocalPath);
+  if (!stat.isDirectory()) {
+    error(`  --share path must be a directory: ${resolvedLocalPath}`);
+    exit(1);
+  }
+  return `${resolvedLocalPath}:${sandboxPath}`;
 }
 
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {

@@ -64,7 +64,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--dangerously-skip-permissions] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--share <host-dir>[:<sandbox-path>]] [--name <sandbox>] [--agent <name>] [--dangerously-skip-permissions] [--yes-i-accept-third-party-software]
 ```
 
 :::{warning}
@@ -178,6 +178,26 @@ $ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_FROM_DOCKERFILE=path/to/Dockerfile NEMOCLA
 ```
 
 If a `--resume` is attempted with a different `--from` path than the original session, onboarding exits with a conflict error rather than silently building from the wrong image.
+
+#### `--share <host-dir>[:<sandbox-path>]`
+
+Copy a host directory into the sandbox during onboarding.
+When the sandbox path is omitted, NemoClaw uploads the directory to `/sandbox/shared`.
+
+```console
+$ nemoclaw onboard --share ~/project
+$ nemoclaw onboard --share ~/project:/sandbox/project
+```
+
+This uses OpenShell's creation-time upload path.
+It is useful for seeding project files without running separate `openshell sandbox upload` commands after onboarding.
+It is not a live bidirectional host mount; changes made after sandbox creation still need an explicit upload or download.
+
+In non-interactive mode, the same value can be supplied with `NEMOCLAW_SHARE_DIR`:
+
+```console
+$ NEMOCLAW_SHARE_DIR=~/project:/sandbox/project nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
 
 #### `--name <sandbox>`
 

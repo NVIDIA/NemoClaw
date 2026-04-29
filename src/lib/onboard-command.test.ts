@@ -40,6 +40,7 @@ describe("onboard command", () => {
       fresh: false,
       recreateSandbox: false,
       fromDockerfile: null,
+      share: null,
       sandboxName: null,
       acceptThirdPartySoftware: true,
       agent: null,
@@ -66,6 +67,7 @@ describe("onboard command", () => {
       fresh: false,
       recreateSandbox: false,
       fromDockerfile: null,
+      share: null,
       sandboxName: null,
       acceptThirdPartySoftware: true,
       agent: null,
@@ -91,6 +93,7 @@ describe("onboard command", () => {
       fresh: false,
       recreateSandbox: false,
       fromDockerfile: null,
+      share: null,
       sandboxName: null,
       acceptThirdPartySoftware: false,
       agent: null,
@@ -115,6 +118,7 @@ describe("onboard command", () => {
     expect(runOnboard).not.toHaveBeenCalled();
     expect(lines.join("\n")).toContain("Usage: nemoclaw onboard");
     expect(lines.join("\n")).toContain("--from <Dockerfile>");
+    expect(lines.join("\n")).toContain("--share <host-dir>[:<sandbox-path>]");
     expect(lines.join("\n")).toContain("--name <sandbox>");
     expect(lines.join("\n")).toContain("--agent <name>");
     expect(lines.join("\n")).toContain("--dangerously-skip-permissions");
@@ -142,12 +146,84 @@ describe("onboard command", () => {
       fresh: false,
       recreateSandbox: false,
       fromDockerfile: dockerfilePath,
+      share: null,
       sandboxName: null,
       acceptThirdPartySoftware: false,
       agent: null,
       dangerouslySkipPermissions: false,
       controlUiPort: null,
     });
+  });
+
+  it("parses --share <host-dir> with the default sandbox path", () => {
+    const shareDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-share-parse-"));
+
+    expect(
+      parseOnboardArgs(
+        ["--share", shareDir],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: () => {},
+          exit: exitWithCode,
+        },
+      ),
+    ).toEqual({
+      nonInteractive: false,
+      resume: false,
+      fresh: false,
+      recreateSandbox: false,
+      fromDockerfile: null,
+      share: `${shareDir}:/sandbox/shared`,
+      sandboxName: null,
+      acceptThirdPartySoftware: false,
+      agent: null,
+      dangerouslySkipPermissions: false,
+      controlUiPort: null,
+    });
+  });
+
+  it("parses --share <host-dir>:<sandbox-path>", () => {
+    const shareDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-share-dest-"));
+
+    expect(
+      parseOnboardArgs(
+        ["--share", `${shareDir}:/sandbox/project`],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: () => {},
+          exit: exitWithCode,
+        },
+      ),
+    ).toMatchObject({
+      fromDockerfile: null,
+      share: `${shareDir}:/sandbox/project`,
+      sandboxName: null,
+    });
+  });
+
+  it("exits before onboarding when --share points to a missing path", async () => {
+    const runOnboard = vi.fn(async () => {});
+    const errors: string[] = [];
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-share-missing-"));
+
+    await expect(
+      runOnboardCommand({
+        args: ["--share", path.join(tmpDir, "no-such-dir")],
+        noticeAcceptFlag: "--yes-i-accept-third-party-software",
+        noticeAcceptEnv: "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        env: {},
+        runOnboard,
+        error: (message = "") => errors.push(message),
+        exit: exitWithPrefixedCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(runOnboard).not.toHaveBeenCalled();
+    expect(errors.join("\n")).toContain("--share path not found:");
   });
 
   it("parses --fresh and surfaces it as fresh=true", () => {
@@ -168,6 +244,7 @@ describe("onboard command", () => {
       fresh: true,
       recreateSandbox: false,
       fromDockerfile: null,
+      share: null,
       sandboxName: null,
       acceptThirdPartySoftware: false,
       agent: null,
@@ -215,6 +292,7 @@ describe("onboard command", () => {
       fresh: false,
       recreateSandbox: false,
       fromDockerfile: dockerfilePath,
+      share: null,
       sandboxName: "second-assistant",
       acceptThirdPartySoftware: false,
       agent: null,
@@ -330,6 +408,7 @@ describe("onboard command", () => {
       fresh: false,
       recreateSandbox: false,
       fromDockerfile: null,
+      share: null,
       sandboxName: null,
       acceptThirdPartySoftware: false,
       agent: "openclaw",
@@ -465,6 +544,7 @@ describe("onboard command", () => {
       fresh: false,
       recreateSandbox: false,
       fromDockerfile: null,
+      share: null,
       sandboxName: null,
       acceptThirdPartySoftware: false,
       agent: null,

@@ -134,8 +134,10 @@ When the lookup returns an answer, retry onboarding.
 ### Port already in use
 
 The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8080`.
-If another process is already bound to one of these ports, onboarding fails.
-Identify the conflicting process, verify it is safe to stop, and terminate it:
+If another sandbox already owns the dashboard port, onboarding scans ports `18789` through `18799` and uses the next free port.
+If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
+
+If a non-NemoClaw process is already bound to the dashboard port or the gateway port, identify the conflicting process, verify it is safe to stop, and terminate it:
 
 ```console
 $ sudo lsof -i :18789
@@ -146,7 +148,13 @@ If the process does not exit, use `kill -9 <PID>` to force-terminate it.
 Then retry onboarding.
 
 Alternatively, override the conflicting port instead of stopping the other process.
-Set `CHAT_UI_URL` with the desired port — the dashboard port is derived automatically:
+Pass `--control-ui-port` with the desired dashboard port:
+
+```console
+$ nemoclaw onboard --control-ui-port 19000
+```
+
+You can also set `CHAT_UI_URL` with the desired port:
 
 ```console
 $ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
@@ -163,15 +171,15 @@ See Environment Variables (use the `nemoclaw-user-reference` skill) for the full
 ### Running multiple sandboxes simultaneously
 
 Each sandbox requires its own dashboard port.
-If you onboard a second sandbox without overriding the port, onboarding fails with a clear error because port `18789` is already forwarded to the first sandbox.
+If you onboard a second sandbox without overriding the port, onboarding uses the next free port in the `18789` to `18799` range.
 `onboard` checks `openshell forward list` before starting a new forward, so a second onboard cannot silently take over the first sandbox's port.
 
-Assign a distinct port to each sandbox at onboard time.
-Set `CHAT_UI_URL` with the desired port — the dashboard port is derived automatically:
+Assign a distinct port only when you want a specific value:
 
 ```console
-$ nemoclaw onboard                                                   # first sandbox — uses default 18789
-$ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard               # second sandbox — uses 19000
+$ nemoclaw onboard                                                   # first sandbox uses default 18789
+$ nemoclaw onboard                                                   # second sandbox uses the next free port
+$ nemoclaw onboard --control-ui-port 19000                          # explicit port override
 ```
 
 Each sandbox then has its own SSH tunnel and its own dashboard URL:
@@ -185,7 +193,10 @@ You can verify which tunnel belongs to which sandbox with:
 
 ```console
 $ openshell forward list
+$ nemoclaw list
 ```
+
+`nemoclaw list` prints the recorded dashboard URL for each sandbox.
 
 ## Onboarding
 

@@ -65,6 +65,7 @@ function requireValue<T>(value: T | null | undefined, message: string): T {
   return value;
 }
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
+const { normalizeShareSpec } = require("./onboard-command");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const {
   DASHBOARD_PORT,
@@ -291,6 +292,7 @@ type OnboardOptions = {
   resume?: boolean;
   fresh?: boolean;
   fromDockerfile?: string | null;
+  share?: string | null;
   sandboxName?: string | null;
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
@@ -3387,6 +3389,7 @@ async function createSandbox(
   agent: AgentDefinition | null = null,
   dangerouslySkipPermissions = false,
   controlUiPort: number | null = null,
+  shareSpec: string | null = null,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -3804,6 +3807,10 @@ async function createSandbox(
     "--policy",
     basePolicyPath,
   ];
+  if (shareSpec) {
+    createArgs.push("--upload", shareSpec);
+    console.log(`  Sharing host directory into sandbox: ${shareSpec}`);
+  }
   // --gpu is intentionally omitted. See comment in startGateway().
 
   // Create OpenShell providers for messaging credentials so they flow through
@@ -7045,6 +7052,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   const requestedFromDockerfile =
     opts.fromDockerfile ||
     (isNonInteractive() ? process.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
+  const requestedShareSpec =
+    opts.share || (isNonInteractive() ? process.env.NEMOCLAW_SHARE_DIR || null : null);
+  const normalizedShareSpec = requestedShareSpec
+    ? normalizeShareSpec(requestedShareSpec, {
+        error: console.error,
+        exit: (code: number): never => process.exit(code),
+      })
+    : null;
   // Resolve the explicit sandbox name early so both validation and the
   // --from guard work off the same source. --name always counts; the env
   // var only counts when we cannot prompt (otherwise interactive runs would
@@ -7571,6 +7586,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         agent,
         dangerouslySkipPermissions,
         opts.controlUiPort || null,
+        normalizedShareSpec,
       );
       webSearchConfig = nextWebSearchConfig;
       // Persist model and provider after the sandbox entry exists in the registry.
