@@ -332,6 +332,38 @@ async function promptOrDefault(
   return prompt(question);
 }
 
+// Yes/no prompt with a typed default. The `[Y/n]` / `[y/N]` indicator and
+// the non-interactive echo letter are both derived from `defaultIsYes`, so
+// the case of the indicator and the echoed default cannot drift apart.
+// Returns a boolean — callers no longer have to parse reply strings.
+// Replies of "y"/"yes" and "n"/"no" win regardless of case; empty and
+// unknown input fall back to the default.
+async function promptYesNoOrDefault(
+  question: string,
+  envVar: string | null,
+  defaultIsYes: boolean,
+): Promise<boolean> {
+  const fullQuestion = `${question} ${defaultIsYes ? "[Y/n]" : "[y/N]"}: `;
+  const nonInteractive = isNonInteractive();
+  const input = nonInteractive
+    ? envVar
+      ? process.env[envVar]
+      : null
+    : await prompt(fullQuestion);
+
+  const value = String(input ?? "")
+    .trim()
+    .toLowerCase();
+  let chosen = defaultIsYes;
+  if (value === "y" || value === "yes") chosen = true;
+  else if (value === "n" || value === "no") chosen = false;
+
+  if (nonInteractive) {
+    note(`  [non-interactive] ${fullQuestion.trim()} → ${chosen ? "Y" : "N"}`);
+  }
+  return chosen;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 // Gateway state functions — delegated to src/lib/gateway-state.ts
@@ -3431,10 +3463,7 @@ async function createSandbox(
         );
         process.exit(1);
       }
-      const answer = (await promptOrDefault("  Continue anyway? [y/N]: ", null, "n"))
-        .trim()
-        .toLowerCase();
-      if (answer !== "y" && answer !== "yes") {
+      if (!(await promptYesNoOrDefault("  Continue anyway?", null, false))) {
         console.log("  Aborting sandbox creation.");
         process.exit(1);
       }
@@ -3572,9 +3601,7 @@ async function createSandbox(
         } else {
           console.log(`  Sandbox '${sandboxName}' already exists.`);
           console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
-          const answer = await promptOrDefault("  Reuse existing sandbox? [Y/n]: ", null, "y");
-          const normalizedAnswer = answer.trim().toLowerCase();
-          if (normalizedAnswer !== "n" && normalizedAnswer !== "no") {
+          if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             upsertMessagingProviders(messagingTokenDefs);
             const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
             process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort2}`;
@@ -3585,13 +3612,7 @@ async function createSandbox(
       } else {
         console.log(`  Sandbox '${sandboxName}' exists but is not ready.`);
         console.log("  Selecting 'n' will abort onboarding.");
-        const answer = await promptOrDefault(
-          "  Delete it and create a new one? [Y/n]: ",
-          null,
-          "y",
-        );
-        const normalizedAnswer = answer.trim().toLowerCase();
-        if (normalizedAnswer === "n" || normalizedAnswer === "no") {
+        if (!(await promptYesNoOrDefault("  Delete it and create a new one?", null, true))) {
           console.log("  Aborting onboarding.");
           process.exit(1);
         }
@@ -5253,10 +5274,7 @@ async function checkTelegramReachability(token: string) {
       );
       process.exit(1);
     } else {
-      const answer = (await promptOrDefault("    Continue anyway? [y/N]: ", null, "n"))
-        .trim()
-        .toLowerCase();
-      if (answer !== "y" && answer !== "yes") {
+      if (!(await promptYesNoOrDefault("    Continue anyway?", null, false))) {
         console.log("  Aborting onboarding.");
         process.exit(1);
       }
@@ -7397,10 +7415,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       );
       console.log("  Web search and messaging channels will be prompted next.");
       if (!isNonInteractive() && !dangerouslySkipPermissions) {
-        const answer = (await promptOrDefault("  Apply this configuration? [Y/n]: ", null, "y"))
-          .trim()
-          .toLowerCase();
-        if (answer === "n" || answer === "no") {
+        if (!(await promptYesNoOrDefault("  Apply this configuration?", null, true))) {
           console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
           console.log("  Credentials entered so far were only staged in memory for this run.");
           console.log(
@@ -7705,6 +7720,7 @@ module.exports = {
   onboard,
   onboardSession,
   printSandboxCreateRecoveryHints,
+  promptYesNoOrDefault,
   providerExistsInGateway,
   parsePolicyPresetEnv,
   parseSandboxStatus,
