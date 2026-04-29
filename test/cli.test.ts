@@ -90,6 +90,27 @@ function readRecordedArgs(markerFile: string): string[] {
   return fs.readFileSync(markerFile, "utf8").trim().split(/\s+/);
 }
 
+function writeSandboxRegistry(home: string): void {
+  const registryDir = path.join(home, ".nemoclaw");
+  fs.mkdirSync(registryDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(registryDir, "sandboxes.json"),
+    JSON.stringify({
+      sandboxes: {
+        alpha: {
+          name: "alpha",
+          model: "test-model",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+      },
+      defaultSandbox: "alpha",
+    }),
+    { mode: 0o600 },
+  );
+}
+
 describe("CLI dispatch", () => {
   it("help exits 0 and shows sections", () => {
     const r = run("help");
@@ -136,52 +157,105 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("No sandboxes")).toBeTruthy();
   });
 
-  it("start does not prompt for NVIDIA_API_KEY before launching local services", { timeout: 35000 }, () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    const markerFile = path.join(home, "start-args");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
-          },
-        },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "bash"),
-      [
-        "#!/bin/sh",
-        `marker_file=${JSON.stringify(markerFile)}`,
-        'printf \'%s\\n\' "$@" > "$marker_file"',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+  it("shows skill install help when --help follows install", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-skill-help-"));
+    writeSandboxRegistry(home);
 
-    const r = runWithEnv("start", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-      NVIDIA_API_KEY: "",
-      TELEGRAM_BOT_TOKEN: "",
-    });
+    const r = runWithEnv("alpha skill install --help", { HOME: home });
 
     expect(r.code).toBe(0);
-    expect(r.out).not.toContain("NVIDIA API Key required");
-    // Services module now runs in-process (no bash shelling)
-    expect(r.out).toContain("NemoClaw Services");
+    expect(r.out).toContain("Usage: nemoclaw <sandbox> skill install <path>");
+    expect(r.out).toContain("Deploy a skill directory");
+    expect(r.out).not.toContain("--help");
+    expect(r.out).not.toContain("No SKILL.md found");
   });
+
+  it("points plugin-shaped directories away from skill install", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-plugin-hint-"));
+    const pluginDir = path.join(home, "openclaw-plugin");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    writeSandboxRegistry(home);
+    fs.writeFileSync(
+      path.join(pluginDir, "package.json"),
+      JSON.stringify({ name: "demo-plugin", openclaw: { extensions: ["./dist/index.js"] } }),
+    );
+
+    const r = runWithEnv(`alpha skill install ${JSON.stringify(pluginDir)}`, { HOME: home });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("No SKILL.md found in");
+    expect(r.out).toContain("This looks like an OpenClaw plugin");
+    expect(r.out).toContain("nemoclaw onboard --from <Dockerfile>");
+  });
+
+  it("detects openclaw.plugin.json as a plugin marker", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-plugin-marker-"));
+    const pluginDir = path.join(home, "openclaw-plugin");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    writeSandboxRegistry(home);
+    fs.writeFileSync(
+      path.join(pluginDir, "openclaw.plugin.json"),
+      JSON.stringify({ name: "demo" }),
+    );
+
+    const r = runWithEnv(`alpha skill install ${JSON.stringify(pluginDir)}`, { HOME: home });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("No SKILL.md found in");
+    expect(r.out).toContain("This looks like an OpenClaw plugin");
+    expect(r.out).toContain("nemoclaw onboard --from <Dockerfile>");
+  });
+
+  it(
+    "start does not prompt for NVIDIA_API_KEY before launching local services",
+    { timeout: 35000 },
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const markerFile = path.join(home, "start-args");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "bash"),
+        [
+          "#!/bin/sh",
+          `marker_file=${JSON.stringify(markerFile)}`,
+          'printf \'%s\\n\' "$@" > "$marker_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("start", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NVIDIA_API_KEY: "",
+        TELEGRAM_BOT_TOKEN: "",
+      });
+
+      expect(r.code).toBe(0);
+      expect(r.out).not.toContain("NVIDIA API Key required");
+      // Services module now runs in-process (no bash shelling)
+      expect(r.out).toContain("NemoClaw Services");
+    },
+  );
 
   it("onboard --help exits 0 and shows usage", () => {
     const r = run("onboard --help");
@@ -505,7 +579,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "bash.log");
+    const bashLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -539,7 +613,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "docker"),
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(bashLog)}`,
@@ -559,7 +633,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("NAME STATUS");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
-    expect(fs.readFileSync(bashLog, "utf8")).toContain("docker volume ls -q --filter");
+    expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
   });
 
   it("keeps the gateway runtime when other sandboxes still exist", () => {
@@ -567,7 +641,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "bash.log");
+    const bashLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -609,7 +683,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "docker"),
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(bashLog)}`,
@@ -629,7 +703,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     if (fs.existsSync(bashLog)) {
-      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("docker volume ls -q --filter");
+      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
     }
   });
 
@@ -638,7 +712,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "bash.log");
+    const bashLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -673,7 +747,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "docker"),
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(bashLog)}`,
@@ -694,7 +768,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     if (fs.existsSync(bashLog)) {
-      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("docker volume ls -q --filter");
+      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
     }
   });
 
@@ -759,7 +833,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "bash.log");
+    const bashLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -799,7 +873,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "docker"),
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(bashLog)}`,
@@ -825,7 +899,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
-    expect(fs.readFileSync(bashLog, "utf8")).toContain("docker volume ls -q --filter");
+    expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
   });
 
   it("deletes messaging providers when destroying a sandbox", () => {
@@ -833,7 +907,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "bash.log");
+    const bashLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -867,7 +941,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "docker"),
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(bashLog)}`,

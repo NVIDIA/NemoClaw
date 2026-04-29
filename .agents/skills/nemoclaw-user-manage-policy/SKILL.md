@@ -8,6 +8,10 @@ description: "Reviews and approves blocked agent network requests in the TUI. Us
 
 # Approve or Deny NemoClaw Agent Network Requests
 
+## Gotchas
+
+- Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
+
 ## Prerequisites
 
 - A running NemoClaw sandbox.
@@ -307,9 +311,18 @@ Files are processed in lexicographic order.
 Processing stops at the first failure; presets already applied are not rolled back.
 Fix the failing file and re-run the command to continue.
 
-> [!WARNING]
-> Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
+> **Warning:** Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
 > Review every host in a custom preset before applying it, especially when the file originates outside your team.
+
+### Remove a Custom Preset
+
+Custom presets applied with `--from-file` or `--from-dir` are recorded in the NemoClaw sandbox registry alongside their full YAML content, so they can be removed by name — the original file does not need to be kept on disk:
+
+```console
+$ nemoclaw my-assistant policy-remove my-internal-api --yes
+```
+
+`policy-remove` accepts both built-in and custom preset names. Run `nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
 
 ## Related Skills
 

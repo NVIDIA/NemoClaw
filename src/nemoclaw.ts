@@ -21,14 +21,13 @@ const R = _useColor ? "\x1b[0m" : "";
 const _RD = _useColor ? "\x1b[1;31m" : "";
 const YW = _useColor ? "\x1b[1;33m" : "";
 
+const { ROOT, run, runInteractive, shellQuote, validateName } = require("./lib/runner");
 const {
-  ROOT,
-  run,
-  runCapture: _runCapture,
-  runInteractive,
-  shellQuote,
-  validateName,
-} = require("./lib/runner");
+  dockerCapture,
+  dockerListImagesFormat,
+  dockerRemoveVolumesByPrefix,
+  dockerRmi,
+} = require("./lib/docker");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
 const {
   fetchGatewayAuthTokenFromSandbox,
@@ -37,10 +36,7 @@ const {
   ensureOllamaAuthProxy,
   isNonInteractive,
 } = require("./lib/onboard");
-const {
-  parseGatewayTokenArgs,
-  runGatewayTokenCommand,
-} = require("./lib/gateway-token-command");
+const { parseGatewayTokenArgs, runGatewayTokenCommand } = require("./lib/gateway-token-command");
 const {
   getCredential,
   deleteCredential,
@@ -171,12 +167,14 @@ function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
 }
 
 function cleanupGatewayAfterLastSandbox() {
-  runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], { ignoreError: true });
+  runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], {
+    ignoreError: true,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
   runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], { ignoreError: true });
-  run(
-    `docker volume ls -q --filter "name=openshell-cluster-${NEMOCLAW_GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${NEMOCLAW_GATEWAY_NAME}" | xargs docker volume rm || true`,
-    { ignoreError: true },
-  );
+  dockerRemoveVolumesByPrefix(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, {
+    ignoreError: true,
+  });
 }
 
 function hasNoLiveSandboxes() {
@@ -286,15 +284,31 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
   const script =
     agentScript ||
     [
-      "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
+      // Source /tmp/nemoclaw-proxy-env.sh explicitly so NODE_OPTIONS preload
+      // guards (safety-net, ciao, slack, …) survive gateway respawn. Without
+      // this, library errors crash-loop the gateway because the original
+      // .bashrc-only path silently failed when the env file was unreadable
+      // or the shell did not source ~/.bashrc. See #2478. Mirrors the
+      // hardened block in src/lib/agent-runtime.ts:buildRecoveryScript.
+      // Defer warning emission until AFTER touch+chmod gateway.log so
+      // warnings land in the persistent log a sysadmin would tail. Stderr
+      // alone hides them because executeSandboxCommand captures stderr
+      // without surfacing it. Mirrors src/lib/agent-runtime.ts.
+      "if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; else _PE_MISSING=1; fi;",
+      "[ -f ~/.bashrc ] && . ~/.bashrc;",
+      'case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _GUARDS_MISSING=0 ;; *) _GUARDS_MISSING=1 ;; esac;',
       `if curl -sf --max-time 3 http://127.0.0.1:${DASHBOARD_PORT}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
       "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
       "rm -f /tmp/gateway.log /tmp/auto-pair.log;",
       "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
       "touch /tmp/auto-pair.log; chmod 600 /tmp/auto-pair.log;",
+      '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing — gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
+      '[ "$_GUARDS_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: NODE_OPTIONS missing safety-net preload — gateway may crash on unhandled library errors (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
       'OPENCLAW="$(command -v openclaw)";',
       'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
-      `nohup "$OPENCLAW" gateway run --port ${DASHBOARD_PORT} > /tmp/gateway.log 2>&1 &`,
+      // Append rather than truncate so [gateway-recovery] WARNING lines
+      // written above survive past the launch. (#2478)
+      `nohup "$OPENCLAW" gateway run --port ${DASHBOARD_PORT} >> /tmp/gateway.log 2>&1 &`,
       "GPID=$!; sleep 2;",
       'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
     ].join(" ");
@@ -1777,14 +1791,15 @@ async function sandboxStatus(sandboxName: string) {
     }
   }
 
-  // NIM health
   const nimStat =
     sb && sb.nimContainer ? nim.nimStatusByName(sb.nimContainer) : nim.nimStatus(sandboxName);
-  console.log(
-    `    NIM:      ${nimStat.running ? `running (${nimStat.container})` : "not running"}`,
-  );
-  if (nimStat.running) {
-    console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
+  if (nim.shouldShowNimLine(sb && sb.nimContainer, nimStat.running)) {
+    console.log(
+      `    NIM:      ${nimStat.running ? `running (${nimStat.container})` : "not running"}`,
+    );
+    if (nimStat.running) {
+      console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
+    }
   }
   console.log("");
 }
@@ -1861,7 +1876,9 @@ async function sandboxPolicyAdd(sandboxName: string, args: string[] = []): Promi
     }
     const files = fs
       .readdirSync(absDir, { withFileTypes: true })
-      .filter((ent: { name: string; isFile(): boolean }) => ent.isFile() && /\.ya?ml$/i.test(ent.name))
+      .filter(
+        (ent: { name: string; isFile(): boolean }) => ent.isFile() && /\.ya?ml$/i.test(ent.name),
+      )
       .map((ent: { name: string }) => path.join(absDir, ent.name))
       .sort();
     if (files.length === 0) {
@@ -2188,6 +2205,56 @@ async function sandboxChannelsStart(sandboxName: string, args: string[] = []): P
   await sandboxChannelsSetEnabled(sandboxName, args, false);
 }
 
+function printSkillInstallUsage(): void {
+  console.log("");
+  console.log("  Usage: nemoclaw <sandbox> skill install <path>");
+  console.log("");
+  console.log("  Deploy a skill directory to a running sandbox.");
+  console.log(
+    "  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
+  );
+  console.log(
+    "  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
+  );
+  console.log("");
+}
+
+function looksLikeOpenClawPlugin(candidatePath: string): boolean {
+  const dir =
+    fs.existsSync(candidatePath) && fs.statSync(candidatePath).isDirectory()
+      ? candidatePath
+      : path.dirname(candidatePath);
+  if (!fs.existsSync(dir)) return false;
+  if (fs.existsSync(path.join(dir, "openclaw.plugin.json"))) return true;
+
+  const packageJsonPath = path.join(dir, "package.json");
+  if (!fs.existsSync(packageJsonPath)) return false;
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    const openclawBlock = packageJson?.openclaw;
+    return Boolean(
+      packageJson?.["openclaw.plugin"] === true ||
+      openclawBlock === true ||
+      (typeof openclawBlock === "object" &&
+        openclawBlock !== null &&
+        (openclawBlock.plugin === true ||
+          typeof openclawBlock.entry === "string" ||
+          typeof openclawBlock.main === "string" ||
+          (Array.isArray(openclawBlock.extensions) && openclawBlock.extensions.length > 0))),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function printPluginInstallHint(): void {
+  console.error("  This looks like an OpenClaw plugin, not a SKILL.md agent skill.");
+  console.error("  `skill install` only accepts skill directories or direct SKILL.md paths.");
+  console.error(
+    "  To use an OpenClaw plugin today, bake it into a custom sandbox image with `nemoclaw onboard --from <Dockerfile>`.",
+  );
+}
+
 /**
  * Install or update a local skill directory into a live sandbox and perform
  * any agent-specific post-install refresh needed for the new content to load.
@@ -2195,17 +2262,7 @@ async function sandboxChannelsStart(sandboxName: string, args: string[] = []): P
 async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Promise<void> {
   const sub = args[0];
   if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
-    console.log("");
-    console.log("  Usage: nemoclaw <sandbox> skill install <path>");
-    console.log("");
-    console.log("  Deploy a skill directory to a running sandbox.");
-    console.log(
-      "  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
-    );
-    console.log(
-      "  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
-    );
-    console.log("");
+    printSkillInstallUsage();
     return;
   }
 
@@ -2217,6 +2274,10 @@ async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Pr
 
   const skillPath = args[1];
   const extraArgs = args.slice(2);
+  if (skillPath === "--help" || skillPath === "-h" || skillPath === "help") {
+    printSkillInstallUsage();
+    return;
+  }
   if (extraArgs.length > 0) {
     console.error(`  Unknown argument(s) for skill install: ${extraArgs.join(", ")}`);
     console.error("  Usage: nemoclaw <sandbox> skill install <path>");
@@ -2242,12 +2303,18 @@ async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Pr
   } else {
     console.error(`  No SKILL.md found at '${resolvedPath}'.`);
     console.error("  <path> must be a skill directory or a direct path to SKILL.md.");
+    if (looksLikeOpenClawPlugin(resolvedPath)) {
+      printPluginInstallHint();
+    }
     process.exit(1);
   }
 
   if (!fs.existsSync(skillMdPath)) {
     console.error(`  No SKILL.md found in '${skillDir}'.`);
     console.error("  The skill directory must contain a SKILL.md file.");
+    if (looksLikeOpenClawPlugin(skillDir)) {
+      printPluginInstallHint();
+    }
     process.exit(1);
   }
 
@@ -2434,9 +2501,13 @@ function cleanupSandboxServices(
     // PID directory may not exist — ignore.
   }
 
-  // Delete messaging providers created during onboard.
+  // Delete messaging providers created during onboard. Suppress stderr so
+  // "! Provider not found" noise doesn't appear when messaging was never configured.
   for (const suffix of ["telegram-bridge", "discord-bridge", "slack-bridge"]) {
-    runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], { ignoreError: true });
+    runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
+      ignoreError: true,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
   }
 }
 
@@ -2447,7 +2518,7 @@ function cleanupSandboxServices(
 function removeSandboxImage(sandboxName: string) {
   const sb = registry.getSandbox(sandboxName);
   if (!sb?.imageTag) return;
-  const result = run(["docker", "rmi", sb.imageTag], { ignoreError: true });
+  const result = dockerRmi(sb.imageTag, { ignoreError: true });
   if (result.status === 0) {
     console.log(`  Removed Docker image ${sb.imageTag}`);
   } else {
@@ -2663,6 +2734,25 @@ async function sandboxRebuild(
   } else {
     rebuildCredentialEnv = session?.credentialEnv || null;
   }
+  // Legacy migration: pre-fix local-inference sandboxes (GH #2519) recorded
+  // credentialEnv="OPENAI_API_KEY" in onboard-session.json even though the
+  // sandbox does not actually need a host OpenAI key (ollama-local uses an
+  // auth proxy with an internal token; vllm-local accepts a static dummy
+  // bearer). Treat the legacy value as null so rebuild does not demand a
+  // credential that was never actually used.
+  if (
+    (session?.provider === "ollama-local" || session?.provider === "vllm-local") &&
+    rebuildCredentialEnv === "OPENAI_API_KEY"
+  ) {
+    console.log(
+      `  ${D}Note: migrating ${session.provider} sandbox off OPENAI_API_KEY (GH #2519). ` +
+        `Local inference does not require a host API key.${R}`,
+    );
+    log(
+      `Preflight: legacy ${session.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
+    );
+    rebuildCredentialEnv = null;
+  }
   if (rebuildCredentialEnv) {
     const credentialValue = getCredential(rebuildCredentialEnv);
     log(
@@ -2773,8 +2863,9 @@ async function sandboxRebuild(
   // Force the sandbox name so onboard recreates with the same name.
   // Mark session resumable and point at this sandbox; set env var as fallback.
   const sessionBefore = onboardSession.loadSession();
+  const sessionMatchesSandbox = sessionBefore?.sandboxName === sandboxName;
   log(
-    `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}`,
+    `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
   );
 
   // Sync the session's agent field with the registry so onboard --resume
@@ -2802,7 +2893,11 @@ async function sandboxRebuild(
   // Forward the stored --from Dockerfile path so onboard --resume uses the
   // same custom image.  Without this, the conflict check rejects the resume
   // because requestedFrom (null) !== recordedFrom (the stored path).  (#2301)
-  const storedFromDockerfile = sessionAfter?.metadata?.fromDockerfile || null;
+  // Only read from the session when it belongs to this sandbox to avoid
+  // using config from a different sandbox's onboard run.
+  const storedFromDockerfile = sessionMatchesSandbox
+    ? sessionAfter?.metadata?.fromDockerfile || null
+    : null;
   log(
     `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
   );
@@ -2816,8 +2911,7 @@ async function sandboxRebuild(
   // call stack, which skips process.once("exit") listeners (lock
   // release, build context cleanup, session failure marking).  We
   // manually release the lock and mark the session failed in the
-  // onboardFailed block below.  Full fix is tracked in #2306 (extract
-  // rebuild-specific recreate path that throws instead of exiting).
+  // onboardFailed block below.
   const { onboard } = require("./lib/onboard");
   let onboardFailed = false;
   let onboardExitCode = 1;
@@ -3162,8 +3256,7 @@ function renderSnapshotTable(
 function resolveSrcPodImage(srcName: string): string | null {
   const gatewayContainer = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
   try {
-    const result = spawnSync(
-      "docker",
+    const output = dockerCapture(
       [
         "exec",
         gatewayContainer,
@@ -3176,10 +3269,9 @@ function resolveSrcPodImage(srcName: string): string | null {
         "-o",
         'jsonpath={.spec.containers[?(@.name=="agent")].image}',
       ],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 },
+      { ignoreError: true, timeout: 10000 },
     );
-    if (result.status !== 0) return null;
-    const img = (result.stdout || "").trim().split(/\s+/)[0];
+    const img = output.trim().split(/\s+/)[0];
     return img || null;
   } catch {
     return null;
@@ -3539,23 +3631,18 @@ async function garbageCollectImages(args: string[] = []): Promise<void> {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
 
   // 1. List all openshell/sandbox-from images on the host
-  const imagesResult = spawnSync(
-    "docker",
-    [
-      "images",
-      "--filter",
-      "reference=openshell/sandbox-from",
-      "--format",
+  let imagesOutput = "";
+  try {
+    imagesOutput = dockerListImagesFormat(
+      "openshell/sandbox-from",
       "{{.Repository}}:{{.Tag}}\t{{.Size}}",
-    ],
-    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (imagesResult.status !== 0) {
+    );
+  } catch {
     console.error("  Failed to query Docker images. Is Docker running?");
     process.exit(1);
   }
 
-  const allImages = (imagesResult.stdout || "")
+  const allImages = imagesOutput
     .split("\n")
     .map((line: string) => line.trim())
     .filter(Boolean)
@@ -3611,9 +3698,11 @@ async function garbageCollectImages(args: string[] = []): Promise<void> {
   let removed = 0;
   let failed = 0;
   for (const img of orphans) {
-    const rmiResult = spawnSync("docker", ["rmi", img.tag], {
+    const rmiResult = dockerRmi(img.tag, {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
+      ignoreError: true,
+      suppressOutput: true,
     });
     if (rmiResult.status === 0) {
       console.log(`  ${G}✓${R} Removed ${img.tag}`);

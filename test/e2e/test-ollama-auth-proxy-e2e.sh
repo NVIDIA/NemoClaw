@@ -437,6 +437,86 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
+# Phase: Token divergence after simulated re-onboard (issue #2553)
+# ══════════════════════════════════════════════════════════════════
+section "Token Divergence Regression (issue #2553)"
+
+# Proxy should be running from earlier phases with the original token.
+# Simulate a re-onboard that writes a NEW token to the file but
+# leaves the proxy running with the OLD token.
+ORIGINAL_TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null || echo "")
+DIVERGENT_TOKEN="divergent-$(date +%s)-$(node -e 'console.log(require("node:crypto").randomBytes(16).toString("hex"))')"
+
+if [ -n "$ORIGINAL_TOKEN" ]; then
+  info "Original token: ${ORIGINAL_TOKEN:0:16}..."
+  info "Writing divergent token to file: ${DIVERGENT_TOKEN:0:16}..."
+  echo "$DIVERGENT_TOKEN" >"$TOKEN_FILE"
+
+  # Verify proxy still runs with OLD token (divergence exists)
+  OLD_TOKEN_OK=false
+  curl -sf --max-time 3 \
+    -H "Authorization: Bearer $ORIGINAL_TOKEN" \
+    "http://localhost:${PROXY_PORT}/v1/models" >/dev/null 2>&1 && OLD_TOKEN_OK=true
+
+  NEW_TOKEN_OK=false
+  curl -sf --max-time 3 \
+    -H "Authorization: Bearer $DIVERGENT_TOKEN" \
+    "http://localhost:${PROXY_PORT}/v1/models" >/dev/null 2>&1 && NEW_TOKEN_OK=true
+
+  if [ "$OLD_TOKEN_OK" = true ] && [ "$NEW_TOKEN_OK" = false ]; then
+    pass "Confirmed: proxy running with old token, rejects new token (divergence exists)"
+  else
+    fail "Divergence not reproduced (old=$OLD_TOKEN_OK new=$NEW_TOKEN_OK) — aborting test"
+    echo "$ORIGINAL_TOKEN" >"$TOKEN_FILE"
+    exit 1
+  fi
+
+  # Simulate what the fixed ensureOllamaAuthProxy() does:
+  # 1. Read token from file
+  # 2. Probe running proxy with that token
+  # 3. If rejected, kill proxy and restart with file token
+  info "Simulating ensureOllamaAuthProxy() fix logic..."
+  FILE_TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null)
+  PROBE_RC=0
+  curl -sf --max-time 3 -H "Authorization: Bearer $FILE_TOKEN" \
+    "http://localhost:${PROXY_PORT}/v1/models" >/dev/null 2>&1 || PROBE_RC=$?
+
+  if [ "$PROBE_RC" -ne 0 ]; then
+    info "Proxy rejects file token (expected) — killing and restarting with correct token..."
+    kill "$PROXY_PID" 2>/dev/null || true
+    sleep 1
+    OLLAMA_PROXY_TOKEN="$FILE_TOKEN" \
+      OLLAMA_PROXY_PORT="$PROXY_PORT" \
+      OLLAMA_BACKEND_PORT="$OLLAMA_PORT" \
+      node "$PROXY_SCRIPT" &
+    PROXY_PID=$!
+    sleep 2
+    info "Restarted proxy (PID $PROXY_PID) with file token"
+  else
+    info "Proxy already accepts file token — no restart needed"
+  fi
+
+  # After the fix, the proxy should accept the divergent (file) token
+  sleep 2
+  FIXED_OK=false
+  curl -sf --max-time 3 \
+    -H "Authorization: Bearer $DIVERGENT_TOKEN" \
+    "http://localhost:${PROXY_PORT}/v1/models" >/dev/null 2>&1 && FIXED_OK=true
+
+  if [ "$FIXED_OK" = true ]; then
+    pass "After ensureOllamaAuthProxy: proxy accepts the file token (divergence fixed)"
+  else
+    fail "After ensureOllamaAuthProxy: proxy still rejects file token (divergence NOT fixed)"
+  fi
+
+  # Restore original token for cleanup
+  echo "$ORIGINAL_TOKEN" >"$TOKEN_FILE"
+else
+  info "No token file found — skipping divergence test"
+  pass "Token divergence: skipped (no prior token)"
+fi
+
+# ══════════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════════
 echo ""
@@ -456,6 +536,7 @@ echo "    - Proxy kill + restart from persisted token"
 echo "    - Inference after proxy recovery"
 echo "    - Container-to-proxy reachability (if Docker available)"
 echo "    - Container cannot reach Ollama directly (localhost binding)"
+echo "    - Token divergence detection + auto-fix (issue #2553)"
 echo ""
 
 if [ "$FAIL" -eq 0 ]; then

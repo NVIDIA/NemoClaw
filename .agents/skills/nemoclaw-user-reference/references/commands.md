@@ -318,7 +318,9 @@ If the preset name is unknown or already applied, the command exits non-zero wit
 
 | Flag | Description |
 |------|-------------|
-| `--yes`, `--force` | Skip the confirmation prompt (requires a preset name) |
+| `--from-file <path>` | Apply a custom preset YAML file instead of a built-in preset |
+| `--from-dir <path>` | Apply every custom preset YAML file in a directory in lexicographic order |
+| `--yes`, `--force` | Skip the confirmation prompt (requires a preset name, `--from-file`, or `--from-dir`) |
 | `--dry-run` | Preview the endpoints a preset would open without applying changes |
 
 Use `--dry-run` to audit a preset before applying it:
@@ -326,6 +328,21 @@ Use `--dry-run` to audit a preset before applying it:
 ```console
 $ nemoclaw my-assistant policy-add --dry-run
 ```
+
+Apply a custom preset file when you need to grant access to an endpoint that is not covered by a built-in preset:
+
+```console
+$ nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
+```
+
+For batch workflows, apply all preset files from a directory:
+
+```console
+$ nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
+```
+
+Review every host in custom preset files before applying them.
+Custom presets bypass the built-in preset review process and can widen sandbox egress.
 
 ### `nemoclaw <name> policy-list`
 
@@ -442,6 +459,7 @@ $ nemoclaw my-assistant skill install ./my-skill/
 
 The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field.
 Skill names must contain only alphanumeric characters, dots, hyphens, and underscores.
+OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, see Install OpenClaw Plugins (use the `nemoclaw-user-deploy-remote` skill).
 
 Files with names starting with `.` (dotfiles) are skipped and listed in the output.
 Files with unsafe path characters are rejected to prevent shell injection.

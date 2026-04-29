@@ -16,8 +16,8 @@ const readline = require("readline");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
 const { validateName } = require("./runner");
+const { dockerExecFileSync } = require("./docker/exec");
 const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue } = credentialFilter;
 const { appendAuditEntry } = require("./shields-audit");
@@ -516,8 +516,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   // Write config to sandbox via kubectl exec (bypasses Landlock)
   console.log(`  Writing config to sandbox (${target.configPath})...`);
   const content = fs.readFileSync(tmpFile, "utf-8");
-  execFileSync(
-    "docker",
+  dockerExecFileSync(
     [
       "exec",
       "-i",
@@ -540,8 +539,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
   // Fix ownership via kubectl exec (bypasses Landlock)
   try {
-    execFileSync(
-      "docker",
+    dockerExecFileSync(
       [
         "exec",
         K3S_CONTAINER,
