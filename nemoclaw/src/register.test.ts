@@ -113,6 +113,38 @@ describe("plugin registration", () => {
     expect(logLines.some((line) => line.includes("Model:     llama3.2:latest"))).toBe(true);
   });
 
+  it("prefers live gateway model over stale onboard config model after runtime switch (#2608)", () => {
+    mockedLoadOnboardConfig.mockReturnValue({
+      endpointType: "build",
+      endpointUrl: "https://api.build.nvidia.com/v1",
+      ncpPartner: null,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      profile: "default",
+      credentialEnv: "NVIDIA_API_KEY",
+      onboardedAt: "2026-03-01T00:00:00.000Z",
+    });
+    mockedExecFileSync.mockReturnValue(
+      JSON.stringify({
+        provider: "NVIDIA",
+        endpoint: "https://api.build.nvidia.com/v1",
+        model: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+      }),
+    );
+
+    const api = createMockApi();
+    register(api);
+
+    const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
+    expect(providerArg.models?.chat).toEqual([
+      expect.objectContaining({ id: "inference/nvidia/llama-3.3-nemotron-super-49b-v1.5" }),
+    ]);
+
+    const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
+    expect(
+      logLines.some((line) => line.includes("Model:     nvidia/llama-3.3-nemotron-super-49b-v1.5")),
+    ).toBe(true);
+  });
+
   it("does not treat the provider name as a fallback endpoint", () => {
     mockedExecFileSync.mockReturnValue(
       JSON.stringify({
