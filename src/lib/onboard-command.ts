@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 export interface OnboardCommandOptions {
   nonInteractive: boolean;
   resume: boolean;
@@ -63,12 +66,18 @@ export function parseOnboardArgs(
   let fromDockerfile: string | null = null;
   const fromIdx = parsedArgs.indexOf("--from");
   if (fromIdx !== -1) {
-    fromDockerfile = parsedArgs[fromIdx + 1] || null;
-    if (!fromDockerfile || fromDockerfile.startsWith("--")) {
+    const requestedFromDockerfile = parsedArgs[fromIdx + 1];
+    if (!requestedFromDockerfile || requestedFromDockerfile.startsWith("--")) {
       error("  --from requires a path to a Dockerfile");
       printOnboardUsage(error, noticeAcceptFlag);
       exit(1);
     }
+    const resolvedFromDockerfile = path.resolve(requestedFromDockerfile);
+    if (!fs.existsSync(resolvedFromDockerfile)) {
+      error(`  --from path not found: ${resolvedFromDockerfile}`);
+      exit(1);
+    }
+    fromDockerfile = requestedFromDockerfile;
     parsedArgs.splice(fromIdx, 2);
   }
 

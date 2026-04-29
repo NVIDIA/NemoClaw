@@ -146,9 +146,11 @@ const {
   prompt,
   ensureApiKey,
   getCredential,
+  stageLegacyCredentialsToEnv,
+  removeLegacyCredentialsFile,
   normalizeCredentialValue,
-  saveCredential,
   resolveProviderCredential,
+  saveCredential,
 } = credentials;
 const registry: typeof import("./registry") = require("./registry");
 const nim: typeof import("./nim") = require("./nim");
@@ -689,8 +691,24 @@ const {
   parsePolicyPresetEnv,
 } = urlUtils;
 
+/**
+ * Resolve a credential into `process.env[envName]` so subsequent gateway
+ * upserts can read it via `--credential <ENV>`. Idempotently stages any
+ * pre-fix plaintext credentials.json (non-destructively) so callers that
+ * reach a credential check from outside the onboard entry point — such as
+ * rebuild preflight — can still find legacy values. The file itself is
+ * removed only after a full successful onboard, so an interrupted run can
+ * be retried without losing the user's only copy.
+ *
+ * @param envName Credential env variable name, e.g. `NVIDIA_API_KEY`.
+ * @returns The resolved value, or `null` if `envName` is empty/unstaged.
+ */
 function hydrateCredentialEnv(envName: string | null | undefined): string | null {
   if (!envName) return null;
+  // Thin wrapper for back-compat. resolveProviderCredential() (introduced
+  // by PR #2306 as the canonical entry point) now performs the staging
+  // dance internally — env first, then a one-time on-demand legacy stage,
+  // then write back into process.env for downstream code.
   return resolveProviderCredential(envName);
 }
 
@@ -759,7 +777,7 @@ async function replaceNamedCredential(
     saveCredential(envName, key);
     process.env[envName] = key;
     console.log("");
-    console.log(`  Key saved to ~/.nemoclaw/credentials.json (mode 600)`);
+    console.log(`  ${envName} staged. Onboarding will register it with the OpenShell gateway.`);
     console.log("");
     return key;
   }
@@ -858,8 +876,92 @@ async function promptValidationRecovery(
 
 // Provider CRUD — thin wrappers that inject runOpenshell to avoid circular deps.
 const { buildProviderArgs } = onboardProviders;
+
+// Snapshot of legacy {env-key → value} pairs that stageLegacyCredentialsToEnv()
+// imported from ~/.nemoclaw/credentials.json at the start of this run.
+// Captured by the onboard() entry point; consulted by the upsertProvider /
+// upsertMessagingProviders wrappers below to decide whether a successful
+// gateway upsert actually migrated the *legacy* value (vs. e.g. a vllm/ollama
+// branch that upserts a placeholder under the same env-key name).
+const stagedLegacyValues: Map<string, string> = new Map<string, string>();
+
+// Env-keys whose successful gateway upsert actually used the staged legacy
+// value. Seeded from the persisted onboard session at the start of every
+// run so a `--resume` invocation that skips already-completed upserts still
+// remembers the migrations the prior attempt committed. The post-onboard
+// legacy-file cleanup is gated on `stagedLegacyKeys ⊆ migratedLegacyKeys`
+// so picking a local inference provider, disabling a preselected messaging
+// channel, or any other path that upserts a different value under the same
+// env-key name leaves the file alone instead of stranding the user's only
+// copy.
+const migratedLegacyKeys: Set<string> = new Set<string>();
+
+// SHA-256 hex digest of `value`. Used to fingerprint migrated legacy
+// secrets in the persisted onboard session so a later `--resume` can
+// detect when the legacy file value was edited between runs (or another
+// session is on disk with stale entries) and refuse to inherit a stale
+// "migrated" mark.
+function legacyValueHash(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+// Mirror the in-memory `migratedLegacyKeys` set into the persisted onboard
+// session along with each entry's value hash. `--resume` invocations that
+// skip the upsert wrappers entirely use this to inherit migration state
+// from the previous attempt — but only when the staged value at restore
+// time still hashes to the same digest, so an edit to the legacy file or
+// an out-of-band gateway reset cannot satisfy the cleanup gate.
+function persistMigratedLegacyKeys(): void {
+  try {
+    const hashes: Record<string, string> = {};
+    for (const key of migratedLegacyKeys) {
+      const stagedValue = stagedLegacyValues.get(key);
+      if (stagedValue !== undefined) {
+        hashes[key] = legacyValueHash(stagedValue);
+      }
+    }
+    onboardSession.updateSession((current: Session) => {
+      current.migratedLegacyValueHashes = hashes;
+      return current;
+    });
+  } catch {
+    // updateSession can throw if the session file isn't yet writable
+    // (e.g. very early in the run before lockless state is established).
+    // The cleanup gate in this same process still consults the in-memory
+    // set, so a missed write only matters if THIS run later crashes and
+    // a future --resume needs the persisted value. Best effort.
+  }
+}
+
 function upsertProvider(name: string, type: string, credentialEnv: string, baseUrl: string | null, env: NodeJS.ProcessEnv = {}) {
-  return onboardProviders.upsertProvider(name, type, credentialEnv, baseUrl, env, runOpenshell);
+  const result = onboardProviders.upsertProvider(name, type, credentialEnv, baseUrl, env, runOpenshell);
+  if (result.ok && credentialEnv) {
+    const stagedValue = stagedLegacyValues.get(credentialEnv);
+    if (stagedValue !== undefined) {
+      // openshell receives `--credential <ENV>` and reads the value from the
+      // `env` block passed here, falling back to the inherited process.env.
+      // Use getCredential() for the env-fallback branch (per the
+      // no-direct-credential-env eslint rule from PR #2306) — it mirrors
+      // openshell's resolution order while the staging contract has
+      // already populated the same value into process.env.
+      const upsertedValue = env[credentialEnv] ?? getCredential(credentialEnv);
+      if (upsertedValue === stagedValue) {
+        // The gateway received the staged legacy value verbatim — count
+        // this key as migrated.
+        migratedLegacyKeys.add(credentialEnv);
+      } else {
+        // A later upsert under the same env-key wrote a different value
+        // (e.g. a retry-loop after validation failure replaced the legacy
+        // key with a freshly entered one, or a placeholder like "dummy"
+        // for vllm-local). The gateway no longer holds the staged legacy
+        // value under this env-key, so withdraw the migration mark — the
+        // cleanup gate must keep the legacy file intact.
+        migratedLegacyKeys.delete(credentialEnv);
+      }
+      persistMigratedLegacyKeys();
+    }
+  }
+  return result;
 }
 
 type MessagingTokenDef = { name: string; envKey: string; token: string | null };
@@ -878,7 +980,30 @@ type SelectionDrift = {
 };
 
 function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
-  return onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
+  const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
+  // upsertMessagingProviders process.exits on failure, so reaching this
+  // point means every entry in tokenDefs that had a token was registered.
+  // Mark migrated only when the registered token equals the staged legacy
+  // value — a token rotated since staging (or a fresh prompt) is not a
+  // legacy migration even if it happens to use the same env-key name.
+  // Mirror upsertProvider's withdrawal logic so a later messaging upsert
+  // that replaces the legacy value with something else cannot leave the
+  // mark stuck on.
+  let mutated = false;
+  for (const def of tokenDefs) {
+    if (!def.token || !def.envKey) continue;
+    const stagedValue = stagedLegacyValues.get(def.envKey);
+    if (stagedValue === undefined) continue;
+    if (def.token === stagedValue) {
+      migratedLegacyKeys.add(def.envKey);
+      mutated = true;
+    } else {
+      migratedLegacyKeys.delete(def.envKey);
+      mutated = true;
+    }
+  }
+  if (mutated) persistMigratedLegacyKeys();
+  return upserted;
 }
 function providerExistsInGateway(name: string) {
   return onboardProviders.providerExistsInGateway(name, runOpenshell);
@@ -3174,7 +3299,7 @@ function formatOnboardConfigSummary({
   const webSearch =
     webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
   const apiKeyLine = credentialEnv
-    ? `  API key:       ${credentialEnv} (stored in ~/.nemoclaw/credentials.json)`
+    ? `  API key:       ${credentialEnv} (staged for OpenShell gateway registration)`
     : `  API key:       (not required for ${provider ?? "this provider"})`;
   const noteLines = (Array.isArray(notes) ? notes : [])
     .filter((n) => typeof n === "string" && n.length > 0)
@@ -4251,7 +4376,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
           }
         }
 
-        // Hydrate from saved credentials (~/.nemoclaw/credentials.json)
+        // Hydrate from credential env vars set earlier in this process
         // before checking env, so rebuild and other non-interactive callers
         // can resolve keys stored during the original interactive onboard.
         // See #2273.
@@ -6820,6 +6945,47 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     process.exit(1);
   }
 
+  // Stage any pre-fix plaintext credentials.json into process.env so the
+  // provider upserts later in this run can pick the values up. The file is
+  // NOT removed here — the secure unlink runs only after onboarding
+  // completes successfully and only when every staged value was actually
+  // pushed to the gateway in this run.
+  stagedLegacyValues.clear();
+  migratedLegacyKeys.clear();
+
+  const stagedLegacyKeys = stageLegacyCredentialsToEnv();
+  for (const key of stagedLegacyKeys) {
+    const value = process.env[key];
+    if (value) stagedLegacyValues.set(key, value);
+  }
+
+  // Only carry forward migration state across processes when the user is
+  // explicitly continuing the same attempt via `--resume`. Even then,
+  // validate each persisted entry against the *current* staged value: if
+  // the legacy file was edited between runs (so the staged secret no
+  // longer matches what the gateway holds), the hash mismatch drops that
+  // key from migratedLegacyKeys and the cleanup gate forces a fresh
+  // upsert before the file can be removed. A fresh / non-resume run
+  // ignores prior persisted state entirely so a stale or unrelated
+  // session record cannot satisfy the cleanup gate.
+  if (resume) {
+    const previousSession = onboardSession.loadSession();
+    const persistedHashes = previousSession?.migratedLegacyValueHashes ?? {};
+    for (const [key, hash] of Object.entries(persistedHashes)) {
+      if (typeof key !== "string" || typeof hash !== "string") continue;
+      const currentValue = stagedLegacyValues.get(key);
+      if (currentValue === undefined) continue;
+      if (legacyValueHash(currentValue) !== hash) continue;
+      migratedLegacyKeys.add(key);
+    }
+  }
+
+  if (stagedLegacyKeys.length > 0) {
+    console.error(
+      `  Staged ${String(stagedLegacyKeys.length)} legacy credential(s) for migration to the OpenShell gateway.`,
+    );
+  }
+
   let lockReleased = false;
   const releaseOnboardLock = () => {
     if (lockReleased) return;
@@ -7086,9 +7252,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           .toLowerCase();
         if (answer === "n" || answer === "no") {
           console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
-          console.log("  Credentials entered so far are stored in ~/.nemoclaw/credentials.json —");
+          console.log("  Credentials entered so far were only staged in memory for this run.");
           console.log(
-            "  clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
+            "  No new gateway credential was registered because onboarding stopped here.",
           );
           process.exit(0);
         }
@@ -7314,6 +7480,30 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     onboardSession.completeSession(toSessionUpdates({ sandboxName, provider, model }));
     completed = true;
+    // Onboarding finished successfully. Delete the legacy plaintext
+    // credentials.json only when every staged *value* was actually pushed
+    // to the gateway in this run. A successful upsert under the same
+    // env-key name with a different value (e.g. vllm-local upserting
+    // `OPENAI_API_KEY: "dummy"` while the legacy file held a real
+    // `sk-…` cloud key) does not count as a migration — the gateway
+    // never received the legacy secret, so unlinking the file would
+    // strand the user's only copy.
+    const allStagedMigrated =
+      stagedLegacyKeys.length > 0 &&
+      stagedLegacyKeys.every((k) => migratedLegacyKeys.has(k));
+    if (allStagedMigrated) {
+      removeLegacyCredentialsFile();
+    } else if (stagedLegacyKeys.length > 0) {
+      const unmigrated = stagedLegacyKeys.filter(
+        (k) => !migratedLegacyKeys.has(k),
+      );
+      console.error(
+        `  Kept ~/.nemoclaw/credentials.json: ${String(unmigrated.length)} ` +
+          `legacy credential(s) were not migrated verbatim to the gateway in this run ` +
+          `(${unmigrated.join(", ")}). Re-run onboard with the relevant ` +
+          `providers/channels enabled to migrate them, then the file is removed automatically.`,
+      );
+    }
     printDashboard(sandboxName, model, provider, nimContainer, agent);
   } finally {
     releaseOnboardLock();

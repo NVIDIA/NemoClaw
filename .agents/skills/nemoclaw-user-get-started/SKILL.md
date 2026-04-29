@@ -191,7 +191,7 @@ After you enter the sandbox name, the wizard prints a review summary and asks fo
   ──────────────────────────────────────────────────
   Provider:      nvidia-api
   Model:         nvidia/nemotron-3-super-120b-a12b
-  API key:       NVIDIA_API_KEY (stored in ~/.nemoclaw/credentials.json)
+  API key:       NVIDIA_API_KEY (registered with the OpenShell gateway)
   Web search:    disabled
   Messaging:     none
   Sandbox name:  my-assistant
@@ -307,15 +307,15 @@ Refer to Switch inference providers (use the `nemoclaw-user-configure-inference`
 
 ### Reset a Stored Credential
 
-If an API key was entered incorrectly during onboarding, clear the stored value and re-enter it on the next onboard run:
+If a provider credential was entered incorrectly during onboarding, clear the gateway-registered value and re-enter it on the next onboard run:
 
 ```console
-$ nemoclaw credentials list           # see which keys are stored
-$ nemoclaw credentials reset <KEY>    # clear a single key, for example NVIDIA_API_KEY
-$ nemoclaw onboard                    # re-run to re-enter the cleared key
+$ nemoclaw credentials list                # see which providers are registered
+$ nemoclaw credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
+$ nemoclaw onboard                         # re-run to re-enter the cleared provider
 ```
 
-The credentials command is documented in full at `nemoclaw credentials reset <KEY>` (use the `nemoclaw-user-reference` skill).
+The credentials command is documented in full at `nemoclaw credentials reset <PROVIDER>` (use the `nemoclaw-user-reference` skill).
 
 ### Rebuild a Sandbox While Preserving Workspace State
 
@@ -337,7 +337,58 @@ $ nemoclaw <sandbox-name> policy-add
 
 Refer to `nemoclaw <name> policy-add` (use the `nemoclaw-user-reference` skill) for usage details and flags.
 
-## Step 5: Uninstall
+## Step 5: Update to the Latest Version
+
+When a new NemoClaw release becomes available, update the `nemoclaw` CLI on your host and check existing sandboxes for stale agent/runtime versions.
+
+### Update the NemoClaw CLI
+
+Re-run the installer.
+Before it onboards anything, the installer calls `nemoclaw backup-all` (use the `nemoclaw-user-reference` skill) automatically, storing a snapshot of each running sandbox in `~/.nemoclaw/rebuild-backups/` as a safety net.
+
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+### Upgrade sandboxes with stale agent and runtime versions
+
+The installer checks registered sandboxes after onboarding succeeds and runs `nemoclaw upgrade-sandboxes --auto` for stale running sandboxes. Use `upgrade-sandboxes` directly to verify the result, rebuild when you skipped the installer or onboarding step, or handle sandboxes that were stopped or could not be version-checked. The upgrade flow is non-destructive by default because NemoClaw preserves manifest-defined workspace state, but a manual snapshot before any major upgrade gives you a state restore point.
+
+**Safe upgrade flow:**
+
+```console
+$ nemoclaw <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash          # updates CLI; auto-upgrades stale running sandboxes
+$ nemoclaw upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
+$ nemoclaw upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
+```
+
+For scripted manual rebuilds, use `nemoclaw upgrade-sandboxes --auto` to skip the confirmation prompt.
+
+If the upgraded sandbox needs its workspace state reverted, restore the pre-upgrade snapshot into the running sandbox. This restores saved state directories only; it does not downgrade the sandbox image or agent/runtime:
+
+```console
+$ nemoclaw <sandbox-name> snapshot restore pre-upgrade
+```
+
+#### What changes during a rebuild
+
+Each rebuild destroys the existing container and creates a new one. NemoClaw protects your data through the same backup-and-restore flow as `nemoclaw <name> rebuild` (use the `nemoclaw-user-reference` skill):
+
+- NemoClaw preserves manifest-defined workspace state. Before deleting the old container, NemoClaw snapshots the state directories defined in the agent manifest (typically `/sandbox/.openclaw/workspace/`) and restores them into the new container. Stored credentials (`~/.nemoclaw/credentials.json`) and registered policy presets live on the host and are re-applied to the new sandbox automatically.
+- NemoClaw does not preserve runtime changes outside the workspace state directories. This includes packages installed inside the running container with `apt` or `pip`, files in non-workspace paths, and in-memory or process state. If you have customized the running container at runtime, capture that as `Dockerfile` changes (for `nemoclaw onboard --from`) or a manual `openshell sandbox download` before the rebuild starts.
+
+Aborts before the destroy step are non-destructive. The flow refuses to proceed past preflight if a credential is missing (see below) or past backup if the snapshot fails (with `"Aborting rebuild to prevent data loss"`), so a botched run leaves the original sandbox intact and ready to retry.
+
+See Backup and Restore (use the `nemoclaw-user-workspace` skill) for the full list of state-preservation guarantees, snapshot retention, and instructions for manual backups when the auto-flow is not enough.
+
+:::{note} If the rebuild aborts with `Missing credential: <KEY>`
+The rebuild preflight reads the provider credential recorded by your last `nemoclaw onboard` session. If you have switched providers since onboarding (for example, from a remote API to a local Ollama setup) the preflight may still reference the old key and fail before any destroy step runs.
+
+To recover, re-run `nemoclaw onboard` and select your current provider. This refreshes the session metadata. Your existing container keeps serving traffic until the new image is ready.
+:::
+
+## Step 6: Uninstall
 
 To remove NemoClaw and all resources created during setup, run the CLI's built-in uninstall command:
 

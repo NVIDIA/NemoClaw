@@ -79,9 +79,8 @@ Other useful flags:
 ### How the Script Works
 
 The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `smart` strategy by default.
-Procedure pages (`how_to`, `get_started`) become the main body of the skill.
-Concept pages become a `## Context` section.
-Reference pages go into a `references/` subdirectory for progressive disclosure, keeping the `SKILL.md` concise (under 500 lines).
+Within each group, the first procedure page (`how_to`, `get_started`, or `tutorial`) becomes the main body of the skill.
+Sibling procedure pages, concept pages, and reference pages go into a `references/` subdirectory for progressive disclosure, keeping `SKILL.md` concise while preserving access to the full docs.
 
 Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
 MyST/Sphinx directives are converted to standard markdown.

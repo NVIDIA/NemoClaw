@@ -307,6 +307,7 @@ Quickstart <get-started/quickstart>
 Inference Options <inference/inference-options>
 Use Local Inference <inference/use-local-inference>
 Switch Inference Providers <inference/switch-inference-providers>
+Set Up Task-Specific Sub-Agents <inference/set-up-sub-agent>
 ```
 
 ```{toctree}

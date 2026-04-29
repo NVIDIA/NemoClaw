@@ -304,6 +304,71 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=issue-2478-crash-loop-recovery-e2e
         ```
 
+    # ── Split cloud-experimental tests (#2644) ──────────────────
+    - path: "test/e2e/test-cloud-onboard-e2e.sh"
+      instructions: &e2e-cloud-onboard |
+        This script tests the public installer flow, Landlock read-only
+        enforcement, API key leak detection, and inference.local HTTPS.
+
+        **E2E test recommendation:**
+        - `cloud-onboard-e2e` — public installer + sandbox health + security
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-onboard-e2e
+        ```
+
+    - path: "test/e2e/e2e-cloud-experimental/checks/**"
+      instructions: *e2e-cloud-onboard
+
+    - path: "test/e2e/test-cloud-inference-e2e.sh"
+      instructions: &e2e-cloud-inference |
+        This script tests live chat via inference.local and validates
+        the skill filesystem layout inside the sandbox.
+
+        **E2E test recommendation:**
+        - `cloud-inference-e2e` — live cloud inference + skill filesystem
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-inference-e2e
+        ```
+
+    - path: "test/e2e/test-skill-agent-e2e.sh"
+      instructions: &e2e-skill-agent |
+        This script tests skill injection into the sandbox and verifies
+        the agent reads the skill and returns a verification token.
+
+        **E2E test recommendation:**
+        - `skill-agent-e2e` — skill injection + agent verification
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=skill-agent-e2e
+        ```
+
+    - path: "test/e2e/e2e-cloud-experimental/features/**"
+      instructions: *e2e-skill-agent
+
+    - path: "test/e2e/test-docs-validation.sh"
+      instructions: &e2e-docs-validation |
+        This script validates CLI/docs parity (nemoclaw --help vs
+        commands.md) and markdown link resolution.
+
+        **E2E test recommendation:**
+        - `docs-validation-e2e` — CLI/docs parity + link validation
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=docs-validation-e2e
+        ```
+
+    - path: "test/e2e/e2e-cloud-experimental/check-docs.sh"
+      instructions: *e2e-docs-validation
+
+    - path: "docs/reference/commands.md"
+      instructions: *e2e-docs-validation
+
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |
         This is the nightly E2E workflow definition. Changes here affect
