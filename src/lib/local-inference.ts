@@ -49,9 +49,22 @@ export function findReachableOllamaHost(runCaptureImpl?: RunCaptureFn): string |
   if (_resolvedOllamaHost !== null) return _resolvedOllamaHost;
   const capture = runCaptureImpl ?? runCapture;
   for (const host of ollamaCandidateHosts()) {
-    const result = capture(["curl", "-sf", `http://${host}:${OLLAMA_PORT}/api/tags`], {
-      ignoreError: true,
-    });
+    // Explicit timeouts: a blackholed host (e.g., firewalled host.docker.internal)
+    // would otherwise stall the synchronous onboard probe for the OS connect
+    // timeout (~75-130s on Linux). Matches the convention used in
+    // getLocalProviderHealthStatus probes.
+    const result = capture(
+      [
+        "curl",
+        "-sf",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "5",
+        `http://${host}:${OLLAMA_PORT}/api/tags`,
+      ],
+      { ignoreError: true },
+    );
     if (result) {
       _resolvedOllamaHost = host;
       return host;
@@ -294,7 +307,9 @@ export function validateLocalProvider(
     case "ollama-local":
       return {
         ok: false,
-        message: `Local Ollama is responding on ${getResolvedOllamaHost()}, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
+        message: isWsl()
+          ? `Local Ollama is responding on ${getResolvedOllamaHost()}, but containers cannot reach it at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. On WSL the auth proxy is not used; verify Ollama is bound so containers can reach it via host-gateway.`
+          : `Local Ollama is responding on ${getResolvedOllamaHost()}, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
       };
     default:
       return {
@@ -328,9 +343,18 @@ export function parseOllamaTags(output: string | null | undefined): string[] {
 export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   const capture = runCaptureImpl ?? runCapture;
   const host = getResolvedOllamaHost();
-  const tagsOutput = capture(["curl", "-sf", `http://${host}:${OLLAMA_PORT}/api/tags`], {
-    ignoreError: true,
-  });
+  const tagsOutput = capture(
+    [
+      "curl",
+      "-sf",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "5",
+      `http://${host}:${OLLAMA_PORT}/api/tags`,
+    ],
+    { ignoreError: true },
+  );
   const tagsParsed = parseOllamaTags(tagsOutput);
   if (tagsParsed.length > 0) {
     return tagsParsed;
