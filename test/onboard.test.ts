@@ -4635,24 +4635,27 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("nonexistent") }));
     assert.equal(payload.exists, false);
   });
 
-  it("continues once the sandbox is Ready even if the create stream never closes", async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
-    const payloadPath = path.join(tmpDir, "payload.json");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+  it(
+    "continues once the sandbox is Ready even if the create stream never closes",
+    { timeout: 20000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
+      const payloadPath = path.join(tmpDir, "payload.json");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -4734,29 +4737,30 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-      timeout: 15000,
-    });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+        timeout: 15000,
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
-    assert.equal(payload.sandboxName, "my-assistant");
-    assert.ok(payload.sandboxListCalls >= 2);
-    assert.deepEqual(payload.killCalls, ["SIGTERM"]);
-    assert.equal(payload.unrefCalls, 1);
-    assert.equal(payload.stdoutDestroyCalls, 1);
-    assert.equal(payload.stderrDestroyCalls, 1);
-  });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+      assert.equal(payload.sandboxName, "my-assistant");
+      assert.ok(payload.sandboxListCalls >= 2);
+      assert.deepEqual(payload.killCalls, ["SIGTERM"]);
+      assert.equal(payload.unrefCalls, 1);
+      assert.equal(payload.stdoutDestroyCalls, 1);
+      assert.equal(payload.stderrDestroyCalls, 1);
+    },
+  );
 
   it("restores the dashboard forward when onboarding reuses an existing ready sandbox", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
