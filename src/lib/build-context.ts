@@ -72,6 +72,12 @@ export function printSandboxCreateRecoveryHints(output = ""): void {
     );
     return;
   }
+  if (failure.kind === "tls_cert_mismatch") {
+    console.error("  Hint: TLS certificate mismatch — the gateway certificate changed since the CLI last trusted it.");
+    console.error("  Fix:  openshell gateway trust -g nemoclaw");
+    console.error("  Then: nemoclaw onboard --resume");
+    return;
+  }
   console.error("  Recovery: nemoclaw onboard --resume");
   console.error("  Or:      nemoclaw onboard");
 }
