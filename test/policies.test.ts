@@ -1523,4 +1523,36 @@ setImmediate(() => {
       expect(loads[0]).toMatch(/real\.yaml$/);
     });
   });
+
+  describe("interactive prompt cleanup", () => {
+    it("releases stdin after preset prompts so the event loop drains on a TTY", () => {
+      const source = fs.readFileSync(
+        path.join(REPO_ROOT, "src", "lib", "policies.ts"),
+        "utf-8",
+      );
+      // A TTY-only guard around pause/unref pins the event loop on
+      // interactive runs and stops the wizard from exiting after its last
+      // prompt resolves.
+      expect(source).not.toMatch(/rl\.close\(\);\s*if\s*\(\s*!process\.stdin\.isTTY\s*\)/);
+      // Both prompt callbacks must release stdin after `rl.close()`.
+      const cleanupMatches = source.match(
+        /rl\.close\(\);[\s\S]*?process\.stdin\.pause\(\)[\s\S]*?process\.stdin\.unref\(\)/g,
+      );
+      expect(cleanupMatches?.length ?? 0).toBeGreaterThanOrEqual(2);
+    });
+
+    it("re-refs stdin before each preset prompt so a follow-up prompt is not stranded by a sticky unref()", () => {
+      const source = fs.readFileSync(
+        path.join(REPO_ROOT, "src", "lib", "policies.ts"),
+        "utf-8",
+      );
+      // unref() above is sticky — a subsequent createInterface will not
+      // re-ref by itself; an explicit ref() before each one keeps follow-up
+      // prompts able to wait for input.
+      const refMatches = source.match(
+        /process\.stdin\.ref\(\)[\s\S]*?readline\.createInterface\(\{\s*input:\s*process\.stdin/g,
+      );
+      expect(refMatches?.length ?? 0).toBeGreaterThanOrEqual(2);
+    });
+  });
 });

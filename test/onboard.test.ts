@@ -2648,6 +2648,44 @@ const { setupInference } = require(${onboardPath});
     assert.equal(typeof streamSandboxCreate, "function");
   });
 
+  it("re-refs stdin before each raw-mode prompt and unrefs in cleanup so sticky unref() does not strand later prompts", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // The shared `prompt()` cleanup unref()s stdin so the wizard exits
+    // naturally after its last readline prompt. unref() is sticky, so the
+    // raw-mode TUI selectors (messaging channels + the three arrow-key
+    // pickers) must explicitly ref() stdin before resume()/setRawMode(true)
+    // or they would otherwise listen on a detached handle.
+    const refMatches = source.match(
+      /process\.stdin\.ref\(\);[\s\S]{0,180}?process\.stdin\.setRawMode\(true\)/g,
+    );
+    assert.ok(
+      refMatches !== null && refMatches.length >= 3,
+      `expected at least 3 ref()-then-setRawMode(true) sites, found ${
+        refMatches ? refMatches.length : 0
+      }`,
+    );
+
+    // The messaging-channels picker uses an `input.ref()` alias on the
+    // captured handle. Same contract, different binding.
+    assert.match(source, /input\.ref\(\)[\s\S]{0,200}?input\.setRawMode\(true\)/);
+
+    // Each raw-mode cleanup must release stdin too, so a wizard that ends
+    // on a TUI selector exits cleanly.
+    const unrefMatches = source.match(
+      /setRawMode\(false\);[\s\S]{0,400}?(?:process\.stdin|input)\.unref\(\)/g,
+    );
+    assert.ok(
+      unrefMatches !== null && unrefMatches.length >= 4,
+      `expected at least 4 setRawMode(false)-then-unref() sites, found ${
+        unrefMatches ? unrefMatches.length : 0
+      }`,
+    );
+  });
+
   it("migrates a legacy credentials.json into env so setupInference can register the provider", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));

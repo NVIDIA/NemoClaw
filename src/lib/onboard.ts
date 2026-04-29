@@ -5316,6 +5316,14 @@ async function setupMessagingChannels(): Promise<string[]> {
       if (rawModeEnabled && typeof input.setRawMode === "function") {
         input.setRawMode(false);
       }
+      // Symmetric with the ref() at the entry; lets the wizard exit
+      // naturally if this is the last prompt.
+      if (typeof input.pause === "function") {
+        input.pause();
+      }
+      if (typeof input.unref === "function") {
+        input.unref();
+      }
     }
 
     function finish(): void {
@@ -5353,6 +5361,12 @@ async function setupMessagingChannels(): Promise<string[]> {
       }
     }
 
+    // Re-attach stdin to the event loop. A prior prompt cleanup may have
+    // unref'd it (sticky), and resume() alone would leave the raw-mode read
+    // detached from the loop.
+    if (typeof input.ref === "function") {
+      input.ref();
+    }
     input.setEncoding("utf8");
     if (typeof input.resume === "function") {
       input.resume();
@@ -5777,6 +5791,10 @@ async function selectPolicyTier(): Promise<string> {
     lineCount = lines.length;
   };
 
+  // Re-attach stdin to the event loop. A prior prompt cleanup may have
+  // unref'd it (sticky), and resume() alone would leave the raw-mode read
+  // detached from the loop.
+  if (typeof process.stdin.ref === "function") process.stdin.ref();
   process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.setEncoding("utf8");
@@ -5785,6 +5803,9 @@ async function selectPolicyTier(): Promise<string> {
     const cleanup = () => {
       process.stdin.setRawMode(false);
       process.stdin.pause();
+      // Symmetric with the ref() at the entry; lets the wizard exit
+      // naturally if this is the last prompt.
+      if (typeof process.stdin.unref === "function") process.stdin.unref();
       process.stdin.removeListener("data", onData);
       process.removeListener("SIGTERM", onSigterm);
     };
@@ -5961,6 +5982,10 @@ async function selectTierPresetsAndAccess(
     lineCount = lines.length;
   };
 
+  // Re-attach stdin to the event loop. A prior prompt cleanup may have
+  // unref'd it (sticky), and resume() alone would leave the raw-mode read
+  // detached from the loop.
+  if (typeof process.stdin.ref === "function") process.stdin.ref();
   process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.setEncoding("utf8");
@@ -5969,6 +5994,9 @@ async function selectTierPresetsAndAccess(
     const cleanup = () => {
       process.stdin.setRawMode(false);
       process.stdin.pause();
+      // Symmetric with the ref() at the entry; lets the wizard exit
+      // naturally if this is the last prompt.
+      if (typeof process.stdin.unref === "function") process.stdin.unref();
       process.stdin.removeListener("data", onData);
       process.removeListener("SIGTERM", onSigterm);
     };
@@ -6104,6 +6132,10 @@ async function presetsCheckboxSelector(
     lineCount = lines.length;
   };
 
+  // Re-attach stdin to the event loop. A prior prompt cleanup may have
+  // unref'd it (sticky), and resume() alone would leave the raw-mode read
+  // detached from the loop.
+  if (typeof process.stdin.ref === "function") process.stdin.ref();
   process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.setEncoding("utf8");
@@ -6112,6 +6144,9 @@ async function presetsCheckboxSelector(
     const cleanup = () => {
       process.stdin.setRawMode(false);
       process.stdin.pause();
+      // Symmetric with the ref() at the entry; lets the wizard exit
+      // naturally if this is the last prompt.
+      if (typeof process.stdin.unref === "function") process.stdin.unref();
       process.stdin.removeListener("data", onData);
       process.removeListener("SIGTERM", onSigterm);
     };

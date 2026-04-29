@@ -752,9 +752,16 @@ function readStdin(): Promise<string> {
  */
 function confirmYesNo(prompt: string): Promise<boolean> {
   return new Promise((resolve) => {
+    // Re-attach stdin to the event loop — unref() on exit is sticky and
+    // would otherwise leave a follow-up prompt waiting on a detached handle.
+    if (typeof process.stdin.ref === "function") process.stdin.ref();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     rl.question(prompt, (answer: string) => {
       rl.close();
+      // pause+unref so the process exits naturally after the last prompt.
+      // The matching ref() above keeps subsequent prompts working.
+      if (typeof process.stdin.pause === "function") process.stdin.pause();
+      if (typeof process.stdin.unref === "function") process.stdin.unref();
       resolve(/^y(es)?$/i.test(answer.trim()));
     });
   });
