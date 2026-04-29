@@ -4245,14 +4245,21 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
   let credentialEnv: string | null = REMOTE_PROVIDER_CONFIG.build.credentialEnv;
   let preferredInferenceApi: string | null = null;
 
-  // Detect local inference options
+  // Detect local inference options. The runCapture timeout caps each probe
+  // at the spawnSync layer so a half-open port or stalled listener cannot
+  // hang the wizard at [3/8] (#2674; reproduced on macOS / M3 Pro with
+  // Ollama running but unreachable). 5s is plenty for a loopback HTTP
+  // round-trip; matches the existing { ignoreError, timeout } pattern at
+  // onboard.ts:1514, 1537, 2078.
   const hasOllama = hostCommandExists("ollama");
-  const ollamaRunning = !!runCapture(["curl", "-sf", `http://127.0.0.1:${OLLAMA_PORT}/api/tags`], {
-    ignoreError: true,
-  });
-  const vllmRunning = !!runCapture(["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`], {
-    ignoreError: true,
-  });
+  const ollamaRunning = !!runCapture(
+    ["curl", "-sf", `http://127.0.0.1:${OLLAMA_PORT}/api/tags`],
+    { ignoreError: true, timeout: 5_000 },
+  );
+  const vllmRunning = !!runCapture(
+    ["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`],
+    { ignoreError: true, timeout: 5_000 },
+  );
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")

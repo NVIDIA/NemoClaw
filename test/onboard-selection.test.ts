@@ -200,6 +200,129 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
+  it("#2674: bounds local Ollama and vLLM detection probes with a runCapture timeout", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-probe-timeout-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "probe-timeout-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"ok"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+
+// Pick the cloud path so setupNim returns quickly without further probing.
+const answers = ["1", "1"];
+const messages = [];
+const probes = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
+runner.runCapture = (command, opts) => {
+  // Record every captured argv together with the runCapture options so the
+  // test can assert that the loopback detection probes carry a spawnSync-level
+  // timeout (Option C — protects against a curl that ignores its own flags).
+  probes.push({
+    cmd: Array.isArray(command) ? command.slice() : String(command),
+    opts: opts ?? {},
+  });
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  return "";
+};
+registry.updateSandbox = () => {};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("probe-timeout-test", null);
+    originalLog(JSON.stringify({ result, probes, messages, lines }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout.trim());
+    const probes: Array<{ cmd: string | string[]; opts: Record<string, unknown> }> =
+      payload.probes;
+
+    // Locate each detection probe by URL substring, then assert the runCapture
+    // opts include a finite spawnSync-level timeout so a stalled listener
+    // can't hang the wizard at [3/8] (#2674 was reproducible on M3 Pro under
+    // Colima with Ollama running but unreachable).
+    function findProbe(urlMatch: string) {
+      return probes.find((p) => {
+        const argv = Array.isArray(p.cmd) ? p.cmd : [p.cmd];
+        return argv.some((arg) => typeof arg === "string" && arg.includes(urlMatch));
+      });
+    }
+
+    const ollamaProbe = findProbe("127.0.0.1:11434/api/tags");
+    const vllmProbe = findProbe("127.0.0.1:8000/v1/models");
+    assert.ok(ollamaProbe, "expected an Ollama detection probe to fire");
+    assert.ok(vllmProbe, "expected a vLLM detection probe to fire");
+
+    for (const [label, probe] of [["ollama", ollamaProbe!], ["vllm", vllmProbe!]] as const) {
+      const timeout = probe.opts.timeout;
+      assert.ok(
+        typeof timeout === "number" && timeout > 0 && timeout <= 30_000,
+        `${label} probe missing finite timeout (opts: ${JSON.stringify(probe.opts)})`,
+      );
+      assert.equal(
+        probe.opts.ignoreError,
+        true,
+        `${label} probe must keep ignoreError=true so a timeout returns "" (opts: ${JSON.stringify(probe.opts)})`,
+      );
+    }
+  });
+
   it("does not label NVIDIA Endpoints as recommended in the provider list", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-recommended-label-"));

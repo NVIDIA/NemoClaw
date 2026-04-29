@@ -285,8 +285,12 @@ export function parseOllamaTags(output: string | null | undefined): string[] {
 
 export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   const capture = runCaptureImpl ?? runCapture;
+  // Bound the loopback probe at the spawnSync layer so a stalled listener
+  // can't hang the model-selection step (#2674, same hazard as the
+  // detection probes in onboard.ts). 5s is plenty for /api/tags.
   const tagsOutput = capture(["curl", "-sf", `http://127.0.0.1:${OLLAMA_PORT}/api/tags`], {
     ignoreError: true,
+    timeout: 5_000,
   });
   const tagsParsed = parseOllamaTags(tagsOutput);
   if (tagsParsed.length > 0) {
