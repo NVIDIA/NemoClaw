@@ -16,7 +16,9 @@ describe("configureWebSearch non-interactive Brave validation failure", () => {
     for (const f of tmpFiles) {
       try {
         fs.unlinkSync(f);
-      } catch {}
+      } catch {
+        // Best-effort cleanup: temp file may already be removed.
+      }
     }
     tmpFiles.length = 0;
   });
