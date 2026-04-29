@@ -192,6 +192,7 @@ The output includes the active provider, model, and endpoint.
 - Same-provider model switches take effect immediately via the gateway route alone.
 - Cross-provider switches also require `NEMOCLAW_MODEL_OVERRIDE` (and `NEMOCLAW_INFERENCE_API_OVERRIDE`) plus a sandbox recreate so the entrypoint patches the config at startup.
 - Overrides are applied at container startup. Changing or removing env vars requires a sandbox recreate to take effect.
+- Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 
 ## Related Topics
 

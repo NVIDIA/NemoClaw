@@ -61,6 +61,8 @@ $ nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
 The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
+Snapshot restore accepts symlinks that resolve to NemoClaw-managed sandbox data paths such as `/sandbox/.openclaw-data/`.
+Symlinks that point outside the known sandbox data paths are still rejected during extraction.
 For full details, see the [Commands reference](../reference/commands.md).
 
 ## Manual Backup
