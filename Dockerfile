@@ -195,6 +195,24 @@ RUN set -eu; \
     test -n "$rcf_file" || { echo "ERROR: replaceConfigFile function not found in OpenClaw dist" >&2; exit 1; }; \
     python3 -c "import sys; p=sys.argv[1]; f=open(p); src=f.read(); f.close(); old='\tif (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t});'; new='\ttry { if (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t}); } catch(_rcfErr) { if (process.env.OPENSHELL_SANDBOX === \"1\" && _rcfErr.code === \"EACCES\") { console.error(\"[nemoclaw] Config is read-only in sandbox \\u2014 plugin metadata not persisted (plugins auto-load from extensions/)\"); } else { throw _rcfErr; } }'; assert old in src, 'tryWriteSingleTopLevelIncludeMutation/writeConfigFile pattern not found in replaceConfigFile'; f=open(p,'w'); f.write(src.replace(old,new,1)); f.close()" "$rcf_file"; \
     grep -REq --include='*.js' 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }; \
+    # --- Patch 4b: graceful EACCES in mutateConfigFile for sandbox (#2681) --- \
+    # Patch 4 only wraps replaceConfigFile.  The OpenClaw control UI uses a \
+    # sibling function mutateConfigFile (e.g. for the "Enable Dreaming" toggle, \
+    # account toggles, and other in-place config changes), which takes the \
+    # same writeConfigFile / tryWriteSingleTopLevelIncludeMutation paths and \
+    # therefore also hits EACCES against the read-only openclaw.json. \
+    # Without this patch the UI surfaces \
+    #   GatewayRequestError: EACCES: permission denied, open \
+    #   '/sandbox/.openclaw/openclaw.json.<pid>.<uuid>.tmp' \
+    # whenever the user touches a config-backed control.  Mirror Patch 4's \
+    # try/catch so the gateway emits a single warning and returns success \
+    # instead of crashing.  The toggle change is non-persistent in the \
+    # sandbox by design (config is immutable for tamper-resistance, ref #514, \
+    # #719); this patch keeps the rest of the UI usable. \
+    mcf_file="$(grep -RIlE --include='*.js' 'async function mutateConfigFile\(params\)' "$OC_DIST" | head -n 1)"; \
+    test -n "$mcf_file" || { echo "ERROR: mutateConfigFile function not found in OpenClaw dist" >&2; exit 1; }; \
+    python3 -c "import sys; p=sys.argv[1]; f=open(p); src=f.read(); f.close(); old='\tif (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: draft\n\t})) await writeConfigFile(draft, {\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t});'; new='\ttry { if (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: draft\n\t})) await writeConfigFile(draft, {\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t}); } catch(_mcfErr) { if (process.env.OPENSHELL_SANDBOX === \"1\" && _mcfErr.code === \"EACCES\") { console.error(\"[nemoclaw] Config is read-only in sandbox \\u2014 mutation not persisted (UI toggles like Enable Dreaming are non-persistent here)\"); } else { throw _mcfErr; } }'; assert old in src, 'tryWriteSingleTopLevelIncludeMutation/writeConfigFile pattern not found in mutateConfigFile'; f=open(p,'w'); f.write(src.replace(old,new,1)); f.close()" "$mcf_file"; \
+    grep -REq --include='*.js' 'mutation not persisted' "$mcf_file" || { echo "ERROR: Patch 4b (mutateConfigFile EACCES) not applied" >&2; exit 1; }; \
     # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
     # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
     # client and server. Server-side connect-handler processing can exceed \
