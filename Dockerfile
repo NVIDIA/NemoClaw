@@ -79,7 +79,17 @@ RUN set -eu; \
         # rmdir failure inside npm's own install path.
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
         npm install -g --no-audit --no-fund --no-progress "openclaw@${MIN_VER}"; \
-    fi
+    fi; \
+    # Pre-install the codex-acp package so the embedded ACPx runtime can
+    # call the local binary instead of `npx @zed-industries/codex-acp`.
+    # The sandbox's L7 proxy denies @zed-industries/* package URLs
+    # (403 policy_denied), and npm still refreshes registry metadata for
+    # versioned npx package specs even when the package is globally installed.
+    # Installing the binary at build time and configuring ACPx to use it
+    # directly keeps TC-SBX-02 off the runtime npm path.
+    npm install -g --no-audit --no-fund --no-progress \
+        '@zed-industries/codex-acp@0.11.1'; \
+    command -v codex-acp >/dev/null
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
 #
@@ -172,16 +182,38 @@ RUN set -eu; \
     sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
     if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
     # --- Patch 4: graceful EACCES in replaceConfigFile for sandbox (#2254) --- \
-    # Plugin install persists metadata to openclaw.json via replaceConfigFile. \
-    # In the sandbox, openclaw.json is immutable (444 root:root in a 755 \
-    # root:root directory) by design.  The write fails with EACCES.  This \
-    # patch wraps the writeConfigFile call inside replaceConfigFile to catch \
-    # EACCES when OPENSHELL_SANDBOX=1 and emit a warning instead of crashing. \
-    # Plugins still load via auto-discovery from the extensions directory. \
+    # Plugin install persists metadata via replaceConfigFile. In the sandbox, \
+    # openclaw.json is immutable (444 root:root) by design.  OpenClaw 2026.4.24 \
+    # restructured config writes: replaceConfigFile now first attempts a \
+    # single-key include-file mutation (tryWriteSingleTopLevelIncludeMutation), \
+    # falling back to writeConfigFile for the full config.  Both paths can hit \
+    # EACCES in the read-only sandbox tree.  This patch wraps the entire \
+    # write block in a try/catch that catches EACCES when OPENSHELL_SANDBOX=1 \
+    # and emits a warning instead of crashing.  Plugins still load via \
+    # auto-discovery from the extensions directory. \
     rcf_file="$(grep -RIlE --include='*.js' 'async function replaceConfigFile\(params\)' "$OC_DIST" | head -n 1)"; \
     test -n "$rcf_file" || { echo "ERROR: replaceConfigFile function not found in OpenClaw dist" >&2; exit 1; }; \
-    python3 -c "import sys; p=sys.argv[1]; f=open(p); src=f.read(); f.close(); old='\tawait writeConfigFile(params.nextConfig, {\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t});'; new='\ttry { await writeConfigFile(params.nextConfig, {\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t}); } catch(_rcfErr) { if (process.env.OPENSHELL_SANDBOX === \"1\" && _rcfErr.code === \"EACCES\") { console.error(\"[nemoclaw] Config is read-only in sandbox \\u2014 plugin metadata not persisted (plugins auto-load from extensions/)\"); } else { throw _rcfErr; } }'; assert old in src, 'writeConfigFile(params.nextConfig) pattern not found'; f=open(p,'w'); f.write(src.replace(old,new,1)); f.close()" "$rcf_file"; \
-    grep -REq --include='*.js' 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }
+    python3 -c "import sys; p=sys.argv[1]; f=open(p); src=f.read(); f.close(); old='\tif (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t});'; new='\ttry { if (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t}); } catch(_rcfErr) { if (process.env.OPENSHELL_SANDBOX === \"1\" && _rcfErr.code === \"EACCES\") { console.error(\"[nemoclaw] Config is read-only in sandbox \\u2014 plugin metadata not persisted (plugins auto-load from extensions/)\"); } else { throw _rcfErr; } }'; assert old in src, 'tryWriteSingleTopLevelIncludeMutation/writeConfigFile pattern not found in replaceConfigFile'; f=open(p,'w'); f.write(src.replace(old,new,1)); f.close()" "$rcf_file"; \
+    grep -REq --include='*.js' 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }; \
+    # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
+    # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
+    # client and server. Server-side connect-handler processing can exceed \
+    # 10s under load (multiple concurrent connects on slow CI infra), \
+    # causing `openclaw agent --json` to fail with "gateway timeout after \
+    # 10000ms" and TC-SBX-02 to hit its 90s SSH timeout. \
+    # \
+    # Both env vars (OPENCLAW_HANDSHAKE_TIMEOUT_MS, \
+    # OPENCLAW_CONNECT_CHALLENGE_TIMEOUT_MS) are clamped at the same \
+    # DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS constant, so we patch the \
+    # constant itself.  Affects both client.js (used by openclaw CLI) and \
+    # server.impl.js (gateway side). \
+    # \
+    # Removal criteria: drop when openclaw fixes the underlying connect \
+    # latency, or exposes the timeout as an unbounded env override. \
+    hto_files="$(grep -RIlE --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4' "$OC_DIST")"; \
+    test -n "$hto_files" || { echo "ERROR: handshake-timeout constant not found" >&2; exit 1; }; \
+    printf '%s\n' "$hto_files" | xargs sed -i -E 's|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4|g'; \
+    if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4' "$OC_DIST"; then echo "ERROR: Patch 5 left a 1e4 constant" >&2; exit 1; fi
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
@@ -192,8 +224,9 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # Copy startup script and shared sandbox initialisation library
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
+COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp /usr/local/lib/nemoclaw/sandbox-init.sh
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
@@ -296,9 +329,21 @@ USER sandbox
 # list of env vars and derivation rules.
 RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 
-# Install NemoClaw plugin into OpenClaw
-RUN openclaw doctor --fix > /dev/null 2>&1 || true \
-    && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
+# Install NemoClaw plugin into OpenClaw. Prune non-runtime metadata from
+# staged bundled plugin dependencies before this layer is committed; deleting
+# it in a later layer would not reduce the OCI image imported by k3s.
+RUN (openclaw doctor --fix > /dev/null 2>&1 || true) \
+    && (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
+    && if [ -d /sandbox/.openclaw-data/plugin-runtime-deps ]; then \
+        find /sandbox/.openclaw-data/plugin-runtime-deps -type f \( \
+            -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o \
+            -name '*.map' -o -name '*.tsbuildinfo' \
+        \) -delete; \
+        find /sandbox/.openclaw-data/plugin-runtime-deps -type d \( \
+            -name __tests__ -o -name test -o -name tests -o -name docs -o \
+            -name examples \
+        \) -prune -exec rm -rf {} +; \
+    fi
 
 # Inject gateway auth token into openclaw.json.
 # NEMOCLAW_BUILD_ID busts the Docker cache so each image gets a unique token.
@@ -326,19 +371,28 @@ os.chmod(path, 0o600)"
 # hadolint ignore=DL3002
 USER root
 
-# Ensure .openclaw-data subdirs and symlinks exist for logs, credentials, and
-# sandbox. These are defined in Dockerfile.base but the GHCR base image may
-# not have been rebuilt yet. Idempotent — harmless once the base catches up.
+# Ensure .openclaw-data subdirs and symlinks exist for logs, credentials,
+# sandbox, and plugin-runtime-deps. These are defined in Dockerfile.base but
+# the GHCR base image may not have been rebuilt yet. Idempotent — harmless
+# once the base catches up.
+#
+# plugin-runtime-deps was added in OpenClaw 2026.4.24: the CLI lazy-installs
+# bundled plugin runtime dependencies into ~/.openclaw/plugin-runtime-deps/
+# on first invocation (Jiti loader). Without a writable target every bundled
+# plugin (nvidia, openai, anthropic, ollama, …) fails to load with EACCES,
+# leaving the agent CLI with no providers. See PluginLoadFailureError in #2484.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/804
 RUN mkdir -p /sandbox/.openclaw-data/logs \
         /sandbox/.openclaw-data/credentials \
         /sandbox/.openclaw-data/sandbox \
         /sandbox/.openclaw-data/media \
+        /sandbox/.openclaw-data/plugin-runtime-deps \
     && chown sandbox:sandbox /sandbox/.openclaw-data/logs \
         /sandbox/.openclaw-data/credentials \
         /sandbox/.openclaw-data/sandbox \
         /sandbox/.openclaw-data/media \
-    && for dir in logs credentials sandbox media; do \
+        /sandbox/.openclaw-data/plugin-runtime-deps \
+    && for dir in logs credentials sandbox media plugin-runtime-deps; do \
         if [ -L "/sandbox/.openclaw/$dir" ]; then true; \
         elif [ -e "/sandbox/.openclaw/$dir" ]; then \
             cp -a "/sandbox/.openclaw/$dir/." "/sandbox/.openclaw-data/$dir/" 2>/dev/null || true; \

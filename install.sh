@@ -9,8 +9,12 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-LOCAL_PAYLOAD="${SCRIPT_DIR}/scripts/install.sh"
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  SCRIPT_DIR=""
+fi
+LOCAL_PAYLOAD="${SCRIPT_DIR:+${SCRIPT_DIR}/scripts/install.sh}"
 BOOTSTRAP_TMPDIR=""
 PAYLOAD_MARKER="NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1"
 

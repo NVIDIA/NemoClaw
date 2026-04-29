@@ -143,6 +143,52 @@ validate_tmp_permissions() {
   return $failed
 }
 
+# ── Config file permission helpers ────────────────────────────────
+# After drop_capabilities() strips CAP_DAC_OVERRIDE, root can no longer
+# write to files with mode 444. These helpers temporarily relax config
+# files to 644 for writing, then re-lock to 444 afterward.
+#
+# CAP_FOWNER is retained (by design in PR #917), so root can still chmod
+# files it doesn't own. The helpers include symlink guards to prevent
+# symlink-following attacks on the config path.
+#
+# Usage:
+#   relax_config_for_write /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+#   # ... perform writes ...
+#   lock_config_after_write /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+#
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2653
+
+relax_config_for_write() {
+  local f
+  for f in "$@"; do
+    if [ -L "$f" ]; then
+      printf '[SECURITY] Refusing to relax permissions — %s is a symlink\n' "$f" >&2
+      return 1
+    fi
+    [ -f "$f" ] || continue
+    if ! chmod 644 "$f"; then
+      printf '[SECURITY] Failed to relax permissions on %s\n' "$f" >&2
+      return 1
+    fi
+  done
+}
+
+lock_config_after_write() {
+  local f
+  for f in "$@"; do
+    if [ -L "$f" ]; then
+      printf '[SECURITY] Refusing to lock permissions — %s is a symlink\n' "$f" >&2
+      return 1
+    fi
+    [ -f "$f" ] || continue
+    if ! chmod 444 "$f"; then
+      printf '[SECURITY] Failed to lock permissions on %s\n' "$f" >&2
+      return 1
+    fi
+  done
+}
+
 # ── Capability dropping ──────────────────────────────────────────
 # CIS Docker Benchmark 5.3: containers should not run with default caps.
 # OpenShell manages the container runtime so we cannot pass --cap-drop=ALL

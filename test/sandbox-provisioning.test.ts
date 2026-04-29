@@ -19,6 +19,7 @@ import path from "node:path";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
+const DOCKERFILE_SANDBOX = path.join(ROOT, "test", "Dockerfile.sandbox");
 
 describe("sandbox provisioning: exec-approvals / update-check symlinks (#1027, #1519)", () => {
   const src = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
@@ -87,5 +88,47 @@ describe("sandbox provisioning: root-owned read-only config (#514)", () => {
   it(".openclaw directory stays root:root 0755 (agent cannot add or replace symlinks)", () => {
     expect(src).toContain("chown root:root /sandbox/.openclaw");
     expect(src).toContain("chmod 755 /sandbox/.openclaw");
+  });
+});
+
+describe("sandbox provisioning: codex-acp wrapper (#2484)", () => {
+  const dockerSrc = fs.readFileSync(DOCKERFILE, "utf-8");
+  const wrapperSrc = fs.readFileSync(path.join(ROOT, "scripts", "codex-acp-wrapper.sh"), "utf-8");
+
+  it("copies the wrapper into the sandbox image", () => {
+    expect(dockerSrc).toContain(
+      "COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp",
+    );
+    expect(dockerSrc).toContain("/usr/local/bin/nemoclaw-codex-acp");
+  });
+
+  it("runs codex-acp with writable Codex and XDG state", () => {
+    expect(wrapperSrc).toContain("export CODEX_HOME=");
+    expect(wrapperSrc).toContain("export XDG_CONFIG_HOME=");
+    expect(wrapperSrc).toContain("export HOME=");
+    expect(wrapperSrc).toContain("exec /usr/local/bin/codex-acp");
+  });
+});
+
+describe("sandbox test image fixtures", () => {
+  const src = fs.readFileSync(DOCKERFILE_SANDBOX, "utf-8");
+
+  it("clears production config recovery artifacts after writing the legacy fixture", () => {
+    expect(src).toContain("/sandbox/.openclaw/openclaw.json.bak*");
+    expect(src).toContain("/sandbox/.openclaw/openclaw.json.last-good");
+    expect(src).toContain("/sandbox/.openclaw-data/logs/config-health.json");
+  });
+});
+
+describe("sandbox operations E2E harness", () => {
+  const src = fs.readFileSync(
+    path.join(ROOT, "test", "e2e", "test-sandbox-operations.sh"),
+    "utf-8",
+  );
+
+  it("resumes onboard when OpenShell resets after importing the image", () => {
+    expect(src).toContain("is_onboard_import_stream_reset");
+    expect(src).toContain("Connection reset by peer (os error 104)");
+    expect(src).toContain("nemoclaw onboard --resume --non-interactive");
   });
 });

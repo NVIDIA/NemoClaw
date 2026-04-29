@@ -691,6 +691,62 @@ $ nemoclaw onboard
 These are build-time settings baked into the sandbox image.
 Changing them after onboarding requires re-running `nemoclaw onboard` to rebuild the image.
 
+### Agent cannot reach a host-side HTTP service
+
+When a sandbox needs to call an HTTP service running on the host, use the normal OpenShell network policy path.
+Expose the service on a host IP address that the OpenShell gateway can reach, create a custom NemoClaw policy preset for that IP and port, and apply it with `nemoclaw <sandbox> policy-add --from-file`.
+The sandbox request then flows through the OpenShell proxy while NemoClaw preserves the existing live policy entries.
+
+Do not rely on `host.docker.internal` or `host.openshell.internal` as a general-purpose host-service path.
+Those names may appear in the sandbox's `/etc/hosts`, but in OpenShell's sandbox network they are not guaranteed to point at a reachable host gateway.
+Bypassing the proxy with `--noproxy '*'` also bypasses network policy enforcement and audit.
+
+First, make sure the host-side service listens on a non-loopback address.
+For example, a health endpoint on port `50001` should be reachable from the host IP, not only from `127.0.0.1`:
+
+```console
+$ curl -s http://10.0.0.5:50001/health
+{"status":"ok"}
+```
+
+Then create a custom NemoClaw preset for the host-side service.
+Replace `10.0.0.5`, `50001`, paths, methods, and binaries with the service you want the sandbox to reach:
+
+```yaml
+preset:
+  name: host-memory-api
+  description: "Host memory API"
+network_policies:
+  host_memory_api:
+    name: host_memory_api
+    endpoints:
+      - host: 10.0.0.5
+        port: 50001
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/health" }
+    binaries:
+      - { path: /usr/bin/curl }
+```
+
+Apply the preset to the running sandbox with the NemoClaw CLI:
+
+```console
+$ nemoclaw my-assistant policy-add --from-file ./host-memory-api.yaml
+```
+
+After you apply the policy, retry the request from inside the sandbox without disabling the proxy:
+
+```console
+$ curl -s http://10.0.0.5:50001/health
+{"status":"ok"}
+```
+
+If the request is still denied, check the blocked request in `openshell term`.
+The policy `binaries` list must include the executable path that actually made the request.
+If the response changes from `policy_denied` to `upstream_unreachable`, the policy matched, but the OpenShell gateway could not reach the host IP and port.
+
 ### Agent cannot reach an external host
 
 OpenShell blocks outbound connections to hosts not listed in the network policy.
