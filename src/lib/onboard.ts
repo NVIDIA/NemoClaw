@@ -83,6 +83,7 @@ const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
+  getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
@@ -90,6 +91,14 @@ const {
   validateOllamaModel,
   validateLocalProvider,
 } = localInference;
+const {
+  ensureOllamaAuthProxy,
+  getOllamaProxyToken,
+  isProxyHealthy,
+  killStaleProxy,
+  persistProxyToken,
+  startOllamaAuthProxy,
+} = require("./onboard-ollama-proxy");
 const inferenceConfig: typeof import("./inference-config") = require("./inference-config");
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
@@ -1959,12 +1968,9 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
 // classifySandboxCreateFailure — see validation import above
 
 // ---------------------------------------------------------------------------
-// Ollama auth proxy — moved to onboard-ollama-proxy.ts
+// Ollama model prompt/pull/prepare functions — from onboard-ollama-proxy.ts
+// (proxy lifecycle functions already imported at the top of this file)
 const {
-  ensureOllamaAuthProxy,
-  getOllamaProxyToken,
-  persistProxyToken,
-  startOllamaAuthProxy,
   promptOllamaModel,
   printOllamaExposureWarning,
   pullOllamaModel,
@@ -5225,8 +5231,29 @@ async function setupInference(
   } else if (provider === "vllm-local") {
     const validation = validateLocalProvider(provider);
     if (!validation.ok) {
-      console.error(`  ${validation.message}`);
-      process.exit(1);
+      const hostCheck = getLocalProviderHealthCheck(provider);
+      // Use run() and check exit status rather than coercing runCapture() output
+      // to boolean — curl -sf can leave output even on failure in edge cases.
+      const hostResponding = hostCheck
+        ? run(hostCheck, { ignoreError: true, suppressOutput: true }).status === 0
+        : false;
+
+      if (hostResponding) {
+        console.warn(`  ⚠ ${validation.message}`);
+        if (validation.diagnostic) {
+          console.warn(`  Diagnostic: ${validation.diagnostic}`);
+        }
+        console.warn(
+          "  The server is healthy on the host — continuing. " +
+            "The sandbox uses a different network path and may work correctly.",
+        );
+      } else {
+        console.error(`  ${validation.message}`);
+        if (validation.diagnostic) {
+          console.error(`  Diagnostic: ${validation.diagnostic}`);
+        }
+        process.exit(1);
+      }
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     // Use a dedicated internal credential env so the gateway does not pick
@@ -5260,19 +5287,44 @@ async function setupInference(
     // to unrelated OpenAI-backed sandboxes.
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider);
+    let proxyReady = false;
     if (!validation.ok) {
-      console.error(`  ${validation.message}`);
-      if (process.platform === "darwin") {
-        console.error(
-          "  On macOS, local inference also depends on OpenShell host routing support.",
-        );
+      // The container reachability check uses Docker's --add-host host-gateway,
+      // which may not work on all Docker configurations (e.g., Brev, rootless).
+      // The real sandbox uses k3s CoreDNS + NodeHosts — a different path.
+      // Try to start/restart the auth proxy before probing — this recovers
+      // from stale or missing proxy processes before we decide to abort.
+      if (!isWsl()) {
+        ensureOllamaAuthProxy();
+        proxyReady = isProxyHealthy();
       }
-      process.exit(1);
+      if (proxyReady) {
+        console.warn(`  ⚠ ${validation.message}`);
+        if (validation.diagnostic) {
+          console.warn(`  Diagnostic: ${validation.diagnostic}`);
+        }
+        console.warn(
+          "  The auth proxy is healthy on the host — continuing. " +
+            "The sandbox uses a different network path and may work correctly.",
+        );
+      } else {
+        console.error(`  ${validation.message}`);
+        if (validation.diagnostic) {
+          console.error(`  Diagnostic: ${validation.diagnostic}`);
+        }
+        if (process.platform === "darwin") {
+          console.error(
+            "  On macOS, local inference also depends on OpenShell host routing support.",
+          );
+        }
+        process.exit(1);
+      }
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     let ollamaCredential = "ollama";
     if (!isWsl()) {
-      ensureOllamaAuthProxy();
+      // Skip if already started during the fallback recovery above.
+      if (!proxyReady) ensureOllamaAuthProxy();
       const proxyToken = getOllamaProxyToken();
       if (!proxyToken) {
         console.error(

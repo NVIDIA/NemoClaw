@@ -33,10 +33,10 @@ const {
   fetchGatewayAuthTokenFromSandbox,
   startGatewayForRecovery,
   pruneKnownHostsEntries,
-  ensureOllamaAuthProxy,
   hydrateCredentialEnv,
   isNonInteractive,
 } = require("./lib/onboard");
+const { ensureOllamaAuthProxy } = require("./lib/onboard-ollama-proxy");
 const { parseGatewayTokenArgs, runGatewayTokenCommand } = require("./lib/gateway-token-command");
 const {
   getCredential,
