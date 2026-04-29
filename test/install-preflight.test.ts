@@ -2984,17 +2984,21 @@ exit 0`,
   });
 
   it("--yes-i-accept-third-party-software alone is sufficient to clear the fail-fast gate", () => {
-    // Sanity: with the #2670 fix, this flag alone should NOT trigger the new
-    // fail-fast gate. (Whether the install ultimately succeeds depends on
-    // unrelated phases — we only assert that the gate doesn't preempt it.)
-    const { result } = runInstaller({ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" });
+    // The flag implies non-interactive intent (set by main() before the
+    // preflight check), so it must clear the gate AND let the install
+    // progress past preflight into phase 1 — assert phases is non-empty
+    // so the test doesn't false-pass if the install bailed for some other
+    // reason while the TTY error happened to be absent from output.
+    const { result, phases } = runInstaller({ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" });
     const output = `${result.stdout}${result.stderr}`;
     expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(phases).not.toBe("");
   });
 
   it("--non-interactive alone is sufficient to clear the fail-fast gate", () => {
-    const { result } = runInstaller({ NEMOCLAW_NON_INTERACTIVE: "1" });
+    const { result, phases } = runInstaller({ NEMOCLAW_NON_INTERACTIVE: "1" });
     const output = `${result.stdout}${result.stderr}`;
     expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(phases).not.toBe("");
   });
 });
