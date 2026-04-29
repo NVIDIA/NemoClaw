@@ -1657,7 +1657,7 @@ jobs:
         gpu-e2e,
         gpu-double-onboard-e2e,
       ]
-    if: ${{ always() && github.event_name == 'schedule' }}
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     permissions:
       actions: read
     steps:
