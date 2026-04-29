@@ -18,6 +18,7 @@
 #   credential-migration-e2e Validates legacy ~/.nemoclaw/credentials.json migration to the
 #                            OpenShell gateway, secure zero-fill on unlink, allowlist filter
 #                            on non-credential env keys, and symlink-safe deletion.
+#   launchable-smoke-e2e     Community install path (brev-launchable-ci-cpu.sh) on ubuntu-latest.
 #   gpu-e2e                  Local Ollama inference on an NVKS ephemeral GPU runner.
 #   gpu-double-onboard-e2e   Ollama proxy token consistency after re-onboard (#2553).
 #   notify-on-failure        Auto-creates a GitHub issue when any E2E job fails.
@@ -53,7 +54,7 @@ on:
           upgrade-stale-sandbox-e2e, rebuild-hermes-e2e, double-onboard-e2e,
           onboard-repair-e2e, onboard-resume-e2e, runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e,
-          overlayfs-autofix-e2e, gpu-e2e, gpu-double-onboard-e2e
+          overlayfs-autofix-e2e, launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e
         required: false
         type: string
         default: ""
@@ -1278,6 +1279,59 @@ jobs:
             /tmp/nemoclaw-e2e-onboard-negative.log
           if-no-files-found: ignore
 
+  # ── Launchable Install-Flow Smoke Test ─────────────────────────
+  # Validates the community install path (brev-launchable-ci-cpu.sh) end-to-end.
+  # The launchable script has ZERO Brev dependencies — it's a generic Ubuntu
+  # bootstrap script that runs on ubuntu-latest. Catches regressions like the
+  # Apr 20-25 Brev outage (#2472, #2482) and container reachability fallback (#2425).
+  # See: issue #2599
+  launchable-smoke-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',launchable-smoke-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run launchable install-flow smoke test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          SKIP_DOCKER_PULL: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-launchable-smoke.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchable-smoke-install-log
+          path: /tmp/nemoclaw-launchable-install.log
+          if-no-files-found: ignore
+
+      - name: Upload onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchable-smoke-onboard-log
+          path: /tmp/nemoclaw-launchable-onboard.log
+          if-no-files-found: ignore
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchable-smoke-test-log
+          path: /tmp/nemoclaw-launchable-test.log
+          if-no-files-found: ignore
+
   # ── GPU E2E (Ollama local inference) ──────────────────────────
   # Runs on an NVKS ephemeral GPU runner (RTX Pro 6000, 36 GB VRAM).
   # Each job gets a fresh VM — no state leakage between runs.
@@ -1423,6 +1477,7 @@ jobs:
         credential-sanitization-e2e,
         telegram-injection-e2e,
         overlayfs-autofix-e2e,
+        launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
       ]

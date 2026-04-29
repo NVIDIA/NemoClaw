@@ -42,9 +42,10 @@ export default defineConfig({
       },
       {
         test: {
-          name: "e2e-brev",
+          name: "e2e-branch-validation",
           include: ["test/e2e/brev-e2e.test.ts"],
-          // Only run when explicitly targeted: npx vitest run --project e2e-brev
+          // Branch validation E2E: installs from source on a Brev instance.
+          // Only run when explicitly targeted: npx vitest run --project e2e-branch-validation
           enabled: !!process.env.BREV_API_TOKEN,
         },
       },
