@@ -2917,7 +2917,7 @@ async function sandboxSkillDeploy(sandboxName: string, args: string[] = []): Pro
   }
 }
 
-async function sandboxSkillInstall(sandboxName, args = []) {
+async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Promise<void> {
   const sub = args[0];
   if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
     console.log("");
@@ -2948,7 +2948,7 @@ async function sandboxSkillInstall(sandboxName, args = []) {
   process.exit(1);
 }
 
-async function sandboxPolicyRemove(sandboxName, args = []) {
+async function sandboxPolicyRemove(sandboxName: string, args: string[] = []): Promise<void> {
   const dryRun = args.includes("--dry-run");
   const skipConfirm =
     args.includes("--yes") ||

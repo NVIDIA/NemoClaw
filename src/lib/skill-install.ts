@@ -333,10 +333,12 @@ export function checkExisting(ctx: SshContext, paths: SkillPaths): boolean | nul
     checks.push(`test -f "${paths.mirrorDir}/SKILL.md"`);
   }
   const result = sshExec(ctx, `{ ${checks.join(" || ")}; } && echo EXISTS || echo ABSENT`);
-  if (result === null) {
+  if (result === null || result.status !== 0) {
     return null;
   }
-  return result.stdout === "EXISTS";
+  if (result.stdout === "EXISTS") return true;
+  if (result.stdout === "ABSENT") return false;
+  return null;
 }
 
 /**

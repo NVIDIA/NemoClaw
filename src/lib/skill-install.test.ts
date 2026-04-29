@@ -369,18 +369,18 @@ describe("verifyRemove (unit — no SSH)", () => {
 // ── checkExisting ────────────────────────────────────────────────────────────
 
 describe("checkExisting (unit — no SSH)", () => {
-  it("returns false when SSH is unreachable for OpenClaw paths", () => {
+  it("returns null when SSH is unreachable for OpenClaw paths", () => {
     const paths = resolvePaths(null, "test-skill");
     const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
-    expect(checkExisting(ctx, paths)).toBe(false);
+    expect(checkExisting(ctx, paths)).toBeNull();
   });
 
-  it("returns false when SSH is unreachable for non-OpenClaw paths", () => {
+  it("returns null when SSH is unreachable for non-OpenClaw paths", () => {
     const paths = resolvePaths(
       { name: "hermes", configPaths: { immutableDir: "/sandbox/.hermes", writableDir: "/sandbox/.hermes-data" } },
       "test-skill",
     );
     const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
-    expect(checkExisting(ctx, paths)).toBe(false);
+    expect(checkExisting(ctx, paths)).toBeNull();
   });
 });
