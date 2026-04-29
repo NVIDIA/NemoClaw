@@ -110,5 +110,277 @@ reviews:
         - NVIDIA must be all caps (not Nvidia, nvidia).
         - NemoClaw, OpenClaw, and OpenShell must use correct casing.
         - No emoji in technical prose.
+
+    # ── E2E test recommendations ──────────────────────────────────
+    # Maps sensitive file paths to the nightly E2E jobs that exercise them.
+    # CodeRabbit surfaces these as review comments on PRs that touch a
+    # matched path, so reviewers know which E2E jobs to run before merge.
+    #
+    # When adding a new E2E job to nightly-e2e.yaml, add a matching
+    # path_instructions entry below. The cross-validation test in
+    # test/validate-e2e-coverage.test.ts verifies consistency.
+
+    - path: "scripts/nemoclaw-start.sh"
+      instructions: &e2e-entrypoint |
+        This file is a sandbox entrypoint script. Changes affect every
+        sandbox boot and are invisible to unit tests (Landlock, non-root
+        execution, process lifecycle).
+
+        **E2E test recommendation:**
+        - `sandbox-survival-e2e` — gateway restart recovery
+        - `sandbox-operations-e2e` — process recovery after gateway kill
+        - `cloud-e2e` — full onboard + cloud inference
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sandbox-survival-e2e,sandbox-operations-e2e,cloud-e2e
+        ```
+
+    - path: "scripts/lib/sandbox-init.sh"
+      instructions: *e2e-entrypoint
+
+    - path: "Dockerfile"
+      instructions: &e2e-dockerfile |
+        This file affects the sandbox container image. Layer ordering,
+        permissions, and baked config changes are only testable with a
+        real container build.
+
+        **E2E test recommendation:**
+        - `cloud-e2e` — full onboard + cloud inference
+        - `sandbox-survival-e2e` — gateway restart recovery
+        - `hermes-e2e` — Hermes agent onboard + inference
+        - `rebuild-openclaw-e2e` — workspace state survives rebuild
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-survival-e2e,hermes-e2e,rebuild-openclaw-e2e
+        ```
+
+    - path: "Dockerfile.base"
+      instructions: *e2e-dockerfile
+
+    - path: "nemoclaw-blueprint/scripts/http-proxy-fix.js"
+      instructions: |
+        This file is the L7 proxy rewrite script. Changes affect all
+        inference routing through the proxy. FORWARD-mode path needs
+        manual validation until a dedicated forward-proxy-e2e exists.
+
+        **E2E test recommendation:**
+        - `cloud-e2e` — full inference through the proxy chain
+        - `inference-routing-e2e` — credential isolation + error classification
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,inference-routing-e2e
+        ```
+
+    - path: "src/lib/onboard.ts"
+      instructions: |
+        This file contains core onboarding logic. Changes here affect
+        the full sandbox creation and configuration flow.
+
+        **E2E test recommendation:**
+        - `cloud-e2e` — full onboard + cloud inference
+        - `sandbox-operations-e2e` — multi-sandbox lifecycle
+        - `rebuild-openclaw-e2e` — workspace state survives rebuild
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e
+        ```
+
+    - path: "src/nemoclaw.ts"
+      instructions: |
+        This file contains CLI dispatch, status, recovery, and connect
+        functions. Changes affect sandbox lifecycle commands.
+
+        **E2E test recommendation:**
+        - `sandbox-survival-e2e` — gateway restart recovery
+        - `sandbox-operations-e2e` — process recovery after gateway kill
+        - `skip-permissions-e2e` — permissive policy activation
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sandbox-survival-e2e,sandbox-operations-e2e,skip-permissions-e2e
+        ```
+
+    - path: "src/lib/cluster-image-patch.ts"
+      instructions: &e2e-overlayfs |
+        This file handles Docker 26+ overlayfs compatibility. Changes
+        are only testable under real Docker + K3s execution.
+
+        **E2E test recommendation:**
+        - `overlayfs-autofix-e2e` — Docker 26+ nested-mount auto-fix
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=overlayfs-autofix-e2e
+        ```
+
+    - path: "src/lib/preflight.ts"
+      instructions: *e2e-overlayfs
+
+    - path: "src/lib/deploy.ts"
+      instructions: |
+        This file contains deployment lifecycle logic (start/stop,
+        cloudflared tunnel, uninstall).
+
+        **E2E test recommendation:**
+        - `deployment-services-e2e` — backup/restore, start/stop, uninstall
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=deployment-services-e2e
+        ```
+
+    - path: "src/lib/sandbox-state.ts"
+      instructions: |
+        This file manages sandbox state (backup, restore, rebuild,
+        snapshot). Changes affect data persistence across sandbox
+        lifecycle operations.
+
+        **E2E test recommendation:**
+        - `snapshot-commands-e2e` — snapshot create/list/restore lifecycle
+        - `rebuild-openclaw-e2e` — workspace state survives rebuild
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=snapshot-commands-e2e,rebuild-openclaw-e2e
+        ```
+
+    - path: "src/lib/shields*.ts"
+      instructions: |
+        These files control shields down/up, config mutability, audit
+        trail, and auto-restore timer.
+
+        **E2E test recommendation:**
+        - `shields-config-e2e` — shields lifecycle + config get/set/rotate
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=shields-config-e2e
+        ```
+
+    - path: "agents/hermes/**"
+      instructions: |
+        This directory contains the Hermes agent. Changes affect
+        multi-agent onboarding, health probes, and inference routing.
+
+        **E2E test recommendation:**
+        - `hermes-e2e` — Hermes onboard + health probe + live inference
+        - `rebuild-hermes-e2e` — Hermes upgrade path
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,rebuild-hermes-e2e
+        ```
+
+    - path: "nemoclaw-blueprint/policies/**"
+      instructions: |
+        This directory contains network policy definitions and presets.
+        Changes affect sandbox egress rules and SSRF filtering.
+
+        **E2E test recommendation:**
+        - `network-policy-e2e` — deny-by-default, whitelist, hot-reload, SSRF
+        - `skip-permissions-e2e` — permissive policy activation
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=network-policy-e2e,skip-permissions-e2e
+        ```
+
+    - path: "test/e2e/test-issue-2478-crash-loop-recovery.sh"
+      instructions: |
+        STAYS_IN_PR_UNTIL_SHIP — long-running soak test for the gateway
+        recovery preload chain hardening (issue #2478). Removed in the
+        same commit that drops the test file before merge.
+
+        **E2E test recommendation:**
+        - `issue-2478-crash-loop-recovery-e2e` — gateway recovery preload
+          chain hardening soak
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=issue-2478-crash-loop-recovery-e2e
+        ```
+
+    # ── Split cloud-experimental tests (#2644) ──────────────────
+    - path: "test/e2e/test-cloud-onboard-e2e.sh"
+      instructions: &e2e-cloud-onboard |
+        This script tests the public installer flow, Landlock read-only
+        enforcement, API key leak detection, and inference.local HTTPS.
+
+        **E2E test recommendation:**
+        - `cloud-onboard-e2e` — public installer + sandbox health + security
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-onboard-e2e
+        ```
+
+    - path: "test/e2e/e2e-cloud-experimental/checks/**"
+      instructions: *e2e-cloud-onboard
+
+    - path: "test/e2e/test-cloud-inference-e2e.sh"
+      instructions: &e2e-cloud-inference |
+        This script tests live chat via inference.local and validates
+        the skill filesystem layout inside the sandbox.
+
+        **E2E test recommendation:**
+        - `cloud-inference-e2e` — live cloud inference + skill filesystem
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-inference-e2e
+        ```
+
+    - path: "test/e2e/test-skill-agent-e2e.sh"
+      instructions: &e2e-skill-agent |
+        This script tests skill injection into the sandbox and verifies
+        the agent reads the skill and returns a verification token.
+
+        **E2E test recommendation:**
+        - `skill-agent-e2e` — skill injection + agent verification
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=skill-agent-e2e
+        ```
+
+    - path: "test/e2e/e2e-cloud-experimental/features/**"
+      instructions: *e2e-skill-agent
+
+    - path: "test/e2e/test-docs-validation.sh"
+      instructions: &e2e-docs-validation |
+        This script validates CLI/docs parity (nemoclaw --help vs
+        commands.md) and markdown link resolution.
+
+        **E2E test recommendation:**
+        - `docs-validation-e2e` — CLI/docs parity + link validation
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=docs-validation-e2e
+        ```
+
+    - path: "test/e2e/e2e-cloud-experimental/check-docs.sh"
+      instructions: *e2e-docs-validation
+
+    - path: "docs/reference/commands.md"
+      instructions: *e2e-docs-validation
+
+    - path: ".github/workflows/nightly-e2e.yaml"
+      instructions: |
+        This is the nightly E2E workflow definition. Changes here affect
+        which tests run and how they are triggered.
+
+        If a new E2E job is added, verify a corresponding
+        `path_instructions` entry exists in `.coderabbit.yaml` for the
+        source files it covers. The cross-validation test in
+        `test/validate-e2e-coverage.test.ts` checks this automatically.
+
+        If a job is renamed or removed, update the corresponding
+        `.coderabbit.yaml` path_instructions entries and the
+        `notify-on-failure` needs list.
 chat:
   auto_reply: true

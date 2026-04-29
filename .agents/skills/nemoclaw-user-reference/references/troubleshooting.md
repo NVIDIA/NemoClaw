@@ -568,7 +568,7 @@ $ nemoclaw <sandbox> channels add <telegram|discord|slack>
 $ nemoclaw <sandbox> channels remove <telegram|discord|slack>
 ```
 
-`channels add` stores credentials under `~/.nemoclaw/credentials.json` and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
+`channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
 
 ### `nemoclaw <sandbox> config set` refuses a key that does not currently exist

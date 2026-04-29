@@ -3,6 +3,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { dockerExecFileSync } from "./docker/exec";
 import { platform, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -255,10 +256,9 @@ function collectDocker(collectDir: string, quick: boolean): void {
   // NemoClaw-labelled containers
   if (commandExists("docker")) {
     try {
-      const output = execFileSync(
-        "docker",
+      const output = dockerExecFileSync(
         ["ps", "-a", "--filter", "label=com.nvidia.nemoclaw", "--format", "{{.Names}}"],
-        { encoding: "utf-8", timeout: TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] },
+        { timeout: TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] },
       );
       const containers = output.split("\n").filter((c) => c.trim().length > 0);
       for (const cid of containers) {

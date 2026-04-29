@@ -46,9 +46,10 @@ describe("run with argv array", () => {
     expect(result).toContain("rm");
   });
 
-  it("still works with string commands (legacy path)", () => {
-    const result = runner.run("echo hello", { suppressOutput: true });
-    expect(result.status).toBe(0);
+  it("rejects string commands", () => {
+    expect(() => runner.run("echo hello", { suppressOutput: true })).toThrow(
+      /argv array instead/,
+    );
   });
 
   it("surfaces ENOENT error for missing executables", () => {
@@ -59,6 +60,39 @@ describe("run with argv array", () => {
     // spawnSync sets result.error for missing executables
     expect(result.error).toBeDefined();
     expect(result.error.code).toBe("ENOENT");
+  });
+});
+
+describe("runShell", () => {
+  it("runs an explicit shell command string", () => {
+    const result = runner.runShell("echo hello", { suppressOutput: true });
+    expect(result.status).toBe(0);
+  });
+});
+
+describe("runInteractive with argv array", () => {
+  it("executes an interactive argv command", () => {
+    const result = runner.runInteractive(["echo", "hello"], { suppressOutput: true });
+    expect(result.status).toBe(0);
+  });
+
+  it("rejects string commands", () => {
+    expect(() => runner.runInteractive("echo hello", { suppressOutput: true })).toThrow(
+      /argv array instead/,
+    );
+  });
+
+  it("rejects shell: true to prevent security bypass", () => {
+    expect(() => runner.runInteractive(["echo", "hello"], { shell: true })).toThrow(
+      /shell option is forbidden/,
+    );
+  });
+});
+
+describe("runInteractiveShell", () => {
+  it("runs an explicit interactive shell command string", () => {
+    const result = runner.runInteractiveShell("echo hello", { suppressOutput: true });
+    expect(result.status).toBe(0);
   });
 });
 

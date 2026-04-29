@@ -303,6 +303,24 @@ describe("nim", () => {
     });
   });
 
+  describe("shouldShowNimLine", () => {
+    it("hides the line for cloud-only sandboxes (no container, nothing running)", () => {
+      expect(nim.shouldShowNimLine(null, false)).toBe(false);
+      expect(nim.shouldShowNimLine(undefined, false)).toBe(false);
+      expect(nim.shouldShowNimLine("", false)).toBe(false);
+    });
+
+    it("shows the line when the sandbox is bound to a NIM container", () => {
+      expect(nim.shouldShowNimLine("nim-foo", false)).toBe(true);
+      expect(nim.shouldShowNimLine("nim-foo", true)).toBe(true);
+    });
+
+    it("still surfaces an orphan NIM container even when none is registered", () => {
+      expect(nim.shouldShowNimLine(null, true)).toBe(true);
+      expect(nim.shouldShowNimLine(undefined, true)).toBe(true);
+    });
+  });
+
   describe("isNgcLoggedIn", () => {
     const fs = require("fs");
     const os = require("os");

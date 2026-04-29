@@ -80,20 +80,24 @@ function spawnAndHandle(
 }
 
 /**
- * Run a command, streaming stdout/stderr (redacted) to the terminal.
+ * Run a program directly with argv-style arguments, bypassing shell parsing.
  * Exits the process on failure unless opts.ignoreError is true.
  *
- * Accepts two forms:
- *   run("bash -c string")  — legacy: passes the string to bash for interpretation
- *   run(["docker", "rm", name])  — safe: calls spawnSync(exe, args) with no shell
- *
- * When an argv array is passed, the shell option is forbidden to prevent
- * callers from accidentally re-enabling shell interpretation.
+ * Shell-string execution is intentionally unsupported here. If a caller truly
+ * needs shell parsing, it must opt in explicitly via runShell().
  */
-function run(cmd: string | readonly string[], opts: RunnerOptions = {}): SpawnResult {
-  if (Array.isArray(cmd)) {
-    return runArrayCmd(cmd, opts);
+function run(cmd: readonly string[], opts: RunnerOptions = {}): SpawnResult {
+  if (!Array.isArray(cmd)) {
+    throw new Error("run no longer accepts shell strings; pass an argv array instead");
   }
+  return runArrayCmd(cmd, opts);
+}
+
+/**
+ * Run an explicit shell command string through bash -c.
+ * Exits the process on failure unless opts.ignoreError is true.
+ */
+function runShell(cmd: string, opts: RunnerOptions = {}): SpawnResult {
   const shellCmd = String(cmd);
   const stdio = opts.stdio ?? ["ignore", "pipe", "pipe"];
   return spawnAndHandle("bash", ["-c", shellCmd], opts, stdio, shellCmd);
@@ -101,11 +105,16 @@ function run(cmd: string | readonly string[], opts: RunnerOptions = {}): SpawnRe
 
 /**
  * Internal: execute an argv array via spawnSync with no shell.
- * Shared by run() and kept separate for clarity.
+ * Shared by run() and runInteractive() and kept separate for clarity.
  */
-function runArrayCmd(cmd: readonly string[], opts: RunnerOptions = {}): SpawnResult {
+function runArrayCmd(
+  cmd: readonly string[],
+  opts: RunnerOptions = {},
+  defaultStdio: RunnerOptions["stdio"] = ["ignore", "pipe", "pipe"],
+  callerName = "run",
+): SpawnResult {
   if (cmd.length === 0) {
-    throw new Error("run: argv array must not be empty");
+    throw new Error(`${callerName}: argv array must not be empty`);
   }
 
   const exe = cmd[0];
@@ -114,10 +123,10 @@ function runArrayCmd(cmd: readonly string[], opts: RunnerOptions = {}): SpawnRes
 
   // Guard: re-enabling shell interpretation defeats the purpose of argv arrays.
   if (spawnOpts.shell) {
-    throw new Error("run: shell option is forbidden when passing an argv array");
+    throw new Error(`${callerName}: shell option is forbidden when passing an argv array`);
   }
 
-  const stdio = stdioCfg ?? ["ignore", "pipe", "pipe"];
+  const stdio = stdioCfg ?? defaultStdio;
 
   const result = spawnSync(exe, args, {
     ...spawnOpts,
@@ -145,10 +154,21 @@ function runArrayCmd(cmd: readonly string[], opts: RunnerOptions = {}): SpawnRes
 }
 
 /**
- * Run a shell command interactively (stdin inherited) while capturing and redacting stdout/stderr.
+ * Run a program directly with argv-style arguments while inheriting stdin.
  * Exits the process on failure unless opts.ignoreError is true.
  */
-function runInteractive(cmd: string, opts: RunnerOptions = {}): SpawnResult {
+function runInteractive(cmd: readonly string[], opts: RunnerOptions = {}): SpawnResult {
+  if (!Array.isArray(cmd)) {
+    throw new Error("runInteractive no longer accepts shell strings; pass an argv array instead");
+  }
+  return runArrayCmd(cmd, opts, ["inherit", "pipe", "pipe"], "runInteractive");
+}
+
+/**
+ * Run an explicit shell command string interactively (stdin inherited).
+ * Exits the process on failure unless opts.ignoreError is true.
+ */
+function runInteractiveShell(cmd: string, opts: RunnerOptions = {}): SpawnResult {
   const stdio = opts.stdio ?? ["inherit", "pipe", "pipe"];
   return spawnAndHandle("bash", ["-c", cmd], opts, stdio, cmd);
 }
@@ -259,9 +279,11 @@ export {
   SCRIPTS,
   redact,
   run,
+  runShell,
   runCapture,
   runFile,
   runInteractive,
+  runInteractiveShell,
   shellQuote,
   validateName,
 };

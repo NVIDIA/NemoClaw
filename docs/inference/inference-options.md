@@ -34,6 +34,8 @@ OpenShell intercepts inference traffic on the host and forwards it to the provid
 
 Provider credentials stay on the host.
 The sandbox does not receive your API key.
+Local Ollama and local vLLM do not require your host `OPENAI_API_KEY`.
+NemoClaw uses provider-specific local tokens for those routes, and rebuilds of legacy local-inference sandboxes migrate away from stale OpenAI credential requirements.
 
 ## Provider Status
 
@@ -108,6 +110,7 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 | Anthropic-compatible | Tries `/v1/messages`. |
 | NVIDIA Endpoints (manual model entry) | Validates the model name against the catalog API. |
 | Compatible endpoints | Sends a real inference request because many proxies do not expose a `/models` endpoint. For OpenAI-compatible endpoints, the probe includes tool calling before NemoClaw favors `/responses`. |
+| Local NVIDIA NIM | Uses the same validation behavior as NVIDIA Endpoints and skips the `/v1/responses` probe for endpoints that do not expose it. |
 
 ## Next Steps
 

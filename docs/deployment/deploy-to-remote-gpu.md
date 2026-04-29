@@ -132,6 +132,7 @@ $ nemoclaw onboard
 ```
 
 These values are baked into the sandbox image at build time.
+They are also forwarded into the runtime container during sandbox creation, so `/tmp/nemoclaw-proxy-env.sh` uses the same host and port that the image build used.
 Only alphanumeric characters, dots, hyphens, and colons are accepted for the host.
 The port must be numeric (0-65535).
 Changing the proxy after onboarding requires re-running `nemoclaw onboard`.

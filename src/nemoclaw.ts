@@ -21,30 +21,25 @@ const R = _useColor ? "\x1b[0m" : "";
 const _RD = _useColor ? "\x1b[1;31m" : "";
 const YW = _useColor ? "\x1b[1;33m" : "";
 
+const { ROOT, run, runInteractive, shellQuote, validateName } = require("./lib/runner");
 const {
-  ROOT,
-  run,
-  runCapture: _runCapture,
-  runInteractive,
-  shellQuote,
-  validateName,
-} = require("./lib/runner");
+  dockerCapture,
+  dockerListImagesFormat,
+  dockerRemoveVolumesByPrefix,
+  dockerRmi,
+} = require("./lib/docker");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
 const {
   fetchGatewayAuthTokenFromSandbox,
   startGatewayForRecovery,
   pruneKnownHostsEntries,
   ensureOllamaAuthProxy,
+  hydrateCredentialEnv,
   isNonInteractive,
 } = require("./lib/onboard");
-const {
-  parseGatewayTokenArgs,
-  runGatewayTokenCommand,
-} = require("./lib/gateway-token-command");
+const { parseGatewayTokenArgs, runGatewayTokenCommand } = require("./lib/gateway-token-command");
 const {
   getCredential,
-  deleteCredential,
-  listCredentialKeys,
   prompt: askPrompt,
 } = require("./lib/credentials");
 const registry = require("./lib/registry");
@@ -100,6 +95,7 @@ import {
   knownChannelNames,
   persistChannelTokens,
 } from "./lib/sandbox-channels";
+const onboardProviders = require("./lib/onboard-providers");
 
 // ── Global commands (derived from command registry) ──────────────
 
@@ -172,12 +168,14 @@ function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
 }
 
 function cleanupGatewayAfterLastSandbox() {
-  runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], { ignoreError: true });
+  runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], {
+    ignoreError: true,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
   runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], { ignoreError: true });
-  run(
-    `docker volume ls -q --filter "name=openshell-cluster-${NEMOCLAW_GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${NEMOCLAW_GATEWAY_NAME}" | xargs docker volume rm || true`,
-    { ignoreError: true },
-  );
+  dockerRemoveVolumesByPrefix(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, {
+    ignoreError: true,
+  });
 }
 
 function hasNoLiveSandboxes() {
@@ -287,15 +285,31 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
   const script =
     agentScript ||
     [
-      "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
+      // Source /tmp/nemoclaw-proxy-env.sh explicitly so NODE_OPTIONS preload
+      // guards (safety-net, ciao, slack, …) survive gateway respawn. Without
+      // this, library errors crash-loop the gateway because the original
+      // .bashrc-only path silently failed when the env file was unreadable
+      // or the shell did not source ~/.bashrc. See #2478. Mirrors the
+      // hardened block in src/lib/agent-runtime.ts:buildRecoveryScript.
+      // Defer warning emission until AFTER touch+chmod gateway.log so
+      // warnings land in the persistent log a sysadmin would tail. Stderr
+      // alone hides them because executeSandboxCommand captures stderr
+      // without surfacing it. Mirrors src/lib/agent-runtime.ts.
+      "if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; else _PE_MISSING=1; fi;",
+      "[ -f ~/.bashrc ] && . ~/.bashrc;",
+      'case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _GUARDS_MISSING=0 ;; *) _GUARDS_MISSING=1 ;; esac;',
       `if curl -sf --max-time 3 http://127.0.0.1:${DASHBOARD_PORT}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
       "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
       "rm -f /tmp/gateway.log /tmp/auto-pair.log;",
       "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
       "touch /tmp/auto-pair.log; chmod 600 /tmp/auto-pair.log;",
+      '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing — gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
+      '[ "$_GUARDS_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: NODE_OPTIONS missing safety-net preload — gateway may crash on unhandled library errors (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
       'OPENCLAW="$(command -v openclaw)";',
       'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
-      `nohup "$OPENCLAW" gateway run --port ${DASHBOARD_PORT} > /tmp/gateway.log 2>&1 &`,
+      // Append rather than truncate so [gateway-recovery] WARNING lines
+      // written above survive past the launch. (#2478)
+      `nohup "$OPENCLAW" gateway run --port ${DASHBOARD_PORT} >> /tmp/gateway.log 2>&1 &`,
       "GPID=$!; sleep 2;",
       'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
     ].join(" ");
@@ -1171,6 +1185,29 @@ function uninstall(args: string[]) {
   });
 }
 
+// Suffixes that mark a per-sandbox messaging integration in the gateway's
+// provider list, not a NemoClaw-managed credential. The bridge providers are
+// created during onboarding (see src/lib/onboard.ts:3203,3208,3218) and torn
+// down by the channels/sandbox-delete flows. `nemoclaw credentials list`
+// hides them and `nemoclaw credentials reset` refuses to touch them so
+// users cannot accidentally break a live integration via the credentials
+// surface.
+const BRIDGE_PROVIDER_SUFFIXES: readonly string[] = [
+  "-telegram-bridge",
+  "-discord-bridge",
+  "-slack-bridge",
+  // Slack registers a second provider for the App-Level Token (used for
+  // Socket Mode). bridgeProviderName() emits `${sandbox}-slack-app` for
+  // SLACK_APP_TOKEN, so the guardrails must match that suffix too —
+  // otherwise the slack-app provider shows up as an ordinary credential
+  // and `credentials reset` would happily delete it.
+  "-slack-app",
+];
+
+function isBridgeProviderName(name: string): boolean {
+  return BRIDGE_PROVIDER_SUFFIXES.some((suffix) => name.endsWith(suffix));
+}
+
 async function credentialsCommand(args: string[]): Promise<void> {
   const sub = args[0];
   if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
@@ -1178,54 +1215,102 @@ async function credentialsCommand(args: string[]): Promise<void> {
     console.log("  Usage: nemoclaw credentials <subcommand>");
     console.log("");
     console.log("  Subcommands:");
-    console.log("    list                  List stored credential keys (values are not printed)");
-    console.log("    reset <KEY> [--yes]   Remove a stored credential so onboard re-prompts");
+    console.log("    list                  List provider credentials registered with the OpenShell gateway");
+    console.log("    reset <PROVIDER> [--yes]   Remove a provider credential so onboard re-prompts");
     console.log("");
-    console.log("  Stored at ~/.nemoclaw/credentials.json (mode 600)");
+    console.log("  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.");
+    console.log("  Nothing is persisted to host disk; deploy/non-onboard commands read from env vars.");
     console.log("");
     return;
   }
 
   if (sub === "list") {
-    const keys = listCredentialKeys();
-    if (keys.length === 0) {
-      console.log("  No stored credentials.");
-      return;
+    // Pin to the NemoClaw gateway so a different active gateway cannot make
+    // us list (or later delete) providers from the wrong place.
+    const recovery = await recoverNamedGatewayRuntime();
+    if (!recovery.recovered) {
+      console.error("  Could not query the NemoClaw OpenShell gateway. Is it running?");
+      console.error("  Run 'openshell gateway start --name nemoclaw' or 'nemoclaw onboard' first.");
+      process.exit(1);
     }
-    console.log("  Stored credentials:");
-    for (const k of keys) {
-      console.log(`    ${k}`);
+    const result = runOpenshell(["provider", "list", "--names"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.status !== 0) {
+      console.error("  Could not query OpenShell gateway. Is it running?");
+      console.error("  Run 'openshell gateway start --name nemoclaw' or 'nemoclaw onboard' first.");
+      process.exit(1);
+    }
+    const allNames = String(result.stdout || "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    // Show only credential providers. Per-sandbox messaging bridges are
+    // live integrations managed by the channels surface; surfacing them
+    // here would invite users to "reset" what looks like a credential and
+    // accidentally destroy a running bridge.
+    const credentialNames = allNames.filter((n) => !isBridgeProviderName(n)).sort();
+    const bridgeNames = allNames.filter((n) => isBridgeProviderName(n));
+    if (credentialNames.length === 0) {
+      console.log("  No provider credentials registered.");
+    } else {
+      console.log("  Providers registered with the OpenShell gateway:");
+      for (const name of credentialNames) {
+        console.log(`    ${name}`);
+      }
+    }
+    if (bridgeNames.length > 0) {
+      console.log("");
+      console.log(
+        `  ${String(bridgeNames.length)} per-sandbox messaging bridge(s) are also registered.`,
+      );
+      console.log(
+        "  Manage those with `nemoclaw <sandbox> channels list/remove/stop` — not this command.",
+      );
     }
     return;
   }
 
   if (sub === "reset") {
     const key = args[1];
-    // Validate that <KEY> is a real positional argument, not a flag like
-    // `--yes` that the user passed without a key. Without this guard, the
-    // missing-key path would mistakenly look up '--yes' as a credential.
+    // Validate that <PROVIDER> is a real positional argument, not a flag like
+    // `--yes` that the user passed without a key.
     if (!key || key.startsWith("-")) {
-      console.error("  Usage: nemoclaw credentials reset <KEY> [--yes]");
-      console.error("  Run 'nemoclaw credentials list' to see stored keys.");
+      console.error("  Usage: nemoclaw credentials reset <PROVIDER> [--yes]");
+      console.error("  KEY is an OpenShell provider name. Run 'nemoclaw credentials list' first.");
       process.exit(1);
     }
     // Reject unknown trailing arguments to keep scripted use predictable.
     const extraArgs = args.slice(2).filter((arg) => arg !== "--yes" && arg !== "-y");
     if (extraArgs.length > 0) {
       console.error(`  Unknown argument(s) for credentials reset: ${extraArgs.join(", ")}`);
-      console.error("  Usage: nemoclaw credentials reset <KEY> [--yes]");
+      console.error("  Usage: nemoclaw credentials reset <PROVIDER> [--yes]");
       process.exit(1);
     }
-    // Only consult the persisted credentials file — getCredential() falls back
-    // to process.env, which would let an env-only key pass this check even
-    // though there is nothing on disk to delete.
-    if (!listCredentialKeys().includes(key)) {
-      console.error(`  No stored credential found for '${key}'.`);
+    // Refuse to delete a per-sandbox messaging bridge — those are live
+    // integrations created/destroyed by the channels surface, not
+    // NemoClaw-managed credentials. Without this guard, scripting against
+    // the gateway provider list could tear down a running bridge and
+    // leave the sandbox in a half-configured state.
+    if (isBridgeProviderName(key)) {
+      console.error(
+        `  '${key}' is a per-sandbox messaging bridge, not a credential.`,
+      );
+      console.error(
+        "  Use `nemoclaw <sandbox> channels remove <telegram|discord|slack>` to retire",
+      );
+      console.error(
+        "  the integration (it tears down the bridge provider and rebuilds the sandbox),",
+      );
+      console.error(
+        "  or `nemoclaw <sandbox> channels stop <…>` to pause it without clearing tokens.",
+      );
       process.exit(1);
     }
     const skipPrompt = args.includes("--yes") || args.includes("-y");
     if (!skipPrompt) {
-      const answer = (await askPrompt(`  Remove stored credential '${key}'? [y/N]: `))
+      const answer = (await askPrompt(`  Remove provider '${key}' from the OpenShell gateway? [y/N]: `))
         .trim()
         .toLowerCase();
       if (answer !== "y" && answer !== "yes") {
@@ -1233,12 +1318,40 @@ async function credentialsCommand(args: string[]): Promise<void> {
         return;
       }
     }
-    const removed = deleteCredential(key);
-    if (removed) {
-      console.log(`  Removed '${key}' from ~/.nemoclaw/credentials.json`);
+    // Pin to the NemoClaw gateway so we cannot accidentally delete a
+    // provider from a different active gateway. We deliberately do NOT
+    // touch process.env here — `key` is an OpenShell provider name, and
+    // calling deleteCredential on it would silently strip an unrelated
+    // env entry whenever a provider name happens to share the shape of
+    // a credential env variable.
+    const recovery = await recoverNamedGatewayRuntime();
+    if (!recovery.recovered) {
+      console.error("  Could not reach the NemoClaw OpenShell gateway. Is it running?");
+      console.error("  Run 'openshell gateway start --name nemoclaw' or 'nemoclaw onboard' first.");
+      process.exit(1);
+    }
+    const result = runOpenshell(["provider", "delete", key], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.status === 0) {
+      console.log(`  Removed provider '${key}' from the OpenShell gateway.`);
       console.log("  Re-run 'nemoclaw onboard' to enter a new value.");
     } else {
-      console.error(`  No stored credential found for '${key}'.`);
+      console.error(`  Could not remove provider '${key}'.`);
+      // Earlier releases accepted a credential env-var name (e.g.
+      // NVIDIA_API_KEY) here; the API now takes an OpenShell provider
+      // name (nvidia-prod, openai-api, telegram-bridge, …). Surface the
+      // rename to anyone whose script is still passing the old shape.
+      if (/^[A-Z][A-Z0-9_]+$/.test(key)) {
+        console.error("");
+        console.error(`  '${key}' looks like a credential env variable name.`);
+        console.error("  As of this release, 'credentials reset' takes an OpenShell");
+        console.error("  provider name. Run 'nemoclaw credentials list' to see the");
+        console.error("  registered providers, then retry with one of those names.");
+      }
+      const stderr = String(result.stderr || "").trim();
+      if (stderr) console.error(`  ${stderr}`);
       process.exit(1);
     }
     return;
@@ -1778,14 +1891,15 @@ async function sandboxStatus(sandboxName: string) {
     }
   }
 
-  // NIM health
   const nimStat =
     sb && sb.nimContainer ? nim.nimStatusByName(sb.nimContainer) : nim.nimStatus(sandboxName);
-  console.log(
-    `    NIM:      ${nimStat.running ? `running (${nimStat.container})` : "not running"}`,
-  );
-  if (nimStat.running) {
-    console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
+  if (nim.shouldShowNimLine(sb && sb.nimContainer, nimStat.running)) {
+    console.log(
+      `    NIM:      ${nimStat.running ? `running (${nimStat.container})` : "not running"}`,
+    );
+    if (nimStat.running) {
+      console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
+    }
   }
   console.log("");
 }
@@ -1862,7 +1976,9 @@ async function sandboxPolicyAdd(sandboxName: string, args: string[] = []): Promi
     }
     const files = fs
       .readdirSync(absDir, { withFileTypes: true })
-      .filter((ent: { name: string; isFile(): boolean }) => ent.isFile() && /\.ya?ml$/i.test(ent.name))
+      .filter(
+        (ent: { name: string; isFile(): boolean }) => ent.isFile() && /\.ya?ml$/i.test(ent.name),
+      )
       .map((ent: { name: string }) => path.join(absDir, ent.name))
       .sort();
     if (files.length === 0) {
@@ -2039,6 +2155,108 @@ function sandboxChannelsList(sandboxName: string) {
   console.log("");
 }
 
+// Map a channel + token-env-key to the OpenShell provider name onboarding
+// uses for it. Mirrors the names in src/lib/onboard.ts:3201-3221 so a
+// channels-add upsert collides with (i.e. updates) the same provider that
+// a later rebuild would have created from scratch.
+function bridgeProviderName(sandboxName: string, channelName: string, envKey: string): string {
+  if (channelName === "slack" && envKey === "SLACK_APP_TOKEN") {
+    return `${sandboxName}-slack-app`;
+  }
+  return `${sandboxName}-${channelName}-bridge`;
+}
+
+// Push channel tokens to the OpenShell gateway and add the channel to the
+// sandbox registry's messagingChannels list. Done eagerly at `channels
+// add` time (not deferred to rebuild) because the host-side credential
+// helpers are env-only after the fix — without an immediate gateway
+// upsert plus registry update, a "rebuild later" answer would drop the
+// queued change since process.env disappears when the CLI exits.
+async function applyChannelAddToGatewayAndRegistry(
+  sandboxName: string,
+  channelName: string,
+  acquired: Record<string, string>,
+): Promise<void> {
+  const recovery = await recoverNamedGatewayRuntime();
+  if (!recovery.recovered) {
+    console.error("  Could not reach the NemoClaw OpenShell gateway. Tokens were staged");
+    console.error("  in env for this run only — re-run after starting the gateway, or run");
+    console.error("  'openshell gateway start --name nemoclaw' manually.");
+    process.exit(1);
+  }
+  const tokenDefs = Object.entries(acquired).map(([envKey, token]) => ({
+    name: bridgeProviderName(sandboxName, channelName, envKey),
+    envKey,
+    token,
+  }));
+  // upsertMessagingProviders handles create-or-update and process.exits on
+  // failure, so reaching the next line means every entry is registered.
+  onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
+
+  // Persist the enabled-channels list in the registry so a deferred
+  // `nemoclaw <sandbox> rebuild` knows the channel set without needing
+  // tokens on disk.
+  const entry = registry.getSandbox(sandboxName);
+  if (entry) {
+    const enabled = new Set(entry.messagingChannels || []);
+    enabled.add(channelName);
+    const disabled = (entry.disabledChannels || []).filter((c: string) => c !== channelName);
+    registry.updateSandbox(sandboxName, {
+      messagingChannels: Array.from(enabled).sort(),
+      disabledChannels: disabled,
+    });
+  }
+}
+
+// Remove a channel's bridge providers from the gateway and drop it from the
+// registry's messagingChannels list. Mirrors applyChannelAddToGatewayAndRegistry.
+async function applyChannelRemoveToGatewayAndRegistry(
+  sandboxName: string,
+  channelName: string,
+  channelTokenKeys: string[],
+): Promise<void> {
+  const recovery = await recoverNamedGatewayRuntime();
+  if (!recovery.recovered) {
+    console.error("  Could not reach the NemoClaw OpenShell gateway to delete the bridge.");
+    console.error("  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.");
+    process.exit(1);
+  }
+  // Capture each delete's outcome. If any non-NotFound failure surfaces
+  // we must NOT update the registry — otherwise NemoClaw would record
+  // the channel as removed locally while the bridge is still live in
+  // the gateway, which produces a half-configured sandbox the user
+  // can't easily recover.
+  const failed: string[] = [];
+  for (const envKey of channelTokenKeys) {
+    const name = bridgeProviderName(sandboxName, channelName, envKey);
+    const result = runOpenshell(["provider", "delete", name], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.status !== 0) {
+      const output = `${result.stdout || ""}${result.stderr || ""}`;
+      // Treat "not found" as success-equivalent — a previous run may
+      // have already deleted the provider.
+      if (!/\bNotFound\b|not found/i.test(output)) {
+        failed.push(name);
+      }
+    }
+  }
+  if (failed.length > 0) {
+    console.error(
+      `  Failed to delete bridge provider(s) from the OpenShell gateway: ${failed.join(", ")}.`,
+    );
+    console.error("  Registry not updated; re-run after resolving the gateway error.");
+    process.exit(1);
+  }
+
+  const entry = registry.getSandbox(sandboxName);
+  if (entry) {
+    const enabled = (entry.messagingChannels || []).filter((c: string) => c !== channelName);
+    registry.updateSandbox(sandboxName, { messagingChannels: enabled });
+  }
+}
+
 async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<void> {
   if (isNonInteractive()) {
     console.log("");
@@ -2107,7 +2325,13 @@ async function sandboxChannelsAdd(sandboxName: string, args: string[] = []): Pro
   }
 
   persistChannelTokens(acquired);
-  console.log(`  ${G}✓${R} Saved ${channelArg} credentials.`);
+  // Push to the gateway and update the registry NOW so that answering
+  // "rebuild later" (or running non-interactively) does not silently
+  // discard the change. Pre-fix this was safe because saveCredential()
+  // wrote credentials.json; with env-only persistence, exiting before
+  // the rebuild used to drop the queued token.
+  await applyChannelAddToGatewayAndRegistry(sandboxName, channelArg, acquired);
+  console.log(`  ${G}✓${R} Registered ${channelArg} bridge with the OpenShell gateway.`);
   await promptAndRebuild(sandboxName, `add '${channelArg}'`);
 }
 
@@ -2133,7 +2357,16 @@ async function sandboxChannelsRemove(sandboxName: string, args: string[] = []): 
   }
 
   clearChannelTokens(channel);
-  console.log(`  ${G}✓${R} Cleared stored ${channelArg} credentials.`);
+  // Same rationale as channels-add: tear down the gateway providers and
+  // drop the channel from the registry NOW so a deferred rebuild does
+  // not leave a stale bridge running against a token NemoClaw has
+  // already "removed" from the user's perspective.
+  await applyChannelRemoveToGatewayAndRegistry(
+    sandboxName,
+    channelArg,
+    getChannelTokenKeys(channel),
+  );
+  console.log(`  ${G}✓${R} Removed ${channelArg} bridge from the OpenShell gateway.`);
   await promptAndRebuild(sandboxName, `remove '${channelArg}'`);
 }
 
@@ -2189,6 +2422,56 @@ async function sandboxChannelsStart(sandboxName: string, args: string[] = []): P
   await sandboxChannelsSetEnabled(sandboxName, args, false);
 }
 
+function printSkillInstallUsage(): void {
+  console.log("");
+  console.log("  Usage: nemoclaw <sandbox> skill install <path>");
+  console.log("");
+  console.log("  Deploy a skill directory to a running sandbox.");
+  console.log(
+    "  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
+  );
+  console.log(
+    "  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
+  );
+  console.log("");
+}
+
+function looksLikeOpenClawPlugin(candidatePath: string): boolean {
+  const dir =
+    fs.existsSync(candidatePath) && fs.statSync(candidatePath).isDirectory()
+      ? candidatePath
+      : path.dirname(candidatePath);
+  if (!fs.existsSync(dir)) return false;
+  if (fs.existsSync(path.join(dir, "openclaw.plugin.json"))) return true;
+
+  const packageJsonPath = path.join(dir, "package.json");
+  if (!fs.existsSync(packageJsonPath)) return false;
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    const openclawBlock = packageJson?.openclaw;
+    return Boolean(
+      packageJson?.["openclaw.plugin"] === true ||
+      openclawBlock === true ||
+      (typeof openclawBlock === "object" &&
+        openclawBlock !== null &&
+        (openclawBlock.plugin === true ||
+          typeof openclawBlock.entry === "string" ||
+          typeof openclawBlock.main === "string" ||
+          (Array.isArray(openclawBlock.extensions) && openclawBlock.extensions.length > 0))),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function printPluginInstallHint(): void {
+  console.error("  This looks like an OpenClaw plugin, not a SKILL.md agent skill.");
+  console.error("  `skill install` only accepts skill directories or direct SKILL.md paths.");
+  console.error(
+    "  To use an OpenClaw plugin today, bake it into a custom sandbox image with `nemoclaw onboard --from <Dockerfile>`.",
+  );
+}
+
 /**
  * Install or update a local skill directory into a live sandbox and perform
  * any agent-specific post-install refresh needed for the new content to load.
@@ -2196,17 +2479,7 @@ async function sandboxChannelsStart(sandboxName: string, args: string[] = []): P
 async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Promise<void> {
   const sub = args[0];
   if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
-    console.log("");
-    console.log("  Usage: nemoclaw <sandbox> skill install <path>");
-    console.log("");
-    console.log("  Deploy a skill directory to a running sandbox.");
-    console.log(
-      "  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
-    );
-    console.log(
-      "  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
-    );
-    console.log("");
+    printSkillInstallUsage();
     return;
   }
 
@@ -2218,6 +2491,10 @@ async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Pr
 
   const skillPath = args[1];
   const extraArgs = args.slice(2);
+  if (skillPath === "--help" || skillPath === "-h" || skillPath === "help") {
+    printSkillInstallUsage();
+    return;
+  }
   if (extraArgs.length > 0) {
     console.error(`  Unknown argument(s) for skill install: ${extraArgs.join(", ")}`);
     console.error("  Usage: nemoclaw <sandbox> skill install <path>");
@@ -2243,12 +2520,18 @@ async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Pr
   } else {
     console.error(`  No SKILL.md found at '${resolvedPath}'.`);
     console.error("  <path> must be a skill directory or a direct path to SKILL.md.");
+    if (looksLikeOpenClawPlugin(resolvedPath)) {
+      printPluginInstallHint();
+    }
     process.exit(1);
   }
 
   if (!fs.existsSync(skillMdPath)) {
     console.error(`  No SKILL.md found in '${skillDir}'.`);
     console.error("  The skill directory must contain a SKILL.md file.");
+    if (looksLikeOpenClawPlugin(skillDir)) {
+      printPluginInstallHint();
+    }
     process.exit(1);
   }
 
@@ -2435,9 +2718,13 @@ function cleanupSandboxServices(
     // PID directory may not exist — ignore.
   }
 
-  // Delete messaging providers created during onboard.
+  // Delete messaging providers created during onboard. Suppress stderr so
+  // "! Provider not found" noise doesn't appear when messaging was never configured.
   for (const suffix of ["telegram-bridge", "discord-bridge", "slack-bridge"]) {
-    runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], { ignoreError: true });
+    runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
+      ignoreError: true,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
   }
 }
 
@@ -2448,7 +2735,7 @@ function cleanupSandboxServices(
 function removeSandboxImage(sandboxName: string) {
   const sb = registry.getSandbox(sandboxName);
   if (!sb?.imageTag) return;
-  const result = run(["docker", "rmi", sb.imageTag], { ignoreError: true });
+  const result = dockerRmi(sb.imageTag, { ignoreError: true });
   if (result.status === 0) {
     console.log(`  Removed Docker image ${sb.imageTag}`);
   } else {
@@ -2664,8 +2951,30 @@ async function sandboxRebuild(
   } else {
     rebuildCredentialEnv = session?.credentialEnv || null;
   }
+  // Legacy migration: pre-fix local-inference sandboxes (GH #2519) recorded
+  // credentialEnv="OPENAI_API_KEY" in onboard-session.json even though the
+  // sandbox does not actually need a host OpenAI key (ollama-local uses an
+  // auth proxy with an internal token; vllm-local accepts a static dummy
+  // bearer). Treat the legacy value as null so rebuild does not demand a
+  // credential that was never actually used.
+  if (
+    (session?.provider === "ollama-local" || session?.provider === "vllm-local") &&
+    rebuildCredentialEnv === "OPENAI_API_KEY"
+  ) {
+    console.log(
+      `  ${D}Note: migrating ${session.provider} sandbox off OPENAI_API_KEY (GH #2519). ` +
+        `Local inference does not require a host API key.${R}`,
+    );
+    log(
+      `Preflight: legacy ${session.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
+    );
+    rebuildCredentialEnv = null;
+  }
   if (rebuildCredentialEnv) {
-    const credentialValue = getCredential(rebuildCredentialEnv);
+    // hydrateCredentialEnv migrates any pre-fix legacy credentials.json
+    // into process.env once, so users upgrading from a release that wrote
+    // the plaintext file can still rebuild without re-entering keys.
+    const credentialValue = hydrateCredentialEnv(rebuildCredentialEnv);
     log(
       `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
     );
@@ -2674,7 +2983,7 @@ async function sandboxRebuild(
       console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
       console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
       console.error(
-        "  but it is not set in the environment or saved in ~/.nemoclaw/credentials.json.",
+        "  but it is not set in the environment.",
       );
       console.error("");
       console.error("  To fix, do one of:");
@@ -2774,8 +3083,9 @@ async function sandboxRebuild(
   // Force the sandbox name so onboard recreates with the same name.
   // Mark session resumable and point at this sandbox; set env var as fallback.
   const sessionBefore = onboardSession.loadSession();
+  const sessionMatchesSandbox = sessionBefore?.sandboxName === sandboxName;
   log(
-    `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}`,
+    `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
   );
 
   // Sync the session's agent field with the registry so onboard --resume
@@ -2803,7 +3113,11 @@ async function sandboxRebuild(
   // Forward the stored --from Dockerfile path so onboard --resume uses the
   // same custom image.  Without this, the conflict check rejects the resume
   // because requestedFrom (null) !== recordedFrom (the stored path).  (#2301)
-  const storedFromDockerfile = sessionAfter?.metadata?.fromDockerfile || null;
+  // Only read from the session when it belongs to this sandbox to avoid
+  // using config from a different sandbox's onboard run.
+  const storedFromDockerfile = sessionMatchesSandbox
+    ? sessionAfter?.metadata?.fromDockerfile || null
+    : null;
   log(
     `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
   );
@@ -2817,8 +3131,7 @@ async function sandboxRebuild(
   // call stack, which skips process.once("exit") listeners (lock
   // release, build context cleanup, session failure marking).  We
   // manually release the lock and mark the session failed in the
-  // onboardFailed block below.  Full fix is tracked in #2306 (extract
-  // rebuild-specific recreate path that throws instead of exiting).
+  // onboardFailed block below.
   const { onboard } = require("./lib/onboard");
   let onboardFailed = false;
   let onboardExitCode = 1;
@@ -3163,8 +3476,7 @@ function renderSnapshotTable(
 function resolveSrcPodImage(srcName: string): string | null {
   const gatewayContainer = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
   try {
-    const result = spawnSync(
-      "docker",
+    const output = dockerCapture(
       [
         "exec",
         gatewayContainer,
@@ -3177,10 +3489,9 @@ function resolveSrcPodImage(srcName: string): string | null {
         "-o",
         'jsonpath={.spec.containers[?(@.name=="agent")].image}',
       ],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 },
+      { ignoreError: true, timeout: 10000 },
     );
-    if (result.status !== 0) return null;
-    const img = (result.stdout || "").trim().split(/\s+/)[0];
+    const img = output.trim().split(/\s+/)[0];
     return img || null;
   } catch {
     return null;
@@ -3540,23 +3851,18 @@ async function garbageCollectImages(args: string[] = []): Promise<void> {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
 
   // 1. List all openshell/sandbox-from images on the host
-  const imagesResult = spawnSync(
-    "docker",
-    [
-      "images",
-      "--filter",
-      "reference=openshell/sandbox-from",
-      "--format",
+  let imagesOutput = "";
+  try {
+    imagesOutput = dockerListImagesFormat(
+      "openshell/sandbox-from",
       "{{.Repository}}:{{.Tag}}\t{{.Size}}",
-    ],
-    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (imagesResult.status !== 0) {
+    );
+  } catch {
     console.error("  Failed to query Docker images. Is Docker running?");
     process.exit(1);
   }
 
-  const allImages = (imagesResult.stdout || "")
+  const allImages = imagesOutput
     .split("\n")
     .map((line: string) => line.trim())
     .filter(Boolean)
@@ -3612,9 +3918,11 @@ async function garbageCollectImages(args: string[] = []): Promise<void> {
   let removed = 0;
   let failed = 0;
   for (const img of orphans) {
-    const rmiResult = spawnSync("docker", ["rmi", img.tag], {
+    const rmiResult = dockerRmi(img.tag, {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
+      ignoreError: true,
+      suppressOutput: true,
     });
     if (rmiResult.status === 0) {
       console.log(`  ${G}✓${R} Removed ${img.tag}`);
@@ -3687,14 +3995,14 @@ function help() {
     `    ${D}• Change inference model:  openshell inference set -g nemoclaw --model <model> --provider <provider>${R}`,
   );
   lines.push(`    ${D}• Add network presets:     use the policy-add command on your sandbox${R}`);
-  lines.push(`    ${D}• Change credentials:      credentials reset <KEY>, then re-run onboard${R}`);
+  lines.push(`    ${D}• Change credentials:      credentials reset <PROVIDER>, then re-run onboard${R}`);
   lines.push(`    ${D}• openclaw.json is read-only inside the sandbox (Landlock enforced).${R}`);
   lines.push(`    ${D}  To change OpenClaw settings, re-run onboard to rebuild the sandbox.${R}`);
 
   // ── Footer ──
   lines.push("");
   lines.push(`  ${D}Powered by NVIDIA OpenShell · Nemotron · Agent Toolkit`);
-  lines.push(`  Credentials saved in ~/.nemoclaw/credentials.json (mode 600)${R}`);
+  lines.push(`  Credentials registered with the OpenShell gateway${R}`);
   lines.push(`  ${D}https://www.nvidia.com/nemoclaw${R}`);
   lines.push("");
 

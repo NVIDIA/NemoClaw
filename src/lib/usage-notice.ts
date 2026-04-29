@@ -165,7 +165,7 @@ export function printUsageNotice(
     writeLine("");
     const label =
       supportsTerminalHyperlinks() && link?.url && link?.label
-        ? formatTerminalHyperlink(link.url, link.url)
+        ? formatTerminalHyperlink(link.label, link.url)
         : link?.label || "";
     if (label) {
       writeLine(`  ${label}`);

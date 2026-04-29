@@ -663,6 +663,21 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    // GH #2519: ollama-local must not capture the host's OPENAI_API_KEY.
+    // credentialEnv should be null so the wizard summary shows
+    // "(not required for ollama-local)" and onboard-session.json does not
+    // record OPENAI_API_KEY (which would later trip the rebuild preflight).
+    assert.equal(payload.result.credentialEnv, null);
+    // credentials.json must not have been written with an OPENAI_API_KEY
+    // entry by the ollama-local path.
+    const credsPath = path.join(tmpDir, ".nemoclaw", "credentials.json");
+    if (fs.existsSync(credsPath)) {
+      const creds = JSON.parse(fs.readFileSync(credsPath, "utf-8"));
+      assert.ok(
+        !Object.prototype.hasOwnProperty.call(creds, "OPENAI_API_KEY"),
+        "ollama-local onboard must not write OPENAI_API_KEY to credentials.json",
+      );
+    }
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Loading Ollama model: nemotron-3-nano:30b"),
@@ -3307,6 +3322,9 @@ runner.runCapture = (command) => {
 };
 runner.run = (command, opts) => {
   runCommands.push(typeof command === "string" ? command : command.join(" "));
+};
+runner.runShell = (command, opts) => {
+  runCommands.push(command);
 };
 registry.updateSandbox = (_name, update) => updates.push(update);
 

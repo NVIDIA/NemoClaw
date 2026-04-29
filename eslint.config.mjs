@@ -3,6 +3,9 @@
 
 import js from "@eslint/js";
 import tsParser from "@typescript-eslint/parser";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const noDirectCredentialEnv = require("./eslint-rules/no-direct-credential-env.js");
 
 export default [
   // Ignore build artifacts, vendored code, and the nemoclaw sub-project (has its own config)
@@ -96,6 +99,24 @@ export default [
     rules: {
       ...js.configs.recommended.rules,
       "no-unused-vars": "off",
+    },
+  },
+
+  // ── src/lib/onboard.ts — credential env guard (#2306) ───────────────────
+  {
+    files: ["src/lib/onboard.ts"],
+    languageOptions: {
+      parser: tsParser,
+      ecmaVersion: 2022,
+      sourceType: "module",
+    },
+    plugins: {
+      nemoclaw: {
+        rules: { "no-direct-credential-env": noDirectCredentialEnv },
+      },
+    },
+    rules: {
+      "nemoclaw/no-direct-credential-env": "error",
     },
   },
 
