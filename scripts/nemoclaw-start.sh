@@ -237,8 +237,8 @@ apply_model_override() {
     case "$api_override" in
       openai-completions | anthropic-messages) ;;
       *)
-        printf '[SECURITY] NEMOCLAW_INFERENCE_API_OVERRIDE must be "openai-completions" or "anthropic-messages", got "%s"\n' "$api_override" >&2
-        return 1
+        printf '[SECURITY] NEMOCLAW_INFERENCE_API_OVERRIDE must be "openai-completions" or "anthropic-messages", got "%s" — skipping override\n' "$api_override" >&2
+        return 0
         ;;
     esac
   fi
@@ -249,20 +249,20 @@ apply_model_override() {
 
   # Validate numeric values
   if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[0-9]+$'; then
-    printf '[SECURITY] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "%s"\n' "$context_window" >&2
-    return 1
+    printf '[SECURITY] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "%s" — skipping override\n' "$context_window" >&2
+    return 0
   fi
   if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[0-9]+$'; then
-    printf '[SECURITY] NEMOCLAW_MAX_TOKENS must be a positive integer, got "%s"\n' "$max_tokens" >&2
-    return 1
+    printf '[SECURITY] NEMOCLAW_MAX_TOKENS must be a positive integer, got "%s" — skipping override\n' "$max_tokens" >&2
+    return 0
   fi
   # Validate reasoning is true/false
   if [ -n "$reasoning" ]; then
     case "$reasoning" in
       true | false) ;;
       *)
-        printf '[SECURITY] NEMOCLAW_REASONING must be "true" or "false", got "%s"\n' "$reasoning" >&2
-        return 1
+        printf '[SECURITY] NEMOCLAW_REASONING must be "true" or "false", got "%s" — skipping override\n' "$reasoning" >&2
+        return 0
         ;;
     esac
   fi
@@ -365,8 +365,8 @@ apply_cors_override() {
     return 1
   fi
   if ! printf '%s' "$cors_origin" | grep -qE '^https?://'; then
-    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN must start with http:// or https://, got "%s"\n' "$cors_origin" >&2
-    return 1
+    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN must start with http:// or https://, got "%s" — skipping override\n' "$cors_origin" >&2
+    return 0
   fi
 
   printf '[config] Adding CORS origin: %s\n' "$cors_origin" >&2
