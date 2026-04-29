@@ -1932,9 +1932,8 @@ function getLogsProbeTimeoutMs(): number {
     return DEFAULT_LOGS_PROBE_TIMEOUT_MS;
   }
   const parsed = Number(rawValue);
-  return Number.isFinite(parsed) && parsed > 0
-    ? Math.floor(parsed)
-    : DEFAULT_LOGS_PROBE_TIMEOUT_MS;
+  const timeoutMs = Number.isFinite(parsed) ? Math.floor(parsed) : Number.NaN;
+  return timeoutMs > 0 ? timeoutMs : DEFAULT_LOGS_PROBE_TIMEOUT_MS;
 }
 
 function describeLogProbeResult(result: SpawnLikeResult): string {
