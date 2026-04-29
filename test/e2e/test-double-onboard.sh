@@ -308,6 +308,7 @@ fi
 section "Phase 3: Second onboard ($SANDBOX_A — same name, recreate)"
 info "Running nemoclaw onboard with NEMOCLAW_RECREATE_SANDBOX=1..."
 
+GATEWAY_ID_BEFORE=$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)
 PHASE3_START="$(phase_start_time)"
 run_onboard "$SANDBOX_A" "1"
 output2="$RUN_ONBOARD_OUTPUT"
@@ -324,10 +325,11 @@ else
   dump_diagnostics "Phase 3"
 fi
 
-if grep -q "Reusing healthy NemoClaw gateway" <<<"$output2"; then
-  pass "Healthy gateway reused on second onboard"
+GATEWAY_ID_AFTER=$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)
+if [ -n "$GATEWAY_ID_BEFORE" ] && [ "$GATEWAY_ID_BEFORE" = "$GATEWAY_ID_AFTER" ]; then
+  pass "Healthy gateway reused on second onboard (container $GATEWAY_ID_BEFORE)"
 else
-  fail "Healthy gateway was not reused on second onboard"
+  fail "Gateway container changed on second onboard (before=$GATEWAY_ID_BEFORE after=$GATEWAY_ID_AFTER)"
 fi
 
 if grep -q "Port 8080 is not available" <<<"$output2"; then
@@ -354,6 +356,7 @@ fi
 section "Phase 4: Third onboard ($SANDBOX_B — different name)"
 info "Running nemoclaw onboard with new sandbox name..."
 
+GATEWAY_ID_BEFORE3=$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)
 PHASE4_START="$(phase_start_time)"
 run_onboard "$SANDBOX_B"
 output3="$RUN_ONBOARD_OUTPUT"
@@ -370,10 +373,11 @@ else
   dump_diagnostics "Phase 4"
 fi
 
-if grep -q "Reusing healthy NemoClaw gateway" <<<"$output3"; then
-  pass "Healthy gateway reused on third onboard"
+GATEWAY_ID_AFTER3=$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)
+if [ -n "$GATEWAY_ID_BEFORE3" ] && [ "$GATEWAY_ID_BEFORE3" = "$GATEWAY_ID_AFTER3" ]; then
+  pass "Healthy gateway reused on third onboard (container $GATEWAY_ID_BEFORE3)"
 else
-  fail "Healthy gateway was not reused on third onboard"
+  fail "Gateway container changed on third onboard (before=$GATEWAY_ID_BEFORE3 after=$GATEWAY_ID_AFTER3)"
 fi
 
 if grep -q "Port 8080 is not available" <<<"$output3"; then
