@@ -32,10 +32,10 @@ describe("lib/onboard — gateway cleanup on final failure", () => {
     const originalPRetry = await vi.importActual<{ default: typeof import("p-retry") }>("p-retry");
 
     const pRetrySpy = vi.spyOn(originalPRetry.default, "default").mockImplementation(async (fn, opts) => {
-      const { onFailedAttempt } = opts || {};
+      const { onFailedAttempt({ } = opts || {};
       for (let attempt = 1; attempt <= (opts?.retries ?? 2) + 1; attempt++) {
-        if (onFailedAttempt) {
-          onFailedAttempt({ attemptNumber: attempt, retriesLeft: Math.max(0, (opts?.retries ?? 2) + 1 - attempt), message: "Gateway start failed" } as Error & { attemptNumber: number; retriesLeft: number });
+        if (onFailedAttempt({) {
+    await       onFailedAttempt({ attemptNumber: attempt, retriesLeft: Math.max(0, (opts?.retries ?? 2) + 1 - attempt), message: "Gateway start failed" } as Error & { attemptNumber: number; retriesLeft: number });
         }
       }
       throw new Error("Gateway failed to start");
