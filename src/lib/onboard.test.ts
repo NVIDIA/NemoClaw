@@ -28,7 +28,7 @@ describe("lib/onboard — gateway cleanup on final failure", () => {
     vi.restoreAllMocks();
   });
 
-  it("calls destroyGateway() when gateway start fails after exhausting retries", async () => {
+  it("calls destroyGateway() in the catch block after diagnostic logs when retries are exhausted", async () => {
     const originalPRetry = await vi.importActual<{ default: typeof import("p-retry") }>("p-retry");
 
     const pRetrySpy = vi.spyOn(originalPRetry.default, "default").mockImplementation(async (fn, opts) => {
@@ -42,13 +42,15 @@ describe("lib/onboard — gateway cleanup on final failure", () => {
     });
 
     const gpu = { name: "nvidia", memory_gb: 0, vram_gb: 0, cuda_version: "12.0" as const };
-
+    let threw = false;
     try {
       await onboardModule.startGatewayWithOptions(gpu, { exitOnFailure: true });
     } catch {
-      expect(destroyGatewayMock).toHaveBeenCalled();
+      threw = true;
     }
 
+    expect(threw).toBe(true);
+    expect(destroyGatewayMock).toHaveBeenCalled();
     pRetrySpy.mockRestore();
   });
 });
