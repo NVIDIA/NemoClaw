@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
@@ -435,11 +437,11 @@ describe("runtime CORS origin override (#719)", () => {
     const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
     expect(nonRootBlock).toBeTruthy();
     expect(nonRootBlock[1]).toMatch(
-      /apply_model_override[\s\S]*?apply_cors_override[\s\S]*?apply_slack_token_override[\s\S]*?export_gateway_token/,
+      /apply_model_override[\s\S]*?apply_cors_override[\s\S]*?export_gateway_token/,
     );
 
     const rootBlock = src.match(
-      /# ── Root path[\s\S]*?apply_model_override[\s\S]*?apply_cors_override[\s\S]*?apply_slack_token_override[\s\S]*?export_gateway_token/,
+      /# ── Root path[\s\S]*?apply_model_override[\s\S]*?apply_cors_override[\s\S]*?export_gateway_token/,
     );
     expect(rootBlock).toBeTruthy();
   });
@@ -486,6 +488,11 @@ describe("runtime CORS origin override (#719)", () => {
 
 describe("Slack channel guard — unhandled-rejection safety net (#2340)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const extractGuardScript = () => {
+    const match = src.match(/<<'SLACK_GUARD_EOF'\n([\s\S]*?)\nSLACK_GUARD_EOF/);
+    expect(match).toBeTruthy();
+    return match[1];
+  };
 
   it("defines install_slack_channel_guard function", () => {
     expect(src).toMatch(/install_slack_channel_guard\(\) \{/);
@@ -530,11 +537,51 @@ describe("Slack channel guard — unhandled-rejection safety net (#2340)", () =>
     expect(fn[1]).toContain("uncaughtException");
   });
 
-  it("re-throws non-Slack rejections to preserve default behavior", () => {
+  it("passes non-Slack failures through to later process handlers", () => {
     const fn = src.match(/install_slack_channel_guard\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
-    expect(fn[1]).toContain("throw reason");
-    expect(fn[1]).toContain("process.exit(1)");
+    expect(fn[1]).toContain("origEmit.apply");
+
+    const run = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `${extractGuardScript()}
+process.on('unhandledRejection', function () {
+  console.log('downstream');
+  process.exit(42);
+});
+process.emit('unhandledRejection', new Error('plain failure'), {});
+`,
+      ],
+      { encoding: "utf-8" },
+    );
+    expect(run.status).toBe(42);
+    expect(run.stdout).toContain("downstream");
+  });
+
+  it("consumes Slack auth rejections before later fatal handlers see them", () => {
+    const run = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `${extractGuardScript()}
+let downstreamCalled = false;
+process.on('unhandledRejection', function () {
+  downstreamCalled = true;
+  process.exit(42);
+});
+process.emit('unhandledRejection', new Error('An API error occurred: invalid_auth'), {});
+setImmediate(function () {
+  console.log('downstream=' + downstreamCalled);
+});
+`,
+      ],
+      { encoding: "utf-8" },
+    );
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("downstream=false");
+    expect(run.stderr).toContain("provider failed to start");
   });
 
   it("detects Slack errors by error code, message, stack trace, and domain", () => {
@@ -698,5 +745,90 @@ describe("nemoclaw-start CHAT_UI_URL override for configurable dashboard port (#
     expect(rootBlock).toMatch(
       /nohup gosu gateway "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/,
     );
+  });
+});
+
+describe("Slack token rewriter (#2085)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("legacy apply_slack_token_override carve-out is fully removed", () => {
+    // The previous implementation mutated openclaw.json at startup to splice
+    // the real Slack token into the config. Replaced by the rewriter preload —
+    // this assertion guards against accidental re-introduction.
+    expect(src).not.toContain("apply_slack_token_override");
+  });
+
+  it("defines _SLACK_REWRITER_SCRIPT and install_slack_token_rewriter", () => {
+    expect(src).toContain('_SLACK_REWRITER_SCRIPT="/tmp/nemoclaw-slack-token-rewriter.js"');
+    expect(src).toContain("install_slack_token_rewriter()");
+  });
+
+  it("install_slack_token_rewriter exports NODE_OPTIONS pointing at the rewriter path", () => {
+    // Function-body extraction can't easily skip past the embedded heredoc,
+    // so just assert the file contains the export line. The byte-identity
+    // sync test catches any drift in the heredoc body.
+    expect(src).toMatch(
+      /export NODE_OPTIONS="\$\{NODE_OPTIONS:\+\$NODE_OPTIONS \}--require \$_SLACK_REWRITER_SCRIPT"/,
+    );
+  });
+
+  it("install_slack_token_rewriter is a no-op when no Slack placeholder is present", () => {
+    // The trigger must be the placeholder token, not just the channel name —
+    // otherwise the rewriter installs on configs that have already been
+    // mutated to a real token, which would mask regressions.
+    expect(src).toContain('grep -q \'OPENSHELL-RESOLVE-ENV-SLACK_\'');
+  });
+
+  it("calls install_slack_token_rewriter and verify_no_slack_secrets_on_disk in both paths", () => {
+    const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
+    expect(nonRootBlock).toBeTruthy();
+    expect(nonRootBlock[1]).toMatch(
+      /configure_messaging_channels[\s\S]*?install_slack_token_rewriter[\s\S]*?install_slack_channel_guard[\s\S]*?verify_no_slack_secrets_on_disk/,
+    );
+    const rootBlock = src.split(/# ── Root path/)[1] || "";
+    expect(rootBlock).toMatch(
+      /configure_messaging_channels[\s\S]*?install_slack_token_rewriter[\s\S]*?install_slack_channel_guard[\s\S]*?verify_no_slack_secrets_on_disk/,
+    );
+  });
+
+  it("validate_tmp_permissions includes the rewriter path in both branches", () => {
+    const calls =
+      src.match(/validate_tmp_permissions\s+.*"\$_SLACK_REWRITER_SCRIPT"/g) || [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("connect-shell rc export sources the rewriter when present", () => {
+    // The export is emitted from inside an outer `echo "..."` so the inner
+    // double quotes appear escaped (\"). Match accordingly.
+    expect(src).toMatch(
+      /\[ -f \\"\$_SLACK_REWRITER_SCRIPT\\" \].*--require \$_SLACK_REWRITER_SCRIPT/,
+    );
+  });
+
+  it("verify_no_slack_secrets_on_disk refuses to serve on real-token leak", () => {
+    const fn = src.match(/verify_no_slack_secrets_on_disk\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    // Negative lookahead: matches xoxb-/xapp- only when NOT followed by the
+    // placeholder marker. exit 78 is EX_CONFIG (sysexits.h).
+    expect(fn[1]).toContain("OPENSHELL-RESOLVE-ENV-");
+    expect(fn[1]).toMatch(/xoxb.*xapp/);
+    expect(fn[1]).toContain("exit 78");
+
+    const python = fn[1].match(
+      /python3 - "\$config" <<'PYSLACKSECRET'(?:; then)?\n([\s\S]*?)\nPYSLACKSECRET/,
+    );
+    expect(python).toBeTruthy();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-secret-"));
+    const run = (input: string) => {
+      const config = path.join(tmpDir, "openclaw.json");
+      fs.writeFileSync(config, input);
+      return spawnSync("python3", ["-c", python[1], config], { encoding: "utf-8" }).status;
+    };
+
+    expect(run('{"botToken":"xoxb-real-token"}\n')).toBe(0);
+    expect(run('{"botToken":"prefixxoxb-real-token"}\n')).toBe(0);
+    expect(run('{"appToken":"xapp-real-token"}\n')).toBe(0);
+    expect(run('{"botToken":"xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"}\n')).toBe(1);
+    expect(run('{"token":"openshell:resolve:env:SLACK_BOT_TOKEN"}\n')).toBe(1);
   });
 });
