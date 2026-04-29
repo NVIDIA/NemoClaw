@@ -59,7 +59,7 @@ Tests are organized into three Vitest projects defined in `vitest.config.ts`:
 
 1. **`cli`** — `test/**/*.test.{js,ts}` — integration tests for CLI behavior
 2. **`plugin`** — `nemoclaw/src/**/*.test.ts` — unit tests co-located with source
-3. **`e2e-brev`** — `test/e2e/brev-e2e.test.js` — cloud E2E (requires `BREV_API_TOKEN`)
+3. **`e2e-branch-validation`** — `test/e2e/brev-e2e.test.ts` — validates a branch from source on ephemeral Brev instance (requires `BREV_API_TOKEN`)
 
 When writing tests:
 
