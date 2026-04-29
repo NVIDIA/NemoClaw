@@ -1591,15 +1591,56 @@ startGateway(null).catch(() => {});
     }
   });
 
+  it("prefers the explicit --name option over NEMOCLAW_SANDBOX_NAME", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    process.env.NEMOCLAW_SANDBOX_NAME = "from-env";
+    try {
+      expect(getRequestedSandboxNameHint({ sandboxName: "From-Flag" })).toBe("from-flag");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
+      }
+    }
+  });
+
+  it("detects resume conflicts when --name does not match the recorded sandbox", () => {
+    expect(
+      getResumeConfigConflicts(
+        { sandboxName: "my-assistant" },
+        { sandboxName: "second-assistant" },
+      ),
+    ).toEqual([
+      {
+        field: "sandbox",
+        requested: "second-assistant",
+        recorded: "my-assistant",
+      },
+    ]);
+  });
+
   it("detects resume conflicts when a different sandbox is requested", () => {
+    expect(
+      getResumeSandboxConflict({ sandboxName: "my-assistant" }, { sandboxName: "other-sandbox" }),
+    ).toEqual({
+      requestedSandboxName: "other-sandbox",
+      recordedSandboxName: "my-assistant",
+    });
+    expect(
+      getResumeSandboxConflict({ sandboxName: "other-sandbox" }, { sandboxName: "other-sandbox" }),
+    ).toBe(null);
+  });
+
+  it("does not fire a resume conflict from NEMOCLAW_SANDBOX_NAME alone", () => {
+    // Interactive resume runs never consult the env var (sandbox creation
+    // is already complete in the session, so promptOrDefault is skipped).
+    // Reading it here would surface a spurious conflict whenever a user
+    // happens to export NEMOCLAW_SANDBOX_NAME in their shell rc.
     const previous = process.env.NEMOCLAW_SANDBOX_NAME;
     process.env.NEMOCLAW_SANDBOX_NAME = "other-sandbox";
     try {
-      expect(getResumeSandboxConflict({ sandboxName: "my-assistant" })).toEqual({
-        requestedSandboxName: "other-sandbox",
-        recordedSandboxName: "my-assistant",
-      });
-      expect(getResumeSandboxConflict({ sandboxName: "other-sandbox" })).toBe(null);
+      expect(getResumeSandboxConflict({ sandboxName: "my-assistant" })).toBe(null);
     } finally {
       if (previous === undefined) {
         delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -2637,6 +2678,18 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
+  it("re-checks RESERVED_SANDBOX_NAMES against a resumed session's sandboxName", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(
+      source,
+      /let sandboxName = session\?\.sandboxName \|\| requestedSandboxName \|\| null;\s*if \(sandboxName && RESERVED_SANDBOX_NAMES\.has\(sandboxName\)\) \{[\s\S]*?process\.exit\(1\);\s*\}/,
+    );
+  });
+
   it("delegates sandbox-create progress streaming to the extracted helper module", () => {
     const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -2646,6 +2699,44 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(onboardSource, /sandbox-create-stream/);
     assert.equal(typeof streamSandboxCreate, "function");
+  });
+
+  it("re-refs stdin before each raw-mode prompt and unrefs in cleanup so sticky unref() does not strand later prompts", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // The shared `prompt()` cleanup unref()s stdin so the wizard exits
+    // naturally after its last readline prompt. unref() is sticky, so the
+    // raw-mode TUI selectors (messaging channels + the three arrow-key
+    // pickers) must explicitly ref() stdin before resume()/setRawMode(true)
+    // or they would otherwise listen on a detached handle.
+    const refMatches = source.match(
+      /process\.stdin\.ref\(\);[\s\S]{0,180}?process\.stdin\.setRawMode\(true\)/g,
+    );
+    assert.ok(
+      refMatches !== null && refMatches.length >= 3,
+      `expected at least 3 ref()-then-setRawMode(true) sites, found ${
+        refMatches ? refMatches.length : 0
+      }`,
+    );
+
+    // The messaging-channels picker uses an `input.ref()` alias on the
+    // captured handle. Same contract, different binding.
+    assert.match(source, /input\.ref\(\)[\s\S]{0,200}?input\.setRawMode\(true\)/);
+
+    // Each raw-mode cleanup must release stdin too, so a wizard that ends
+    // on a TUI selector exits cleanly.
+    const unrefMatches = source.match(
+      /setRawMode\(false\);[\s\S]{0,400}?(?:process\.stdin|input)\.unref\(\)/g,
+    );
+    assert.ok(
+      unrefMatches !== null && unrefMatches.length >= 4,
+      `expected at least 4 setRawMode(false)-then-unref() sites, found ${
+        unrefMatches ? unrefMatches.length : 0
+      }`,
+    );
   });
 
   it("migrates a legacy credentials.json into env so setupInference can register the provider", () => {
@@ -4544,24 +4635,27 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("nonexistent") }));
     assert.equal(payload.exists, false);
   });
 
-  it("continues once the sandbox is Ready even if the create stream never closes", async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
-    const payloadPath = path.join(tmpDir, "payload.json");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+  it(
+    "continues once the sandbox is Ready even if the create stream never closes",
+    { timeout: 20000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
+      const payloadPath = path.join(tmpDir, "payload.json");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -4643,29 +4737,30 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-      timeout: 15000,
-    });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+        timeout: 15000,
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
-    assert.equal(payload.sandboxName, "my-assistant");
-    assert.ok(payload.sandboxListCalls >= 2);
-    assert.deepEqual(payload.killCalls, ["SIGTERM"]);
-    assert.equal(payload.unrefCalls, 1);
-    assert.equal(payload.stdoutDestroyCalls, 1);
-    assert.equal(payload.stderrDestroyCalls, 1);
-  });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+      assert.equal(payload.sandboxName, "my-assistant");
+      assert.ok(payload.sandboxListCalls >= 2);
+      assert.deepEqual(payload.killCalls, ["SIGTERM"]);
+      assert.equal(payload.unrefCalls, 1);
+      assert.equal(payload.stdoutDestroyCalls, 1);
+      assert.equal(payload.stderrDestroyCalls, 1);
+    },
+  );
 
   it("restores the dashboard forward when onboarding reuses an existing ready sandbox", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");

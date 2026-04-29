@@ -504,4 +504,79 @@ describe("prompt machinery (unchanged)", () => {
     expect(source).toContain('output.write("*")');
     expect(source).toContain('output.write("\\b \\b")');
   });
+
+  it("releases stdin after a prompt resolves so the event loop drains on a TTY", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
+      "utf-8",
+    );
+
+    // The previous TTY-only guard kept the event loop pinned on interactive
+    // runs — the wizard would not exit after its last prompt.
+    expect(source).not.toMatch(/cleanup\s*\(\s*\)\s*\{\s*rl\.close\(\);\s*if\s*\(\s*!process\.stdin\.isTTY\s*\)/);
+    expect(source).toMatch(
+      /function cleanup\(\)\s*\{\s*rl\.close\(\);[\s\S]*?process\.stdin\.pause\(\)[\s\S]*?process\.stdin\.unref\(\)/,
+    );
+  });
+
+  it("re-refs stdin before each prompt so a follow-up prompt is not stranded by a sticky unref()", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
+      "utf-8",
+    );
+
+    // unref() is sticky — readline.createInterface() will not re-ref by
+    // itself, so a sequential prompt after the first cleanup would see a
+    // detached stdin handle and the process could exit before the user
+    // can answer. The matching ref() at the top of `prompt()` undoes that.
+    expect(source).toMatch(
+      /process\.stdin\.ref\(\)[\s\S]*?readline\.createInterface\(\{\s*input:\s*process\.stdin/,
+    );
+  });
+
+  it("re-refs stdin even on the secret-prompt branch so a follow-up secret read is not stranded", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
+      "utf-8",
+    );
+
+    // The ref() must come before the silent/secret branch so that a
+    // sequence of `prompt()` -> `prompt({ secret: true })` after a normal
+    // prompt's sticky unref() still has a ref'd handle for promptSecret().
+    const refIdx = source.search(/process\.stdin\.ref\(\);/);
+    const silentIdx = source.search(/const silent = opts\.secret === true/);
+    expect(refIdx).toBeGreaterThan(0);
+    expect(silentIdx).toBeGreaterThan(0);
+    expect(refIdx).toBeLessThan(silentIdx);
+  });
+
+  it("releases stdin in promptSecret() cleanup so a wizard ending on a secret prompt exits naturally", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
+      "utf-8",
+    );
+
+    // The secret reader uses raw mode + a `data` listener instead of
+    // readline. Its cleanup must still pause+unref or the wizard hangs the
+    // same way the readline path did.
+    expect(source).toMatch(
+      /promptSecret[\s\S]*?function cleanup\(\)\s*\{[\s\S]*?input\.pause\(\)[\s\S]*?input\.unref\(\)/,
+    );
+  });
+
+  it("re-refs stdin at the top of promptSecret() so a direct caller is self-contained", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
+      "utf-8",
+    );
+
+    // promptSecret() is exported and used directly elsewhere. Because its
+    // own cleanup unref()s stdin, two sequential direct calls (or any call
+    // after a prior unref) would strand the second read without an entry
+    // ref(). Assert ref() is the first effectful call inside the body.
+    expect(source).toMatch(
+      /export function promptSecret[\s\S]*?const input = process\.stdin;[\s\S]{0,400}?input\.ref\(\);[\s\S]*?function cleanup/,
+    );
+  });
+
 });

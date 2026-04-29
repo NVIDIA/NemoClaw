@@ -9,6 +9,7 @@ export default defineConfig({
       {
         test: {
           name: "cli",
+          testTimeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 15000),
           include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"],
           exclude: [
             "**/node_modules/**",

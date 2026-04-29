@@ -140,6 +140,30 @@ network_policies:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
 
+  # ── Managed inference route ──────────────────────────────────────────
+  # inference.local is the OpenShell gateway's internal virtual hostname;
+  # the gateway proxies it to the configured provider (OpenAI, NVIDIA, etc.).
+  # Every sandbox uses this route regardless of provider, so it belongs in
+  # the base policy rather than an optional preset.
+  # Ref: https://github.com/NVIDIA/NemoClaw/issues/2663
+  managed_inference:
+    name: managed_inference
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/claude }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/python3 }
+
   # NOTE: github.com / api.github.com and the git/gh binaries used to
   # live in this base policy and were therefore granted to every
   # sandbox regardless of user opt-in. They have been moved into a

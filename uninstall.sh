@@ -416,6 +416,19 @@ is_installer_managed_nemoclaw_shim() {
       return 0
       ;;
   esac
+
+  # Dev-install shim from scripts/npm-link-or-shim.sh — wraps bin/nemoclaw.js
+  # in the source checkout instead of an npm-linked binary. Same wrapper
+  # shape as above plus a marker line so we can distinguish it from
+  # user-managed files.
+  local dev_marker_line="# NemoClaw dev-shim - managed by scripts/npm-link-or-shim.sh"
+  local dev_exec_suffix="\" \"\$@\""
+  case "$contents" in
+    '#!/usr/bin/env bash'$'\n'"$dev_marker_line"$'\n'"$path_line"*"$path_suffix"$'\n'"$exec_line"*"$dev_exec_suffix")
+      return 0
+      ;;
+  esac
+
   return 1
 }
 

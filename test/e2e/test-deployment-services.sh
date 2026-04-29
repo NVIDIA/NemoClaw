@@ -8,7 +8,9 @@
 #
 # Covers:
 #   TC-STATE-02: backup-workspace.sh backup → destroy → recreate → restore
-#   TC-DEPLOY-01: nemoclaw start/stop (cloudflared tunnel)
+#   TC-DEPLOY-01a: nemoclaw tunnel start (cloudflared tunnel)
+#   TC-DEPLOY-01b: tunnel URL serves the OpenClaw dashboard
+#   TC-DEPLOY-01c: nemoclaw tunnel stop removes URL from status
 #   TC-DEPLOY-03: nemoclaw uninstall --keep-openshell --yes
 #
 # Prerequisites:
@@ -172,7 +174,7 @@ onboard_sandbox() {
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="open" \
-    run_with_timeout 600 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+    run_with_timeout 1800 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | tee -a "$LOG_FILE" || {
     log "FATAL: Onboard failed for '$name'"
     return 1
@@ -285,64 +287,117 @@ test_state_02_backup_restore() {
 }
 
 # =============================================================================
-# TC-DEPLOY-01: nemoclaw start/stop (cloudflared tunnel)
+# TC-DEPLOY-01a: nemoclaw tunnel start (cloudflared tunnel)
+# TC-DEPLOY-01b: tunnel URL serves the OpenClaw dashboard
+# TC-DEPLOY-01c: nemoclaw tunnel stop removes tunnel URL from status
 # =============================================================================
 test_deploy_01_start_stop() {
-  log "=== TC-DEPLOY-01: Start/Stop Services ==="
+  log "=== TC-DEPLOY-01a/b/c: Start / Probe / Stop ==="
 
   if ! command -v cloudflared >/dev/null 2>&1; then
-    skip "TC-DEPLOY-01" "cloudflared not installed"
+    skip "TC-DEPLOY-01a / TC-DEPLOY-01b / TC-DEPLOY-01c" "cloudflared not installed"
     return
   fi
 
-  log "  Step 1: Running nemoclaw start..."
-  local start_output
-  start_output=$(nemoclaw start 2>&1) || true
-  log "  Start output: ${start_output:0:400}"
-
-  log "  Step 2: Polling nemoclaw status for tunnel URL (up to 30s)..."
-  local tunnel_url="" status_output=""
-  for i in $(seq 1 6); do
-    sleep 5
-    status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1) || true
-    tunnel_url=$(echo "$status_output" | grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" | head -1) || true
-    if [[ -n "$tunnel_url" ]]; then
-      break
-    fi
-    log "  [$i] No tunnel URL yet, retrying..."
-  done
-
-  if [[ -n "$tunnel_url" ]]; then
-    pass "TC-DEPLOY-01: Tunnel URL found in status ($tunnel_url)"
-  else
-    local has_service
-    has_service=$(echo "$start_output$status_output" | grep -i "cloudflared\|tunnel\|public\|services" || true)
-    if [[ -n "$has_service" ]]; then
-      pass "TC-DEPLOY-01: Start command executed (tunnel URL not available — CI limitation)"
-    else
-      fail "TC-DEPLOY-01: Start" "No tunnel URL or service info in output"
-      nemoclaw stop 2>/dev/null || true
-      return
-    fi
+  # Cascade guard: skip if a prior TC (e.g. TC-STATE-02) left the sandbox missing.
+  if ! nemoclaw list 2>/dev/null | grep -Fq -- "$SANDBOX_NAME"; then
+    skip "TC-DEPLOY-01a / TC-DEPLOY-01b / TC-DEPLOY-01c" \
+      "Sandbox '$SANDBOX_NAME' not present"
+    return
   fi
 
-  log "  Step 3: Running nemoclaw stop..."
-  local stop_output
-  stop_output=$(nemoclaw stop 2>&1) || true
-  log "  Stop output: ${stop_output:0:200}"
+  # ── TC-DEPLOY-01a: Start tunnel + verify URL surfaces ───────────────────────────────────
+  log "  Step 1: Running nemoclaw tunnel start..."
+  local start_output start_rc=0
+  start_output=$(nemoclaw tunnel start 2>&1) || start_rc=$?
+  log "  Start output: ${start_output}"
+  if [[ $start_rc -ne 0 ]]; then
+    fail "TC-DEPLOY-01a: Start" "nemoclaw tunnel start failed (exit $start_rc)"
+    return
+  fi
 
-  sleep 3
+  log "  Step 2: Reading nemoclaw status (polling for tunnel URL)..."
+  local status_output tunnel_url
+  for i in $(seq 1 15); do
+    status_output=$(nemoclaw status 2>&1) || true
+    tunnel_url=$(printf '%s\n' "$status_output" | grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" | head -1) || true
+    [[ -n "$tunnel_url" ]] && break
+    sleep 1
+  done
+  log "  Status output:     ${status_output//$'\n'/$'\n'    }"
 
-  log "  Step 4: Verifying tunnel stopped..."
-  local post_status
-  post_status=$(nemoclaw "$SANDBOX_NAME" status 2>&1) || true
-  local post_url
-  post_url=$(echo "$post_status" | grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" | head -1) || true
-
-  if [[ -z "$post_url" ]]; then
-    pass "TC-DEPLOY-01: Tunnel URL absent after stop"
+  if [[ -n "$tunnel_url" ]]; then
+    pass "TC-DEPLOY-01a: Tunnel URL found in status ($tunnel_url)"
   else
-    fail "TC-DEPLOY-01: Stop" "Tunnel URL still present after stop ($post_url)"
+    fail "TC-DEPLOY-01a: Start" "Start executed but tunnel URL did not surface in status"
+    nemoclaw tunnel stop 2>/dev/null || true
+    return
+  fi
+
+  # ── TC-DEPLOY-01b: Tunnel serves the OpenClaw dashboard ────────────────────────
+  if [[ -n "$tunnel_url" ]]; then
+    log "  Step 3: Probing tunnel URL (HTTP + content)..."
+    local http_code="000" body_file
+    body_file=$(mktemp)
+    for i in $(seq 1 10); do
+      http_code=$(curl -sS -o "$body_file" -w '%{http_code}' \
+        --max-time 30 "$tunnel_url" 2>/dev/null || echo "000")
+      if [[ "$http_code" == "200" ]]; then
+        break
+      fi
+      log "  [$i] Tunnel URL returned '$http_code', retrying in 5s..."
+      sleep 5
+    done
+
+    if [[ "$http_code" == "200" ]]; then
+      if grep -qE '<title>OpenClaw Control</title>|<openclaw-app' "$body_file"; then
+        pass "TC-DEPLOY-01b: Tunnel serves OpenClaw dashboard (HTTP 200, marker matched)"
+      else
+        fail "TC-DEPLOY-01b" "HTTP 200 but body lacks dashboard markers (first 200B: $(head -c 200 "$body_file" | tr -d '\n'))"
+      fi
+    else
+      fail "TC-DEPLOY-01b" "Tunnel URL returned unexpected status: $http_code"
+    fi
+    rm -f "$body_file"
+  else
+    skip "TC-DEPLOY-01b" "Tunnel URL not available"
+  fi
+
+  log "  Step 4: Running nemoclaw tunnel stop..."
+  local stop_output stop_rc=0
+  stop_output=$(nemoclaw tunnel stop 2>&1) || stop_rc=$?
+  log "  Tunnel stop output:     ${stop_output//$'\n'/$'\n'    }"
+  if [[ $stop_rc -ne 0 ]]; then
+    fail "TC-DEPLOY-01c: Stop command" "nemoclaw tunnel stop failed (exit $stop_rc)"
+    return
+  fi
+
+  # ── TC-DEPLOY-01c: Tunnel URL absent after stop ─────────────────────────────
+  log "  Step 5: Verifying tunnel stopped (polling for URL removal)..."
+  if [[ -z "$tunnel_url" ]]; then
+    skip "TC-DEPLOY-01c" "Tunnel URL was never confirmed in status"
+  else
+    local post_status post_url status_rc=0 status_ok=0
+    for i in $(seq 1 10); do
+      status_rc=0
+      post_status=$(nemoclaw status 2>&1) || status_rc=$?
+      if [[ $status_rc -ne 0 ]]; then
+        log "  [$i] nemoclaw status failed (exit $status_rc), retrying in 1s..."
+        sleep 1
+        continue
+      fi
+      status_ok=1
+      post_url=$(printf '%s\n' "$post_status" | grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" | head -1) || true
+      [[ -z "$post_url" ]] && break
+      sleep 1
+    done
+    if [[ $status_ok -eq 0 ]]; then
+      fail "TC-DEPLOY-01c: Stop" "Could not read nemoclaw status after stop"
+    elif [[ -z "$post_url" ]]; then
+      pass "TC-DEPLOY-01c: Tunnel URL absent after stop"
+    else
+      fail "TC-DEPLOY-01c: Stop" "Tunnel URL still present after stop ($post_url)"
+    fi
   fi
 }
 

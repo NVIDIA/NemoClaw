@@ -18,6 +18,7 @@ const {
   getOllamaWarmupCommand,
   validateOllamaModel,
 } = require("./local-inference");
+const { buildSubprocessEnv } = require("./subprocess-env");
 const { prompt } = require("./credentials");
 const { promptManualModelId } = require("./model-prompts");
 
@@ -104,12 +105,11 @@ function spawnOllamaAuthProxy(token: string): number | null {
   const child = spawn(process.execPath, [path.join(SCRIPTS, "ollama-auth-proxy.js")], {
     detached: true,
     stdio: "ignore",
-    env: {
-      ...process.env,
+    env: buildSubprocessEnv({
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
-    },
+    }),
   });
   child.unref();
   persistProxyPid(child.pid);
@@ -275,7 +275,7 @@ function pullOllamaModel(model) {
     encoding: "utf8",
     stdio: "inherit",
     timeout: 600_000,
-    env: { ...process.env },
+    env: buildSubprocessEnv(),
   });
   if (result.signal === "SIGTERM") {
     console.error(

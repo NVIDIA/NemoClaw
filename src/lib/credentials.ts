@@ -390,6 +390,13 @@ export function promptSecret(question: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const input = process.stdin;
     const output = process.stderr;
+    // Re-attach stdin to the event loop. cleanup() below unrefs after the
+    // read completes (so a wizard ending here exits naturally), and unref()
+    // is sticky — without this the next direct promptSecret() call would
+    // listen on a detached handle. Idempotent when prompt() already ref'd.
+    if (typeof input.ref === "function") {
+      input.ref();
+    }
     let answer = "";
     let rawModeEnabled = false;
     let finished = false;
@@ -399,8 +406,14 @@ export function promptSecret(question: string): Promise<string> {
       if (rawModeEnabled && typeof input.setRawMode === "function") {
         input.setRawMode(false);
       }
+      // pause+unref so a wizard ending on a secret prompt exits naturally.
+      // The matching ref() in prompt() (and any direct caller) restores the
+      // event-loop ref before the next read.
       if (typeof input.pause === "function") {
         input.pause();
+      }
+      if (typeof input.unref === "function") {
+        input.unref();
       }
     }
 
@@ -480,6 +493,14 @@ export function promptSecret(question: string): Promise<string> {
  */
 export function prompt(question: string, opts: { secret?: boolean } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
+    // Re-attach stdin to the event loop before any prompt path. unref() in
+    // cleanup (below, and in the secret path) is sticky — neither
+    // readline.createInterface() nor the secret reader re-ref stdin on
+    // their own, so a follow-up prompt of either kind would otherwise see
+    // a detached handle and the process could exit before the user answers.
+    if (typeof process.stdin.ref === "function") {
+      process.stdin.ref();
+    }
     const silent = opts.secret === true && process.stdin.isTTY && process.stderr.isTTY;
     if (silent) {
       promptSecret(question)
@@ -499,13 +520,15 @@ export function prompt(question: string, opts: { secret?: boolean } = {}): Promi
 
     function cleanup() {
       rl.close();
-      if (!process.stdin.isTTY) {
-        if (typeof process.stdin.pause === "function") {
-          process.stdin.pause();
-        }
-        if (typeof process.stdin.unref === "function") {
-          process.stdin.unref();
-        }
+      // pause+unref so the process exits naturally after the last prompt
+      // resolves. The matching ref() above keeps subsequent prompts working;
+      // unref()-ing a TTY ReadStream only releases the event-loop reference,
+      // cooked/raw mode and any subsequent reads remain unaffected.
+      if (typeof process.stdin.pause === "function") {
+        process.stdin.pause();
+      }
+      if (typeof process.stdin.unref === "function") {
+        process.stdin.unref();
       }
     }
 
