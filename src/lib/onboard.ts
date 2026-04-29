@@ -5102,6 +5102,9 @@ async function setupInference(
         args.push("--no-verify");
       }
       args.push("--provider", provider, "--model", model);
+      if (provider === "compatible-endpoint") {
+        args.push("--timeout", String(LOCAL_INFERENCE_TIMEOUT_SECS));
+      }
       const applyResult = runOpenshell(args, { ignoreError: true });
       if (applyResult.status === 0) {
         break;
