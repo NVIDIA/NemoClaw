@@ -77,6 +77,7 @@ const {
 } = require("./ports");
 const localInference: typeof import("./local-inference") = require("./local-inference");
 const {
+  findReachableOllamaHost,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -4247,9 +4248,11 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
 
   // Detect local inference options
   const hasOllama = hostCommandExists("ollama");
-  const ollamaRunning = !!runCapture(["curl", "-sf", `http://127.0.0.1:${OLLAMA_PORT}/api/tags`], {
-    ignoreError: true,
-  });
+  // findReachableOllamaHost probes 127.0.0.1 first and, on WSL, falls back
+  // to host.docker.internal so a Windows-host Ollama bound to a non-loopback
+  // interface is detected. The result is cached for the rest of the onboard
+  // run and consumed by the Ollama lifecycle helpers in local-inference.ts.
+  const ollamaRunning = findReachableOllamaHost() !== null;
   const vllmRunning = !!runCapture(["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`], {
     ignoreError: true,
   });

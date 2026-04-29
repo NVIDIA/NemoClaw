@@ -28,6 +28,48 @@ export const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
 
 export type RunCaptureFn = (cmd: string | string[], opts?: { ignoreError?: boolean }) => string;
 
+// Hosts that the WSL-side onboard CLI tries when probing Ollama. Native Linux
+// and macOS only ever reach Ollama on the local loopback. WSL with Docker
+// Desktop can also reach a Windows-host Ollama through the docker-desktop
+// integration's `host.docker.internal` alias when Ollama is bound to a
+// non-loopback interface (typically OLLAMA_HOST=0.0.0.0).
+export const OLLAMA_LOCALHOST = "127.0.0.1";
+export const OLLAMA_HOST_DOCKER_INTERNAL = "host.docker.internal";
+
+let _resolvedOllamaHost: string | null = null;
+
+function ollamaCandidateHosts(): string[] {
+  return isWsl() ? [OLLAMA_LOCALHOST, OLLAMA_HOST_DOCKER_INTERNAL] : [OLLAMA_LOCALHOST];
+}
+
+// Probe each candidate host for a responding Ollama. Returns the first host
+// whose `/api/tags` succeeds, or null if none responds. Result is cached for
+// the rest of the onboard run; call resetOllamaHostCache() in tests.
+export function findReachableOllamaHost(runCaptureImpl?: RunCaptureFn): string | null {
+  if (_resolvedOllamaHost !== null) return _resolvedOllamaHost;
+  const capture = runCaptureImpl ?? runCapture;
+  for (const host of ollamaCandidateHosts()) {
+    const result = capture(["curl", "-sf", `http://${host}:${OLLAMA_PORT}/api/tags`], {
+      ignoreError: true,
+    });
+    if (result) {
+      _resolvedOllamaHost = host;
+      return host;
+    }
+  }
+  return null;
+}
+
+// Returns the resolved host if a probe has succeeded, otherwise OLLAMA_LOCALHOST.
+// Used by URL-builder helpers that need a string and don't want to re-probe.
+export function getResolvedOllamaHost(): string {
+  return _resolvedOllamaHost ?? OLLAMA_LOCALHOST;
+}
+
+export function resetOllamaHostCache(): void {
+  _resolvedOllamaHost = null;
+}
+
 export interface GpuInfo {
   totalMemoryMB: number;
 }
@@ -79,7 +121,7 @@ export function getLocalProviderValidationBaseUrl(provider: string): string | nu
     case "vllm-local":
       return `http://127.0.0.1:${VLLM_PORT}/v1`;
     case "ollama-local":
-      return `http://127.0.0.1:${OLLAMA_PORT}/v1`;
+      return `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}/v1`;
     default:
       return null;
   }
@@ -90,7 +132,7 @@ export function getLocalProviderHealthEndpoint(provider: string): string | null 
     case "vllm-local":
       return `http://127.0.0.1:${VLLM_PORT}/v1/models`;
     case "ollama-local":
-      return `http://127.0.0.1:${OLLAMA_PORT}/api/tags`;
+      return `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}/api/tags`;
     default:
       return null;
   }
@@ -226,7 +268,7 @@ export function validateLocalProvider(
       case "ollama-local":
         return {
           ok: false,
-          message: `Local Ollama was selected, but nothing is responding on http://127.0.0.1:${OLLAMA_PORT}.`,
+          message: `Local Ollama was selected, but nothing is responding on http://${getResolvedOllamaHost()}:${OLLAMA_PORT}.`,
         };
       default:
         return { ok: false, message: "The selected local inference provider is unavailable." };
@@ -285,7 +327,8 @@ export function parseOllamaTags(output: string | null | undefined): string[] {
 
 export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   const capture = runCaptureImpl ?? runCapture;
-  const tagsOutput = capture(["curl", "-sf", `http://127.0.0.1:${OLLAMA_PORT}/api/tags`], {
+  const host = getResolvedOllamaHost();
+  const tagsOutput = capture(["curl", "-sf", `http://${host}:${OLLAMA_PORT}/api/tags`], {
     ignoreError: true,
   });
   const tagsParsed = parseOllamaTags(tagsOutput);
@@ -324,6 +367,7 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
     stream: false,
     keep_alive: keepAlive,
   });
+  const host = getResolvedOllamaHost();
   // backgrounding (nohup ... &) and output redirection require a shell wrapper.
   // The payload is safe: model name is JSON-serialized (escaping all special
   // chars) then shellQuote'd (single-quoted), so injection through model
@@ -331,7 +375,7 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
   return [
     "bash",
     "-c",
-    `nohup curl -s http://127.0.0.1:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,
+    `nohup curl -s http://${host}:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,
   ];
 }
 
@@ -346,12 +390,13 @@ export function getOllamaProbeCommand(
     stream: false,
     keep_alive: keepAlive,
   });
+  const host = getResolvedOllamaHost();
   return [
     "curl",
     "-sS",
     "--max-time",
     String(timeoutSeconds),
-    `http://127.0.0.1:${OLLAMA_PORT}/api/generate`,
+    `http://${host}:${OLLAMA_PORT}/api/generate`,
     "-H",
     "Content-Type: application/json",
     "-d",
