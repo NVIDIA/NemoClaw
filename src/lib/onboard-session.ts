@@ -77,6 +77,18 @@ export interface Session {
   webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
+  // SHA-256 hex digest of every legacy credential value successfully
+  // written to the OpenShell gateway during this onboard session, keyed by
+  // env-name. Persisted across process restarts so a `--resume` run that
+  // skips already-completed upserts still knows the migration completed
+  // earlier and can safely remove ~/.nemoclaw/credentials.json on the
+  // final completeSession. Storing the hash (not just the env-name) lets
+  // us detect when the legacy file value was edited between runs, when
+  // the gateway provider was reset out-of-band, or when an unrelated
+  // session is found on disk — in any of those cases the in-memory
+  // migrated set is NOT seeded from the persisted record, so the cleanup
+  // gate keeps the file until the *current* value is actually re-migrated.
+  migratedLegacyValueHashes: Record<string, string> | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
 }
@@ -107,6 +119,7 @@ export interface SessionUpdates {
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
   messagingChannels?: string[];
+  migratedLegacyValueHashes?: Record<string, string>;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
@@ -170,6 +183,17 @@ function readString(value: SessionJsonValue | undefined): string | null {
 function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function readStringRecord(
+  value: SessionJsonValue | undefined,
+): Record<string, string> | null {
+  if (!isObject(value)) return null;
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof k === "string" && typeof v === "string") result[k] = v;
+  }
+  return result;
 }
 
 function isStepStatus(value: string): value is StepStatus {
@@ -261,6 +285,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
+    migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
+      ? readStringRecord(overrides.migratedLegacyValueHashes)
+      : null,
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
@@ -292,6 +319,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
+    migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
@@ -597,6 +625,13 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   }
   if (Array.isArray(updates.messagingChannels)) {
     safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
+  }
+  if (isObject(updates.migratedLegacyValueHashes)) {
+    const cleaned: Record<string, string> = {};
+    for (const [k, v] of Object.entries(updates.migratedLegacyValueHashes)) {
+      if (typeof k === "string" && typeof v === "string") cleaned[k] = v;
+    }
+    safe.migratedLegacyValueHashes = cleaned;
   }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {

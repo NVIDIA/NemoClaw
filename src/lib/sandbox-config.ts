@@ -670,10 +670,11 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
     process.exit(1);
   }
 
-  // 4. Save credential locally
+  // 4. Stage the new value in the current process so the openshell update
+  //    that follows can read it via --credential <ENV>. The OpenShell
+  //    gateway becomes the system of record once the update succeeds.
   const { saveCredential } = require("./credentials");
   saveCredential(credentialEnv, newToken);
-  console.log("  Credential saved to ~/.nemoclaw/credentials.json");
 
   // 5. Update the openshell provider
   console.log("  Updating openshell provider...");

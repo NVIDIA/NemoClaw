@@ -2648,7 +2648,7 @@ const { setupInference } = require(${onboardPath});
     assert.equal(typeof streamSandboxCreate, "function");
   });
 
-  it("hydrates stored provider credentials when setupInference runs without process env set", () => {
+  it("migrates a legacy credentials.json into env so setupInference can register the provider", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -2656,22 +2656,31 @@ const { setupInference } = require(${onboardPath});
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    // Pre-seed a pre-fix plaintext credentials.json. hydrateCredentialEnv
+    // stages it non-destructively into process.env via
+    // stageLegacyCredentialsToEnv(); the secure unlink only runs from the
+    // post-onboard cleanup gate when the staged values are confirmed
+    // migrated, so the legacy file must still exist after this test's
+    // setupInference call (asserted further down).
+    const legacyDir = path.join(tmpDir, ".nemoclaw");
+    fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(legacyDir, "credentials.json"),
+      JSON.stringify({ OPENAI_API_KEY: "sk-stored-secret" }),
+      { mode: 0o600 },
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
       mode: 0o755,
     });
 
+    const legacyFilePath = JSON.stringify(path.join(legacyDir, "credentials.json"));
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
-const credentials = require(${credentialsPath});
-const childProcess = require("node:child_process");
-const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
-const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
@@ -2693,14 +2702,17 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-credentials.saveCredential("OPENAI_API_KEY", "sk-stored-secret");
 delete process.env.OPENAI_API_KEY;
 
 const { setupInference } = require(${onboardPath});
 
 (async () => {
   await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
-  console.log(JSON.stringify({ commands, openai: process.env.OPENAI_API_KEY || null }));
+  console.log(JSON.stringify({
+    commands,
+    openai: process.env.OPENAI_API_KEY || null,
+    legacyFileGone: !fs.existsSync(${legacyFilePath}),
+  }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -2722,8 +2734,18 @@ const { setupInference } = require(${onboardPath});
     const payload = parseStdoutJson<{
       openai: string;
       commands: CommandEntry[];
+      legacyFileGone: boolean;
     }>(result.stdout);
     assert.equal(payload.openai, "sk-stored-secret");
+    // setupInference's hydrateCredentialEnv only stages the legacy file
+    // (non-destructive). The secure unlink runs only after a full successful
+    // onboard, so an interrupted run can be retried without losing the
+    // user's only copy of their credentials.
+    assert.equal(
+      payload.legacyFileGone,
+      false,
+      "legacy credentials.json must survive the staging-only hydrate path",
+    );
     // commands[0]=gateway select, [1]=provider get, [2]=provider update
     const providerUpdate = payload.commands[2];
     assert.ok(providerUpdate, "expected provider update command");
@@ -6145,8 +6167,8 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(summary.includes("gemini-api"), "summary includes provider");
     assert.ok(summary.includes("gemini-2.5-flash"), "summary includes model");
     assert.ok(
-      summary.includes("GEMINI_API_KEY (stored in ~/.nemoclaw/credentials.json)"),
-      "summary shows API key env var + storage location",
+      summary.includes("GEMINI_API_KEY (staged for OpenShell gateway registration)"),
+      "summary shows API key env var + staging state",
     );
     assert.ok(summary.includes("enabled"), "summary includes web-search enabled");
     assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");
