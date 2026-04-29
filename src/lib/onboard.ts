@@ -3128,7 +3128,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
         // doctor logs unavailable — fall through to manual instructions
       }
       console.error("  Troubleshooting:");
-          console.error("  nemoclau onboard");
+              console.error("  nemoclau onboard");
               destroyGateway();
       process.exit(1);
     }
