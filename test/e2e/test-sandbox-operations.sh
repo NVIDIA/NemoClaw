@@ -107,6 +107,60 @@ sandbox_exec() {
   sandbox_exec_for "$SANDBOX_A" "$1"
 }
 
+is_onboard_import_stream_reset() {
+  local output_file="$1"
+  [[ -f "$output_file" ]] || return 1
+
+  grep -q "Connection reset by peer (os error 104)" "$output_file" \
+    && grep -Eq "The image appears to have reached the gateway before the stream failed|Recovery: nemoclaw onboard --resume" "$output_file"
+}
+
+is_transient_onboard_resume_error() {
+  local output_file="$1"
+  [[ -f "$output_file" ]] || return 1
+
+  grep -Eq "Connection reset by peer \(os error 104\)|transport error|gateway unavailable|No active gateway|No gateway metadata found" "$output_file"
+}
+
+resume_onboard_after_import_stream_reset() {
+  local name="$1" output_file="$2"
+  if ! is_onboard_import_stream_reset "$output_file"; then
+    return 1
+  fi
+
+  log "  [onboard] Image reached gateway but import stream reset; retrying with nemoclaw onboard --resume..."
+
+  local attempt delay resume_exit resume_output
+  for attempt in 1 2 3; do
+    rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
+    resume_exit=0
+    resume_output="$(mktemp)"
+    log "  [onboard] Resume attempt ${attempt}/3..."
+    NEMOCLAW_SANDBOX_NAME="$name" \
+      NEMOCLAW_NON_INTERACTIVE=1 \
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+      nemoclaw onboard --resume --non-interactive --yes-i-accept-third-party-software \
+      2>&1 | tee -a "$LOG_FILE" "$resume_output" || resume_exit=$?
+
+    if [[ $resume_exit -eq 0 ]]; then
+      rm -f "$resume_output"
+      return 0
+    fi
+
+    log "  [onboard] nemoclaw onboard --resume attempt ${attempt}/3 exited with code $resume_exit"
+    if ((attempt < 3)) && is_transient_onboard_resume_error "$resume_output"; then
+      delay=$((attempt * 15))
+      log "  [onboard] Gateway transport still settling; retrying resume in ${delay}s..."
+      rm -f "$resume_output"
+      sleep "$delay"
+      continue
+    fi
+    rm -f "$resume_output"
+    return 1
+  done
+  return 1
+}
+
 # Onboard a sandbox by name. Removes stale locks, runs nemoclaw onboard in
 # non-interactive mode, and returns 0 if the sandbox appears in nemoclaw list.
 onboard_sandbox() {
@@ -116,18 +170,25 @@ onboard_sandbox() {
   # Remove stale lock from previous crashed runs
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
 
-  local onboard_exit=0
+  local onboard_exit=0 onboard_output
+  onboard_output="$(mktemp)"
   NEMOCLAW_SANDBOX_NAME="$name" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_RECREATE_SANDBOX=1 \
     nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
-    2>&1 | tee -a "$LOG_FILE" || onboard_exit=$?
+    2>&1 | tee -a "$LOG_FILE" "$onboard_output" || onboard_exit=$?
 
   if [[ $onboard_exit -ne 0 ]]; then
     log "  [onboard_sandbox] nemoclaw onboard exited with code $onboard_exit"
-    return 1
+    if resume_onboard_after_import_stream_reset "$name" "$onboard_output"; then
+      onboard_exit=0
+    else
+      rm -f "$onboard_output"
+      return 1
+    fi
   fi
+  rm -f "$onboard_output"
 
   if ! nemoclaw list 2>/dev/null | grep -q "$name"; then
     log "  [onboard_sandbox] Sandbox '$name' not found in nemoclaw list after onboard"
@@ -158,9 +219,10 @@ install_nemoclaw() {
 
   log "=== Installing NemoClaw via install.sh ==="
 
-  local install_exit=0
+  local install_exit=0 install_output
+  install_output="$(mktemp)"
   bash "$REPO_ROOT/install.sh" --non-interactive --yes-i-accept-third-party-software \
-    2>&1 | tee -a "$LOG_FILE" || install_exit=$?
+    2>&1 | tee -a "$LOG_FILE" "$install_output" || install_exit=$?
 
   # Source shell profile to pick up PATH changes from install.sh
   if [ -f "$HOME/.bashrc" ]; then
@@ -175,6 +237,15 @@ install_nemoclaw() {
   if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     export PATH="$HOME/.local/bin:$PATH"
   fi
+
+  if [[ $install_exit -ne 0 ]]; then
+    local install_sandbox
+    install_sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+    if resume_onboard_after_import_stream_reset "$install_sandbox" "$install_output"; then
+      install_exit=0
+    fi
+  fi
+  rm -f "$install_output"
 
   if [[ $install_exit -ne 0 ]]; then
     echo -e "${RED}FATAL: install.sh failed (exit $install_exit)${NC}"
@@ -284,6 +355,8 @@ test_sbx_01_list_sandboxes() {
 #      SSRF regression from the prior `Say exactly: HELLO_E2E` assertion.
 #   3. Asserts on `result.payloads[].text` from the JSON envelope, not on
 #      merged stdout/stderr.
+#   4. Pins `--thinking off` so the first-turn smoke contract is not delayed
+#      by model-catalog inferred reasoning defaults.
 test_sbx_02_connect_chat() {
   log "=== TC-SBX-02: Connect & Chat ==="
   require_sandbox "$SANDBOX_A" "TC-SBX-02" || return
@@ -306,7 +379,7 @@ test_sbx_02_connect_chat() {
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_A}" \
-    "openclaw agent --agent main --json --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
+    "openclaw agent --agent main --json --thinking off --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
     2>/dev/null) || true
   rm -f "$ssh_cfg"
 

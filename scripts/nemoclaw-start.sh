@@ -941,17 +941,34 @@ while time.time() < DEADLINE:
         time.sleep(1)
         continue
 
-    if has_browser:
-        QUIET_POLLS += 1
-        if QUIET_POLLS >= 4:
+    QUIET_POLLS += 1
+    # Exit-on-quiet conditions, checked in order of strength:
+    #   1. Browser device paired — original control-UI workflow
+    #   2. Any paired device — covers dangerouslyDisableDeviceAuth setups
+    #      where the gateway auto-pairs CLI clients directly without the
+    #      watcher running `openclaw devices approve` (so APPROVED stays
+    #      0 forever in those configurations)
+    #   3. We approved at least one device explicitly
+    # Without these, the watcher polled `openclaw devices list --json`
+    # every 1 second for 10 minutes whenever no browser device joined,
+    # saturating the gateway connect handler and starving concurrent
+    # `openclaw agent` connects (NemoClaw#2484: WS handshake-timeout).
+    if QUIET_POLLS >= 4:
+        if has_browser:
             print(f'[auto-pair] browser pairing converged approvals={APPROVED}')
             break
-    elif APPROVED > 0:
-        QUIET_POLLS += 1
-    else:
-        QUIET_POLLS = 0
+        if paired:
+            print(f'[auto-pair] devices paired ({len(paired)}); exiting approvals={APPROVED}')
+            break
+        if APPROVED > 0:
+            print(f'[auto-pair] non-browser pairing converged approvals={APPROVED}')
+            break
 
-    time.sleep(1)
+    # Back off polling once anything is paired or approved: 1s when
+    # actively processing pending requests / waiting for first pairing,
+    # 5s thereafter. The 5s cadence avoids connect-handler pile-up under
+    # high gateway connect latency.
+    time.sleep(5 if (APPROVED > 0 or paired) else 1)
 else:
     print(f'[auto-pair] watcher timed out approvals={APPROVED}')
 PYAUTOPAIR
@@ -1016,17 +1033,21 @@ fi
 # src/lib/sandbox-build-context.ts. A sync test enforces that the
 # embedded copy is byte-identical to the canonical file.
 # ── Global sandbox safety net ──────────────────────────────────
-# Catch-all handler for uncaught exceptions and unhandled rejections
-# that would otherwise crash the gateway. In a sandbox environment,
-# a crashed gateway means total loss of inference, chat, and TUI —
-# worse than degraded service from a swallowed error.
+# Last-resort handler for uncaught exceptions and unhandled rejections
+# that would otherwise crash the gateway. The gateway is shared sandbox
+# infrastructure; user-initiated actions must not be able to take it down.
 #
-# This MUST be the first --require preload so its handlers register
-# before any library code runs. Specific guards (Slack, ciao) provide
-# targeted handling; this catches everything else.
+# This is intentionally NOT a catch-all swallow. Known-benign error
+# patterns are documented inline in the script; unknown patterns are
+# logged with full stack so they can be diagnosed and either fixed
+# upstream or added to the allow-list with explicit justification.
+# Specific guards (Slack, ciao) pre-empt their own error patterns;
+# this is the backstop for everything else.
 #
-# Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime).
-# Outside a sandbox, normal Node.js crash behavior is preserved.
+# Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime),
+# and only for gateway processes. Outside a sandbox or in CLI processes
+# (agent, doctor, plugins, tui, etc.) normal Node.js crash behavior is
+# preserved so errors surface promptly to users running short-lived tools.
 _SANDBOX_SAFETY_NET="/tmp/nemoclaw-sandbox-safety-net.js"
 emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <<'SAFETY_NET_EOF'
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -1034,53 +1055,110 @@ emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <<'SAFETY_NET_EOF'
 //
 // sandbox-safety-net.js — last-resort handler that keeps the gateway alive
 // when any library throws an uncaught exception or unhandled rejection.
-// Only active inside OpenShell sandboxes (OPENSHELL_SANDBOX=1).
+//
+// Contract:
+//
+//   1. Inside the OpenShell sandbox the gateway is shared infrastructure.
+//      User-initiated actions (loading a plugin, starting a sidecar,
+//      running an agent against the gateway) must not be able to take it
+//      down. Node.js 22+ defaults --unhandled-rejections=throw which
+//      crashes on the first stray rejection from any library — including
+//      libraries we don't control.
+//
+//   2. Specific known-benign patterns are documented inline below. They
+//      get a single-line summary and are absorbed silently. Each pattern
+//      MUST document which library produces it, why it's safe to absorb
+//      in the sandbox context, and what the upstream fix is. Prefer
+//      disabling/configuring the upstream component so the rejection
+//      never fires; this list is the safety net, not the policy.
+//
+//   3. Unknown errors do NOT crash the gateway either, but they are
+//      logged with full stack so they can be diagnosed and either fixed
+//      upstream or added to the allow-list with explicit justification.
+//      "Unknown means crash" is the wrong default for shared
+//      infrastructure; "unknown means log loudly" is the right default.
+//
+//   4. No process.exit interception. An earlier iteration intercepted
+//      process.exit during swallow windows, which masked legitimate
+//      shutdown signals and was itself the kind of catch-all hack we
+//      want to avoid.
+//
+//   5. Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime),
+//      and only for `openclaw gateway run …` invocations
+//      (process.argv[2] === "gateway"). CLI commands (agent, doctor,
+//      plugins, tui, etc.) get default Node behavior so errors surface
+//      promptly to users running short-lived tools.
 
 (function () {
   'use strict';
   if (process.env.OPENSHELL_SANDBOX !== '1') return;
+  if (process.argv[2] !== 'gateway') return;
 
-  // Track whether we're inside an unhandledRejection we chose to swallow.
-  // OpenClaw's own handler calls process.exit(1) for non-transient rejections.
-  // We intercept process.exit during swallowed rejections to prevent that.
-  var _swallowing = false;
-  var _origExit = process.exit;
-  process.exit = function (code) {
-    if (_swallowing) {
-      try {
-        process.stderr.write(
-          '[sandbox-safety-net] blocked process.exit(' + code +
-          ') during swallowed rejection — gateway continues\n'
-        );
-      } catch (_) {}
-      return;
+  // KNOWN-BENIGN ERROR PATTERNS
+  //
+  // ciao / @homebridge/ciao — mDNS service-discovery library used by the
+  // OpenClaw bonjour plugin (introduced in 2026.4.15). Sandboxes have
+  // restricted network namespaces with no multicast. Two failure modes:
+  //   - sync: os.networkInterfaces() throws ERR_SYSTEM_ERROR
+  //     uv_interface_addresses. Pre-empted by ciao-network-guard.js,
+  //     which monkey-patches os.networkInterfaces() to return {}.
+  //   - async: the probe state machine cancels itself during gateway
+  //     startup/reload and emits "CIAO PROBING CANCELLED" as an unhandled
+  //     rejection. This is the path we catch here.
+  // Upstream fix: bonjour is disabled via plugins.entries.bonjour.enabled
+  // = false in the sandbox openclaw.json. This pattern is a backstop in
+  // case the disable is bypassed or a future release introduces another
+  // mDNS code path.
+  function classifyBenignRejection(reason) {
+    if (!reason) return null;
+    var msg = String((reason && reason.message) || reason);
+    var stack = (reason && reason.stack) || '';
+
+    if (msg.indexOf('CIAO') !== -1 ||
+        stack.indexOf('@homebridge/ciao') !== -1 ||
+        stack.indexOf('/ciao/') !== -1) {
+      return 'ciao/mDNS (sandbox lacks multicast; bonjour should be disabled in openclaw.json)';
     }
-    return _origExit.call(process, code);
-  };
+    if (reason && reason.code === 'ERR_SYSTEM_ERROR' &&
+        msg.indexOf('uv_interface_addresses') !== -1) {
+      return 'uv_interface_addresses (restricted netns)';
+    }
+    return null;
+  }
 
   process.on('uncaughtException', function (err, origin) {
+    // Sync error paths are pre-empted by the targeted guards
+    // (ciao-network-guard.js, slack-channel-guard.js when Slack is
+    // configured). If we get here it's an error those guards didn't
+    // recognize. Log full stack and stay alive — registering this
+    // listener is what tells Node "don't crash on uncaughtException".
     try {
       process.stderr.write(
-        '[sandbox-safety-net] uncaughtException: ' +
-        (err && err.stack ? err.stack : String(err)) +
-        ' (origin: ' + origin + ') — swallowed, gateway continues\n'
+        '[sandbox-safety-net] uncaughtException [unhandled by upstream guards \u2014 please diagnose]: ' +
+        ((err && err.stack) ? err.stack : String(err)) +
+        ' (origin: ' + origin + ') \u2014 gateway continues\n'
       );
     } catch (_) {}
   });
 
   process.on('unhandledRejection', function (reason, promise) {
-    _swallowing = true;
+    var benign = classifyBenignRejection(reason);
+    if (benign) {
+      try {
+        process.stderr.write(
+          '[sandbox-safety-net] unhandledRejection [known-benign: ' + benign + ']: ' +
+          ((reason && reason.message) ? reason.message : String(reason)) + '\n'
+        );
+      } catch (_) {}
+      return;
+    }
     try {
       process.stderr.write(
-        '[sandbox-safety-net] unhandledRejection: ' +
-        (reason && reason.stack ? reason.stack : String(reason)) +
-        ' — swallowed, gateway continues\n'
+        '[sandbox-safety-net] unhandledRejection [UNKNOWN PATTERN \u2014 please diagnose]: ' +
+        ((reason && reason.stack) ? reason.stack : String(reason)) +
+        ' \u2014 gateway continues\n'
       );
     } catch (_) {}
-    // Keep _swallowing=true through this tick so OpenClaw's handler
-    // (which runs in the same microtask delivery) hits our process.exit
-    // intercept. Reset on next tick.
-    Promise.resolve().then(function () { _swallowing = false; });
   });
 })();
 SAFETY_NET_EOF
@@ -1462,32 +1540,37 @@ emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <<'CIAO_GUARD_EOF'
   };
 
   // Fallback: catch uncaughtException from ciao if the monkey-patch
-  // doesn't cover all call sites.
-  process.on('uncaughtException', function (err, origin) {
-    if (
-      err && err.code === 'ERR_SYSTEM_ERROR' &&
-      String(err.message || '').indexOf('uv_interface_addresses') !== -1
-    ) {
-      process.stderr.write(
-        '[guard] ciao/networkInterfaces crash caught: ' + (err.message || err) +
-        ' — gateway continues\n'
-      );
-      return;
-    }
-    // Check stack for ciao/NetworkManager
-    if (err && err.stack && err.stack.indexOf('ciao') !== -1 &&
-        String(err.message || '').indexOf('networkInterfaces') !== -1) {
-      process.stderr.write(
-        '[guard] ciao network error caught: ' + (err.message || err) +
-        ' — gateway continues\n'
-      );
-      return;
-    }
-    // Not a ciao error — re-throw to preserve normal crash behavior.
-    process.stderr.write((err && err.stack) || String(err));
-    process.stderr.write('\n');
-    process.exit(1);
-  });
+  // doesn't cover all call sites. Gateway-only — registering ANY
+  // uncaughtException listener tells Node "don't crash by default", and
+  // we want CLI processes (agent, doctor, plugins, tui) to keep default
+  // Node crash behavior so errors surface promptly.
+  //
+  // For gateway processes, non-ciao errors fall through (return) to the
+  // sandbox safety net registered later in the preload chain. The safety
+  // net is the single point of "keep gateway alive on unknown errors".
+  if (process.argv[2] === 'gateway') {
+    process.on('uncaughtException', function (err, origin) {
+      if (
+        err && err.code === 'ERR_SYSTEM_ERROR' &&
+        String(err.message || '').indexOf('uv_interface_addresses') !== -1
+      ) {
+        process.stderr.write(
+          '[guard] ciao/networkInterfaces crash caught: ' + (err.message || err) +
+          ' \u2014 gateway continues\n'
+        );
+        return;
+      }
+      if (err && err.stack && err.stack.indexOf('ciao') !== -1 &&
+          String(err.message || '').indexOf('networkInterfaces') !== -1) {
+        process.stderr.write(
+          '[guard] ciao network error caught: ' + (err.message || err) +
+          ' \u2014 gateway continues\n'
+        );
+        return;
+      }
+      // Not ciao — let the sandbox safety net handle it.
+    });
+  }
 })();
 CIAO_GUARD_EOF
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT"
@@ -1688,12 +1771,22 @@ if [ "$(id -u)" -ne 0 ]; then
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
+  # Diagnostic: mirror gateway log to PID 1's stderr — see root-mode block
+  # below for rationale (NVIDIA/NemoClaw#2484).
+  { tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
+  GATEWAY_LOG_TAIL_PID=$!
+  # Persistent mirror: see root-mode block for rationale.
+  mkdir -p /sandbox/.openclaw-data/logs 2>/dev/null || true
+  { tail -n +1 -F /tmp/gateway.log 2>/dev/null >>/sandbox/.openclaw-data/logs/gateway-persistent.log; } &
+  GATEWAY_LOG_PERSIST_PID=$!
   start_auto_pair
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
   # the shared-library refactor). Acceptable for entrypoint-level cleanup.
   SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
   [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
+  [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
+  [ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   trap cleanup_on_signal SIGTERM SIGINT
@@ -1830,12 +1923,35 @@ nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gat
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 
+# Diagnostic: mirror gateway log to PID 1's stderr so its content surfaces in
+# docker logs. /tmp/gateway.log is otherwise only readable from inside the
+# sandbox via `nemoclaw <sandbox> logs` and is not captured by the e2e test
+# framework on failure. Streaming it to PID 1's stderr lets a workflow-level
+# `docker logs` capture pick it up. Each line is prefixed with [gateway-log:]
+# so it can be filtered out post-hoc when not investigating.
+# Ref: NVIDIA/NemoClaw#2484 (TC-SBX-02 hang investigation)
+{ tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
+GATEWAY_LOG_TAIL_PID=$!
+
+# Persistent mirror: append /tmp/gateway.log content to a file under
+# /sandbox/.openclaw-data/logs which is volume-mounted by openshell and
+# survives pod restarts. /tmp/gateway.log itself is wiped when the pod
+# restarts (TC-SBX-06 docker-kills the gateway container), so the
+# only durable record of pre-restart events lives here. The diag
+# streamer in the e2e workflow snapshots this file post-test.
+mkdir -p /sandbox/.openclaw-data/logs 2>/dev/null || true
+chown gateway:gateway /sandbox/.openclaw-data/logs 2>/dev/null || true
+{ tail -n +1 -F /tmp/gateway.log 2>/dev/null >>/sandbox/.openclaw-data/logs/gateway-persistent.log; } &
+GATEWAY_LOG_PERSIST_PID=$!
+
 start_auto_pair
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.
 SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
 [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
+[ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
+[ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
 # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
 SANDBOX_WAIT_PID="$GATEWAY_PID"
 trap cleanup_on_signal SIGTERM SIGINT

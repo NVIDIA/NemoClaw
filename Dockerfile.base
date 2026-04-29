@@ -109,6 +109,7 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
         /sandbox/.openclaw-data/flows \
         /sandbox/.openclaw-data/sandbox \
         /sandbox/.openclaw-data/telegram \
+        /sandbox/.openclaw-data/plugin-runtime-deps \
     && mkdir -p /sandbox/.openclaw \
     && ln -s /sandbox/.openclaw-data/agents /sandbox/.openclaw/agents \
     && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
@@ -129,6 +130,7 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && ln -s /sandbox/.openclaw-data/exec-approvals.json /sandbox/.openclaw/exec-approvals.json \
     && ln -s /sandbox/.openclaw-data/telegram /sandbox/.openclaw/telegram \
     && ln -s /sandbox/.openclaw-data/flows /sandbox/.openclaw/flows \
+    && ln -s /sandbox/.openclaw-data/plugin-runtime-deps /sandbox/.openclaw/plugin-runtime-deps \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
 # Pre-create shell init files for the sandbox user.
@@ -152,7 +154,7 @@ RUN printf '%s\n' \
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
 # the base image on push to main, or use workflow_dispatch on base-image.yaml
 # with the openclaw_version input for a one-off build without editing this file.
-ARG OPENCLAW_VERSION=2026.4.9
+ARG OPENCLAW_VERSION=2026.4.24
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 

@@ -454,6 +454,73 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Start gateway log streamer (background)
+        run: |
+          # Diagnostic for NVIDIA/NemoClaw#2484: container log driver in
+          # openshell's k3s setup doesn't allow reading container stdio —
+          # only working path to /tmp/gateway.log is via SSH, which
+          # `nemoclaw <sandbox> logs` uses internally.
+          #
+          # Snapshot mode (not follow): every 10s, overwrite per-sandbox
+          # log file with the latest gateway log content. Bounded output
+          # (~62 lines per snapshot). When a sandbox is destroyed by the
+          # test, the file holds the final pre-destroy snapshot.
+          mkdir -p docker-logs
+          nohup bash -c '
+            export PATH="$HOME/.local/bin:$PATH"
+            # Strategy: every 5s, snapshot each live sandbox via
+            # `docker exec openshell-cluster-nemoclaw kubectl ...`. This
+            # bypasses both per-pod networking (which has had connection-
+            # refused races for some sandboxes) and the host openshell
+            # client (which loses gateway metadata after TC-SBX-06s
+            # docker-kill). kubectl talks directly to k3s in the cluster
+            # container.
+            #
+            # Snapshot mode (overwrite per iteration), not live tail-F:
+            # the gateway-persistent.log file accumulates everything since
+            # boot (mirrored from /tmp/gateway.log by nemoclaw-start.sh),
+            # so a single full-cat at any point gives us complete history.
+            # Each iteration is short-lived so transient connection issues
+            # do not cause us to lose the entire stream.
+            #
+            # Also snapshot kubectl pod listing per iteration so we have
+            # the actual pod naming convention even if the cluster is
+            # destroyed by teardown later.
+            while sleep 5; do
+              if ! docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^openshell-cluster-nemoclaw$"; then
+                continue
+              fi
+              docker exec openshell-cluster-nemoclaw kubectl get pods -A --no-headers >docker-logs/_pods.txt 2>&1
+              registry="$HOME/.nemoclaw/sandboxes.json"
+              [ -f "$registry" ] || continue
+              live=$(jq -r ".sandboxes // {} | keys[]?" "$registry" 2>/dev/null)
+              for name in $live; do
+                case "$name" in
+                  *[!a-z0-9_-]*|"") continue ;;
+                esac
+                # Find pod by sandbox name. openshell uses the sandbox
+                # name as the namespace and "agent" as the pod name.
+                # Try a few common patterns.
+                pod_match=$(awk -v n="$name" "\$1==n || \$2==n || \$1==\"sandbox-\" n || \$2==\"sandbox-\" n {print \$1\"/\"\$2; exit}" docker-logs/_pods.txt)
+                if [ -z "$pod_match" ]; then
+                  # Fallback: any pod whose name contains the sandbox name
+                  pod_match=$(awk -v n="$name" "index(\$2,n)>0 {print \$1\"/\"\$2; exit}" docker-logs/_pods.txt)
+                fi
+                if [ -z "$pod_match" ]; then continue; fi
+                pod_ns="${pod_match%%/*}"
+                pod_name="${pod_match##*/}"
+                docker exec openshell-cluster-nemoclaw kubectl exec -n "$pod_ns" "$pod_name" -- bash -c "
+                  for f in /sandbox/.openclaw-data/logs/gateway-persistent.log /tmp/gateway.log /tmp/openclaw-*/openclaw-*.log; do
+                    [ -f \"\$f\" ] || continue
+                    printf \"\\n----- %s (size=%s) -----\\n\" \"\$f\" \"\$(stat -c%s \"\$f\" 2>/dev/null || echo ?)\"
+                    cat -- \"\$f\" 2>/dev/null
+                  done
+                " > "docker-logs/sandbox-${name}.log" 2>&1
+              done
+            done
+          ' >/dev/null 2>&1 &
+          echo $! > /tmp/gateway-log-streamer.pid
+
       - name: Run sandbox operations E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -461,7 +528,153 @@ jobs:
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_POLICY_TIER: "open"
           GITHUB_TOKEN: ${{ github.token }}
+          # Override the 1800s default in test/e2e/e2e-timeout.sh. Sandbox
+          # creation alone is ~14 min per sandbox in current CI conditions
+          # (build+upload to k3s gateway), and the test creates two — leaving
+          # the default 30-min budget completely consumed by setup with no
+          # room for the actual TC-SBX cases. The job-level timeout (60 min,
+          # set in `timeout-minutes` above) is the real upper bound.
+          NEMOCLAW_E2E_TIMEOUT_SECONDS: "2700"
         run: bash test/e2e/test-sandbox-operations.sh
+
+      - name: Stop gateway log streamer
+        if: always()
+        # Diagnostic step: never let `bash -e` kill the snapshot loop on a
+        # single command failure (openshell ssh-config, nemoclaw logs, etc.
+        # all routinely fail post-test depending on TC-SBX-06's docker-kill
+        # state). We log the failures inline and continue.
+        shell: bash --noprofile --norc -uo pipefail {0}
+        run: |
+          [ -f /tmp/gateway-log-streamer.pid ] && kill "$(cat /tmp/gateway-log-streamer.pid)" 2>/dev/null || true
+          # Kill any per-sandbox SSH+tail followers spawned by the streamer.
+          pkill -f 'tail -n \+1 -F /tmp/gateway.log' 2>/dev/null || true
+          pkill -f 'ssh.*openshell-' 2>/dev/null || true
+          sleep 2
+          # Final snapshot: tail -F glob expands once at start, so log files
+          # for openclaw processes that ran as a different UID (creating new
+          # /tmp/openclaw-<uid>/ dirs mid-test) get missed. Re-glob now and
+          # append every openclaw log file from each live sandbox to the
+          # per-sandbox docker-logs file.
+          #
+          # Use `nemoclaw <name> logs` (not raw openshell ssh-config + ssh)
+          # because nemoclaw handles SSH key/host setup and is robust to
+          # streamer race conditions. Tested working in TC-SBX-04.
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "=== final-snapshot: PATH=$PATH"
+          echo "=== final-snapshot: nemoclaw=$(command -v nemoclaw)"
+          echo "=== final-snapshot: openshell=$(command -v openshell)"
+          # TC-SBX-06's docker kill of the gateway pod can leave openshell
+          # without an active gateway selected; re-select before the snapshot
+          # so `nemoclaw <name> logs` and direct `openshell sandbox exec` both
+          # have a target. The select is best-effort — failure (e.g., gateway
+          # not yet recovered) just means we fall through to ssh-config-based
+          # capture below.
+          openshell gateway select nemoclaw 2>&1 | head -5 || true
+          openshell gateway list 2>&1 | head -10 || true
+          # NEW PATH: bypass the openshell client entirely. The
+          # openshell-cluster-nemoclaw docker container runs k3s with
+          # kubectl available inside. Even after TC-SBX-06's docker-kill,
+          # docker auto-restarts the container and k3s state survives via
+          # /var/lib/rancher/k3s. Use `docker exec ... kubectl` to read
+          # the persistent log directly from each sandbox pod, with no
+          # dependency on the host's openshell metadata.
+          echo "=== final-snapshot: docker containers:"
+          docker ps --format '{{.Names}}\t{{.Status}}' 2>&1 | head -10
+          echo "=== final-snapshot: cluster pods:"
+          docker exec openshell-cluster-nemoclaw kubectl get pods -A --no-headers 2>&1 | head -20
+          if [ -f "$HOME/.nemoclaw/sandboxes.json" ]; then
+            echo "=== final-snapshot: sandboxes.json contents:"
+            cat "$HOME/.nemoclaw/sandboxes.json" 2>&1 | head -30
+            registry_keys=$(jq -r ".sandboxes // {} | keys[]?" "$HOME/.nemoclaw/sandboxes.json" 2>&1)
+            echo "=== final-snapshot: sandbox names from jq: '$registry_keys'"
+            for name in $registry_keys; do
+              case "$name" in *[!a-z0-9_-]*|"") echo "=== final-snapshot: skipping invalid name '$name'"; continue ;; esac
+              echo "=== final-snapshot: capturing logs for '$name'"
+              {
+                printf '\n\n===== FINAL SNAPSHOT: %s =====\n' "$name"
+                # FIRST attempt: docker exec into the cluster container and
+                # kubectl-exec into the sandbox pod. This works even when
+                # the host openshell client is broken post-TC-SBX-06 because
+                # docker (and k3s inside the cluster) survive the gateway
+                # docker-kill via auto-restart + persistent k3s state.
+                pod_ns_name=$(docker exec openshell-cluster-nemoclaw kubectl get pods -A --no-headers 2>/dev/null | awk -v n="$name" '$2==n {print $1"/"$2; exit}')
+                if [ -n "$pod_ns_name" ]; then
+                  echo "(found pod $pod_ns_name for $name)"
+                  pod_ns="${pod_ns_name%%/*}"
+                  pod_name="${pod_ns_name##*/}"
+                  k_out=$(mktemp)
+                  docker exec openshell-cluster-nemoclaw kubectl exec -n "$pod_ns" "$pod_name" -- bash -c '
+                    for f in /sandbox/.openclaw-data/logs/gateway-persistent.log /tmp/gateway.log /tmp/openclaw-*/openclaw-*.log; do
+                      [ -f "$f" ] || continue
+                      printf "\n----- %s (size=%s) -----\n" "$f" "$(stat -c%s "$f" 2>/dev/null || echo ?)"
+                      cat -- "$f" 2>/dev/null || true
+                    done
+                  ' >"$k_out" 2>&1
+                  k_rc=$?
+                  echo "(kubectl exec rc=$k_rc size=$(wc -c <"$k_out"))"
+                  tail -c 500000 "$k_out"
+                  rm -f "$k_out"
+                else
+                  echo "(no kubectl pod found matching '$name')"
+                fi
+                # Existing fallbacks (raw ssh + nemoclaw logs) preserved
+                # below in case the docker/kubectl path also fails — they
+                # provide complementary coverage during transient states.
+                ssh_cfg="/tmp/sshcfg-final-${name}.tmp"
+                if openshell sandbox ssh-config "$name" >"$ssh_cfg" 2>&1 && [ -s "$ssh_cfg" ]; then
+                  ssh_out=$(mktemp)
+                  ssh -F "$ssh_cfg" \
+                      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                      -o ConnectTimeout=10 -o LogLevel=ERROR \
+                      "openshell-${name}" \
+                      'for f in /sandbox/.openclaw-data/logs/gateway-persistent.log \
+                               /tmp/gateway.log \
+                               /tmp/openclaw-*/openclaw-*.log; do
+                         [ -f "$f" ] || continue
+                         printf "\n----- %s (size=%s) -----\n" "$f" "$(stat -c%s "$f" 2>/dev/null || echo ?)"
+                         cat -- "$f" 2>/dev/null || true
+                       done' >"$ssh_out" 2>&1
+                  ssh_rc=$?
+                  tail -c 500000 "$ssh_out"
+                  rm -f "$ssh_out"
+                  [ "$ssh_rc" -eq 0 ] || echo "(direct ssh exited rc=$ssh_rc)"
+                else
+                  echo "(openshell sandbox ssh-config failed for $name)"
+                  # Fallback to nemoclaw logs (less reliable, but try anything)
+                  if command -v nemoclaw >/dev/null 2>&1; then
+                    nm_out=$(mktemp)
+                    nemoclaw "$name" logs >"$nm_out" 2>&1
+                    echo "(nemoclaw logs rc=$? size=$(wc -c <"$nm_out"))"
+                    tail -c 500000 "$nm_out"
+                    rm -f "$nm_out"
+                  fi
+                fi
+                rm -f "$ssh_cfg"
+              } >> "docker-logs/sandbox-${name}.log"
+            done
+          else
+            echo "=== final-snapshot: sandboxes.json not found at $HOME/.nemoclaw/sandboxes.json"
+          fi
+          # Cap each log file at 5MB by keeping only the last 5MB — useful
+          # content (real gateway events) is mixed throughout, so tail-trim
+          # is fine for diagnostic purposes.
+          for f in docker-logs/*.log; do
+            [ -f "$f" ] || continue
+            sz=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || echo 0)
+            if [ "$sz" -gt 5242880 ]; then
+              tail -c 5242880 "$f" > "${f}.tail" && mv "${f}.tail" "$f"
+            fi
+          done
+          ls -la docker-logs/ 2>&1 | head -20 || true
+          du -sh docker-logs/ 2>&1 || true
+
+      - name: Upload sandbox gateway logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-operations-docker-logs
+          path: docker-logs/
+          if-no-files-found: ignore
 
       - name: Upload test log on failure
         if: failure()

@@ -134,9 +134,41 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.agents.defaults.timeoutSeconds).toBe(300);
   });
 
+  it("disables OpenClaw first-run workspace bootstrap", () => {
+    const config = runConfigScript();
+    expect(config.agents.defaults.skipBootstrap).toBe(true);
+  });
+
+  it("disables inferred thinking for first-turn sandbox replies", () => {
+    const config = runConfigScript();
+    expect(config.agents.defaults.thinkingDefault).toBe("off");
+  });
+
   it("sets gateway auth token to empty string", () => {
     const config = runConfigScript();
     expect(config.gateway.auth.token).toBe("");
+  });
+
+  it("configures acpx codex to use the preinstalled binary", () => {
+    const config = runConfigScript();
+    expect(config.plugins.entries.acpx.config.agents.codex.command).toBe(
+      "/usr/local/bin/nemoclaw-codex-acp",
+    );
+  });
+
+  it("disables unused bundled provider plugins with staged runtime deps", () => {
+    const config = runConfigScript({ NEMOCLAW_PROVIDER_KEY: "inference" });
+    expect(config.plugins.entries["amazon-bedrock"].enabled).toBe(false);
+    expect(config.plugins.entries["amazon-bedrock-mantle"].enabled).toBe(false);
+    expect(config.plugins.entries.anthropic.enabled).toBe(false);
+    expect(config.plugins.entries["anthropic-vertex"].enabled).toBe(false);
+    expect(config.plugins.entries.google.enabled).toBe(false);
+  });
+
+  it("keeps the selected bundled provider plugin available", () => {
+    const config = runConfigScript({ NEMOCLAW_PROVIDER_KEY: "anthropic" });
+    expect(config.plugins.entries.anthropic).toBeUndefined();
+    expect(config.plugins.entries.google.enabled).toBe(false);
   });
 
   it("creates file with 0600 permissions", () => {
@@ -202,9 +234,7 @@ describe("generate-openclaw-config.py: empty-string env vars fall back to defaul
   it("treats empty CHAT_UI_URL as unset and uses the loopback default", () => {
     const config = runConfigScript({ CHAT_UI_URL: "" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
-    expect(config.gateway.controlUi.allowedOrigins).toEqual([
-      "http://127.0.0.1:18789",
-    ]);
+    expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18789"]);
   });
 
   it("treats empty NEMOCLAW_PROXY_HOST as unset and uses the documented default", () => {
@@ -213,9 +243,7 @@ describe("generate-openclaw-config.py: empty-string env vars fall back to defaul
       NEMOCLAW_PROXY_HOST: "",
       NEMOCLAW_MESSAGING_CHANNELS_B64: channelB64,
     });
-    expect(cfg.channels.telegram.accounts.default.proxy).toBe(
-      "http://10.200.0.1:3128",
-    );
+    expect(cfg.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
   });
 
   it("treats empty NEMOCLAW_PROXY_PORT as unset and uses the documented default", () => {
@@ -224,8 +252,6 @@ describe("generate-openclaw-config.py: empty-string env vars fall back to defaul
       NEMOCLAW_PROXY_PORT: "",
       NEMOCLAW_MESSAGING_CHANNELS_B64: channelB64,
     });
-    expect(cfg.channels.telegram.accounts.default.proxy).toBe(
-      "http://10.200.0.1:3128",
-    );
+    expect(cfg.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
   });
 });
