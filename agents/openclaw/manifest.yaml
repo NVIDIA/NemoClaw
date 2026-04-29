@@ -38,6 +38,24 @@ config:
   writable_dir: /sandbox/.openclaw-data
   config_file: openclaw.json      # relative to immutable_dir
   format: json
+  # Known top-level sections in openclaw.json. Used by `nemoclaw config set`
+  # to reject obvious typos (e.g. `inferenc.endpoint`) without coupling
+  # NemoClaw to OpenClaw's evolving config schema. Agents that omit this
+  # field skip validation entirely (see #2400).
+  known_sections:
+    - llm
+    - tts
+    - stt
+    - mcp
+    - sandbox
+    - extensions
+    - personas
+    - customization
+    - inference
+    - plugins
+    - skills
+    - ui
+    - logging
 
 # ── State directories ──────────────────────────────────────────
 state_dirs:

@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
+import assert from "node:assert";
+import fs from "node:fs";
+import path from "node:path";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const yaml = require("js-yaml") as { load: (s: string) => unknown };
 
 // Build must run before these tests (imports from dist/)
 const { extractDotpath, setDotpath, validateUrlValue, resolveAgentConfig } = require("../dist/lib/sandbox-config");
@@ -22,6 +27,61 @@ describe("resolveAgentConfig", () => {
   it("includes configFile in configPath", () => {
     const target = resolveAgentConfig("any-sandbox");
     expect(target.configPath.endsWith(target.configFile)).toBe(true);
+  });
+
+  it("defaults knownSections to null when manifest is absent (e.g. fallback)", () => {
+    const target = resolveAgentConfig("nonexistent-sandbox");
+    expect(target.knownSections).toBe(null);
+  });
+});
+
+describe("config set top-level section validation (manifest-aware)", () => {
+  // Tracks the design discussion on #2071 / #2400: the validator must NOT
+  // hardcode an OpenClaw-specific allowlist. It must read `config.known_sections`
+  // from the agent's manifest, and skip validation entirely when the agent
+  // doesn't declare one (so agents like Hermes with their own schema aren't
+  // blocked).
+
+  const sandboxConfigSource = fs.readFileSync(
+    path.join(import.meta.dirname, "..", "src", "lib", "sandbox-config.ts"),
+    "utf-8",
+  );
+
+  it("does not contain a hardcoded KNOWN_TOP_LEVEL_KEYS allowlist", () => {
+    assert.doesNotMatch(sandboxConfigSource, /KNOWN_TOP_LEVEL_KEYS\s*=\s*new Set/);
+  });
+
+  it("reads the allowlist from the agent's manifest via target.knownSections", () => {
+    assert.match(sandboxConfigSource, /target\.knownSections/);
+    assert.match(
+      sandboxConfigSource,
+      /if \(target\.knownSections && target\.knownSections\.length > 0\)/,
+    );
+  });
+
+  it("declares known_sections in the openclaw agent manifest", () => {
+    const manifest = yaml.load(
+      fs.readFileSync(
+        path.join(import.meta.dirname, "..", "agents", "openclaw", "manifest.yaml"),
+        "utf-8",
+      ),
+    ) as { config?: { known_sections?: string[] } };
+    expect(Array.isArray(manifest.config?.known_sections)).toBe(true);
+    expect(manifest.config!.known_sections!.length).toBeGreaterThan(0);
+    // Spot-check a few essentials.
+    for (const key of ["llm", "sandbox", "extensions"]) {
+      expect(manifest.config!.known_sections).toContain(key);
+    }
+  });
+
+  it("does NOT declare known_sections in the hermes agent manifest (intentionally permissive)", () => {
+    const manifest = yaml.load(
+      fs.readFileSync(
+        path.join(import.meta.dirname, "..", "agents", "hermes", "manifest.yaml"),
+        "utf-8",
+      ),
+    ) as { config?: { known_sections?: string[] } };
+    expect(manifest.config?.known_sections).toBeUndefined();
   });
 });
 

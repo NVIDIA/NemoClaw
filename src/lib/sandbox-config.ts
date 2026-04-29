@@ -49,6 +49,14 @@ interface AgentConfigTarget {
   format: string;
   /** Config file basename */
   configFile: string;
+  /**
+   * Optional list of known top-level config sections from the agent's
+   * manifest. When provided, `nemoclaw config set` rejects writes whose
+   * top-level key isn't in this set. When null, validation is skipped
+   * (agents are free to evolve their config schema without a NemoClaw
+   * release).
+   */
+  knownSections: string[] | null;
 }
 
 const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
@@ -57,6 +65,7 @@ const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   configDir: "/sandbox/.openclaw",
   format: "json",
   configFile: "openclaw.json",
+  knownSections: null,
 };
 
 function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
@@ -75,6 +84,7 @@ function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
       configDir: cfg.immutableDir,
       format: cfg.format || "json",
       configFile: cfg.configFile,
+      knownSections: agent.knownConfigSections,
     };
   } catch {
     // Registry or agent-defs unavailable (e.g., during tests) — fall back
@@ -308,22 +318,25 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
     process.exit(1);
   }
 
-  // 5. Validate key against known top-level config sections
-  const KNOWN_TOP_LEVEL_KEYS = new Set([
-    "llm",
-    "tts",
-    "stt",
-    "mcp",
-    "sandbox",
-    "extensions",
-    "personas",
-    "customization",
-  ]);
+  // 5. Validate the top-level config section against the agent's manifest.
+  //    The agent's manifest.yaml may declare `config.known_sections`. When it
+  //    does, we reject obvious typos here for a fast, friendly error. When it
+  //    doesn't (e.g. for the Hermes agent, whose schema is intentionally open),
+  //    validation is skipped — NemoClaw stays decoupled from each agent's
+  //    evolving config schema (per #2400).
   const topLevelKey = opts.key.split(".")[0];
-  if (!KNOWN_TOP_LEVEL_KEYS.has(topLevelKey)) {
-    console.error(`  Unknown config section: '${topLevelKey}'`);
-    console.error(`  Valid top-level keys: ${[...KNOWN_TOP_LEVEL_KEYS].sort().join(", ")}`);
-    process.exit(1);
+  if (target.knownSections && target.knownSections.length > 0) {
+    if (!target.knownSections.includes(topLevelKey)) {
+      console.error(`  Unknown config section: '${topLevelKey}'`);
+      console.error(
+        `  Valid top-level keys for agent '${target.agentName}': ${[...target.knownSections].sort().join(", ")}`,
+      );
+      console.error(
+        `  (Allowlist is declared in agents/${target.agentName}/manifest.yaml → config.known_sections.\n` +
+          `   If '${topLevelKey}' is a real new section, add it there in a follow-up PR.)`,
+      );
+      process.exit(1);
+    }
   }
 
   // 6. Show what will change
@@ -341,7 +354,7 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
   const tmpFile = path.join(tmpDir, target.configFile);
   fs.writeFileSync(tmpFile, serializeConfig(config, target.format), { mode: 0o600 });
 
-  // 8. Write config to sandbox via kubectl exec (bypasses Landlock)
+  // 9. Write config to sandbox via kubectl exec (bypasses Landlock)
   console.log(`  Writing config to sandbox (${target.configPath})...`);
   const content = fs.readFileSync(tmpFile, "utf-8");
   execFileSync("docker", [
@@ -350,7 +363,7 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
     "sh", "-c", `cat > ${target.configPath}`,
   ], { input: content, stdio: ["pipe", "pipe", "pipe"], timeout: 15000 });
 
-  // 9. Fix ownership via kubectl exec (bypasses Landlock)
+  // 10. Fix ownership via kubectl exec (bypasses Landlock)
   try {
     execFileSync("docker", [
       "exec", K3S_CONTAINER,
@@ -361,7 +374,7 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
     // Best effort — chown failure is non-fatal
   }
 
-  // 10. Cleanup temp
+  // 11. Cleanup temp
   try {
     fs.unlinkSync(tmpFile);
     fs.rmdirSync(tmpDir);
@@ -369,7 +382,7 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
     // Best effort
   }
 
-  // 11. Audit log
+  // 12. Audit log
   appendAuditEntry({
     action: "shields_down",
     sandbox: sandboxName,
@@ -379,7 +392,7 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
 
   console.log(`  ${target.agentName} config updated.`);
 
-  // 12. Restart if requested
+  // 13. Restart if requested
   if (opts.restart) {
     console.log("  Restarting sandbox agent process...");
     const restartBinary = getOpenshellBinary();

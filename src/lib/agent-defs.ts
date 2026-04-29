@@ -58,6 +58,7 @@ export interface AgentDefinition {
   readonly healthProbe: AgentHealthProbe;
   readonly forwardPort: number;
   readonly configPaths: AgentConfigPaths;
+  readonly knownConfigSections: string[] | null;
   readonly stateDirs: string[];
   readonly versionCommand: string;
   readonly expectedVersion: string | null;
@@ -146,6 +147,22 @@ export function loadAgent(name: string): AgentDefinition {
         envFile: cfg.env_file || null,
         format: cfg.format || "json",
       };
+    },
+
+    /**
+     * Optional list of known top-level config sections, declared by the
+     * agent in `manifest.yaml > config.known_sections`. Used by
+     * `nemoclaw config set` to give an early error on obvious typos
+     * (e.g. `inferenc.endpoint`) without coupling NemoClaw to any one
+     * agent's evolving config schema. When an agent does NOT declare
+     * this list, validation is skipped — agents stay free to add new
+     * top-level keys without a NemoClaw release.
+     */
+    get knownConfigSections(): string[] | null {
+      const cfg = (raw.config as Record<string, unknown>) || {};
+      const sections = cfg.known_sections;
+      if (!Array.isArray(sections) || sections.length === 0) return null;
+      return sections.filter((s): s is string => typeof s === "string");
     },
 
     get stateDirs(): string[] {
