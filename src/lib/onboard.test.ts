@@ -3,26 +3,25 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+vi.mock("../../dist/lib/onboard", async () => {
+  const actual = await vi.importActual<typeof import("../../dist/lib/onboard")>("../../dist/lib/onboard");
+  return {
+    ...actual,
+    destroyGateway: vi.fn(),
+    runOpenshell: vi.fn().mockReturnValue({ status: 0 }),
+    run: vi.fn(),
+  };
+});
+
 describe("lib/onboard — gateway cleanup on final failure", () => {
-  let destroyGatewaySpy: ReturnType<typeof vi.fn>;
-  let runOpenshellSpy: ReturnType<typeof vi.fn>;
-  let runSpy: ReturnType<typeof vi.fn>;
+  let onboardModule: typeof import("../../dist/lib/onboard");
+  let destroyGatewayMock: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.resetModules();
-    destroyGatewaySpy = vi.fn();
-    runOpenshellSpy = vi.fn().mockReturnValue({ status: 0 });
-    runSpy = vi.fn();
-
-    vi.mock("../../dist/lib/onboard", async () => {
-      const actual = await vi.importActual<typeof import("../../dist/lib/onboard")>("../../dist/lib/onboard");
-      return {
-        ...actual,
-        destroyGateway: destroyGatewaySpy,
-        runOpenshell: runOpenshellSpy,
-        run: runSpy,
-      };
-    });
+    onboardModule = await import("../../dist/lib/onboard");
+    destroyGatewayMock = (onboardModule as { destroyGateway: ReturnType<typeof vi.fn> }).destroyGateway;
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -30,7 +29,6 @@ describe("lib/onboard — gateway cleanup on final failure", () => {
   });
 
   it("calls destroyGateway() when gateway start fails after exhausting retries", async () => {
-    const onboardModule = await import("../../dist/lib/onboard");
     const originalPRetry = await vi.importActual<{ default: typeof import("p-retry") }>("p-retry");
 
     const pRetrySpy = vi.spyOn(originalPRetry.default, "default").mockImplementation(async (fn, opts) => {
@@ -48,7 +46,7 @@ describe("lib/onboard — gateway cleanup on final failure", () => {
     try {
       await onboardModule.startGatewayWithOptions(gpu, { exitOnFailure: true });
     } catch {
-      expect(destroyGatewaySpy).toHaveBeenCalled();
+      expect(destroyGatewayMock).toHaveBeenCalled();
     }
 
     pRetrySpy.mockRestore();
