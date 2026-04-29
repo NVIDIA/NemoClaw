@@ -3097,7 +3097,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
           console.log(
             `  Gateway start attempt ${err.attemptNumber} failed. ${err.retriesLeft} retries left...`,
           );
-          if (exitOnFailure) {
+      if (err.retriesLeft > 0 && exitOnFailure) {
             destroyGateway();
           }
         },
@@ -3130,6 +3130,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
       console.error("  Troubleshooting:");
       console.error("    openshell doctor logs --name nemoclaw");
       console.error("    openshell doctor check");
+              destroyGateway();
       process.exit(1);
     }
     throw new Error("Gateway failed to start");
