@@ -993,6 +993,29 @@ describe("onboard helpers", () => {
     );
   });
 
+  it("cleans up the sandbox-default dashboard forward via SANDBOX_DASHBOARD_PORT (no hardcoded 18789)", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // The cleanup branch must compare against the imported constant, not a literal.
+    assert.match(source, /SANDBOX_DASHBOARD_PORT/);
+    assert.match(
+      source,
+      /const defaultPortStr = String\(SANDBOX_DASHBOARD_PORT\);[\s\S]*runOpenshell\(\["forward", "stop", defaultPortStr\]/,
+    );
+    // Guard against regressions to the hardcoded literal.
+    assert.doesNotMatch(source, /const DEFAULT_SANDBOX_PORT = "18789"/);
+
+    // The shared port constant must be exported so onboard.ts can import it.
+    const portsSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "ports.ts"),
+      "utf-8",
+    );
+    assert.match(portsSource, /export const SANDBOX_DASHBOARD_PORT = 18789/);
+  });
+
   it("classifies gateway reuse states conservatively", () => {
     expect(
       getGatewayReuseState(

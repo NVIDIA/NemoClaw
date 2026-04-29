@@ -29,7 +29,7 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const { ROOT, SCRIPTS, redact, run, runCapture, runFile, shellQuote, validateName } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
-const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("./ports");
+const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT, SANDBOX_DASHBOARD_PORT } = require("./ports");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -5540,11 +5540,11 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
   const forwardTarget = getDashboardForwardTarget(chatUiUrl);
   runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
   // When using a custom dashboard port, also stop any lingering forward on the
-  // default port (18789) that openshell sandbox create may have auto-created.
+  // sandbox-default port that openshell sandbox create may have auto-created.
   // Without this, `forward list` shows both the custom and default forwards (#2007).
-  const DEFAULT_SANDBOX_PORT = "18789";
-  if (portToStop !== DEFAULT_SANDBOX_PORT) {
-    runOpenshell(["forward", "stop", DEFAULT_SANDBOX_PORT], { ignoreError: true });
+  const defaultPortStr = String(SANDBOX_DASHBOARD_PORT);
+  if (portToStop !== defaultPortStr) {
+    runOpenshell(["forward", "stop", defaultPortStr], { ignoreError: true });
   }
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
   // The --background flag forks a child that inherits stdout/stderr; if those are
