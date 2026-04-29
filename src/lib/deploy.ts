@@ -5,6 +5,27 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { sleepSeconds } from "./wait";
+
+type ExecLikeValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | string[]
+  | NodeJS.ProcessEnv
+  | object;
+type ExecLikeOptions = { [key: string]: ExecLikeValue };
+
+function readCommandOutput(error: object | null, key: "stdout" | "stderr"): string {
+  if (error === null) {
+    return "";
+  }
+  const value = Reflect.get(error, key);
+  return typeof value === "string" ? value : String(value || "");
+}
+
 export interface DeployCredentials {
   NVIDIA_API_KEY?: string | null;
   OPENAI_API_KEY?: string | null;
@@ -38,10 +59,10 @@ export interface DeployExecutionOptions {
   getCredential: (key: string) => string | null;
   validateName: (value: string, label: string) => string;
   shellQuote: (value: string) => string;
-  run: (command: string, opts?: { ignoreError?: boolean }) => void;
-  runInteractive: (command: string) => void;
-  execFileSync: (file: string, args: string[], opts?: Record<string, unknown>) => string;
-  spawnSync: (file: string, args: string[], opts?: Record<string, unknown>) => void;
+  run: (command: readonly string[], opts?: { ignoreError?: boolean }) => void;
+  runInteractive: (command: readonly string[]) => void;
+  execFileSync: (file: string, args: string[], opts?: ExecLikeOptions) => string;
+  spawnSync: (file: string, args: string[], opts?: ExecLikeOptions) => void;
   log: (message?: string) => void;
   error: (message?: string) => void;
   stdoutWrite: (message: string) => void;
@@ -126,7 +147,7 @@ export function buildDeployEnvLines(opts: {
     "NEMOCLAW_POLICY_MODE",
     "NEMOCLAW_POLICY_PRESETS",
     "CHAT_UI_URL",
-  ] as const;
+  ];
   for (const key of passthroughVars) {
     const value = env[key];
     if (value) envLines.push(`${key}=${shellQuote(value)}`);
@@ -157,7 +178,11 @@ export function findBrevInstanceStatus(
   try {
     const items = JSON.parse(rawJson);
     if (!Array.isArray(items)) return null;
-    return (items.find((item) => item && item.name === instanceName) as BrevInstanceStatus) || null;
+    const match = items.find(
+      (item): item is BrevInstanceStatus =>
+        typeof item === "object" && item !== null && item.name === instanceName,
+    );
+    return match ?? null;
   } catch {
     return null;
   }
@@ -239,9 +264,10 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
   }
 
   const name = validateName(instanceName, "instance name");
-  const qname = shellQuote(name);
   const gpu = env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
-  const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp").trim().toLowerCase();
+  const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp")
+    .trim()
+    .toLowerCase();
   const skipConnect = ["1", "true"].includes(
     String(env.NEMOCLAW_DEPLOY_NO_CONNECT || "").toLowerCase(),
   );
@@ -290,19 +316,19 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     const out = execFileSync("brev", ["ls"], { encoding: "utf-8" });
     exists = outputHasExactLine(out, name);
   } catch (caught) {
-    const err = caught as { stdout?: string; stderr?: string };
-    if (outputHasExactLine(err.stdout, name)) exists = true;
-    if (outputHasExactLine(err.stderr, name)) exists = true;
+    const caughtObject = typeof caught === "object" && caught !== null ? caught : null;
+    if (outputHasExactLine(readCommandOutput(caughtObject, "stdout"), name)) exists = true;
+    if (outputHasExactLine(readCommandOutput(caughtObject, "stderr"), name)) exists = true;
   }
 
   if (!exists) {
     log(`  Creating Brev instance '${name}' (${gpu}, provider=${brevProvider})...`);
-    run(`brev create ${qname} --type ${shellQuote(gpu)} --provider ${shellQuote(brevProvider)}`);
+    run(["brev", "create", name, "--type", gpu, "--provider", brevProvider]);
   } else {
     log(`  Brev instance '${name}' already exists.`);
   }
 
-  run("brev refresh", { ignoreError: true });
+  run(["brev", "refresh"], { ignoreError: true });
 
   stdoutWrite("  Waiting for Brev instance readiness ");
   for (let i = 0; i < 60; i++) {
@@ -333,7 +359,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       return fail([`  Timed out waiting for Brev instance readiness for ${name}`], error, exit);
     }
     stdoutWrite(".");
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
   }
 
   // ── SSH trust-on-first-use (TOFU) ──────────────────────────────
@@ -371,7 +397,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       );
     }
     stdoutWrite(".");
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
   }
 
   const sshOpts = buildSshOpts(knownHostsFile, shellQuote);
@@ -384,10 +410,24 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     const remoteDir = `${remoteHome}/nemoclaw`;
 
     log("  Syncing NemoClaw to VM...");
-    run(`ssh ${sshOpts} ${qname} 'mkdir -p ${shellQuote(remoteDir)}'`);
-    run(
-      `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv -e "ssh ${sshOpts}" "${rootDir}/" ${qname}:${shellQuote(`${remoteDir}/`)}`,
-    );
+    run(["ssh", ...sshArgs, name, `mkdir -p ${shellQuote(remoteDir)}`]);
+    run([
+      "rsync",
+      "-az",
+      "--delete",
+      "--exclude",
+      "node_modules",
+      "--exclude",
+      ".git",
+      "--exclude",
+      "dist",
+      "--exclude",
+      ".venv",
+      "-e",
+      `ssh ${sshOpts}`,
+      `${rootDir}/`,
+      `${name}:${remoteDir}/`,
+    ]);
 
     const envLines = buildDeployEnvLines({
       env,
@@ -400,10 +440,8 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     const envTmp = path.join(envDir, "env");
     fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
     try {
-      run(`scp -q ${sshOpts} ${shellQuote(envTmp)} ${qname}:${shellQuote(`${remoteDir}/.env`)}`);
-      run(
-        `ssh -q ${sshOpts} ${qname} 'chmod 600 ${shellQuote(`${remoteDir}/.env`)}'`,
-      );
+      run(["scp", "-q", ...sshArgs, envTmp, `${name}:${remoteDir}/.env`]);
+      run(["ssh", "-q", ...sshArgs, name, `chmod 600 ${shellQuote(`${remoteDir}/.env`)}`]);
     } finally {
       try {
         fs.unlinkSync(envTmp);
@@ -418,9 +456,13 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     }
 
     log("  Running setup...");
-    runInteractive(
-      `ssh -t ${sshOpts} ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software'`,
-    );
+    runInteractive([
+      "ssh",
+      "-t",
+      ...sshArgs,
+      name,
+      `cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software`,
+    ]);
 
     if (
       !skipStartServices &&
@@ -429,9 +471,12 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
         credentials.SLACK_BOT_TOKEN)
     ) {
       log("  Starting services...");
-      run(
-        `ssh ${sshOpts} ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/start-services.sh'`,
-      );
+      run([
+        "ssh",
+        ...sshArgs,
+        name,
+        `cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/start-services.sh`,
+      ]);
     }
 
     if (skipStartServices) {
@@ -449,9 +494,13 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     log("");
     log("  Connecting to sandbox...");
     log("");
-    runInteractive(
-      `ssh -t ${sshOpts} ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && openshell sandbox connect ${shellQuote(sandboxName)}'`,
-    );
+    runInteractive([
+      "ssh",
+      "-t",
+      ...sshArgs,
+      name,
+      `cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && openshell sandbox connect ${shellQuote(sandboxName)}`,
+    ]);
   } finally {
     fs.rmSync(khDir, { recursive: true, force: true });
   }

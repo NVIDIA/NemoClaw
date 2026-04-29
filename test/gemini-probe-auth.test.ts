@@ -1,46 +1,45 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
 
-import { getProbeAuthMode } from "../dist/lib/onboard";
+type OnboardProbeInternals = {
+  getProbeAuthMode: (provider: string) => "query-param" | undefined;
+};
 
-describe("Gemini dual-auth credential fix (issue #1960)", () => {
-  describe("getProbeAuthMode", () => {
-    it("returns 'query-param' for gemini-api provider", () => {
-      expect(getProbeAuthMode("gemini-api")).toBe("query-param");
-    });
+function isOnboardProbeInternals(value: object | null): value is OnboardProbeInternals {
+  return value !== null && typeof Reflect.get(value, "getProbeAuthMode") === "function";
+}
 
-    it("returns undefined for non-Gemini providers", () => {
-      expect(getProbeAuthMode("openai-api")).toBeUndefined();
-      expect(getProbeAuthMode("nvidia-prod")).toBeUndefined();
-      expect(getProbeAuthMode("anthropic-prod")).toBeUndefined();
-      expect(getProbeAuthMode("compatible-endpoint")).toBeUndefined();
-      expect(getProbeAuthMode("")).toBeUndefined();
-    });
+const loadedOnboardProbeInternals = require("../dist/lib/onboard");
+const onboardProbeInternals =
+  typeof loadedOnboardProbeInternals === "object" && loadedOnboardProbeInternals !== null
+    ? loadedOnboardProbeInternals
+    : null;
+if (!isOnboardProbeInternals(onboardProbeInternals)) {
+  throw new Error("Expected onboard probe internals to expose getProbeAuthMode");
+}
+const { getProbeAuthMode } = onboardProbeInternals;
+
+// The onboarder's Gemini validation probes target the OpenAI-compat
+// endpoint at https://generativelanguage.googleapis.com/v1beta/openai/.
+// That endpoint requires `Authorization: Bearer <KEY>` and rejects
+// `?key=<KEY>` with HTTP 400 "Missing or invalid Authorization header."
+//
+// The dual-auth rejection described in #1960 applies to Gemini's native
+// /v1beta/models/...:generateContent endpoint, which is not used by the
+// onboarder probes. getProbeAuthMode therefore returns undefined for
+// every provider so probes default to Bearer auth.
+describe("getProbeAuthMode — Bearer auth for OpenAI-compat probes", () => {
+  it("returns undefined for gemini-api so probes send Authorization: Bearer", () => {
+    expect(getProbeAuthMode("gemini-api")).toBeUndefined();
   });
 
-  describe("compiled probe uses ?key= for Gemini instead of Bearer header", () => {
-    const onboardSrc = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "dist", "lib", "onboard.js"),
-      "utf-8",
-    );
-
-    it("contains query-param auth mode logic in probeOpenAiLikeEndpoint", () => {
-      // The probe function must check for authMode === "query-param"
-      expect(onboardSrc).toMatch(/authMode.*===.*"query-param"/);
-    });
-
-    it("appends ?key= to the URL with encodeURIComponent when using query-param auth", () => {
-      // The compiled code must URL-encode the key when building ?key= URLs
-      expect(onboardSrc).toMatch(/\?key=.*encodeURIComponent/);
-    });
-
-    it("getProbeAuthMode returns query-param for gemini-api", () => {
-      expect(onboardSrc).toMatch(/gemini-api.*\?.*query-param|query-param.*gemini-api/);
-    });
+  it("returns undefined for non-Gemini providers", () => {
+    expect(getProbeAuthMode("openai-api")).toBeUndefined();
+    expect(getProbeAuthMode("nvidia-prod")).toBeUndefined();
+    expect(getProbeAuthMode("anthropic-prod")).toBeUndefined();
+    expect(getProbeAuthMode("compatible-endpoint")).toBeUndefined();
+    expect(getProbeAuthMode("")).toBeUndefined();
   });
 });

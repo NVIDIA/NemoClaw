@@ -29,6 +29,8 @@ default_install_hook_types:
   - pre-commit
   - commit-msg
   - pre-push
+  - post-merge
+  - post-checkout
 
 repos:
   # ── Priority 0: general file fixers ───────────────────────────────────────
@@ -68,24 +70,16 @@ repos:
         pass_filenames: true
         priority: 4
 
-  # ── Priority 4: regenerate agent skills when docs change ──────────────────
+  # ── Priority 3: sync generated docs before read-only validation ───────────
   - repo: local
     hooks:
       - id: platform-matrix-sync
         name: Sync platform matrix to docs
-        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add README.md docs/get-started/quickstart.md docs/inference/inference-options.md'
+        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add README.md docs/inference/inference-options.md'
         language: system
-        files: ^(ci/platform-matrix\.json|README\.md|docs/get-started/quickstart\.md|docs/inference/inference-options\.md|scripts/generate-platform-docs\.py)$
+        files: ^(ci/platform-matrix\.json|README\.md|docs/inference/inference-options\.md|scripts/generate-platform-docs\.py)$
         pass_filenames: false
         priority: 3
-
-      - id: docs-to-skills
-        name: Regenerate agent skills from docs
-        entry: bash -c 'python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user && git add .agents/skills/'
-        language: system
-        files: ^(docs/.*\.md$|ci/platform-matrix\.json$|scripts/generate-platform-docs\.py$)
-        pass_filenames: false
-        priority: 4
 
   # ── Priority 5: formatters ────────────────────────────────────────────────
   - repo: https://github.com/scop/pre-commit-shfmt
@@ -202,6 +196,16 @@ repos:
       - id: markdownlint-cli2
         priority: 10
 
+  - repo: local
+    hooks:
+      - id: docs-to-skills-dry-run
+        name: Validate docs-to-skills conversion
+        entry: python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
+        language: system
+        files: ^(docs/.*\.md$|docs/conf\.py$|ci/platform-matrix\.json$|scripts/docs-to-skills\.py$|scripts/generate-platform-docs\.py$)
+        pass_filenames: false
+        priority: 10
+
   # ── commit-msg hooks ────────────────────────────────────────────────────────
   - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
     rev: v9.24.0
@@ -249,6 +253,22 @@ repos:
         always_run: true
         pass_filenames: false
         stages: [pre-push]
+        priority: 10
+
+  # ── post-merge / post-checkout: warn about stale compiled dist/ ───────────
+  # See #1958 — dist/ is gitignored, so git pull / checkout can leave stale
+  # compiled output. This hook warns the developer immediately after the git
+  # operation so they rebuild before hitting cryptic runtime errors.
+  # The hook always exits 0 — it never blocks a git operation.
+  - repo: local
+    hooks:
+      - id: stale-dist-check
+        name: Warn if dist/ is older than src/
+        entry: npx tsx scripts/check-stale-dist.ts
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [post-merge, post-checkout]
         priority: 10
 
   # ── Priority 20: project-level checks (coverage + ratchet) ─────────────────

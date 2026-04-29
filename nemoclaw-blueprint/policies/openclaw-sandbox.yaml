@@ -140,6 +140,30 @@ network_policies:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
 
+  # ── Managed inference route ──────────────────────────────────────────
+  # inference.local is the OpenShell gateway's internal virtual hostname;
+  # the gateway proxies it to the configured provider (OpenAI, NVIDIA, etc.).
+  # Every sandbox uses this route regardless of provider, so it belongs in
+  # the base policy rather than an optional preset.
+  # Ref: https://github.com/NVIDIA/NemoClaw/issues/2663
+  managed_inference:
+    name: managed_inference
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/claude }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/python3 }
+
   # NOTE: github.com / api.github.com and the git/gh binaries used to
   # live in this base policy and were therefore granted to every
   # sandbox regardless of user opt-in. They have been moved into a
@@ -242,13 +266,14 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-      # WebSocket gateway — must use access: full (CONNECT tunnel) instead
-      # of protocol: rest. The proxy's HTTP idle timeout (~2 min) kills
-      # long-lived WebSocket connections; a CONNECT tunnel avoids
-      # HTTP-level timeouts entirely. Matches presets/discord.yaml. See #409.
+      # WebSocket gateway — pure L4 CONNECT tunnel. OpenShell v0.0.15+
+      # auto-terminates TLS unconditionally (NVIDIA/OpenShell#544), which
+      # also applies to WSS. tls: skip restores the pre-v0.0.15 pass-
+      # through behaviour needed here. Matches presets/discord.yaml.
       - host: gateway.discord.gg
         port: 443
         access: full
+        tls: skip
       - host: cdn.discordapp.com
         port: 443
         protocol: rest

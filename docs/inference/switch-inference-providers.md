@@ -131,6 +131,44 @@ Remove the env vars and recreate the sandbox to revert to the original model.
 `NEMOCLAW_INFERENCE_API_OVERRIDE` accepts `openai-completions` (for NVIDIA, OpenAI, Gemini, compatible endpoints) or `anthropic-messages` (for Anthropic and Anthropic-compatible endpoints).
 This variable is only needed when switching between provider families.
 
+## Tune Model Metadata
+
+The sandbox image bakes model metadata (context window, max output tokens, reasoning mode, and accepted input modalities) into `openclaw.json` at build time.
+To change these values, set the corresponding environment variables before running `nemoclaw onboard` so they patch into the Dockerfile before the image builds.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer (tokens) | `131072` |
+| `NEMOCLAW_MAX_TOKENS` | Positive integer (tokens) | `4096` |
+| `NEMOCLAW_REASONING` | `true` or `false` | `false` |
+| `NEMOCLAW_INFERENCE_INPUTS` | `text` or `text,image` | `text` |
+| `NEMOCLAW_AGENT_TIMEOUT` | Positive integer (seconds) | `600` |
+
+Invalid values are ignored, and the default bakes into the image.
+Use `NEMOCLAW_INFERENCE_INPUTS=text,image` only for a model that accepts image input through the selected provider.
+
+```console
+$ export NEMOCLAW_CONTEXT_WINDOW=65536
+$ export NEMOCLAW_MAX_TOKENS=8192
+$ export NEMOCLAW_REASONING=true
+$ export NEMOCLAW_INFERENCE_INPUTS=text,image
+$ export NEMOCLAW_AGENT_TIMEOUT=1800
+$ nemoclaw onboard
+```
+
+`NEMOCLAW_AGENT_TIMEOUT` controls the per-request inference timeout baked into
+`agents.defaults.timeoutSeconds`. Increase it for slow local inference (for
+example, CPU-only Ollama or vLLM on modest hardware). `openclaw.json` is
+immutable at runtime, so this value can only be changed by rebuilding the
+sandbox via `nemoclaw onboard`.
+
+These variables are build-time settings.
+If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:
+
+```console
+$ nemoclaw onboard --resume --recreate-sandbox
+```
+
 ## Verify the Active Model
 
 Run the status command to confirm the change:
@@ -154,6 +192,7 @@ The output includes the active provider, model, and endpoint.
 - Same-provider model switches take effect immediately via the gateway route alone.
 - Cross-provider switches also require `NEMOCLAW_MODEL_OVERRIDE` (and `NEMOCLAW_INFERENCE_API_OVERRIDE`) plus a sandbox recreate so the entrypoint patches the config at startup.
 - Overrides are applied at container startup. Changing or removing env vars requires a sandbox recreate to take effect.
+- Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 
 ## Related Topics
 

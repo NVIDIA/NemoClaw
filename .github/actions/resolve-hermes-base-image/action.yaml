@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: resolve-hermes-base-image
+description: Resolve the Hermes sandbox base image from GHCR, falling back to a local Dockerfile.base build.
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Hermes sandbox base image
+      shell: bash
+      run: |
+        if docker pull ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest 2>/dev/null; then
+          echo "HERMES_BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest" >> "$GITHUB_ENV"
+        else
+          echo "::warning::GHCR Hermes base image not available, building locally"
+          docker build -f agents/hermes/Dockerfile.base -t nemoclaw-hermes-base-local .
+          echo "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local" >> "$GITHUB_ENV"
+        fi

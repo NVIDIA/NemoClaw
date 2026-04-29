@@ -40,7 +40,7 @@ NemoClaw provides the following benefits.
 | Benefit                    | Description                                                                                                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|
 | Sandboxed execution        | Every agent runs inside an OpenShell sandbox with Landlock, seccomp, and network namespace isolation. No access is granted by default. |
-| Routed inference           | Model traffic is routed through the OpenShell gateway to your selected provider, transparent to the agent. You can switch providers or models. Refer to Inference Options (see the `nemoclaw-user-configure-inference` skill).          |
+| Routed inference           | Model traffic is routed through the OpenShell gateway to your selected provider, transparent to the agent. You can switch providers or models. Refer to Inference Options (use the `nemoclaw-user-configure-inference` skill).          |
 | Declarative network policy | Egress rules are defined in YAML. Unknown hosts are blocked and surfaced to the operator for approval.                 |
 | Single CLI                 | The `nemoclaw` command orchestrates the full stack: gateway, sandbox, inference provider, and network policy.           |
 | Blueprint lifecycle        | Versioned blueprints handle sandbox creation, digest verification, and reproducible setup.                             |
@@ -57,10 +57,10 @@ You can use NemoClaw for various use cases including the following.
 
 ## Next Steps
 
-- Ecosystem (see the `nemoclaw-user-overview` skill) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
-- How It Works (see the `nemoclaw-user-overview` skill) to understand how NemoClaw works internally: plugin, blueprint, sandbox lifecycle.
-- Quickstart (see the `nemoclaw-user-get-started` skill) to install NemoClaw and run your first agent.
-- Switch Inference Providers (see the `nemoclaw-user-configure-inference` skill) to configure the inference provider.
-- Approve or Deny Network Requests (see the `nemoclaw-user-manage-policy` skill) to manage egress approvals.
-- Deploy to a Remote GPU Instance (see the `nemoclaw-user-deploy-remote` skill) for persistent operation.
-- Monitor Sandbox Activity (see the `nemoclaw-user-monitor-sandbox` skill) to observe agent behavior.
+- Ecosystem (use the `nemoclaw-user-overview` skill) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+- How It Works (use the `nemoclaw-user-overview` skill) to understand how NemoClaw works internally: plugin, blueprint, sandbox lifecycle.
+- Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and run your first agent.
+- Switch Inference Providers (use the `nemoclaw-user-configure-inference` skill) to configure the inference provider.
+- Approve or Deny Network Requests (use the `nemoclaw-user-manage-policy` skill) to manage egress approvals.
+- Deploy to a Remote GPU Instance (use the `nemoclaw-user-deploy-remote` skill) for persistent operation.
+- Monitor Sandbox Activity (use the `nemoclaw-user-monitor-sandbox` skill) to observe agent behavior.

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -13,6 +12,7 @@ import path from "node:path";
 import { describe, it, expect } from "vitest";
 
 const ONBOARD_JS = path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts");
+const ONBOARD_PROVIDERS_JS = path.join(import.meta.dirname, "..", "src", "lib", "onboard-providers.ts");
 const RUNNER_TS = path.join(import.meta.dirname, "..", "nemoclaw", "src", "blueprint", "runner.ts");
 const SERVICES_TS = path.join(import.meta.dirname, "..", "src", "lib", "services.ts");
 
@@ -65,7 +65,9 @@ describe("credential exposure in process arguments", () => {
   });
 
   it("onboard.js --credential flags pass env var names only", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
+    // buildProviderArgs lives in onboard-providers.ts; scan both files.
+    const src = fs.readFileSync(ONBOARD_JS, "utf-8") +
+      fs.readFileSync(ONBOARD_PROVIDERS_JS, "utf-8");
 
     expect(src).toMatch(/"--credential", credentialEnv/);
     expect(src).not.toMatch(/"--credential",\s*["'][A-Z_]+=/);
@@ -89,6 +91,42 @@ describe("credential exposure in process arguments", () => {
     expect(src).toMatch(/delete sandboxEnv\.SSH_AUTH_SOCK/);
     // sandboxEnv must still be passed to streamSandboxCreate
     expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);
+  });
+
+  it("subprocess-env TLS allowlist includes git, curl, and python CA vars (#2270)", () => {
+    const cliSrc = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "subprocess-env.ts"),
+      "utf-8",
+    );
+    const pluginSrc = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "nemoclaw", "src", "lib", "subprocess-env.ts"),
+      "utf-8",
+    );
+    for (const src of [cliSrc, pluginSrc]) {
+      expect(src).toContain("GIT_SSL_CAINFO");
+      expect(src).toContain("GIT_SSL_CAPATH");
+      expect(src).toContain("CURL_CA_BUNDLE");
+      expect(src).toContain("REQUESTS_CA_BUNDLE");
+    }
+  });
+
+  it("subprocess-env TLS allowlists in CLI and plugin are in sync (#2270)", () => {
+    const cliSrc = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "subprocess-env.ts"),
+      "utf-8",
+    );
+    const pluginSrc = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "nemoclaw", "src", "lib", "subprocess-env.ts"),
+      "utf-8",
+    );
+    // Extract the TLS array from both files and compare
+    const extractTLS = (src: string) => {
+      const match = src.match(/const TLS = \[([\s\S]*?)\];/);
+      if (!match) return "";
+      const entries = match[1].match(/"[^"]+"/g) ?? [];
+      return entries.join(",");
+    };
+    expect(extractTLS(cliSrc)).toBe(extractTLS(pluginSrc));
   });
 
   it("services.ts must not spread full process.env into subprocess", () => {
@@ -122,9 +160,12 @@ describe("credential exposure in process arguments", () => {
     expect(src).toMatch(/!choice\.includes\(" "\).*choice\.length > 40/);
     // Regex fallback for base64-safe tokens must be present (full shape)
     expect(src).toMatch(/\/\^\[A-Za-z0-9_\\-\\.\]\{20,\}\$\/\.test\(choice\)/);
-    // Validator must be hoisted (defined exactly once, not inside both branches)
+    // Validator must be hoisted (defined exactly once, not inside both branches).
+    // After PR #2389 the validator delegates to validateNvidiaApiKeyValue with
+    // credentialEnv so non-NVIDIA keys aren't rejected on retry, but the
+    // single-definition invariant from the original PR (#1313) still holds.
     const validatorCount = (
-      src.match(/const validator = credentialEnv === "NVIDIA_API_KEY"/g) || []
+      src.match(/const validator = .*validateNvidiaApiKeyValue\(key, credentialEnv\)/g) || []
     ).length;
     expect(validatorCount).toBe(1);
     // looksLikeToken variable must exist

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +9,7 @@ import { spawnSync } from "node:child_process";
 
 const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "..", "uninstall.sh");
 
-function createFakeNpmEnv(tmp) {
+function createFakeNpmEnv(tmp: string): Record<string, string | undefined> {
   const fakeBin = path.join(tmp, "bin");
   const npmPath = path.join(fakeBin, "npm");
   fs.mkdirSync(fakeBin, { recursive: true });
@@ -137,6 +136,34 @@ describe("uninstall helpers", () => {
         "#!/usr/bin/env bash",
         'export PATH="/tmp/node-bin:$PATH"',
         'exec "/tmp/prefix/bin/nemoclaw" "$@"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync("bash", ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: createFakeNpmEnv(tmp),
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(shimPath)).toBe(false);
+  });
+
+  it("removes a dev-install shim written by scripts/npm-link-or-shim.sh", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dev-shim-"));
+    const shimDir = path.join(tmp, ".local", "bin");
+    const shimPath = path.join(shimDir, "nemoclaw");
+
+    fs.mkdirSync(shimDir, { recursive: true });
+    fs.writeFileSync(
+      shimPath,
+      [
+        "#!/usr/bin/env bash",
+        "# NemoClaw dev-shim - managed by scripts/npm-link-or-shim.sh",
+        'export PATH="/tmp/node-bin:$PATH"',
+        'exec "/tmp/checkout/bin/nemoclaw.js" "$@"',
         "",
       ].join("\n"),
       { mode: 0o755 },

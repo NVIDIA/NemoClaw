@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,9 +10,31 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const distPath = require.resolve("../../dist/lib/onboard-session");
 const originalHome = process.env.HOME;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let session: any;
+type OnboardSessionModule = typeof import("../../dist/lib/onboard-session");
+type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
+type DebugSummary = NonNullable<ReturnType<OnboardSessionModule["summarizeForDebug"]>>;
+let session: OnboardSessionModule;
 let tmpDir: string;
+
+function requireLoadedSession(
+  loaded: ReturnType<OnboardSessionModule["loadSession"]>,
+): LoadedSession {
+  expect(loaded).not.toBeNull();
+  if (!loaded) {
+    throw new Error("Expected onboard session to be present");
+  }
+  return loaded;
+}
+
+function requireDebugSummary(
+  summary: ReturnType<OnboardSessionModule["summarizeForDebug"]>,
+): DebugSummary {
+  expect(summary).not.toBeNull();
+  if (!summary) {
+    throw new Error("Expected debug session summary to be present");
+  }
+  return summary;
+}
 
 beforeEach(() => {
   // Recreate tmpDir per test so lock artifacts (and any other on-disk state)
@@ -61,38 +83,46 @@ describe("onboard session", () => {
         "https://alice:secret@example.com/v1/models?token=abc123&sig=def456&X-Amz-Signature=ghi789&keep=yes#token=frag",
     });
 
-    const loaded = session.loadSession();
+    const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.endpointUrl).toBe(
       "https://example.com/v1/models?token=%3CREDACTED%3E&sig=%3CREDACTED%3E&X-Amz-Signature=%3CREDACTED%3E&keep=yes",
     );
-    expect(session.summarizeForDebug().endpointUrl).toBe(loaded.endpointUrl);
+    const summary = requireDebugSummary(session.summarizeForDebug());
+    expect(summary.endpointUrl).toBe(loaded.endpointUrl);
   });
 
   it("marks steps started, completed, and failed", () => {
     session.saveSession(session.createSession());
     session.markStepStarted("gateway");
-    let loaded = session.loadSession();
+    let loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.gateway.status).toBe("in_progress");
     expect(loaded.lastStepStarted).toBe("gateway");
     expect(loaded.steps.gateway.completedAt).toBeNull();
 
     session.markStepComplete("gateway", { sandboxName: "my-assistant" });
-    loaded = session.loadSession();
+    loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.gateway.status).toBe("complete");
     expect(loaded.sandboxName).toBe("my-assistant");
     expect(loaded.steps.gateway.completedAt).toBeTruthy();
 
     session.markStepFailed("sandbox", "Sandbox creation failed");
-    loaded = session.loadSession();
+    loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.sandbox.status).toBe("failed");
     expect(loaded.steps.sandbox.completedAt).toBeNull();
+    expect(loaded.failure).not.toBeNull();
+    if (!loaded.failure) {
+      throw new Error("Expected failure metadata after markStepFailed()");
+    }
     expect(loaded.failure.step).toBe("sandbox");
     expect(loaded.failure.message).toMatch(/Sandbox creation failed/);
   });
 
   it("persists safe provider metadata without persisting secrets", () => {
     session.saveSession(session.createSession());
-    session.markStepComplete("provider_selection", {
+    const unsafeProviderUpdate: Parameters<OnboardSessionModule["markStepComplete"]>[1] & {
+      apiKey: string;
+      metadata: { gatewayName: string; token: string };
+    } = {
       provider: "nvidia-nim",
       model: "nvidia/test-model",
       sandboxName: "my-assistant",
@@ -106,9 +136,10 @@ describe("onboard session", () => {
         gatewayName: "nemoclaw",
         token: "secret",
       },
-    });
+    };
+    session.markStepComplete("provider_selection", unsafeProviderUpdate);
 
-    const loaded = session.loadSession();
+    const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.provider).toBe("nvidia-nim");
     expect(loaded.model).toBe("nvidia/test-model");
     expect(loaded.sandboxName).toBe("my-assistant");
@@ -117,9 +148,38 @@ describe("onboard session", () => {
     expect(loaded.preferredInferenceApi).toBe("openai-completions");
     expect(loaded.nimContainer).toBe("nim-123");
     expect(loaded.policyPresets).toEqual(["pypi", "npm"]);
-    expect(loaded.apiKey).toBeUndefined();
+    expect("apiKey" in loaded).toBe(false);
     expect(loaded.metadata.gatewayName).toBe("nemoclaw");
-    expect(loaded.metadata.token).toBeUndefined();
+    expect("token" in loaded.metadata).toBe(false);
+  });
+
+  it("persists messagingChannels across save/load roundtrips", () => {
+    const created = session.createSession();
+    created.messagingChannels = ["telegram", "slack"];
+    session.saveSession(created);
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.messagingChannels).toEqual(["telegram", "slack"]);
+  });
+
+  it("filters non-string entries out of persisted messagingChannels", () => {
+    const created = session.createSession();
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        ...created,
+        messagingChannels: ["telegram", 42, null, "discord"],
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.messagingChannels).toEqual(["telegram", "discord"]);
+  });
+
+  it("defaults messagingChannels to null for fresh sessions", () => {
+    const fresh = session.createSession();
+    expect(fresh.messagingChannels).toBeNull();
   });
 
   it("persists and clears web search config through safe session updates", () => {
@@ -128,25 +188,40 @@ describe("onboard session", () => {
       webSearchConfig: { fetchEnabled: true },
     });
 
-    let loaded = session.loadSession();
+    let loaded = requireLoadedSession(session.loadSession());
     expect(loaded.webSearchConfig).toEqual({ fetchEnabled: true });
 
     session.completeSession({ webSearchConfig: null });
-    loaded = session.loadSession();
+    loaded = requireLoadedSession(session.loadSession());
     expect(loaded.webSearchConfig).toBeNull();
   });
 
   it("does not clear existing metadata when updates omit whitelisted metadata fields", () => {
-    session.saveSession(session.createSession({ metadata: { gatewayName: "nemoclaw" } }));
-    session.markStepComplete("provider_selection", {
+    session.saveSession(
+      session.createSession({ metadata: { gatewayName: "nemoclaw", fromDockerfile: null } }),
+    );
+    const unsafeMetadataUpdate: Parameters<OnboardSessionModule["markStepComplete"]>[1] & {
+      metadata: { token: string };
+    } = {
       metadata: {
         token: "should-not-persist",
       },
-    });
+    };
+    session.markStepComplete("provider_selection", unsafeMetadataUpdate);
 
-    const loaded = session.loadSession();
+    const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.metadata.gatewayName).toBe("nemoclaw");
-    expect(loaded.metadata.token).toBeUndefined();
+    expect("token" in loaded.metadata).toBe(false);
+  });
+
+  it("drops non-string gatewayName during normalization", () => {
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({ version: 1, metadata: { gatewayName: 123 } }),
+    );
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.metadata.gatewayName).toBe("nemoclaw");
   });
 
   it("returns null for corrupt session data", () => {
@@ -217,8 +292,7 @@ describe("onboard session", () => {
     //    via isProcessAlive, never reaching unlinkIfInodeMatches.
     let statCallCount = 0;
     const originalStatSync = fs.statSync;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (fs as any).statSync = function (...args: unknown[]) {
+    const statSpy = vi.spyOn(fs, "statSync").mockImplementation((...args) => {
       statCallCount += 1;
       // Just before stat #2 (inside unlinkIfInodeMatches), simulate
       // the race: a concurrent fast process unlinks the stale lock
@@ -239,8 +313,8 @@ describe("onboard session", () => {
         );
         fs.renameSync(tmpClaim, session.LOCK_FILE);
       }
-      return (originalStatSync as unknown as (...a: unknown[]) => unknown).apply(fs, args);
-    };
+      return originalStatSync(...args);
+    });
 
     try {
       // The acquire call will see EEXIST (stale lock present), stat it,
@@ -264,8 +338,7 @@ describe("onboard session", () => {
       expect(result.acquired).toBe(false);
       expect(result.holderPid).toBe(process.ppid);
     } finally {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (fs as any).statSync = originalStatSync;
+      statSpy.mockRestore();
     }
   });
 
@@ -291,17 +364,65 @@ describe("onboard session", () => {
     session.saveSession(session.createSession());
     session.markStepFailed(
       "inference",
-      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value ghp_1234567890123456789012345",
+      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value-that-is-long-enough ghp_1234567890123456789012345",
     );
 
-    const loaded = session.loadSession();
+    const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.inference.error).toContain("NVIDIA_API_KEY=<REDACTED>");
     expect(loaded.steps.inference.error).toContain("Bearer <REDACTED>");
     expect(loaded.steps.inference.error).not.toContain("nvapi-secret");
     expect(loaded.steps.inference.error).not.toContain("topsecret");
-    expect(loaded.steps.inference.error).not.toContain("sk-secret-value");
+    expect(loaded.steps.inference.error).not.toContain("sk-secret-value-that-is-long-enough");
     expect(loaded.steps.inference.error).not.toContain("ghp_1234567890123456789012345");
+    expect(loaded.failure).not.toBeNull();
+    if (!loaded.failure) {
+      throw new Error("Expected failure metadata after markStepFailed()");
+    }
     expect(loaded.failure.message).toBe(loaded.steps.inference.error);
+  });
+
+  it("round-trips null messagingChannels through normalizeSession", () => {
+    const created = session.createSession();
+    expect(created.messagingChannels).toBeNull();
+    const saved = session.saveSession(created);
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(saved.messagingChannels).toBeNull();
+    expect(loaded.messagingChannels).toBeNull();
+  });
+
+  it("round-trips messagingChannels=['telegram'] through normalizeSession", () => {
+    const created = session.createSession({ messagingChannels: ["telegram"] });
+    expect(created.messagingChannels).toEqual(["telegram"]);
+    const saved = session.saveSession(created);
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(saved.messagingChannels).toEqual(["telegram"]);
+    expect(loaded.messagingChannels).toEqual(["telegram"]);
+  });
+
+  it("filterSafeUpdates preserves messagingChannels field", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      messagingChannels: ["slack", "discord"],
+    });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.messagingChannels).toEqual(["slack", "discord"]);
+  });
+
+  it("createSession with messagingChannels override", () => {
+    const created = session.createSession({ messagingChannels: ["telegram", "slack"] });
+    expect(created.messagingChannels).toEqual(["telegram", "slack"]);
+    expect(created.provider).toBeNull();
+  });
+
+  it("filters non-string array entries in createSession overrides", () => {
+    const created = session.createSession({
+      policyPresets: ["pypi", 7, null, "npm"] as unknown as string[],
+      messagingChannels: ["telegram", 42, null, "discord"] as unknown as string[],
+    });
+
+    expect(created.policyPresets).toEqual(["pypi", "npm"]);
+    expect(created.messagingChannels).toEqual(["telegram", "discord"]);
   });
 
   it("summarizes the session for debug output", () => {
@@ -309,7 +430,7 @@ describe("onboard session", () => {
     session.markStepStarted("preflight");
     session.markStepComplete("preflight");
     session.completeSession();
-    const summary = session.summarizeForDebug();
+    const summary = requireDebugSummary(session.summarizeForDebug());
 
     expect(summary.sandboxName).toBe("my-assistant");
     expect(summary.steps.preflight.status).toBe("complete");
@@ -321,8 +442,30 @@ describe("onboard session", () => {
   it("keeps debug summaries redacted when failures were sanitized", () => {
     session.saveSession(session.createSession({ sandboxName: "my-assistant" }));
     session.markStepFailed("provider_selection", "Bearer abcdefghijklmnopqrstuvwxyz");
-    const summary = session.summarizeForDebug();
+    const summary = requireDebugSummary(session.summarizeForDebug());
 
+    expect(summary.failure).not.toBeNull();
+    if (!summary.failure) {
+      throw new Error("Expected failure metadata in debug summary");
+    }
+    expect(summary.failure.message).toContain("Bearer <REDACTED>");
+    expect(summary.failure.message).not.toContain("abcdefghijklmnopqrstuvwxyz");
+  });
+
+  it("re-sanitizes in-memory failures in debug summaries", () => {
+    const rawSession = session.createSession({
+      failure: {
+        step: "provider_selection",
+        message: "Bearer abcdefghijklmnopqrstuvwxyz",
+        recordedAt: "2026-04-01T00:00:00.000Z",
+      },
+    });
+
+    const summary = requireDebugSummary(session.summarizeForDebug(rawSession));
+    expect(summary.failure).not.toBeNull();
+    if (!summary.failure) {
+      throw new Error("Expected failure metadata in debug summary");
+    }
     expect(summary.failure.message).toContain("Bearer <REDACTED>");
     expect(summary.failure.message).not.toContain("abcdefghijklmnopqrstuvwxyz");
   });

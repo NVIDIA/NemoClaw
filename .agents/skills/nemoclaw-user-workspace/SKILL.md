@@ -1,71 +1,12 @@
 ---
 name: "nemoclaw-user-workspace"
-description: "Hows to back up and restore OpenClaw workspace files before destructive operations. Whats workspace personality and configuration files are, where they live, and how they persist across sandbox restarts."
+description: "Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds. Use when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds. Trigger keywords - nemoclaw backup, nemoclaw restore, workspace backup, openshell sandbox download upload, nemoclaw workspace files, soul.md, user.md, identity.md, agents.md, sandbox persistence."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw User Workspace
-
-How to back up and restore OpenClaw workspace files before destructive operations.
-
-## Context
-
-OpenClaw stores its personality, user context, and behavioral configuration in a set of Markdown files inside the sandbox.
-These files live at `/sandbox/.openclaw/workspace/` and are collectively called **workspace files**.
-
-## File Reference
-
-| File | Purpose |
-|---|---|
-| `SOUL.md` | Defines the agent's persona, tone, and communication style. |
-| `USER.md` | Stores information about the human the agent assists. |
-| `IDENTITY.md` | Short identity card — name, language, emoji, creature type. |
-| `AGENTS.md` | Behavioral rules, memory conventions, safety guidelines, and session workflow. |
-| `MEMORY.md` | Curated long-term memory distilled from daily notes. |
-| `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. |
-
-## Where They Live
-
-All workspace files reside inside the sandbox filesystem:
-
-```text
-/sandbox/.openclaw/workspace/
-├── AGENTS.md
-├── IDENTITY.md
-├── MEMORY.md
-├── SOUL.md
-├── USER.md
-└── memory/
-    ├── 2026-03-18.md
-    └── 2026-03-19.md
-```
-
-## Persistence Behavior
-
-Understanding when these files persist and when they are lost is critical.
-
-### Survives: Sandbox Restart
-
-Sandbox restarts (`openshell sandbox restart`) preserve workspace files.
-The sandbox uses a **Persistent Volume Claim (PVC)** that outlives individual container restarts.
-
-### Lost: Sandbox Destroy
-
-Running `nemoclaw <name> destroy` **deletes the sandbox and its PVC**.
-All workspace files are permanently lost unless you back them up first.
-
-> **Warning:** Always back up your workspace files before running `nemoclaw <name> destroy`.
-> See Backup and Restore (see the `nemoclaw-user-workspace` skill) for instructions.
-
-## Editing Workspace Files
-
-The agent reads these files at the start of every session.
-You can edit them in two ways:
-
-1. **Let the agent do it** — Ask your agent to update its persona, memory, or user context.
-2. **Edit manually** — Use `openshell sandbox shell` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
+# Backup and Restore Workspace Files
 
 Workspace files define your agent's personality, memory, and user context.
 They persist across sandbox restarts but are **permanently deleted** when you run `nemoclaw <name> destroy`.
@@ -89,14 +30,24 @@ $ nemoclaw my-assistant snapshot list
 $ nemoclaw my-assistant snapshot restore
 ```
 
-To restore a specific snapshot instead of the latest, pass a timestamp or prefix:
+`snapshot list` prints a table of version, name, timestamp, and path. Versions (`v1`, `v2`, ..., `vN`) are computed from the timestamp order, so `vN` is always the newest snapshot.
+
+To tag a snapshot with a human-readable label, pass `--name`:
 
 ```console
+$ nemoclaw my-assistant snapshot create --name before-upgrade
+```
+
+To restore a specific snapshot instead of the latest, pass a version, name, or timestamp prefix:
+
+```console
+$ nemoclaw my-assistant snapshot restore v3
+$ nemoclaw my-assistant snapshot restore before-upgrade
 $ nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
 The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
-For full details, see the Commands reference (see the `nemoclaw-user-reference` skill).
+For full details, see the Commands reference (use the `nemoclaw-user-reference` skill).
 
 ## Step 3: Manual Backup
 
@@ -171,6 +122,35 @@ USER.md
 memory/
 ```
 
+## Step 7: Multi-Agent Deployments
+
+When OpenClaw is configured with multiple named agents, each agent has its own
+workspace directory (`workspace-main/`, `workspace-support/`, `workspace-ops/`,
+and so on — see Multi-Agent Deployments (use the `nemoclaw-user-workspace` skill)).
+
+`nemoclaw <name> snapshot create` automatically discovers every `workspace-*/`
+directory under the sandbox state tree and includes it in the snapshot bundle
+alongside the default `workspace/`. `snapshot restore` re-applies the full
+per-agent set. No manual per-workspace backup pattern is needed.
+
+The sandbox entrypoint ensures every per-agent workspace is backed by the
+persistent `.openclaw-data/` tree (via a symlink from
+`.openclaw/workspace-<name>/`) so state also survives `openshell sandbox restart`.
+
+### Shared files across agents
+
+Files that operators typically want consistent across every per-agent workspace
+(`AGENTS.md`, shared skills, common templates) are **not** synced automatically.
+Each workspace is independent; changes in one don't propagate. Operators that
+need this either copy the shared files explicitly to each workspace after
+editing, or maintain a host-side sync layer. Tracking shared-file tooling
+(shared mount, `workspaces list` command) in
+[#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
+
+## References
+
+- **Load [references/workspace-files.md](references/workspace-files.md)** when users ask about `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, or other workspace files, or when preparing to back up or restore workspace state. Explains what workspace personality and configuration files are, where they live, and how they persist across sandbox restarts.
+
 ## Related Skills
 
-- `nemoclaw-user-reference` — Commands reference
+- `nemoclaw-user-reference` — Commands reference (use the `nemoclaw-user-reference` skill)

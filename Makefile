@@ -1,4 +1,4 @@
-.PHONY: check lint format lint-ts format-ts docs docs-strict docs-live docs-clean
+.PHONY: check lint format lint-ts format-ts check-installer-hash docs docs-strict docs-live docs-clean
 
 check:
 	npx prek run --all-files
@@ -17,6 +17,11 @@ format-cli:
 
 format-ts:
 	cd nemoclaw && npm run lint:fix && npm run format
+
+# --- Integrity checks ---
+
+check-installer-hash:
+	bash scripts/check-installer-hash.sh
 
 # --- Documentation ---
 

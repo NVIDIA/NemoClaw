@@ -1,0 +1,110 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Docs to Skills
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+    paths:
+      - "docs/**"
+      - "scripts/docs-to-skills.py"
+      - ".github/workflows/docs-to-skills.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "scripts/docs-to-skills.py"
+      - ".github/workflows/docs-to-skills.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dry-run:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.11"
+
+      - name: Validate docs-to-skills conversion
+        run: python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
+
+  sync:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.11"
+
+      - name: Regenerate agent skills
+        run: python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
+
+      - name: Commit generated skills
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYNC_BRANCH: automation/docs-to-skills-sync
+        run: |
+          set -euo pipefail
+
+          status="$(git status --porcelain -- .agents/skills .claude/skills)"
+          if [ -z "$status" ]; then
+            echo "Generated skills are already in sync."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .agents/skills .claude/skills
+          git commit -m "chore(skills): sync generated skills"
+
+          if git push origin HEAD:main; then
+            echo "Pushed generated skills to main."
+            exit 0
+          fi
+
+          echo "::notice::Direct push to main failed; opening or updating a sync PR instead."
+          git fetch origin "$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" || true
+          git push --force-with-lease origin HEAD:"$SYNC_BRANCH"
+
+          pr_body="$(cat <<'EOF'
+          This PR was opened by the Docs to Skills workflow after documentation changed on `main`.
+
+          It contains only regenerated `.agents/skills/nemoclaw-user-*` artifacts from:
+
+          ```bash
+          python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
+          ```
+          EOF
+          )"
+
+          existing_pr="$(gh pr list --head "$SYNC_BRANCH" --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing_pr" ]; then
+            gh pr edit "$existing_pr" --title "chore(skills): sync generated skills" --body "$pr_body"
+            echo "Updated docs-to-skills sync PR #$existing_pr."
+          else
+            gh pr create --title "chore(skills): sync generated skills" --body "$pr_body" --base main --head "$SYNC_BRANCH"
+          fi
