@@ -406,108 +406,269 @@ PYCORS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
-# ── Slack token placeholder resolution ────────────────────────────
-# Resolves openshell:resolve:env:SLACK_* placeholders in openclaw.json at
-# container startup, before chattr +i locks the file. This ensures Bolt's
-# in-process token validation (appToken must start with xapp-) succeeds even
-# before the L7 proxy can intercept HTTP calls.
-# Same trust model as apply_model_override: host-set env vars, root-only,
-# applied before Landlock/chattr +i, hash recomputed. Tokens are unset from
-# the process env after patching so they are not visible inside the sandbox.
+# ── Slack token rewriter (Bolt-shape → canonical placeholder) ────
+# Installs a Node preload that translates the Bolt-compatible placeholder
+# (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR — emitted into openclaw.json by
+# generate-openclaw-config.py — into the canonical openshell:resolve:env:VAR
+# form on outbound HTTP. OpenShell's L7 proxy then substitutes the real
+# token from env on the wire, the same path Discord/Telegram/Brave already
+# take. No real Slack token ever touches openclaw.json, /tmp, or any other
+# disk surface readable by the sandbox uid.
+#
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2085
 
-apply_slack_token_override() {
-  [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
+_SLACK_REWRITER_SCRIPT="/tmp/nemoclaw-slack-token-rewriter.js"
 
-  # Non-root cannot write to /sandbox/.openclaw (root:root 444), so the
-  # placeholder token cannot be resolved here. Log a warning and continue —
-  # the Slack channel guard will catch the inevitable auth failure at runtime
-  # without crashing the gateway. Ref: #2340
-  if [ "$(id -u)" -ne 0 ]; then
-    printf '[channels] Slack token override skipped (non-root) — channel guard will handle auth failure at runtime\n' >&2
+install_slack_token_rewriter() {
+  local config_file="/sandbox/.openclaw/openclaw.json"
+
+  # Only install if a Slack channel placeholder is present in the config.
+  # Same conditional shape as install_slack_channel_guard — both are no-ops
+  # for sandboxes without Slack configured.
+  if ! grep -q 'OPENSHELL-RESOLVE-ENV-SLACK_' "$config_file" 2>/dev/null; then
     return 0
   fi
 
-  local config_file="/sandbox/.openclaw/openclaw.json"
-  local hash_file="/sandbox/.openclaw/.config-hash"
+  printf '[channels] Installing Slack token rewriter (Bolt-shape → canonical)\n' >&2
 
-  # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing Slack token override — config or hash path is a symlink\n' >&2
-    return 1
-  fi
+  emit_sandbox_sourced_file "$_SLACK_REWRITER_SCRIPT" <<'SLACK_REWRITER_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// slack-token-rewriter.js — translates the Bolt-compatible placeholder
+// (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR into the canonical
+// openshell:resolve:env:VAR form on outbound HTTP, so Slack tokens travel
+// the same OpenShell substitution path Discord / Telegram / Brave already
+// use without any real token touching openclaw.json.
+//
+// Why this preload exists:
+//   Slack's Bolt SDK validates token shape (^xoxb-[A-Za-z0-9_-]+$ /
+//   ^xapp-…$) at App construction, before any HTTP call leaves the
+//   process — so the canonical openshell:resolve:env:VAR placeholder is
+//   rejected synchronously and the gateway crashes. We emit a Bolt-shape
+//   placeholder into openclaw.json (which Bolt accepts), then translate
+//   it back to canonical form here, just before the bytes hit the wire,
+//   where OpenShell's L7 proxy substitutes the real token from env.
+//
+// Wraps http.request / https.request — every Node HTTP client bottoms
+// out here, including @slack/web-api (axios → follow-redirects → http)
+// and Bolt's Socket Mode HTTPS auth (apps.connections.open → http).
+// Also wraps http.get / https.get because they call the module-local
+// `request` function, not module.exports.request — wrapping `request`
+// alone would miss any `get` caller.
+// Request body chunks are wrapped too: Bolt's auth.test path can put the
+// token in both Authorization and the urlencoded body.
+//
+// Invariants:
+//   - No env reads. Translation is purely structural.
+//   - Mutates options/headers in place. axios reuses the headers object
+//     after request creation, so cloning would break the request lifecycle.
+//   - Idempotent. The output (openshell:resolve:env:VAR) does not match
+//     the Bolt-shape regex, so re-entering the wrapper on a retry is safe.
+//   - Fast path: indexOf short-circuits the regex on the 99.9% of
+//     requests that don't contain a placeholder.
+//
+// This file is the canonical source for review and tests. At sandbox boot,
+// nemoclaw-start.sh writes a byte-identical copy to /tmp and loads it via
+// NODE_OPTIONS=--require. A sync test enforces byte-for-byte equality.
+// Mirrors the http-proxy-fix.js / ws-proxy-fix.js convention; see those
+// files for the rationale on why the content cannot live under
+// /opt/nemoclaw-blueprint/scripts/ in the optimized sandbox build.
+//
+// Ref: https://github.com/NVIDIA/NemoClaw/issues/2085
 
-  # SECURITY: Validate token prefixes — reject anything that doesn't look like a real Slack token.
-  case "${SLACK_BOT_TOKEN}" in
-    xoxb-*) ;;
-    *)
-      printf '[channels] SLACK_BOT_TOKEN does not start with xoxb- — skipping Slack placeholder resolution\n' >&2
-      return 0
-      ;;
-  esac
+(function () {
+  'use strict';
 
-  if [ -n "${SLACK_APP_TOKEN:-}" ]; then
-    case "$SLACK_APP_TOKEN" in
-      xapp-*) ;;
-      *)
-        printf '[channels] SLACK_APP_TOKEN does not start with xapp- — skipping Slack placeholder resolution\n' >&2
-        return 0
-        ;;
-    esac
-  else
-    printf '[channels] Warning: SLACK_BOT_TOKEN is set but SLACK_APP_TOKEN is missing — Socket Mode requires both tokens\n' >&2
-  fi
+  // Bolt-shape placeholder → canonical form. Single source of truth used
+  // by every code path below. <VAR> = [A-Z_][A-Z0-9_]* — the charset
+  // OpenShell's substitution layer accepts.
+  var BOLT_PLACEHOLDER =
+    /\b(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-([A-Z_][A-Z0-9_]*)\b/g;
+  var FAST_PATH = 'OPENSHELL-RESOLVE-ENV-';
 
-  printf '[channels] Resolving Slack token placeholders in openclaw.json\n' >&2
+  function rewriteString(s) {
+    if (typeof s !== 'string') return s;
+    if (s.indexOf(FAST_PATH) === -1) return s;
+    return s.replace(BOLT_PLACEHOLDER, 'openshell:resolve:env:$1');
+  }
 
-  # Relax 444 → 644 so writes succeed after CAP_DAC_OVERRIDE is dropped (#2653).
-  # Re-lock in all exit paths so files are never left at 644 on failure.
-  relax_config_for_write "$config_file" "$hash_file"
-  local _write_rc=0
+  function rewriteHeaders(headers) {
+    if (!headers || typeof headers !== 'object') return headers;
+    var keys = Object.keys(headers);
+    for (var i = 0; i < keys.length; i++) {
+      var v = headers[keys[i]];
+      if (Array.isArray(v)) {
+        for (var j = 0; j < v.length; j++) v[j] = rewriteString(v[j]);
+      } else {
+        headers[keys[i]] = rewriteString(v);
+      }
+    }
+    return headers;
+  }
 
-  SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
-    SLACK_APP_TOKEN="${SLACK_APP_TOKEN:-}" \
-    python3 - "$config_file" <<'PYSLACK' || _write_rc=$?
-import json, os, re, sys
+  function rewriteOptions(options) {
+    if (!options || typeof options !== 'object') return options;
+    if (typeof options.path === 'string') {
+      options.path = rewriteString(options.path);
+    }
+    if (options.headers) rewriteHeaders(options.headers);
+    return options;
+  }
 
-config_file = sys.argv[1]
-bot_token = os.environ["SLACK_BOT_TOKEN"]
-app_token = os.environ.get("SLACK_APP_TOKEN", "")
-# json.dumps produces a quoted string; strip the outer quotes to get a
-# JSON-safe value that can be spliced directly into the existing string literal.
-bot_token_json = json.dumps(bot_token)[1:-1]
-app_token_json = json.dumps(app_token)[1:-1]
+  function adjustContentLength(req, beforeLength, afterLength) {
+    var delta = afterLength - beforeLength;
+    if (!delta || !req || typeof req.getHeader !== 'function' || typeof req.setHeader !== 'function') {
+      return;
+    }
+    // Once Node has built/sent the header block, changing Content-Length would
+    // be too late. Axios writes the urlencoded Slack body in one chunk before
+    // headers are flushed, which is the path this adjustment is for.
+    if (req.headersSent || req._header) return;
+    var current = req.getHeader('content-length');
+    if (Array.isArray(current)) current = current[0];
+    if (current === undefined || current === null || current === '') return;
+    var n = Number(current);
+    if (!isFinite(n)) return;
+    req.setHeader('Content-Length', String(n + delta));
+  }
 
-with open(config_file) as f:
+  function rewriteBodyChunk(req, chunk, encoding) {
+    if (typeof chunk === 'string') {
+      var rewritten = rewriteString(chunk);
+      if (rewritten !== chunk) {
+        adjustContentLength(
+          req,
+          Buffer.byteLength(chunk, encoding),
+          Buffer.byteLength(rewritten, encoding)
+        );
+      }
+      return rewritten;
+    }
+
+    if (!chunk || typeof chunk !== 'object') return chunk;
+    var isBuffer = Buffer.isBuffer(chunk);
+    if (!isBuffer && !(chunk instanceof Uint8Array)) return chunk;
+
+    var buf = isBuffer
+      ? chunk
+      : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    if (buf.indexOf(FAST_PATH) === -1) return chunk;
+    var s = buf.toString('utf8');
+    if (s.indexOf(FAST_PATH) === -1) return chunk;
+    // Do not rewrite arbitrary binary data. Slack's urlencoded bodies are
+    // valid UTF-8 and round-trip exactly.
+    if (!Buffer.from(s, 'utf8').equals(buf)) return chunk;
+    var rs = rewriteString(s);
+    if (rs === s) return chunk;
+    var out = Buffer.from(rs, 'utf8');
+    adjustContentLength(req, buf.length, out.length);
+    return out;
+  }
+
+  function wrapClientRequest(req) {
+    if (!req || typeof req !== 'object') return req;
+    if (req.__nemoclawSlackTokenRewriter) return req;
+    try {
+      Object.defineProperty(req, '__nemoclawSlackTokenRewriter', { value: true });
+    } catch (_e) {
+      req.__nemoclawSlackTokenRewriter = true;
+    }
+
+    var origWrite = req.write;
+    if (typeof origWrite === 'function') {
+      req.write = function (chunk, encoding, cb) {
+        if (typeof encoding === 'function') {
+          cb = encoding;
+          encoding = undefined;
+        }
+        chunk = rewriteBodyChunk(this, chunk, encoding);
+        if (cb) return origWrite.call(this, chunk, encoding, cb);
+        if (encoding !== undefined) return origWrite.call(this, chunk, encoding);
+        return origWrite.call(this, chunk);
+      };
+    }
+
+    var origEnd = req.end;
+    if (typeof origEnd === 'function') {
+      req.end = function (chunk, encoding, cb) {
+        if (arguments.length === 0) return origEnd.call(this);
+        if (typeof chunk === 'function') return origEnd.call(this, chunk);
+        if (typeof encoding === 'function') {
+          cb = encoding;
+          encoding = undefined;
+        }
+        if (chunk !== undefined && chunk !== null) {
+          chunk = rewriteBodyChunk(this, chunk, encoding);
+        }
+        if (cb) return origEnd.call(this, chunk, encoding, cb);
+        if (encoding !== undefined) return origEnd.call(this, chunk, encoding);
+        return origEnd.call(this, chunk);
+      };
+    }
+
+    return req;
+  }
+
+  function wrap(mod, methodName) {
+    var orig = mod[methodName];
+    if (typeof orig !== 'function') return;
+    mod[methodName] = function (arg1, arg2, arg3) {
+      // Signatures: m(options[, cb]); m(url[, options][, cb])
+      if (typeof arg1 === 'string') {
+        arg1 = rewriteString(arg1);
+        if (arg2 && typeof arg2 === 'object' && typeof arg2 !== 'function') {
+          rewriteOptions(arg2);
+        }
+      } else if (arg1 instanceof URL) {
+        // URL instances are immutable by component; rebuild only if needed.
+        var s = arg1.href;
+        var rs = rewriteString(s);
+        if (rs !== s) arg1 = new URL(rs);
+        if (arg2 && typeof arg2 === 'object' && typeof arg2 !== 'function') {
+          rewriteOptions(arg2);
+        }
+      } else {
+        rewriteOptions(arg1);
+      }
+      return wrapClientRequest(orig.call(this, arg1, arg2, arg3));
+    };
+  }
+
+  var http = require('http');
+  var https = require('https');
+  wrap(http, 'request');
+  wrap(http, 'get');
+  wrap(https, 'request');
+  wrap(https, 'get');
+})();
+SLACK_REWRITER_EOF
+
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_REWRITER_SCRIPT"
+  printf '[channels] Slack token rewriter installed (NODE_OPTIONS updated)\n' >&2
+}
+
+# ── Slack secrets-on-disk tripwire ────────────────────────────────
+# Defense-in-depth: refuse to serve if a real Slack token (anything
+# starting with xoxb- or xapp- that is NOT the OPENSHELL-RESOLVE-ENV-
+# placeholder) ever appears in openclaw.json. This catches a regression
+# where someone re-introduces inline token mutation, or a bug in the
+# config generator that emits raw env values. Runs once at startup,
+# after configure_messaging_channels has finalized the config.
+verify_no_slack_secrets_on_disk() {
+  local config="/sandbox/.openclaw/openclaw.json"
+  [ -f "$config" ] || return 0
+  if python3 - "$config" <<'PYSLACKSECRET'; then
+import re
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8", errors="ignore") as f:
     content = f.read()
-
-content = re.sub(
-    r'("botToken"\s*:\s*")openshell:resolve:env:SLACK_BOT_TOKEN(")',
-    lambda m: m.group(1) + bot_token_json + m.group(2),
-    content,
-)
-if app_token:
-    content = re.sub(
-        r'("appToken"\s*:\s*")openshell:resolve:env:SLACK_APP_TOKEN(")',
-        lambda m: m.group(1) + app_token_json + m.group(2),
-        content,
-    )
-
-with open(config_file, "w") as f:
-    f.write(content)
-PYSLACK
-
-  if [ "$_write_rc" -eq 0 ]; then
-    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
-      printf '[channels] Config hash recomputed after Slack token override\n' >&2
-    else
-      _write_rc=$?
-    fi
+sys.exit(0 if re.search(r"(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)", content) else 1)
+PYSLACKSECRET
+    printf '[SECURITY] Slack token leaked into %s — refusing to serve\n' "$config" >&2
+    exit 78 # EX_CONFIG
   fi
-
-  # Re-lock 644 → 444 — always runs, even on write/hash failure (#2653)
-  lock_config_after_write "$config_file" "$hash_file"
-  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
 # ── Slack channel guard (unhandled-rejection safety net) ─────────
@@ -545,9 +706,10 @@ install_slack_channel_guard() {
 // fatal (--unhandled-rejections=throw is the default), taking down
 // inference, chat, and TUI alongside the failed Slack channel.
 //
-// This preload installs a process-level handler that detects Slack-specific
-// rejections (by error code or stack trace) and logs a warning instead of
-// crashing. Non-Slack rejections are re-thrown to preserve normal behavior.
+// This preload wraps process.emit for Slack-specific process-level failures
+// and consumes those events before later OpenClaw handlers can treat the
+// provider startup failure as fatal. Non-Slack failures pass through to the
+// original event machinery unchanged.
 //
 // Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
 
@@ -619,24 +781,22 @@ install_slack_channel_guard() {
     return false;
   }
 
-  // Catch async Slack errors (rejected promises from @slack/web-api).
-  process.on('unhandledRejection', function (reason, promise) {
-    if (handleSlackError(reason, 'unhandledRejection')) return;
-    // Non-Slack: re-throw to preserve default --unhandled-rejections=throw.
-    throw reason;
-  });
+  if (process.__nemoclawSlackChannelGuardInstalled) return;
+  try {
+    Object.defineProperty(process, '__nemoclawSlackChannelGuardInstalled', { value: true });
+  } catch (_e) {
+    process.__nemoclawSlackChannelGuardInstalled = true;
+  }
 
-  // Catch sync Slack errors (e.g., Bolt token format validation throws
-  // synchronously when appToken doesn't start with xapp-).
-  process.on('uncaughtException', function (err, origin) {
-    if (handleSlackError(err, 'uncaughtException')) return;
-    // Non-Slack: re-throw to preserve normal crash behavior.
-    // Print the error first since re-throw inside uncaughtException handler
-    // may not print the original stack.
-    process.stderr.write(err.stack || String(err));
-    process.stderr.write('\n');
-    process.exit(1);
-  });
+  var origEmit = process.emit;
+  process.emit = function (eventName) {
+    if (eventName === 'unhandledRejection') {
+      if (handleSlackError(arguments[1], 'unhandledRejection')) return true;
+    } else if (eventName === 'uncaughtException') {
+      if (handleSlackError(arguments[1], 'uncaughtException')) return true;
+    }
+    return origEmit.apply(this, arguments);
+  };
 })();
 SLACK_GUARD_EOF
 
@@ -1641,6 +1801,8 @@ PROXYEOF
   # by install_slack_channel_guard() — conditional on the file existing at
   # source-time so connect sessions started before Slack is configured are safe.
   echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
+  # Slack token rewriter for connect sessions — same conditional pattern.
+  echo "[ -f \"$_SLACK_REWRITER_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_REWRITER_SCRIPT\""
   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
   for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -1676,11 +1838,12 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
   apply_model_override
   apply_cors_override
-  apply_slack_token_override
   export_gateway_token
   install_configure_guard
   configure_messaging_channels
+  install_slack_token_rewriter
   install_slack_channel_guard
+  verify_no_slack_secrets_on_disk
   validate_openclaw_symlinks
 
   # Ensure writable state directories exist and are owned by the current user.
@@ -1765,7 +1928,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_SLACK_REWRITER_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
@@ -1802,7 +1965,6 @@ fi
 verify_config_integrity /sandbox/.openclaw
 apply_model_override
 apply_cors_override
-apply_slack_token_override
 export_gateway_token
 install_configure_guard
 
@@ -1810,7 +1972,9 @@ install_configure_guard
 # Must run AFTER integrity check (to detect build-time tampering) and
 # BEFORE chattr +i (which locks the config permanently).
 configure_messaging_channels
+install_slack_token_rewriter
 install_slack_channel_guard
+verify_no_slack_secrets_on_disk
 
 # Write auth profile as sandbox user (needs writable .openclaw-data)
 # and recursively re-tighten any auth-profiles.json files under ~/.openclaw.
@@ -1913,7 +2077,7 @@ harden_openclaw_symlinks
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT"
+validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_SLACK_REWRITER_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
