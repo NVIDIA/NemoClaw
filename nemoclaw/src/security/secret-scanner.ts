@@ -107,24 +107,19 @@ export function scanForSecrets(content: string): SecretMatch[] {
 // secrets split across multiple writes are not detectable by regex alone.
 // These are inherent limitations of content-based scanning.
 const MEMORY_PATH_SEGMENTS = [
-  "/.openclaw-data/memory/",
-  "/.openclaw-data/workspace/",
-  "/.openclaw-data/agents/",
-  "/.openclaw-data/skills/",
-  "/.openclaw-data/hooks/",
-  "/.openclaw-data/credentials/",
-  "/.openclaw-data/canvas/",
-  "/.openclaw-data/identity/",
-  "/.openclaw-data/cron/",
-  "/.openclaw-data/telegram/",
-  "/.openclaw-data/sandbox/",
   "/.openclaw/memory/",
   "/.openclaw/workspace/",
   "/.openclaw/agents/",
   "/.openclaw/skills/",
   "/.openclaw/hooks/",
-  "/.openclaw-data/MEMORY.md",
+  "/.openclaw/credentials/",
+  "/.openclaw/canvas/",
+  "/.openclaw/identity/",
+  "/.openclaw/cron/",
+  "/.openclaw/telegram/",
+  "/.openclaw/sandbox/",
   "/.openclaw/MEMORY.md",
+  "/.openclaw/openclaw.json",
   "/.nemoclaw/",
 ];
 

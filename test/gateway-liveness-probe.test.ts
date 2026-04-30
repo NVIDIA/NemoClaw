@@ -18,11 +18,13 @@ describe("gateway liveness probe (#2020)", () => {
   const content = fs.readFileSync(path.join(ROOT, "src/lib/onboard.ts"), "utf-8");
 
   it("verifyGatewayContainerRunning() helper exists and checks Docker state", () => {
-    expect(content).toContain("function verifyGatewayContainerRunning()");
-    // Must use docker inspect to probe container state
-    expect(content).toContain("docker inspect --type container");
+    const match = content.match(/function verifyGatewayContainerRunning\([\s\S]*?^}/m);
+    expect(match).toBeTruthy();
+    if (!match) throw new Error("Expected verifyGatewayContainerRunning() in src/lib/onboard.ts");
+    // Must use a Docker inspect helper to probe container state
+    expect(match[0]).toMatch(/docker(?:Inspect|ContainerInspectFormat)\(/);
     // Must check .State.Running, not just container existence
-    expect(content).toContain("{{.State.Running}}");
+    expect(match[0]).toContain("{{.State.Running}}");
   });
 
   it("preflight probes the container when gatewayReuseState is 'healthy'", () => {

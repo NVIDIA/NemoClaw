@@ -15,7 +15,10 @@
 
 set -uo pipefail
 
-export NEMOCLAW_E2E_DEFAULT_TIMEOUT=900
+# Three sequential sandbox creations (~5-7 min each) plus cleanup phases need
+# well over the default 900s.  80 min leaves a 10 min buffer under the 90-min
+# CI job timeout.
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=4800
 SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
@@ -39,6 +42,33 @@ section() {
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+
+# TODO(#2562): replace shell timeout with structured timeout once unified abstraction lands
+
+# Per-phase timeout in seconds (20 min per onboard phase, generous for CI)
+PHASE_TIMEOUT="${NEMOCLAW_E2E_PHASE_TIMEOUT:-1200}"
+
+# Elapsed-time helpers
+phase_start_time() { date +%s; }
+phase_elapsed() {
+  local start="$1"
+  local now
+  now="$(date +%s)"
+  echo $((now - start))
+}
+
+# Diagnostic dump — called on phase timeout or failure to aid debugging
+dump_diagnostics() {
+  local phase_label="${1:-unknown}"
+  info "=== Diagnostics for ${phase_label} ==="
+  info "openshell status:"
+  openshell status 2>&1 | sed 's/^/    /' || true
+  info "openshell sandbox list:"
+  openshell sandbox list 2>&1 | sed 's/^/    /' || true
+  info "docker ps:"
+  docker ps 2>&1 | sed 's/^/    /' || true
+  info "=== End diagnostics ==="
+}
 
 registry_has() {
   local sandbox_name="$1"
@@ -141,6 +171,7 @@ PY
   return 1
 }
 
+# TODO(#2562): replace shell timeout with structured timeout once unified abstraction lands
 run_onboard() {
   local sandbox_name="$1"
   local recreate="${2:-0}"
@@ -161,7 +192,7 @@ run_onboard() {
     env_args+=("NEMOCLAW_RECREATE_SANDBOX=1")
   fi
 
-  env "${env_args[@]}" "${NEMOCLAW_CMD[@]}" onboard --non-interactive >"$log_file" 2>&1
+  run_with_timeout "$PHASE_TIMEOUT" env "${env_args[@]}" "${NEMOCLAW_CMD[@]}" onboard --non-interactive >"$log_file" 2>&1
   RUN_ONBOARD_EXIT=$?
   RUN_ONBOARD_OUTPUT="$(cat "$log_file")"
   rm -f "$log_file"
@@ -234,14 +265,20 @@ fi
 section "Phase 2: First onboard ($SANDBOX_A)"
 info "Running successful non-interactive onboard against local compatible endpoint..."
 
+PHASE2_START="$(phase_start_time)"
 run_onboard "$SANDBOX_A"
 output1="$RUN_ONBOARD_OUTPUT"
 exit1="$RUN_ONBOARD_EXIT"
+info "Phase 2 elapsed: $(phase_elapsed "$PHASE2_START")s"
 
 if [ "$exit1" -eq 0 ]; then
   pass "First onboard completed successfully"
+elif [ "$exit1" -eq 124 ]; then
+  fail "First onboard timed out after ${PHASE_TIMEOUT}s (exit 124)"
+  dump_diagnostics "Phase 2"
 else
   fail "First onboard exited $exit1 (expected 0)"
+  dump_diagnostics "Phase 2"
 fi
 
 if grep -q "Sandbox '${SANDBOX_A}' created" <<<"$output1"; then
@@ -274,20 +311,28 @@ fi
 section "Phase 3: Second onboard ($SANDBOX_A — same name, recreate)"
 info "Running nemoclaw onboard with NEMOCLAW_RECREATE_SANDBOX=1..."
 
+GATEWAY_ID_BEFORE=$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)
+PHASE3_START="$(phase_start_time)"
 run_onboard "$SANDBOX_A" "1"
 output2="$RUN_ONBOARD_OUTPUT"
 exit2="$RUN_ONBOARD_EXIT"
+info "Phase 3 elapsed: $(phase_elapsed "$PHASE3_START")s"
 
 if [ "$exit2" -eq 0 ]; then
   pass "Second onboard completed successfully"
+elif [ "$exit2" -eq 124 ]; then
+  fail "Second onboard timed out after ${PHASE_TIMEOUT}s (exit 124)"
+  dump_diagnostics "Phase 3"
 else
   fail "Second onboard exited $exit2 (expected 0)"
+  dump_diagnostics "Phase 3"
 fi
 
-if grep -q "Reusing existing NemoClaw gateway" <<<"$output2"; then
-  pass "Healthy gateway reused on second onboard"
+GATEWAY_ID_AFTER=$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)
+if [ -n "$GATEWAY_ID_BEFORE" ] && [ "$GATEWAY_ID_BEFORE" = "$GATEWAY_ID_AFTER" ]; then
+  pass "Healthy gateway reused on second onboard (container $GATEWAY_ID_BEFORE)"
 else
-  fail "Healthy gateway was not reused on second onboard"
+  fail "Gateway container changed on second onboard (before=$GATEWAY_ID_BEFORE after=$GATEWAY_ID_AFTER)"
 fi
 
 if grep -q "Port 8080 is not available" <<<"$output2"; then
@@ -314,20 +359,28 @@ fi
 section "Phase 4: Third onboard ($SANDBOX_B — different name)"
 info "Running nemoclaw onboard with new sandbox name..."
 
+GATEWAY_ID_BEFORE3=$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)
+PHASE4_START="$(phase_start_time)"
 run_onboard "$SANDBOX_B"
 output3="$RUN_ONBOARD_OUTPUT"
 exit3="$RUN_ONBOARD_EXIT"
+info "Phase 4 elapsed: $(phase_elapsed "$PHASE4_START")s"
 
 if [ "$exit3" -eq 0 ]; then
   pass "Third onboard completed successfully"
+elif [ "$exit3" -eq 124 ]; then
+  fail "Third onboard timed out after ${PHASE_TIMEOUT}s (exit 124)"
+  dump_diagnostics "Phase 4"
 else
   fail "Third onboard exited $exit3 (expected 0)"
+  dump_diagnostics "Phase 4"
 fi
 
-if grep -q "Reusing existing NemoClaw gateway" <<<"$output3"; then
-  pass "Healthy gateway reused on third onboard"
+GATEWAY_ID_AFTER3=$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)
+if [ -n "$GATEWAY_ID_BEFORE3" ] && [ "$GATEWAY_ID_BEFORE3" = "$GATEWAY_ID_AFTER3" ]; then
+  pass "Healthy gateway reused on third onboard (container $GATEWAY_ID_BEFORE3)"
 else
-  fail "Healthy gateway was not reused on third onboard"
+  fail "Gateway container changed on third onboard (before=$GATEWAY_ID_BEFORE3 after=$GATEWAY_ID_AFTER3)"
 fi
 
 if grep -q "Port 8080 is not available" <<<"$output3"; then
@@ -352,6 +405,27 @@ if openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1; then
   pass "First sandbox '$SANDBOX_A' still exists after creating '$SANDBOX_B'"
 else
   fail "First sandbox '$SANDBOX_A' disappeared after creating '$SANDBOX_B' (regression: #849)"
+fi
+
+# #2174 regression: B must auto-allocate to a different dashboard port,
+# surface it in nemoclaw list, and not collide with A's 18789.
+if grep -q "is taken. Using port" <<<"$output3"; then
+  pass "Second-sandbox onboard logged port auto-allocation (#2174)"
+else
+  fail "Second-sandbox onboard did not log port auto-allocation — auto-alloc may not have fired (#2174)"
+fi
+
+LIST_LOG="$(mktemp)"
+run_nemoclaw list >"$LIST_LOG" 2>&1 || true
+list_output="$(cat "$LIST_LOG")"
+rm -f "$LIST_LOG"
+
+dashboard_ports_in_list="$(grep -oE 'dashboard: http://127\.0\.0\.1:[0-9]+' <<<"$list_output" | awk -F: '{print $NF}' | sort -u)"
+distinct_count="$(wc -l <<<"$dashboard_ports_in_list" | tr -d ' ')"
+if [ "$distinct_count" = "2" ]; then
+  pass "nemoclaw list shows two distinct dashboard ports (#2174)"
+else
+  fail "nemoclaw list did not show two distinct dashboard ports (got $distinct_count: $(tr '\n' ' ' <<<"$dashboard_ports_in_list"))"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -440,6 +514,13 @@ openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
 openshell forward stop 18789 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
+
+# Force registry reconciliation: when the gateway is in a degraded state
+# (stopped in Phase 6), `nemoclaw destroy` may delete the sandbox from
+# OpenShell but fail to clean its own registry entry. Running `status` for
+# each sandbox triggers the stale-entry reconciliation path.
+run_nemoclaw "$SANDBOX_A" status 2>/dev/null || true
+run_nemoclaw "$SANDBOX_B" status 2>/dev/null || true
 
 if openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1; then
   fail "Sandbox '$SANDBOX_A' still exists after cleanup"

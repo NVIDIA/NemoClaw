@@ -218,7 +218,8 @@ function activeModelEntries(
   onboardCfg: ReturnType<typeof loadOnboardConfig>,
   fallbackModel = "",
 ): ModelProviderEntry[] {
-  const activeModel = onboardCfg?.model ?? fallbackModel;
+  // Prefer fallbackModel (live gateway model) over the potentially stale onboard config (#2608).
+  const activeModel = fallbackModel || onboardCfg?.model || "";
   if (!activeModel) {
     return [
       {
@@ -330,31 +331,28 @@ export default function register(api: OpenClawPluginApi): void {
     handler: (ctx) => handleSlashCommand(ctx, api),
   });
 
-  // 2. Register nvidia-nim provider — use onboard config if available
+  // 2. Register nvidia-nim provider — always probe the live gateway inference
+  // state so the TUI footer reflects the current model after a runtime
+  // `openshell inference set` (#2608).
   const onboardCfg = loadOnboardConfig();
+  const probed = probeOpenShellInference();
 
-  // Prefer onboard config; fall back to live OpenShell inference state when
-  // the config file is unavailable (e.g. inside the sandbox). Only resort to
-  // hardcoded defaults if both lookups fail.
   let bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "";
   let bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "";
-  let bannerModel = onboardCfg?.model ?? "";
-  let probedModel = "";
+  // Prefer the live gateway model over the stale onboard config model.
+  let bannerModel = probed.model || onboardCfg?.model || "";
 
-  if (!bannerEndpoint || !bannerProvider || !bannerModel) {
-    const probed = probeOpenShellInference();
-    if (!bannerEndpoint) bannerEndpoint = probed.endpoint;
-    if (!bannerProvider) bannerProvider = probed.provider;
-    if (!bannerModel) bannerModel = probed.model;
-    probedModel = probed.model;
-  }
+  if (!bannerEndpoint) bannerEndpoint = probed.endpoint;
+  if (!bannerProvider) bannerProvider = probed.provider;
 
   if (!bannerEndpoint) bannerEndpoint = "build.nvidia.com";
   if (!bannerProvider) bannerProvider = "NVIDIA Endpoints";
   if (!bannerModel) bannerModel = "nvidia/nemotron-3-super-120b-a12b";
 
   const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
-  api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv, probedModel));
+  api.registerProvider(
+    registeredProviderForConfig(onboardCfg, providerCredentialEnv, probed.model),
+  );
 
   // 3. Register before_tool_call hook to block secrets in memory writes (#1233)
   // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract
@@ -376,7 +374,7 @@ export default function register(api: OpenClawPluginApi): void {
         const rawPath = event.params["file_path"] ?? event.params["path"];
         if (typeof rawPath !== "string" || rawPath.length === 0) return undefined;
         // Resolve symlinks and traversal before checking — prevents bypasses like
-        // /sandbox/project/../../.openclaw-data/memory/secrets.md
+        // /sandbox/project/../../.openclaw/memory/secrets.md
         const filePath = api.resolvePath(rawPath);
         if (!isMemoryPath(filePath)) return undefined;
 

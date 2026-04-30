@@ -5,19 +5,22 @@
 #
 #   cloud-e2e                Cloud inference (NVIDIA Endpoint API) on ubuntu-latest.
 #   messaging-providers-e2e  Validates messaging credential provider/placeholder/L7-proxy chain
-#                            for Telegram + Discord. Uses fake tokens. See PR #1081.
+#                            for Telegram + Discord + Slack. Uses fake tokens. Slack additionally
+#                            exercises the slack-token-rewriter Bolt-shape → canonical placeholder
+#                            translation (#2085). See PR #1081.
 #   token-rotation-e2e       Validates that rotating a messaging token and re-running onboard
 #                            propagates the new credential to the sandbox. Combined Telegram +
-#                            Discord coverage with cross-talk assertions. See issue #1903.
+#                            Discord + Slack coverage with cross-talk assertions. See issue #1903.
 #   sandbox-survival-e2e     Sandbox survival across gateway restarts (onboard, inference,
 #                            gateway stop/start, verify sandbox + workspace + inference).
 #   hermes-e2e               Hermes Agent E2E — install → onboard --agent hermes → health
 #                            probe → live inference. Validates the multi-agent architecture.
-#   skip-permissions-e2e     Validates --dangerously-skip-permissions activates the permissive
-#                            policy (not stuck in Pending) and sandbox egress works (not 403).
-#   gpu-e2e                  Local Ollama inference on a GPU self-hosted runner.
-#                            Controlled by the GPU_E2E_ENABLED repository variable.
-#                            Set vars.GPU_E2E_ENABLED to "true" in repo settings to enable.
+#   credential-migration-e2e Validates legacy ~/.nemoclaw/credentials.json migration to the
+#                            OpenShell gateway, secure zero-fill on unlink, allowlist filter
+#                            on non-credential env keys, and symlink-safe deletion.
+#   launchable-smoke-e2e     Community install path (brev-launchable-ci-cpu.sh) on ubuntu-latest.
+#   gpu-e2e                  Local Ollama inference on an NVKS ephemeral GPU runner.
+#   gpu-double-onboard-e2e   Ollama proxy token consistency after re-onboard (#2553).
 #   notify-on-failure        Auto-creates a GitHub issue when any E2E job fails.
 #
 # Runs directly on the runner (not inside Docker) because OpenShell bootstraps
@@ -36,6 +39,25 @@ on:
   schedule:
     - cron: "0 0 * * *"
   workflow_dispatch:
+    inputs:
+      jobs:
+        description: >-
+          Comma-separated job names to run (empty = all).
+          Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
+          skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
+          token-rotation-e2e, sandbox-survival-e2e,
+          issue-2478-crash-loop-recovery-e2e, hermes-e2e,
+          sandbox-operations-e2e, inference-routing-e2e,
+          network-policy-e2e, deployment-services-e2e, diagnostics-e2e,
+          credential-migration-e2e,
+          snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
+          upgrade-stale-sandbox-e2e, rebuild-hermes-e2e, double-onboard-e2e,
+          onboard-repair-e2e, onboard-resume-e2e, runtime-overrides-e2e,
+          credential-sanitization-e2e, telegram-injection-e2e,
+          overlayfs-autofix-e2e, launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -46,7 +68,11 @@ concurrency:
 
 jobs:
   cloud-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',cloud-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -71,13 +97,150 @@ jobs:
           path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
 
+  # ── Cloud Onboard E2E ──────────────────────────────────────────
+  # Public installer (curl nvidia.com/nemoclaw.sh), Landlock read-only
+  # enforcement, API key leak detection, inference.local HTTPS probe.
+  # Split from cloud-experimental-e2e monolith (#2644).
+  cloud-onboard-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',cloud-onboard-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run cloud onboard E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_POLICY_MODE: "custom"
+          NEMOCLAW_POLICY_PRESETS: "npm,pypi"
+          NEMOCLAW_SANDBOX_NAME: "e2e-cloud-onboard"
+        run: bash test/e2e/test-cloud-onboard-e2e.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-cloud-onboard
+          path: /tmp/nemoclaw-e2e-cloud-onboard-install.log
+          if-no-files-found: ignore
+
+  # ── Cloud Inference E2E ──────────────────────────────────────
+  # Live chat via inference.local + skill filesystem validation.
+  # Split from cloud-experimental-e2e monolith (#2644).
+  cloud-inference-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',cloud-inference-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run cloud inference E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-cloud-inference"
+        run: bash test/e2e/test-cloud-inference-e2e.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-cloud-inference
+          path: /tmp/nemoclaw-e2e-cloud-inference-install.log
+          if-no-files-found: ignore
+
+  # ── Skill Agent E2E ──────────────────────────────────────────
+  # Skill injection + agent verification with retry + fuzzy matching.
+  # Split from cloud-experimental-e2e monolith (#2644).
+  skill-agent-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',skill-agent-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run skill agent E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-skill-agent"
+        run: bash test/e2e/test-skill-agent-e2e.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-skill-agent
+          path: /tmp/nemoclaw-e2e-skill-agent-install.log
+          if-no-files-found: ignore
+
+  # ── Docs Validation E2E ──────────────────────────────────────
+  # CLI/docs parity (nemoclaw --help vs commands.md) + markdown link validation.
+  # Split from cloud-experimental-e2e monolith (#2644).
+  docs-validation-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',docs-validation-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install NemoClaw
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+
+      - name: Run docs validation
+        env:
+          CHECK_DOC_LINKS_REMOTE: "0"
+        run: |
+          set -euo pipefail
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-docs-validation.sh
+
   # ── Messaging Providers E2E ──────────────────────────────────
   # Validates the full provider/placeholder/L7-proxy chain for messaging
   # credentials (Telegram, Discord). Uses fake tokens by default — the L7
   # proxy rewrites placeholders and the real API returns 401, proving the
   # chain works. See: PR #1081
   messaging-providers-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',messaging-providers-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -94,6 +257,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e"
           DISCORD_BOT_TOKEN: "test-fake-discord-token-e2e"
+          SLACK_BOT_TOKEN: "xoxb-fake-slack-token-e2e"
+          SLACK_APP_TOKEN: "xapp-fake-slack-app-token-e2e"
         run: bash test/e2e/test-messaging-providers.sh
 
       - name: Upload install log on failure
@@ -111,7 +276,11 @@ jobs:
   # rotation and reused when unchanged.
   # See: issue #1903
   token-rotation-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',token-rotation-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -129,6 +298,10 @@ jobs:
           TELEGRAM_BOT_TOKEN_B: "test-fake-token-B-rotation-e2e"
           DISCORD_BOT_TOKEN_A: "test-fake-discord-A-rotation-e2e"
           DISCORD_BOT_TOKEN_B: "test-fake-discord-B-rotation-e2e"
+          SLACK_BOT_TOKEN_A: "xoxb-fake-A-rotation-e2e"
+          SLACK_BOT_TOKEN_B: "xoxb-fake-B-rotation-e2e"
+          SLACK_APP_TOKEN_A: "xapp-fake-A-rotation-e2e"
+          SLACK_APP_TOKEN_B: "xapp-fake-B-rotation-e2e"
         run: bash test/e2e/test-token-rotation.sh
 
       - name: Upload install log on failure
@@ -141,7 +314,11 @@ jobs:
 
   # ── Sandbox survival (gateway restart recovery) ──────────────
   sandbox-survival-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',sandbox-survival-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -165,12 +342,49 @@ jobs:
           path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
 
+  # ── #2478 crash-loop recovery (STAYS_IN_PR_UNTIL_SHIP) ───────
+  # Soak test for the gateway recovery preload chain hardening.
+  # Removed in the same commit that deletes
+  # test/e2e/test-issue-2478-crash-loop-recovery.sh before merge.
+  issue-2478-crash-loop-recovery-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',issue-2478-crash-loop-recovery-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run #2478 crash-loop recovery E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-2478"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-issue-2478-crash-loop-recovery.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-2478-crash-loop-recovery-install-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
   # ── Hermes Agent E2E ─────────────────────────────────────────
   # Validates the multi-agent architecture by onboarding with --agent hermes,
   # verifying the Hermes health probe, and running live inference through the
   # Hermes sandbox. See: PR #1618
   hermes-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',hermes-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -196,48 +410,88 @@ jobs:
           path: /tmp/nemoclaw-e2e-hermes-install.log
           if-no-files-found: ignore
 
-  # ── Skip-permissions policy activation ────────────────────────
-  # Validates the --dangerously-skip-permissions onboard flag correctly
-  # activates the permissive network policy (not stuck in Pending).
-  # Reproduces the exact scenario from the bug report: onboard, verify
-  # policy is Active, curl from inside sandbox must not return 403.
-  skip-permissions-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Run skip-permissions policy E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-skip-perms"
-          NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS: "1"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-skip-permissions-policy.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: skip-permissions-install-log
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
   # ── Sandbox operations (recovery + multi-sandbox isolation) ──
   # Validates sandbox list, connect, status, logs, destroy, gateway
   # auto-recovery after docker kill, registry rebuild, process recovery,
   # multi-sandbox metadata, and cross-sandbox network isolation.
   sandbox-operations-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',sandbox-operations-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Start gateway log streamer (background)
+        run: |
+          # Diagnostic for NVIDIA/NemoClaw#2484: container log driver in
+          # openshell's k3s setup doesn't allow reading container stdio —
+          # only working path to /tmp/gateway.log is via SSH, which
+          # `nemoclaw <sandbox> logs` uses internally.
+          #
+          # Snapshot mode (not follow): every 10s, overwrite per-sandbox
+          # log file with the latest gateway log content. Bounded output
+          # (~62 lines per snapshot). When a sandbox is destroyed by the
+          # test, the file holds the final pre-destroy snapshot.
+          mkdir -p docker-logs
+          nohup bash -c '
+            export PATH="$HOME/.local/bin:$PATH"
+            # Strategy: every 5s, snapshot each live sandbox via
+            # `docker exec openshell-cluster-nemoclaw kubectl ...`. This
+            # bypasses both per-pod networking (which has had connection-
+            # refused races for some sandboxes) and the host openshell
+            # client (which loses gateway metadata after TC-SBX-06s
+            # docker-kill). kubectl talks directly to k3s in the cluster
+            # container.
+            #
+            # Snapshot mode (overwrite per iteration), not live tail-F:
+            # the gateway-persistent.log file accumulates everything since
+            # boot (mirrored from /tmp/gateway.log by nemoclaw-start.sh),
+            # so a single full-cat at any point gives us complete history.
+            # Each iteration is short-lived so transient connection issues
+            # do not cause us to lose the entire stream.
+            #
+            # Also snapshot kubectl pod listing per iteration so we have
+            # the actual pod naming convention even if the cluster is
+            # destroyed by teardown later.
+            while sleep 5; do
+              if ! docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^openshell-cluster-nemoclaw$"; then
+                continue
+              fi
+              docker exec openshell-cluster-nemoclaw kubectl get pods -A --no-headers >docker-logs/_pods.txt 2>&1
+              registry="$HOME/.nemoclaw/sandboxes.json"
+              [ -f "$registry" ] || continue
+              live=$(jq -r ".sandboxes // {} | keys[]?" "$registry" 2>/dev/null)
+              for name in $live; do
+                case "$name" in
+                  *[!a-z0-9_-]*|"") continue ;;
+                esac
+                # Find pod by sandbox name. openshell uses the sandbox
+                # name as the namespace and "agent" as the pod name.
+                # Try a few common patterns.
+                pod_match=$(awk -v n="$name" "\$1==n || \$2==n || \$1==\"sandbox-\" n || \$2==\"sandbox-\" n {print \$1\"/\"\$2; exit}" docker-logs/_pods.txt)
+                if [ -z "$pod_match" ]; then
+                  # Fallback: any pod whose name contains the sandbox name
+                  pod_match=$(awk -v n="$name" "index(\$2,n)>0 {print \$1\"/\"\$2; exit}" docker-logs/_pods.txt)
+                fi
+                if [ -z "$pod_match" ]; then continue; fi
+                pod_ns="${pod_match%%/*}"
+                pod_name="${pod_match##*/}"
+                docker exec openshell-cluster-nemoclaw kubectl exec -n "$pod_ns" "$pod_name" -- bash -c "
+                  for f in /sandbox/.openclaw/logs/gateway-persistent.log /tmp/gateway.log /tmp/openclaw-*/openclaw-*.log; do
+                    [ -f \"\$f\" ] || continue
+                    printf \"\\n----- %s (size=%s) -----\\n\" \"\$f\" \"\$(stat -c%s \"\$f\" 2>/dev/null || echo ?)\"
+                    cat -- \"\$f\" 2>/dev/null
+                  done
+                " > "docker-logs/sandbox-${name}.log" 2>&1
+              done
+            done
+          ' >/dev/null 2>&1 &
+          echo $! > /tmp/gateway-log-streamer.pid
 
       - name: Run sandbox operations E2E test
         env:
@@ -246,7 +500,153 @@ jobs:
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_POLICY_TIER: "open"
           GITHUB_TOKEN: ${{ github.token }}
+          # Override the 1800s default in test/e2e/e2e-timeout.sh. Sandbox
+          # creation alone is ~14 min per sandbox in current CI conditions
+          # (build+upload to k3s gateway), and the test creates two — leaving
+          # the default 30-min budget completely consumed by setup with no
+          # room for the actual TC-SBX cases. The job-level timeout (60 min,
+          # set in `timeout-minutes` above) is the real upper bound.
+          NEMOCLAW_E2E_TIMEOUT_SECONDS: "2700"
         run: bash test/e2e/test-sandbox-operations.sh
+
+      - name: Stop gateway log streamer
+        if: always()
+        # Diagnostic step: never let `bash -e` kill the snapshot loop on a
+        # single command failure (openshell ssh-config, nemoclaw logs, etc.
+        # all routinely fail post-test depending on TC-SBX-06's docker-kill
+        # state). We log the failures inline and continue.
+        shell: bash --noprofile --norc -uo pipefail {0}
+        run: |
+          [ -f /tmp/gateway-log-streamer.pid ] && kill "$(cat /tmp/gateway-log-streamer.pid)" 2>/dev/null || true
+          # Kill any per-sandbox SSH+tail followers spawned by the streamer.
+          pkill -f 'tail -n \+1 -F /tmp/gateway.log' 2>/dev/null || true
+          pkill -f 'ssh.*openshell-' 2>/dev/null || true
+          sleep 2
+          # Final snapshot: tail -F glob expands once at start, so log files
+          # for openclaw processes that ran as a different UID (creating new
+          # /tmp/openclaw-<uid>/ dirs mid-test) get missed. Re-glob now and
+          # append every openclaw log file from each live sandbox to the
+          # per-sandbox docker-logs file.
+          #
+          # Use `nemoclaw <name> logs` (not raw openshell ssh-config + ssh)
+          # because nemoclaw handles SSH key/host setup and is robust to
+          # streamer race conditions. Tested working in TC-SBX-04.
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "=== final-snapshot: PATH=$PATH"
+          echo "=== final-snapshot: nemoclaw=$(command -v nemoclaw)"
+          echo "=== final-snapshot: openshell=$(command -v openshell)"
+          # TC-SBX-06's docker kill of the gateway pod can leave openshell
+          # without an active gateway selected; re-select before the snapshot
+          # so `nemoclaw <name> logs` and direct `openshell sandbox exec` both
+          # have a target. The select is best-effort — failure (e.g., gateway
+          # not yet recovered) just means we fall through to ssh-config-based
+          # capture below.
+          openshell gateway select nemoclaw 2>&1 | head -5 || true
+          openshell gateway list 2>&1 | head -10 || true
+          # NEW PATH: bypass the openshell client entirely. The
+          # openshell-cluster-nemoclaw docker container runs k3s with
+          # kubectl available inside. Even after TC-SBX-06's docker-kill,
+          # docker auto-restarts the container and k3s state survives via
+          # /var/lib/rancher/k3s. Use `docker exec ... kubectl` to read
+          # the persistent log directly from each sandbox pod, with no
+          # dependency on the host's openshell metadata.
+          echo "=== final-snapshot: docker containers:"
+          docker ps --format '{{.Names}}\t{{.Status}}' 2>&1 | head -10
+          echo "=== final-snapshot: cluster pods:"
+          docker exec openshell-cluster-nemoclaw kubectl get pods -A --no-headers 2>&1 | head -20
+          if [ -f "$HOME/.nemoclaw/sandboxes.json" ]; then
+            echo "=== final-snapshot: sandboxes.json contents:"
+            cat "$HOME/.nemoclaw/sandboxes.json" 2>&1 | head -30
+            registry_keys=$(jq -r ".sandboxes // {} | keys[]?" "$HOME/.nemoclaw/sandboxes.json" 2>&1)
+            echo "=== final-snapshot: sandbox names from jq: '$registry_keys'"
+            for name in $registry_keys; do
+              case "$name" in *[!a-z0-9_-]*|"") echo "=== final-snapshot: skipping invalid name '$name'"; continue ;; esac
+              echo "=== final-snapshot: capturing logs for '$name'"
+              {
+                printf '\n\n===== FINAL SNAPSHOT: %s =====\n' "$name"
+                # FIRST attempt: docker exec into the cluster container and
+                # kubectl-exec into the sandbox pod. This works even when
+                # the host openshell client is broken post-TC-SBX-06 because
+                # docker (and k3s inside the cluster) survive the gateway
+                # docker-kill via auto-restart + persistent k3s state.
+                pod_ns_name=$(docker exec openshell-cluster-nemoclaw kubectl get pods -A --no-headers 2>/dev/null | awk -v n="$name" '$2==n {print $1"/"$2; exit}')
+                if [ -n "$pod_ns_name" ]; then
+                  echo "(found pod $pod_ns_name for $name)"
+                  pod_ns="${pod_ns_name%%/*}"
+                  pod_name="${pod_ns_name##*/}"
+                  k_out=$(mktemp)
+                  docker exec openshell-cluster-nemoclaw kubectl exec -n "$pod_ns" "$pod_name" -- bash -c '
+                    for f in /sandbox/.openclaw/logs/gateway-persistent.log /tmp/gateway.log /tmp/openclaw-*/openclaw-*.log; do
+                      [ -f "$f" ] || continue
+                      printf "\n----- %s (size=%s) -----\n" "$f" "$(stat -c%s "$f" 2>/dev/null || echo ?)"
+                      cat -- "$f" 2>/dev/null || true
+                    done
+                  ' >"$k_out" 2>&1
+                  k_rc=$?
+                  echo "(kubectl exec rc=$k_rc size=$(wc -c <"$k_out"))"
+                  tail -c 500000 "$k_out"
+                  rm -f "$k_out"
+                else
+                  echo "(no kubectl pod found matching '$name')"
+                fi
+                # Existing fallbacks (raw ssh + nemoclaw logs) preserved
+                # below in case the docker/kubectl path also fails — they
+                # provide complementary coverage during transient states.
+                ssh_cfg="/tmp/sshcfg-final-${name}.tmp"
+                if openshell sandbox ssh-config "$name" >"$ssh_cfg" 2>&1 && [ -s "$ssh_cfg" ]; then
+                  ssh_out=$(mktemp)
+                  ssh -F "$ssh_cfg" \
+                      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                      -o ConnectTimeout=10 -o LogLevel=ERROR \
+                      "openshell-${name}" \
+                      'for f in /sandbox/.openclaw/logs/gateway-persistent.log \
+                               /tmp/gateway.log \
+                               /tmp/openclaw-*/openclaw-*.log; do
+                         [ -f "$f" ] || continue
+                         printf "\n----- %s (size=%s) -----\n" "$f" "$(stat -c%s "$f" 2>/dev/null || echo ?)"
+                         cat -- "$f" 2>/dev/null || true
+                       done' >"$ssh_out" 2>&1
+                  ssh_rc=$?
+                  tail -c 500000 "$ssh_out"
+                  rm -f "$ssh_out"
+                  [ "$ssh_rc" -eq 0 ] || echo "(direct ssh exited rc=$ssh_rc)"
+                else
+                  echo "(openshell sandbox ssh-config failed for $name)"
+                  # Fallback to nemoclaw logs (less reliable, but try anything)
+                  if command -v nemoclaw >/dev/null 2>&1; then
+                    nm_out=$(mktemp)
+                    nemoclaw "$name" logs >"$nm_out" 2>&1
+                    echo "(nemoclaw logs rc=$? size=$(wc -c <"$nm_out"))"
+                    tail -c 500000 "$nm_out"
+                    rm -f "$nm_out"
+                  fi
+                fi
+                rm -f "$ssh_cfg"
+              } >> "docker-logs/sandbox-${name}.log"
+            done
+          else
+            echo "=== final-snapshot: sandboxes.json not found at $HOME/.nemoclaw/sandboxes.json"
+          fi
+          # Cap each log file at 5MB by keeping only the last 5MB — useful
+          # content (real gateway events) is mixed throughout, so tail-trim
+          # is fine for diagnostic purposes.
+          for f in docker-logs/*.log; do
+            [ -f "$f" ] || continue
+            sz=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || echo 0)
+            if [ "$sz" -gt 5242880 ]; then
+              tail -c 5242880 "$f" > "${f}.tail" && mv "${f}.tail" "$f"
+            fi
+          done
+          ls -la docker-logs/ 2>&1 | head -20 || true
+          du -sh docker-logs/ 2>&1 || true
+
+      - name: Upload sandbox gateway logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-operations-docker-logs
+          path: docker-logs/
+          if-no-files-found: ignore
 
       - name: Upload test log on failure
         if: failure()
@@ -261,7 +661,11 @@ jobs:
   # TC-INF-06: invalid API key → classified credential error (PR-safe)
   # TC-INF-07: unreachable endpoint → classified transport error (PR-safe)
   inference-routing-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',inference-routing-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -288,7 +692,11 @@ jobs:
   # TC-NET-01..07, TC-NET-09: deny-by-default, whitelist, live policy-add,
   # dry-run, hot-reload, inference exemption, permissive mode, SSRF validation.
   network-policy-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',network-policy-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -317,7 +725,11 @@ jobs:
   # TC-DEPLOY-01: nemoclaw start/stop (cloudflared tunnel)
   # TC-DEPLOY-03: uninstall --keep-openshell (destructive, runs last in script)
   deployment-services-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',deployment-services-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -345,7 +757,11 @@ jobs:
   # TC-DIAG-01: debug tarball + credential sanitization,
   # TC-DIAG-05: sandbox config, TC-DIAG-03: credentials list
   diagnostics-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',diagnostics-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -368,11 +784,51 @@ jobs:
           path: test-diagnostics-*.log
           if-no-files-found: ignore
 
+  # ── Credential migration E2E ────────────────────────────────
+  # Validates the host-side credential storage hardening: pre-fix plaintext
+  # credentials.json is migrated into the OpenShell gateway during onboard,
+  # securely zero-filled and unlinked, non-allowlisted keys from a tampered
+  # file are not honored, and a planted symlink at the credentials path is
+  # link-only-unlinked without touching its target.
+  credential-migration-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',credential-migration-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run credential migration E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-cred-migration"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-credential-migration.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-credential-migration
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
   # ── Snapshot commands E2E ────────────────────────────────────
   # Validates snapshot create/list/restore lifecycle: create a snapshot,
   # list it, delete state, restore from snapshot, verify state recovered.
   snapshot-commands-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',snapshot-commands-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -400,7 +856,11 @@ jobs:
   # Validates shields down/up controls config mutability, config get/set/
   # rotate-token, audit trail, and auto-restore timer.
   shields-config-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',shields-config-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -428,7 +888,11 @@ jobs:
   # Reproduces NVBug 6076156: onboard with an older OpenClaw version,
   # then rebuild to verify workspace state survives the upgrade.
   rebuild-openclaw-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',rebuild-openclaw-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -457,7 +921,11 @@ jobs:
   # NemoClaw, create a sandbox, upgrade to current, verify the old
   # sandbox is detected as stale and rebuilt with the new image.
   upgrade-stale-sandbox-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -486,7 +954,11 @@ jobs:
   # ── Hermes rebuild upgrade E2E ──────────────────────────────
   # Same upgrade scenario as OpenClaw but for Hermes Agent.
   rebuild-hermes-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',rebuild-hermes-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -511,13 +983,247 @@ jobs:
           path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
 
-  # ── Docker 26+ overlayfs nested-mount auto-fix (#2481) ──────
-  # TEMPORARY: validates the auto-fix in src/lib/cluster-image-patch.ts.
+  # ── Double Onboard / Lifecycle Recovery E2E ──────────────────
+  double-onboard-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',double-onboard-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install NemoClaw
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Run double onboard E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: |
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-double-onboard.sh
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: double-onboard-test-log
+          path: test-double-onboard-*.log
+          if-no-files-found: ignore
+
+  # ── Onboard Repair E2E ─────────────────────────────────────
+  onboard-repair-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',onboard-repair-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install NemoClaw
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Run onboard repair E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: |
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-onboard-repair.sh
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboard-repair-test-log
+          path: test-onboard-repair-*.log
+          if-no-files-found: ignore
+
+  # ── Onboard Resume E2E ─────────────────────────────────────
+  onboard-resume-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',onboard-resume-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install NemoClaw
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Run onboard resume E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: |
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-onboard-resume.sh
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboard-resume-test-log
+          path: test-onboard-resume-*.log
+          if-no-files-found: ignore
+
+  # ── Runtime Overrides E2E ──────────────────────────────────
+  runtime-overrides-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',runtime-overrides-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install NemoClaw
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Run runtime overrides E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: |
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-runtime-overrides.sh
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-overrides-test-log
+          path: test-runtime-overrides-*.log
+          if-no-files-found: ignore
+
+  # ── Credential Sanitization E2E ────────────────────────────
+  # Requires a running sandbox. Bootstraps via install.sh then runs tests.
+  credential-sanitization-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',credential-sanitization-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install NemoClaw and onboard sandbox
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-test"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Run credential sanitization E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-test"
+        run: |
+          # shellcheck source=/dev/null
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-credential-sanitization.sh
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: credential-sanitization-test-log
+          path: test-credential-sanitization-*.log
+          if-no-files-found: ignore
+
+  # ── Telegram Injection E2E ─────────────────────────────────
+  # Requires a running sandbox. Bootstraps via install.sh then runs tests.
+  telegram-injection-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',telegram-injection-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install NemoClaw and onboard sandbox
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-test"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Run telegram injection E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-test"
+        run: |
+          # shellcheck source=/dev/null
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-telegram-injection.sh
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: telegram-injection-test-log
+          path: test-telegram-injection-*.log
+          if-no-files-found: ignore
+
   # Remove this job — and the matching notify-on-failure entry — in the
   # same PR that deletes cluster-image-patch.ts when the OpenShell
   # roadmap migration off k3s (NVIDIA/OpenShell#873) lands.
+  # ── Docker 26+ overlayfs nested-mount auto-fix (#2481) ──────
+  # TEMPORARY: validates the auto-fix in src/lib/cluster-image-patch.ts.
   overlayfs-autofix-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',overlayfs-autofix-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -544,16 +1250,71 @@ jobs:
             /tmp/nemoclaw-e2e-onboard-negative.log
           if-no-files-found: ignore
 
+  # ── Launchable Install-Flow Smoke Test ─────────────────────────
+  # Validates the community install path (brev-launchable-ci-cpu.sh) end-to-end.
+  # The launchable script has ZERO Brev dependencies — it's a generic Ubuntu
+  # bootstrap script that runs on ubuntu-latest. Catches regressions like the
+  # Apr 20-25 Brev outage (#2472, #2482) and container reachability fallback (#2425).
+  # See: issue #2599
+  launchable-smoke-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',launchable-smoke-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run launchable install-flow smoke test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          SKIP_DOCKER_PULL: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-launchable-smoke.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchable-smoke-install-log
+          path: /tmp/nemoclaw-launchable-install.log
+          if-no-files-found: ignore
+
+      - name: Upload onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchable-smoke-onboard-log
+          path: /tmp/nemoclaw-launchable-onboard.log
+          if-no-files-found: ignore
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchable-smoke-test-log
+          path: /tmp/nemoclaw-launchable-test.log
+          if-no-files-found: ignore
+
   # ── GPU E2E (Ollama local inference) ──────────────────────────
-  # Enable by setting repository variable GPU_E2E_ENABLED=true
-  # (Settings → Secrets and variables → Actions → Variables)
-  #
-  # Runner labels: using 'self-hosted' for now. Refine to
-  # [self-hosted, linux, x64, gpu] once NVIDIA runner labels are confirmed.
+  # Runs on an NVKS ephemeral GPU runner (RTX Pro 6000, 36 GB VRAM).
+  # Each job gets a fresh VM — no state leakage between runs.
   gpu-e2e:
-    if: github.repository == 'NVIDIA/NemoClaw' && vars.GPU_E2E_ENABLED == 'true'
-    runs-on: self-hosted
-    timeout-minutes: 60
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      vars.GPU_E2E_ENABLED == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',gpu-e2e,'))
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 30
     env:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -594,28 +1355,101 @@ jobs:
           path: /tmp/nemoclaw-gpu-e2e-test.log
           if-no-files-found: ignore
 
+  # ── GPU Double-Onboard E2E (Ollama token consistency) ────────
+  # Reproduces issue #2553: re-onboard with Ollama must not leave the
+  # proxy running with a different token than what's persisted to disk.
+  # Runs on its own ephemeral VM — no dependency on gpu-e2e.
+  gpu-double-onboard-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      vars.GPU_E2E_ENABLED == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',gpu-double-onboard-e2e,'))
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 30
+    env:
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-gpu-double-onboard"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_PROVIDER: "ollama"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify GPU availability
+        run: |
+          echo "=== GPU Info ==="
+          nvidia-smi
+          echo ""
+          echo "=== VRAM ==="
+          nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+          echo ""
+          echo "=== Docker ==="
+          docker info --format '{{.ServerVersion}}'
+
+      - name: Run GPU double-onboard E2E test
+        run: bash test/e2e/test-gpu-double-onboard.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-double-onboard-install-log
+          path: /tmp/nemoclaw-gpu-double-onboard-install.log
+          if-no-files-found: ignore
+
+      - name: Upload re-onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-double-onboard-reonboard-log
+          path: /tmp/nemoclaw-gpu-double-onboard-reonboard.log
+          if-no-files-found: ignore
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-double-onboard-test-log
+          path: /tmp/nemoclaw-gpu-double-onboard-test.log
+          if-no-files-found: ignore
+
   notify-on-failure:
     runs-on: ubuntu-latest
     needs:
       [
         cloud-e2e,
+        cloud-onboard-e2e,
+        cloud-inference-e2e,
+        skill-agent-e2e,
+        docs-validation-e2e,
         messaging-providers-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         hermes-e2e,
-        skip-permissions-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         network-policy-e2e,
         deployment-services-e2e,
         diagnostics-e2e,
+        credential-migration-e2e,
         snapshot-commands-e2e,
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         rebuild-hermes-e2e,
+        double-onboard-e2e,
+        onboard-repair-e2e,
+        onboard-resume-e2e,
+        runtime-overrides-e2e,
+        credential-sanitization-e2e,
+        telegram-injection-e2e,
         overlayfs-autofix-e2e,
+        launchable-smoke-e2e,
         gpu-e2e,
+        gpu-double-onboard-e2e,
       ]
     if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     permissions:
@@ -660,4 +1494,290 @@ jobs:
                 body: `The nightly E2E pipeline failed.\n\n**Run:** ${runUrl}\n${summary}\n**Artifacts:** Check the run artifacts for install/test logs (artifact names vary by job).`,
                 labels: ['bug', 'CI/CD'],
               });
+            }
+
+  report-to-pr:
+    runs-on: ubuntu-latest
+    needs:
+      [
+        cloud-e2e,
+        cloud-onboard-e2e,
+        cloud-inference-e2e,
+        skill-agent-e2e,
+        docs-validation-e2e,
+        messaging-providers-e2e,
+        token-rotation-e2e,
+        sandbox-survival-e2e,
+        hermes-e2e,
+        sandbox-operations-e2e,
+        inference-routing-e2e,
+        network-policy-e2e,
+        deployment-services-e2e,
+        diagnostics-e2e,
+        snapshot-commands-e2e,
+        shields-config-e2e,
+        rebuild-openclaw-e2e,
+        upgrade-stale-sandbox-e2e,
+        rebuild-hermes-e2e,
+        overlayfs-autofix-e2e,
+        gpu-e2e,
+      ]
+    if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Post E2E results to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const needs = ${{ toJSON(needs) }};
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const branch = context.ref.replace('refs/heads/', '');
+            const requestedJobs = ${{ toJSON(inputs.jobs) }} || "";
+
+            // Find open PR for this branch
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${branch}`,
+              state: 'open',
+            });
+
+            if (prs.length === 0) {
+              core.info(`No open PR found for branch ${branch} — skipping comment.`);
+              return;
+            }
+
+            const pr = prs[0];
+
+            // Build results table
+            const emoji = { success: '✅', failure: '❌', cancelled: '⚠️', skipped: '⏭️' };
+            const rows = Object.entries(needs)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([name, { result }]) => `| ${name} | ${emoji[result] || '❓'} ${result} |`);
+
+            const ran = Object.entries(needs).filter(([, v]) => v.result !== 'skipped');
+            const passed = ran.filter(([, v]) => v.result === 'success');
+            const failed = ran.filter(([, v]) => v.result === 'failure');
+
+            const status = failed.length > 0 ? '❌ Some jobs failed' : '✅ All requested jobs passed';
+
+            const body = [
+              `### Selective E2E Results — ${status}`,
+              '',
+              `**Run:** [${context.runId}](${runUrl})`,
+              `**Branch:** \`${branch}\``,
+              requestedJobs ? `**Requested jobs:** \`${requestedJobs}\`` : '**Requested jobs:** all (no filter)',
+              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${Object.entries(needs).filter(([, v]) => v.result === 'skipped').length} skipped`,
+              '',
+              '| Job | Result |',
+              '|-----|--------|',
+              ...rows,
+              '',
+              failed.length > 0
+                ? `> **Failed jobs:** ${failed.map(([k]) => k).join(', ')}. Check [run artifacts](${runUrl}) for logs.`
+                : '',
+            ].filter((line) => line !== undefined).join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body,
+            });
+
+  # ── Nightly Scorecard ──────────────────────────────────────────────────
+  # Aggregates overnight results into a scorecard published to
+  # $GITHUB_STEP_SUMMARY. Identifies flaky jobs, computes pass/fail/cancel
+  # breakdowns, and compares trends against the prior day.
+  # Only runs on schedule (not workflow_dispatch — that uses report-to-pr).
+  scorecard:
+    runs-on: ubuntu-latest
+    needs:
+      [
+        cloud-e2e,
+        cloud-onboard-e2e,
+        cloud-inference-e2e,
+        skill-agent-e2e,
+        docs-validation-e2e,
+        messaging-providers-e2e,
+        token-rotation-e2e,
+        sandbox-survival-e2e,
+        hermes-e2e,
+        sandbox-operations-e2e,
+        inference-routing-e2e,
+        network-policy-e2e,
+        deployment-services-e2e,
+        diagnostics-e2e,
+        credential-migration-e2e,
+        snapshot-commands-e2e,
+        shields-config-e2e,
+        rebuild-openclaw-e2e,
+        upgrade-stale-sandbox-e2e,
+        rebuild-hermes-e2e,
+        double-onboard-e2e,
+        onboard-repair-e2e,
+        onboard-resume-e2e,
+        runtime-overrides-e2e,
+        credential-sanitization-e2e,
+        telegram-injection-e2e,
+        overlayfs-autofix-e2e,
+        gpu-e2e,
+        gpu-double-onboard-e2e,
+      ]
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    permissions:
+      actions: read
+    steps:
+      - name: Generate nightly scorecard
+        id: scorecard
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // ── Config ──────────────────────────────────────────────
+            const EXCLUDED_JOBS = new Set(['gpu-e2e', 'notify-on-failure', 'report-to-pr', 'scorecard']);
+
+            // ── Helpers ─────────────────────────────────────────────
+            function formatDate(date) {
+              return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }
+
+            // ── Gather results from the current run's needs context ─
+            const needs = ${{ toJSON(needs) }};
+            const today = formatDate(new Date());
+
+            const entries = Object.entries(needs).filter(([name]) => !EXCLUDED_JOBS.has(name));
+            let success = 0;
+            let failure = 0;
+            let cancelled = 0;
+            let skipped = 0;
+
+            for (const [, { result }] of entries) {
+              if (result === 'success') success++;
+              else if (result === 'failure') failure++;
+              else if (result === 'cancelled') cancelled++;
+              else if (result === 'skipped') skipped++;
+            }
+
+            const total = entries.length;
+            const ran = total - skipped;
+            const perfect = failure === 0 && cancelled === 0 && ran > 0;
+
+            // ── Identify failed jobs ────────────────────────────────
+            const failedJobs = entries
+              .filter(([, { result }]) => result === 'failure')
+              .map(([name]) => name)
+              .sort();
+
+            // ── Fetch prior-day run for trend comparison ────────────
+            let trendLine = '';
+            try {
+              const WORKFLOW_FILE = 'nightly-e2e.yaml';
+              const now = new Date();
+              const since48h = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+              const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: WORKFLOW_FILE,
+                created: `>=${since48h}`,
+                per_page: 50,
+              });
+
+              // Find completed scheduled runs from 24–48h ago
+              const priorRuns = data.workflow_runs.filter(r =>
+                r.status === 'completed' &&
+                r.event === 'schedule' &&
+                new Date(r.created_at) < new Date(since24h)
+              );
+
+              if (priorRuns.length > 0) {
+                // Check the most recent prior run
+                const priorRun = priorRuns[0];
+                const priorPerfect = priorRun.conclusion === 'success';
+                if (perfect && priorPerfect) {
+                  trendLine = 'Trend: ➡️ Stable (perfect both days)';
+                } else if (perfect && !priorPerfect) {
+                  trendLine = 'Trend: ↗️ Improving (yesterday had failures → today perfect)';
+                } else if (!perfect && priorPerfect) {
+                  trendLine = 'Trend: ↘️ Degrading (yesterday perfect → today has failures)';
+                } else {
+                  trendLine = 'Trend: ➡️ Stable (failures both days)';
+                }
+              } else {
+                trendLine = 'Trend: ⊘ No prior-day data for comparison';
+              }
+            } catch (e) {
+              trendLine = `Trend: ⊘ Could not fetch prior-day data (${e.message})`;
+            }
+
+            // ── Build scorecard ─────────────────────────────────────
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const lines = [
+              `## 🌅 NemoClaw Nightly Scorecard — ${today}`,
+              '',
+              `**Jobs run:** ${ran} of ${total}`,
+              `  ✅ ${success} passed`,
+              `  ❌ ${failure} failed`,
+              `  ⊘  ${cancelled} cancelled`,
+              `  ⏭️  ${skipped} skipped`,
+            ];
+
+            if (failedJobs.length > 0) {
+              lines.push('');
+              lines.push('**Failed jobs:**');
+              for (const name of failedJobs) {
+                lines.push(`  - \`${name}\``);
+              }
+            }
+
+            if (perfect) {
+              lines.push('');
+              lines.push('🎉 **All jobs passed!**');
+            }
+
+            lines.push('');
+            lines.push(trendLine);
+            lines.push('');
+            lines.push(`🔗 [Full run details](${runUrl})`);
+
+            const scorecard = lines.join('\n');
+            core.summary.addRaw(scorecard);
+            await core.summary.write();
+            core.setOutput('scorecard', scorecard);
+
+      # ── Optional Slack notification ────────────────────────────
+      - name: Post scorecard to Slack
+        if: ${{ steps.scorecard.outputs.scorecard != '' }}
+        uses: actions/github-script@v7
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SCORECARD_TEXT: ${{ steps.scorecard.outputs.scorecard }}
+        with:
+          script: |
+            const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+            if (!webhookUrl) {
+              core.info('SLACK_WEBHOOK_URL not configured — skipping Slack notification');
+              return;
+            }
+
+            const scorecard = process.env.SCORECARD_TEXT;
+
+            // Strip markdown formatting for Slack plain-text rendering
+            const slackText = scorecard
+              .replace(/^## /gm, '')
+              .replace(/\*\*/g, '*')
+              .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
+
+            const resp = await fetch(webhookUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: slackText }),
+            });
+
+            if (!resp.ok) {
+              core.warning(`Slack webhook returned ${resp.status}: ${await resp.text()}`);
+            } else {
+              core.info('Scorecard posted to Slack');
             }

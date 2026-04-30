@@ -118,17 +118,30 @@ def build_config(env: dict | None = None) -> dict:
         "slack": "SLACK_BOT_TOKEN",
     }
 
+    # Slack's Bolt SDK validates token shape at App construction (^xoxb-…$ /
+    # ^xapp-…$) before any HTTP call leaves the process, so the canonical
+    # openshell:resolve:env:VAR placeholder is rejected synchronously. Emit a
+    # Bolt-regex-compatible placeholder instead; the slack-token-rewriter
+    # Node preload translates it to canonical form on outbound HTTP, where
+    # OpenShell's L7 proxy substitutes the real token from env.
+    def _placeholder(channel: str, env_key: str) -> str:
+        if channel == "slack" and env_key == "SLACK_BOT_TOKEN":
+            return f"xoxb-OPENSHELL-RESOLVE-ENV-{env_key}"
+        if channel == "slack" and env_key == "SLACK_APP_TOKEN":
+            return f"xapp-OPENSHELL-RESOLVE-ENV-{env_key}"
+        return f"openshell:resolve:env:{env_key}"
+
     _ch_cfg = {}
     for ch in msg_channels:
         if ch not in _token_keys:
             continue
         account = {
-            _token_keys[ch]: f"openshell:resolve:env:{_env_keys[ch]}",
+            _token_keys[ch]: _placeholder(ch, _env_keys[ch]),
             "enabled": True,
             "healthMonitor": {"enabled": False},
         }
         if ch == "slack":
-            account["appToken"] = "openshell:resolve:env:SLACK_APP_TOKEN"
+            account["appToken"] = _placeholder(ch, "SLACK_APP_TOKEN")
         if ch in ("telegram", "discord"):
             account["proxy"] = proxy_url
         if ch == "telegram":
@@ -193,16 +206,82 @@ def build_config(env: dict | None = None) -> dict:
         }
     }
 
+    # OpenClaw 2026.4.24 stages runtime dependencies for every bundled
+    # enabledByDefault provider plugin during `openclaw doctor --fix`.
+    # NemoClaw bakes one model provider into openclaw.json, so keeping unused
+    # default providers enabled bloats the sandbox image and can exhaust the
+    # CI k3s/containerd import volume before tests even start.
+    plugin_entries = {
+        "acpx": {
+            "config": {
+                "agents": {
+                    "codex": {"command": "/usr/local/bin/nemoclaw-codex-acp"},
+                }
+            }
+        },
+        "bonjour": {"enabled": False},
+        "qqbot": {"enabled": False},
+    }
+    _bundled_provider_plugins = {
+        "amazon-bedrock": {"amazon-bedrock", "bedrock"},
+        "amazon-bedrock-mantle": {"amazon-bedrock-mantle"},
+        "anthropic": {"anthropic"},
+        "anthropic-vertex": {"anthropic-vertex"},
+        "google": {"google", "google-gemini-cli"},
+    }
+    for _plugin_id, _provider_keys in _bundled_provider_plugins.items():
+        if provider_key not in _provider_keys:
+            plugin_entries[_plugin_id] = {"enabled": False}
+
     config = {
         "agents": {
             "defaults": {
                 "model": {"primary": primary_model_ref},
                 "timeoutSeconds": agent_timeout,
+                # NemoClaw sandboxes are provisioned non-interactively and the
+                # E2E CLI contract expects the first agent turn to answer the
+                # caller's prompt. OpenClaw 2026.4.24 seeds BOOTSTRAP.md by
+                # default, which redirects a fresh workspace into an identity
+                # setup conversation before normal replies.
+                "skipBootstrap": True,
+                # Keep first-turn smoke checks on the lowest-latency path.
+                # OpenClaw can infer thinking defaults from the model catalog;
+                # NemoClaw's sandbox contract is a direct CLI answer, not an
+                # interactive reasoning session.
+                "thinkingDefault": "off",
             }
         },
         "models": {"mode": "merge", "providers": providers},
         "channels": {"defaults": {}, **_ch_cfg},
         "update": {"checkOnStart": False},
+        # Disable bundled plugins/channels that hit the L7 proxy at startup
+        # and either crash or hang the gateway:
+        #
+        #   bonjour — uses @homebridge/ciao for mDNS announcement; sandbox
+        #     netns has no multicast, ciao either fails sync via
+        #     uv_interface_addresses or async via "CIAO PROBING CANCELLED".
+        #     Introduced in OpenClaw 2026.4.15. See NemoClaw#2484.
+        #
+        #   qqbot — has stageRuntimeDependencies=true, so its npm deps
+        #     (@tencent-connect/qqbot-connector et al.) install on first
+        #     load. The sandbox L7 proxy denies the registry URL, the
+        #     install retries for ~6 minutes, and while it's stuck the
+        #     gateway can't service openclaw-agent requests — that's the
+        #     TC-SBX-02 hang in 2026.4.24.
+        #
+        # acpx stays enabled, but its default codex adapter command is
+        # `npx @zed-industries/codex-acp@^0.11.1`. npm refreshes registry
+        # metadata for that package spec even when codex-acp is globally
+        # installed, which hits the L7 proxy deny path during gateway startup.
+        # The sandbox image pre-installs /usr/local/bin/codex-acp. The wrapper
+        # below points ACPx at that binary with writable per-UID Codex/XDG
+        # state so the gateway user does not try to write under /sandbox or
+        # the sandbox user's redirected /tmp directories.
+        #
+        # Provider plugins with staged runtime dependencies are disabled above
+        # unless they match NEMOCLAW_PROVIDER_KEY. That keeps the baked image
+        # limited to the provider selected during onboard.
+        "plugins": {"entries": plugin_entries},
         "gateway": {
             "mode": "local",
             "controlUi": {

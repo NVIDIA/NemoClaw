@@ -344,12 +344,12 @@ describe("inventory commands", () => {
           },
           {
             name: "beta",
-            model: "z-ai/glm5",
+            model: "z-ai/glm-5.1",
           },
         ],
         defaultSandbox: "alpha",
       }),
-      getLiveInference: () => ({ provider: "nvidia-prod", model: "moonshotai/kimi-k2.5" }),
+      getLiveInference: () => ({ provider: "nvidia-prod", model: "minimaxai/minimax-m2.5" }),
       showServiceStatus,
       log: (message = "") => lines.push(message),
     });
@@ -357,11 +357,11 @@ describe("inventory commands", () => {
     expect(lines).toContain("  Sandboxes:");
     // Default sandbox shows the live gateway model (#2369), annotated with
     // the onboarded model when they differ.
-    expect(lines).toContain("    alpha * (moonshotai/kimi-k2.5)");
+    expect(lines).toContain("    alpha * (minimaxai/minimax-m2.5)");
     expect(lines).toContain("      (onboarded: nvidia/nemotron-3-super-120b-a12b)");
     // Non-default sandbox keeps its stored model — the gateway only applies
     // to whichever sandbox is currently connected.
-    expect(lines).toContain("    beta (z-ai/glm5)");
+    expect(lines).toContain("    beta (z-ai/glm-5.1)");
     expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 
@@ -408,12 +408,12 @@ describe("inventory commands", () => {
         sandboxes: [{ name: "alpha" }],
         defaultSandbox: "alpha",
       }),
-      getLiveInference: () => ({ provider: "nvidia-prod", model: "moonshotai/kimi-k2.5" }),
+      getLiveInference: () => ({ provider: "nvidia-prod", model: "minimaxai/minimax-m2.5" }),
       showServiceStatus: vi.fn(),
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("    alpha * (moonshotai/kimi-k2.5)");
+    expect(lines).toContain("    alpha * (minimaxai/minimax-m2.5)");
     expect(lines).toContain("      (onboarded: unknown)");
   });
 });

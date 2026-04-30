@@ -44,16 +44,15 @@ forward_ports:
 
 # ── Configuration ───────────────────────────────────────────────
 config:
-  immutable_dir: /sandbox/.hermes
-  writable_dir: /sandbox/.hermes-data
-  config_file: config.yaml        # relative to immutable_dir
-  env_file: .env                  # relative to immutable_dir — API keys
+  dir: /sandbox/.hermes
+  config_file: config.yaml
+  env_file: .env                  # relative to dir — API keys
   auth_file: auth.json            # OAuth tokens (Nous Portal, Codex, etc.)
   format: yaml
 
 # ── State directories ──────────────────────────────────────────
-# Symlinked from immutable_dir -> writable_dir so the agent can
-# write state while the config directory stays Landlock read-only.
+# All state dirs live under the single config dir now that
+# immutable/writable split has been removed.
 state_dirs:
   - memories
   - sessions

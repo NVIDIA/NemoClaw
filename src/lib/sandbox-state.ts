@@ -30,6 +30,7 @@ import { loadAgent } from "./agent-defs.js";
 import { resolveOpenshell } from "./resolve-openshell.js";
 import { captureOpenshellCommand } from "./openshell.js";
 import { sanitizeConfigFile, isSensitiveFile } from "./credential-filter.js";
+import { shellQuote } from "./runner.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
@@ -50,7 +51,10 @@ export interface RebuildManifest {
   agentVersion: string | null;
   expectedVersion: string | null;
   stateDirs: string[];
-  writableDir: string;
+  /** Single config/state directory */
+  dir: string;
+  /** @deprecated Old field name for `dir` — retained for backward compat with pre-consolidation backups. */
+  writableDir?: string;
   backupPath: string;
   blueprintDigest: string | null;
   policyPresets?: string[];
@@ -136,7 +140,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.agentVersion === null || typeof value.agentVersion === "string") &&
     (value.expectedVersion === null || typeof value.expectedVersion === "string") &&
     isStringArray(value.stateDirs) &&
-    typeof value.writableDir === "string" &&
+    (typeof value.dir === "string" || typeof value.writableDir === "string") &&
     typeof value.backupPath === "string" &&
     (value.blueprintDigest === undefined ||
       value.blueprintDigest === null ||
@@ -279,11 +283,39 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
         const stat = lstatSync(fullPath);
         if (stat.isSymbolicLink()) {
           const linkTarget = readlinkSync(fullPath);
-          const resolvedTarget = path.resolve(path.dirname(fullPath), linkTarget);
-          const inAnyAllowedRoot = allowedRoots.some((root) => isWithinRoot(resolvedTarget, root));
+
+          // Resolve relative to the symlink's containing directory (standard).
+          const resolvedRelative = path.resolve(path.dirname(fullPath), linkTarget);
+
+          // For absolute symlinks that point into the canonical sandbox data
+          // directory (/sandbox/.openclaw-data/** or /sandbox/.hermes-data/**),
+          // also check whether the target falls within the extraction root when
+          // the leading /sandbox/ prefix is mapped onto the archive root. This
+          // mirrors how the symlink resolves once the backup is restored inside
+          // the sandbox container (where /sandbox/.openclaw-data/* exists).
+          //
+          // Only /sandbox/ prefixed targets receive this treatment so that
+          // symlinks pointing to arbitrary absolute paths (e.g. /etc/passwd)
+          // are still rejected. Fixes #2317.
+          const SANDBOX_DATA_PREFIXES = ["/sandbox/.openclaw-data/", "/sandbox/.hermes-data/"];
+          // Normalize the target first to collapse any .. traversal segments
+          // (e.g. /sandbox/.openclaw-data/../../etc/passwd → /etc/passwd).
+          // Only then check the prefix — this prevents a traversal bypass
+          // where a crafted target starts with an allowed prefix but escapes it.
+          const normalizedTarget = path.posix.normalize(linkTarget);
+          const resolvedInArchive =
+            path.isAbsolute(normalizedTarget) &&
+            SANDBOX_DATA_PREFIXES.some((p) => normalizedTarget.startsWith(p))
+              ? path.resolve(dirPath, normalizedTarget.replace(/^\//, ""))
+              : null;
+
+          const inAnyAllowedRoot =
+            allowedRoots.some((root) => isWithinRoot(resolvedRelative, root)) ||
+            (resolvedInArchive !== null && isWithinRoot(resolvedInArchive, dirPath));
+
           if (!inAnyAllowedRoot) {
             violations.push(
-              `symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedTarget})`,
+              `symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedRelative})`,
             );
           }
         } else if (stat.isDirectory()) {
@@ -528,11 +560,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
-  const writableDir = agent.configPaths.writableDir;
+  const dir = agent.configPaths.dir;
   const stateDirs = agent.stateDirs;
-  _log(
-    `backupSandboxState: agent=${agentName}, writableDir=${writableDir}, stateDirs=[${stateDirs.join(",")}]`,
-  );
+  _log(`backupSandboxState: agent=${agentName}, dir=${dir}, stateDirs=[${stateDirs.join(",")}]`);
 
   // Validate user-supplied name and check for conflicts BEFORE creating any
   // files on disk.
@@ -589,7 +619,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     agentVersion: sb?.agentVersion || null,
     expectedVersion: agent.expectedVersion,
     stateDirs,
-    writableDir,
+    dir,
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
     policyPresets,
@@ -623,9 +653,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     // snapshotted alongside the manifest-declared dirs. `awk '!seen[$0]++'`
     // dedupes while preserving order.
     const existCheckCmd = stateDirs
-      .map((d) => `[ -d "${writableDir}/${d}" ] && echo "${d}"`)
+      .map((d) => `[ -d ${shellQuote(`${dir}/${d}`)} ] && printf '%s\\n' ${shellQuote(d)}`)
       .join("; ");
-    const workspaceGlobCmd = `for d in ${writableDir}/workspace-*/; do [ -d "$d" ] && basename "$d"; done 2>/dev/null`;
+    const workspaceGlobCmd = `for d in ${shellQuote(dir)}/workspace-*/; do [ -d "$d" ] && basename "$d"; done 2>/dev/null`;
     const fullCheckCmd = `{ ${existCheckCmd}; ${workspaceGlobCmd}; } 2>/dev/null | awk '!seen[$0]++'`;
     _log(`Checking existing dirs via SSH: ${fullCheckCmd.substring(0, 100)}...`);
     const existResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), fullCheckCmd], {
@@ -657,8 +687,55 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       return { success: true, manifest, backedUpDirs, failedDirs };
     }
 
+    // NC-2227-04: Pre-backup audit — reject symlinks, hardlinks, and special
+    // files inside state dirs. A compromised agent could plant a symlink like
+    // workspace/copy -> ../openclaw.json to exfiltrate config via backup.
+    const auditCmd = existingDirs
+      .map(
+        (d) =>
+          `find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y %p\\n" 2>/dev/null`,
+      )
+      .join(" && ");
+    _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
+    const auditResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), auditCmd], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30000,
+    });
+    if (auditResult.status !== 0) {
+      const stderr = (auditResult.stderr || "").trim();
+      const detail = stderr || auditResult.error?.message || `exit ${String(auditResult.status)}`;
+      _log(`FAILED: Pre-backup audit command failed — ${detail}`);
+      return {
+        success: false,
+        manifest,
+        backedUpDirs,
+        failedDirs: [...existingDirs],
+        error: `Pre-backup audit failed: ${detail}`,
+      };
+    }
+    const auditOutput = (auditResult.stdout || "").trim();
+    if (auditOutput.length > 0) {
+      // Found symlinks or special files — log them and reject the backup
+      const violations = auditOutput.split("\n").filter((l) => l.length > 0);
+      _log(
+        `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
+      );
+      return {
+        success: false,
+        manifest,
+        backedUpDirs,
+        failedDirs: [...existingDirs],
+        error: `Pre-backup audit rejected: symlinks, hard links, or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
+      };
+    }
+    _log("Pre-backup audit passed — no symlinks, hard links, or special files found");
+
     // Download via SSH+tar
-    const tarCmd = `tar -cf - -C ${writableDir} ${existingDirs.join(" ")}`;
+    // NC-2227-04: Removed -h flag (was following symlinks). State dirs are
+    // now agent-writable and co-located with config — a compromised agent
+    // could create symlinks to exfiltrate config contents via backup.
+    const tarCmd = `tar -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
     _log(`Downloading via SSH+tar: ${tarCmd}`);
     const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), tarCmd], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -731,7 +808,11 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     return { success: false, restoredDirs: [], failedDirs: ["manifest"] };
   }
 
-  const writableDir = manifest.writableDir;
+  const dir = manifest.dir || manifest.writableDir;
+  if (!dir) {
+    _log("FAILED: manifest has no dir or writableDir");
+    return { success: false, restoredDirs: [], failedDirs: ["manifest"] };
+  }
   const restoredDirs: string[] = [];
   const failedDirs: string[] = [];
 
@@ -756,6 +837,7 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
   const configFile = writeTempSshConfig(sshConfig);
   try {
     // Upload via tar pipe
+    // NC-2227-04: Removed -h flag from restore as well — no symlink following.
     const tarResult = spawnSync("tar", ["-cf", "-", "-C", backupPath, ...localDirs], {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 60000,
@@ -768,19 +850,23 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
 
     // Remove existing state dirs before extracting so stale files from
     // later snapshots don't persist after restoring an earlier one.
-    const rmCmd = localDirs.map((d) => `rm -rf "${writableDir}/${d}"`).join(" && ");
+    const rmCmd = localDirs.map((d) => `rm -rf -- ${shellQuote(`${dir}/${d}`)}`).join(" && ");
     _log(`Cleaning target dirs before restore: ${rmCmd}`);
     const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 30000,
     });
-    if (rmResult.status !== 0) {
-      _log(
-        `WARNING: pre-restore cleanup failed (exit ${rmResult.status}): ${(rmResult.stderr?.toString() || "").substring(0, 200)}`,
-      );
+    if (rmResult.status !== 0 || rmResult.error || rmResult.signal) {
+      const stderr = (rmResult.stderr?.toString() || "").trim();
+      const detail =
+        stderr ||
+        rmResult.error?.message ||
+        (rmResult.signal ? `signal ${rmResult.signal}` : `exit ${String(rmResult.status)}`);
+      _log(`FAILED: pre-restore cleanup failed: ${detail.substring(0, 200)}`);
+      return { success: false, restoredDirs, failedDirs: [...localDirs] };
     }
 
-    const extractCmd = `tar -xf - -C ${writableDir}`;
+    const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
     const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
       input: tarResult.stdout,
       stdio: ["pipe", "pipe", "pipe"],
@@ -788,23 +874,54 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     });
 
     if (sshResult.status === 0) {
-      restoredDirs.push(...localDirs);
+      const restoredPaths = localDirs.map((d) => `${dir}/${d}`);
 
-      // Fix ownership — treat failure as restore failure since wrong
-      // ownership means the agent can't read its own state files.
-      const openshellBinary = resolveOpenshell();
-      if (openshellBinary) {
-        _log(`Fixing ownership: chown -R sandbox:sandbox ${writableDir}`);
-        const chownResult = spawnSync(
-          openshellBinary,
-          ["sandbox", "exec", sandboxName, "--", "chown", "-R", "sandbox:sandbox", writableDir],
-          { stdio: ["ignore", "pipe", "pipe"], timeout: 30000 },
+      // Best-effort only: OpenShell exec/SSH normally runs as the sandbox user,
+      // which cannot chown even files it owns. The tar restore above runs as the
+      // same user, so the real restore gate is whether the restored state dirs
+      // are usable by that user.
+      const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
+      _log(`Best-effort ownership repair: ${chownCmd}`);
+      const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30000,
+      });
+      if (chownResult.error || chownResult.signal) {
+        const detail =
+          chownResult.error?.message ||
+          (chownResult.signal ? `signal ${chownResult.signal}` : "unknown error");
+        _log(
+          `WARNING: post-restore ownership repair did not complete: ${detail.substring(0, 200)}`,
         );
-        if (chownResult.status !== 0) {
-          _log(
-            `WARNING: chown failed (exit ${chownResult.status}) — agent may not be able to read restored state`,
-          );
-        }
+      }
+
+      const usabilityCmd = restoredPaths
+        .map(
+          (p) =>
+            `[ -d ${shellQuote(p)} ] && [ ! -L ${shellQuote(p)} ] && [ -r ${shellQuote(p)} ] && [ -w ${shellQuote(p)} ]`,
+        )
+        .join(" && ");
+      _log(`Verifying restored state usability: ${usabilityCmd}`);
+      const usabilityResult = spawnSync(
+        "ssh",
+        [...sshArgs(configFile, sandboxName), usabilityCmd],
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 30000,
+        },
+      );
+      if (usabilityResult.status === 0 && !usabilityResult.error && !usabilityResult.signal) {
+        restoredDirs.push(...localDirs);
+      } else {
+        const stderr = (usabilityResult.stderr?.toString() || "").trim();
+        const detail =
+          stderr ||
+          usabilityResult.error?.message ||
+          (usabilityResult.signal
+            ? `signal ${usabilityResult.signal}`
+            : `exit ${String(usabilityResult.status)}`);
+        _log(`FAILED: restored state usability check failed: ${detail.substring(0, 200)}`);
+        failedDirs.push(...localDirs);
       }
     } else {
       failedDirs.push(...localDirs);
@@ -837,9 +954,15 @@ function readManifest(backupPath: string): RebuildManifest | null {
   if (!existsSync(manifestPath)) return null;
   try {
     const parsed = parseJson<unknown>(readFileSync(manifestPath, "utf-8"));
-    return isRebuildManifest(parsed)
-      ? { ...parsed, blueprintDigest: parsed.blueprintDigest ?? null }
-      : null;
+    if (!isRebuildManifest(parsed)) return null;
+    const manifest = parsed as RebuildManifest & { dir?: string; writableDir?: string };
+    const dir = manifest.dir ?? manifest.writableDir;
+    if (!dir) return null;
+    return {
+      ...manifest,
+      dir,
+      blueprintDigest: manifest.blueprintDigest ?? null,
+    };
   } catch {
     return null;
   }

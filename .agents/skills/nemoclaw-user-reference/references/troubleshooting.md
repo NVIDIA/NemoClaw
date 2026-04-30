@@ -466,6 +466,24 @@ The status command detects the sandbox context and reports "active (inside sandb
 
 Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
+### Git clone fails with a certificate verification error
+
+In networks that inspect TLS, OpenShell injects a proxy CA bundle into the sandbox.
+Current NemoClaw exports that bundle as `GIT_SSL_CAINFO` during sandbox startup and persists it for `nemoclaw <name> connect` sessions, so Git can trust the proxy CA.
+It also forwards standard CA bundle variables for subprocesses, including `GIT_SSL_CAPATH`, `CURL_CA_BUNDLE`, and `REQUESTS_CA_BUNDLE`.
+
+If Git still reports `server certificate verification failed`, reconnect to the sandbox and check that the CA variables are present:
+
+```console
+$ env | grep -E 'SSL_CERT_FILE|GIT_SSL_CAINFO|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE'
+```
+
+If they are missing on an older sandbox, upgrade NemoClaw and run:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
 ### `openclaw update` hangs or times out inside the sandbox
 
 This is expected for the current NemoClaw deployment model.
@@ -539,7 +557,7 @@ For the security trade-offs, refer to Security Best Practices (use the `nemoclaw
 
 This is expected.
 The messaging channel list is frozen into the sandbox's container image when the image is built during `nemoclaw onboard` or `nemoclaw rebuild` (the selected channel names are passed to the `docker build` as `NEMOCLAW_MESSAGING_CHANNELS_B64` and written into `/sandbox/.openclaw/openclaw.json` as part of the image).
-At runtime the sandbox mounts that path read-only and layers Landlock + filesystem hardening on top, so `openclaw channels` commands that mutate the config cannot write there.
+Changes made inside the running sandbox do not persist across rebuilds, so `openclaw channels` commands that mutate the config are intercepted.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw channels <add|remove>` and prints an actionable error pointing at the host-side commands below, instead of letting the call fail deep in the binary with a raw `EACCES` trace.
 
 Run the equivalent host-side command instead:
@@ -550,38 +568,27 @@ $ nemoclaw <sandbox> channels add <telegram|discord|slack>
 $ nemoclaw <sandbox> channels remove <telegram|discord|slack>
 ```
 
-`channels add` stores credentials under `~/.nemoclaw/credentials.json` and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
+`channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
-
-### `nemoclaw <sandbox> config set` refuses a key that does not currently exist
-
-This is intentional.
-The host-side `config set` does not maintain a copy of OpenClaw's config schema, so it cannot tell a typo'd key path apart from a schema-valid path that has not been written yet.
-To make typos visible without blocking documented first-time writes (such as `provider.compatible-endpoint.timeoutSeconds`), it asks before creating a brand-new key.
-
-In an interactive terminal, accept the prompt to proceed.
-
-In non-interactive mode (CI or `NEMOCLAW_NON_INTERACTIVE=1`), pass `--config-accept-new-path` or set `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1`.
-Modifying a key that already exists in the config never triggers this gate.
-
-Numeric path segments are also refused because `config set` only writes plain objects and would silently overwrite array elements; replace the array as a whole with `--value '[...]'` instead.
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
 This is expected.
-The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time and mounted read-only at runtime.
-NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error instead of letting the call fail with a raw permission error.
+The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time.
+NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
-Rebuild the sandbox from the host to change its OpenClaw configuration:
+To change your configuration, exit the sandbox and rerun onboarding:
 
 ```console
-$ nemoclaw <sandbox> rebuild
+$ nemoclaw onboard --resume
 ```
+
+This rebuilds the sandbox with your updated settings.
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 
 This is expected in NemoClaw-managed sandboxes.
-NemoClaw bakes channel entries into `/sandbox/.openclaw/openclaw.json` at image build time, and OpenShell keeps that path read-only at runtime.
+NemoClaw bakes channel entries into `/sandbox/.openclaw/openclaw.json` at image build time.
 
 As a result, commands that try to rewrite the baked config from inside the sandbox, including `openclaw doctor --fix`, cannot repair Discord, Telegram, or Slack channel entries in place.
 
@@ -672,6 +679,62 @@ $ nemoclaw onboard
 
 These are build-time settings baked into the sandbox image.
 Changing them after onboarding requires re-running `nemoclaw onboard` to rebuild the image.
+
+### Agent cannot reach a host-side HTTP service
+
+When a sandbox needs to call an HTTP service running on the host, use the normal OpenShell network policy path.
+Expose the service on a host IP address that the OpenShell gateway can reach, create a custom NemoClaw policy preset for that IP and port, and apply it with `nemoclaw <sandbox> policy-add --from-file`.
+The sandbox request then flows through the OpenShell proxy while NemoClaw preserves the existing live policy entries.
+
+Do not rely on `host.docker.internal` or `host.openshell.internal` as a general-purpose host-service path.
+Those names may appear in the sandbox's `/etc/hosts`, but in OpenShell's sandbox network they are not guaranteed to point at a reachable host gateway.
+Bypassing the proxy with `--noproxy '*'` also bypasses network policy enforcement and audit.
+
+First, make sure the host-side service listens on a non-loopback address.
+For example, a health endpoint on port `50001` should be reachable from the host IP, not only from `127.0.0.1`:
+
+```console
+$ curl -s http://10.0.0.5:50001/health
+{"status":"ok"}
+```
+
+Then create a custom NemoClaw preset for the host-side service.
+Replace `10.0.0.5`, `50001`, paths, methods, and binaries with the service you want the sandbox to reach:
+
+```yaml
+preset:
+  name: host-memory-api
+  description: "Host memory API"
+network_policies:
+  host_memory_api:
+    name: host_memory_api
+    endpoints:
+      - host: 10.0.0.5
+        port: 50001
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/health" }
+    binaries:
+      - { path: /usr/bin/curl }
+```
+
+Apply the preset to the running sandbox with the NemoClaw CLI:
+
+```console
+$ nemoclaw my-assistant policy-add --from-file ./host-memory-api.yaml
+```
+
+After you apply the policy, retry the request from inside the sandbox without disabling the proxy:
+
+```console
+$ curl -s http://10.0.0.5:50001/health
+{"status":"ok"}
+```
+
+If the request is still denied, check the blocked request in `openshell term`.
+The policy `binaries` list must include the executable path that actually made the request.
+If the response changes from `policy_denied` to `upstream_unreachable`, the policy matched, but the OpenShell gateway could not reach the host IP and port.
 
 ### Agent cannot reach an external host
 

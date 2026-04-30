@@ -214,7 +214,8 @@ SLACK_PRESET="$REPO/nemoclaw-blueprint/policies/presets/slack.yaml"
 if [ -f "$BASE_POLICY" ] && [ -f "$SLACK_PRESET" ] && ! grep -q "api.slack.com" "$BASE_POLICY"; then
   BASE_POLICY_BAK="$(mktemp)"
   cp "$BASE_POLICY" "$BASE_POLICY_BAK"
-  trap 'cp "$BASE_POLICY_BAK" "$BASE_POLICY" 2>/dev/null || true; rm -f "$BASE_POLICY_BAK"' EXIT
+  _previous_exit_trap=$(trap -p EXIT | sed "s/^trap -- '//;s/' EXIT$//")
+  trap ''"${_previous_exit_trap:+$_previous_exit_trap;}"' cp "$BASE_POLICY_BAK" "$BASE_POLICY" 2>/dev/null || true; rm -f "$BASE_POLICY_BAK"' EXIT
   info "Pre-merging Slack network policy into base sandbox policy..."
   cat >>"$BASE_POLICY" <<'SLACK_POLICY_EOF'
 
@@ -478,6 +479,151 @@ if [ -n "$DISCORD_PLACEHOLDER" ]; then
   fi
 else
   skip "M5h: No Discord placeholder to verify (provider-only mode)"
+fi
+
+# ── Slack credential isolation (#2085) ────────────────────────────
+# Mirrors M5a/M5e/M5g for Slack now that the apply_slack_token_override
+# carve-out has been replaced by the in-process slack-token-rewriter +
+# L7-proxy substitution. The host-side fake token must never appear on
+# any observable surface inside the sandbox.
+
+# M-S5a: Full environment dump must not contain the real Slack bot token.
+if [ -z "$sandbox_env_all" ]; then
+  skip "M-S5a: Environment variable list is empty"
+elif echo "$sandbox_env_all" | grep -qF "$SLACK_TOKEN"; then
+  fail "M-S5a: Real Slack bot token found in full sandbox environment dump"
+else
+  pass "M-S5a: Real Slack bot token absent from full sandbox environment"
+fi
+
+# M-S5b: Process list must not contain the real Slack bot token.
+if [ -z "$sandbox_ps" ]; then
+  skip "M-S5b: Process list is empty"
+elif echo "$sandbox_ps" | grep -qF "$SLACK_TOKEN"; then
+  fail "M-S5b: Real Slack bot token found in sandbox process list"
+else
+  pass "M-S5b: Real Slack bot token absent from sandbox process list"
+fi
+
+# M-S5c: Recursive filesystem search for the real Slack bot token.
+sandbox_fs_sl=$(printf '%s' "$SLACK_TOKEN" | sandbox_exec_stdin "grep -rFlm1 -f - /sandbox /home /etc /tmp /var 2>/dev/null || true")
+if [ -n "$sandbox_fs_sl" ]; then
+  fail "M-S5c: Real Slack bot token found on sandbox filesystem: ${sandbox_fs_sl}"
+else
+  pass "M-S5c: Real Slack bot token absent from sandbox filesystem"
+fi
+
+# M-S5d: Same checks for the xapp- Socket Mode token.
+if [ -n "$SLACK_APP" ]; then
+  if [ -z "$sandbox_env_all" ]; then
+    skip "M-S5d: Environment variable list is empty"
+  elif echo "$sandbox_env_all" | grep -qF "$SLACK_APP"; then
+    fail "M-S5d: Real Slack app token found in full sandbox environment dump"
+  else
+    pass "M-S5d: Real Slack app token absent from sandbox environment"
+  fi
+  if [ -z "$sandbox_ps" ]; then
+    skip "M-S5d2: Process list is empty"
+  elif echo "$sandbox_ps" | grep -qF "$SLACK_APP"; then
+    fail "M-S5d2: Real Slack app token found in sandbox process list"
+  else
+    pass "M-S5d2: Real Slack app token absent from sandbox process list"
+  fi
+  sandbox_fs_sapp=$(printf '%s' "$SLACK_APP" | sandbox_exec_stdin "grep -rFlm1 -f - /sandbox /home /etc /tmp /var 2>/dev/null || true")
+  if [ -n "$sandbox_fs_sapp" ]; then
+    fail "M-S5e: Real Slack app token found on sandbox filesystem: ${sandbox_fs_sapp}"
+  else
+    pass "M-S5e: Real Slack app token absent from sandbox filesystem"
+  fi
+fi
+
+# M-S5f: openclaw.json must contain the Bolt-shape placeholder, not the
+# real token. The placeholder is what nemoclaw-slack-token-rewriter.js
+# translates to the canonical openshell:resolve:env:VAR form on egress.
+config_slack=$(sandbox_exec "cat /sandbox/.openclaw/openclaw.json 2>/dev/null | grep -E '\"(bot|app)Token\"'" 2>/dev/null || true)
+if [ -n "$config_slack" ] && {
+  echo "$config_slack" | grep -qF "$SLACK_TOKEN" \
+    || echo "$config_slack" | grep -qF "$SLACK_APP"
+}; then
+  fail "M-S5f: Real Slack bot/app token spliced into openclaw.json — apply_slack_token_override regression?"
+elif [ -n "$config_slack" ] \
+  && echo "$config_slack" | grep -q 'xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN' \
+  && echo "$config_slack" | grep -q 'xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN'; then
+  pass "M-S5f: openclaw.json holds both Bolt-shape Slack placeholders (no real token on disk)"
+else
+  skip "M-S5f: Could not extract Slack token fields from openclaw.json"
+fi
+
+# M-S5g: The rewriter preload was actually installed. NODE_OPTIONS in the
+# sandbox shell should reference the rewriter path.
+sandbox_node_opts=$(openshell sandbox exec --name "$SANDBOX_NAME" -- bash -lc 'echo "$NODE_OPTIONS"' 2>/dev/null || echo "")
+if echo "$sandbox_node_opts" | grep -q "nemoclaw-slack-token-rewriter.js"; then
+  pass "M-S5g: Slack token rewriter preload present in sandbox NODE_OPTIONS"
+else
+  fail "M-S5g: rewriter preload missing from NODE_OPTIONS (got: ${sandbox_node_opts:0:200})"
+fi
+
+# M-S5h: The rewriter actually wraps http.request at runtime. NODE_OPTIONS
+# pointing at an empty file (or a syntax-error file) would still make
+# M-S5g pass and a subsequent slack.com round-trip would still return
+# invalid_auth (because the un-translated Bolt-shape token is not a valid
+# Slack token either) — so the slack.com 200 invalid_auth in M-S15/M-S16
+# alone doesn't prove the rewriter ran. This loopback probe forces a
+# definitive answer: send a Bolt-shape Authorization header and urlencoded
+# token body to a 127.0.0.1 listener (loopback bypasses the L7 proxy), have
+# the listener echo what it actually received, then assert the placeholder is
+# gone. If the rewriter is loaded and wrapping http.request/write/end, the
+# listener sees the canonical openshell:resolve:env:VAR form. If the rewriter
+# is a no-op, the listener sees the raw Bolt-shape placeholder.
+info "Probing rewriter via loopback listener (proves http.request is wrapped)..."
+sl_loopback=$(sandbox_exec 'node -e "
+const http = require(\"http\");
+const server = http.createServer((req, res) => {
+  let body = \"\";
+  req.setEncoding(\"utf8\");
+  req.on(\"data\", (d) => body += d);
+  req.on(\"end\", () => {
+    res.writeHead(200, { \"Content-Type\": \"application/json\" });
+    res.end(JSON.stringify({ headers: req.headers, body }));
+  });
+});
+server.listen(0, \"127.0.0.1\", () => {
+  const port = server.address().port;
+  const data = \"token=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\";
+  const r = http.request({
+    hostname: \"127.0.0.1\",
+    port: port,
+    path: \"/probe\",
+    method: \"POST\",
+    headers: {
+      \"Authorization\": \"Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\",
+      \"Content-Type\": \"application/x-www-form-urlencoded\",
+      \"Content-Length\": Buffer.byteLength(data),
+    },
+  }, (res) => {
+    let body = \"\";
+    res.on(\"data\", (d) => body += d);
+    res.on(\"end\", () => { console.log(body); server.close(); });
+  });
+  r.on(\"error\", (e) => { console.log(\"ERROR: \" + e.message); server.close(); });
+  r.setTimeout(10000, () => { r.destroy(); console.log(\"TIMEOUT\"); server.close(); });
+  r.write(data);
+  r.end();
+});
+"' 2>/dev/null || true)
+
+info "Loopback echoed request: ${sl_loopback:0:300}"
+if echo "$sl_loopback" | grep -qF 'OPENSHELL-RESOLVE-ENV-'; then
+  fail "M-S5h: rewriter did NOT translate Bolt-shape on http.request/write/end — the preload is loaded but incomplete or a no-op"
+elif echo "$sl_loopback" | grep -qE '"authorization"\s*:\s*"Bearer openshell:resolve:env:SLACK_BOT_TOKEN' \
+  && echo "$sl_loopback" | grep -qE '"body"\s*:\s*"token=openshell:resolve:env:SLACK_BOT_TOKEN'; then
+  pass "M-S5h: rewriter wraps http.request/write/end — Bolt-shape header and body were translated before egress"
+elif echo "$sl_loopback" | grep -q "ERROR"; then
+  fail "M-S5h: loopback probe errored: ${sl_loopback:0:200}"
+elif echo "$sl_loopback" | grep -q "TIMEOUT"; then
+  skip "M-S5h: loopback probe timed out"
+else
+  fail "M-S5h: loopback probe returned unexpected output: ${sl_loopback:0:200}"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -1083,6 +1229,284 @@ else
   fail "M17: Unexpected Discord response (status=$dc_status): ${dc_api:0:200}"
 fi
 
+# ── Slack: rewriter + L7 proxy chain (#2085) ─────────────────────
+# Verifies the full chain: Bolt-shape placeholder in Authorization
+# header → slack-token-rewriter (Node preload) translates to canonical
+# form → OpenShell L7 proxy substitutes real env value → request
+# reaches slack.com which responds with invalid_auth (because the
+# host-side fake token is, well, fake). The 200 OK + invalid_auth
+# response is the proof the chain worked end-to-end.
+#
+# Slack returns HTTP 200 with {"ok":false,"error":"invalid_auth"} for
+# auth failures on auth.test (it does NOT use 401). The body is the
+# load-bearing assertion, not the status.
+
+info "Calling slack.com/api/auth.test from inside sandbox with Bolt-shape placeholder..."
+sl_api=$(sandbox_exec 'node -e "
+const https = require(\"https\");
+const data = \"\";
+const options = {
+  hostname: \"slack.com\",
+  path: \"/api/auth.test\",
+  method: \"POST\",
+  headers: {
+    \"Authorization\": \"Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\",
+    \"Content-Type\": \"application/x-www-form-urlencoded\",
+    \"Content-Length\": data.length,
+  },
+};
+const req = https.request(options, (res) => {
+  let body = \"\";
+  res.on(\"data\", (d) => body += d);
+  res.on(\"end\", () => console.log(res.statusCode + \" \" + body.slice(0, 300)));
+});
+req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
+req.setTimeout(30000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+req.write(data);
+req.end();
+"' 2>/dev/null || true)
+
+info "Slack auth.test response: ${sl_api:0:300}"
+sl_status=$(echo "$sl_api" | grep -E '^[0-9]' | head -1 | awk '{print $1}')
+
+if [ "$sl_status" = "200" ] && echo "$sl_api" | grep -q '"ok":true'; then
+  pass "M-S15: Slack auth.test returned ok:true — real token round-trip verified!"
+elif [ "$sl_status" = "200" ] && echo "$sl_api" | grep -qE 'invalid_auth|not_authed'; then
+  pass "M-S15: Slack auth.test returned invalid_auth — full chain verified (rewriter → L7 proxy → slack.com)"
+elif echo "$sl_api" | grep -q "TIMEOUT"; then
+  skip "M-S15: Slack API timed out (network issue, not a plumbing failure)"
+elif echo "$sl_api" | grep -q "ERROR"; then
+  fail "M-S15: Slack API call failed with error: ${sl_api:0:200}"
+elif echo "$sl_api" | grep -qF 'OPENSHELL-RESOLVE-ENV-'; then
+  fail "M-S15: rewriter did not translate the Bolt-shape placeholder — preload not loaded?"
+elif echo "$sl_api" | grep -qF 'openshell:resolve:env:'; then
+  fail "M-S15: L7 proxy did not substitute the canonical placeholder — substitution chain broken"
+else
+  fail "M-S15: Unexpected Slack response (status=$sl_status): ${sl_api:0:200}"
+fi
+
+# M-S15b: L7 proxy substitution for SLACK_BOT_TOKEN, isolated from the
+# rewriter. Sends the canonical openshell:resolve:env:SLACK_BOT_TOKEN
+# placeholder directly (no Bolt-shape, so the rewriter is a no-op for
+# this request). If the L7 proxy substitutes correctly, the fake xoxb-
+# token reaches slack.com which returns invalid_auth. If the proxy
+# doesn't substitute, slack.com sees the literal placeholder and STILL
+# returns invalid_auth — same response shape as M-S15. To distinguish,
+# we additionally call with an env var that does NOT exist in the
+# sandbox (DEFINITELY_NOT_SET_XYZ); the L7 proxy's behavior on an
+# unset var differs from a successful substitution.
+#
+# Mirrors the proof technique already used by Telegram M15 and Discord
+# M17 (they get 401/404 from the real APIs because the L7 proxy
+# substituted the canonical form into a real fake-token-shape value).
+info "Probing L7 proxy substitution for SLACK_BOT_TOKEN (canonical placeholder, bypasses rewriter)..."
+sl_canonical=$(sandbox_exec 'node -e "
+const https = require(\"https\");
+const data = \"\";
+const options = {
+  hostname: \"slack.com\",
+  path: \"/api/auth.test\",
+  method: \"POST\",
+  headers: {
+    \"Authorization\": \"Bearer openshell:resolve:env:SLACK_BOT_TOKEN\",
+    \"Content-Type\": \"application/x-www-form-urlencoded\",
+    \"Content-Length\": data.length,
+  },
+};
+const req = https.request(options, (res) => {
+  let body = \"\";
+  res.on(\"data\", (d) => body += d);
+  res.on(\"end\", () => console.log(res.statusCode + \" \" + body.slice(0, 300)));
+});
+req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
+req.setTimeout(30000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+req.write(data);
+req.end();
+"' 2>/dev/null || true)
+
+info "Slack auth.test (canonical) response: ${sl_canonical:0:300}"
+sl_canon_status=$(echo "$sl_canonical" | grep -E '^[0-9]' | head -1 | awk '{print $1}')
+
+if [ "$sl_canon_status" = "200" ] && echo "$sl_canonical" | grep -qE 'invalid_auth|not_authed'; then
+  pass "M-S15b: L7 proxy substitutes openshell:resolve:env:SLACK_BOT_TOKEN at egress (parallels Telegram M15 / Discord M17)"
+elif echo "$sl_canonical" | grep -q "TIMEOUT"; then
+  skip "M-S15b: canonical-placeholder probe timed out"
+elif echo "$sl_canonical" | grep -qF 'openshell:resolve:env:' || echo "$sl_canonical" | grep -qiF 'invalid token'; then
+  fail "M-S15b: L7 proxy passed canonical placeholder through unchanged — substitution not happening for SLACK_BOT_TOKEN"
+else
+  fail "M-S15b: Unexpected response (status=$sl_canon_status): ${sl_canonical:0:200}"
+fi
+
+# M-S15c: Negative control — the env-var name in the canonical
+# placeholder is not registered as a provider. The L7 proxy's response
+# differs from M-S15b's "successful substitution" path, which gives us
+# a positive signal that substitution happens at all. If M-S15b and
+# M-S15c return identical responses, the proxy isn't substituting; if
+# they differ, the proxy distinguishes set vs unset env vars (i.e.,
+# substitution is actually running on the substring it recognizes).
+info "Probing L7 proxy substitution with an unset env var (negative control)..."
+sl_unset=$(sandbox_exec 'node -e "
+const https = require(\"https\");
+const data = \"\";
+const options = {
+  hostname: \"slack.com\",
+  path: \"/api/auth.test\",
+  method: \"POST\",
+  headers: {
+    \"Authorization\": \"Bearer openshell:resolve:env:DEFINITELY_NOT_SET_XYZ\",
+    \"Content-Type\": \"application/x-www-form-urlencoded\",
+    \"Content-Length\": data.length,
+  },
+};
+const req = https.request(options, (res) => {
+  let body = \"\";
+  res.on(\"data\", (d) => body += d);
+  res.on(\"end\", () => console.log(res.statusCode + \" \" + body.slice(0, 300)));
+});
+req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
+req.setTimeout(30000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+req.write(data);
+req.end();
+"' 2>/dev/null || true)
+
+info "Slack auth.test (unset env) response: ${sl_unset:0:300}"
+# Empirically (verified in nightly run 25070238797): when the canonical
+# placeholder names an env var that isn't registered as a provider, the
+# OpenShell L7 proxy refuses to forward and the client sees a
+# connection-level failure ("socket hang up" / ECONNRESET / EPIPE).
+# The set-var path returns HTTP 200 invalid_auth from slack.com — these
+# shapes are completely disjoint, so we assert specifically on them
+# instead of doing a fuzzy string compare (UNDICI warnings carry a PID
+# and would always make the captures differ regardless of substance).
+if echo "$sl_unset" | grep -qE 'ERROR:.*(socket hang up|ECONNRESET|EPIPE|hang up|reset)'; then
+  pass "M-S15c: unset-var triggered connection-level failure — proxy refuses to forward unsubstituted placeholder"
+elif echo "$sl_unset" | grep -qE '^200\b'; then
+  fail "M-S15c: unset-var returned HTTP 200 — proxy passed canonical placeholder through unchanged for unset env (substitution may be a no-op)"
+elif [ -z "$sl_unset" ] || echo "$sl_unset" | grep -q "TIMEOUT"; then
+  skip "M-S15c: unset-var probe timed out or returned no output"
+else
+  skip "M-S15c: unset-var produced an unclassified result: ${sl_unset:0:200}"
+fi
+
+# M-S16: Socket Mode HTTPS leg (apps.connections.open). Bolt's Socket
+# Mode opens a websocket only after this POST succeeds, so this is the
+# call that the xapp- token actually authenticates. We don't bother
+# upgrading WSS in the test — the auth check is on the HTTPS POST.
+info "Calling slack.com/api/apps.connections.open with Bolt-shape xapp- placeholder..."
+sl_app_api=$(sandbox_exec 'node -e "
+const https = require(\"https\");
+const data = \"\";
+const options = {
+  hostname: \"slack.com\",
+  path: \"/api/apps.connections.open\",
+  method: \"POST\",
+  headers: {
+    \"Authorization\": \"Bearer xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN\",
+    \"Content-Type\": \"application/x-www-form-urlencoded\",
+    \"Content-Length\": data.length,
+  },
+};
+const req = https.request(options, (res) => {
+  let body = \"\";
+  res.on(\"data\", (d) => body += d);
+  res.on(\"end\", () => console.log(res.statusCode + \" \" + body.slice(0, 300)));
+});
+req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
+req.setTimeout(30000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+req.write(data);
+req.end();
+"' 2>/dev/null || true)
+
+info "Slack apps.connections.open response: ${sl_app_api:0:300}"
+sl_app_status=$(echo "$sl_app_api" | grep -E '^[0-9]' | head -1 | awk '{print $1}')
+
+if [ "$sl_app_status" = "200" ] && echo "$sl_app_api" | grep -q '"ok":true'; then
+  pass "M-S16: apps.connections.open returned ok:true — real xapp token round-trip verified!"
+elif [ "$sl_app_status" = "200" ] && echo "$sl_app_api" | grep -qE 'invalid_auth|not_authed|not_allowed_token_type'; then
+  pass "M-S16: apps.connections.open auth-rejected — Socket Mode HTTPS leg verified (rewriter → L7 proxy → slack.com)"
+elif echo "$sl_app_api" | grep -q "TIMEOUT"; then
+  skip "M-S16: apps.connections.open timed out (network issue)"
+elif echo "$sl_app_api" | grep -qF 'OPENSHELL-RESOLVE-ENV-'; then
+  fail "M-S16: rewriter did not translate xapp- placeholder — preload not loaded for Socket Mode path?"
+else
+  fail "M-S16: Unexpected apps.connections.open response (status=$sl_app_status): ${sl_app_api:0:200}"
+fi
+
+# M-S16b: L7 proxy substitution for SLACK_APP_TOKEN, isolated. Same
+# rationale as M-S15b — sends the canonical placeholder directly so the
+# rewriter is a no-op and only the L7 proxy substitution is exercised.
+info "Probing L7 proxy substitution for SLACK_APP_TOKEN (canonical placeholder)..."
+sl_app_canonical=$(sandbox_exec 'node -e "
+const https = require(\"https\");
+const data = \"\";
+const options = {
+  hostname: \"slack.com\",
+  path: \"/api/apps.connections.open\",
+  method: \"POST\",
+  headers: {
+    \"Authorization\": \"Bearer openshell:resolve:env:SLACK_APP_TOKEN\",
+    \"Content-Type\": \"application/x-www-form-urlencoded\",
+    \"Content-Length\": data.length,
+  },
+};
+const req = https.request(options, (res) => {
+  let body = \"\";
+  res.on(\"data\", (d) => body += d);
+  res.on(\"end\", () => console.log(res.statusCode + \" \" + body.slice(0, 300)));
+});
+req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
+req.setTimeout(30000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+req.write(data);
+req.end();
+"' 2>/dev/null || true)
+
+info "Slack apps.connections.open (canonical) response: ${sl_app_canonical:0:300}"
+sl_app_canon_status=$(echo "$sl_app_canonical" | grep -E '^[0-9]' | head -1 | awk '{print $1}')
+
+info "Probing L7 proxy substitution for an unset app-token env var (negative control)..."
+sl_app_unset=$(sandbox_exec 'node -e "
+const https = require(\"https\");
+const data = \"\";
+const options = {
+  hostname: \"slack.com\",
+  path: \"/api/apps.connections.open\",
+  method: \"POST\",
+  headers: {
+    \"Authorization\": \"Bearer openshell:resolve:env:DEFINITELY_NOT_SET_SLACK_APP_TOKEN\",
+    \"Content-Type\": \"application/x-www-form-urlencoded\",
+    \"Content-Length\": data.length,
+  },
+};
+const req = https.request(options, (res) => {
+  let body = \"\";
+  res.on(\"data\", (d) => body += d);
+  res.on(\"end\", () => console.log(res.statusCode + \" \" + body.slice(0, 300)));
+});
+req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
+req.setTimeout(30000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+req.write(data);
+req.end();
+"' 2>/dev/null || true)
+
+info "Slack apps.connections.open (unset env) response: ${sl_app_unset:0:300}"
+if [ "$sl_app_canon_status" = "200" ] && echo "$sl_app_canonical" | grep -qE 'invalid_auth|not_authed|not_allowed_token_type'; then
+  if echo "$sl_app_unset" | grep -qE 'ERROR:.*(socket hang up|ECONNRESET|EPIPE|hang up|reset)'; then
+    pass "M-S16b: L7 proxy substitutes openshell:resolve:env:SLACK_APP_TOKEN at egress (unset-var control diverged)"
+  elif echo "$sl_app_unset" | grep -qE '^200\b'; then
+    fail "M-S16b: unset app-token env returned HTTP 200 — proxy may be passing canonical placeholders through unchanged"
+  elif [ -z "$sl_app_unset" ] || echo "$sl_app_unset" | grep -q "TIMEOUT"; then
+    skip "M-S16b: unset app-token control timed out or returned no output"
+  else
+    skip "M-S16b: unset app-token control produced an unclassified result: ${sl_app_unset:0:200}"
+  fi
+elif echo "$sl_app_canonical" | grep -q "TIMEOUT"; then
+  skip "M-S16b: canonical-placeholder probe timed out"
+elif echo "$sl_app_canonical" | grep -qF 'openshell:resolve:env:'; then
+  fail "M-S16b: L7 proxy passed canonical placeholder through unchanged for SLACK_APP_TOKEN"
+else
+  fail "M-S16b: Unexpected response (status=$sl_app_canon_status): ${sl_app_canonical:0:200}"
+fi
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 6: Real API Round-Trip (Optional)
 # ══════════════════════════════════════════════════════════════════
@@ -1155,9 +1579,17 @@ fi
 # ══════════════════════════════════════════════════════════════════
 # Phase 7: Slack channel guard (#2340)
 #
-# The sandbox was installed with fake Slack tokens. The channel guard
-# preload (NODE_OPTIONS --require) should catch the unhandled rejection
-# from @slack/web-api and keep the gateway alive.
+# The sandbox was installed with fake Slack tokens. After the
+# slack-token-rewriter refactor (#2085) the failure mode is:
+#   1. Bolt accepts the xoxb-OPENSHELL-RESOLVE-ENV-… placeholder
+#      (matches its prefix regex).
+#   2. The rewriter translates to canonical form on egress.
+#   3. The L7 proxy substitutes the fake xoxb-fake-… token from env.
+#   4. slack.com returns 200 OK invalid_auth.
+#   5. @slack/web-api emits an unhandled rejection — the guard catches it.
+# Pre-refactor the catch happened earlier (Bolt's in-process xapp- prefix
+# check), but the observable here is the same: gateway stays up, log shows
+# the guard caught a Slack rejection.
 # ══════════════════════════════════════════════════════════════════
 section "Phase 7: Slack channel guard (#2340)"
 

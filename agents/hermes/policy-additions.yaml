@@ -3,7 +3,7 @@
 #
 # Sandbox policy for the Hermes Agent.
 # Based on the OpenClaw policy with agent-specific adjustments:
-#   - .hermes / .hermes-data instead of .openclaw / .openclaw-data
+#   - .hermes instead of .openclaw (single config/state directory)
 #   - Nous Research phone-home endpoints instead of OpenClaw/ClawHub
 #   - PyPI instead of npm registry
 #   - /usr/local/bin/hermes and python3 binary restrictions
@@ -22,12 +22,11 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
-    - /sandbox/.hermes              # Immutable config (Landlock enforced)
   read_write:
     - /sandbox
     - /tmp
     - /dev/null
-    - /sandbox/.hermes-data         # Writable agent state (symlinked from .hermes)
+    - /sandbox/.hermes              # Agent config (lockable via shields up)
 
 landlock:
   compatibility: best_effort

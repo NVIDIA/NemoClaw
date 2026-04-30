@@ -14,7 +14,7 @@
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. gosu upgrade             — update URL, checksum, and version
 #   4. node:22-slim digest rot  — update-docker-pin.sh updates both
-#   5. New .hermes subdirectory — add mkdir + symlink below
+#   5. New .hermes subdirectory — add mkdir below
 # ────────────────────────────────────────────────────────────────
 
 FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
@@ -53,41 +53,30 @@ RUN arch="$(dpkg --print-architecture)" \
     && gosu --version
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
-# Same UID/GID layout as OpenClaw — OpenShell expects these names.
-RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
-    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+# gateway is a member of the sandbox group so it can read Hermes config files
+# with group-read permissions while the sandbox user remains the only writer.
+RUN groupadd -r sandbox \
+    && groupadd -r gateway \
+    && useradd -r -g gateway -G sandbox -d /sandbox -s /usr/sbin/nologin gateway \
+    && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
     && mkdir -p /sandbox/.nemoclaw \
     && chown -R sandbox:sandbox /sandbox
 
-# Split .hermes into immutable config dir + writable state dir.
-# Same pattern as OpenClaw: Landlock makes /sandbox/.hermes read-only,
-# writable state lives in .hermes-data, reached via symlinks.
-RUN mkdir -p /sandbox/.hermes-data/memories \
-        /sandbox/.hermes-data/sessions \
-        /sandbox/.hermes-data/skills \
-        /sandbox/.hermes-data/plugins \
-        /sandbox/.hermes-data/cron \
-        /sandbox/.hermes-data/logs \
-        /sandbox/.hermes-data/skins \
-        /sandbox/.hermes-data/plans \
-        /sandbox/.hermes-data/workspace \
-        /sandbox/.hermes-data/profiles \
-        /sandbox/.hermes-data/cache \
-        /sandbox/.hermes-data/pairing \
-    && mkdir -p /sandbox/.hermes \
-    && ln -s /sandbox/.hermes-data/memories /sandbox/.hermes/memories \
-    && ln -s /sandbox/.hermes-data/sessions /sandbox/.hermes/sessions \
-    && ln -s /sandbox/.hermes-data/skills /sandbox/.hermes/skills \
-    && ln -s /sandbox/.hermes-data/plugins /sandbox/.hermes/plugins \
-    && ln -s /sandbox/.hermes-data/cron /sandbox/.hermes/cron \
-    && ln -s /sandbox/.hermes-data/logs /sandbox/.hermes/logs \
-    && ln -s /sandbox/.hermes-data/skins /sandbox/.hermes/skins \
-    && ln -s /sandbox/.hermes-data/plans /sandbox/.hermes/plans \
-    && ln -s /sandbox/.hermes-data/workspace /sandbox/.hermes/workspace \
-    && ln -s /sandbox/.hermes-data/profiles /sandbox/.hermes/profiles \
-    && ln -s /sandbox/.hermes-data/cache /sandbox/.hermes/cache \
-    && ln -s /sandbox/.hermes-data/pairing /sandbox/.hermes/pairing \
-    && chown -R sandbox:sandbox /sandbox/.hermes /sandbox/.hermes-data
+# Create .hermes with all state subdirs directly (mutable by default).
+# No separate .hermes-data or symlink bridge.
+RUN mkdir -p /sandbox/.hermes/memories \
+        /sandbox/.hermes/sessions \
+        /sandbox/.hermes/skills \
+        /sandbox/.hermes/plugins \
+        /sandbox/.hermes/cron \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/skins \
+        /sandbox/.hermes/plans \
+        /sandbox/.hermes/workspace \
+        /sandbox/.hermes/profiles \
+        /sandbox/.hermes/cache \
+        /sandbox/.hermes/pairing \
+    && chown -R sandbox:sandbox /sandbox/.hermes
 
 # Install Hermes Agent from GitHub release.
 # Hermes is not on PyPI — official install is via their install script or

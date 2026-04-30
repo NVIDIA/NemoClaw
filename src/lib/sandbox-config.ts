@@ -9,29 +9,14 @@
 // those at runtime so the same CLI surface works for any agent.
 //
 // config get:          Read-only inspection with credential redaction.
-// config set:          Host-initiated config mutation with validation.
-// config rotate-token: Credential rotation via stdin or env var.
 
-const readline = require("readline");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
-const { execFileSync } = require("child_process");
 const { validateName } = require("./runner");
 const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
-const { stripCredentials, isConfigObject, isConfigValue } = credentialFilter;
-const { appendAuditEntry } = require("./shields-audit");
-const { isPrivateHostname } = require("./private-networks");
+const { stripCredentials, isConfigObject } = credentialFilter;
 
 type ConfigObject = import("./credential-filter").ConfigObject;
 type ConfigValue = import("./credential-filter").ConfigValue;
-const { runOpenshellCommand, captureOpenshellCommand } = require("./openshell");
-
-function parseJson<T>(text: string): T {
-  return JSON.parse(text);
-}
-
-const K3S_CONTAINER = "openshell-cluster-nemoclaw";
+const { captureOpenshellCommand } = require("./openshell");
 
 // ---------------------------------------------------------------------------
 // Agent-aware config resolution
@@ -56,6 +41,8 @@ interface AgentConfigTarget {
   format: string;
   /** Config file basename */
   configFile: string;
+  /** Additional files to lock/unlock alongside the main config (e.g. .env, .config-hash) */
+  sensitiveFiles?: string[];
 }
 
 const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
@@ -64,6 +51,7 @@ const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   configDir: "/sandbox/.openclaw",
   format: "json",
   configFile: "openclaw.json",
+  sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
 };
 
 function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
@@ -76,12 +64,18 @@ function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
     const agent = agentDefs.loadAgent(entry.agent);
     const cfg = agent.configPaths;
 
+    const dir = cfg.dir;
+    const sensitiveFiles = [`${dir}/.config-hash`];
+    // Hermes stores credentials in .env alongside the config
+    if (entry.agent === "hermes") sensitiveFiles.push(`${dir}/.env`);
+
     return {
       agentName: entry.agent,
-      configPath: `${cfg.immutableDir}/${cfg.configFile}`,
-      configDir: cfg.immutableDir,
+      configPath: `${dir}/${cfg.configFile}`,
+      configDir: dir,
       format: cfg.format || "json",
       configFile: cfg.configFile,
+      sensitiveFiles,
     };
   } catch {
     // Registry or agent-defs unavailable (e.g., during tests) — fall back
@@ -114,151 +108,6 @@ function extractDotpath(obj: ConfigValue, dotpath: string): ConfigValue | undefi
   return current;
 }
 
-function ensureConfigObjectKey(record: ConfigObject, key: string): ConfigObject {
-  const existing = record[key];
-  if (isConfigObject(existing)) {
-    return existing;
-  }
-
-  const created: ConfigObject = {};
-  record[key] = created;
-  return created;
-}
-
-function setDotpath(obj: ConfigObject, dotpath: string, value: ConfigValue): void {
-  const keys = dotpath.split(".");
-  const leafKey = keys.pop();
-  if (!leafKey) return;
-
-  let current = obj;
-  for (const key of keys) {
-    current = ensureConfigObjectKey(current, key);
-  }
-  current[leafKey] = value;
-}
-
-/**
- * Key segments that must never appear in a dotpath — blocking these prevents
- * prototype-pollution and accidental traversal into inherited members.
- */
-const UNSAFE_KEY_SEGMENTS: ReadonlySet<string> = new Set([
-  "__proto__",
-  "constructor",
-  "prototype",
-  "toString",
-  "hasOwnProperty",
-]);
-
-type DotpathValidation = { ok: true } | { ok: false; reason: string };
-
-/**
- * Validate the syntax of a config dotpath: non-empty, no empty segments, no
- * prototype-pollution / inherited-member segments. Schema validity is not
- * checked here — `configSet` handles unknown paths via an interactive
- * confirm or a `--config-accept-new-path` opt-in so first-time writes
- * under unset namespaces stay possible (see #2400).
- */
-function validateConfigDotpath(dotpath: string): DotpathValidation {
-  if (!dotpath || typeof dotpath !== "string") {
-    return { ok: false, reason: "key is empty" };
-  }
-  const keys = dotpath.split(".");
-  for (const key of keys) {
-    if (!key) return { ok: false, reason: "key contains an empty segment" };
-    if (UNSAFE_KEY_SEGMENTS.has(key)) {
-      return { ok: false, reason: `segment '${key}' is reserved` };
-    }
-  }
-  return { ok: true };
-}
-
-/**
- * Walk a dotpath and report the first reason `configSet` should refuse it:
- *
- *   - Numeric segment: would target an array index, but `setDotpath` always
- *     materialises plain objects, so allowing this would either clobber an
- *     existing array or create a confusingly object-shaped "array".
- *   - Non-object ancestor: an existing intermediate value (string, number,
- *     null, array, …) would be silently overwritten by `setDotpath` on its
- *     way to the leaf.
- *
- * Missing ancestors are fine — they get materialised on write. Returns
- * `null` when no refusal reason applies.
- */
-function findClobberingAncestor(
-  obj: ConfigValue,
-  dotpath: string,
-): { segment: string; reason: string } | null {
-  const keys = dotpath.split(".");
-
-  for (let i = 0; i < keys.length; i++) {
-    if (/^\d+$/.test(keys[i])) {
-      return {
-        segment: keys.slice(0, i + 1).join("."),
-        reason: "is a numeric segment, but 'config set' does not support array editing",
-      };
-    }
-  }
-
-  if (keys.length <= 1) return null;
-
-  let current: ConfigValue = obj;
-  for (let i = 0; i < keys.length - 1; i++) {
-    if (!isConfigObject(current)) {
-      return {
-        segment: keys.slice(0, i).join(".") || "(root)",
-        reason: `is ${describeNonConfigValue(current)}, not a config object`,
-      };
-    }
-    const key = keys[i];
-    if (!Object.prototype.hasOwnProperty.call(current, key)) {
-      return null;
-    }
-    const next = current[key];
-    if (!isConfigObject(next)) {
-      return {
-        segment: keys.slice(0, i + 1).join("."),
-        reason: `is ${describeNonConfigValue(next)}, not a config object`,
-      };
-    }
-    current = next;
-  }
-  return null;
-}
-
-function describeNonConfigValue(value: ConfigValue): string {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "an array";
-  return `a ${typeof value}`;
-}
-
-/**
- * Decide what to do when `config set` targets a key that does not yet exist.
- * Returns `accept` if an explicit override (CLI flag or env) is in effect,
- * `prompt` if the caller should ask the user interactively, and `refuse`
- * otherwise. Inputs are passed in so the gate can be tested without
- * touching `process.env` or `process.stdin`.
- */
-type NewKeyGate = { mode: "accept" } | { mode: "prompt" } | { mode: "refuse" };
-
-interface NewKeyGateInputs {
-  acceptNewPath?: boolean;
-  acceptEnv?: string;
-  isTTY?: boolean;
-  nonInteractiveEnv?: string;
-}
-
-function classifyNewKeyGate(inputs: NewKeyGateInputs): NewKeyGate {
-  if (inputs.acceptNewPath === true || inputs.acceptEnv === "1") {
-    return { mode: "accept" };
-  }
-  const interactive = !!inputs.isTTY && inputs.nonInteractiveEnv !== "1";
-  if (!interactive) {
-    return { mode: "refuse" };
-  }
-  return { mode: "prompt" };
-}
-
 /**
  * Parse a config file's raw text according to its format.
  */
@@ -268,30 +117,6 @@ function parseConfig(raw: string, format: string): ConfigObject {
     throw new Error("Config is not an object.");
   }
   return parsed;
-}
-
-/**
- * Serialize a config object according to its format.
- */
-function serializeConfig(config: ConfigObject, format: string): string {
-  if (format === "yaml") {
-    const YAML = require("yaml");
-    return YAML.stringify(config);
-  }
-  return JSON.stringify(config, null, 2);
-}
-
-/**
- * Parse a CLI-provided config value as JSON when possible, otherwise keep it
- * as a string literal.
- */
-function parseCliConfigValue(rawValue: string): ConfigValue {
-  try {
-    const parsed = parseJson<ConfigValue>(rawValue);
-    return isConfigValue(parsed) ? parsed : rawValue;
-  } catch {
-    return rawValue;
-  }
 }
 
 /**
@@ -324,35 +149,6 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
     const message = err instanceof Error ? err.message : String(err);
     console.error(`  Failed to parse ${target.agentName} config: ${message}`);
     process.exit(1);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// URL validation (literal-IP SSRF check for config set)
-//
-// isPrivateHostname is defined in ./private-networks alongside the shared
-// BlockList built from nemoclaw-blueprint/private-networks.yaml. DNS
-// rebinding (TOCTOU) protection is out of scope — the plugin's
-// validateEndpointUrl handles that via async DNS resolution and pinning.
-// ---------------------------------------------------------------------------
-
-function validateUrlValue(value: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return; // Not a URL — skip validation
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`URL scheme "${parsed.protocol}" is not allowed. Use http: or https:.`);
-  }
-
-  if (isPrivateHostname(parsed.hostname)) {
-    throw new Error(
-      `URL points to private/internal address "${parsed.hostname}". ` +
-        `This could expose internal services to the sandbox.`,
-    );
   }
 }
 
@@ -397,384 +193,14 @@ function configGet(sandboxName: string, opts: ConfigGetOpts = {}): void {
 }
 
 // ---------------------------------------------------------------------------
-// config set
-// ---------------------------------------------------------------------------
-
-interface ConfigSetOpts {
-  key?: string | null;
-  value?: string | null;
-  restart?: boolean;
-  acceptNewPath?: boolean;
-}
-
-async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise<void> {
-  validateName(sandboxName, "sandbox name");
-
-  if (!opts.key) {
-    console.error("  --key is required.");
-    console.error("  Usage: nemoclaw <name> config set --key <dotpath> --value <value>");
-    process.exit(1);
-  }
-
-  if (opts.value === undefined || opts.value === null) {
-    console.error("  --value is required.");
-    console.error("  Usage: nemoclaw <name> config set --key <dotpath> --value <value>");
-    process.exit(1);
-  }
-
-  const dotpathCheck = validateConfigDotpath(opts.key);
-  if (!dotpathCheck.ok) {
-    console.error(`  Invalid config key '${opts.key}': ${dotpathCheck.reason}.`);
-    process.exit(1);
-  }
-
-  const target = resolveAgentConfig(sandboxName);
-
-  // Read current config
-  console.log(`  Reading ${target.agentName} config...`);
-  const config = readSandboxConfig(sandboxName, target);
-
-  // Parse and validate value
-  const parsedValue = parseCliConfigValue(opts.value);
-
-  // Validate URLs for SSRF. validateUrlValue no-ops on non-URL input,
-  // so run it for every string to avoid bypasses via mixed-case schemes
-  // ("HTTP://127.0.0.1") or leading whitespace.
-  if (typeof parsedValue === "string") {
-    try {
-      validateUrlValue(parsedValue.trim());
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`  URL validation failed: ${message}`);
-      process.exit(1);
-    }
-  }
-
-  // Check that we're not modifying the gateway section (contains auth tokens)
-  if (opts.key.startsWith("gateway.") || opts.key === "gateway") {
-    console.error("  Cannot modify the gateway section directly.");
-    console.error("  Use `nemoclaw config rotate-token` for credential changes.");
-    process.exit(1);
-  }
-
-  // Show what will change
-  const oldValue = extractDotpath(config, opts.key);
-  console.log(`  Agent:     ${target.agentName}`);
-  console.log(`  Key:       ${opts.key}`);
-  console.log(`  Old value: ${oldValue !== undefined ? JSON.stringify(oldValue) : "(not set)"}`);
-  console.log(`  New value: ${JSON.stringify(parsedValue)}`);
-
-  // Refuse outright if writing this path would silently overwrite an
-  // existing scalar ancestor or target an array index — setDotpath would
-  // either replace the scalar with a fresh empty object or clobber the
-  // array on its way to the leaf.
-  const refusal = findClobberingAncestor(config, opts.key);
-  if (refusal) {
-    console.error(
-      `  Cannot set '${opts.key}' in ${target.agentName} config: '${refusal.segment}' ${refusal.reason}.`,
-    );
-    process.exit(1);
-  }
-
-  // First-time writes go through a confirmation gate so users get a
-  // signal when they are creating a brand-new key (which may be a typo)
-  // without coupling the validator to OpenClaw's evolving config schema
-  // (see #2400).
-  if (oldValue === undefined) {
-    const gate = classifyNewKeyGate({
-      acceptNewPath: opts.acceptNewPath,
-      acceptEnv: process.env.NEMOCLAW_CONFIG_ACCEPT_NEW_PATH,
-      isTTY: process.stdin.isTTY,
-      nonInteractiveEnv: process.env.NEMOCLAW_NON_INTERACTIVE,
-    });
-    if (gate.mode === "refuse") {
-      console.error(
-        `  Key '${opts.key}' does not currently exist in the ${target.agentName} config.`,
-      );
-      console.error(
-        "  Re-run interactively, pass --config-accept-new-path, or set NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1.",
-      );
-      process.exit(1);
-    }
-    if (gate.mode === "prompt") {
-      const confirmed = await confirmYesNo("  Write this new key? [y/N] ");
-      if (!confirmed) {
-        console.error("  Aborted.");
-        process.exit(1);
-      }
-    }
-  }
-
-  // Apply change
-  setDotpath(config, opts.key, parsedValue);
-
-  // Write to temp file in the agent's native format
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
-  const tmpFile = path.join(tmpDir, target.configFile);
-  fs.writeFileSync(tmpFile, serializeConfig(config, target.format), { mode: 0o600 });
-
-  // Write config to sandbox via kubectl exec (bypasses Landlock)
-  console.log(`  Writing config to sandbox (${target.configPath})...`);
-  const content = fs.readFileSync(tmpFile, "utf-8");
-  execFileSync(
-    "docker",
-    [
-      "exec",
-      "-i",
-      K3S_CONTAINER,
-      "kubectl",
-      "exec",
-      "-n",
-      "openshell",
-      sandboxName,
-      "-c",
-      "agent",
-      "-i",
-      "--",
-      "sh",
-      "-c",
-      `cat > ${target.configPath}`,
-    ],
-    { input: content, stdio: ["pipe", "pipe", "pipe"], timeout: 15000 },
-  );
-
-  // Fix ownership via kubectl exec (bypasses Landlock)
-  try {
-    execFileSync(
-      "docker",
-      [
-        "exec",
-        K3S_CONTAINER,
-        "kubectl",
-        "exec",
-        "-n",
-        "openshell",
-        sandboxName,
-        "-c",
-        "agent",
-        "--",
-        "chown",
-        "sandbox:sandbox",
-        target.configPath,
-      ],
-      { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-    );
-  } catch {
-    // Best effort — chown failure is non-fatal
-  }
-
-  // Cleanup temp
-  try {
-    fs.unlinkSync(tmpFile);
-    fs.rmdirSync(tmpDir);
-  } catch {
-    // Best effort
-  }
-
-  // Audit log
-  appendAuditEntry({
-    action: "shields_down",
-    sandbox: sandboxName,
-    timestamp: new Date().toISOString(),
-    reason: `config set ${target.agentName}:${opts.key}`,
-  });
-
-  console.log(`  ${target.agentName} config updated.`);
-
-  // Restart if requested
-  if (opts.restart) {
-    console.log("  Restarting sandbox agent process...");
-    const restartBinary = getOpenshellBinary();
-    const result = captureOpenshellCommand(
-      restartBinary,
-      ["sandbox", "exec", "--name", sandboxName, "--", "kill", "-HUP", "1"],
-      { ignoreError: true, errorLine: console.error, exit: (code: number) => process.exit(code) },
-    );
-
-    if (result.status !== 0) {
-      console.error("  Could not signal the sandbox process to reload.");
-      console.error("  You may need to recreate the sandbox for this change to take effect.");
-    } else {
-      console.log("  Reload signal sent.");
-    }
-  } else {
-    console.log("");
-    console.log("  Note: Some config changes require a sandbox restart to take effect.");
-    console.log(`  Re-run with --restart or recreate with: nemoclaw onboard --recreate-sandbox`);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// config rotate-token
-// ---------------------------------------------------------------------------
-
-interface RotateTokenOpts {
-  fromEnv?: string | null;
-  fromStdin?: boolean;
-}
-
-async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}): Promise<void> {
-  validateName(sandboxName, "sandbox name");
-
-  // 1. Determine which provider and credentialEnv the sandbox uses.
-  //    Load the onboard session and verify it matches this sandbox.
-  const { loadSession } = require("./onboard-session");
-  const session = loadSession();
-
-  if (!session || !session.credentialEnv) {
-    console.error(`  Cannot determine credential for sandbox '${sandboxName}'.`);
-    console.error("  No onboard session found with a credentialEnv.");
-    console.error("  Re-run: nemoclaw onboard --recreate-sandbox");
-    process.exit(1);
-  }
-
-  if (session.sandboxName && session.sandboxName !== sandboxName) {
-    console.error(
-      `  Onboard session is for sandbox '${session.sandboxName}', not '${sandboxName}'.`,
-    );
-    process.exit(1);
-  }
-
-  const target = resolveAgentConfig(sandboxName);
-  const credentialEnv: string = session.credentialEnv;
-  const providerName: string = session.provider || "inference";
-
-  console.log(`  Agent:          ${target.agentName}`);
-  console.log(`  Provider:       ${providerName}`);
-  console.log(`  Credential env: ${credentialEnv}`);
-
-  // 2. Read new token
-  let newToken: string | null = null;
-
-  if (opts.fromEnv) {
-    newToken = process.env[opts.fromEnv] || null;
-    if (!newToken) {
-      console.error(`  Environment variable "${opts.fromEnv}" is not set or empty.`);
-      process.exit(1);
-    }
-  } else if (opts.fromStdin) {
-    newToken = await readStdin();
-  } else {
-    const { promptSecret } = require("./credentials");
-    newToken = await promptSecret(`  New ${credentialEnv} value: `);
-  }
-
-  if (!newToken || !newToken.trim()) {
-    console.error("  Token cannot be empty.");
-    process.exit(1);
-  }
-
-  newToken = newToken.trim();
-
-  // 3. Validate — no whitespace in token
-  if (/\s/.test(newToken)) {
-    console.error("  Token contains whitespace. This is likely a paste error.");
-    process.exit(1);
-  }
-
-  // 4. Save credential locally
-  const { saveCredential } = require("./credentials");
-  saveCredential(credentialEnv, newToken);
-  console.log("  Credential saved to ~/.nemoclaw/credentials.json");
-
-  // 5. Update the openshell provider
-  console.log("  Updating openshell provider...");
-  const binary = getOpenshellBinary();
-  const result = runOpenshellCommand(
-    binary,
-    ["provider", "update", providerName, "--credential", credentialEnv],
-    {
-      env: { [credentialEnv]: newToken },
-      ignoreError: true,
-      errorLine: console.error,
-      exit: (code: number) => process.exit(code),
-    },
-  );
-
-  if (result.status !== 0) {
-    const providerType = session.providerType || "generic";
-    const createResult = runOpenshellCommand(
-      binary,
-      [
-        "provider",
-        "create",
-        "--name",
-        providerName,
-        "--type",
-        providerType,
-        "--credential",
-        credentialEnv,
-      ],
-      {
-        env: { [credentialEnv]: newToken },
-        ignoreError: true,
-        errorLine: console.error,
-        exit: (code: number) => process.exit(code),
-      },
-    );
-
-    if (createResult.status !== 0) {
-      console.error("  Failed to update provider. You may need to re-onboard.");
-      process.exit(1);
-    }
-  }
-
-  // 6. Audit log
-  appendAuditEntry({
-    action: "shields_down",
-    sandbox: sandboxName,
-    timestamp: new Date().toISOString(),
-    reason: `rotate-token ${target.agentName}:${credentialEnv}`,
-  });
-
-  // 7. Output (redacted)
-  const lastFour = newToken.length > 4 ? newToken.slice(-4) : "****";
-  console.log(`  Token rotated: ****${lastFour}`);
-  console.log("");
-  console.log("  The new credential is active immediately for new sandbox requests.");
-}
-
-/**
- * Read all data from stdin until EOF.
- */
-function readStdin(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    process.stdin.on("data", (chunk: Buffer) => chunks.push(chunk));
-    process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8").trim()));
-    process.stdin.on("error", reject);
-    process.stdin.resume();
-  });
-}
-
-/**
- * Ask a yes/no question on stderr. Returns true only when the answer matches
- * /^y(es)?$/i — empty, "no", or unparseable input is treated as no.
- */
-function confirmYesNo(prompt: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(prompt, (answer: string) => {
-      rl.close();
-      resolve(/^y(es)?$/i.test(answer.trim()));
-    });
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
 export {
+  DEFAULT_AGENT_CONFIG,
   configGet,
-  configSet,
-  configRotateToken,
   resolveAgentConfig,
+  readSandboxConfig,
   extractDotpath,
-  setDotpath,
-  validateConfigDotpath,
-  findClobberingAncestor,
-  classifyNewKeyGate,
-  validateUrlValue,
-  readStdin,
+  parseConfig,
 };

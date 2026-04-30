@@ -223,13 +223,18 @@ Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build
 
 Refer to Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 
+## Provider Credential Storage
+
+Provider credentials live in the OpenShell gateway store, not on the host filesystem.
+NemoClaw never writes them to host disk; the OpenShell L7 proxy injects values at egress.
+See Credential Storage (use the `nemoclaw-user-configure-security` skill) for the inspection, rotation, and migration flow.
+
 ## Host-Side State and Config
 
-NemoClaw keeps its operator-facing state on the host rather than inside the sandbox.
+NemoClaw keeps non-secret operator-facing state on the host rather than inside the sandbox.
 
 | Path | Purpose |
 |---|---|
-| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding. Stored as plaintext JSON protected by local filesystem permissions; see Credential Storage (use the `nemoclaw-user-configure-security` skill). |
 | `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection. |
 | `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
 

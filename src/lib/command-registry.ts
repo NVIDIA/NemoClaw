@@ -164,14 +164,14 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> policy-add",
     description: "Add a network or filesystem policy preset",
-    flags: "(--yes, --dry-run)",
+    flags: "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>)",
     group: "Policy Presets",
     scope: "sandbox",
   },
   {
     usage: "nemoclaw <name> policy-remove",
-    description: "Remove an applied policy preset",
-    flags: "(--yes, --dry-run)",
+    description: "Remove an applied policy preset (built-in or custom)",
+    flags: "(--yes, -y, --dry-run)",
     group: "Policy Presets",
     scope: "sandbox",
   },
@@ -241,20 +241,6 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> config get",
     description: "Get sandbox configuration",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw <name> config set",
-    description: "Set sandbox configuration",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw <name> config rotate-token",
-    description: "Rotate sandbox authentication token",
     group: "Sandbox Management",
     scope: "sandbox",
     hidden: true,

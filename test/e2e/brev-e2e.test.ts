@@ -2,13 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Ephemeral Brev E2E test suite.
+ * Branch Validation E2E — installs NemoClaw FROM SOURCE on a fresh Brev instance.
  *
- * Creates a fresh Brev instance via the launchable bootstrap path, bootstraps it,
- * runs E2E tests remotely, then tears it down.
+ * Answers: "Does this branch work if you install from source on a clean machine?"
+ *
+ * Creates a fresh Brev instance, rsyncs the checked-out branch code, runs
+ * install.sh from source, onboards a sandbox, then executes the selected test
+ * suite against the live environment. Tears down the instance when done.
+ *
+ * NOTE: This does NOT test the community Launchable install path
+ * (launch-plugin.sh). For that, see test-launchable-smoke.sh wired into
+ * nightly-e2e.yaml.
  *
  * Intended to be run from CI via:
- *   npx vitest run --project e2e-brev
+ *   npx vitest run --project e2e-branch-validation
  *
  * Required env vars:
  *   NVIDIA_API_KEY   — passed to VM for inference config during onboarding

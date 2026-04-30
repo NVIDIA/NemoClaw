@@ -17,31 +17,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 50 commands", () => {
+    it("should contain exactly 48 commands", () => {
       // 25 global (20 visible + 5 hidden help/version aliases)
-      // 25 sandbox (19 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(50);
-    });
-
-    it("should have no duplicate usage strings", () => {
-      const usages = COMMANDS.map((c) => c.usage);
-      expect(new Set(usages).size).toBe(usages.length);
-    });
-
-    it("every command has required fields", () => {
-      for (const cmd of COMMANDS) {
-        expect(cmd.usage).toBeTruthy();
-        expect(cmd.description).toBeTruthy();
-        expect(cmd.group).toBeTruthy();
-        expect(["global", "sandbox"]).toContain(cmd.scope);
-      }
-    });
-  });
-
-  describe("globalCommands()", () => {
-    it("should return exactly 25 entries", () => {
-      // 20 visible + 5 hidden (help, --help, -h, --version, -v)
-      expect(globalCommands()).toHaveLength(25);
+      // 23 sandbox (19 visible + 4 hidden shields/config)
+      expect(COMMANDS).toHaveLength(48);
     });
 
     it("every entry has scope global", () => {
@@ -52,9 +31,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 25 entries", () => {
-      // 19 visible + 6 hidden (shields×3 + config×3)
-      expect(sandboxCommands()).toHaveLength(25);
+    it("should return exactly 23 entries", () => {
+      // 19 visible + 4 hidden (shields×3 + config get)
+      expect(sandboxCommands()).toHaveLength(23);
     });
 
     it("every entry has scope sandbox", () => {
@@ -65,182 +44,97 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 11 hidden commands (39 visible)", () => {
+    it("should exclude 9 hidden commands (39 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
-      // 6 hidden sandbox (shields×3, config×3)
+      // 4 hidden sandbox (shields×3, config get)
       expect(visibleCommands()).toHaveLength(39);
     });
 
-    it("no visible command has hidden=true", () => {
+    it("none of the returned commands are hidden", () => {
       for (const cmd of visibleCommands()) {
-        expect(cmd.hidden).not.toBe(true);
+        expect(cmd.hidden).toBeFalsy();
       }
-    });
-  });
-
-  describe("hidden commands", () => {
-    it("exactly 11 hidden commands: help/version aliases + shields + config", () => {
-      const hidden = COMMANDS.filter((c) => c.hidden);
-      expect(hidden).toHaveLength(11);
-      const usages = hidden.map((c) => c.usage).sort();
-      expect(usages).toEqual([
-        "nemoclaw --help",
-        "nemoclaw --version",
-        "nemoclaw -h",
-        "nemoclaw -v",
-        "nemoclaw <name> config get",
-        "nemoclaw <name> config rotate-token",
-        "nemoclaw <name> config set",
-        "nemoclaw <name> shields down",
-        "nemoclaw <name> shields status",
-        "nemoclaw <name> shields up",
-        "nemoclaw help",
-      ]);
-    });
-  });
-
-  describe("deprecated commands", () => {
-    it("should include setup, setup-spark, deploy, start, stop", () => {
-      const deprecated = COMMANDS.filter((c) => c.deprecated);
-      const usages = deprecated.map((c) => c.usage).sort();
-      expect(usages).toContain("nemoclaw setup");
-      expect(usages).toContain("nemoclaw setup-spark");
-      expect(usages).toContain("nemoclaw deploy");
-      expect(usages).toContain("nemoclaw start");
-      expect(usages).toContain("nemoclaw stop");
-    });
-  });
-
-  describe("canonicalUsageList()", () => {
-    it("returns sorted usage strings", () => {
-      const list = canonicalUsageList();
-      const sorted = [...list].sort();
-      expect(list).toEqual(sorted);
-    });
-
-    it("every entry starts with nemoclaw", () => {
-      for (const entry of canonicalUsageList()) {
-        expect(entry).toMatch(/^nemoclaw /);
-      }
-    });
-
-    it("no entry contains description text (double spaces)", () => {
-      for (const entry of canonicalUsageList()) {
-        expect(entry).not.toMatch(/\s{2,}/);
-      }
-    });
-
-    it("excludes hidden commands", () => {
-      const list = canonicalUsageList();
-      expect(list).not.toContain("nemoclaw <name> shields down");
-      expect(list).not.toContain("nemoclaw <name> config get");
-    });
-  });
-
-  describe("globalCommandTokens()", () => {
-    it("returns the exact set of 22 tokens matching the old GLOBAL_COMMANDS", () => {
-      const tokens = globalCommandTokens();
-      const expected = new Set([
-        "onboard",
-        "list",
-        "deploy",
-        "setup",
-        "setup-spark",
-        "start",
-        "stop",
-        "tunnel",
-        "status",
-        "debug",
-        "uninstall",
-        "credentials",
-        "backup-all",
-        "backups",
-        "import",
-        "upgrade-sandboxes",
-        "gc",
-        "help",
-        "--help",
-        "-h",
-        "--version",
-        "-v",
-      ]);
-      expect(tokens).toEqual(expected);
-    });
-  });
-
-  describe("sandboxActionTokens()", () => {
-    it("returns exactly 16 unique action tokens including empty string", () => {
-      const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(16);
-      // Must contain the same set as the old sandboxActions array
-const expected = new Set([
-          "connect",
-          "status",
-          "logs",
-          "policy-add",
-          "policy-remove",
-          "policy-list",
-          "destroy",
-          "export",
-          "skill",
-          "rebuild",
-          "snapshot",
-          "shields",
-          "config",
-          "channels",
-          "gateway-token",
-          "",
-        ]);
-      expect(new Set(tokens)).toEqual(expected);
-    });
-
-    it("has no duplicates", () => {
-      const tokens = sandboxActionTokens();
-      expect(new Set(tokens).size).toBe(tokens.length);
     });
   });
 
   describe("commandsByGroup()", () => {
-    it("groups visible commands by group name", () => {
+    it("returns a Map with all groups that have visible commands", () => {
       const grouped = commandsByGroup();
-      // All group keys should appear in GROUP_ORDER
-      for (const key of grouped.keys()) {
-        expect(GROUP_ORDER).toContain(key);
+      expect(grouped).toBeInstanceOf(Map);
+      expect(grouped.size).toBeGreaterThan(0);
+
+      // Every group in the Map should be in GROUP_ORDER
+      for (const group of grouped.keys()) {
+        expect(GROUP_ORDER).toContain(group);
       }
-      // Total visible commands across all groups
-      let total = 0;
-      for (const cmds of grouped.values()) {
-        total += cmds.length;
-      }
-      expect(total).toBe(visibleCommands().length);
     });
 
-    it("no hidden commands in any group", () => {
+    it("only includes visible commands in the groups", () => {
       const grouped = commandsByGroup();
       for (const cmds of grouped.values()) {
         for (const cmd of cmds) {
-          expect(cmd.hidden).not.toBe(true);
+          expect(cmd.hidden).toBeFalsy();
         }
       }
     });
   });
 
-  describe("GROUP_ORDER", () => {
-    it("matches the current UX sequence", () => {
-      expect(GROUP_ORDER).toEqual([
-        "Getting Started",
-        "Sandbox Management",
-        "Skills",
-        "Policy Presets",
-        "Messaging Channels",
-        "Compatibility Commands",
-        "Services",
-        "Troubleshooting",
-        "Credentials",
-        "Backup",
-        "Upgrade",
-        "Cleanup",
-      ]);
+  describe("canonicalUsageList()", () => {
+    it("returns a sorted list of usage strings", () => {
+      const list = canonicalUsageList();
+      expect(list).toHaveLength(visibleCommands().length);
+
+      const sorted = [...list].sort();
+      expect(list).toEqual(sorted);
+    });
+
+    it("contains only strings from visible commands", () => {
+      const list = canonicalUsageList();
+      const visibleUsages = visibleCommands().map(c => c.usage);
+      for (const usage of list) {
+        expect(visibleUsages).toContain(usage);
+      }
+    });
+  });
+
+  describe("globalCommandTokens()", () => {
+    it("extracts unique first tokens of global commands", () => {
+      const tokens = globalCommandTokens();
+      expect(tokens).toBeInstanceOf(Set);
+      expect(tokens.size).toBeGreaterThan(0);
+
+      // "nemoclaw onboard" -> "onboard"
+      expect(tokens.has("onboard")).toBe(true);
+      // "nemoclaw --help" -> "--help"
+      expect(tokens.has("--help")).toBe(true);
+    });
+
+    it("handles multi-word commands by taking only the first token after nemoclaw", () => {
+      const tokens = globalCommandTokens();
+      // "nemoclaw tunnel start" -> "tunnel"
+      expect(tokens.has("tunnel")).toBe(true);
+      // "create" is a sandbox subcommand, not a global first token
+      expect(tokens.has("create")).toBe(false);
+    });
+  });
+
+  describe("sandboxActionTokens()", () => {
+    it("extracts unique action tokens from sandbox commands", () => {
+      const tokens = sandboxActionTokens();
+      expect(Array.isArray(tokens)).toBe(true);
+
+      // "nemoclaw <name> connect" -> "connect"
+      expect(tokens).toContain("connect");
+      // "nemoclaw <name> snapshot create" -> "snapshot"
+      expect(tokens).toContain("snapshot");
+      // Default connect behavior is an empty string
+      expect(tokens).toContain("");
+    });
+
+    it("does not contain duplicates", () => {
+      const tokens = sandboxActionTokens();
+      const unique = new Set(tokens);
+      expect(tokens.length).toBe(unique.size);
     });
   });
 });

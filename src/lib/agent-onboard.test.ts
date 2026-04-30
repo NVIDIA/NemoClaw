@@ -14,8 +14,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     forwardPort: 19000,
     dashboard: { kind: "ui", label: "UI", path: "/" },
     configPaths: {
-      immutableDir: "/tmp/agent/immutable",
-      writableDir: "/tmp/agent/writable",
+      dir: "/tmp/agent",
       configFile: "/tmp/agent/config.yaml",
       envFile: null,
       format: "yaml",
