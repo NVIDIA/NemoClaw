@@ -890,3 +890,86 @@ For additional troubleshooting, see the [Quickstart](../get-started/quickstart.m
 Podman is not a tested runtime.
 OpenShell officially documents Docker-based runtimes only.
 If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
+
+## Brev
+
+For Brev setup instructions, see [Get Started with NemoClaw on Brev (Web UI)](../get-started/brev-web-ui-quickstart.md).
+
+### Most OpenClaw skills show as blocked
+
+After deploying NemoClaw on Brev, the Skills page in the OpenClaw gateway dashboard shows most bundled skills with a `blocked` status.
+Only three skills are available by default: `healthcheck`, `skill-creator`, and `weather`.
+
+Skills are blocked for one of three reasons.
+
+- The skill requires a macOS-only binary (`memo`, `remindctl`, `grizzly`, and similar) that is not available on the Linux (GCP) instance Brev provisions.
+- The skill requires a CLI binary that is not pre-installed in the Brev environment, such as `gh` for the GitHub skill.
+- The skill requires API credentials that have not been configured, such as a Notion API key or Discord bot token.
+
+Skills that require macOS-only binaries cannot be enabled on Brev.
+Skills that require Linux-compatible CLIs can be unblocked by installing the required binary on the Brev host.
+
+To enable the GitHub skill, install the `gh` CLI on the Brev host (outside the sandbox) and authenticate:
+
+```console
+$ sudo apt-get update
+$ sudo apt-get install -y gh
+$ gh auth login
+```
+
+Then restart the sandbox:
+
+```console
+$ nemoclaw <name> stop
+$ nemoclaw <name> start
+```
+
+### `openclaw config set` fails with a permission error on Brev
+
+When deploying NemoClaw on Brev, running `openclaw config set` or asking the agent to update its configuration returns:
+
+```text
+EACCES: permission denied, open '/sandbox/.openclaw/openclaw.json'
+```
+
+This is expected behavior.
+The `openclaw.json` file is owned by root and mounted read-only inside the sandbox.
+NemoClaw's security model prevents the agent from modifying its own configuration to protect against prompt injection attacks.
+
+To change the OpenClaw configuration on Brev, use the host-side `nemoclaw <sandbox> config set` command instead:
+
+```console
+$ nemoclaw <name> config set <key> <value>
+```
+
+If you need to make changes that `nemoclaw config set` does not support, connect to the Brev host via SSH or the Brev CLI, edit the file from the host with appropriate permissions, and restart the sandbox.
+Refer to [Commands](../reference/commands.md) for the full list of supported configuration keys.
+
+### OpenClaw dashboard is unreachable after extended uptime on Brev
+
+After leaving NemoClaw running for an extended period on Brev, the OpenClaw dashboard may return `ERR_CONNECTION_RESET` or fail to load in the browser.
+The agent may still respond on messaging channels such as Telegram or Slack while the dashboard is unreachable.
+
+Re-run onboarding to restore dashboard connectivity:
+
+```console
+$ nemoclaw <name> onboard
+```
+
+This restores the gateway connection without deleting the sandbox or losing workspace files.
+
+### Skill install buttons do not work on Brev
+
+Clicking **Install** on a skill in the OpenClaw dashboard on Brev shows no response or fails silently.
+
+The sandbox filesystem is read-only for most paths.
+The `npm install -g` and `apt install` commands that skill installation depends on cannot write to their target directories inside the sandbox.
+
+Install skill dependencies from the Brev host before launching the sandbox.
+Connect to your Brev instance and install the required binary listed in the skill's **Missing** field on the Skills page.
+Then restart the sandbox:
+
+```console
+$ nemoclaw <name> stop
+$ nemoclaw <name> start
+```
