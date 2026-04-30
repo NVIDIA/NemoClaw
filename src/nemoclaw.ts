@@ -24,6 +24,7 @@ const YW = _useColor ? "\x1b[1;33m" : "";
 const { ROOT, run, runInteractive, shellQuote, validateName } = require("./lib/runner");
 const {
   dockerCapture,
+  dockerInspect,
   dockerListImagesFormat,
   dockerRemoveVolumesByPrefix,
   dockerRmi,
@@ -3795,16 +3796,28 @@ async function autoCreateSandboxFromSource(
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
 }
 
+// Returns true only when the gateway Docker container is confirmed running.
+// `openshell sandbox list` reads a local registry and exits 0 even when the
+// gateway is stopped (#2673), so we probe the container directly instead.
+function probeGatewayRunning(): boolean {
+  const container = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
+  const result = dockerInspect(
+    ["--type", "container", "--format", "{{.State.Running}}", container],
+    { ignoreError: true, suppressOutput: true },
+  );
+  return result.status === 0 && String(result.stdout || "").trim() === "true";
+}
+
 async function sandboxSnapshot(sandboxName: string, subArgs: string[]) {
   const subcommand = subArgs[0] || "help";
   switch (subcommand) {
     case "create": {
       const opts = parseSnapshotCreateFlags(subArgs.slice(1));
-      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
-      if (isLive.status !== 0) {
+      if (!probeGatewayRunning()) {
         console.error("  Failed to query live sandbox state from OpenShell.");
         process.exit(1);
       }
+      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       const liveNames = parseLiveSandboxNames(isLive.output || "");
       if (!liveNames.has(sandboxName)) {
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
@@ -3865,11 +3878,11 @@ async function sandboxSnapshot(sandboxName: string, subArgs: string[]) {
         parsed.targetSandbox === sandboxName
           ? sandboxName
           : validateName(parsed.targetSandbox, "target sandbox name");
-      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
-      if (isLive.status !== 0) {
+      if (!probeGatewayRunning()) {
         console.error("  Failed to query live sandbox state from OpenShell.");
         process.exit(1);
       }
+      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       const liveNames = parseLiveSandboxNames(isLive.output || "");
       if (!liveNames.has(targetSandbox)) {
         // Self-restore: cannot auto-create, there is no source to clone from.
