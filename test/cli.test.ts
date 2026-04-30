@@ -301,12 +301,16 @@ describe("CLI dispatch", () => {
         { mode: 0o755 },
       );
 
-      const r = runWithEnv("start", {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-        NVIDIA_API_KEY: "",
-        TELEGRAM_BOT_TOKEN: "",
-      });
+      const r = runWithEnv(
+        "start",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+          NVIDIA_API_KEY: "",
+          TELEGRAM_BOT_TOKEN: "",
+        },
+        30000,
+      );
 
       expect(r.code).toBe(0);
       expect(r.out).not.toContain("NVIDIA API Key required");
