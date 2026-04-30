@@ -145,7 +145,7 @@ export default class ShareCommand extends Command {
     // Check not already mounted
     if (isMountPoint(localMount)) {
       console.error(`  ${localMount} is already mounted.`);
-      console.error(`  Run 'nemoclaw ${sandboxName} share unmount' first.`);
+      console.error(`  Run '${deps.cliName} ${sandboxName} share unmount' first.`);
       process.exit(1);
     }
 
@@ -159,11 +159,10 @@ export default class ShareCommand extends Command {
       process.exit(1);
     }
 
-    const tmpFile = path.join(
-      os.tmpdir(),
-      `nemoclaw-sshfs-${sandboxName}-${process.pid}.conf`,
-    );
-    fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
+    // Use a private temp directory to prevent symlink attacks on predictable paths.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sshfs-"));
+    const tmpFile = path.join(tmpDir, `${sandboxName}.conf`);
+    fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600, flag: "wx" });
     fs.mkdirSync(localMount, { recursive: true });
 
     let mountFailed = false;
@@ -190,7 +189,7 @@ export default class ShareCommand extends Command {
         if (/sftp/i.test(stderr)) {
           console.error("  The sandbox may lack openssh-sftp-server.");
           console.error(
-            `  If this sandbox uses the default base image, rebuild with: nemoclaw ${sandboxName} rebuild --yes`,
+            `  If this sandbox uses the default base image, rebuild with: ${deps.cliName} ${sandboxName} rebuild --yes`,
           );
           console.error(
             "  If it was created from a custom `--from` image, add openssh-sftp-server at /usr/lib/openssh/sftp-server and rebuild.",
@@ -204,6 +203,7 @@ export default class ShareCommand extends Command {
     } finally {
       try {
         fs.unlinkSync(tmpFile);
+        fs.rmdirSync(tmpDir);
       } catch {
         /* ignore */
       }
@@ -260,7 +260,9 @@ export default class ShareCommand extends Command {
   }
 
   private shareHelp(): void {
-    console.error("  Usage: nemoclaw <name> share <mount|unmount|status>");
+    const { cliName } = buildShareCommandDeps();
+    console.error(`  Usage: ${cliName} <name> share <mount|unmount|status>`);
+
     console.error(
       "    mount   [sandbox-path] [local-mount-point]  Mount sandbox filesystem via SSHFS",
     );

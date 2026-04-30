@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
+import { CLI_NAME } from "./branding";
 
 export interface ShareCommandDeps {
   /** Run `openshell sandbox ssh-config <name>` and return output. */
@@ -12,6 +13,8 @@ export interface ShareCommandDeps {
   colorGreen: string;
   /** ANSI reset code (empty string if color disabled). */
   colorReset: string;
+  /** CLI executable name for user-facing messages (supports alias launchers). */
+  cliName: string;
 }
 
 interface ShareRuntimeBridge {
@@ -40,5 +43,6 @@ export function buildShareCommandDeps(): ShareCommandDeps {
     ensureLive: (sandboxName: string) => runtime.ensureLiveSandboxOrExit(sandboxName),
     colorGreen: runtime.G,
     colorReset: runtime.R,
+    cliName: CLI_NAME,
   };
 }
