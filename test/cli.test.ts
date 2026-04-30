@@ -3111,6 +3111,7 @@ describe("list shows live gateway inference", () => {
     const r = runWithEnv("alpha share mount", { HOME: home });
 
     // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
+    expect(r.code).not.toBe(0);
     expect(r.out).not.toContain("Unknown action");
   });
 });
