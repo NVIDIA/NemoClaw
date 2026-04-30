@@ -334,7 +334,7 @@ describe("removeSkill (unit — no SSH)", () => {
   it("success is false for OpenClaw when mirrorDir removal fails even if uploadDir was removed", () => {
     // Non-OpenClaw agent: success depends only on uploadDir
     const nonOcPaths = resolvePaths(
-      { name: "hermes", configPaths: { immutableDir: "/sandbox/.hermes", writableDir: "/sandbox/.hermes-data" } },
+      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
       "test-skill",
     );
     // Both SSH calls fail (unreachable), so removedUploadDir=false → success=false regardless
@@ -362,7 +362,7 @@ describe("verifyRemove (unit — no SSH)", () => {
 
   it("returns false for non-OpenClaw paths when SSH is unreachable", () => {
     const paths = resolvePaths(
-      { name: "hermes", configPaths: { immutableDir: "/sandbox/.hermes", writableDir: "/sandbox/.hermes-data" } },
+      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
       "test-skill",
     );
     const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
@@ -381,7 +381,7 @@ describe("checkExisting (unit — no SSH)", () => {
 
   it("returns null when SSH is unreachable for non-OpenClaw paths", () => {
     const paths = resolvePaths(
-      { name: "hermes", configPaths: { immutableDir: "/sandbox/.hermes", writableDir: "/sandbox/.hermes-data" } },
+      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
       "test-skill",
     );
     const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
