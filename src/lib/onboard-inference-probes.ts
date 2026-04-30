@@ -49,6 +49,53 @@ function hasResponsesToolCall(body) {
   return false;
 }
 
+function parseStringifiedToolCall(content) {
+  if (typeof content !== "string") return null;
+  const trimmed = content.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (typeof parsed.name !== "string" || parsed.name.length === 0) return null;
+    if (!Object.prototype.hasOwnProperty.call(parsed, "arguments")) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function hasChatCompletionsToolCall(body) {
+  const parsed = parseJsonObject(body);
+  const message = parsed?.choices?.[0]?.message;
+  if (!message || typeof message !== "object") return false;
+  const toolCalls = message.tool_calls;
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return false;
+  return toolCalls.some((call) => {
+    if (!call || typeof call !== "object") return false;
+    const fn = call.function;
+    return Boolean(fn && typeof fn === "object" && typeof fn.name === "string" && fn.name.length > 0);
+  });
+}
+
+function hasChatCompletionsToolCallLeak(body) {
+  const parsed = parseJsonObject(body);
+  const message = parsed?.choices?.[0]?.message;
+  if (!message || typeof message !== "object") return false;
+
+  const content = message.content;
+  if (typeof content === "string") {
+    return Boolean(parseStringifiedToolCall(content));
+  }
+  if (Array.isArray(content)) {
+    return content.some((item) => {
+      if (!item || typeof item !== "object") return false;
+      const text = typeof item.text === "string" ? item.text : "";
+      return Boolean(parseStringifiedToolCall(text));
+    });
+  }
+  return false;
+}
+
 function shouldRequireResponsesToolCalling(provider) {
   return (
     provider === "nvidia-prod" || provider === "gemini-api" || provider === "compatible-endpoint"
@@ -188,6 +235,113 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
   };
 }
 
+function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {}) {
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const authHeader = !useQueryParam && normalizedKey
+    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
+    : [];
+  const url = useQueryParam && normalizedKey
+    ? `${baseUrl}/chat/completions?key=${encodeURIComponent(normalizedKey)}`
+    : `${baseUrl}/chat/completions`;
+  const result = runCurlProbe([
+    "-sS",
+    ...getValidationProbeCurlArgs(),
+    "-H",
+    "Content-Type: application/json",
+    ...authHeader,
+    "-d",
+    JSON.stringify({
+      model,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a tool-calling assistant. When tools are available and the user asks for an action, call a tool.",
+        },
+        {
+          role: "user",
+          content:
+            "Send hello to the current session. Use the sessions_send tool and do not answer in plain text.",
+        },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "sessions_send",
+            description: "Send a message to the active chat session.",
+            parameters: {
+              type: "object",
+              properties: { message: { type: "string" } },
+              required: ["message"],
+              additionalProperties: false,
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "memory_search",
+            description: "Search memory for relevant prior context.",
+            parameters: {
+              type: "object",
+              properties: { query: { type: "string" } },
+              required: ["query"],
+              additionalProperties: false,
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "web_fetch",
+            description: "Fetch a URL and summarize the result.",
+            parameters: {
+              type: "object",
+              properties: { url: { type: "string" } },
+              required: ["url"],
+              additionalProperties: false,
+            },
+          },
+        },
+      ],
+      tool_choice: "required",
+      temperature: 0,
+    }),
+    url,
+  ]);
+
+  if (!result.ok) {
+    return result;
+  }
+  if (hasChatCompletionsToolCall(result.body)) {
+    return result;
+  }
+  if (hasChatCompletionsToolCallLeak(result.body)) {
+    return {
+      ok: false,
+      httpStatus: result.httpStatus,
+      curlStatus: result.curlStatus,
+      body: result.body,
+      stderr: result.stderr,
+      message:
+        `HTTP ${result.httpStatus}: Chat Completions leaked tool calls into plain text content. ` +
+        "Use an endpoint/runtime that returns structured tool_calls (for Hermes on local inference, " +
+        "prefer vLLM with --tool-call-parser hermes).",
+    };
+  }
+  return {
+    ok: false,
+    httpStatus: result.httpStatus,
+    curlStatus: result.curlStatus,
+    body: result.body,
+    stderr: result.stderr,
+    message: `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`,
+  };
+}
+
 // ── OpenAI-like probe ────────────────────────────────────────────
 function isDeepSeekV4ProModel(model) {
   return String(model || "").toLowerCase() === "deepseek-ai/deepseek-v4-pro";
@@ -288,12 +442,16 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     name: "Chat Completions API",
     api: "openai-completions",
     execute: () =>
-      runChatCompletionsProbe({
-        authHeader,
-        model,
-        url: appendKey("/chat/completions"),
-        isWsl: options.isWsl,
-      }),
+      options.requireChatCompletionsToolCalling === true
+        ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
+            authMode: options.authMode,
+          })
+        : runChatCompletionsProbe({
+            authHeader,
+            model,
+            url: appendKey("/chat/completions"),
+            isWsl: options.isWsl,
+          }),
   };
 
   // NVIDIA Build does not expose /v1/responses; probing it always returns
@@ -481,6 +639,8 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
 module.exports = {
   parseJsonObject,
   hasResponsesToolCall,
+  hasChatCompletionsToolCall,
+  hasChatCompletionsToolCallLeak,
   shouldRequireResponsesToolCalling,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
@@ -488,6 +648,7 @@ module.exports = {
   getChatCompletionsProbePayload,
   getChatCompletionsProbeCurlArgs,
   probeResponsesToolCalling,
+  probeChatCompletionsToolCalling,
   probeOpenAiLikeEndpoint,
   probeAnthropicEndpoint,
 };

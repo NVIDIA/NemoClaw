@@ -397,6 +397,92 @@ describe("runner", () => {
       );
     });
 
+    it("applies blueprint policy additions by merging into the live policy", async () => {
+      const bp = minimalBlueprint({
+        components: {
+          inference: {
+            profiles: {
+              default: {
+                provider_type: "openai",
+                provider_name: "my-provider",
+                endpoint: "https://api.example.com/v1",
+                model: "gpt-4",
+                credential_env: "MY_API_KEY",
+              },
+            },
+          },
+          sandbox: {
+            image: "openclaw",
+            name: "test-sandbox",
+            forward_ports: [18789],
+          },
+          policy: {
+            additions: {
+              nim_service: {
+                mode: "allow",
+                endpoints: ["https://integrate.api.nvidia.com"],
+              },
+            },
+          },
+        },
+      });
+
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+        if (
+          args[0] === "policy" &&
+          args[1] === "get" &&
+          args[2] === "--full" &&
+          args[3] === "test-sandbox"
+        ) {
+          return {
+            exitCode: 0,
+            stdout: [
+              "Version: 1",
+              "Hash: sha256:test",
+              "---",
+              "version: 1",
+              "network_policies:",
+              "  existing_service:",
+              "    mode: allow",
+              "    endpoints:",
+              "      - https://api.example.com",
+              "",
+            ].join("\n"),
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+
+      await actionApply("default", bp);
+
+      expect(mockExeca).toHaveBeenCalledWith(
+        "openshell",
+        ["policy", "set", "--policy", expect.stringContaining("merged-policy.yaml"), "--wait", "test-sandbox"],
+        expect.objectContaining({ reject: false }),
+      );
+
+      const mergedPolicyKey = [...store.keys()].find((k) =>
+        k.endsWith("/merged-policy.yaml") || k.endsWith("\\merged-policy.yaml"),
+      );
+      if (!mergedPolicyKey) throw new Error("merged policy file not written");
+      const mergedEntry = store.get(mergedPolicyKey);
+      if (!mergedEntry?.content) throw new Error("merged policy file is empty");
+      const merged = YAML.parse(mergedEntry.content) as {
+        network_policies?: Record<string, unknown>;
+      };
+      expect(merged.network_policies).toHaveProperty("existing_service");
+      expect(merged.network_policies).toHaveProperty("nim_service");
+    });
+
+    it("skips policy commands when policy additions are empty", async () => {
+      await actionApply("default", minimalBlueprint());
+      const policyCalls = mockExeca.mock.calls.filter(
+        (c) => Array.isArray(c[1]) && c[1][0] === "policy",
+      );
+      expect(policyCalls).toEqual([]);
+    });
+
     it("reuses sandbox when 'already exists' error", async () => {
       mockExeca.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "already exists" });
       // Subsequent calls succeed

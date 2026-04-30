@@ -221,6 +221,31 @@ interface SandboxConfig {
   forward_ports?: number[];
 }
 
+function parseCurrentPolicy(raw: string): UnknownRecord {
+  const sep = raw.indexOf("---");
+  const yaml = (sep >= 0 ? raw.slice(sep + 3) : raw).trim();
+  if (!yaml) return {};
+  const parsed = YAML.parse(yaml);
+  return isObjectLike(parsed) ? parsed : {};
+}
+
+function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
+  const current = parseCurrentPolicy(currentPolicyRaw);
+  const existingNetworkPolicies = isObjectLike(current.network_policies) ? current.network_policies : {};
+  const output: UnknownRecord = {};
+
+  for (const [key, value] of Object.entries(current)) {
+    if (key !== "version" && key !== "network_policies") {
+      output[key] = value;
+    }
+  }
+
+  output.version =
+    typeof current.version === "number" && Number.isFinite(current.version) ? current.version : 1;
+  output.network_policies = { ...existingNetworkPolicies, ...additions };
+  return YAML.stringify(output);
+}
+
 export function loadBlueprint(): Blueprint {
   const blueprintPath = process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".";
   const bpFile = join(blueprintPath, "blueprint.yaml");
@@ -388,6 +413,9 @@ export async function actionApply(
   const sandboxName = sandboxCfg.name ?? "openclaw";
   const sandboxImage = sandboxCfg.image ?? "openclaw";
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
+  const policyAdditions = blueprint.components?.policy?.additions ?? {};
+  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
+  mkdirSync(stateDir, { recursive: true });
 
   progress(20, "Creating OpenClaw sandbox");
   const createArgs = [
@@ -467,9 +495,30 @@ export async function actionApply(
   }
   await runCmd(inferenceArgs, { reject: false });
 
+  if (Object.keys(policyAdditions).length > 0) {
+    progress(78, "Applying policy additions");
+    const currentPolicy = await runCmd(["openshell", "policy", "get", "--full", sandboxName], {
+      reject: false,
+    });
+    if (currentPolicy.exitCode !== 0) {
+      throw new Error(
+        `Failed to read current policy before applying additions: ${currentPolicy.stderr}`,
+      );
+    }
+
+    const mergedPolicyFile = join(stateDir, "merged-policy.yaml");
+    writeFileSync(mergedPolicyFile, mergePolicyAdditions(currentPolicy.stdout, policyAdditions));
+
+    const policySet = await runCmd(
+      ["openshell", "policy", "set", "--policy", mergedPolicyFile, "--wait", sandboxName],
+      { reject: false },
+    );
+    if (policySet.exitCode !== 0) {
+      throw new Error(`Failed to apply policy additions: ${policySet.stderr}`);
+    }
+  }
+
   progress(85, "Saving run state");
-  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
-  mkdirSync(stateDir, { recursive: true });
   writeFileSync(
     join(stateDir, "plan.json"),
     JSON.stringify(
@@ -477,6 +526,7 @@ export async function actionApply(
         run_id: rid,
         profile,
         sandbox_name: sandboxName,
+        policy_additions: policyAdditions,
         inference: {
           provider_type: inferenceCfg.provider_type,
           provider_name: inferenceCfg.provider_name,

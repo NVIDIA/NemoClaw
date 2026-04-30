@@ -2132,6 +2132,8 @@ function patchStagedDockerfile(
 // Inference probes — moved to onboard-inference-probes.ts
 const {
   hasResponsesToolCall,
+  hasChatCompletionsToolCall,
+  hasChatCompletionsToolCallLeak,
   shouldRequireResponsesToolCalling,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
@@ -2153,6 +2155,7 @@ async function validateOpenAiLikeSelection(
   options: {
     authMode?: "bearer" | "query-param";
     requireResponsesToolCalling?: boolean;
+    requireChatCompletionsToolCalling?: boolean;
     skipResponsesProbe?: boolean;
     probeStreaming?: boolean;
   } = {},
@@ -5704,6 +5707,11 @@ async function setupNim(
             selectedModel,
             null,
             "Choose a different Ollama model or select Other.",
+            null,
+            {
+              skipResponsesProbe: true,
+              requireChatCompletionsToolCalling: true,
+            },
           );
           if (validation.retry === "selection") {
             continue selectionLoop;
@@ -5788,6 +5796,11 @@ async function setupNim(
             selectedModel,
             null,
             "Choose a different Ollama model or select Other.",
+            null,
+            {
+              skipResponsesProbe: true,
+              requireChatCompletionsToolCalling: true,
+            },
           );
           if (validation.retry === "selection") {
             continue selectionLoop;
@@ -8818,6 +8831,8 @@ module.exports = {
   summarizeCurlFailure,
   summarizeProbeFailure,
   hasResponsesToolCall,
+  hasChatCompletionsToolCall,
+  hasChatCompletionsToolCallLeak,
   upsertProvider,
   hashCredential,
   detectMessagingCredentialRotation,

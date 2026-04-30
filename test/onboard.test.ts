@@ -82,6 +82,8 @@ type OnboardTestInternals = {
   isGatewayHealthy: ShimFn<boolean>;
   classifyValidationFailure: ShimFn<ValidationClassification>;
   hasResponsesToolCall: (body?: string | null) => boolean;
+  hasChatCompletionsToolCall: (body?: string | null) => boolean;
+  hasChatCompletionsToolCallLeak: (body?: string | null) => boolean;
   agentSupportsWebSearch: (
     agent?: AgentDefinition | null,
     dockerfilePathOverride?: string | null,
@@ -184,6 +186,8 @@ const {
   isGatewayHealthy,
   classifyValidationFailure,
   hasResponsesToolCall,
+  hasChatCompletionsToolCall,
+  hasChatCompletionsToolCallLeak,
   agentSupportsWebSearch,
   configureWebSearch,
   isLoopbackHostname,
@@ -850,6 +854,77 @@ describe("onboard helpers", () => {
       ),
     ).toBe(false);
     expect(hasResponsesToolCall("{")).toBe(false);
+  });
+
+  it("detects structured chat-completions tool_calls", () => {
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: { name: "sessions_send", arguments: '{"message":"hello"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "OK", tool_calls: [] } }],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasChatCompletionsToolCall("{")).toBe(false);
+  });
+
+  it("detects leaked stringified tool-call JSON in chat-completions content", () => {
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: '{\n  "arguments":{"message":"hello?"},\n  "name":"sessions_send"\n}',
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "Regular assistant text response.",
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasChatCompletionsToolCallLeak("{")).toBe(false);
+  });
+
+  it("regression #2731: Ollama validation requires structured chat-completions tool calls", () => {
+    const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"), "utf-8");
+    expect(src).toMatch(/Local Ollama[\s\S]*requireChatCompletionsToolCalling:\s*true/);
+    expect(src).toMatch(/Local Ollama[\s\S]*skipResponsesProbe:\s*true/);
   });
 
   it("normalizes anthropic-compatible base URLs with a trailing /v1", () => {

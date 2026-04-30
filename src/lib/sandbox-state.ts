@@ -746,11 +746,28 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       `SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`,
     );
 
-    if (result.status === 0 && result.stdout && result.stdout.length > 0) {
+    const hasTarBytes = Boolean(result.stdout && result.stdout.length > 0);
+    const tarExitCode = typeof result.status === "number" ? result.status : null;
+    // GNU tar exits with status 2 on non-fatal read errors (e.g., unreadable
+    // root-owned files). If we still received archive bytes, attempt a safe
+    // extract and keep any successfully captured directories.
+    const canUseTarOutput = hasTarBytes && (tarExitCode === 0 || tarExitCode === 2);
+    if (canUseTarOutput) {
+      if (tarExitCode === 2) {
+        _log("WARNING: tar exited with code 2; continuing with partial archive output");
+      }
       // SECURITY: Validate tar entries, extract safely, audit symlinks
       const extractResult = safeTarExtract(result.stdout, backupPath);
       if (extractResult.success) {
-        backedUpDirs.push(...existingDirs);
+        const extractedDirs = existingDirs.filter((d) => existsSync(path.join(backupPath, d)));
+        const missingDirs = existingDirs.filter((d) => !extractedDirs.includes(d));
+        backedUpDirs.push(...extractedDirs);
+        failedDirs.push(...missingDirs);
+        if (missingDirs.length > 0) {
+          _log(
+            `WARNING: backup archive was partial; missing dirs after extract: [${missingDirs.join(",")}]`,
+          );
+        }
       } else {
         _log(`SECURITY: tar extraction blocked: ${extractResult.error}`);
         failedDirs.push(...existingDirs);

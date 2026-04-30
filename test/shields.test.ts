@@ -340,6 +340,18 @@ describe("NC-2227-04: sandbox-state.ts tar commands do not follow symlinks", () 
     expect(fnBody).toContain("failedDirs: [...existingDirs]");
   });
 
+  it("backup treats tar exit code 2 as partial success when archive bytes are present", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function backupSandboxState");
+    const fnBody = src.slice(fnStart);
+
+    expect(fnBody).toContain("tarExitCode === 0 || tarExitCode === 2");
+    expect(fnBody).toContain("tar exited with code 2; continuing with partial archive output");
+    expect(fnBody).toContain("const extractedDirs = existingDirs.filter");
+    expect(fnBody).toContain("const missingDirs = existingDirs.filter");
+    expect(fnBody).toContain("failedDirs.push(...missingDirs)");
+  });
+
   it("restore fails closed when pre-restore cleanup cannot remove stale state", () => {
     const src = getSourceCode();
     const fnStart = src.indexOf("function restoreSandboxState");
