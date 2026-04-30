@@ -127,6 +127,8 @@ $ BRAVE_API_KEY=... \
 ```
 
 `BRAVE_API_KEY` enables Brave Search in non-interactive mode and also enables `web_fetch`.
+If Brave Search key validation fails in non-interactive mode, onboarding prints a warning, skips web search setup, and continues with the rest of the sandbox setup.
+After fixing the key, re-enable web search with `nemoclaw config web-search`.
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
@@ -161,13 +163,28 @@ If the installed OpenShell version falls outside this range, onboarding exits wi
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
+Onboarding skips common large directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context.
+It also skips credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`.
+Other build outputs such as `dist/`, `target/`, or `build/` are still included.
+If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts.
 If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
 ```console
 $ nemoclaw onboard --from path/to/Dockerfile
 ```
 
+The Dockerfile path must exist.
+Missing paths fail during command parsing before preflight, gateway setup, inference setup, or sandbox creation starts.
+
 The file can have any name; if it is not already named `Dockerfile`, onboard copies it to `Dockerfile` inside the staged build context automatically.
+To create an isolated build context, create a dedicated directory that contains only the Dockerfile and the files it needs:
+
+```text
+build-dir/
+├── Dockerfile
+└── files-used-by-COPY/
+```
+
 All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_PROVIDER_KEY`, `NEMOCLAW_INFERENCE_BASE_URL`, etc.) are injected as `ARG` overrides at build time, so declare them in your Dockerfile if you need to reference them.
 
 In non-interactive mode, the path can also be supplied via the `NEMOCLAW_FROM_DOCKERFILE` environment variable.
@@ -303,6 +320,8 @@ $ nemoclaw my-assistant status
 
 View sandbox logs.
 Use `--follow` to stream output in real time.
+The command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream.
+If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source.
 
 ```console
 $ nemoclaw my-assistant logs [--follow]

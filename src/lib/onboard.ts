@@ -64,7 +64,10 @@ function requireValue<T>(value: T | null | undefined, message: string): T {
   }
   return value;
 }
-const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
+const {
+  collectBuildContextStats,
+  stageOptimizedSandboxBuildContext,
+} = require("./sandbox-build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const {
   DASHBOARD_PORT,
@@ -80,6 +83,7 @@ const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
+  getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
@@ -87,10 +91,72 @@ const {
   validateOllamaModel,
   validateLocalProvider,
 } = localInference;
+const {
+  ensureOllamaAuthProxy,
+  getOllamaProxyToken,
+  isProxyHealthy,
+  killStaleProxy,
+  persistProxyToken,
+  startOllamaAuthProxy,
+} = require("./onboard-ollama-proxy");
 const inferenceConfig: typeof import("./inference-config") = require("./inference-config");
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
 const onboardProviders = require("./onboard-providers");
+
+const CUSTOM_BUILD_CONTEXT_WARN_BYTES = 100_000_000;
+const CUSTOM_BUILD_CONTEXT_IGNORES = new Set([
+  "node_modules",
+  ".git",
+  ".venv",
+  "__pycache__",
+  ".aws",
+  ".credentials",
+  ".direnv",
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  ".ssh",
+  "credentials.json",
+  "key.json",
+  "secrets",
+  "secrets.json",
+  "secrets.yaml",
+  "token.json",
+]);
+
+function isIgnoredCustomBuildContextName(name: string): boolean {
+  const lowerName = name.toLowerCase();
+  return (
+    CUSTOM_BUILD_CONTEXT_IGNORES.has(lowerName) ||
+    lowerName === ".env" ||
+    lowerName === ".envrc" ||
+    lowerName.startsWith(".env.") ||
+    lowerName.endsWith(".key") ||
+    lowerName.endsWith(".pem") ||
+    lowerName.endsWith(".pfx") ||
+    lowerName.endsWith(".p12") ||
+    lowerName.endsWith(".jks") ||
+    lowerName.endsWith(".keystore") ||
+    lowerName.endsWith(".tfvars") ||
+    lowerName.endsWith("_ecdsa") ||
+    lowerName.endsWith("_ed25519") ||
+    lowerName.endsWith("_rsa") ||
+    (lowerName.startsWith("service-account") && lowerName.endsWith(".json"))
+  );
+}
+
+function shouldIncludeCustomBuildContextPath(src: string): boolean {
+  return !isIgnoredCustomBuildContextName(path.basename(src));
+}
+
+function isInsideIgnoredCustomBuildContextPath(src: string): boolean {
+  return path
+    .normalize(src)
+    .split(path.sep)
+    .filter(Boolean)
+    .some((part: string) => isIgnoredCustomBuildContextName(part));
+}
 
 type RemoteProviderConfigEntry = {
   label: string;
@@ -133,8 +199,16 @@ const {
   getEffectiveProviderName: (key: string | null | undefined) => string | null;
   getNonInteractiveProvider: () => string | null;
   getNonInteractiveModel: (providerKey: string) => string | null;
-  getSandboxInferenceConfig: (model: string, provider?: string | null, preferredInferenceApi?: string | null) => {
-    providerKey: string; primaryModelRef: string; inferenceBaseUrl: string; inferenceApi: string; inferenceCompat: LooseObject | null;
+  getSandboxInferenceConfig: (
+    model: string,
+    provider?: string | null,
+    preferredInferenceApi?: string | null,
+  ) => {
+    providerKey: string;
+    primaryModelRef: string;
+    inferenceBaseUrl: string;
+    inferenceApi: string;
+    inferenceCompat: LooseObject | null;
   };
 };
 const { sleepSeconds } = require("./wait");
@@ -282,7 +356,11 @@ const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 
 // Re-export shared JSON types under the names used throughout this module.
 // See src/lib/json-types.ts for the canonical definitions.
-import type { JsonScalar as LooseScalar, JsonValue as LooseValue, JsonObject as LooseObject } from "./json-types";
+import type {
+  JsonScalar as LooseScalar,
+  JsonValue as LooseValue,
+  JsonObject as LooseObject,
+} from "./json-types";
 
 type OnboardOptions = {
   nonInteractive?: boolean;
@@ -1745,7 +1823,6 @@ const {
 // nvcfFunctionNotFoundMessage — see validation import above. They live in
 // src/lib/validation.ts so they can be unit-tested independently.
 
-
 async function validateOpenAiLikeSelection(
   label: string,
   endpointUrl: string,
@@ -1891,12 +1968,9 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
 // classifySandboxCreateFailure — see validation import above
 
 // ---------------------------------------------------------------------------
-// Ollama auth proxy — moved to onboard-ollama-proxy.ts
+// Ollama model prompt/pull/prepare functions — from onboard-ollama-proxy.ts
+// (proxy lifecycle functions already imported at the top of this file)
 const {
-  ensureOllamaAuthProxy,
-  getOllamaProxyToken,
-  persistProxyToken,
-  startOllamaAuthProxy,
   promptOllamaModel,
   printOllamaExposureWarning,
   pullOllamaModel,
@@ -1938,7 +2012,6 @@ function getRequestedProviderHint(nonInteractive = isNonInteractive()) {
 }
 function getRequestedModelHint(nonInteractive = isNonInteractive()) {
   return onboardProviders.getRequestedModelHint(nonInteractive);
-
 }
 
 function getResumeConfigConflicts(
@@ -2382,25 +2455,19 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
       console.warn(
         "  ⚠ Container DNS probe inconclusive: docker couldn't pull the busybox test image.",
       );
-      console.warn(
-        "    This usually means the docker daemon itself can't reach Docker Hub,",
-      );
+      console.warn("    This usually means the docker daemon itself can't reach Docker Hub,");
       console.warn(
         "    but doesn't prove container DNS is broken — the sandbox build may still succeed.",
       );
     } else {
-      console.warn(
-        `  ⚠ Container DNS probe inconclusive (reason: ${dns.reason ?? "unknown"}).`,
-      );
+      console.warn(`  ⚠ Container DNS probe inconclusive (reason: ${dns.reason ?? "unknown"}).`);
     }
     if (dns.details) {
       for (const line of String(dns.details).split("\n").slice(-3)) {
         if (line.trim()) console.warn(`    ${line.trim()}`);
       }
     }
-    console.warn(
-      "    Proceeding. If the sandbox build later hangs at `npm ci`, see issue #2101.",
-    );
+    console.warn("    Proceeding. If the sandbox build later hangs at `npm ci`, see issue #2101.");
   } else {
     console.error("  ✗ DNS resolution from inside a docker container failed.");
     if (dns.details) {
@@ -2410,18 +2477,10 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
     }
     console.error("");
     {
-      console.error(
-        "  The sandbox build runs `npm ci` inside a container and needs to resolve",
-      );
-      console.error(
-        "  registry.npmjs.org. On networks that block outbound UDP:53 to public DNS",
-      );
-      console.error(
-        "  (common in corporate environments that force DNS-over-TLS on the host),",
-      );
-      console.error(
-        "  the build appears to hang for ~15 minutes and then prints the cryptic",
-      );
+      console.error("  The sandbox build runs `npm ci` inside a container and needs to resolve");
+      console.error("  registry.npmjs.org. On networks that block outbound UDP:53 to public DNS");
+      console.error("  (common in corporate environments that force DNS-over-TLS on the host),");
+      console.error("  the build appears to hang for ~15 minutes and then prints the cryptic");
       console.error("  `npm error Exit handler never called`. See issue #2101.");
       console.error("");
       console.error("  Fix options:");
@@ -2470,9 +2529,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
         console.error("  1. Make systemd-resolved reachable from containers (recommended):");
         printLinuxFix(bridgeIp, bridgeNote);
         console.error("");
-        console.error(
-          "  2. Configure an explicit UDP:53-capable DNS in /etc/docker/daemon.json",
-        );
+        console.error("  2. Configure an explicit UDP:53-capable DNS in /etc/docker/daemon.json");
         console.error("     (ask your IT team for an internal DNS server IP).");
       } else if (host.platform === "darwin") {
         // On macOS, branch by the detected runtime (host.runtime) so users get
@@ -2481,9 +2538,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
           console.error("  Configure Colima's DNS (macOS):");
           console.error("       colima stop");
           console.error("       colima start --dns <corp-dns-ip>");
-          console.error(
-            "     (or edit ~/.colima/default/colima.yaml and `colima restart`)",
-          );
+          console.error("     (or edit ~/.colima/default/colima.yaml and `colima restart`)");
         } else if (host.runtime === "docker-desktop" || host.runtime === "docker") {
           console.error("  Configure Docker Desktop's DNS (macOS):");
           console.error(
@@ -2501,7 +2556,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
           console.error("  Configure your container runtime's DNS (macOS):");
           console.error("     - Docker Desktop:");
           console.error(
-            "         { jq '. + {\"dns\":[\"<corp-dns-ip>\"]}' ~/.docker/daemon.json 2>/dev/null || echo '{\"dns\":[\"<corp-dns-ip>\"]}'; } > ~/.docker/daemon.json.new && mv ~/.docker/daemon.json.new ~/.docker/daemon.json",
+            '         { jq \'. + {"dns":["<corp-dns-ip>"]}\' ~/.docker/daemon.json 2>/dev/null || echo \'{"dns":["<corp-dns-ip>"]}\'; } > ~/.docker/daemon.json.new && mv ~/.docker/daemon.json.new ~/.docker/daemon.json',
           );
           console.error("         osascript -e 'quit app \"Docker\"' && sleep 3 && open -a Docker");
           console.error("     - Colima:");
@@ -2509,13 +2564,9 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
           console.error("     - Rancher Desktop / Podman: edit the runtime's DNS config");
           console.error("       and restart it.");
         }
-        console.error(
-          "     Ask your IT team for an internal DNS server IP that accepts UDP:53.",
-        );
+        console.error("     Ask your IT team for an internal DNS server IP that accepts UDP:53.");
       } else if (host.platform === "win32" || host.isWsl) {
-        console.error(
-          "  1. Configure Docker Desktop's DNS (Windows / WSL via Docker Desktop):",
-        );
+        console.error("  1. Configure Docker Desktop's DNS (Windows / WSL via Docker Desktop):");
         console.error(
           "       Docker Desktop for Windows → Settings → Docker Engine — edit the JSON to add:",
         );
@@ -2540,9 +2591,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
         }
         printLinuxFix(wslBridgeIp || "172.17.0.1", wslBridgeNote);
       } else {
-        console.error(
-          "  Configure your docker daemon to use a DNS server that accepts UDP:53.",
-        );
+        console.error("  Configure your docker daemon to use a DNS server that accepts UDP:53.");
         console.error(
           '  Add { "dns": ["<corp-dns-ip>"] } to your docker daemon.json and restart the daemon.',
         );
@@ -3404,13 +3453,18 @@ async function createSandbox(
   if (process.env.CHAT_UI_URL) {
     try {
       const u = new URL(
-        process.env.CHAT_UI_URL.includes("://") ? process.env.CHAT_UI_URL : `http://${process.env.CHAT_UI_URL}`,
+        process.env.CHAT_UI_URL.includes("://")
+          ? process.env.CHAT_UI_URL
+          : `http://${process.env.CHAT_UI_URL}`,
       );
       const p = Number(u.port);
       if (p > 0) envPort = p;
-    } catch { /* malformed URL — ignore */ }
+    } catch {
+      /* malformed URL — ignore */
+    }
   }
-  const preferredPort = controlUiPort ?? envPort ?? persistedPort ?? (agent ? agent.forwardPort : CONTROL_UI_PORT);
+  const preferredPort =
+    controlUiPort ?? envPort ?? persistedPort ?? (agent ? agent.forwardPort : CONTROL_UI_PORT);
   const earlyForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
   const effectivePort = findAvailableDashboardPort(sandboxName, preferredPort, earlyForwards);
   if (effectivePort !== preferredPort) {
@@ -3421,7 +3475,9 @@ async function createSandbox(
   let chatUiUrl: string;
   if (process.env.CHAT_UI_URL && controlUiPort == null) {
     const parsed = new URL(
-      process.env.CHAT_UI_URL.includes("://") ? process.env.CHAT_UI_URL : `http://${process.env.CHAT_UI_URL}`,
+      process.env.CHAT_UI_URL.includes("://")
+        ? process.env.CHAT_UI_URL
+        : `http://${process.env.CHAT_UI_URL}`,
     );
     parsed.port = String(effectivePort);
     chatUiUrl = parsed.toString().replace(/\/$/, "");
@@ -3714,29 +3770,66 @@ async function createSandbox(
   // in env args, so it must not persist in /tmp after a failed sandbox create.
   // run() calls process.exit() on failure (bypassing normal control flow), so
   // we register a process 'exit' handler to guarantee cleanup in all cases.
-  let buildCtx, stagedDockerfile;
+  let buildCtx: string, stagedDockerfile: string;
   if (fromDockerfile) {
     const fromResolved = path.resolve(fromDockerfile);
     if (!fs.existsSync(fromResolved)) {
       console.error(`  Custom Dockerfile not found: ${fromResolved}`);
       process.exit(1);
     }
+    if (!fs.statSync(fromResolved).isFile()) {
+      console.error(`  Custom Dockerfile path is not a file: ${fromResolved}`);
+      process.exit(1);
+    }
+    const buildContextDir = path.dirname(fromResolved);
+    if (isInsideIgnoredCustomBuildContextPath(buildContextDir)) {
+      console.error(
+        `  Custom Dockerfile is inside an ignored build-context path: ${buildContextDir}`,
+      );
+      console.error("  Move your Dockerfile to a dedicated directory and retry.");
+      process.exit(1);
+    }
+    console.log(`  Using custom Dockerfile: ${fromResolved}`);
+    console.log(`  Docker build context: ${buildContextDir}`);
+    const buildContextStats = collectBuildContextStats(
+      buildContextDir,
+      shouldIncludeCustomBuildContextPath,
+    );
+    if (buildContextStats.totalBytes > CUSTOM_BUILD_CONTEXT_WARN_BYTES) {
+      const sizeMb = (buildContextStats.totalBytes / 1_000_000).toFixed(1);
+      console.warn(
+        `  WARN: build context contains about ${sizeMb} MB across ${buildContextStats.fileCount} files.`,
+      );
+      console.warn(
+        "  The --from flag sends the Dockerfile's parent directory to Docker; use a dedicated directory if this is not intentional.",
+      );
+    }
     buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
     stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    const cleanupCustomBuildCtx = (): void => {
+      try {
+        fs.rmSync(buildCtx, { recursive: true, force: true });
+      } catch {
+        // Best effort cleanup; the original error is more useful to the caller.
+      }
+    };
     // Copy the entire parent directory as build context.
     try {
-      fs.cpSync(path.dirname(fromResolved), buildCtx, {
+      fs.cpSync(buildContextDir, buildCtx, {
         recursive: true,
-        filter: (src: string) => {
-          const base = path.basename(src);
-          return !["node_modules", ".git", ".venv", "__pycache__"].includes(base);
-        },
+        filter: shouldIncludeCustomBuildContextPath,
       });
+      // If the caller pointed at a file not named "Dockerfile", copy it to the
+      // location openshell expects (buildCtx/Dockerfile).
+      if (path.basename(fromResolved) !== "Dockerfile") {
+        fs.copyFileSync(fromResolved, stagedDockerfile);
+      }
     } catch (err) {
+      cleanupCustomBuildCtx();
       const errorObject = typeof err === "object" && err !== null ? err : null;
       if (isErrnoException(errorObject) && errorObject.code === "EACCES") {
         console.error(
-          `  Permission denied while copying build context from: ${path.dirname(fromResolved)}`,
+          `  Permission denied while copying build context from: ${buildContextDir}`,
         );
         console.error(
           "  The --from flag uses the Dockerfile's parent directory as the Docker build context.",
@@ -3746,12 +3839,6 @@ async function createSandbox(
       }
       throw err;
     }
-    // If the caller pointed at a file not named "Dockerfile", copy it to the
-    // location openshell expects (buildCtx/Dockerfile).
-    if (path.basename(fromResolved) !== "Dockerfile") {
-      fs.copyFileSync(fromResolved, stagedDockerfile);
-    }
-    console.log(`  Using custom Dockerfile: ${fromResolved}`);
   } else if (agent) {
     const agentBuild = agentOnboard.createAgentSandbox(agent);
     buildCtx = agentBuild.buildCtx;
@@ -4085,7 +4172,14 @@ async function createSandbox(
   const openshellBin = getOpenshellBinary();
   for (let i = 0; i < 15; i++) {
     const readyMatch = runCaptureOpenshell(
-      ["sandbox", "exec", sandboxName, "curl", "-sf", `http://localhost:${effectiveDashboardPort}/`],
+      [
+        "sandbox",
+        "exec",
+        sandboxName,
+        "curl",
+        "-sf",
+        `http://localhost:${effectiveDashboardPort}/`,
+      ],
       { ignoreError: true },
     );
     if (readyMatch) {
@@ -5137,8 +5231,29 @@ async function setupInference(
   } else if (provider === "vllm-local") {
     const validation = validateLocalProvider(provider);
     if (!validation.ok) {
-      console.error(`  ${validation.message}`);
-      process.exit(1);
+      const hostCheck = getLocalProviderHealthCheck(provider);
+      // Use run() and check exit status rather than coercing runCapture() output
+      // to boolean — curl -sf can leave output even on failure in edge cases.
+      const hostResponding = hostCheck
+        ? run(hostCheck, { ignoreError: true, suppressOutput: true }).status === 0
+        : false;
+
+      if (hostResponding) {
+        console.warn(`  ⚠ ${validation.message}`);
+        if (validation.diagnostic) {
+          console.warn(`  Diagnostic: ${validation.diagnostic}`);
+        }
+        console.warn(
+          "  The server is healthy on the host — continuing. " +
+            "The sandbox uses a different network path and may work correctly.",
+        );
+      } else {
+        console.error(`  ${validation.message}`);
+        if (validation.diagnostic) {
+          console.error(`  Diagnostic: ${validation.diagnostic}`);
+        }
+        process.exit(1);
+      }
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     // Use a dedicated internal credential env so the gateway does not pick
@@ -5172,19 +5287,44 @@ async function setupInference(
     // to unrelated OpenAI-backed sandboxes.
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider);
+    let proxyReady = false;
     if (!validation.ok) {
-      console.error(`  ${validation.message}`);
-      if (process.platform === "darwin") {
-        console.error(
-          "  On macOS, local inference also depends on OpenShell host routing support.",
-        );
+      // The container reachability check uses Docker's --add-host host-gateway,
+      // which may not work on all Docker configurations (e.g., Brev, rootless).
+      // The real sandbox uses k3s CoreDNS + NodeHosts — a different path.
+      // Try to start/restart the auth proxy before probing — this recovers
+      // from stale or missing proxy processes before we decide to abort.
+      if (!isWsl()) {
+        ensureOllamaAuthProxy();
+        proxyReady = isProxyHealthy();
       }
-      process.exit(1);
+      if (proxyReady) {
+        console.warn(`  ⚠ ${validation.message}`);
+        if (validation.diagnostic) {
+          console.warn(`  Diagnostic: ${validation.diagnostic}`);
+        }
+        console.warn(
+          "  The auth proxy is healthy on the host — continuing. " +
+            "The sandbox uses a different network path and may work correctly.",
+        );
+      } else {
+        console.error(`  ${validation.message}`);
+        if (validation.diagnostic) {
+          console.error(`  Diagnostic: ${validation.diagnostic}`);
+        }
+        if (process.platform === "darwin") {
+          console.error(
+            "  On macOS, local inference also depends on OpenShell host routing support.",
+          );
+        }
+        process.exit(1);
+      }
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     let ollamaCredential = "ollama";
     if (!isWsl()) {
-      ensureOllamaAuthProxy();
+      // Skip if already started during the fallback recovery above.
+      if (!proxyReady) ensureOllamaAuthProxy();
       const proxyToken = getOllamaProxyToken();
       if (!proxyToken) {
         console.error(
@@ -5445,7 +5585,9 @@ async function setupMessagingChannels(): Promise<string[]> {
       console.log(`  ${ch.help}`);
       const token = normalizeCredentialValue(await prompt(`  ${ch.label}: `, { secret: true }));
       if (token && ch.tokenFormat && !ch.tokenFormat.test(token)) {
-        console.log(`  ✗ Invalid format. ${ch.tokenFormatHint || "Check the token and try again."}`);
+        console.log(
+          `  ✗ Invalid format. ${ch.tokenFormatHint || "Check the token and try again."}`,
+        );
         console.log(`  Skipped ${ch.name} (invalid token format)`);
         enabled.delete(ch.name);
         continue;
@@ -6320,7 +6462,9 @@ async function setupPoliciesWithSelection(
       // the sandbox with no presets. Warn, optionally suggest the intended
       // variable, and fall through to the tier-derived suggestions list.
       console.warn(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
-      console.warn("  Valid values: suggested, custom, skip (aliases: default/auto, list, none/no).");
+      console.warn(
+        "  Valid values: suggested, custom, skip (aliases: default/auto, list, none/no).",
+      );
       if (tiers.getTier(policyMode)) {
         console.warn(
           `  '${policyMode}' is a policy tier — did you mean NEMOCLAW_POLICY_TIER=${policyMode}?`,
@@ -6495,10 +6639,9 @@ function getOccupiedPorts(forwardListOutput: string | null): Map<string, string>
  */
 function isPortBoundOnHost(port: number): boolean {
   try {
-    const out = runCapture(
-      ["lsof", "-i", `:${port}`, "-sTCP:LISTEN", "-P", "-n"],
-      { ignoreError: true },
-    );
+    const out = runCapture(["lsof", "-i", `:${port}`, "-sTCP:LISTEN", "-P", "-n"], {
+      ignoreError: true,
+    });
     return !!out && out.trim().length > 0;
   } catch {
     return false;
@@ -6513,7 +6656,11 @@ function isPortBoundOnHost(port: number): boolean {
  * non-OpenShell processes are skipped.
  * Throws if the entire range is exhausted.
  */
-function findAvailableDashboardPort(sandboxName: string, preferredPort: number, forwardListOutput: string | null): number {
+function findAvailableDashboardPort(
+  sandboxName: string,
+  preferredPort: number,
+  forwardListOutput: string | null,
+): number {
   const occupied = getOccupiedPorts(forwardListOutput);
   const preferredStr = String(preferredPort);
   const owner = occupied.get(preferredStr) ?? null;
@@ -6531,7 +6678,9 @@ function findAvailableDashboardPort(sandboxName: string, preferredPort: number, 
   }
 
   const owners = [...occupied.entries()]
-    .filter(([p]) => Number(p) >= DASHBOARD_PORT_RANGE_START && Number(p) <= DASHBOARD_PORT_RANGE_END)
+    .filter(
+      ([p]) => Number(p) >= DASHBOARD_PORT_RANGE_START && Number(p) <= DASHBOARD_PORT_RANGE_END,
+    )
     .map(([p, s]) => `  ${p} → ${s}`)
     .join("\n");
   throw new Error(
@@ -6771,10 +6920,12 @@ function getWslHostAddress(
   }
   const runCaptureFn = options.runCapture || runCapture;
   const output = runCaptureFn(["hostname", "-I"], { ignoreError: true });
-  return String(output || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)[0] || null;
+  return (
+    String(output || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)[0] || null
+  );
 }
 
 function getDashboardAccessInfo(
@@ -6860,9 +7011,10 @@ function printDashboard(
   const chain = buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: wslAddr });
 
   // Build access info inline — uses chain instead of re-deriving from env
-  const dashboardAccess = buildControlUiUrls(token, chain.port, chain.accessUrl).map(
-    (url, i) => ({ label: i === 0 ? "Dashboard" : `Alt ${i}`, url }),
-  );
+  const dashboardAccess = buildControlUiUrls(token, chain.port, chain.accessUrl).map((url, i) => ({
+    label: i === 0 ? "Dashboard" : `Alt ${i}`,
+    url,
+  }));
   if (wslAddr) {
     const wslUrl = `http://${wslAddr}:${chain.port}/${token ? `#token=${encodeURIComponent(token)}` : ""}`;
     const existing = dashboardAccess.find((a) => a.url === wslUrl);
@@ -6870,7 +7022,10 @@ function printDashboard(
     else dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
   }
   const guidanceLines = [`Port ${chain.port} must be forwarded before opening these URLs.`];
-  if (isWsl()) guidanceLines.push("WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.");
+  if (isWsl())
+    guidanceLines.push(
+      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
+    );
   if (dashboardAccess.length === 0) guidanceLines.push("No dashboard URLs were generated.");
 
   console.log("");

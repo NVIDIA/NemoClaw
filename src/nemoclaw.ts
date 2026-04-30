@@ -33,10 +33,10 @@ const {
   fetchGatewayAuthTokenFromSandbox,
   startGatewayForRecovery,
   pruneKnownHostsEntries,
-  ensureOllamaAuthProxy,
   hydrateCredentialEnv,
   isNonInteractive,
 } = require("./lib/onboard");
+const { ensureOllamaAuthProxy } = require("./lib/onboard-ollama-proxy");
 const { parseGatewayTokenArgs, runGatewayTokenCommand } = require("./lib/gateway-token-command");
 const {
   getCredential,
@@ -94,6 +94,10 @@ import {
   knownChannelNames,
   persistChannelTokens,
 } from "./lib/sandbox-channels";
+import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "./lib/openshell-timeouts";
 const onboardProviders = require("./lib/onboard-providers");
 
 // ── Global commands (derived from command registry) ──────────────
@@ -182,7 +186,10 @@ function cleanupGatewayAfterLastSandbox() {
 }
 
 function hasNoLiveSandboxes() {
-  const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const liveList = captureOpenshell(["sandbox", "list"], {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
   if (liveList.status !== 0) {
     return false;
   }
@@ -218,6 +225,7 @@ function getInstalledOpenshellVersionOrNull() {
 function executeSandboxCommand(sandboxName: string, command: string): SandboxCommandResult | null {
   const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
     ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (sshConfigResult.status !== 0) return null;
 
@@ -507,7 +515,10 @@ async function recoverRegistryFromLiveGateway(
   }
 
   let recoveredFromGateway = 0;
-  const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const liveList = captureOpenshell(["sandbox", "list"], {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
   const liveNames = Array.from<string>(parseLiveSandboxNames(liveList.output));
   for (const name of liveNames) {
     const metadata = metadataByName.get(name) || undefined;
@@ -569,8 +580,10 @@ function getActiveGatewayName(output = ""): string | null {
 }
 
 function getNamedGatewayLifecycleState() {
-  const status = captureOpenshell(["status"]);
-  const gatewayInfo = captureOpenshell(["gateway", "info", "-g", "nemoclaw"]);
+  const status = captureOpenshell(["status"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS });
+  const gatewayInfo = captureOpenshell(["gateway", "info", "-g", "nemoclaw"], {
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
   const cleanStatus = stripAnsi(status.output);
   const activeGateway = getActiveGatewayName(status.output);
   const connected = /^\s*Status:\s*Connected\b/im.test(cleanStatus);
@@ -625,7 +638,10 @@ async function recoverNamedGatewayRuntime() {
     return { recovered: true, before, after: before, attempted: false };
   }
 
-  runOpenshell(["gateway", "select", "nemoclaw"], { ignoreError: true });
+  runOpenshell(["gateway", "select", "nemoclaw"], {
+    ignoreError: true,
+    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+  });
   let after = getNamedGatewayLifecycleState();
   if (after.state === "healthy_named") {
     process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -643,7 +659,10 @@ async function recoverNamedGatewayRuntime() {
       // Fall through to the lifecycle re-check below so we preserve the
       // existing recovery result shape and emit the correct classification.
     }
-    runOpenshell(["gateway", "select", "nemoclaw"], { ignoreError: true });
+    runOpenshell(["gateway", "select", "nemoclaw"], {
+      ignoreError: true,
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
     after = getNamedGatewayLifecycleState();
     if (after.state === "healthy_named") {
       process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -656,7 +675,9 @@ async function recoverNamedGatewayRuntime() {
 
 /** Query sandbox presence and return its output with the live enforced policy. */
 function getSandboxGatewayState(sandboxName: string) {
-  const result = captureOpenshell(["sandbox", "get", sandboxName]);
+  const result = captureOpenshell(["sandbox", "get", sandboxName], {
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
   let output = result.output;
   if (result.status === 0) {
     // `openshell sandbox get` returns the immutable baseline policy from sandbox
@@ -666,6 +687,7 @@ function getSandboxGatewayState(sandboxName: string) {
     // Sandbox info above it. (#1132)
     const livePolicy = captureOpenshell(["policy", "get", "--full", sandboxName], {
       ignoreError: true,
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     });
     if (livePolicy.status === 0 && livePolicy.output.trim()) {
       const rawLines = String(output).split("\n");
@@ -727,7 +749,10 @@ function reconcileMissingAgainstNamedGateway(
 ) {
   const lifecycle = getNamedGatewayLifecycleState();
   if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", "nemoclaw"], { ignoreError: true });
+    runOpenshell(["gateway", "select", "nemoclaw"], {
+      ignoreError: true,
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
     const retry = getSandboxGatewayState(sandboxName);
     if (retry.state === "present") {
       return { ...retry, recoveredGateway: true, recoveryVia: "select" };
@@ -1153,7 +1178,10 @@ function debug(args: string[]) {
       );
       return undefined;
     }
-    const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+    const liveList = captureOpenshell(["sandbox", "list"], {
+      ignoreError: true,
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
     if (liveList.status === 0 && !parseLiveSandboxNames(liveList.output).has(defaultSandbox)) {
       console.error(
         `${_RD}Warning:${R} default sandbox '${defaultSandbox}' exists in the local registry but not in OpenShell.`,
@@ -1399,7 +1427,10 @@ function makeConflictProbe() {
   let gatewayAlive: boolean | null = null;
   const isGatewayAlive = (): boolean => {
     if (gatewayAlive === null) {
-      const result = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+      const result = captureOpenshell(["sandbox", "list"], {
+        ignoreError: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      });
       gatewayAlive = result.status === 0;
     }
     return gatewayAlive;
@@ -1407,7 +1438,10 @@ function makeConflictProbe() {
   return {
     providerExists: (name: string) => {
       if (!isGatewayAlive()) return "error";
-      const result = captureOpenshell(["provider", "get", name], { ignoreError: true });
+      const result = captureOpenshell(["provider", "get", name], {
+        ignoreError: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      });
       return result.status === 0 ? "present" : "absent";
     },
   };
@@ -1457,7 +1491,12 @@ function showStatus() {
   showStatusCommand({
     listSandboxes: () => registry.listSandboxes(),
     getLiveInference: () =>
-      parseGatewayInference(captureOpenshell(["inference", "get"], { ignoreError: true }).output),
+      parseGatewayInference(
+        captureOpenshell(["inference", "get"], {
+          ignoreError: true,
+          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        }).output,
+      ),
     showServiceStatus,
     checkMessagingBridgeHealth,
     backfillAndFindOverlaps,
@@ -1483,7 +1522,12 @@ async function listSandboxes(): Promise<void> {
   await listSandboxesCommand({
     recoverRegistryEntries: () => recoverRegistryEntries(),
     getLiveInference: () =>
-      parseGatewayInference(captureOpenshell(["inference", "get"], { ignoreError: true }).output),
+      parseGatewayInference(
+        captureOpenshell(["inference", "get"], {
+          ignoreError: true,
+          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        }).output,
+      ),
     loadLastSession: () => onboardSession.loadSession(),
     getActiveSessionCount: sessionDeps
       ? (name: string) => {
@@ -1559,7 +1603,10 @@ async function sandboxConnect(
     const sb = registry.getSandbox(sandboxName);
     if (sb && sb.provider && sb.model) {
       const live = parseGatewayInference(
-        captureOpenshell(["inference", "get"], { ignoreError: true }).output,
+        captureOpenshell(["inference", "get"], {
+          ignoreError: true,
+          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        }).output,
       );
       if (!live || live.provider !== sb.provider || live.model !== sb.model) {
         console.log(
@@ -1699,7 +1746,10 @@ async function sandboxConnect(
 async function sandboxStatus(sandboxName: string) {
   const sb = registry.getSandbox(sandboxName);
   const live = parseGatewayInference(
-    captureOpenshell(["inference", "get"], { ignoreError: true }).output,
+    captureOpenshell(["inference", "get"], {
+      ignoreError: true,
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    }).output,
   );
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";

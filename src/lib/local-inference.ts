@@ -13,6 +13,7 @@ import { runCurlProbe } from "./http-probe";
 const { shellQuote, runCapture } = require("./runner");
 
 import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "./ports";
+import { sleepSeconds } from "./wait";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { isWsl } = require("./platform");
@@ -35,6 +36,7 @@ export interface GpuInfo {
 export interface ValidationResult {
   ok: boolean;
   message?: string;
+  diagnostic?: string;
 }
 
 export interface LocalProviderHealthStatus {
@@ -177,6 +179,10 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
         "--add-host",
         "host.openshell.internal:host-gateway",
         CONTAINER_REACHABILITY_IMAGE,
+        "--connect-timeout",
+        "5",
+        "--max-time",
+        "10",
         "-sf",
         `http://host.openshell.internal:${VLLM_PORT}/v1/models`,
       ];
@@ -190,6 +196,10 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
         "--add-host",
         "host.openshell.internal:host-gateway",
         CONTAINER_REACHABILITY_IMAGE,
+        "--connect-timeout",
+        "5",
+        "--max-time",
+        "10",
         "-sf",
         `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
       ];
@@ -198,9 +208,13 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
   }
 }
 
+const CONTAINER_CHECK_MAX_ATTEMPTS = 3;
+const CONTAINER_CHECK_RETRY_DELAY_SECS = 2;
+
 export function validateLocalProvider(
   provider: string,
   runCaptureImpl?: RunCaptureFn,
+  sleepFn?: (seconds: number) => void,
 ): ValidationResult {
   if (provider === "ollama-local") {
     const portValidation = validateOllamaPortConfiguration();
@@ -210,6 +224,7 @@ export function validateLocalProvider(
   }
 
   const capture = runCaptureImpl ?? runCapture;
+  const sleep = sleepFn ?? sleepSeconds;
   const command = getLocalProviderHealthCheck(provider);
   if (!command) {
     return { ok: true };
@@ -238,27 +253,99 @@ export function validateLocalProvider(
     return { ok: true };
   }
 
-  const containerOutput = capture(containerCommand, { ignoreError: true });
-  if (containerOutput) {
-    return { ok: true };
+  // Retry container reachability check with backoff
+  for (let attempt = 1; attempt <= CONTAINER_CHECK_MAX_ATTEMPTS; attempt++) {
+    const containerOutput = capture(containerCommand, { ignoreError: true });
+    if (containerOutput) {
+      return { ok: true };
+    }
+    if (attempt < CONTAINER_CHECK_MAX_ATTEMPTS) {
+      sleep(CONTAINER_CHECK_RETRY_DELAY_SECS);
+    }
   }
+
+  // All retries exhausted — collect diagnostics
+  const diagnostic = collectContainerDiagnostic(provider, capture);
 
   switch (provider) {
     case "vllm-local":
       return {
         ok: false,
-        message: `Local vLLM is responding on 127.0.0.1, but containers cannot reach http://host.openshell.internal:${VLLM_PORT}. Ensure the server is reachable from containers, not only from the host shell.`,
+        message: `Local vLLM is responding on 127.0.0.1, but the Docker container reachability check failed for http://host.openshell.internal:${VLLM_PORT}. This may be a Docker networking issue — the sandbox uses a different network path and may still work.`,
+        diagnostic,
       };
     case "ollama-local":
       return {
         ok: false,
-        message: `Local Ollama is responding on 127.0.0.1, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
+        message: `Local Ollama is responding on 127.0.0.1, but the Docker container reachability check failed for http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. This may be a Docker networking issue — the sandbox uses a different network path and may still work.`,
+        diagnostic,
       };
     default:
       return {
         ok: false,
         message: "The selected local inference provider is unavailable from containers.",
+        diagnostic,
       };
+  }
+}
+
+function getContainerCheckUrl(provider: string): string {
+  switch (provider) {
+    case "vllm-local":
+      return `http://host.openshell.internal:${VLLM_PORT}/v1/models`;
+    case "ollama-local":
+      return `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`;
+    default:
+      return "http://host.openshell.internal/";
+  }
+}
+
+function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): string {
+  const url = getContainerCheckUrl(provider);
+  try {
+    // Get HTTP status code
+    const httpStatus = capture(
+      [
+        "docker", "run", "--rm",
+        "--add-host", "host.openshell.internal:host-gateway",
+        CONTAINER_REACHABILITY_IMAGE,
+        "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "--connect-timeout", "5", "--max-time", "10",
+        url,
+      ],
+      { ignoreError: true },
+    );
+
+    // Get /etc/hosts to see host-gateway resolution
+    const hostsOutput = capture(
+      [
+        "docker", "run", "--rm",
+        "--add-host", "host.openshell.internal:host-gateway",
+        CONTAINER_REACHABILITY_IMAGE,
+        "cat", "/etc/hosts",
+      ],
+      { ignoreError: true },
+    );
+
+    if (!httpStatus && !hostsOutput) {
+      return `Docker command failed (image pull error or runtime failure). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`;
+    }
+
+    const parts: string[] = [];
+    if (httpStatus) {
+      parts.push(`Container curl returned HTTP ${httpStatus.trim()}`);
+    }
+    if (hostsOutput) {
+      const gwLine = hostsOutput.split(/\r?\n/).find((l: string) => l.includes("host.openshell.internal"));
+      if (gwLine) {
+        const ip = gwLine.trim().split(/\s+/)[0];
+        parts.push(`host-gateway resolved to: ${ip}`);
+      }
+    }
+    parts.push(`Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times over ~${(CONTAINER_CHECK_MAX_ATTEMPTS - 1) * CONTAINER_CHECK_RETRY_DELAY_SECS}s`);
+    return parts.join(". ") + ".";
+  } catch {
+    return `Docker command failed (image pull error or runtime failure). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`;
   }
 }
 

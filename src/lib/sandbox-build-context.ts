@@ -15,6 +15,8 @@ export interface BuildContextStats {
   totalBytes: number;
 }
 
+type BuildContextStatsFilter = (entryPath: string) => boolean;
+
 function createBuildContextDir(tmpDir: string = os.tmpdir()): string {
   return fs.mkdtempSync(path.join(tmpDir, "nemoclaw-build-"));
 }
@@ -98,13 +100,19 @@ function stageOptimizedSandboxBuildContext(
   return { buildCtx, stagedDockerfile };
 }
 
-function collectBuildContextStats(dir: string): BuildContextStats {
+function collectBuildContextStats(
+  dir: string,
+  shouldInclude: BuildContextStatsFilter = () => true,
+): BuildContextStats {
   let fileCount = 0;
   let totalBytes = 0;
 
   function walk(currentDir: string): void {
     for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
       const entryPath = path.join(currentDir, entry.name);
+      if (!shouldInclude(entryPath)) {
+        continue;
+      }
       if (entry.isDirectory()) {
         walk(entryPath);
         continue;
