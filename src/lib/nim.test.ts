@@ -165,6 +165,36 @@ describe("nim", () => {
       }
     });
 
+    it("preserves commas inside the GPU model name (last-comma split)", () => {
+      // The CSV split must use the LAST comma, not the first, so that GPU
+      // models whose names contain a comma round-trip intact. The split was
+      // designed for this; the test guards against future "split on first
+      // comma" regressions.
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA RTX A,B, 81920\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA RTX A,B",
+          count: 1,
+          totalMemoryMB: 81920,
+          perGpuMB: 81920,
+        });
+      } finally {
+        restore();
+      }
+    });
+
     it("drops name on mixed-model multi-GPU hosts so we don't attribute one model to the others", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
