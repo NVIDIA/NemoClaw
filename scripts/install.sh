@@ -882,6 +882,10 @@ install_or_start_vllm() {
       sudo apt-get install -y -qq python3-pip >/dev/null 2>&1 || true
     fi
     pip3 install --break-system-packages vllm 2>/dev/null || pip3 install vllm
+    if ! python3 -c "import vllm" 2>/dev/null; then
+      warn "vLLM installation failed — cannot start local inference."
+      return 1
+    fi
   else
     info "vLLM already installed"
   fi
@@ -1449,7 +1453,7 @@ main() {
   if [[ "${NEMOCLAW_PROVIDER:-}" == "ollama" ]]; then
     install_or_upgrade_ollama
   fi
-  install_or_start_vllm
+  install_or_start_vllm || warn "vLLM setup failed — continuing without local inference."
   fix_npm_permissions
   install_nemoclaw
   verify_nemoclaw
