@@ -190,6 +190,12 @@ resolve_default_sandbox_name() {
       ' "$session_file" 2>/dev/null || true
     )"
   fi
+  if [[ -z "$sandbox_name" && -f "$session_file" ]]; then
+    sandbox_name="$(
+      sed -n 's/.*"sandboxName"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p' "$session_file" 2>/dev/null \
+        | head -n 1
+    )"
+  fi
 
   if [[ -z "$sandbox_name" ]]; then
     sandbox_name="${NEMOCLAW_SANDBOX_NAME:-}"

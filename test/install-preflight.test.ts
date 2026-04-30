@@ -1795,6 +1795,18 @@ describe("installer pure helpers", () => {
     });
   }
 
+  function callInstallerPayloadFn(fnCall: string, env: Record<string, string | undefined> = {}) {
+    return spawnSync("bash", ["-c", `source "${INSTALLER_PAYLOAD}" 2>/dev/null; ${fnCall}`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        HOME: os.tmpdir(),
+        PATH: TEST_SYSTEM_PATH,
+        ...env,
+      },
+    });
+  }
+
   it("verify_nemoclaw checks the active CLI alias", () => {
     const script = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
     const body = requireMatch(
@@ -2125,6 +2137,29 @@ exit 1
       NEMOCLAW_SANDBOX_NAME: "env-name",
       PATH: `${process.env.PATH}`,
     });
+    expect(r.stdout.trim()).toBe("created-by-onboard");
+  });
+
+  it("resolve_default_sandbox_name: payload session lookup wins even when node is absent", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-name-payload-session-"));
+    const registryDir = path.join(tmp, ".nemoclaw");
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "onboard-session.json"),
+      `${JSON.stringify({ sandboxName: "created-by-onboard" }, null, 2)}\n`,
+    );
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "old-default",
+        sandboxes: { "old-default": {} },
+      }),
+    );
+    const r = callInstallerPayloadFn("resolve_default_sandbox_name", {
+      HOME: tmp,
+      NEMOCLAW_SANDBOX_NAME: "env-name",
+    });
+    expect(r.status).toBe(0);
     expect(r.stdout.trim()).toBe("created-by-onboard");
   });
 });
