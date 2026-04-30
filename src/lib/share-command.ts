@@ -83,7 +83,6 @@ export default class ShareCommand extends Command {
     subcommand: Args.string({
       required: false,
       description: "Action: mount, unmount, or status",
-      options: ["mount", "unmount", "status"],
     }),
   };
 
@@ -167,6 +166,7 @@ export default class ShareCommand extends Command {
     fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
     fs.mkdirSync(localMount, { recursive: true });
 
+    let mountFailed = false;
     try {
       const result = spawnSync(
         "sshfs",
@@ -196,10 +196,11 @@ export default class ShareCommand extends Command {
             "  If it was created from a custom `--from` image, add openssh-sftp-server at /usr/lib/openssh/sftp-server and rebuild.",
           );
         }
-        process.exit(1);
+        mountFailed = true;
+      } else {
+        console.log(`  ${G}\u2713${R} Mounted ${remotePath} \u2192 ${localMount}`);
+        console.log(`  Edit files at ${localMount} \u2014 changes appear in the sandbox instantly.`);
       }
-      console.log(`  ${G}\u2713${R} Mounted ${remotePath} \u2192 ${localMount}`);
-      console.log(`  Edit files at ${localMount} \u2014 changes appear in the sandbox instantly.`);
     } finally {
       try {
         fs.unlinkSync(tmpFile);
@@ -207,6 +208,7 @@ export default class ShareCommand extends Command {
         /* ignore */
       }
     }
+    if (mountFailed) process.exit(1);
   }
 
   private unmount(sandboxName: string, extraArgs: string[], G: string, R: string): void {
