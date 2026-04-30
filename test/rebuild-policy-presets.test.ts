@@ -22,7 +22,7 @@ type ManifestWithOptionalPresets = {
   agentVersion: string | null;
   expectedVersion: string | null;
   stateDirs: string[];
-  writableDir: string;
+  dir: string;
   backupPath: string;
   blueprintDigest: string | null;
   policyPresets?: string[] | null;
@@ -43,7 +43,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
         agentVersion: "1.0.0",
         expectedVersion: "1.0.0",
         stateDirs: ["workspace"],
-        writableDir: "/sandbox/.openclaw",
+        dir: "/sandbox/.openclaw",
         backupPath: "/tmp/backup",
         blueprintDigest: null,
         policyPresets: ["telegram", "npm"],
@@ -60,7 +60,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
         agentVersion: null,
         expectedVersion: null,
         stateDirs: [],
-        writableDir: "/sandbox/.openclaw",
+        dir: "/sandbox/.openclaw",
         backupPath: "/tmp/backup",
         blueprintDigest: null,
       };
@@ -76,7 +76,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
         agentVersion: null,
         expectedVersion: null,
         stateDirs: [],
-        writableDir: "/sandbox/.openclaw",
+        dir: "/sandbox/.openclaw",
         backupPath: "/tmp/backup",
         blueprintDigest: null,
         policyPresets: [],
@@ -105,7 +105,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
         agentVersion: "1.0.0",
         expectedVersion: "1.0.0",
         stateDirs: ["workspace", "memory"],
-        writableDir: "/sandbox/.openclaw",
+        dir: "/sandbox/.openclaw",
         backupPath: tmpDir,
         blueprintDigest: "abc123",
         policyPresets: ["telegram", "npm", "pypi"],
@@ -128,7 +128,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
         agentVersion: "1.0.0",
         expectedVersion: "1.0.0",
         stateDirs: ["workspace"],
-        writableDir: "/sandbox/.openclaw",
+        dir: "/sandbox/.openclaw",
         backupPath: tmpDir,
         blueprintDigest: null,
       };

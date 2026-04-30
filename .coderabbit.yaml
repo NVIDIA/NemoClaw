@@ -197,11 +197,10 @@ reviews:
         **E2E test recommendation:**
         - `sandbox-survival-e2e` — gateway restart recovery
         - `sandbox-operations-e2e` — process recovery after gateway kill
-        - `skip-permissions-e2e` — permissive policy activation
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sandbox-survival-e2e,sandbox-operations-e2e,skip-permissions-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sandbox-survival-e2e,sandbox-operations-e2e
         ```
 
     - path: "src/lib/cluster-image-patch.ts"
@@ -282,11 +281,10 @@ reviews:
 
         **E2E test recommendation:**
         - `network-policy-e2e` — deny-by-default, whitelist, hot-reload, SSRF
-        - `skip-permissions-e2e` — permissive policy activation
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=network-policy-e2e,skip-permissions-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=network-policy-e2e
         ```
 
     - path: "test/e2e/test-issue-2478-crash-loop-recovery.sh"

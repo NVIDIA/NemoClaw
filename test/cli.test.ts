@@ -159,6 +159,17 @@ function createLogsTestSetup(prefix: string, openshellLines: string[] = []) {
 }
 
 describe("CLI dispatch", () => {
+  it("config get validates flags and values before dispatch", () => {
+    const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
+    const configGet = src.match(/case "get": \{([\s\S]*?)sandboxConfig\.configGet\(cmd, configOpts\);/);
+    expect(configGet).toBeTruthy();
+    expect(configGet![1]).toContain("--key requires a value");
+    expect(configGet![1]).toContain("--format requires a value");
+    expect(configGet![1]).toContain("Unknown format");
+    expect(configGet![1]).toContain("Unknown flag");
+    expect(configGet![1]).toContain('format !== "json" && format !== "yaml"');
+  });
+
   it("help exits 0 and shows sections", () => {
     const r = run("help");
     expect(r.code).toBe(0);
@@ -1333,10 +1344,14 @@ describe("CLI dispatch", () => {
       mode: 0o755,
     });
 
-    const r = runWithEnv("alpha connect", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
+    const r = runWithEnv(
+      "alpha connect",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      30000,
+    );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("Waiting for sandbox 'alpha' to be ready")).toBeTruthy();

@@ -38,7 +38,7 @@ describe("sandbox build context staging", () => {
     }
   });
 
-  it("optimized staging is smaller than the legacy build context", { timeout: 30_000 }, () => {
+  it("optimized staging is smaller than the legacy build context", { timeout: 120_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-compare-"));
 

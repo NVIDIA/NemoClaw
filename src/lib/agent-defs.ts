@@ -27,8 +27,7 @@ export interface AgentHealthProbe {
 }
 
 export interface AgentConfigPaths {
-  immutableDir: string;
-  writableDir: string;
+  dir: string;
   configFile: string;
   envFile: string | null;
   format: string;
@@ -320,8 +319,7 @@ export function loadAgent(name: string): AgentDefinition {
 
     get configPaths(): AgentConfigPaths {
       return {
-        immutableDir: readString(config ?? {}, "immutable_dir") ?? "/sandbox/.openclaw",
-        writableDir: readString(config ?? {}, "writable_dir") ?? "/sandbox/.openclaw-data",
+        dir: readString(config ?? {}, "dir") ?? "/sandbox/.openclaw",
         configFile: readString(config ?? {}, "config_file") ?? "openclaw.json",
         envFile: readString(config ?? {}, "env_file") ?? null,
         format: readString(config ?? {}, "format") ?? "json",

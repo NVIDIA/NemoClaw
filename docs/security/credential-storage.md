@@ -28,7 +28,7 @@ The OpenShell gateway is the only system of record for stored credentials.
 When you provide a provider credential — interactively during `nemoclaw onboard` or via an environment variable — NemoClaw holds the value in memory only long enough to register it with the OpenShell gateway through `openshell provider create` or `openshell provider update`.
 The gateway stores the credential and the OpenShell L7 proxy substitutes it into outbound requests at egress, so sandboxed agents see placeholders instead of the raw secret.
 
-`nemoclaw config rotate-token` is a separate flow that rotates a sandbox-side OpenClaw auth token; it is not a provider-credential upsert and is documented under [Commands](../reference/commands.md).
+The sandbox-side OpenClaw gateway token is generated at container startup and is not rotated through provider credential commands.
 
 ## Where Credentials Live
 

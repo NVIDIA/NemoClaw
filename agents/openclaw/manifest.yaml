@@ -34,9 +34,8 @@ forward_ports:
 
 # ── Configuration ───────────────────────────────────────────────
 config:
-  immutable_dir: /sandbox/.openclaw
-  writable_dir: /sandbox/.openclaw-data
-  config_file: openclaw.json      # relative to immutable_dir
+  dir: /sandbox/.openclaw
+  config_file: openclaw.json
   format: json
 
 # ── State directories ──────────────────────────────────────────

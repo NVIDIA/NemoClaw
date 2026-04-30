@@ -238,20 +238,6 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "sandbox",
     hidden: true,
   },
-  {
-    usage: "nemoclaw <name> config set",
-    description: "Set sandbox configuration",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw <name> config rotate-token",
-    description: "Rotate sandbox authentication token",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    hidden: true,
-  },
 
   // ── Compatibility Commands ──
   {
