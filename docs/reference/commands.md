@@ -329,6 +329,7 @@ Do not log it, share it, or commit it to version control.
 
 Stop the NIM container, remove the host-side Docker image built during onboard, and delete the sandbox.
 This removes the sandbox from the registry.
+For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
 
 :::{warning}
 This command permanently deletes the sandbox **and its persistent volume**.
@@ -631,6 +632,57 @@ $ nemoclaw my-assistant snapshot restore 2026-04-21T07-35-55-987Z
 # clone v3 into another sandbox
 $ nemoclaw my-assistant snapshot restore v3 --to my-assistant-clone
 ```
+
+### `nemoclaw <name> share mount`
+
+Mount the sandbox filesystem on the host machine via SSHFS for bidirectional file sharing.
+Files edited on the host appear instantly inside the sandbox, and vice versa.
+
+```console
+$ nemoclaw my-assistant share mount
+✓ Mounted /sandbox → ~/.nemoclaw/mounts/my-assistant
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `sandbox-path` | `/sandbox` | Remote path inside the sandbox to mount |
+| `local-mount-point` | `~/.nemoclaw/mounts/<name>` | Local directory to mount onto (auto-created) |
+
+Prerequisites:
+
+- `sshfs` must be installed on the host (`sudo apt-get install sshfs` on Linux, `brew install macfuse && brew install sshfs` on macOS).
+- The sandbox must be running.
+- Sandboxes created before the `openssh-sftp-server` base image update must be rebuilt with `nemoclaw <name> rebuild`.
+
+```console
+# mount a specific path to a custom local directory
+$ nemoclaw my-assistant share mount /sandbox/workspace ~/my-workspace
+```
+
+### `nemoclaw <name> share unmount`
+
+Unmount a previously mounted sandbox filesystem.
+
+```console
+$ nemoclaw my-assistant share unmount
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `local-mount-point` | `~/.nemoclaw/mounts/<name>` | Local directory to unmount |
+
+### `nemoclaw <name> share status`
+
+Check whether the sandbox filesystem is currently mounted.
+
+```console
+$ nemoclaw my-assistant share status
+● Mounted at ~/.nemoclaw/mounts/my-assistant
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `local-mount-point` | `~/.nemoclaw/mounts/<name>` | Local directory to check |
 
 ## `openshell term`
 

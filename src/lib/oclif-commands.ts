@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import ListCommand from "./list-command";
+import ShareCommand from "./share-command";
 
 export default {
   list: ListCommand,
+  share: ShareCommand,
 };

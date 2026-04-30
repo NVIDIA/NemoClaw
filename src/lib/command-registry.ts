@@ -135,6 +135,27 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "sandbox",
   },
   {
+    usage: "nemoclaw <name> share mount",
+    description: "Mount sandbox filesystem on the host via SSHFS",
+    flags: "[sandbox-path] [local-mount-point]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> share unmount",
+    description: "Unmount a previously mounted sandbox filesystem",
+    flags: "[local-mount-point]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> share status",
+    description: "Check whether the sandbox filesystem is currently mounted",
+    flags: "[local-mount-point]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
     usage: "nemoclaw <name> rebuild",
     description: "Upgrade sandbox to current agent version",
     flags: "(--yes to skip prompt)",
