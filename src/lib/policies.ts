@@ -39,6 +39,11 @@ function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Enumerate every preset YAML under `nemoclaw-blueprint/policies/presets/`
+ * and return `{ file, name, description }` triples parsed from the file's
+ * `preset:` header.
+ */
 function listPresets(): PresetInfo[] {
   if (!fs.existsSync(PRESETS_DIR)) return [];
   return fs
@@ -56,6 +61,10 @@ function listPresets(): PresetInfo[] {
     });
 }
 
+/**
+ * Read a built-in preset by short name from `PRESETS_DIR`. Guards against
+ * path traversal and returns `null` if the preset does not exist.
+ */
 function loadPreset(name: string): string | null {
   const file = path.resolve(PRESETS_DIR, `${name}.yaml`);
   if (!file.startsWith(PRESETS_DIR + path.sep) && file !== PRESETS_DIR) {
@@ -69,6 +78,11 @@ function loadPreset(name: string): string | null {
   return fs.readFileSync(file, "utf-8");
 }
 
+/**
+ * Extract the bare hostnames declared in a preset YAML (anything matched by
+ * `host: <value>`), with surrounding quotes stripped. Used to show the
+ * "endpoints that would be opened" preview before applying a preset.
+ */
 function getPresetEndpoints(content: string): string[] {
   const hosts: string[] = [];
   const regex = /host:\s*([^\s,}]+)/g;
@@ -300,6 +314,14 @@ function removePresetFromPolicy(
   return YAML.stringify(current);
 }
 
+/**
+ * Remove a previously-applied preset from the running sandbox policy and
+ * delete its name from the registry entry. Resolves the preset's content
+ * from the built-in presets directory first, then from the registry's
+ * `customPolicies` list for presets applied via `--from-file`/`--from-dir`.
+ * Returns `false` if the preset is unknown or has no `network_policies`
+ * section.
+ */
 function removePreset(sandboxName: string, presetName: string): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
@@ -311,7 +333,20 @@ function removePreset(sandboxName: string, presetName: string): boolean {
     );
   }
 
-  const presetContent = loadPreset(presetName);
+  // Resolve preset content: built-in first, then custom presets persisted
+  // in the registry. `isCustom` controls which registry bucket to prune on
+  // success.
+  let presetContent: string | null = loadPreset(presetName);
+  let isCustom = false;
+  if (!presetContent) {
+    const custom = registry
+      .getCustomPolicies(sandboxName)
+      .find((p: { name: string }) => p.name === presetName);
+    if (custom) {
+      presetContent = custom.content;
+      isCustom = true;
+    }
+  }
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
     return false;
@@ -371,13 +406,22 @@ function removePreset(sandboxName: string, presetName: string): boolean {
 
   const sandbox = registry.getSandbox(sandboxName);
   if (sandbox) {
-    const pols = (sandbox.policies || []).filter((p: string) => p !== presetName);
-    registry.updateSandbox(sandboxName, { policies: pols });
+    if (isCustom) {
+      registry.removeCustomPolicyByName(sandboxName, presetName);
+    } else {
+      const pols = (sandbox.policies || []).filter((p: string) => p !== presetName);
+      registry.updateSandbox(sandboxName, { policies: pols });
+    }
   }
 
   return true;
 }
 
+/**
+ * Interactive preset picker for the `policy-remove` command. Prompts on
+ * stderr and resolves to the chosen preset name, or `null` if the user
+ * cancels or enters an invalid selection.
+ */
 function selectForRemoval(
   items: PresetInfo[],
   { applied = [] }: SelectionOptions = {},
@@ -396,13 +440,16 @@ function selectForRemoval(
     });
     process.stderr.write("\n");
     const question = "  Choose preset to remove: ";
+    // Re-attach stdin to the event loop — unref() on exit is sticky and
+    // would otherwise leave a follow-up prompt waiting on a detached handle.
+    if (typeof process.stdin.ref === "function") process.stdin.ref();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer: string) => {
       rl.close();
-      if (!process.stdin.isTTY) {
-        if (typeof process.stdin.pause === "function") process.stdin.pause();
-        if (typeof process.stdin.unref === "function") process.stdin.unref();
-      }
+      // pause+unref so the process exits naturally after the last prompt.
+      // The matching ref() above keeps subsequent prompts working.
+      if (typeof process.stdin.pause === "function") process.stdin.pause();
+      if (typeof process.stdin.unref === "function") process.stdin.unref();
       const trimmed = answer.trim();
       if (!trimmed) {
         resolve(null);
@@ -425,7 +472,24 @@ function selectForRemoval(
   });
 }
 
-function applyPreset(sandboxName: string, presetName: string, _options = {}): boolean {
+/**
+ * Apply raw preset content (already loaded in memory) to a running sandbox.
+ * Validates the sandbox name, extracts the `network_policies` entries, merges
+ * them into the sandbox's current policy, runs `openshell policy set --wait`,
+ * and records the preset name in the registry. Returns `false` if the content
+ * has no `network_policies` section. Used by both `applyPreset` (built-in
+ * presets) and the `--from-file` / `--from-dir` paths (custom preset files).
+ *
+ * When `options.custom` is set, the preset content is also persisted under
+ * `customPolicies` in the registry so `removePreset` can later undo a
+ * custom preset purely by name.
+ */
+function applyPresetContent(
+  sandboxName: string,
+  presetName: string,
+  presetContent: string,
+  options: { custom?: { sourcePath?: string } } = {},
+): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
@@ -434,12 +498,6 @@ function applyPreset(sandboxName: string, presetName: string, _options = {}): bo
       `Invalid or truncated sandbox name: '${sandboxName}'. ` +
         `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
     );
-  }
-
-  const presetContent = loadPreset(presetName);
-  if (!presetContent) {
-    console.error(`  Cannot load preset: ${presetName}`);
-    return false;
   }
 
   const presetEntries = extractPresetEntries(presetContent);
@@ -487,19 +545,137 @@ function applyPreset(sandboxName: string, presetName: string, _options = {}): bo
 
   const sandbox = registry.getSandbox(sandboxName);
   if (sandbox) {
-    const pols = sandbox.policies || [];
-    if (!pols.includes(presetName)) {
-      pols.push(presetName);
+    if (options.custom) {
+      // Custom preset: persist full content so it can be removed later
+      // without requiring the user to still have the file on disk.
+      registry.addCustomPolicy(sandboxName, {
+        name: presetName,
+        content: presetContent,
+        sourcePath: options.custom.sourcePath,
+      });
+    } else {
+      const pols = sandbox.policies || [];
+      if (!pols.includes(presetName)) {
+        pols.push(presetName);
+      }
+      registry.updateSandbox(sandboxName, { policies: pols });
     }
-    registry.updateSandbox(sandboxName, { policies: pols });
   }
 
   return true;
 }
 
+/**
+ * Apply a built-in preset (by name) to a running sandbox. Loads the preset
+ * from `nemoclaw-blueprint/policies/presets/<name>.yaml` and delegates to
+ * `applyPresetContent`. Returns `false` if the named preset does not exist.
+ */
+function applyPreset(
+  sandboxName: string,
+  presetName: string,
+  options: Record<string, unknown> = {},
+): boolean {
+  const presetContent = loadPreset(presetName);
+  if (!presetContent) {
+    console.error(`  Cannot load preset: ${presetName}`);
+    return false;
+  }
+  return applyPresetContent(sandboxName, presetName, presetContent, options);
+}
+
+/**
+ * Load a user-authored preset YAML from an arbitrary path on disk, validate
+ * its shape, and return `{ presetName, content }` for use with
+ * `applyPresetContent`. Returns `null` (and logs a specific error) for any
+ * of: missing/non-file path, non-`.yaml`/`.yml` extension, invalid YAML,
+ * missing or malformed `preset.name`, missing `network_policies` object, or
+ * a name collision with a built-in preset (built-ins must be addressed by
+ * their own name, so the custom file must be renamed).
+ */
+function loadPresetFromFile(filePath: string): { presetName: string; content: string } | null {
+  const abs = path.resolve(filePath);
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+    console.error(`  Preset file not found: ${filePath}`);
+    return null;
+  }
+  if (!/\.ya?ml$/i.test(abs)) {
+    console.error(`  Preset file must be .yaml or .yml: ${filePath}`);
+    return null;
+  }
+  let content: string;
+  let parsed: PolicyValue;
+  try {
+    content = fs.readFileSync(abs, "utf-8");
+    parsed = YAML.parse(content);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    const message = err instanceof Error ? err.message : String(err);
+    const msg =
+      code === "ENOENT" || code === "EACCES"
+        ? `Cannot read ${filePath}: ${message}`
+        : `Invalid YAML in ${filePath}: ${message}`;
+    console.error(`  ${msg}`);
+    return null;
+  }
+  if (!isPolicyDocument(parsed)) {
+    console.error(`  Preset must be a YAML mapping: ${filePath}`);
+    return null;
+  }
+  const presetMeta = parsed.preset;
+  const presetName =
+    presetMeta && typeof presetMeta === "object" && !Array.isArray(presetMeta)
+      ? (presetMeta as PolicyObject).name
+      : undefined;
+  if (typeof presetName !== "string" || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(presetName)) {
+    console.error(
+      `  Preset must declare preset.name (lowercase, hyphenated RFC 1123 label): ${filePath}`,
+    );
+    return null;
+  }
+  if (
+    !parsed.network_policies ||
+    typeof parsed.network_policies !== "object" ||
+    Array.isArray(parsed.network_policies)
+  ) {
+    console.error(`  Preset missing network_policies section: ${filePath}`);
+    return null;
+  }
+  const builtin = listPresets().map((p) => p.name);
+  if (builtin.includes(presetName)) {
+    console.error(
+      `  Preset name '${presetName}' collides with a built-in preset. Rename 'preset.name' in ${filePath}.`,
+    );
+    return null;
+  }
+  return { presetName, content };
+}
+
+/**
+ * Return the list of preset names currently recorded as applied to the
+ * sandbox (both built-in names and custom-preset names), or an empty array
+ * if the sandbox is not tracked in the registry.
+ */
 function getAppliedPresets(sandboxName: string): string[] {
   const sandbox = registry.getSandbox(sandboxName);
-  return sandbox ? sandbox.policies || [] : [];
+  if (!sandbox) return [];
+  const builtin = sandbox.policies || [];
+  const custom = (sandbox.customPolicies || []).map((p: { name: string }) => p.name);
+  return [...builtin, ...custom];
+}
+
+/**
+ * Return the custom preset entries recorded on the sandbox as
+ * `PresetInfo`-shaped objects, so they can be mixed with built-in presets
+ * in listing / selection UIs. `file` is populated from `sourcePath` when
+ * available for a user hint; `description` is empty.
+ */
+function listCustomPresets(sandboxName: string): PresetInfo[] {
+  const entries = registry.getCustomPolicies(sandboxName);
+  return entries.map((e: { name: string; sourcePath?: string }) => ({
+    file: e.sourcePath || `${e.name}.yaml`,
+    name: e.name,
+    description: "custom preset",
+  }));
 }
 
 /**
@@ -571,6 +747,11 @@ function getGatewayPresets(sandboxName: string): string[] | null {
   return matched;
 }
 
+/**
+ * Interactive preset picker for the `policy-add` command. Prints the
+ * presets on stderr (● applied, ○ not applied), prompts for a number, and
+ * resolves to the chosen preset name or `null` on cancel.
+ */
 function selectFromList(
   items: PresetInfo[],
   { applied = [] }: SelectionOptions = {},
@@ -586,13 +767,16 @@ function selectFromList(
     const defaultIdx = items.findIndex((item) => !applied.includes(item.name));
     const defaultNum = defaultIdx >= 0 ? defaultIdx + 1 : null;
     const question = defaultNum ? `  Choose preset [${defaultNum}]: ` : "  Choose preset: ";
+    // Re-attach stdin to the event loop — unref() on exit is sticky and
+    // would otherwise leave a follow-up prompt waiting on a detached handle.
+    if (typeof process.stdin.ref === "function") process.stdin.ref();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer: string) => {
       rl.close();
-      if (!process.stdin.isTTY) {
-        if (typeof process.stdin.pause === "function") process.stdin.pause();
-        if (typeof process.stdin.unref === "function") process.stdin.unref();
-      }
+      // pause+unref so the process exits naturally after the last prompt.
+      // The matching ref() above keeps subsequent prompts working.
+      if (typeof process.stdin.pause === "function") process.stdin.pause();
+      if (typeof process.stdin.unref === "function") process.stdin.unref();
       const trimmed = answer.trim();
       const effectiveInput = trimmed || (defaultNum ? String(defaultNum) : "");
       if (!effectiveInput) {
@@ -628,6 +812,11 @@ const PERMISSIVE_POLICY_PATH = path.join(
   "openclaw-sandbox-permissive.yaml",
 );
 
+/**
+ * Resolve the on-disk path to the permissive policy YAML for the given
+ * sandbox, honoring the agent-specific override registered in
+ * `agent-defs.ts`. Returns `null` if no permissive policy is configured.
+ */
 function resolvePermissivePolicyPath(sandboxName: string): string {
   // Use agent-specific permissive policy if the sandbox has an agent with one.
   try {
@@ -683,10 +872,13 @@ export {
   mergePresetIntoPolicy,
   removePresetFromPolicy,
   applyPreset,
+  applyPresetContent,
+  loadPresetFromFile,
   removePreset,
   applyPermissivePolicy,
   getAppliedPresets,
   getGatewayPresets,
+  listCustomPresets,
   selectFromList,
   selectForRemoval,
 };

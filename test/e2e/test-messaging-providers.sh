@@ -214,7 +214,8 @@ SLACK_PRESET="$REPO/nemoclaw-blueprint/policies/presets/slack.yaml"
 if [ -f "$BASE_POLICY" ] && [ -f "$SLACK_PRESET" ] && ! grep -q "api.slack.com" "$BASE_POLICY"; then
   BASE_POLICY_BAK="$(mktemp)"
   cp "$BASE_POLICY" "$BASE_POLICY_BAK"
-  trap 'cp "$BASE_POLICY_BAK" "$BASE_POLICY" 2>/dev/null || true; rm -f "$BASE_POLICY_BAK"' EXIT
+  _previous_exit_trap=$(trap -p EXIT | sed "s/^trap -- '//;s/' EXIT$//")
+  trap ''"${_previous_exit_trap:+$_previous_exit_trap;}"' cp "$BASE_POLICY_BAK" "$BASE_POLICY" 2>/dev/null || true; rm -f "$BASE_POLICY_BAK"' EXIT
   info "Pre-merging Slack network policy into base sandbox policy..."
   cat >>"$BASE_POLICY" <<'SLACK_POLICY_EOF'
 
@@ -661,19 +662,11 @@ print('yes' if 'slack' in d else 'no')
     pass "M11e: Slack channel configured with placeholder tokens (guard needed)"
 
     # Diagnostics: check if the guard was installed and what NODE_OPTIONS looks like
-    info "Checking guard installation diagnostics (via openshell exec as root):"
+    info "Checking guard installation diagnostics:"
     guard_exists=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ls -la /tmp/nemoclaw-slack-channel-guard.js 2>/dev/null || echo "EXEC_FAILED")
     info "  Guard file: $guard_exists"
     node_opts=$(openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c 'echo "$NODE_OPTIONS"' 2>/dev/null || echo "EXEC_FAILED")
     info "  NODE_OPTIONS: $node_opts"
-    proxy_fix=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ls -la /tmp/nemoclaw-http-proxy-fix.js 2>/dev/null || echo "EXEC_FAILED")
-    info "  Proxy fix file: $proxy_fix"
-    # Check what processes are running
-    procs=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ps aux 2>/dev/null | head -10 || echo "EXEC_FAILED")
-    info "  Processes:"
-    echo "$procs" | while IFS= read -r line; do
-      info "    $line"
-    done
   else
     skip "M11e: No Slack channel in config"
   fi

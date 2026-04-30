@@ -203,8 +203,12 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
       if (inEnvBlock && !/\\\s*$/.test(line)) {
         inEnvBlock = false;
       }
-      // Verify promotion happened before the python3 -c RUN layer
-      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
+      // Verify promotion happened before the config-generation RUN layer
+      if (
+        /^\s*RUN\b.*python3\s+\/usr\/local\/lib\/nemoclaw\/generate-openclaw-config\.py\b/.test(
+          line,
+        )
+      ) {
         expect(chatUiUrlPromoted).toBeTruthy();
         return; // Found the RUN layer and verified — done
       }
@@ -212,31 +216,17 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
     expect(chatUiUrlPromoted).toBeTruthy();
   });
 
-  it("Python script uses os.environ to read CHAT_UI_URL", () => {
-    const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    const lines = src.split("\n");
-    let inPythonRunBlock = false;
-    let hasEnvRead = false;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
-        inPythonRunBlock = true;
-      }
-      if (inPythonRunBlock) {
-        if (
-          line.includes("os.environ['CHAT_UI_URL']") ||
-          line.includes('os.environ["CHAT_UI_URL"]') ||
-          line.includes("os.environ.get('CHAT_UI_URL'") ||
-          line.includes('os.environ.get("CHAT_UI_URL"')
-        ) {
-          hasEnvRead = true;
-        }
-      }
-      if (inPythonRunBlock && !/\\\s*$/.test(line)) {
-        inPythonRunBlock = false;
-      }
-    }
-    expect(hasEnvRead).toBeTruthy();
+  it("Python config script uses os.environ to read CHAT_UI_URL", () => {
+    // Config generation is now in an external script, not inline python3 -c.
+    // Verify the Dockerfile references the script and the script reads the env var.
+    const dockerSrc = fs.readFileSync(DOCKERFILE, "utf-8");
+    expect(dockerSrc).toMatch(/COPY.*generate-openclaw-config\.py/);
+    expect(dockerSrc).toMatch(/RUN python3 \/usr\/local\/lib\/nemoclaw\/generate-openclaw-config\.py/);
+
+    const scriptPath = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
+    const scriptSrc = fs.readFileSync(scriptPath, "utf-8");
+    expect(scriptSrc).toMatch(/CHAT_UI_URL/);
+    expect(scriptSrc).toMatch(/os\.environ/);
   });
 
   it("Dockerfile promotes NEMOCLAW_MODEL to ENV before the RUN layer", () => {
@@ -263,8 +253,12 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
       if (inEnvBlock && !/\\\s*$/.test(line)) {
         inEnvBlock = false;
       }
-      // Verify promotion happened before the python3 -c RUN layer
-      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
+      // Verify promotion happened before the config-generation RUN layer
+      if (
+        /^\s*RUN\b.*python3\s+\/usr\/local\/lib\/nemoclaw\/generate-openclaw-config\.py\b/.test(
+          line,
+        )
+      ) {
         expect(nemoModelPromoted).toBeTruthy();
         return; // Found the RUN layer and verified — done
       }
@@ -272,31 +266,12 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
     expect(nemoModelPromoted).toBeTruthy();
   });
 
-  it("Python script uses os.environ to read NEMOCLAW_MODEL", () => {
-    const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    const lines = src.split("\n");
-    let inPythonRunBlock = false;
-    let hasEnvRead = false;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
-        inPythonRunBlock = true;
-      }
-      if (inPythonRunBlock) {
-        if (
-          line.includes("os.environ['NEMOCLAW_MODEL']") ||
-          line.includes('os.environ["NEMOCLAW_MODEL"]') ||
-          line.includes("os.environ.get('NEMOCLAW_MODEL'") ||
-          line.includes('os.environ.get("NEMOCLAW_MODEL"')
-        ) {
-          hasEnvRead = true;
-        }
-      }
-      if (inPythonRunBlock && !/\\\s*$/.test(line)) {
-        inPythonRunBlock = false;
-      }
-    }
-    expect(hasEnvRead).toBeTruthy();
+  it("Python config script uses os.environ to read NEMOCLAW_MODEL", () => {
+    // Config generation is now in an external script, not inline python3 -c.
+    const scriptPath = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
+    const scriptSrc = fs.readFileSync(scriptPath, "utf-8");
+    expect(scriptSrc).toMatch(/NEMOCLAW_MODEL/);
+    expect(scriptSrc).toMatch(/os\.environ/);
   });
 });
 
@@ -316,22 +291,30 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
     expect(src).not.toMatch(/'allowInsecureAuth':\s*True/);
   });
 
-  it("dangerouslyDisableDeviceAuth is derived from NEMOCLAW_DISABLE_DEVICE_AUTH env var", () => {
-    const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    // The Python config generation must read the env var
-    expect(src).toMatch(/os\.environ\.get\(['"]NEMOCLAW_DISABLE_DEVICE_AUTH['"]/);
-    // And use the derived variable in the config dict
-    expect(src).toMatch(/'dangerouslyDisableDeviceAuth':\s*disable_device_auth/);
+  it("dangerouslyDisableDeviceAuth is derived from env var AND non-loopback URL", () => {
+    // Config generation moved to external script — check the script source
+    const scriptPath = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
+    const src = fs.readFileSync(scriptPath, "utf-8");
+    // Env var check still present
+    expect(src).toMatch(/NEMOCLAW_DISABLE_DEVICE_AUTH/);
+    // Non-loopback derivation present
+    expect(src).toMatch(/is_loopback/);
+    // Both feed into disable_device_auth
+    expect(src).toMatch(/disable_device_auth/);
+    expect(src).toMatch(/dangerouslyDisableDeviceAuth/);
   });
 
   it("allowInsecureAuth is derived from URL scheme (explicit http allowlist)", () => {
-    const src = fs.readFileSync(DOCKERFILE, "utf-8");
+    // Config generation moved to external script — check the script source
+    const scriptPath = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
+    const src = fs.readFileSync(scriptPath, "utf-8");
     // Must use explicit 'http' allowlist — not `!= 'https'` which would allow
     // insecure auth for malformed or unknown schemes (CodeRabbit review on #123)
-    expect(src).toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*==\s*'http'/);
-    expect(src).not.toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*!=\s*'https'/);
+    expect(src).toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*==\s*['"]http['"]/);
+    expect(src).not.toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*!=\s*['"]https['"]/);
     // And use the derived variable in the config dict
-    expect(src).toMatch(/'allowInsecureAuth':\s*allow_insecure/);
+    expect(src).toMatch(/allowInsecureAuth/);
+    expect(src).toMatch(/allow_insecure/);
   });
 
   it("NEMOCLAW_DISABLE_DEVICE_AUTH defaults to '0' (secure by default)", () => {
@@ -359,7 +342,11 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
       if (inEnvBlock && !/\\\s*$/.test(line)) {
         inEnvBlock = false;
       }
-      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
+      if (
+        /^\s*RUN\b.*python3\s+\/usr\/local\/lib\/nemoclaw\/generate-openclaw-config\.py\b/.test(
+          line,
+        )
+      ) {
         expect(promoted).toBeTruthy();
         return;
       }

@@ -12,7 +12,8 @@
 # Optional env:
 #   NVIDIA_API_KEY                API key for NVIDIA-hosted inference
 #   CHAT_UI_URL                   Browser origin that will access the forwarded dashboard
-#   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth
+#   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth.
+#                                  Also auto-disabled when CHAT_UI_URL is non-loopback.
 #                                 (development/headless). Has no runtime effect — openclaw.json
 #                                 is baked at image build and verified by hash at startup.
 #   NEMOCLAW_MODEL_OVERRIDE       Override the primary model at startup without rebuilding
@@ -211,12 +212,13 @@ _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /s
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/759
 
 apply_model_override() {
-  # Any of these env vars trigger a config patch
+  # Only explicit override env vars trigger a config patch. NEMOCLAW_CONTEXT_WINDOW,
+  # NEMOCLAW_MAX_TOKENS, and NEMOCLAW_REASONING are promoted from Dockerfile build
+  # ARGs to ENV and are always set — they should only take effect when accompanied
+  # by an explicit model or API override. Without this guard the function runs on
+  # every container start even with no override requested. Ref: #2653
   [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] \
     || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
-    || [ -n "${NEMOCLAW_CONTEXT_WINDOW:-}" ] \
-    || [ -n "${NEMOCLAW_MAX_TOKENS:-}" ] \
-    || [ -n "${NEMOCLAW_REASONING:-}" ] \
     || return 0
 
   # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
@@ -290,10 +292,15 @@ apply_model_override() {
   [ -n "$max_tokens" ] && printf '[config] Applying max tokens override: %s\n' "$max_tokens" >&2
   [ -n "$reasoning" ] && printf '[config] Applying reasoning override: %s\n' "$reasoning" >&2
 
+  # Relax 444 → 644 so writes succeed after CAP_DAC_OVERRIDE is dropped (#2653).
+  # Re-lock in all exit paths so files are never left at 644 on failure.
+  relax_config_for_write "$config_file" "$hash_file"
+  local _write_rc=0
+
   NEMOCLAW_CONTEXT_WINDOW="$context_window" \
     NEMOCLAW_MAX_TOKENS="$max_tokens" \
     NEMOCLAW_REASONING="$reasoning" \
-    python3 - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE'
+    python3 - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE' || _write_rc=$?
 import json, os, sys
 
 config_file, model_override, api_override = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -329,9 +336,18 @@ with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYOVERRIDE
 
-  # Recompute config hash so integrity check passes on next startup
-  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
-  printf '[SECURITY] Config hash recomputed after model override\n' >&2
+  if [ "$_write_rc" -eq 0 ]; then
+    # Recompute config hash so integrity check passes on next startup
+    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      printf '[SECURITY] Config hash recomputed after model override\n' >&2
+    else
+      _write_rc=$?
+    fi
+  fi
+
+  # Re-lock 644 → 444 — always runs, even on write/hash failure (#2653)
+  lock_config_after_write "$config_file" "$hash_file"
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
 # ── Runtime CORS origin override ──────────────────────────────────
@@ -374,7 +390,12 @@ apply_cors_override() {
 
   printf '[config] Adding CORS origin: %s\n' "$cors_origin" >&2
 
-  python3 - "$config_file" "$cors_origin" <<'PYCORS'
+  # Relax 444 → 644 so writes succeed after CAP_DAC_OVERRIDE is dropped (#2653).
+  # Re-lock in all exit paths so files are never left at 644 on failure.
+  relax_config_for_write "$config_file" "$hash_file"
+  local _write_rc=0
+
+  python3 - "$config_file" "$cors_origin" <<'PYCORS' || _write_rc=$?
 import json, sys
 
 config_file, cors_origin = sys.argv[1], sys.argv[2]
@@ -391,8 +412,17 @@ with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYCORS
 
-  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
-  printf '[config] Config hash recomputed after CORS override\n' >&2
+  if [ "$_write_rc" -eq 0 ]; then
+    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      printf '[config] Config hash recomputed after CORS override\n' >&2
+    else
+      _write_rc=$?
+    fi
+  fi
+
+  # Re-lock 644 → 444 — always runs, even on write/hash failure (#2653)
+  lock_config_after_write "$config_file" "$hash_file"
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
 # ── Slack token placeholder resolution ────────────────────────────
@@ -449,9 +479,14 @@ apply_slack_token_override() {
 
   printf '[channels] Resolving Slack token placeholders in openclaw.json\n' >&2
 
+  # Relax 444 → 644 so writes succeed after CAP_DAC_OVERRIDE is dropped (#2653).
+  # Re-lock in all exit paths so files are never left at 644 on failure.
+  relax_config_for_write "$config_file" "$hash_file"
+  local _write_rc=0
+
   SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
     SLACK_APP_TOKEN="${SLACK_APP_TOKEN:-}" \
-    python3 - "$config_file" <<'PYSLACK'
+    python3 - "$config_file" <<'PYSLACK' || _write_rc=$?
 import json, os, re, sys
 
 config_file = sys.argv[1]
@@ -481,45 +516,17 @@ with open(config_file, "w") as f:
     f.write(content)
 PYSLACK
 
-  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
-  printf '[channels] Config hash recomputed after Slack token override\n' >&2
-}
+  if [ "$_write_rc" -eq 0 ]; then
+    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      printf '[channels] Config hash recomputed after Slack token override\n' >&2
+    else
+      _write_rc=$?
+    fi
+  fi
 
-# ── Gateway auth token (externalized) ──────────────────────────
-# The gateway auth token is NOT stored in openclaw.json. It is generated
-# at container startup and passed as OPENCLAW_GATEWAY_TOKEN env var only
-# to the gateway process launch line. OpenClaw reads this natively via
-# its resolveGatewayCredentialsFromValues() path.
-#
-# Token file location depends on startup mode:
-#   Root mode:     /run/nemoclaw/gateway-token (gateway:gateway 0400)
-#                  Host reads via kubectl exec (runs as root in pod).
-#                  Sandbox user cannot access: wrong uid, /proc/pid/environ
-#                  is uid-gated, no-new-privileges blocks escalation.
-#   Non-root mode: $XDG_RUNTIME_DIR/nemoclaw/gateway-token (sandbox:sandbox 0400)
-#                  Host reads via openshell sandbox download (sandbox user).
-#                  No uid isolation — matches pre-externalization posture.
-#
-# Both paths regenerate the token on every container start.
-GATEWAY_TOKEN_DIR="/run/nemoclaw"
-GATEWAY_TOKEN_FILE="${GATEWAY_TOKEN_DIR}/gateway-token"
-
-generate_gateway_token() {
-  [ "$(id -u)" -eq 0 ] || {
-    printf '[SECURITY] generate_gateway_token requires root — skipping\n' >&2
-    return 1
-  }
-
-  mkdir -p "$GATEWAY_TOKEN_DIR"
-  chmod 755 "$GATEWAY_TOKEN_DIR"
-
-  python3 -c "import secrets; print(secrets.token_hex(32), end='')" \
-    >"$GATEWAY_TOKEN_FILE"
-
-  chown gateway:gateway "$GATEWAY_TOKEN_FILE"
-  chmod 400 "$GATEWAY_TOKEN_FILE"
-  printf '[token] Gateway auth token generated at %s (gateway:gateway 0400)\n' \
-    "$GATEWAY_TOKEN_FILE" >&2
+  # Re-lock 644 → 444 — always runs, even on write/hash failure (#2653)
+  lock_config_after_write "$config_file" "$hash_file"
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
 # ── Slack channel guard (unhandled-rejection safety net) ─────────
@@ -657,10 +664,74 @@ SLACK_GUARD_EOF
 }
 
 _read_gateway_token() {
-  # Read the gateway token from the externalized file.
-  # Callable by root (entrypoint) and gateway user only.
-  # Returns the token on stdout; empty output means no token.
-  cat "$GATEWAY_TOKEN_FILE" 2>/dev/null || true
+  python3 - <<'PYTOKEN'
+import json
+try:
+    with open('/sandbox/.openclaw/openclaw.json') as f:
+        cfg = json.load(f)
+    print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
+except Exception:
+    print('')
+PYTOKEN
+}
+
+export_gateway_token() {
+  local token
+  token="$(_read_gateway_token)"
+  local marker_begin="# nemoclaw-gateway-token begin"
+  local marker_end="# nemoclaw-gateway-token end"
+
+  if [ -z "$token" ]; then
+    # Remove any stale marker blocks from rc files so revoked/old tokens
+    # are not re-exported in later interactive sessions.
+    unset OPENCLAW_GATEWAY_TOKEN
+    for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+      if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
+        local tmp
+        tmp="$(mktemp)" || continue
+        awk -v b="$marker_begin" -v e="$marker_end" \
+          '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
+          rm -f "$tmp"
+          continue
+        }
+        cat "$tmp" >"$rc_file" 2>/dev/null || true
+        rm -f "$tmp"
+      fi
+    done
+    return
+  fi
+  export OPENCLAW_GATEWAY_TOKEN="$token"
+
+  # Persist to .bashrc/.profile so interactive sessions (openshell sandbox
+  # connect) also see the token — same pattern as the proxy config above.
+  # Shell-escape the token so quotes/dollars/backticks cannot break the
+  # sourced snippet or allow code injection.
+  local escaped_token
+  escaped_token="$(printf '%s' "$token" | sed "s/'/'\\\\''/g")"
+  local snippet
+  snippet="${marker_begin}
+export OPENCLAW_GATEWAY_TOKEN='${escaped_token}'
+${marker_end}"
+
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    [ -f "$rc_file" ] || continue
+    # All writes use || true because Landlock may block writes even though
+    # DAC (-w) says writable (#804) — same pattern as install_configure_guard.
+    if grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
+      local tmp
+      tmp="$(mktemp)" || continue
+      awk -v b="$marker_begin" -v e="$marker_end" \
+        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
+        rm -f "$tmp"
+        continue
+      }
+      printf '%s\n' "$snippet" >>"$tmp"
+      cat "$tmp" >"$rc_file" 2>/dev/null || true
+      rm -f "$tmp"
+    else
+      printf '\n%s\n' "$snippet" >>"$rc_file" 2>/dev/null || true
+    fi
+  done
 }
 
 install_configure_guard() {
@@ -738,20 +809,25 @@ openclaw() {
 GUARD
 
   for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
+    [ -f "$rc_file" ] || continue
+    # Try to write the guard snippet. All writes use || true because
+    # Landlock may block writes even though DAC (-w) says writable (#804).
+    if grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
       local tmp
-      tmp="$(mktemp)"
+      tmp="$(mktemp)" || continue
       awk -v b="$marker_begin" -v e="$marker_end" \
-        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
+        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
+        rm -f "$tmp"
+        continue
+      }
       printf '%s\n' "$snippet" >>"$tmp"
-      cat "$tmp" >"$rc_file"
+      cat "$tmp" >"$rc_file" 2>/dev/null || true
       rm -f "$tmp"
-    elif [ -w "$rc_file" ] || [ -w "$(dirname "$rc_file")" ]; then
-      printf '\n%s\n' "$snippet" >>"$rc_file"
+    else
+      printf '\n%s\n' "$snippet" >>"$rc_file" 2>/dev/null || true
     fi
   done
-  # Final lock after all rc-file mutations are complete so Landlock
-  # read_only enforcement holds.
+  # Best-effort lock — Landlock may already enforce read-only.
   lock_rc_files "$_SANDBOX_HOME"
 }
 
@@ -884,17 +960,34 @@ while time.time() < DEADLINE:
         time.sleep(1)
         continue
 
-    if has_browser:
-        QUIET_POLLS += 1
-        if QUIET_POLLS >= 4:
+    QUIET_POLLS += 1
+    # Exit-on-quiet conditions, checked in order of strength:
+    #   1. Browser device paired — original control-UI workflow
+    #   2. Any paired device — covers dangerouslyDisableDeviceAuth setups
+    #      where the gateway auto-pairs CLI clients directly without the
+    #      watcher running `openclaw devices approve` (so APPROVED stays
+    #      0 forever in those configurations)
+    #   3. We approved at least one device explicitly
+    # Without these, the watcher polled `openclaw devices list --json`
+    # every 1 second for 10 minutes whenever no browser device joined,
+    # saturating the gateway connect handler and starving concurrent
+    # `openclaw agent` connects (NemoClaw#2484: WS handshake-timeout).
+    if QUIET_POLLS >= 4:
+        if has_browser:
             print(f'[auto-pair] browser pairing converged approvals={APPROVED}')
             break
-    elif APPROVED > 0:
-        QUIET_POLLS += 1
-    else:
-        QUIET_POLLS = 0
+        if paired:
+            print(f'[auto-pair] devices paired ({len(paired)}); exiting approvals={APPROVED}')
+            break
+        if APPROVED > 0:
+            print(f'[auto-pair] non-browser pairing converged approvals={APPROVED}')
+            break
 
-    time.sleep(1)
+    # Back off polling once anything is paired or approved: 1s when
+    # actively processing pending requests / waiting for first pairing,
+    # 5s thereafter. The 5s cadence avoids connect-handler pile-up under
+    # high gateway connect latency.
+    time.sleep(5 if (APPROVED > 0 or paired) else 1)
 else:
     print(f'[auto-pair] watcher timed out approvals={APPROVED}')
 PYAUTOPAIR
@@ -925,6 +1018,16 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
+# Git TLS CA bundle fix (NemoClaw#2270).
+# OpenShell's L7 proxy does MITM TLS termination and re-signs with its own CA.
+# OpenShell injects SSL_CERT_FILE and CURL_CA_BUNDLE pointing at the CA bundle,
+# but git does not read those — it needs GIT_SSL_CAINFO.  Without it, git clone
+# fails with "server certificate verification failed".
+# Use SSL_CERT_FILE (set by OpenShell) as the canonical CA bundle path.
+if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
+  export GIT_SSL_CAINFO="$SSL_CERT_FILE"
+fi
+
 # HTTP library + NODE_USE_ENV_PROXY double-proxy fix (NemoClaw#2109).
 # Node.js 22 sets NODE_USE_ENV_PROXY=1 in the OpenShell base image, which
 # intercepts https.request() calls and handles proxying via CONNECT tunnel.
@@ -948,6 +1051,138 @@ export no_proxy="$_NO_PROXY_VAL"
 # Dockerfile layer and hangs npm ci in k3s Docker-in-Docker. See
 # src/lib/sandbox-build-context.ts. A sync test enforces that the
 # embedded copy is byte-identical to the canonical file.
+# ── Global sandbox safety net ──────────────────────────────────
+# Last-resort handler for uncaught exceptions and unhandled rejections
+# that would otherwise crash the gateway. The gateway is shared sandbox
+# infrastructure; user-initiated actions must not be able to take it down.
+#
+# This is intentionally NOT a catch-all swallow. Known-benign error
+# patterns are documented inline in the script; unknown patterns are
+# logged with full stack so they can be diagnosed and either fixed
+# upstream or added to the allow-list with explicit justification.
+# Specific guards (Slack, ciao) pre-empt their own error patterns;
+# this is the backstop for everything else.
+#
+# Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime),
+# and only for gateway processes. Outside a sandbox or in CLI processes
+# (agent, doctor, plugins, tui, etc.) normal Node.js crash behavior is
+# preserved so errors surface promptly to users running short-lived tools.
+_SANDBOX_SAFETY_NET="/tmp/nemoclaw-sandbox-safety-net.js"
+emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <<'SAFETY_NET_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// sandbox-safety-net.js — last-resort handler that keeps the gateway alive
+// when any library throws an uncaught exception or unhandled rejection.
+//
+// Contract:
+//
+//   1. Inside the OpenShell sandbox the gateway is shared infrastructure.
+//      User-initiated actions (loading a plugin, starting a sidecar,
+//      running an agent against the gateway) must not be able to take it
+//      down. Node.js 22+ defaults --unhandled-rejections=throw which
+//      crashes on the first stray rejection from any library — including
+//      libraries we don't control.
+//
+//   2. Specific known-benign patterns are documented inline below. They
+//      get a single-line summary and are absorbed silently. Each pattern
+//      MUST document which library produces it, why it's safe to absorb
+//      in the sandbox context, and what the upstream fix is. Prefer
+//      disabling/configuring the upstream component so the rejection
+//      never fires; this list is the safety net, not the policy.
+//
+//   3. Unknown errors do NOT crash the gateway either, but they are
+//      logged with full stack so they can be diagnosed and either fixed
+//      upstream or added to the allow-list with explicit justification.
+//      "Unknown means crash" is the wrong default for shared
+//      infrastructure; "unknown means log loudly" is the right default.
+//
+//   4. No process.exit interception. An earlier iteration intercepted
+//      process.exit during swallow windows, which masked legitimate
+//      shutdown signals and was itself the kind of catch-all hack we
+//      want to avoid.
+//
+//   5. Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime),
+//      and only for `openclaw gateway run …` invocations
+//      (process.argv[2] === "gateway"). CLI commands (agent, doctor,
+//      plugins, tui, etc.) get default Node behavior so errors surface
+//      promptly to users running short-lived tools.
+
+(function () {
+  'use strict';
+  if (process.env.OPENSHELL_SANDBOX !== '1') return;
+  if (process.argv[2] !== 'gateway') return;
+
+  // KNOWN-BENIGN ERROR PATTERNS
+  //
+  // ciao / @homebridge/ciao — mDNS service-discovery library used by the
+  // OpenClaw bonjour plugin (introduced in 2026.4.15). Sandboxes have
+  // restricted network namespaces with no multicast. Two failure modes:
+  //   - sync: os.networkInterfaces() throws ERR_SYSTEM_ERROR
+  //     uv_interface_addresses. Pre-empted by ciao-network-guard.js,
+  //     which monkey-patches os.networkInterfaces() to return {}.
+  //   - async: the probe state machine cancels itself during gateway
+  //     startup/reload and emits "CIAO PROBING CANCELLED" as an unhandled
+  //     rejection. This is the path we catch here.
+  // Upstream fix: bonjour is disabled via plugins.entries.bonjour.enabled
+  // = false in the sandbox openclaw.json. This pattern is a backstop in
+  // case the disable is bypassed or a future release introduces another
+  // mDNS code path.
+  function classifyBenignRejection(reason) {
+    if (!reason) return null;
+    var msg = String((reason && reason.message) || reason);
+    var stack = (reason && reason.stack) || '';
+
+    if (msg.indexOf('CIAO') !== -1 ||
+        stack.indexOf('@homebridge/ciao') !== -1 ||
+        stack.indexOf('/ciao/') !== -1) {
+      return 'ciao/mDNS (sandbox lacks multicast; bonjour should be disabled in openclaw.json)';
+    }
+    if (reason && reason.code === 'ERR_SYSTEM_ERROR' &&
+        msg.indexOf('uv_interface_addresses') !== -1) {
+      return 'uv_interface_addresses (restricted netns)';
+    }
+    return null;
+  }
+
+  process.on('uncaughtException', function (err, origin) {
+    // Sync error paths are pre-empted by the targeted guards
+    // (ciao-network-guard.js, slack-channel-guard.js when Slack is
+    // configured). If we get here it's an error those guards didn't
+    // recognize. Log full stack and stay alive — registering this
+    // listener is what tells Node "don't crash on uncaughtException".
+    try {
+      process.stderr.write(
+        '[sandbox-safety-net] uncaughtException [unhandled by upstream guards \u2014 please diagnose]: ' +
+        ((err && err.stack) ? err.stack : String(err)) +
+        ' (origin: ' + origin + ') \u2014 gateway continues\n'
+      );
+    } catch (_) {}
+  });
+
+  process.on('unhandledRejection', function (reason, promise) {
+    var benign = classifyBenignRejection(reason);
+    if (benign) {
+      try {
+        process.stderr.write(
+          '[sandbox-safety-net] unhandledRejection [known-benign: ' + benign + ']: ' +
+          ((reason && reason.message) ? reason.message : String(reason)) + '\n'
+        );
+      } catch (_) {}
+      return;
+    }
+    try {
+      process.stderr.write(
+        '[sandbox-safety-net] unhandledRejection [UNKNOWN PATTERN \u2014 please diagnose]: ' +
+        ((reason && reason.stack) ? reason.stack : String(reason)) +
+        ' \u2014 gateway continues\n'
+      );
+    } catch (_) {}
+  });
+})();
+SAFETY_NET_EOF
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET"
+
 _PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"
 if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
   emit_sandbox_sourced_file "$_PROXY_FIX_SCRIPT" <<'HTTP_PROXY_FIX_EOF'
@@ -1007,6 +1242,66 @@ if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
   }
   if (!proxyHost) return;
 
+  // Strip headers that were meaningful for the proxy hop only. Once we
+  // re-issue against the target via https.request, the original Host
+  // points at the proxy and the hop-by-hop headers (RFC 7230 §6.1) leak
+  // upstream — they describe the connection between the caller and the
+  // proxy, not the rewritten connection to the target.
+  //
+  // RFC 7230 §6.1 hop-by-hop set (request direction):
+  //   Connection, Keep-Alive, Proxy-Authorization, TE, Trailer,
+  //   Transfer-Encoding, Upgrade.
+  // Also stripped: Host (points at the proxy); Proxy-Connection (de
+  // facto deprecated header still emitted by some clients); and
+  // Proxy-Authenticate (response-only per RFC 7235 §4.3, included
+  // belt-and-suspenders for clients that echo response headers into
+  // retry-request options). Plus: per RFC 7230 §6.1, any token named in
+  // the Connection header is itself hop-by-hop and must be stripped.
+  var STATIC_HOP_BY_HOP = [
+    'host',
+    'connection',
+    'keep-alive',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'proxy-connection',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+  ];
+
+  function sanitizeHeaders(headers) {
+    if (!headers || typeof headers !== 'object') return undefined;
+    // Collect tokens named in the Connection header — those become
+    // hop-by-hop transitively per RFC 7230 §6.1.
+    var dynamic = new Set();
+    for (var k in headers) {
+      if (
+        !Object.prototype.hasOwnProperty.call(headers, k) ||
+        String(k).toLowerCase() !== 'connection'
+      ) {
+        continue;
+      }
+      var raw = headers[k];
+      var listed = Array.isArray(raw) ? raw.join(',') : raw;
+      if (typeof listed === 'string') {
+        listed.split(',').forEach(function (token) {
+          var t = token.trim().toLowerCase();
+          if (t) dynamic.add(t);
+        });
+      }
+    }
+    var staticSet = new Set(STATIC_HOP_BY_HOP);
+    var out = {};
+    for (var key in headers) {
+      if (!Object.prototype.hasOwnProperty.call(headers, key)) continue;
+      var lower = String(key).toLowerCase();
+      if (staticSet.has(lower) || dynamic.has(lower)) continue;
+      out[key] = headers[key];
+    }
+    return out;
+  }
+
   http.request = function (options, callback) {
     if (typeof options === 'string' || !options) {
       return origRequest.apply(http, arguments);
@@ -1023,10 +1318,34 @@ if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
         return origRequest.apply(http, arguments);
       }
       var https = require('https');
-      // Clone caller's options and overwrite only the proxy-specific
-      // routing fields. Preserves signal (AbortController), lookup,
-      // TLS fields (ca/cert/key/rejectUnauthorized), auth, timeout,
-      // and any other per-request setting the caller supplied.
+      // Clone caller's options and overwrite proxy-specific routing
+      // fields. Strip fields that were set up for the proxy hop and
+      // would misbehave on the rewritten https.request to the target:
+      //   - agent: a forward-proxy http.Agent cannot speak TLS. Leaving
+      //     it attached caused upstreams like deepinfra to surface as
+      //     "LLM request failed: network connection error" while other
+      //     upstreams that don't end up on this code path still worked.
+      //     On Node 22 https.request throws a synchronous TypeError; on
+      //     Node 18/20 it falls through and the TLS handshake fails.
+      //   - auth: basic-auth meant for the proxy hop. Leaving it on
+      //     would Basic-auth the target server with proxy credentials.
+      //   - servername / checkServerIdentity: TLS SNI + cert validation
+      //     pre-computed for the proxy hop. Wrong cert chain and wrong
+      //     SNI must not survive into the rewrite — drop them so Node
+      //     re-derives from the new `hostname`.
+      //   - socketPath: Unix-socket proxies exist (e.g. cntlm-style
+      //     local proxies). Routing TLS bytes into the proxy's Unix
+      //     socket would defeat the entire rewrite.
+      //   - localAddress / lookup / family / hints: source-binding and
+      //     DNS hints picked for reachability to the proxy. The
+      //     rewritten target may not be reachable from the same NIC or
+      //     DNS family.
+      //   - Host / hop-by-hop headers (RFC 7230 §6.1): stripped via
+      //     sanitizeHeaders so Node regenerates Host from `host`/`port`
+      //     to point at the real target.
+      // Signal (AbortController) and TLS material (ca/cert/key/
+      // rejectUnauthorized), timeout, body, and target-intent headers
+      // (Authorization, Content-Type, …) are preserved.
       var rewritten = Object.assign({}, options, {
         method: options.method || 'GET',
         hostname: target.hostname,
@@ -1034,7 +1353,17 @@ if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
         port: target.port || 443,
         path: target.pathname + target.search,
         protocol: 'https:',
+        headers: sanitizeHeaders(options.headers),
       });
+      delete rewritten.agent;
+      delete rewritten.auth;
+      delete rewritten.servername;
+      delete rewritten.checkServerIdentity;
+      delete rewritten.socketPath;
+      delete rewritten.localAddress;
+      delete rewritten.lookup;
+      delete rewritten.family;
+      delete rewritten.hints;
       return https.request(rewritten, callback);
     }
     return origRequest.apply(http, arguments);
@@ -1172,6 +1501,99 @@ emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <<'NEMOTRON_FIX_EOF'
 NEMOTRON_FIX_EOF
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT"
 
+# mDNS / ciao network interface guard.
+# The @homebridge/ciao mDNS library calls os.networkInterfaces() which
+# throws a SystemError (uv_interface_addresses) inside sandboxes with
+# restricted network namespaces (seccomp/Landlock). This crashes the
+# gateway even though mDNS is not needed. The guard monkey-patches
+# os.networkInterfaces to return an empty object on failure instead
+# of throwing, and catches the uncaughtException as a fallback.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
+_CIAO_GUARD_SCRIPT="/tmp/nemoclaw-ciao-network-guard.js"
+emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <<'CIAO_GUARD_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// ciao-network-guard.js — prevents @homebridge/ciao mDNS library from
+// crashing the gateway when os.networkInterfaces() fails in restricted
+// sandbox network namespaces.
+
+(function () {
+  'use strict';
+
+  // Monkey-patch os.networkInterfaces to return empty on failure.
+  var os = require('os');
+  var _origNetworkInterfaces = os.networkInterfaces;
+  // Rate-limit the failure log. The bonjour watchdog inside ciao retries
+  // advertising every few seconds, so a naive "log on every failure" fills
+  // sandbox logs with hundreds of identical lines per hour. Log the first
+  // failure (operator gets the actionable message) and at most one summary
+  // every 5 minutes thereafter, with a suppression count so volume is
+  // still observable. See GitHub issue #2611.
+  var _failureCount = 0;
+  var _lastLogMs = 0;
+  var _suppressedSinceLog = 0;
+  var _LOG_INTERVAL_MS = 5 * 60 * 1000;
+  os.networkInterfaces = function () {
+    try {
+      return _origNetworkInterfaces.call(os);
+    } catch (err) {
+      _failureCount++;
+      var nowMs = Date.now();
+      var shouldLog = _failureCount === 1 || (nowMs - _lastLogMs) >= _LOG_INTERVAL_MS;
+      if (shouldLog) {
+        var suffix = _suppressedSinceLog > 0
+          ? ' [' + _suppressedSinceLog + ' suppressed in last ~5min, ' + _failureCount + ' total]'
+          : '';
+        process.stderr.write(
+          '[guard] os.networkInterfaces() failed: ' + (err.message || err) +
+          ' — returning empty (mDNS disabled)' + suffix + '\n'
+        );
+        _lastLogMs = nowMs;
+        _suppressedSinceLog = 0;
+      } else {
+        _suppressedSinceLog++;
+      }
+      return {};
+    }
+  };
+
+  // Fallback: catch uncaughtException from ciao if the monkey-patch
+  // doesn't cover all call sites. Gateway-only — registering ANY
+  // uncaughtException listener tells Node "don't crash by default", and
+  // we want CLI processes (agent, doctor, plugins, tui) to keep default
+  // Node crash behavior so errors surface promptly.
+  //
+  // For gateway processes, non-ciao errors fall through (return) to the
+  // sandbox safety net registered later in the preload chain. The safety
+  // net is the single point of "keep gateway alive on unknown errors".
+  if (process.argv[2] === 'gateway') {
+    process.on('uncaughtException', function (err, origin) {
+      if (
+        err && err.code === 'ERR_SYSTEM_ERROR' &&
+        String(err.message || '').indexOf('uv_interface_addresses') !== -1
+      ) {
+        process.stderr.write(
+          '[guard] ciao/networkInterfaces crash caught: ' + (err.message || err) +
+          ' \u2014 gateway continues\n'
+        );
+        return;
+      }
+      if (err && err.stack && err.stack.indexOf('ciao') !== -1 &&
+          String(err.message || '').indexOf('networkInterfaces') !== -1) {
+        process.stderr.write(
+          '[guard] ciao network error caught: ' + (err.message || err) +
+          ' \u2014 gateway continues\n'
+        );
+        return;
+      }
+      // Not ciao — let the sandbox safety net handle it.
+    });
+  }
+})();
+CIAO_GUARD_EOF
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT"
+
 # WebSocket CONNECT tunnel fix (NemoClaw#1570).
 # The `ws` library calls https.request() for wss:// WebSocket upgrades.
 # EnvHttpProxyAgent (NODE_USE_ENV_PROXY=1) sends a forward proxy request
@@ -1265,6 +1687,8 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
+  # Global sandbox safety net for connect sessions — must be first.
+  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""
   # HTTP library double-proxy fix: also expose NODE_OPTIONS in connect
   # sessions so interactive shells and user commands started via
   # `openshell sandbox connect` benefit from the preload. (NemoClaw#2109)
@@ -1275,10 +1699,20 @@ PROXYEOF
   if [ -f "$_WS_FIX_SCRIPT" ]; then
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
   fi
+  # Git TLS CA bundle for connect sessions (NemoClaw#2270)
+  if [ -n "${GIT_SSL_CAINFO:-}" ]; then
+    printf 'export GIT_SSL_CAINFO=%q\n' "$GIT_SSL_CAINFO"
+  fi
   # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
   echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
   # Seccomp guard for connect sessions.
   echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT\""
+  # ciao network guard for connect sessions.
+  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
+  # Slack channel guard for connect sessions. The guard file is installed later
+  # by install_slack_channel_guard() — conditional on the file existing at
+  # source-time so connect sessions started before Slack is configured are safe.
+  echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
   for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -1315,19 +1749,7 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_model_override
   apply_cors_override
   apply_slack_token_override
-  # Non-root: no privilege separation — uid separation is unavailable, so the
-  # sandbox user can read the token file. This is no worse than the pre-PR
-  # state where the token lived in openclaw.json (also sandbox-readable).
-  # Write the token to a restrictive file (0400) so it is not world-readable,
-  # and pass it on the gateway launch line (not exported to the shell env).
-  _NONROOT_GATEWAY_TOKEN="$(python3 -c "import secrets; print(secrets.token_hex(32), end='')")"
-  _NONROOT_TOKEN_DIR="${XDG_RUNTIME_DIR:-/tmp}/nemoclaw"
-  _NONROOT_TOKEN_FILE="${_NONROOT_TOKEN_DIR}/gateway-token"
-  mkdir -p "$_NONROOT_TOKEN_DIR"
-  rm -f "$_NONROOT_TOKEN_FILE"
-  printf '%s' "$_NONROOT_GATEWAY_TOKEN" >"$_NONROOT_TOKEN_FILE"
-  chmod 0400 "$_NONROOT_TOKEN_FILE"
-  printf '[SECURITY] Non-root mode — gateway token at %s (no uid isolation)\n' "$_NONROOT_TOKEN_FILE" >&2
+  export_gateway_token
   install_configure_guard
   configure_messaging_channels
   install_slack_channel_guard
@@ -1404,7 +1826,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # stream so openshell sandbox create can return once the container is ready.
   # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
   touch /tmp/gateway.log
-  chmod 600 /tmp/gateway.log
+  chmod 644 /tmp/gateway.log
 
   # Separate log for auto-pair in non-root mode as well.
   # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
@@ -1415,21 +1837,28 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT"
 
-  # Start gateway in background, auto-pair, then wait.
-  # Pass OPENCLAW_GATEWAY_TOKEN only on this launch line so it lives solely
-  # in the gateway process env — not exported to the sandbox shell.
-  OPENCLAW_GATEWAY_TOKEN="$_NONROOT_GATEWAY_TOKEN" \
-    nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
+  # Start gateway in background, auto-pair, then wait
+  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
+  # Diagnostic: mirror gateway log to PID 1's stderr — see root-mode block
+  # below for rationale (NVIDIA/NemoClaw#2484).
+  { tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
+  GATEWAY_LOG_TAIL_PID=$!
+  # Persistent mirror: see root-mode block for rationale.
+  mkdir -p /sandbox/.openclaw-data/logs 2>/dev/null || true
+  { tail -n +1 -F /tmp/gateway.log 2>/dev/null >>/sandbox/.openclaw-data/logs/gateway-persistent.log; } &
+  GATEWAY_LOG_PERSIST_PID=$!
   start_auto_pair
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
   # the shared-library refactor). Acceptable for entrypoint-level cleanup.
   SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
   [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
+  [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
+  [ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   trap cleanup_on_signal SIGTERM SIGINT
@@ -1446,7 +1875,7 @@ verify_config_integrity /sandbox/.openclaw
 apply_model_override
 apply_cors_override
 apply_slack_token_override
-generate_gateway_token
+export_gateway_token
 install_configure_guard
 
 # Inject messaging channel config if provider tokens are present.
@@ -1464,11 +1893,12 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec gosu sandbox "${NEMOCLAW_CMD[@]}"
 fi
 
-# SECURITY: Protect gateway log from sandbox user tampering
+# Gateway log: owned by gateway user, world-readable for diagnostics.
+# The sandbox user can read but not truncate/overwrite (not owner, sticky /tmp).
 # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
 touch /tmp/gateway.log
 chown gateway:gateway /tmp/gateway.log
-chmod 600 /tmp/gateway.log
+chmod 644 /tmp/gateway.log
 
 # Separate log for auto-pair so sandbox user can write to it
 # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
@@ -1555,18 +1985,36 @@ harden_openclaw_symlinks
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT"
+validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
-# SECURITY: OPENCLAW_GATEWAY_TOKEN is passed only to the gateway process
-# env — the sandbox user cannot read /proc/<pid>/environ (different uid).
-OPENCLAW_GATEWAY_TOKEN="$(_read_gateway_token)" \
-  nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
+nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
+
+# Diagnostic: mirror gateway log to PID 1's stderr so its content surfaces in
+# docker logs. /tmp/gateway.log is otherwise only readable from inside the
+# sandbox via `nemoclaw <sandbox> logs` and is not captured by the e2e test
+# framework on failure. Streaming it to PID 1's stderr lets a workflow-level
+# `docker logs` capture pick it up. Each line is prefixed with [gateway-log:]
+# so it can be filtered out post-hoc when not investigating.
+# Ref: NVIDIA/NemoClaw#2484 (TC-SBX-02 hang investigation)
+{ tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
+GATEWAY_LOG_TAIL_PID=$!
+
+# Persistent mirror: append /tmp/gateway.log content to a file under
+# /sandbox/.openclaw-data/logs which is volume-mounted by openshell and
+# survives pod restarts. /tmp/gateway.log itself is wiped when the pod
+# restarts (TC-SBX-06 docker-kills the gateway container), so the
+# only durable record of pre-restart events lives here. The diag
+# streamer in the e2e workflow snapshots this file post-test.
+mkdir -p /sandbox/.openclaw-data/logs 2>/dev/null || true
+chown gateway:gateway /sandbox/.openclaw-data/logs 2>/dev/null || true
+{ tail -n +1 -F /tmp/gateway.log 2>/dev/null >>/sandbox/.openclaw-data/logs/gateway-persistent.log; } &
+GATEWAY_LOG_PERSIST_PID=$!
 
 start_auto_pair
 # NOTE: PIDs are collected after launch; a signal arriving between trap
@@ -1574,6 +2022,8 @@ start_auto_pair
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.
 SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
 [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
+[ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
+[ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
 # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
 SANDBOX_WAIT_PID="$GATEWAY_PID"
 trap cleanup_on_signal SIGTERM SIGINT

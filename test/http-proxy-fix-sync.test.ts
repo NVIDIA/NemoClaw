@@ -66,7 +66,7 @@ describe("http-proxy-fix heredoc sync (#2109)", () => {
 
   it("validate_tmp_permissions is invoked with the fix path in both root and non-root branches", () => {
     const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
-    const calls = startScript.match(/validate_tmp_permissions "\$_PROXY_FIX_SCRIPT"/g) || [];
+    const calls = startScript.match(/validate_tmp_permissions\s+.*"\$_PROXY_FIX_SCRIPT"/g) || [];
     expect(calls.length).toBeGreaterThanOrEqual(2);
   });
 

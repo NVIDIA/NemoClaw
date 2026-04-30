@@ -26,7 +26,7 @@ _SANDBOX_INIT_LOADED=1
 #
 # File                         Owner      Mode  Writer   Reader    Sourced?
 # /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (.bashrc/.profile)
-# /tmp/gateway.log             gateway    600   gateway  gateway   no
+# /tmp/gateway.log             gateway    644   gateway  all       no (world-readable for diagnostics)
 # /tmp/auto-pair.log           sandbox    600   sandbox  sandbox   no
 # /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
@@ -118,18 +118,75 @@ validate_tmp_permissions() {
     fi
   done
 
-  # Restricted log files — must be 600
+  # Restricted log files — gateway.log may be 600 (Hermes) or 644 (OpenClaw,
+  # world-readable for diagnostics). auto-pair.log is 600.
   for f in /tmp/gateway.log /tmp/auto-pair.log; do
     [ -f "$f" ] || continue
     local perms
     perms="$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f" 2>/dev/null || echo "unknown")"
-    if [ "$perms" != "600" ]; then
-      echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600)" >&2
-      failed=1
-    fi
+    case "$f" in
+      */gateway.log)
+        if [ "$perms" != "600" ] && [ "$perms" != "644" ]; then
+          echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600 or 644)" >&2
+          failed=1
+        fi
+        ;;
+      *)
+        if [ "$perms" != "600" ]; then
+          echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600)" >&2
+          failed=1
+        fi
+        ;;
+    esac
   done
 
   return $failed
+}
+
+# ── Config file permission helpers ────────────────────────────────
+# After drop_capabilities() strips CAP_DAC_OVERRIDE, root can no longer
+# write to files with mode 444. These helpers temporarily relax config
+# files to 644 for writing, then re-lock to 444 afterward.
+#
+# CAP_FOWNER is retained (by design in PR #917), so root can still chmod
+# files it doesn't own. The helpers include symlink guards to prevent
+# symlink-following attacks on the config path.
+#
+# Usage:
+#   relax_config_for_write /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+#   # ... perform writes ...
+#   lock_config_after_write /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+#
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2653
+
+relax_config_for_write() {
+  local f
+  for f in "$@"; do
+    if [ -L "$f" ]; then
+      printf '[SECURITY] Refusing to relax permissions — %s is a symlink\n' "$f" >&2
+      return 1
+    fi
+    [ -f "$f" ] || continue
+    if ! chmod 644 "$f"; then
+      printf '[SECURITY] Failed to relax permissions on %s\n' "$f" >&2
+      return 1
+    fi
+  done
+}
+
+lock_config_after_write() {
+  local f
+  for f in "$@"; do
+    if [ -L "$f" ]; then
+      printf '[SECURITY] Refusing to lock permissions — %s is a symlink\n' "$f" >&2
+      return 1
+    fi
+    [ -f "$f" ] || continue
+    if ! chmod 444 "$f"; then
+      printf '[SECURITY] Failed to lock permissions on %s\n' "$f" >&2
+      return 1
+    fi
+  done
 }
 
 # ── Capability dropping ──────────────────────────────────────────
@@ -206,7 +263,9 @@ lock_rc_files() {
 
   for rc_file in "${home_dir}/.bashrc" "${home_dir}/.profile"; do
     if [ -f "$rc_file" ]; then
-      chmod 444 "$rc_file"
+      if ! chmod 444 "$rc_file" 2>/dev/null; then
+        echo "[SECURITY] Could not lock ${rc_file} to 444 — continuing (best-effort, Landlock may enforce)" >&2
+      fi
     fi
   done
 }

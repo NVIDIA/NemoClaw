@@ -9,8 +9,12 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-LOCAL_PAYLOAD="${SCRIPT_DIR}/scripts/install.sh"
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  SCRIPT_DIR=""
+fi
+LOCAL_PAYLOAD="${SCRIPT_DIR:+${SCRIPT_DIR}/scripts/install.sh}"
 BOOTSTRAP_TMPDIR=""
 PAYLOAD_MARKER="NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1"
 
@@ -92,11 +96,13 @@ bootstrap_usage() {
   printf "  Options:\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice in non-interactive mode\n"
+  printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  Environment:\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1   Same as --non-interactive\n"
+  printf "    NEMOCLAW_FRESH=1             Same as --fresh\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_SANDBOX_NAME        Sandbox name to create/use\n"
   printf "    NEMOCLAW_PROVIDER            build | openai | anthropic | anthropicCompatible\n"

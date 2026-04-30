@@ -23,6 +23,7 @@ export interface DashboardDeliveryChain {
   healthEndpoint: string;
   port: number;
   bindAddress: string;
+  shouldDisableDeviceAuth: boolean;
 }
 
 function ensureScheme(raw: string): string {
@@ -75,7 +76,9 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
   const corsOrigins = accessOrigin && accessOrigin !== loopbackOrigin
     ? [loopbackOrigin, accessOrigin] : [loopbackOrigin];
 
-  return { accessUrl, corsOrigins, forwardTarget, healthEndpoint: "/health", port, bindAddress };
+  const shouldDisableDeviceAuth = hasNonLoopbackUrl || (h.isWsl ?? false);
+
+  return { accessUrl, corsOrigins, forwardTarget, healthEndpoint: "/health", port, bindAddress, shouldDisableDeviceAuth };
 }
 
 /** Build the list of control UI URLs. Callers pass chatUiUrl explicitly. */

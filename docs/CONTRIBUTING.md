@@ -48,11 +48,13 @@ The current generated skills and their source pages are:
 
 ### Regenerating skills after doc changes
 
-A pre-commit hook regenerates skills automatically whenever you commit changes to `docs/**/*.md` files.
-The hook runs `scripts/docs-to-skills.py` and stages the updated skills so they are included in the same commit.
-No manual step is needed for normal workflows.
+Pull requests that change docs should normally include only the source pages under `docs/`, not the generated `.agents/skills/nemoclaw-user-*` output.
+Local hooks and PR CI run `scripts/docs-to-skills.py --dry-run` to confirm the docs still convert cleanly without writing files.
 
-To regenerate skills manually (for example, after rebasing or outside of a commit), run from the repo root:
+After a docs change merges to `main`, the `Docs to Skills` workflow regenerates `.agents/skills/nemoclaw-user-*` from `docs/` and publishes the generated update.
+The workflow pushes the generated commit directly when branch protection allows it; otherwise it opens or updates a small sync PR for maintainers to merge.
+
+To regenerate skills manually (for example, when reviewing the sync workflow output), run from the repo root:
 
 ```bash
 python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
@@ -77,9 +79,8 @@ Other useful flags:
 ### How the Script Works
 
 The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `smart` strategy by default.
-Procedure pages (`how_to`, `get_started`) become the main body of the skill.
-Concept pages become a `## Context` section.
-Reference pages go into a `references/` subdirectory for progressive disclosure, keeping the `SKILL.md` concise (under 500 lines).
+Within each group, the first procedure page (`how_to`, `get_started`, or `tutorial`) becomes the main body of the skill.
+Sibling procedure pages, concept pages, and reference pages go into a `references/` subdirectory for progressive disclosure, keeping `SKILL.md` concise while preserving access to the full docs.
 
 Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
 MyST/Sphinx directives are converted to standard markdown.

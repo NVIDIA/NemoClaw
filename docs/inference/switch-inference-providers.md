@@ -133,7 +133,7 @@ This variable is only needed when switching between provider families.
 
 ## Tune Model Metadata
 
-The sandbox image bakes model metadata (context window, max output tokens, and reasoning mode) into `openclaw.json` at build time.
+The sandbox image bakes model metadata (context window, max output tokens, reasoning mode, and accepted input modalities) into `openclaw.json` at build time.
 To change these values, set the corresponding environment variables before running `nemoclaw onboard` so they patch into the Dockerfile before the image builds.
 
 | Variable | Values | Default |
@@ -141,14 +141,17 @@ To change these values, set the corresponding environment variables before runni
 | `NEMOCLAW_CONTEXT_WINDOW` | Positive integer (tokens) | `131072` |
 | `NEMOCLAW_MAX_TOKENS` | Positive integer (tokens) | `4096` |
 | `NEMOCLAW_REASONING` | `true` or `false` | `false` |
+| `NEMOCLAW_INFERENCE_INPUTS` | `text` or `text,image` | `text` |
 | `NEMOCLAW_AGENT_TIMEOUT` | Positive integer (seconds) | `600` |
 
 Invalid values are ignored, and the default bakes into the image.
+Use `NEMOCLAW_INFERENCE_INPUTS=text,image` only for a model that accepts image input through the selected provider.
 
 ```console
 $ export NEMOCLAW_CONTEXT_WINDOW=65536
 $ export NEMOCLAW_MAX_TOKENS=8192
 $ export NEMOCLAW_REASONING=true
+$ export NEMOCLAW_INFERENCE_INPUTS=text,image
 $ export NEMOCLAW_AGENT_TIMEOUT=1800
 $ nemoclaw onboard
 ```
@@ -189,6 +192,7 @@ The output includes the active provider, model, and endpoint.
 - Same-provider model switches take effect immediately via the gateway route alone.
 - Cross-provider switches also require `NEMOCLAW_MODEL_OVERRIDE` (and `NEMOCLAW_INFERENCE_API_OVERRIDE`) plus a sandbox recreate so the entrypoint patches the config at startup.
 - Overrides are applied at container startup. Changing or removing env vars requires a sandbox recreate to take effect.
+- Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 
 ## Related Topics
 

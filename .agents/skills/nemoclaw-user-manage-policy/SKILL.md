@@ -8,6 +8,10 @@ description: "Reviews and approves blocked agent network requests in the TUI. Us
 
 # Approve or Deny NemoClaw Agent Network Requests
 
+## Gotchas
+
+- Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
+
 ## Prerequisites
 
 - A running NemoClaw sandbox.
@@ -69,6 +73,11 @@ Add, remove, or modify the endpoints that the sandbox is allowed to reach.
 
 The sandbox policy is defined in a declarative YAML file in the NemoClaw repository and enforced at runtime by [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
 NemoClaw supports both static policy changes that persist across restarts and dynamic updates applied to a running sandbox through the OpenShell CLI.
+
+> **Note:** If the sandbox needs to reach an HTTP service running on the host, expose the service on a host IP that the OpenShell gateway can reach.
+> Apply a custom NemoClaw preset with `nemoclaw <sandbox> policy-add --from-file`.
+> Do not rely on `host.docker.internal` as a general host-service path because it bypasses the OpenShell policy path and may not be reachable in every sandbox runtime.
+> See Agent cannot reach a host-side HTTP service (use the `nemoclaw-user-reference` skill).
 
 ## Step 5: Static Changes
 
@@ -247,6 +256,7 @@ To include a preset in the baseline, merge its entries into `openclaw-sandbox.ya
 > **Note:** The `openshell policy set --policy <file> <sandbox-name>` command operates on raw policy files and does not
 > accept the `preset:` metadata block used in preset YAML files. Use `nemoclaw <name> policy-add` for
 > presets.
+
 For scripted workflows, `policy-add` and `policy-remove` accept the preset name as a positional argument:
 
 ```console
@@ -258,6 +268,66 @@ Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to drive the same flow from 
 See Commands (use the `nemoclaw-user-reference` skill) for the full flag reference.
 
 `nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
+
+## Step 8: Custom Preset Files
+
+Apply a user-authored preset YAML to a running sandbox without editing the baseline or dropping to `openshell policy set`.
+
+### Authoring
+
+A custom preset follows the same shape as the built-in ones under `nemoclaw-blueprint/policies/presets/`:
+
+```yaml
+preset:
+  name: my-internal-api
+  description: "Internal service"
+network_policies:
+  my-internal-api:
+    name: my-internal-api
+    endpoints:
+      - host: api.example.internal
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+```
+
+The top-level `preset.name` must be a lowercase RFC 1123 label (letters, digits, hyphens) and must not collide with a built-in preset name such as `slack` or `pypi`.
+Rename `preset.name` if NemoClaw refuses to apply the file because of a collision.
+
+### Apply a Single File
+
+```console
+$ nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
+```
+
+Preview the endpoints without applying with `--dry-run`, and skip the confirmation prompt with `--yes` or by exporting `NEMOCLAW_NON_INTERACTIVE=1`.
+
+### Apply Every File in a Directory
+
+```console
+$ nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
+```
+
+Files are processed in lexicographic order.
+Processing stops at the first failure; presets already applied are not rolled back.
+Fix the failing file and re-run the command to continue.
+
+> **Warning:** Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
+> Review every host in a custom preset before applying it, especially when the file originates outside your team.
+
+### Remove a Custom Preset
+
+Custom presets applied with `--from-file` or `--from-dir` are recorded in the NemoClaw sandbox registry alongside their full YAML content, so they can be removed by name — the original file does not need to be kept on disk:
+
+```console
+$ nemoclaw my-assistant policy-remove my-internal-api --yes
+```
+
+`policy-remove` accepts both built-in and custom preset names. Run `nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
 
 ## Related Skills
 

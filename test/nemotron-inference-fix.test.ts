@@ -34,8 +34,7 @@ describe("Nemotron inference fix preload (#1193, #2051)", () => {
   });
 
   it("passes the preload path to validate_tmp_permissions in both root and non-root branches", () => {
-    const calls =
-      src.match(/validate_tmp_permissions\s+"[^"]*"\s+"\$_NEMOTRON_FIX_SCRIPT"/g) || [];
+    const calls = src.match(/validate_tmp_permissions\s+.*"\$_NEMOTRON_FIX_SCRIPT"/g) || [];
     expect(calls.length).toBeGreaterThanOrEqual(2);
   });
 

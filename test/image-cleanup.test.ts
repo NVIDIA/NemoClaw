@@ -14,8 +14,10 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
   const nemoclawSrc = fs.readFileSync(path.join(ROOT, "src/nemoclaw.ts"), "utf-8");
 
   it("removeSandboxImage() helper exists and calls docker rmi", () => {
-    expect(nemoclawSrc).toContain("function removeSandboxImage(");
-    expect(nemoclawSrc).toMatch(/docker.*rmi/);
+    const match = nemoclawSrc.match(/function removeSandboxImage[\s\S]*?^}/m);
+    expect(match).toBeTruthy();
+    if (!match) throw new Error("Expected removeSandboxImage() in src/nemoclaw.ts");
+    expect(match[0]).toMatch(/dockerRmi\(|docker.*\.rmi\(/);
   });
 
   it("sandboxDestroy calls removeSandboxImage before registry.removeSandbox", () => {
@@ -77,8 +79,10 @@ describe("image cleanup: onboard records imageTag in registry (#2086)", () => {
 
   it("onboard recreate path cleans up old image", () => {
     // When recreating, the old image should be removed
-    expect(onboardSrc).toMatch(/previousEntry\?\.imageTag/);
-    expect(onboardSrc).toMatch(/docker.*rmi.*previousEntry\.imageTag/);
+    const match = onboardSrc.match(/if \(previousEntry\?\.imageTag\)[\s\S]*?^\s*}/m);
+    expect(match).toBeTruthy();
+    if (!match) throw new Error("Expected previousEntry image cleanup block in src/lib/onboard.ts");
+    expect(match[0]).toMatch(/dockerRmi\(|docker.*\.rmi\(/);
   });
 });
 

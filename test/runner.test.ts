@@ -48,9 +48,9 @@ function requireCall(calls: SpawnCall[], index: number): SpawnCall {
 describe("runner helpers", () => {
   it("does not let child commands consume installer stdin", () => {
     const script = `
-      const { run } = require(${JSON.stringify(runnerPath)});
+      const { runShell } = require(${JSON.stringify(runnerPath)});
       process.stdin.setEncoding("utf8");
-      run("cat >/dev/null || true");
+      runShell("cat >/dev/null || true");
       process.stdin.once("data", (chunk) => {
         process.stdout.write(chunk);
       });
@@ -75,8 +75,8 @@ describe("runner helpers", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { run, runInteractive } = require(runnerPath);
-      run("echo noninteractive");
-      runInteractive("echo interactive");
+      run(["echo", "noninteractive"]);
+      runInteractive(["echo", "interactive"]);
     } finally {
       childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
@@ -150,9 +150,12 @@ describe("runner env merging", () => {
     const originalGateway = process.env.OPENSHELL_GATEWAY;
     process.env.OPENSHELL_GATEWAY = "nemoclaw";
     try {
-      const output = runCapture('printf \'%s %s\' "$OPENSHELL_GATEWAY" "$OPENAI_API_KEY"', {
-        env: { OPENAI_API_KEY: "sk-test-secret" },
-      });
+      const output = runCapture(
+        ["sh", "-c", 'printf "%s %s" "$OPENSHELL_GATEWAY" "$OPENAI_API_KEY"'],
+        {
+          env: { OPENAI_API_KEY: "sk-test-secret" },
+        },
+      );
       expect(output).toBe("nemoclaw sk-test-secret");
     } finally {
       if (originalGateway === undefined) {
@@ -174,7 +177,7 @@ describe("runner env merging", () => {
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
       process.env.PATH = "/usr/local/bin:/usr/bin";
-      run("echo test", {
+      run(["echo", "test"], {
         env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" },
       });
     } finally {
@@ -388,13 +391,17 @@ describe("redact", () => {
 });
 
 describe("regression guards", () => {
-  it("runCapture redacts secrets before rethrowing errors", () => {
-    const originalExecSync = childProcess.execSync;
-    childProcess.execSync = () => {
-      throw new Error(
+  it("runCapture redacts secrets before rethrowing spawn errors", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => ({
+      error: new Error(
         'command failed: export SERVICE_KEY="supersecretvalue12345" ghp_abcdefghijklmnopqrstuvwxyz1234567890',
-      );
-    };
+      ),
+      status: null,
+      stdout: "",
+      stderr: "",
+    });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
@@ -402,7 +409,7 @@ describe("regression guards", () => {
 
       let error: Error | undefined;
       try {
-        runCapture("echo nope");
+        runCapture(["echo", "nope"]);
       } catch (err) {
         if (err instanceof Error) {
           error = err;
@@ -419,18 +426,24 @@ describe("regression guards", () => {
       expect(error.message).not.toContain("supersecretvalue12345");
       expect(error.message).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
     } finally {
-      childProcess.execSync = originalExecSync;
+      childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
     }
   });
 
-  it("runCapture redacts execSync error cmd/output fields", () => {
-    const originalExecSync = childProcess.execSync;
-    childProcess.execSync = () => {
+  it("runCapture redacts spawn error cmd/output fields", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => {
       const err: RedactedRunnerError = new Error("command failed");
       err.cmd = "echo nvapi-aaaabbbbcccc1111 && echo ghp_abcdefghijklmnopqrstuvwxyz123456";
       err.output = ["stdout: nvapi-aaaabbbbcccc1111", "stderr: PASSWORD=secret123456"];
-      throw err;
+      return {
+        error: err,
+        status: null,
+        stdout: "",
+        stderr: "",
+      };
     };
 
     try {
@@ -439,7 +452,7 @@ describe("regression guards", () => {
 
       let error: RedactedRunnerError | undefined;
       try {
-        runCapture("echo nope");
+        runCapture(["echo", "nope"]);
       } catch (err) {
         if (err instanceof Error) {
           error = err;
@@ -466,7 +479,7 @@ describe("regression guards", () => {
       expect(error.output[0]).toContain("****");
       expect(error.output[1]).toContain("****");
     } finally {
-      childProcess.execSync = originalExecSync;
+      childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
     }
   });
@@ -491,7 +504,7 @@ describe("regression guards", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
-      expect(() => run("echo fail")).toThrow("exit:1");
+      expect(() => run(["echo", "fail"])).toThrow("exit:1");
       expect(stdoutSpy).toHaveBeenCalledWith("token ghp_********************\n");
       expect(stderrSpy).toHaveBeenCalledWith('export SERVICE_KEY="supe*****************"\n');
       expect(errorSpy).toHaveBeenCalledWith("  Command failed (exit 1): echo fail");
@@ -521,7 +534,7 @@ describe("regression guards", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { runInteractive } = require(runnerPath);
-      runInteractive("echo interactive");
+      runInteractive(["echo", "interactive"]);
       const firstCall = requireCall(calls, 0);
       expect(firstCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
       expect(stdoutSpy).toHaveBeenCalledWith("visit https://****:****@example.com/?token=****\n");
@@ -821,10 +834,10 @@ describe("regression guards", () => {
         "utf-8",
       );
       expect(src).not.toContain("--exclude src");
-      expect(src).toContain('"${rootDir}/"');
-      expect(src).toContain("--exclude dist");
+      expect(src).toContain("`${rootDir}/`");
+      expect(src).toMatch(/"--exclude",\s*"dist"/);
       expect(src).toContain('const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp")');
-      expect(src).toContain("--provider ${shellQuote(brevProvider)}");
+      expect(src).toContain('"--provider", brevProvider');
     });
 
     it("deploy supports test-friendly non-interactive skip flags", () => {

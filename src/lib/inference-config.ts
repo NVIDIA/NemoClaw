@@ -13,12 +13,17 @@ export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 export const CLOUD_MODEL_OPTIONS = [
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
   { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
-  { id: "z-ai/glm5", label: "GLM-5" },
+  { id: "z-ai/glm-5.1", label: "GLM-5" },
   { id: "minimaxai/minimax-m2.5", label: "MiniMax M2.5" },
   { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
 ];
 export const DEFAULT_ROUTE_PROFILE = "inference-local";
 export const DEFAULT_ROUTE_CREDENTIAL_ENV = "OPENAI_API_KEY";
+// Dedicated credential env names for local inference. Decoupled from
+// OPENAI_API_KEY so the sandbox-side OpenClaw and the host-side gateway
+// never read the user's host OpenAI key for local providers. See GH #2519.
+export const OLLAMA_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
+export const VLLM_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_VLLM_LOCAL_TOKEN";
 export const MANAGED_PROVIDER_ID = "inference";
 export { DEFAULT_OLLAMA_MODEL };
 
@@ -98,14 +103,14 @@ export function getProviderSelectionConfig(
       return {
         ...base,
         model: model || "vllm-local",
-        credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+        credentialEnv: VLLM_LOCAL_CREDENTIAL_ENV,
         providerLabel: "Local vLLM",
       };
     case "ollama-local":
       return {
         ...base,
         model: model || DEFAULT_OLLAMA_MODEL,
-        credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+        credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
         providerLabel: "Local Ollama",
       };
     default:

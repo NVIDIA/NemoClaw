@@ -36,7 +36,7 @@ vi.mock("./agent-defs.js", () => ({
     name,
     displayName: name === "openclaw" ? "OpenClaw" : "Hermes Agent",
     versionCommand: name === "openclaw" ? "openclaw --version" : "hermes --version",
-    expectedVersion: name === "openclaw" ? "2026.4.2" : "2026.4.8",
+    expectedVersion: name === "openclaw" ? "2026.4.24" : "2026.4.24",
     stateDirs: [],
     configPaths: { writableDir: "/sandbox/.openclaw-data" },
   })),
@@ -76,12 +76,12 @@ describe("checkAgentVersion", () => {
     registry.registerSandbox({
       name: "test-sb",
       agent: null,
-      agentVersion: "2026.4.2",
+      agentVersion: "2026.4.24",
     });
 
     const result = checkAgentVersion("test-sb");
     expect(result.detectionMethod).toBe("registry");
-    expect(result.sandboxVersion).toBe("2026.4.2");
+    expect(result.sandboxVersion).toBe("2026.4.24");
     expect(result.isStale).toBe(false);
   });
 
@@ -102,7 +102,7 @@ describe("checkAgentVersion", () => {
     registry.registerSandbox({
       name: "test-sb",
       agent: null,
-      agentVersion: "2026.4.2",
+      agentVersion: "2026.4.24",
     });
 
     const result = checkAgentVersion("test-sb");
@@ -119,7 +119,7 @@ describe("checkAgentVersion", () => {
 
     vi.mocked(spawnSync).mockReturnValue({
       status: 0,
-      stdout: "OpenClaw 2026.4.2 (abc123)\n",
+      stdout: "OpenClaw 2026.4.24 (abc123)\n",
       stderr: "",
       pid: 1234,
       output: [],
@@ -128,12 +128,12 @@ describe("checkAgentVersion", () => {
 
     const result = checkAgentVersion("test-sb");
     expect(result.detectionMethod).toBe("ssh-exec");
-    expect(result.sandboxVersion).toBe("2026.4.2");
+    expect(result.sandboxVersion).toBe("2026.4.24");
     expect(result.isStale).toBe(false);
 
     // Should have cached the version in registry
     const updated = registry.getSandbox("test-sb");
-    expect(updated?.agentVersion).toBe("2026.4.2");
+    expect(updated?.agentVersion).toBe("2026.4.24");
   });
 
   it("returns unavailable when SSH config fails", () => {
@@ -163,7 +163,7 @@ describe("checkAgentVersion", () => {
 
     vi.mocked(spawnSync).mockReturnValue({
       status: 0,
-      stdout: "OpenClaw 2026.4.2 (abc123)\n",
+      stdout: "OpenClaw 2026.4.24 (abc123)\n",
       stderr: "",
       pid: 1234,
       output: [],
@@ -172,7 +172,7 @@ describe("checkAgentVersion", () => {
 
     const result = checkAgentVersion("test-sb", { forceProbe: true });
     expect(result.detectionMethod).toBe("ssh-exec");
-    expect(result.sandboxVersion).toBe("2026.4.2");
+    expect(result.sandboxVersion).toBe("2026.4.24");
   });
 });
 
@@ -199,14 +199,14 @@ describe("formatStalenessWarning", () => {
   it("includes sandbox name, versions, and rebuild hint", () => {
     const lines = formatStalenessWarning("my-sb", {
       sandboxVersion: "2026.3.11",
-      expectedVersion: "2026.4.2",
+      expectedVersion: "2026.4.24",
       isStale: true,
       detectionMethod: "registry",
     });
     const joined = lines.join("\n");
     expect(joined).toContain("my-sb");
     expect(joined).toContain("2026.3.11");
-    expect(joined).toContain("2026.4.2");
+    expect(joined).toContain("2026.4.24");
     expect(joined).toContain("rebuild");
   });
 });

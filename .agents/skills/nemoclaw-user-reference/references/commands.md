@@ -59,7 +59,7 @@ $ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
-Credentials are stored in `~/.nemoclaw/credentials.json`. For file permissions, plaintext storage behavior, and hardening guidance, see Credential Storage (use the `nemoclaw-user-configure-security` skill).
+Credentials are registered with the OpenShell gateway and never persisted to host disk. See Credential Storage (use the `nemoclaw-user-configure-security` skill) for details on inspection, rotation, and migration from earlier releases.
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
 After provider selection, the wizard prompts for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
@@ -261,6 +261,24 @@ Use `--follow` to stream output in real time.
 $ nemoclaw my-assistant logs [--follow]
 ```
 
+### `nemoclaw <name> gateway-token`
+
+Print the OpenClaw gateway auth token for a running sandbox to stdout.
+The token is required by `openclaw tui` and the OpenClaw dashboard URL, but onboarding only prints it once.
+Pipe it into automation or capture it into an environment variable:
+
+```console
+$ TOKEN=$(nemoclaw my-assistant gateway-token --quiet)
+$ export OPENCLAW_GATEWAY_TOKEN="$TOKEN"
+```
+
+The token is written to stdout with no surrounding text.
+A one-line security warning is written to stderr; pass `--quiet` (or `-q`) to suppress it.
+The command exits non-zero with a diagnostic on stderr when the sandbox is not registered or when the token cannot be retrieved (for example, if the sandbox is not running).
+
+> **Warning:** Treat the gateway token like a password.
+> Do not log it, share it, or commit it to version control.
+
 ### `nemoclaw <name> destroy`
 
 Stop the NIM container, remove the host-side Docker image built during onboard, and delete the sandbox.
@@ -300,7 +318,9 @@ If the preset name is unknown or already applied, the command exits non-zero wit
 
 | Flag | Description |
 |------|-------------|
-| `--yes`, `--force` | Skip the confirmation prompt (requires a preset name) |
+| `--from-file <path>` | Apply a custom preset YAML file instead of a built-in preset |
+| `--from-dir <path>` | Apply every custom preset YAML file in a directory in lexicographic order |
+| `--yes`, `--force` | Skip the confirmation prompt (requires a preset name, `--from-file`, or `--from-dir`) |
 | `--dry-run` | Preview the endpoints a preset would open without applying changes |
 
 Use `--dry-run` to audit a preset before applying it:
@@ -308,6 +328,21 @@ Use `--dry-run` to audit a preset before applying it:
 ```console
 $ nemoclaw my-assistant policy-add --dry-run
 ```
+
+Apply a custom preset file when you need to grant access to an endpoint that is not covered by a built-in preset:
+
+```console
+$ nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
+```
+
+For batch workflows, apply all preset files from a directory:
+
+```console
+$ nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
+```
+
+Review every host in custom preset files before applying them.
+Custom presets bypass the built-in preset review process and can widen sandbox egress.
 
 ### `nemoclaw <name> policy-list`
 
@@ -356,7 +391,7 @@ $ nemoclaw my-assistant channels list
 ### `nemoclaw <name> channels add <channel>`
 
 Store credentials for a messaging channel (`telegram`, `discord`, or `slack`) and rebuild the sandbox so the image picks up the new channel.
-The command prompts for any missing token, persists it under `~/.nemoclaw/credentials.json`, then asks whether to rebuild immediately.
+The command prompts for any missing token, registers it with the OpenShell gateway, then asks whether to rebuild immediately.
 Running `add` for an already-configured channel simply overwrites the stored tokens — the operation is idempotent.
 
 ```console
@@ -389,7 +424,9 @@ Host-side removal is the supported path because `/sandbox/.openclaw/openclaw.jso
 
 ### `nemoclaw <name> channels stop <channel>`
 
-Pause a single messaging bridge (`telegram`, `discord`, or `slack`) without clearing its credentials. The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway. Credentials stay in `~/.nemoclaw/credentials.json`, so a later `channels start` brings the bridge back without re-entering tokens.
+Pause a single messaging bridge (`telegram`, `discord`, or `slack`) without clearing its credentials.
+The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway.
+The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 
 ```console
 $ nemoclaw my-assistant channels stop telegram
@@ -424,6 +461,7 @@ $ nemoclaw my-assistant skill install ./my-skill/
 
 The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field.
 Skill names must contain only alphanumeric characters, dots, hyphens, and underscores.
+OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, see Install OpenClaw Plugins (use the `nemoclaw-user-deploy-remote` skill).
 
 Files with names starting with `.` (dotfiles) are skipped and listed in the output.
 Files with unsafe path characters are rejected to prevent shell injection.
@@ -637,20 +675,21 @@ If `--output` is set and the tarball cannot be written (for example, the destina
 
 ### `nemoclaw credentials list`
 
-List the names of all credentials stored in `~/.nemoclaw/credentials.json`.
+List the provider credentials registered with the OpenShell gateway.
 Values are not printed.
 
 ```console
 $ nemoclaw credentials list
 ```
 
-### `nemoclaw credentials reset <KEY>`
+### `nemoclaw credentials reset <PROVIDER>`
 
-Remove a stored credential by name.
-After removal, re-running `nemoclaw onboard` re-prompts for that key.
+Remove a provider credential from the OpenShell gateway by provider name.
+After removal, re-running `nemoclaw onboard` re-prompts for that provider's credential.
+Run `nemoclaw credentials list` first if you are not sure of the provider name.
 
 ```console
-$ nemoclaw credentials reset NVIDIA_API_KEY
+$ nemoclaw credentials reset nvidia-prod
 ```
 
 | Flag | Description |
@@ -676,7 +715,9 @@ $ nemoclaw gc [--dry-run] [--yes|--force]
 ### `nemoclaw uninstall`
 
 Run `uninstall.sh` to remove NemoClaw sandboxes, gateway resources, related images and containers, and local state.
-The CLI uses the local `uninstall.sh` first and falls back to the hosted script if the local file is unavailable.
+The CLI runs the local `uninstall.sh` shipped with the installed npm package.
+If that local script is missing, the CLI does not auto-fetch a remote copy.
+It prints the versioned URL of the matching `uninstall.sh` so you can download, review, and run it manually.
 
 Uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
@@ -691,6 +732,20 @@ Earlier releases only stopped `openshell forward` processes, so those orphans ac
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
 ```
 
+#### `nemoclaw uninstall` vs. the hosted `uninstall.sh`
+
+Both forms execute the same `uninstall.sh` with the same flags, but differ in where the script comes from and how much they trust the network.
+Use `nemoclaw uninstall` by default.
+Use the hosted `curl … | bash` form only when the CLI is broken or already partially removed.
+
+|  | `nemoclaw uninstall` | `curl … \| bash` (Quickstart) |
+|---|---|---|
+| **Source of the script** | Local `uninstall.sh` shipped with the installed npm package. | Pulled live from `refs/heads/main` on GitHub. |
+| **Version pinning** | Pinned to the version of NemoClaw you installed. | Whatever is on `main` right now; may be newer than your installed CLI. |
+| **Network trust** | No network fetch at uninstall time; runs a vetted local file via `bash`. | Pipes a remote script straight to `bash` with no review step. |
+| **Robustness** | Requires the npm package to be discoverable so the CLI can find the local script. | Works even if the `nemoclaw` CLI is missing, broken, or partially uninstalled. |
+| **Recommended for** | Routine uninstalls. | Recovery when the CLI is unavailable. |
+
 ## Environment Variables
 
 NemoClaw reads the following environment variables to configure service ports.
@@ -700,7 +755,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 | Variable | Default | Service |
 |----------|---------|---------|
 | `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway |
-| `NEMOCLAW_DASHBOARD_PORT` | 18789 | Dashboard UI |
+| `NEMOCLAW_DASHBOARD_PORT` | 18789 (auto-derived from `CHAT_UI_URL` port if set) | Dashboard UI |
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |

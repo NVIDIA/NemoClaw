@@ -31,7 +31,8 @@ import { resolveOpenshell } from "./resolve-openshell.js";
 import { captureOpenshellCommand } from "./openshell.js";
 import { sanitizeConfigFile, isSensitiveFile } from "./credential-filter.js";
 
-const REBUILD_BACKUPS_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw", "rebuild-backups");
+const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
+const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
 
@@ -171,6 +172,41 @@ function isWithinRoot(candidatePath: string, rootPath: string): boolean {
 }
 
 /**
+ * Reject a path if it — or any ancestor up to $HOME — is a symlink.
+ * Prevents an attacker from planting a symlink at the target path to
+ * redirect reads or writes to an attacker-controlled directory.
+ *
+ * Mirrors the pattern from config-io.ts (PR #2290) and
+ * nemoclaw/src/blueprint/snapshot.ts.
+ */
+function rejectSymlinksOnPath(targetPath: string): void {
+  const home = HOME_DIR;
+  const resolved = path.resolve(targetPath);
+
+  const relToHome = path.relative(home, resolved);
+  if (relToHome === "" || relToHome.startsWith("..") || path.isAbsolute(relToHome)) {
+    return;
+  }
+
+  let current = resolved;
+  while (current !== home && current !== path.dirname(current)) {
+    try {
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        const linkTarget = readlinkSync(current);
+        throw new Error(
+          `Refusing to operate on path: ${current} is a symbolic link ` +
+            `(target: ${linkTarget}). This may indicate a symlink attack.`,
+        );
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    current = path.dirname(current);
+  }
+}
+
+/**
  * List tar entries and validate every path is within targetDir.
  * Rejects absolute paths, path traversal (..), and null bytes.
  */
@@ -243,11 +279,39 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
         const stat = lstatSync(fullPath);
         if (stat.isSymbolicLink()) {
           const linkTarget = readlinkSync(fullPath);
-          const resolvedTarget = path.resolve(path.dirname(fullPath), linkTarget);
-          const inAnyAllowedRoot = allowedRoots.some((root) => isWithinRoot(resolvedTarget, root));
+
+          // Resolve relative to the symlink's containing directory (standard).
+          const resolvedRelative = path.resolve(path.dirname(fullPath), linkTarget);
+
+          // For absolute symlinks that point into the canonical sandbox data
+          // directory (/sandbox/.openclaw-data/** or /sandbox/.hermes-data/**),
+          // also check whether the target falls within the extraction root when
+          // the leading /sandbox/ prefix is mapped onto the archive root. This
+          // mirrors how the symlink resolves once the backup is restored inside
+          // the sandbox container (where /sandbox/.openclaw-data/* exists).
+          //
+          // Only /sandbox/ prefixed targets receive this treatment so that
+          // symlinks pointing to arbitrary absolute paths (e.g. /etc/passwd)
+          // are still rejected. Fixes #2317.
+          const SANDBOX_DATA_PREFIXES = ["/sandbox/.openclaw-data/", "/sandbox/.hermes-data/"];
+          // Normalize the target first to collapse any .. traversal segments
+          // (e.g. /sandbox/.openclaw-data/../../etc/passwd → /etc/passwd).
+          // Only then check the prefix — this prevents a traversal bypass
+          // where a crafted target starts with an allowed prefix but escapes it.
+          const normalizedTarget = path.posix.normalize(linkTarget);
+          const resolvedInArchive =
+            path.isAbsolute(normalizedTarget) &&
+            SANDBOX_DATA_PREFIXES.some((p) => normalizedTarget.startsWith(p))
+              ? path.resolve(dirPath, normalizedTarget.replace(/^\//, ""))
+              : null;
+
+          const inAnyAllowedRoot =
+            allowedRoots.some((root) => isWithinRoot(resolvedRelative, root)) ||
+            (resolvedInArchive !== null && isWithinRoot(resolvedInArchive, dirPath));
+
           if (!inAnyAllowedRoot) {
             violations.push(
-              `symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedTarget})`,
+              `symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedRelative})`,
             );
           }
         } else if (stat.isDirectory()) {
@@ -528,7 +592,16 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   }
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = path.join(REBUILD_BACKUPS_DIR, sandboxName, timestamp);
+
+  // SECURITY: Verify backup destination ancestors are not symlinks.
+  // Without this check, an attacker who plants ~/.nemoclaw/rebuild-backups
+  // as a symlink could redirect snapshot content to an arbitrary directory.
+  rejectSymlinksOnPath(backupPath);
+
   mkdirSync(backupPath, { recursive: true, mode: 0o700 });
+  // Re-check after creation to narrow the TOCTOU race window —
+  // a symlink swapped in between the first check and mkdirSync is caught here.
+  rejectSymlinksOnPath(backupPath);
 
   // Capture applied policy presets from the registry so they can be
   // re-applied after rebuild. Presets live in the gateway policy engine,
