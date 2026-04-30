@@ -99,6 +99,8 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 export interface SkillPaths {
   /** Upload target directory for the skill */
   uploadDir: string;
+  /** OpenClaw-only mirror directory under the remote home dir, or null */
+  mirrorDir: string | null;
   /** OpenClaw-only: session index to clear, or null */
   sessionFile: string | null;
   /** Whether the agent is OpenClaw (drives refresh behavior) */
@@ -123,6 +125,7 @@ export function resolveSkillPaths(
 
   return {
     uploadDir,
+    mirrorDir: isOpenClaw ? `$HOME/.openclaw/skills/${skillName}` : null,
     sessionFile: isOpenClaw ? `${dir}/agents/main/sessions/sessions.json` : null,
     isOpenClaw,
   };
