@@ -140,14 +140,14 @@ export default class ShareCommand extends Command {
           "  Install with: sudo apt-get install sshfs  (or: sudo dnf install fuse-sshfs)",
         );
       }
-      this.exit(1);
+      process.exit(1);
     }
 
     // Check not already mounted
     if (isMountPoint(localMount)) {
       console.error(`  ${localMount} is already mounted.`);
       console.error(`  Run 'nemoclaw ${sandboxName} share unmount' first.`);
-      this.exit(1);
+      process.exit(1);
     }
 
     // Verify sandbox is running
@@ -157,7 +157,7 @@ export default class ShareCommand extends Command {
     const sshConfigResult = deps.getSshConfig(sandboxName);
     if (sshConfigResult.status !== 0) {
       console.error("  Failed to obtain SSH configuration for the sandbox.");
-      this.exit(1);
+      process.exit(1);
     }
 
     const tmpFile = path.join(
@@ -196,7 +196,7 @@ export default class ShareCommand extends Command {
             "  If it was created from a custom `--from` image, add openssh-sftp-server at /usr/lib/openssh/sftp-server and rebuild.",
           );
         }
-        this.exit(1);
+        process.exit(1);
       }
       console.log(`  ${G}\u2713${R} Mounted ${remotePath} \u2192 ${localMount}`);
       console.log(`  Edit files at ${localMount} \u2014 changes appear in the sandbox instantly.`);
@@ -222,7 +222,7 @@ export default class ShareCommand extends Command {
       if (!resolved) {
         console.error("  Could not find fusermount3 or fusermount on this host.");
         console.error("  Install with: sudo apt-get install fuse3  (or: sudo dnf install fuse3)");
-        this.exit(1);
+        process.exit(1);
         return;
       }
       unmountCmd = resolved;
@@ -243,7 +243,7 @@ export default class ShareCommand extends Command {
           console.error(`  Try: ${unmountCmd} -uz ${localMount}`);
         }
       }
-      this.exit(1);
+      process.exit(1);
     }
     console.log(`  ${G}\u2713${R} Unmounted ${localMount}`);
   }
@@ -268,6 +268,6 @@ export default class ShareCommand extends Command {
     console.error(
       "    status  [local-mount-point]                 Check current mount status",
     );
-    this.exit(1);
+    process.exit(1);
   }
 }
