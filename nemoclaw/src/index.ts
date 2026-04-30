@@ -18,6 +18,7 @@ import {
   describeOnboardProvider,
   loadOnboardConfig,
 } from "./onboard/config.js";
+import { registerRuntimeContext } from "./runtime-context.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
 
 type PluginScalar = string | number | boolean | null | undefined;
@@ -182,6 +183,14 @@ export interface BeforeToolCallResult {
   blockReason?: string;
 }
 
+/** Return value from a before_agent_start hook. */
+export interface BeforeAgentStartResult {
+  prependContext?: string;
+}
+
+/** Union of all hook result types. */
+export type HookResult = BeforeToolCallResult | BeforeAgentStartResult | undefined;
+
 /**
  * The API object injected into the plugin's register function by the OpenClaw
  * host. Only the methods we actually call are listed here.
@@ -199,7 +208,7 @@ export interface OpenClawPluginApi {
   resolvePath: (input: string) => string;
   on: (
     hookName: string,
-    handler: (...args: readonly PluginValue[]) => BeforeToolCallResult | undefined,
+    handler: (...args: readonly PluginValue[]) => HookResult | Promise<HookResult>,
   ) => void;
 }
 
@@ -336,6 +345,16 @@ export default function register(api: OpenClawPluginApi): void {
   // `openshell inference set` (#2608).
   const onboardCfg = loadOnboardConfig();
   const probed = probeOpenShellInference();
+
+  // 4. Register runtime context injection (sandbox-awareness hook)
+  const pluginConfig = getPluginConfig(api);
+  try {
+    registerRuntimeContext(api, pluginConfig);
+  } catch (err) {
+    api.logger.warn(
+      `Could not register runtime context hook: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   let bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "";
   let bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "";
