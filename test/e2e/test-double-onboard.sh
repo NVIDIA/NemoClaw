@@ -187,6 +187,8 @@ run_onboard() {
     "NEMOCLAW_MODEL=test-model"
     "NEMOCLAW_SANDBOX_NAME=${sandbox_name}"
     "NEMOCLAW_POLICY_MODE=skip"
+    "NEMOCLAW_DASHBOARD_PORT="
+    "CHAT_UI_URL="
   )
   if [ "$recreate" = "1" ]; then
     env_args+=("NEMOCLAW_RECREATE_SANDBOX=1")
@@ -200,6 +202,33 @@ run_onboard() {
 
 run_nemoclaw() {
   "${NEMOCLAW_CMD[@]}" "$@"
+}
+
+dashboard_port_from_list() {
+  local sandbox_name="$1"
+
+  LIST_OUTPUT="$list_output" python3 - "$sandbox_name" <<'PY'
+import os
+import re
+import sys
+
+target = sys.argv[1]
+current = None
+
+for line in os.environ.get("LIST_OUTPUT", "").splitlines():
+    if line.startswith("    ") and not line.startswith("      "):
+        stripped = line.strip()
+        current = stripped.split()[0] if stripped else None
+        continue
+
+    if current == target:
+        match = re.search(r"dashboard:\s+http://127\.0\.0\.1:(\d+)/?", line)
+        if match:
+            print(match.group(1))
+            sys.exit(0)
+
+sys.exit(1)
+PY
 }
 
 # ══════════════════════════════════════════════════════════════════
@@ -408,11 +437,11 @@ else
 fi
 
 # #2174 regression: B must auto-allocate to a different dashboard port,
-# surface it in nemoclaw list, and not collide with A's 18789.
+# surface it in nemoclaw list, and not collide with A's dashboard.
 if grep -q "is taken. Using port" <<<"$output3"; then
-  pass "Second-sandbox onboard logged port auto-allocation (#2174)"
+  info "Second-sandbox onboard logged port auto-allocation (#2174)"
 else
-  fail "Second-sandbox onboard did not log port auto-allocation — auto-alloc may not have fired (#2174)"
+  info "Second-sandbox onboard did not emit the optional auto-allocation warning; verifying assigned ports directly."
 fi
 
 LIST_LOG="$(mktemp)"
@@ -420,12 +449,21 @@ run_nemoclaw list >"$LIST_LOG" 2>&1 || true
 list_output="$(cat "$LIST_LOG")"
 rm -f "$LIST_LOG"
 
-dashboard_ports_in_list="$(grep -oE 'dashboard: http://127\.0\.0\.1:[0-9]+' <<<"$list_output" | awk -F: '{print $NF}' | sort -u)"
-distinct_count="$(wc -l <<<"$dashboard_ports_in_list" | tr -d ' ')"
-if [ "$distinct_count" = "2" ]; then
-  pass "nemoclaw list shows two distinct dashboard ports (#2174)"
+port_a="$(dashboard_port_from_list "$SANDBOX_A" 2>/dev/null || true)"
+port_b="$(dashboard_port_from_list "$SANDBOX_B" 2>/dev/null || true)"
+
+if [ -n "$port_a" ] && [ -n "$port_b" ]; then
+  pass "nemoclaw list shows dashboard ports for both test sandboxes (#2174)"
 else
-  fail "nemoclaw list did not show two distinct dashboard ports (got $distinct_count: $(tr '\n' ' ' <<<"$dashboard_ports_in_list"))"
+  fail "nemoclaw list did not show dashboard ports for both test sandboxes (a=${port_a:-missing} b=${port_b:-missing})"
+  info "Observed nemoclaw list output:"
+  printf '%s\n' "$list_output" | sed 's/^/    /'
+fi
+
+if [ -n "$port_a" ] && [ -n "$port_b" ] && [ "$port_a" != "$port_b" ]; then
+  pass "nemoclaw list shows distinct dashboard ports for test sandboxes (#2174)"
+else
+  fail "test sandboxes did not have distinct dashboard ports (#2174): ${SANDBOX_A}=${port_a:-missing} ${SANDBOX_B}=${port_b:-missing}"
 fi
 
 # ══════════════════════════════════════════════════════════════════

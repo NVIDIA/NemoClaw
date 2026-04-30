@@ -119,6 +119,30 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.telegram).toBeDefined();
   });
 
+  it("emits canonical openshell:resolve:env: placeholders for non-Slack channels", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram.accounts.default.botToken).toBe(
+      "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    );
+    expect(config.channels.discord.accounts.default.token).toBe(
+      "openshell:resolve:env:DISCORD_BOT_TOKEN",
+    );
+  });
+
+  it("emits Bolt-shape placeholders for Slack so the SDK's prefix regex passes", () => {
+    const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    const slack = config.channels.slack.accounts.default;
+    // Bolt validates ^xoxb-[A-Za-z0-9_-]+$ / ^xapp-…$ at App construction.
+    // The slack-token-rewriter preload translates these to canonical form
+    // before egress, where OpenShell's L7 proxy substitutes the real token.
+    expect(slack.botToken).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+    expect(slack.appToken).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
+    expect(slack.botToken).toMatch(/^xoxb-[A-Za-z0-9_-]+$/);
+    expect(slack.appToken).toMatch(/^xapp-[A-Za-z0-9_-]+$/);
+  });
+
   it("enables web search when env is '1'", () => {
     const config = runConfigScript({ NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
     expect(config.tools?.web?.search?.enabled).toBe(true);

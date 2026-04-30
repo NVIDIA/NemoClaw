@@ -70,10 +70,10 @@ command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 180"
 command -v gtimeout >/dev/null 2>&1 && TIMEOUT_CMD="gtimeout 180"
 
 # Remote: decode prompt + key, drop stale session lock for *this* session id (leftover from crashed agent), then run agent.
-# OpenClaw stores sessions under /sandbox/.openclaw-data in NemoClaw sandboxes.
+# OpenClaw stores sessions under /sandbox/.openclaw in NemoClaw sandboxes.
 _lock_rm=""
 if [ "${SKILL_VERIFY_NO_CLEAR_LOCK:-0}" != "1" ]; then
-  _lock_rm="rm -f '/sandbox/.openclaw-data/agents/main/sessions/${SESSION_ID}.jsonl.lock' 2>/dev/null || true; "
+  _lock_rm="rm -f '/sandbox/.openclaw/agents/main/sessions/${SESSION_ID}.jsonl.lock' 2>/dev/null || true; "
 fi
 remote_cmd="pm=\$(printf '%s' '${prompt_b64}' | base64 -d) || exit 1; nv=\$(printf '%s' '${nv_b64}' | base64 -d) || exit 1; export NVIDIA_API_KEY=\"\$nv\"; ${_lock_rm}${AGENT_LAUNCHER}openclaw agent --agent main --local -m \"\$pm\" --session-id '${SESSION_ID}'"
 

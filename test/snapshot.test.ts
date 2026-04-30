@@ -66,7 +66,7 @@ function writeBackup(
     agentVersion: null,
     expectedVersion: null,
     stateDirs: [],
-    writableDir: "/sandbox/.openclaw-data",
+    dir: "/sandbox/.openclaw",
     backupPath: dir,
     blueprintDigest: null,
     ...overrides,
@@ -162,6 +162,8 @@ describe("listBackups computes virtual versions", () => {
 
     const [entry] = sandboxState.listBackups("test-sandbox");
     expect(entry?.timestamp).toBe("2026-04-21T13-59-00-000Z");
+    expect(entry?.dir).toBe("/sandbox/.openclaw-data");
+    expect(entry?.writableDir).toBe("/sandbox/.openclaw-data");
     expect(entry?.blueprintDigest).toBeNull();
   });
 

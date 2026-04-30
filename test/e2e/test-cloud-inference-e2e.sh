@@ -20,7 +20,7 @@
 #   NEMOCLAW_RECREATE_SANDBOX=1             — recreate if exists
 #   E2E_PHASE_5B_MAX_ATTEMPTS              — chat retries (default: 3)
 #   E2E_PHASE_5B_RETRY_SLEEP_SEC           — seconds between retries (default: 5)
-#   NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL      — cloud model (default: moonshotai/kimi-k2.5)
+#   NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL      — cloud model (default: nvidia/nemotron-3-super-120b-a12b)
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
@@ -83,7 +83,7 @@ unset _script_dir _candidate
 
 E2E_DIR="$(cd "$(dirname "$0")" && pwd)"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-inference}"
-CLOUD_MODEL="${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-moonshotai/kimi-k2.5}"
+CLOUD_MODEL="${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
 
 # Source shared teardown helper
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh

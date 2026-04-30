@@ -186,60 +186,57 @@ describe("scanForSecrets", () => {
 });
 
 describe("isMemoryPath", () => {
-  it("matches .openclaw-data/memory/ paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/memory/project.md")).toBe(true);
-  });
-
   it("matches .openclaw/memory/ paths", () => {
+    expect(isMemoryPath("/sandbox/.openclaw/memory/project.md")).toBe(true);
     expect(isMemoryPath("/sandbox/.openclaw/memory/notes.md")).toBe(true);
-  });
-
-  it("matches MEMORY.md anchored to .openclaw-data", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/MEMORY.md")).toBe(true);
   });
 
   it("matches MEMORY.md anchored to .openclaw", () => {
     expect(isMemoryPath("/sandbox/.openclaw/MEMORY.md")).toBe(true);
   });
 
+  it("matches OpenClaw runtime config", () => {
+    expect(isMemoryPath("/sandbox/.openclaw/openclaw.json")).toBe(true);
+  });
+
   it("matches workspace paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/workspace/notes.md")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/workspace/notes.md")).toBe(true);
   });
 
   it("matches agents paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/agents/main/config.json")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/agents/main/config.json")).toBe(true);
   });
 
   it("matches skills paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/skills/custom/handler.ts")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/skills/custom/handler.ts")).toBe(true);
   });
 
   it("matches hooks paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/hooks/my-hook/handler.ts")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/hooks/my-hook/handler.ts")).toBe(true);
   });
 
   it("matches credentials paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/credentials/auth.json")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/credentials/auth.json")).toBe(true);
   });
 
   it("matches canvas paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/canvas/drawing.json")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/canvas/drawing.json")).toBe(true);
   });
 
   it("matches identity paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/identity/profile.json")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/identity/profile.json")).toBe(true);
   });
 
   it("matches cron paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/cron/schedule.json")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/cron/schedule.json")).toBe(true);
   });
 
   it("matches telegram paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/telegram/state.json")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/telegram/state.json")).toBe(true);
   });
 
   it("matches sandbox state paths", () => {
-    expect(isMemoryPath("/sandbox/.openclaw-data/sandbox/config.json")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/sandbox/config.json")).toBe(true);
   });
 
   it("matches .nemoclaw paths", () => {

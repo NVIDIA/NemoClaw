@@ -7,11 +7,24 @@ ARG BASE_IMAGE=nemoclaw-sandbox-test
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
-# The production image locks .openclaw (root:root, 755, openclaw.json 444).
-# Tests need writable fixtures and a sandbox-owned config for rollback tests,
-# so relax permissions here.
+# Ensure mutable-default permissions and keep an explicit legacy split-layout
+# fixture for migration tests.
 USER root
-RUN chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data \
+RUN rm -rf /sandbox/.openclaw-data \
+    && mkdir -p /sandbox/.openclaw-data/workspace \
+        /sandbox/.openclaw-data/extensions \
+        /sandbox/.openclaw-data/skills \
+        /sandbox/.openclaw-data/hooks \
+        /sandbox/.openclaw-data/logs \
+    && rm -rf /sandbox/.openclaw/workspace \
+        /sandbox/.openclaw/extensions \
+        /sandbox/.openclaw/skills \
+        /sandbox/.openclaw/hooks \
+    && ln -s /sandbox/.openclaw-data/workspace /sandbox/.openclaw/workspace \
+    && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
+    && ln -s /sandbox/.openclaw-data/skills /sandbox/.openclaw/skills \
+    && ln -s /sandbox/.openclaw-data/hooks /sandbox/.openclaw/hooks \
+    && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data \
     && chmod 700 /sandbox/.openclaw \
     && chmod 600 /sandbox/.openclaw/openclaw.json
 

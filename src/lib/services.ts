@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execSync, spawn } from "node:child_process";
+import { CLI_DISPLAY_NAME, AGENT_PRODUCT_NAME } from "./branding";
 import {
   chmodSync,
   closeSync,
@@ -303,7 +304,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   // Banner
   console.log("");
   console.log("  ┌─────────────────────────────────────────────────────┐");
-  console.log("  │  NemoClaw Services                                  │");
+  console.log(`  │  ${(CLI_DISPLAY_NAME + " Services").padEnd(52)}│`);
   console.log("  │                                                     │");
 
   let tunnelUrl = "";
@@ -320,7 +321,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     console.log(`  │  Public URL:  ${tunnelUrl.padEnd(40)}│`);
   }
 
-  console.log("  │  Messaging:   via OpenClaw native channels (if configured) │");
+  console.log(`  │  ${("Messaging:   via " + AGENT_PRODUCT_NAME + " native channels (if configured)").padEnd(52)}│`);
 
   console.log("  │                                                     │");
   console.log("  │  Run 'openshell term' to monitor egress approvals   │");

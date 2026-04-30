@@ -4,7 +4,15 @@
   "description": "NemoClaw — run OpenClaw inside OpenShell with NVIDIA inference",
   "license": "Apache-2.0",
   "bin": {
-    "nemoclaw": "./bin/nemoclaw.js"
+    "nemoclaw": "./bin/nemoclaw.js",
+    "nemohermes": "./bin/nemohermes.js"
+  },
+  "oclif": {
+    "bin": "nemoclaw",
+    "commands": {
+      "strategy": "explicit",
+      "target": "./dist/lib/oclif-commands.js"
+    }
   },
   "scripts": {
     "test": "vitest run",
@@ -26,6 +34,7 @@
     "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && test -s .version && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
+    "@oclif/core": "^4.10.5",
     "js-yaml": "^4.1.1",
     "p-retry": "^4.6.2",
     "yaml": "^2.8.3"

@@ -260,4 +260,229 @@ describe("shields — unit logic", () => {
   // feasible here because shields.ts uses CJS require() which doesn't resolve
   // through vitest's ESM mock system. The full call chain is exercised by the
   // E2E test (test/e2e/test-shields-config.sh) against a live sandbox.
+
+  // -------------------------------------------------------------------
+  // NC-2227-02: Three-state shields model
+  // -------------------------------------------------------------------
+  describe("NC-2227-02: three-state shields model", () => {
+    it("deriveShieldsMode encodes the fresh, locked, unlocked, and legacy-state cases", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "shields.ts"),
+        "utf-8",
+      );
+      const fn = src.match(/function deriveShieldsMode\([\s\S]*?^}/m);
+      expect(fn).toBeTruthy();
+      expect(fn![0]).toContain('if (!hasStateFile) return "mutable_default"');
+      expect(fn![0]).toContain('if (state.shieldsDown === true) return "temporarily_unlocked"');
+      expect(fn![0]).toContain('if (state.shieldsDown === false) return "locked"');
+      expect(fn![0]).toContain('return "mutable_default"');
+      expect(src).toContain("deriveShieldsMode(state, state._hasStateFile)");
+    });
+  });
+});
+
+// -------------------------------------------------------------------
+// NC-2227-04: Regression test — tar commands must not follow symlinks
+// -------------------------------------------------------------------
+describe("NC-2227-04: sandbox-state.ts tar commands do not follow symlinks", () => {
+  function getSourceCode(): string {
+    return fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "sandbox-state.ts"),
+      "utf-8",
+    );
+  }
+
+  it("backup tar command does not use -h flag (no symlink following)", () => {
+    const src = getSourceCode();
+    // Find the backup tar command in backupSandboxState
+    const fnStart = src.indexOf("function backupSandboxState");
+    expect(fnStart).not.toBe(-1);
+    const fnBody = src.slice(fnStart);
+
+    // The tar command should be `tar -cf` not `tar -chf`
+    const tarCmdMatch = fnBody.match(/tar -c([a-z]*)f/g);
+    expect(tarCmdMatch).not.toBeNull();
+    for (const match of tarCmdMatch!) {
+      expect(match).not.toContain("h");
+    }
+  });
+
+  it("restore tar command does not use -h flag (no symlink following)", () => {
+    const src = getSourceCode();
+    // Find the restore function
+    const fnStart = src.indexOf("function restoreSandboxState");
+    expect(fnStart).not.toBe(-1);
+    const fnBody = src.slice(fnStart);
+
+    // Check tar commands in the restore path
+    const tarCmdMatches = fnBody.match(/"-c([a-z]*)f"/g);
+    if (tarCmdMatches) {
+      for (const match of tarCmdMatches) {
+        expect(match).not.toContain("h");
+      }
+    }
+  });
+
+  it("backup includes pre-backup symlink and hard-link audit before tar", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function backupSandboxState");
+    const fnBody = src.slice(fnStart);
+
+    // Must have the pre-backup audit command checking for symlinks and hard links.
+    expect(fnBody).toContain("Pre-backup audit");
+    expect(fnBody).toContain("-type l");
+    expect(fnBody).toContain("-links +1");
+    expect(fnBody).toContain('.join(" && ")');
+  });
+
+  it("backup fails closed when the pre-backup audit command errors", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function backupSandboxState");
+    const fnBody = src.slice(fnStart);
+
+    expect(fnBody).toContain("auditResult.status !== 0");
+    expect(fnBody).toContain("Pre-backup audit failed");
+    expect(fnBody).toContain("failedDirs: [...existingDirs]");
+  });
+
+  it("restore fails closed when pre-restore cleanup cannot remove stale state", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function restoreSandboxState");
+    const fnBody = src.slice(fnStart);
+    const cleanupCheck = fnBody.slice(
+      fnBody.indexOf("const rmResult"),
+      fnBody.indexOf("const extractCmd"),
+    );
+
+    expect(cleanupCheck).toContain("rmResult.status !== 0");
+    expect(cleanupCheck).toContain("rmResult.error");
+    expect(cleanupCheck).toContain("rmResult.signal");
+    expect(cleanupCheck).toContain("FAILED: pre-restore cleanup failed");
+    expect(cleanupCheck).toContain("failedDirs: [...localDirs]");
+  });
+
+  it("restore treats post-restore ownership repair as best-effort and verifies usability", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function restoreSandboxState");
+    const fnBody = src.slice(fnStart);
+    const chownCheck = fnBody.slice(
+      fnBody.indexOf("const chownCmd"),
+      fnBody.indexOf("const usabilityCmd"),
+    );
+    const usabilityCheck = fnBody.slice(
+      fnBody.indexOf("const usabilityCmd"),
+      fnBody.indexOf("} else {\n      failedDirs.push(...localDirs);"),
+    );
+
+    expect(chownCheck).toContain("chown -R sandbox:sandbox --");
+    expect(chownCheck).toContain("2>/dev/null || true");
+    expect(chownCheck).toContain("chownResult.error");
+    expect(chownCheck).toContain("chownResult.signal");
+    expect(chownCheck).toContain("WARNING: post-restore ownership repair did not complete");
+    expect(usabilityCheck).toContain("[ -r");
+    expect(usabilityCheck).toContain("[ -w");
+    expect(usabilityCheck).toContain("FAILED: restored state usability check failed");
+    expect(fnBody).toContain("failedDirs.push(...localDirs)");
+  });
+});
+
+// -------------------------------------------------------------------
+// NC-2227-05: Regression test — shields.ts locks state dirs
+// -------------------------------------------------------------------
+describe("NC-2227-05: shields.ts locks state directories", () => {
+  function getSourceCode(): string {
+    return fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "shields.ts"),
+      "utf-8",
+    );
+  }
+
+  it("HIGH_RISK_STATE_DIRS constant includes executable state and workspace entry points", () => {
+    const src = getSourceCode();
+    expect(src).toContain("HIGH_RISK_STATE_DIRS");
+    for (const dir of [
+      "skills",
+      "hooks",
+      "cron",
+      "agents",
+      "extensions",
+      "plugins",
+      "workspace",
+      "memory",
+      "credentials",
+    ]) {
+      expect(src).toContain(`"${dir}"`);
+    }
+  });
+
+  it("lockAgentConfig locks fixed and dynamic workspace state directories", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function lockAgentConfig");
+    expect(fnStart).not.toBe(-1);
+    const fnBody = src.slice(fnStart);
+    expect(src).toContain("function applyStateDirLockMode");
+    expect(src).toContain("workspace-*");
+    expect(fnBody).toContain("applyStateDirLockMode");
+    expect(fnBody).toContain("chown");
+    expect(fnBody).toContain("root:root");
+  });
+
+  it("lockAgentConfig verifies every file it attempts to lock", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function lockAgentConfig");
+    expect(fnStart).not.toBe(-1);
+    const fnBody = src.slice(fnStart, src.indexOf("function shieldsDown"));
+    const verificationBlock = fnBody.slice(
+      fnBody.indexOf("// Verify the lock actually took effect."),
+      fnBody.indexOf("try {\n    assertNoLegacyStateLayout"),
+    );
+
+    expect(verificationBlock).toContain("for (const f of filesToLock)");
+    expect(verificationBlock).toContain('["stat", "-c", "%a %U:%G", f]');
+    expect(verificationBlock).toContain("${f} mode=");
+    expect(verificationBlock).toContain("${f} owner=");
+    expect(verificationBlock).toContain("${f} immutable bit not set");
+  });
+
+  it("unlockAgentConfig restores sandbox ownership on HIGH_RISK_STATE_DIRS", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function unlockAgentConfig");
+    expect(fnStart).not.toBe(-1);
+    const fnBody = src.slice(fnStart, src.indexOf("function lockAgentConfig"));
+    expect(fnBody).toContain("applyStateDirLockMode");
+    expect(fnBody).toContain("sandbox:sandbox");
+  });
+
+  it("unlockAgentConfig verifies mutable-default postconditions before state is saved", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function unlockAgentConfig");
+    expect(fnStart).not.toBe(-1);
+    const fnBody = src.slice(fnStart, src.indexOf("function lockAgentConfig"));
+    expect(fnBody).toContain("Config not unlocked");
+    expect(fnBody).toContain("stat");
+    expect(fnBody).toContain("lsattr");
+    expect(fnBody).toContain("sandbox:sandbox");
+  });
+
+  it("shieldsDown only kills auto-restore timers after rejecting repeated down", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function shieldsDown");
+    expect(fnStart).not.toBe(-1);
+    const fnBody = src.slice(fnStart, src.indexOf("function shieldsUp"));
+    const stateGuard = fnBody.indexOf("if (state.shieldsDown)");
+    const killTimer = fnBody.indexOf("killTimer(sandboxName)");
+    expect(stateGuard).toBeGreaterThan(-1);
+    expect(killTimer).toBeGreaterThan(stateGuard);
+  });
+
+  it("lockAgentConfig fails if legacy .openclaw-data artifacts remain", () => {
+    const src = getSourceCode();
+    const fnStart = src.indexOf("function lockAgentConfig");
+    expect(fnStart).not.toBe(-1);
+    const fnBody = src.slice(fnStart);
+    expect(src).toContain("function assertNoLegacyStateLayout");
+    expect(src).toContain("legacy data dir exists");
+    expect(src).toContain("legacy symlink remains");
+    expect(fnBody).toContain("assertNoLegacyStateLayout");
+  });
 });

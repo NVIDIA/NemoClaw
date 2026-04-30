@@ -13,6 +13,7 @@ import path from "node:path";
 
 import { buildPolicySetCommand } from "./policies";
 import { run } from "./runner";
+import { DEFAULT_AGENT_CONFIG, resolveAgentConfig } from "./sandbox-config";
 import { lockAgentConfig } from "./shields";
 
 type UnknownRecord = { [key: string]: unknown };
@@ -143,34 +144,57 @@ function runRestoreTimer(args: TimerArgs): void {
     // Re-lock config file using the shared lockAgentConfig from shields.ts.
     // lockAgentConfig runs each operation independently and verifies the
     // on-disk state — it throws if verification fails.
+    //
+    // NC-2227-03: Resolve the full agent config target (including sensitive
+    // files like .config-hash, .env) so the timer re-locks the same scope
+    // that interactive `shields up` uses. Fall back to the bare configPath/
+    // configDir from argv if resolution fails (e.g., registry unavailable).
     let lockVerified = true;
-    const lockTarget = args.configPath && args.configDir
-      ? { configPath: args.configPath, configDir: args.configDir }
-      : null;
-
-    if (args.configPath && !lockTarget) {
-      lockVerified = false;
-      appendAudit({
-        action: "shields_auto_restore_lock_warning",
-        sandbox: args.sandboxName,
-        timestamp: now,
-        restored_by: "auto_timer",
-        warning: "Missing config directory for auto-restore re-lock verification",
-        lock_verified: false,
-      });
-    } else if (lockTarget) {
+    if (args.configPath) {
+      let lockTarget: {
+        agentName?: string;
+        configPath: string;
+        configDir: string;
+        sensitiveFiles?: string[];
+      } | null = null;
       try {
-        lockAgentConfig(args.sandboxName, lockTarget);
-      } catch (error: unknown) {
-        lockVerified = false;
-        appendAudit({
-          action: "shields_auto_restore_lock_warning",
-          sandbox: args.sandboxName,
-          timestamp: now,
-          restored_by: "auto_timer",
-          warning: error instanceof Error ? error.message : String(error),
-          lock_verified: false,
-        });
+        const resolvedTarget = resolveAgentConfig(args.sandboxName);
+        if (resolvedTarget === DEFAULT_AGENT_CONFIG && args.configDir) {
+          lockTarget = { configPath: args.configPath, configDir: args.configDir };
+        } else {
+          lockTarget = resolvedTarget;
+        }
+      } catch {
+        // Fall back to argv-supplied paths without sensitive files —
+        // better to lock the main config than nothing at all.
+        if (args.configDir) {
+          lockTarget = { configPath: args.configPath, configDir: args.configDir };
+        } else {
+          lockVerified = false;
+          appendAudit({
+            action: "shields_auto_restore_lock_warning",
+            sandbox: args.sandboxName,
+            timestamp: now,
+            restored_by: "auto_timer",
+            warning: "Missing config directory for auto-restore re-lock verification",
+            lock_verified: false,
+          });
+        }
+      }
+      if (lockTarget) {
+        try {
+          lockAgentConfig(args.sandboxName, lockTarget);
+        } catch (error: unknown) {
+          lockVerified = false;
+          appendAudit({
+            action: "shields_auto_restore_lock_warning",
+            sandbox: args.sandboxName,
+            timestamp: now,
+            restored_by: "auto_timer",
+            warning: error instanceof Error ? error.message : String(error),
+            lock_verified: false,
+          });
+        }
       }
     }
 

@@ -67,6 +67,7 @@ The onboard wizard manages the proxy automatically:
   `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
 - Starts the proxy after Ollama and verifies it before continuing.
 - Cleans up stale proxy processes from previous runs.
+- Retries the sandbox container reachability check and can continue when the host-side proxy is healthy even if the container probe fails.
 - Reuses the persisted token after a host reboot so you do not need to re-run
   onboard.
 
@@ -257,7 +258,7 @@ To select a specific model, set `NEMOCLAW_MODEL`.
 ## Timeout Configuration
 
 Local inference requests use a default timeout of 180 seconds.
-Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so NemoClaw sets a higher default for local providers (Ollama, vLLM, NIM).
+Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so NemoClaw sets a higher default for Ollama, vLLM, NIM, and compatible-endpoint setup.
 
 To override the timeout, set the `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` environment variable before onboarding:
 

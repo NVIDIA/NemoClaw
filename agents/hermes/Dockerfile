@@ -8,6 +8,7 @@
 
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
 
+# hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 # Harden: remove unnecessary build tools and network probes
@@ -72,46 +73,151 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
 # Generate Hermes config.yaml and .env from build args.
-# config.yaml is immutable at runtime (Landlock read-only on /sandbox/.hermes).
-# .env holds API key placeholders for OpenShell provider pipeline.
+# Config is mutable by default (600 sandbox:sandbox). Immutability is opt-in
+# via `shields up`. .env holds API key placeholders for OpenShell provider pipeline.
 # SECURITY: Uses a separate script file instead of inline code to avoid
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
 RUN node --experimental-strip-types /opt/nemoclaw-generate-config.ts
 
 # Install NemoClaw plugin into Hermes
-RUN mkdir -p /sandbox/.hermes-data/plugins/nemoclaw \
-    && cp -r /opt/nemoclaw-hermes-plugin/* /sandbox/.hermes-data/plugins/nemoclaw/
+RUN mkdir -p /sandbox/.hermes/plugins/nemoclaw \
+    && cp -r /opt/nemoclaw-hermes-plugin/* /sandbox/.hermes/plugins/nemoclaw/
 
 # Write a default SOUL.md for the sandboxed agent.
-# Hermes's ensure_hermes_home() expects SOUL.md in the home directory
-# (/sandbox/.hermes/), which is immutable. Write the content to the
-# writable data dir and symlink from the immutable dir.
-RUN printf '%s\n' \
+RUN mkdir -p /sandbox/.hermes/memories \
+    && printf '%s\n' \
     'You are a helpful AI assistant running inside an NVIDIA OpenShell sandbox.' \
     'Your inference is routed through NemoClaw. You have access to terminal,' \
     'file, and web tools. Be concise and helpful.' \
-    > /sandbox/.hermes-data/memories/SOUL.md \
-    && ln -s /sandbox/.hermes-data/memories/SOUL.md /sandbox/.hermes/SOUL.md
+    > /sandbox/.hermes/SOUL.md
 
-# Lock .hermes via DAC: chown to root so sandbox user cannot modify config.
-# Same pattern as OpenClaw — Landlock provides defense-in-depth.
+# Set mutable-default permissions (640/750 sandbox:sandbox).
+# The sandbox user can write config; the gateway user can read it via
+# supplementary sandbox-group membership. Shields-up applies 444 root:root +
+# chattr +i.
 # hadolint ignore=DL3002
 USER root
-RUN chown root:root /sandbox/.hermes \
-    && rm -rf /root/.cache/pip /sandbox/.cache \
-    && find /sandbox/.hermes -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
-    && chmod 755 /sandbox/.hermes \
-    && chmod 444 /sandbox/.hermes/config.yaml \
-    && chmod 444 /sandbox/.hermes/.env
+# Flatten stale published base images that still contain the old .hermes-data
+# symlink bridge. OpenShell starts the sandbox as the sandbox user, so runtime
+# migration cannot rely on root privileges inside the pod.
+# hadolint ignore=DL4006
+RUN set -eu; \
+    config_dir=/sandbox/.hermes; \
+    data_dir=/sandbox/.hermes-data; \
+    mkdir -p "$config_dir"; \
+    if [ -L "$data_dir" ]; then \
+        echo "ERROR: refusing legacy layout cleanup because $data_dir is a symlink" >&2; \
+        exit 1; \
+    fi; \
+    if [ -d "$data_dir" ]; then \
+        for entry in "$data_dir"/*; do \
+            [ -e "$entry" ] || [ -L "$entry" ] || continue; \
+            if [ -L "$entry" ]; then \
+                echo "ERROR: refusing legacy layout cleanup because $entry is a symlink" >&2; \
+                exit 1; \
+            fi; \
+            name="$(basename "$entry")"; \
+            target="$config_dir/$name"; \
+            if [ -L "$target" ]; then \
+                rm -f "$target"; \
+            fi; \
+            if [ -d "$entry" ]; then \
+                mkdir -p "$target"; \
+                cp -a "$entry"/. "$target"/; \
+            elif [ ! -e "$target" ]; then \
+                cp -a "$entry" "$target"; \
+            fi; \
+        done; \
+        data_real="$(readlink -f "$data_dir" 2>/dev/null || printf '%s' "$data_dir")"; \
+        while :; do \
+            replaced_marker="$(mktemp)"; \
+            rm -f "$replaced_marker"; \
+            find "$config_dir" -type l -print | while IFS= read -r link; do \
+                raw_target="$(readlink "$link" 2>/dev/null || true)"; \
+                resolved_target="$(readlink -f "$link" 2>/dev/null || true)"; \
+                legacy_target=0; \
+                case "$raw_target" in "$data_real"/* | "$data_dir"/*) legacy_target=1 ;; esac; \
+                case "$resolved_target" in "$data_real"/* | "$data_dir"/*) legacy_target=1 ;; esac; \
+                if [ "$legacy_target" -eq 1 ]; then \
+                    copy_target="$resolved_target"; \
+                    if [ -z "$copy_target" ] || { [ ! -e "$copy_target" ] && [ ! -L "$copy_target" ]; }; then \
+                        copy_target="$raw_target"; \
+                    fi; \
+                    if [ -d "$copy_target" ] && [ ! -L "$copy_target" ]; then \
+                            rm -f "$link"; \
+                            mkdir -p "$link"; \
+                            cp -a "$copy_target"/. "$link"/; \
+                    elif [ -e "$copy_target" ] || [ -L "$copy_target" ]; then \
+                            rm -f "$link"; \
+                            cp -a "$copy_target" "$link"; \
+                    else \
+                        echo "ERROR: legacy symlink target missing: $link -> ${raw_target:-$resolved_target}" >&2; \
+                        exit 1; \
+                    fi; \
+                    : > "$replaced_marker"; \
+                fi; \
+            done; \
+            if [ ! -e "$replaced_marker" ]; then \
+                rm -f "$replaced_marker"; \
+                break; \
+            fi; \
+            rm -f "$replaced_marker"; \
+        done; \
+        rm -rf "$data_dir"; \
+    fi; \
+    mkdir -p "$config_dir/memories" \
+        "$config_dir/sessions" \
+        "$config_dir/skills" \
+        "$config_dir/plugins" \
+        "$config_dir/cron" \
+        "$config_dir/logs" \
+        "$config_dir/skins" \
+        "$config_dir/plans" \
+        "$config_dir/workspace" \
+        "$config_dir/profiles" \
+        "$config_dir/cache" \
+        "$config_dir/pairing"; \
+    if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
+        echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
+        exit 1; \
+    fi; \
+    data_real="$(readlink -f "$data_dir" 2>/dev/null || printf '%s' "$data_dir")"; \
+    find "$config_dir" -type l -print | while IFS= read -r link; do \
+        raw_target="$(readlink "$link" 2>/dev/null || true)"; \
+        resolved_target="$(readlink -f "$link" 2>/dev/null || true)"; \
+        case "$raw_target" in \
+            "$data_real"/* | "$data_dir"/*) \
+                echo "ERROR: legacy symlink remains after cleanup: $link -> $raw_target" >&2; \
+                exit 1; \
+                ;; \
+        esac; \
+        case "$resolved_target" in \
+            "$data_real"/* | "$data_dir"/*) \
+                echo "ERROR: legacy symlink remains after cleanup: $link -> $resolved_target" >&2; \
+                exit 1; \
+                ;; \
+        esac; \
+    done; \
+    rm -rf /root/.cache/pip /sandbox/.cache \
+    && chown -R sandbox:sandbox /sandbox/.hermes \
+    && chmod 750 /sandbox/.hermes \
+    && chmod 640 /sandbox/.hermes/config.yaml \
+    && chmod 640 /sandbox/.hermes/.env
 
 # Pin config hash at build time for integrity verification at startup.
+RUN mkdir -p /etc/nemoclaw \
+    && sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
+    > /etc/nemoclaw/hermes.config-hash \
+    && chown root:root /etc/nemoclaw/hermes.config-hash \
+    && chmod 444 /etc/nemoclaw/hermes.config-hash
+
+# Backward-compatible marker for host-side shields logic on older sandboxes.
 RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /sandbox/.hermes/.config-hash \
-    && chmod 444 /sandbox/.hermes/.config-hash \
-    && chown root:root /sandbox/.hermes/.config-hash
+    && chmod 600 /sandbox/.hermes/.config-hash \
+    && chown sandbox:sandbox /sandbox/.hermes/.config-hash
 
-# start.sh handles privilege separation: runs as root initially to perform
-# symlink validation and hardening, then drops to 'gateway' user via gosu
-# for the agent process. See the root-path branch in start.sh.
+# start.sh handles privilege separation: runs as root initially, then drops
+# to 'gateway' user via gosu for the agent process. See start.sh.
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]

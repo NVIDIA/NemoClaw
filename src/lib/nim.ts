@@ -72,24 +72,43 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
 }
 
 export function detectGpu(): GpuDetection | null {
-  // Try NVIDIA first — query VRAM
+  // Try NVIDIA first — query name and VRAM in a single call so the preflight
+  // line can show the GPU model alongside the memory size.
   try {
     const output = runCapture(
-      ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+      ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
       { ignoreError: true },
     );
     if (output) {
-      const lines = output.split("\n").filter((l: string) => l.trim());
-      const perGpuMB = lines
-        .map((l: string) => parseInt(l.trim(), 10))
-        .filter((n: number) => !isNaN(n));
-      if (perGpuMB.length > 0) {
-        const totalMemoryMB = perGpuMB.reduce((a: number, b: number) => a + b, 0);
+      type ParsedGpu = { name: string; memoryMB: number };
+      const parsed: ParsedGpu[] = [];
+      for (const raw of output.split("\n")) {
+        const line = raw.trim();
+        if (!line) continue;
+        // Split on the LAST comma — GPU names can contain commas in rare cases.
+        const idx = line.lastIndexOf(",");
+        if (idx === -1) continue;
+        const name = line.slice(0, idx).trim();
+        const memoryMB = parseInt(line.slice(idx + 1).trim(), 10);
+        if (isNaN(memoryMB)) continue;
+        parsed.push({ name, memoryMB });
+      }
+      if (parsed.length > 0) {
+        const totalMemoryMB = parsed.reduce(
+          (sum: number, p: ParsedGpu) => sum + p.memoryMB,
+          0,
+        );
+        const firstName = parsed[0].name;
+        // Only surface a single name when every GPU reports the same model;
+        // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
+        const allSameName =
+          !!firstName && parsed.every((p: ParsedGpu) => p.name === firstName);
         return {
           type: "nvidia",
-          count: perGpuMB.length,
+          ...(allSameName ? { name: firstName } : {}),
+          count: parsed.length,
           totalMemoryMB,
-          perGpuMB: perGpuMB[0],
+          perGpuMB: parsed[0].memoryMB,
           nimCapable: canRunNimWithMemory(totalMemoryMB),
         };
       }

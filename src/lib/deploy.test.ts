@@ -77,6 +77,23 @@ describe("buildDeployEnvLines", () => {
     expect(envLines).toContain("ALLOWED_CHAT_IDS='111,222'");
   });
 
+  it("passes HF_TOKEN and HUGGING_FACE_HUB_TOKEN to the VM when set", () => {
+    const envLines = buildDeployEnvLines({
+      env: {},
+      sandboxName: "my-assistant",
+      provider: "build",
+      credentials: {
+        NVIDIA_API_KEY: "nvapi-test",
+        HF_TOKEN: "hf_abc123",
+        HUGGING_FACE_HUB_TOKEN: "hf_def456",
+      },
+      shellQuote: (value: string) => `'${value}'`,
+    });
+
+    expect(envLines).toContain("HF_TOKEN='hf_abc123'");
+    expect(envLines).toContain("HUGGING_FACE_HUB_TOKEN='hf_def456'");
+  });
+
   it("omits ALLOWED_CHAT_IDS when Telegram is not configured", () => {
     const envLines = buildDeployEnvLines({
       env: {},
