@@ -19,11 +19,14 @@
 //      IPv4-mapped IPv6 auto-match, `localhost`, bare DNS names, and
 //      garbage input.
 //
-// Build must run before this test: `npm run build:cli` for the CLI side
-// and `npm run build` inside nemoclaw/ for the plugin side.
+// The CLI parity side loads compiled output from dist/ (same artifact
+// `npm run build:cli` produces before `vitest run --project cli` in
+// pre-push). The plugin side loads nemoclaw TypeScript directly so this
+// test does not depend on `npm run build` inside nemoclaw/ (that output
+// is not produced by `build:cli`).
 
 import { createRequire } from "node:module";
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
 
 const require = createRequire(import.meta.url);
 
@@ -43,7 +46,7 @@ interface NetworkHelper {
   isPrivateHostname(hostname: string): boolean;
 }
 
-function loadHelper(modulePath: string, buildHint: string): NetworkHelper {
+function loadCliHelper(modulePath: string, buildHint: string): NetworkHelper {
   try {
     return require(modulePath) as NetworkHelper;
   } catch (error) {
@@ -59,11 +62,14 @@ function loadHelper(modulePath: string, buildHint: string): NetworkHelper {
   }
 }
 
-const cliHelper = loadHelper("../dist/lib/private-networks", "`npm run build:cli`");
-const pluginHelper = loadHelper(
-  "../nemoclaw/dist/blueprint/private-networks.js",
-  "`npm run build` inside nemoclaw/",
-);
+let cliHelper: NetworkHelper;
+let pluginHelper: NetworkHelper;
+
+beforeAll(async () => {
+  cliHelper = loadCliHelper("../dist/lib/private-networks", "`npm run build:cli`");
+  const pluginMod = await import("../nemoclaw/src/blueprint/private-networks");
+  pluginHelper = pluginMod as unknown as NetworkHelper;
+});
 
 function entryLabel(entry: NetworkEntry | NameEntry): string {
   return "address" in entry ? `${entry.address}/${String(entry.prefix)}` : entry.name;
