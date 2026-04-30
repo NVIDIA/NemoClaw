@@ -330,7 +330,7 @@ function pullOllamaModelViaHttp(model) {
   return new Promise((resolve) => {
     const host = getResolvedOllamaHost();
     const url = `http://${host}:${OLLAMA_PORT}/api/pull`;
-    const body = JSON.stringify({ name: model, stream: true });
+    const body = JSON.stringify({ model, stream: true });
     const TIMEOUT_MS = 600_000; // 10 min, matches the CLI path
     const isTTY = Boolean(process.stdout.isTTY);
     const BAR_WIDTH = 40;
@@ -437,7 +437,10 @@ function pullOllamaModelViaHttp(model) {
       resolve(false);
     });
 
-    proc.on("exit", (code) => {
+    // Use 'close' rather than 'exit' so the promise resolves only after the
+    // child's stdio streams are fully drained, ensuring readline has emitted
+    // the final 'line' event for the trailing `success` JSON.
+    proc.on("close", (code) => {
       finishLine();
       if (sawError) {
         resolve(false);
