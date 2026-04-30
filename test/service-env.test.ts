@@ -13,6 +13,34 @@ import { join } from "node:path";
 import { resolveOpenshell } from "../dist/lib/resolve-openshell";
 import { parseAllowedChatIds, isChatAllowed } from "../dist/lib/chat-filter.js";
 
+const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+
+function extractRuntimeShellEnvSnippet() {
+  const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+  const start = src.indexOf("write_runtime_shell_env() {");
+  const end = src.indexOf("# cleanup_on_signal", start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(
+      "Failed to extract write_runtime_shell_env from scripts/nemoclaw-start.sh — " +
+        "the runtime shell env function may have been moved or renamed",
+    );
+  }
+  return `${src.slice(start, end).trimEnd()}\nwrite_runtime_shell_env`;
+}
+
+function extractRuntimeShellEnvShimSnippet() {
+  const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+  const start = src.indexOf("ensure_runtime_shell_env_shim() {");
+  const end = src.indexOf("# ── Legacy layout migration", start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(
+      "Failed to extract ensure_runtime_shell_env_shim from scripts/nemoclaw-start.sh — " +
+        "the rc shim helper may have been moved or renamed",
+    );
+  }
+  return `${src.slice(start, end).trimEnd()}\nensure_runtime_shell_env_shim`;
+}
+
 describe("service environment", () => {
   describe("start-services behavior", () => {
     const scriptPath = join(import.meta.dirname, "../scripts/start-services.sh");
@@ -182,17 +210,7 @@ describe("service environment", () => {
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-git-ssl-env-${process.pid}.sh`);
       try {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-        const persistBlock = execFileSync(
-          "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\\$_PROXY_ENV_FILE/p", scriptPath],
-          { encoding: "utf-8" },
-        );
-        if (!persistBlock.trim()) {
-          throw new Error(
-            "sed anchors (_PROXY_ENV_FILE…emit_sandbox_sourced_file) not found in nemoclaw-start.sh — test cannot run",
-          );
-        }
+        const persistBlock = extractRuntimeShellEnvSnippet();
         // Create a fake CA bundle so the -f check passes
         writeFileSync(fakeCaBundle, "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n");
         const wrapper = [
@@ -234,15 +252,7 @@ describe("service environment", () => {
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-git-ssl-noop-env-${process.pid}.sh`);
       try {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-        const persistBlock = execFileSync(
-          "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\\$_PROXY_ENV_FILE/p", scriptPath],
-          { encoding: "utf-8" },
-        );
-        if (!persistBlock.trim()) {
-          throw new Error("sed anchors not found in nemoclaw-start.sh — test cannot run");
-        }
+        const persistBlock = extractRuntimeShellEnvSnippet();
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
@@ -427,18 +437,7 @@ describe("service environment", () => {
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-proxyenv-write-test-${process.pid}.sh`);
       try {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-        const persistBlock = execFileSync(
-          "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\$_PROXY_ENV_FILE/p", scriptPath],
-          { encoding: "utf-8" },
-        );
-        if (!persistBlock.trim()) {
-          throw new Error(
-            "Failed to extract proxy persistence block from scripts/nemoclaw-start.sh — " +
-              "the _PROXY_ENV_FILE..emit_sandbox_sourced_file block may have been moved or renamed",
-          );
-        }
+        const persistBlock = extractRuntimeShellEnvSnippet();
         const toolRedirects = extractToolRedirects();
         const wrapper = [
           "#!/usr/bin/env bash",
@@ -448,6 +447,7 @@ describe("service environment", () => {
           'PROXY_PORT="3128"',
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
           '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          'export OPENCLAW_GATEWAY_TOKEN="test-token-123"',
           // Override the hardcoded path to use our temp dir
           persistBlock
             .trimEnd()
@@ -462,6 +462,9 @@ describe("service environment", () => {
         expect(envFile).toContain("export NO_PROXY=");
         expect(envFile).not.toContain("inference.local");
         expect(envFile).toContain("10.200.0.1");
+        expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN='test-token-123'");
+        expect(envFile).toContain("nemoclaw-configure-guard begin");
+        expect(envFile).toContain('command openclaw "$@"');
         // Tool cache redirects should be present (#804)
         expect(envFile).toContain("npm_config_cache");
         expect(envFile).toContain("HISTFILE");
@@ -501,23 +504,51 @@ describe("service environment", () => {
       }
     });
 
+    it("backfills proxy-env.sh source shims into stale rc files", () => {
+      const fakeHome = join(tmpdir(), `nemoclaw-rc-shim-test-${process.pid}`);
+      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+      const tmpFile = join(tmpdir(), `nemoclaw-rc-shim-write-test-${process.pid}.sh`);
+      const runtimeEnvShim = `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`;
+      try {
+        execFileSync("mkdir", ["-p", fakeHome]);
+        writeFileSync(join(fakeHome, ".bashrc"), "# old bashrc\n", { mode: 0o644 });
+        writeFileSync(join(fakeHome, ".profile"), "# old profile\n", { mode: 0o444 });
+
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          extractRuntimeShellEnvShimSnippet(),
+          "ensure_runtime_shell_env_shim",
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        for (const rcName of [".bashrc", ".profile"]) {
+          const rcFile = readFileSync(join(fakeHome, rcName), "utf-8");
+          expect(rcFile.split(runtimeEnvShim).length - 1).toBe(1);
+        }
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
     it("entrypoint overwrites proxy-env.sh cleanly on repeated invocations", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-idempotent-test-${process.pid}`);
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-idempotent-write-test-${process.pid}.sh`);
       try {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-        const persistBlock = execFileSync(
-          "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\$_PROXY_ENV_FILE/p", scriptPath],
-          { encoding: "utf-8" },
-        );
-        if (!persistBlock.trim()) {
-          throw new Error(
-            "Failed to extract proxy persistence block from scripts/nemoclaw-start.sh — " +
-              "the _PROXY_ENV_FILE..emit_sandbox_sourced_file block may have been moved or renamed",
-          );
-        }
+        const persistBlock = extractRuntimeShellEnvSnippet();
         const toolRedirects = extractToolRedirects();
         const wrapper = [
           "#!/usr/bin/env bash",
@@ -561,18 +592,7 @@ describe("service environment", () => {
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-replace-write-test-${process.pid}.sh`);
       try {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-        const persistBlock = execFileSync(
-          "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\$_PROXY_ENV_FILE/p", scriptPath],
-          { encoding: "utf-8" },
-        );
-        if (!persistBlock.trim()) {
-          throw new Error(
-            "Failed to extract proxy persistence block from scripts/nemoclaw-start.sh — " +
-              "the _PROXY_ENV_FILE..emit_sandbox_sourced_file block may have been moved or renamed",
-          );
-        }
+        const persistBlock = extractRuntimeShellEnvSnippet();
         const toolRedirects = extractToolRedirects();
         const makeWrapper = (host: string) =>
           [
@@ -617,18 +637,7 @@ describe("service environment", () => {
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-symlink-write-test-${process.pid}.sh`);
       try {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-        const persistBlock = execFileSync(
-          "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*\$_PROXY_ENV_FILE/p", scriptPath],
-          { encoding: "utf-8" },
-        );
-        if (!persistBlock.trim()) {
-          throw new Error(
-            "Failed to extract proxy persistence block from scripts/nemoclaw-start.sh — " +
-              "the _PROXY_ENV_FILE..emit_sandbox_sourced_file block may have been moved or renamed",
-          );
-        }
+        const persistBlock = extractRuntimeShellEnvSnippet();
         const sensitiveFile = join(fakeDataDir, "sensitive");
         writeFileSync(sensitiveFile, "SECRET_DATA");
         const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
@@ -710,17 +719,7 @@ describe("service environment", () => {
       const tmpFile = join(tmpdir(), `nemoclaw-http-fix-env-${process.pid}.sh`);
       const fakeFixPath = "/tmp/nemoclaw-http-proxy-fix.js";
       try {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-        const persistBlock = execFileSync(
-          "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*$_PROXY_ENV_FILE/p", scriptPath],
-          { encoding: "utf-8" },
-        );
-        if (!persistBlock.trim()) {
-          throw new Error(
-            "sed anchors (_PROXY_ENV_FILE=…emit_sandbox_sourced_file) not found in nemoclaw-start.sh — test cannot run",
-          );
-        }
+        const persistBlock = extractRuntimeShellEnvSnippet();
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
@@ -764,15 +763,7 @@ describe("service environment", () => {
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-http-noop-env-${process.pid}.sh`);
       try {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-        const persistBlock = execFileSync(
-          "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file.*$_PROXY_ENV_FILE/p", scriptPath],
-          { encoding: "utf-8" },
-        );
-        if (!persistBlock.trim()) {
-          throw new Error("sed anchors not found in nemoclaw-start.sh — test cannot run");
-        }
+        const persistBlock = extractRuntimeShellEnvSnippet();
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
@@ -816,17 +807,7 @@ describe("service environment", () => {
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-ws-fix-env-${process.pid}.sh`);
       try {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-        const persistBlock = execFileSync(
-          "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
-          { encoding: "utf-8" },
-        );
-        if (!persistBlock.trim()) {
-          throw new Error(
-            "sed anchors (_PROXY_ENV_FILE…emit_sandbox_sourced_file) not found in nemoclaw-start.sh — test cannot run",
-          );
-        }
+        const persistBlock = extractRuntimeShellEnvSnippet();
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
@@ -866,15 +847,7 @@ describe("service environment", () => {
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-ws-noop-env-${process.pid}.sh`);
       try {
-        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-        const persistBlock = execFileSync(
-          "sed",
-          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
-          { encoding: "utf-8" },
-        );
-        if (!persistBlock.trim()) {
-          throw new Error("sed anchors not found in nemoclaw-start.sh — test cannot run");
-        }
+        const persistBlock = extractRuntimeShellEnvSnippet();
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",

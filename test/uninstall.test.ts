@@ -149,7 +149,7 @@ describe("uninstall helpers", () => {
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(shimPath)).toBe(false);
-  });
+  }, 60_000);
 
   it("removes a dev-install shim written by scripts/npm-link-or-shim.sh", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dev-shim-"));

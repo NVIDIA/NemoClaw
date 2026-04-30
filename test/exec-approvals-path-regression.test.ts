@@ -6,32 +6,37 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("exec approvals path regression guard", () => {
-  it("Dockerfile.base patches and validates OpenClaw exec approvals path across dist bundles", () => {
+  it("Dockerfile.base installs OpenClaw and validates version against blueprint minimum", () => {
     const dockerfileBase = path.join(import.meta.dirname, "..", "Dockerfile.base");
     const src = fs.readFileSync(dockerfileBase, "utf-8");
 
-    expect(src).toContain("LEGACY_EXEC_APPROVALS_PATH=\"$(printf '%b'");
-    expect(src).toContain("DATA_EXEC_APPROVALS_PATH=\"$(printf '%b'");
-    expect(src).toContain('files_with_old_path_file="$(mktemp)"');
-    expect(src).toContain("--include='*.js'");
-    expect(src).toContain("OpenClaw dist directory not found:");
-    expect(src).toContain("Unable to verify OpenClaw exec approvals path in dist");
+    expect(src).toContain("OPENCLAW_VERSION");
+    expect(src).toContain("min_openclaw_version");
+    expect(src).toContain('npm install -g "openclaw@${OPENCLAW_VERSION}"');
   });
 
-  it("Dockerfile applies a runtime compatibility patch for stale base images", () => {
+  it("Dockerfile flattens legacy .openclaw-data and startup restores mutable-default permissions", () => {
     const dockerfile = path.join(import.meta.dirname, "..", "Dockerfile");
+    const startScript = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
     const src = fs.readFileSync(dockerfile, "utf-8");
+    const startSrc = fs.readFileSync(startScript, "utf-8");
 
-    expect(src).toContain('[ ! -d "$OPENCLAW_DIST_DIR" ]');
-    expect(src).toContain("mkdir -p /sandbox/.openclaw-data");
-    expect(src).toContain("chown sandbox:sandbox /sandbox/.openclaw-data");
-    expect(src).toContain("chmod 755 /sandbox/.openclaw-data");
-    expect(src).toContain("LEGACY_EXEC_APPROVALS_PATH=\"$(printf '%b'");
-    expect(src).toContain("DATA_EXEC_APPROVALS_PATH=\"$(printf '%b'");
-    expect(src).toContain('files_with_old_path_file="$(mktemp)"');
-    expect(src).toContain("--include='*.js'");
-    expect(src).toContain("Unable to verify OpenClaw exec approvals path in dist");
-    expect(src).toContain("OpenClaw dist directory not found:");
-    expect(src).toContain("OpenClaw exec approvals path patch failed");
+    expect(src).toContain("config_dir=/sandbox/.openclaw");
+    expect(src).toContain("data_dir=/sandbox/.openclaw-data");
+    expect(src).toContain('mkdir -p "$config_dir"');
+    expect(src).toContain(
+      'touch "$config_dir/update-check.json" "$config_dir/exec-approvals.json"',
+    );
+    expect(src).toContain('if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then');
+    expect(src).toContain("ERROR: legacy data dir still exists after cleanup");
+    expect(src).toContain("ERROR: legacy symlink remains after cleanup");
+    expect(src).toContain("chown -R sandbox:sandbox /sandbox/.openclaw");
+    expect(src).toContain("chmod 755 /sandbox/.openclaw");
+    expect(src).toContain("chmod 644 /sandbox/.openclaw/openclaw.json");
+
+    expect(startSrc).toContain('chmod 700 "$openclaw_dir"');
+    expect(startSrc).toContain(
+      'chmod 600 "$openclaw_dir/openclaw.json" "$openclaw_dir/.config-hash"',
+    );
   });
 });

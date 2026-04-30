@@ -5,8 +5,8 @@
 // Regression guards for sandbox image provisioning.
 //
 // Verifies that the image-build sources (Dockerfile and Dockerfile.base)
-// preserve the runtime-writable symlink layout introduced by #1027/#1519
-// and the root-owned read-only config invariants from #514.
+// preserve the mutable-by-default config layout (#2227) and the gateway
+// auth token externalization (#2378).
 //
 // These are static regression guards over the Dockerfile text — they fail
 // immediately if a future refactor drops one of the baked-in provisioning
@@ -21,39 +21,34 @@ const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const DOCKERFILE_SANDBOX = path.join(ROOT, "test", "Dockerfile.sandbox");
 
-describe("sandbox provisioning: exec-approvals / update-check symlinks (#1027, #1519)", () => {
+describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
   const src = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
 
-  it("Dockerfile.base creates the exec-approvals.json backing file in .openclaw-data", () => {
-    // The data file has to exist before the symlink target resolves, so the
-    // OpenClaw gateway can read+write through .openclaw/exec-approvals.json
-    // without hitting EACCES.
-    expect(src).toMatch(/touch \/sandbox\/\.openclaw-data\/exec-approvals\.json/);
+  it("Dockerfile.base creates exec-approvals.json directly in .openclaw (no symlink)", () => {
+    expect(src).toMatch(/touch \/sandbox\/\.openclaw\/exec-approvals\.json/);
   });
 
-  it("Dockerfile.base symlinks .openclaw/exec-approvals.json -> .openclaw-data/exec-approvals.json", () => {
-    expect(src).toContain(
-      "ln -s /sandbox/.openclaw-data/exec-approvals.json /sandbox/.openclaw/exec-approvals.json",
-    );
+  it("Dockerfile.base creates update-check.json directly in .openclaw (no symlink)", () => {
+    expect(src).toMatch(/touch \/sandbox\/\.openclaw\/update-check\.json/);
   });
 
-  it("Dockerfile.base creates the update-check.json backing file in .openclaw-data", () => {
-    expect(src).toMatch(/touch \/sandbox\/\.openclaw-data\/update-check\.json/);
+  it("Dockerfile.base does not create .openclaw-data directories (old split layout removed)", () => {
+    // Comments may mention .openclaw-data for context; check for actual mkdir/touch/ln usage
+    expect(src).not.toMatch(/mkdir.*\.openclaw-data/);
+    expect(src).not.toMatch(/touch.*\.openclaw-data/);
+    expect(src).not.toMatch(/ln -s.*\.openclaw-data/);
   });
 
-  it("Dockerfile.base symlinks .openclaw/update-check.json -> .openclaw-data/update-check.json", () => {
-    expect(src).toContain(
-      "ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json",
-    );
+  it("Dockerfile.base sets .openclaw to sandbox:sandbox ownership (mutable by default)", () => {
+    expect(src).toMatch(/chown -R sandbox:sandbox \/sandbox\/\.openclaw/);
   });
 
-  it("the exec-approvals data file is created before the symlink that points at it", () => {
-    const dataIdx = src.indexOf("touch /sandbox/.openclaw-data/exec-approvals.json");
-    const linkIdx = src.indexOf(
-      "ln -s /sandbox/.openclaw-data/exec-approvals.json /sandbox/.openclaw/exec-approvals.json",
-    );
-    expect(dataIdx).toBeGreaterThanOrEqual(0);
-    expect(linkIdx).toBeGreaterThan(dataIdx);
+  it("Dockerfile.base keeps shell startup files static and trusted", () => {
+    const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
+    expect(src.split(runtimeEnvShim).length - 1).toBe(2);
+    expect(src).toMatch(/chown root:root \/sandbox\/\.bashrc \/sandbox\/\.profile/);
+    expect(src).toMatch(/chmod 444 \/sandbox\/\.bashrc \/sandbox\/\.profile/);
+    expect(src).not.toMatch(/chown sandbox:sandbox \/sandbox\/\.bashrc \/sandbox\/\.profile/);
   });
 });
 
@@ -73,21 +68,18 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
   });
 });
 
-describe("sandbox provisioning: root-owned read-only config (#514)", () => {
+describe("sandbox provisioning: gateway auth token externalization (#2378)", () => {
   const src = fs.readFileSync(DOCKERFILE, "utf-8");
 
-  it("openclaw.json stays mode 0444 (agent cannot tamper with auth token / CORS)", () => {
-    expect(src).toContain("chmod 444 /sandbox/.openclaw/openclaw.json");
+  it("Dockerfile clears any auto-generated gateway auth token from openclaw.json", () => {
+    // The real token is generated at container startup by generate_gateway_token()
+    expect(src).toMatch(/\['token'\]\s*=\s*''/);
   });
 
-  it(".config-hash stays root:root 0444 (agent cannot forge a matching integrity hash)", () => {
-    expect(src).toContain("chown root:root /sandbox/.openclaw/.config-hash");
-    expect(src).toContain("chmod 444 /sandbox/.openclaw/.config-hash");
-  });
-
-  it(".openclaw directory stays root:root 0755 (agent cannot add or replace symlinks)", () => {
-    expect(src).toContain("chown root:root /sandbox/.openclaw");
-    expect(src).toContain("chmod 755 /sandbox/.openclaw");
+  it("Dockerfile does NOT bake a persistent auth token into openclaw.json", () => {
+    // Negative guard: the old pattern of writing a real token at build time
+    // must not reappear. The token is runtime-only.
+    expect(src).not.toMatch(/gateway_token.*=.*secrets\./);
   });
 });
 

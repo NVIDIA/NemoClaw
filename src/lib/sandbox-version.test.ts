@@ -38,7 +38,7 @@ vi.mock("./agent-defs.js", () => ({
     versionCommand: name === "openclaw" ? "openclaw --version" : "hermes --version",
     expectedVersion: name === "openclaw" ? "2026.4.24" : "2026.4.24",
     stateDirs: [],
-    configPaths: { writableDir: "/sandbox/.openclaw-data" },
+    configPaths: { dir: "/sandbox/.openclaw" },
   })),
 }));
 

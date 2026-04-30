@@ -42,8 +42,7 @@ describe("agent definitions", () => {
     expect(openclaw.healthProbe.port).toBe(18789);
     expect(openclaw.forwardPort).toBe(18789);
     expect(openclaw.configPaths).toEqual({
-      immutableDir: "/sandbox/.openclaw",
-      writableDir: "/sandbox/.openclaw-data",
+      dir: "/sandbox/.openclaw",
       configFile: "openclaw.json",
       envFile: null,
       format: "json",
@@ -59,8 +58,7 @@ describe("agent definitions", () => {
     expect(hermes.displayName).toBe("Hermes Agent");
     expect(hermes.hasDevicePairing).toBe(false);
     expect(hermes.configPaths).toEqual({
-      immutableDir: "/sandbox/.hermes",
-      writableDir: "/sandbox/.hermes-data",
+      dir: "/sandbox/.hermes",
       configFile: "config.yaml",
       envFile: ".env",
       format: "yaml",

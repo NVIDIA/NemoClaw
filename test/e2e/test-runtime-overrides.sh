@@ -39,7 +39,7 @@ FAILED=0
 # ── Log file for CI artifact collection ──────────────────────────
 # Create a timestamped log file whose name matches the CI artifact glob
 # test-runtime-overrides-*.log so Docker stderr is captured automatically.
-LOG_DIR="${SCRIPT_DIR}"
+LOG_DIR="${REPO_DIR}"
 LOG_FILE="${LOG_DIR}/test-runtime-overrides-$(date +%Y%m%dT%H%M%S).log"
 : >"$LOG_FILE"
 info "Logging Docker stderr to: $LOG_FILE"
@@ -82,7 +82,12 @@ fi
 # ── Capture baseline config ──────────────────────────────────────
 
 info "Capturing baseline config (no overrides)"
-BASELINE=$(run_override)
+if ! BASELINE=$(run_override); then
+  fail "baseline container failed before config capture"
+  info "Docker stderr tail:"
+  tail -80 "$LOG_FILE" || true
+  exit 1
+fi
 BASELINE_MODEL=$(echo "$BASELINE" | jq -r '.agents.defaults.model.primary')
 BASELINE_CTX=$(echo "$BASELINE" | jq -r '.models.providers | to_entries[0].value.models[0].contextWindow')
 BASELINE_MAX=$(echo "$BASELINE" | jq -r '.models.providers | to_entries[0].value.models[0].maxTokens')
@@ -245,7 +250,8 @@ fi
 # ── Test 14: Original config unchanged after rejected override ───
 
 info "14. Config unchanged after rejected override"
-CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=test" -e "NEMOCLAW_CONTEXT_WINDOW=notanumber")
+run_override_stderr -e "NEMOCLAW_MODEL_OVERRIDE=test" -e "NEMOCLAW_CONTEXT_WINDOW=notanumber" >/dev/null
+CFG=$(run_override)
 ACTUAL_CTX=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].contextWindow')
 if [ "$ACTUAL_CTX" = "$BASELINE_CTX" ]; then
   pass "config unchanged after rejected override"

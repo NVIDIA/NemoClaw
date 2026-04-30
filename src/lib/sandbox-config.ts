@@ -58,6 +58,8 @@ interface AgentConfigTarget {
   format: string;
   /** Config file basename */
   configFile: string;
+  /** Additional files to lock/unlock alongside the main config (e.g. .env, .config-hash) */
+  sensitiveFiles?: string[];
 }
 
 type LookupFn = (hostname: string, options: { all: true }) => Promise<Array<{ address: string }>>;
@@ -68,6 +70,7 @@ const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   configDir: "/sandbox/.openclaw",
   format: "json",
   configFile: "openclaw.json",
+  sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
 };
 
 function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
@@ -80,12 +83,18 @@ function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
     const agent = agentDefs.loadAgent(entry.agent);
     const cfg = agent.configPaths;
 
+    const dir = cfg.dir;
+    const sensitiveFiles = [`${dir}/.config-hash`];
+    // Hermes stores credentials in .env alongside the config
+    if (entry.agent === "hermes") sensitiveFiles.push(`${dir}/.env`);
+
     return {
       agentName: entry.agent,
-      configPath: `${cfg.immutableDir}/${cfg.configFile}`,
-      configDir: cfg.immutableDir,
+      configPath: `${dir}/${cfg.configFile}`,
+      configDir: dir,
       format: cfg.format || "json",
       configFile: cfg.configFile,
+      sensitiveFiles,
     };
   } catch {
     // Registry or agent-defs unavailable (e.g., during tests) — fall back
@@ -142,7 +151,7 @@ function setDotpath(obj: ConfigObject, dotpath: string, value: ConfigValue): voi
 }
 
 /**
- * Key segments that must never appear in a dotpath — blocking these prevents
+ * Key segments that must never appear in a dotpath - blocking these prevents
  * prototype-pollution and accidental traversal into inherited members.
  */
 const UNSAFE_KEY_SEGMENTS: ReadonlySet<string> = new Set([
@@ -158,7 +167,7 @@ type DotpathValidation = { ok: true } | { ok: false; reason: string };
 /**
  * Validate the syntax of a config dotpath: non-empty, no empty segments, no
  * prototype-pollution / inherited-member segments. Schema validity is not
- * checked here — `configSet` handles unknown paths via an interactive
+ * checked here - `configSet` handles unknown paths via an interactive
  * confirm or a `--config-accept-new-path` opt-in so first-time writes
  * under unset namespaces stay possible (see #2400).
  */
@@ -183,10 +192,10 @@ function validateConfigDotpath(dotpath: string): DotpathValidation {
  *     materialises plain objects, so allowing this would either clobber an
  *     existing array or create a confusingly object-shaped "array".
  *   - Non-object ancestor: an existing intermediate value (string, number,
- *     null, array, …) would be silently overwritten by `setDotpath` on its
+ *     null, array, ...) would be silently overwritten by `setDotpath` on its
  *     way to the leaf.
  *
- * Missing ancestors are fine — they get materialised on write. Returns
+ * Missing ancestors are fine - they get materialised on write. Returns
  * `null` when no refusal reason applies.
  */
 function findClobberingAncestor(
@@ -867,10 +876,12 @@ function confirmYesNo(prompt: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 export {
+  DEFAULT_AGENT_CONFIG,
   configGet,
   configSet,
   configRotateToken,
   resolveAgentConfig,
+  readSandboxConfig,
   extractDotpath,
   setDotpath,
   validateConfigDotpath,
@@ -878,5 +889,6 @@ export {
   classifyNewKeyGate,
   validateUrlValue,
   validateUrlValueWithDns,
+  parseConfig,
   readStdin,
 };

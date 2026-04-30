@@ -3,9 +3,83 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { listSandboxesCommand, showStatusCommand } from "./inventory-commands";
+import { getSandboxInventory, listSandboxesCommand, showStatusCommand } from "./inventory-commands";
 
 describe("inventory commands", () => {
+  it("returns structured empty inventory for JSON consumers", async () => {
+    const getLiveInference = vi.fn().mockReturnValue(null);
+
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({ sandboxes: [], defaultSandbox: null }),
+      getLiveInference,
+      loadLastSession: () => ({ sandboxName: "alpha" }),
+    });
+
+    expect(inventory).toEqual({
+      schemaVersion: 1,
+      defaultSandbox: null,
+      recovery: {
+        recoveredFromSession: false,
+        recoveredFromGateway: 0,
+      },
+      lastOnboardedSandbox: "alpha",
+      sandboxes: [],
+    });
+    expect(getLiveInference).not.toHaveBeenCalled();
+  });
+
+  it("returns structured sandbox inventory with connection state", async () => {
+    const getLiveInference = vi.fn().mockReturnValue({
+      provider: "live-provider",
+      model: "live-model",
+    });
+
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "configured-alpha",
+            provider: "configured-provider",
+            gpuEnabled: true,
+            policies: ["pypi"],
+            agent: "openclaw",
+          },
+        ],
+        defaultSandbox: "alpha",
+        recoveredFromSession: true,
+        recoveredFromGateway: 2,
+      }),
+      getLiveInference,
+      loadLastSession: () => ({ sandboxName: "alpha" }),
+      getActiveSessionCount: (sandboxName) => (sandboxName === "alpha" ? 1 : 0),
+    });
+
+    expect(inventory).toEqual({
+      schemaVersion: 1,
+      defaultSandbox: "alpha",
+      recovery: {
+        recoveredFromSession: true,
+        recoveredFromGateway: 2,
+      },
+      lastOnboardedSandbox: "alpha",
+      sandboxes: [
+        {
+          name: "alpha",
+          model: "configured-alpha",
+          provider: "configured-provider",
+          gpuEnabled: true,
+          policies: ["pypi"],
+          agent: "openclaw",
+          isDefault: true,
+          activeSessionCount: 1,
+          connected: true,
+        },
+      ],
+    });
+    expect(getLiveInference).not.toHaveBeenCalled();
+  });
+
   it("prints the empty-state onboarding hint when no sandboxes exist", async () => {
     const lines: string[] = [];
     await listSandboxesCommand({
@@ -349,7 +423,7 @@ describe("inventory commands", () => {
         ],
         defaultSandbox: "alpha",
       }),
-      getLiveInference: () => ({ provider: "nvidia-prod", model: "moonshotai/kimi-k2.5" }),
+      getLiveInference: () => ({ provider: "nvidia-prod", model: "minimaxai/minimax-m2.5" }),
       showServiceStatus,
       log: (message = "") => lines.push(message),
     });
@@ -357,7 +431,7 @@ describe("inventory commands", () => {
     expect(lines).toContain("  Sandboxes:");
     // Default sandbox shows the live gateway model (#2369), annotated with
     // the onboarded model when they differ.
-    expect(lines).toContain("    alpha * (moonshotai/kimi-k2.5)");
+    expect(lines).toContain("    alpha * (minimaxai/minimax-m2.5)");
     expect(lines).toContain("      (onboarded: nvidia/nemotron-3-super-120b-a12b)");
     // Non-default sandbox keeps its stored model — the gateway only applies
     // to whichever sandbox is currently connected.
@@ -408,12 +482,12 @@ describe("inventory commands", () => {
         sandboxes: [{ name: "alpha" }],
         defaultSandbox: "alpha",
       }),
-      getLiveInference: () => ({ provider: "nvidia-prod", model: "moonshotai/kimi-k2.5" }),
+      getLiveInference: () => ({ provider: "nvidia-prod", model: "minimaxai/minimax-m2.5" }),
       showServiceStatus: vi.fn(),
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("    alpha * (moonshotai/kimi-k2.5)");
+    expect(lines).toContain("    alpha * (minimaxai/minimax-m2.5)");
     expect(lines).toContain("      (onboarded: unknown)");
   });
 });
