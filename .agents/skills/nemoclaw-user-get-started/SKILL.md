@@ -1,12 +1,12 @@
 ---
 name: "nemoclaw-user-get-started"
-description: "Lists the hardware, software, and container runtime requirements for running NemoClaw. Use when verifying prerequisites before installation. Trigger keywords - nemoclaw prerequisites, nemoclaw supported platforms, nemoclaw hardware software, nemoclaw quickstart, install nemoclaw openclaw sandbox, nemoclaw windows wsl2 setup, nemoclaw install windows docker desktop."
+description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. Trigger keywords - nemoclaw quickstart, install nemoclaw openclaw sandbox, nemoclaw prerequisites, nemoclaw supported platforms, nemoclaw hardware software, nemoclaw windows wsl2 setup, nemoclaw install windows docker desktop."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw Prerequisites
+# NemoClaw Quickstart: Install, Launch, and Run Your First Agent
 
 ## Gotchas
 
@@ -252,16 +252,24 @@ openshell forward list
 
 ### Run Multiple Sandboxes
 
-Each sandbox needs its own dashboard port, since `openshell forward` refuses to bind a port that another sandbox is already using. Override the port with `CHAT_UI_URL` at onboard time — the dashboard port is derived automatically.
+Each sandbox needs its own dashboard port, since `openshell forward` refuses to bind a port that another sandbox is already using.
+When the default port is already held by another sandbox, `nemoclaw onboard` scans ports `18789` through `18799` and uses the next free port.
 
 ```console
 $ nemoclaw onboard                                            # first sandbox uses 18789
-$ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard         # second sandbox uses 19000
+$ nemoclaw onboard                                            # second sandbox uses the next free port
 ```
 
-You can also use `NEMOCLAW_DASHBOARD_PORT` directly if you prefer:
+To choose a specific port, pass `--control-ui-port`:
 
 ```console
+$ nemoclaw onboard --control-ui-port 19000
+```
+
+You can also set `CHAT_UI_URL` or `NEMOCLAW_DASHBOARD_PORT` before onboarding:
+
+```console
+$ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
 $ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 ```
 
