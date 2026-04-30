@@ -2873,7 +2873,17 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
   // GPU
   const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
-    console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
+    if (gpu.name) {
+      // Match DevTest case 517913 cross-check format when the GPU model is
+      // known: `NVIDIA GPU detected (<model>, <vram> MB)`. Multi-GPU hosts
+      // with the same model render as `Nx <model>` inside the parens.
+      const detail = gpu.count > 1 ? `${gpu.count}x ${gpu.name}` : gpu.name;
+      console.log(`  ✓ NVIDIA GPU detected (${detail}, ${gpu.totalMemoryMB} MB)`);
+    } else {
+      // Mixed-model or unnamed devices fall back to the count-only form so
+      // we never falsely attribute one GPU's name to the others.
+      console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
+    }
     if (!gpu.nimCapable) {
       console.log("  ⓘ Local NIM unavailable — GPU VRAM too small");
     }
