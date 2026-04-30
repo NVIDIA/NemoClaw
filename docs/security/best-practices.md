@@ -239,7 +239,7 @@ By default, this directory starts writable so the agent can manage its own confi
 Operators can opt into immutability by running `nemoclaw <name> shields up`, which locks the config and writable state entry points until `shields down` restores the default writable state.
 
 - **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `700` and `openclaw.json` with mode `600`, so the agent can read and write config directly.
-- **Config integrity hash.** The build process pins a SHA256 hash of `openclaw.json`. The entrypoint verifies it at startup and refuses to start if the hash does not match.
+- **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. After `nemoclaw <name> shields up` locks the hash root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
 - **Gateway token environment.** The gateway auth token is exported as `OPENCLAW_GATEWAY_TOKEN` and written to marked shell rc blocks for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or with Shields UP.
 - **Shields UP (opt-in).** `nemoclaw <name> shields up` applies root-owned read-only permissions and best-effort immutable bits to sensitive config files, and locks writable state directories such as workspace, memory, skills, hooks, cron, agents, and extensions.
 

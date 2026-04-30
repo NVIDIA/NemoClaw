@@ -76,7 +76,7 @@ unset _script_dir _candidate
 E2E_DIR="$(cd "$(dirname "$0")" && pwd)"
 E2E_CHECKS_DIR="${E2E_DIR}/e2e-cloud-experimental/checks"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}"
-CLOUD_MODEL="${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-moonshotai/kimi-k2.5}"
+CLOUD_MODEL="${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
 INSTALL_LOG="${E2E_CLOUD_ONBOARD_INSTALL_LOG:-/tmp/nemoclaw-e2e-cloud-onboard-install.log}"
 INTERACTIVE_INSTALL="${RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL:-0}"
 PUBLIC_INSTALL_CWD="${NEMOCLAW_PUBLIC_INSTALL_CWD:-}"

@@ -35,7 +35,7 @@ When adapting an OpenClaw sub-agent setup, use these paths inside the sandbox:
 | Path | Purpose |
 |---|---|
 | `/sandbox/.openclaw/openclaw.json` | OpenClaw config, including `models.providers`, `agents.defaults`, and `agents.list`. |
-| `/sandbox/.openclaw/.config-hash` | Integrity hash for `openclaw.json`. Refresh it after editing the config. |
+| `/sandbox/.openclaw/.config-hash` | Hash for `openclaw.json`. Keep it in sync after manual config edits; it becomes a startup-enforced trust anchor only after `shields up` locks it root-owned and read-only. |
 | `/sandbox/.openclaw/agents/<agent-id>/agent/auth-profiles.json` | Per-agent provider credentials. Use this when a sub-agent calls an auxiliary provider directly. |
 | `/sandbox/.openclaw/workspace/` | Writable shared workspace path for files the primary agent passes to the sub-agent. |
 | `/tmp/gateway.log` | OpenClaw gateway log. Use it to confirm config reloads and diagnose sub-agent failures. |
@@ -73,7 +73,8 @@ $ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- cat
 Create `/tmp/openclaw.updated.json` with the OpenClaw sub-agent config.
 For the Omni example, the demo provides `vlm-demo/vlm-subagent/openclaw-patch.py`.
 
-Upload the patched config and refresh the hash:
+Upload the patched config and refresh the hash.
+In the default mutable state, this keeps the local hash consistent but does not make it tamper-proof; run `nemoclaw <name> shields up` afterward if the sandbox should enforce config integrity at startup.
 
 ```console
 $ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/openclaw.json
