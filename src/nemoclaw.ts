@@ -105,7 +105,6 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "./lib/openshell-timeouts";
 const onboardProviders = require("./lib/onboard-providers");
-const { runShareCommand } = require("./lib/share-command");
 
 // ── Global commands (derived from command registry) ──────────────
 
@@ -579,6 +578,9 @@ async function recoverRegistryEntries({
 
 exports.captureOpenshell = captureOpenshell;
 exports.recoverRegistryEntries = recoverRegistryEntries;
+exports.ensureLiveSandboxOrExit = ensureLiveSandboxOrExit;
+exports.G = G;
+exports.R = R;
 
 function hasNamedGateway(output = ""): boolean {
   return stripAnsi(output).includes("Gateway: nemoclaw");
@@ -4442,20 +4444,13 @@ const [cmd, ...args] = process.argv.slice(2);
       case "snapshot":
         await sandboxSnapshot(cmd, actionArgs);
         break;
-      case "share": {
-        const shareExit = await runShareCommand(cmd, actionArgs, {
-          getSshConfig: (name: string) =>
-            captureOpenshell(["sandbox", "ssh-config", name], {
-              ignoreError: true,
-              timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-            }),
-          ensureLive: (name: string) => ensureLiveSandboxOrExit(name),
-          colorGreen: G,
-          colorReset: R,
+      case "share":
+        await runRegisteredOclifCommand("share", [cmd, ...actionArgs], {
+          rootDir: ROOT,
+          error: console.error,
+          exit: (code: number) => process.exit(code),
         });
-        if (shareExit !== 0) process.exit(shareExit);
         break;
-      }
       case "shields": {
         const shieldsSub = actionArgs[0];
         const shieldsFlags = actionArgs.slice(1);
