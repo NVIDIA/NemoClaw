@@ -42,6 +42,14 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
   it("Dockerfile.base sets .openclaw to sandbox:sandbox ownership (mutable by default)", () => {
     expect(src).toMatch(/chown -R sandbox:sandbox \/sandbox\/\.openclaw/);
   });
+
+  it("Dockerfile.base keeps shell startup files static and trusted", () => {
+    const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
+    expect(src.split(runtimeEnvShim).length - 1).toBe(2);
+    expect(src).toMatch(/chown root:root \/sandbox\/\.bashrc \/sandbox\/\.profile/);
+    expect(src).toMatch(/chmod 444 \/sandbox\/\.bashrc \/sandbox\/\.profile/);
+    expect(src).not.toMatch(/chown sandbox:sandbox \/sandbox\/\.bashrc \/sandbox\/\.profile/);
+  });
 });
 
 describe("sandbox provisioning: procps debug tools (#2343)", () => {
