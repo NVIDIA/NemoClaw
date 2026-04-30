@@ -1521,12 +1521,16 @@ function showStatus() {
   });
 }
 
-async function listSandboxes(args: string[] = []): Promise<void> {
-  await runRegisteredOclifCommand("list", args, {
+async function runOclif(commandId: string, args: string[] = []): Promise<void> {
+  await runRegisteredOclifCommand(commandId, args, {
     rootDir: ROOT,
     error: console.error,
     exit: (code: number) => process.exit(code),
   });
+}
+
+async function listSandboxes(args: string[] = []): Promise<void> {
+  await runOclif("list", args);
 }
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
@@ -2931,6 +2935,13 @@ function cleanupSandboxServices(
     const { stopAll } = require("./lib/services");
     stopAll({ sandboxName });
   }
+
+  const sb = registry.getSandbox(sandboxName);
+  if (sb?.provider?.includes("ollama")) {
+    const { unloadOllamaModels } = require("./lib/onboard-ollama-proxy");
+    unloadOllamaModels();
+  }
+
   try {
     fs.rmSync(`/tmp/nemoclaw-services-${sandboxName}`, { recursive: true, force: true });
   } catch {
@@ -3010,6 +3021,12 @@ async function sandboxDestroy(sandboxName: string, args: string[] = []): Promise
     // be recorded in the registry (e.g. older sandboxes).  Suppress output
     // so the user doesn't see "No such container" noise when no NIM exists.
     nim.stopNimContainer(sandboxName, { silent: true });
+  }
+
+  if (sb?.provider?.includes("ollama")) {
+    const { unloadOllamaModels, killStaleProxy } = require("./lib/onboard-ollama-proxy");
+    unloadOllamaModels();
+    killStaleProxy();
   }
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);

@@ -248,6 +248,14 @@ export function showStatus(opts: ServiceOptions = {}): void {
 export function stopAll(opts: ServiceOptions = {}): void {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
+
+  try {
+    const { unloadOllamaModels } = require("./onboard-ollama-proxy");
+    unloadOllamaModels();
+  } catch {
+    /* best-effort */
+  }
+
   stopService(pidDir, "cloudflared");
   info("All services stopped.");
 }
