@@ -92,15 +92,15 @@ describe("Ollama GPU cleanup", () => {
       end: vi.fn(),
     };
 
-    const httpGetSpy = vi.spyOn(http, "get").mockImplementation((options, callback) => {
+    const httpGetSpy = vi.spyOn(http, "get").mockImplementation(((options: any, callback: any) => {
       expect(options.hostname).toBe("localhost");
       expect(options.port).toBe(11434);
       expect(options.path).toBe("/api/ps");
       callback(mockResponse);
       return mockGetRequest;
-    });
+    }) as any);
 
-    const httpRequestSpy = vi.spyOn(http, "request").mockImplementation((options, callback) => {
+    const httpRequestSpy = vi.spyOn(http, "request").mockImplementation(((options: any, callback: any) => {
       expect(options.hostname).toBe("localhost");
       expect(options.port).toBe(11434);
       expect(options.path).toBe("/api/generate");
@@ -108,7 +108,7 @@ describe("Ollama GPU cleanup", () => {
       expect(options.headers["Content-Type"]).toBe("application/json");
       callback();
       return mockUnloadRequest;
-    });
+    }) as any);
 
     unloadOllamaModels();
 
@@ -139,7 +139,7 @@ describe("Ollama GPU cleanup", () => {
       }),
     };
 
-    const httpGetSpy = vi.spyOn(http, "get").mockImplementation(() => mockGetRequest);
+    const httpGetSpy = vi.spyOn(http, "get").mockImplementation((() => mockGetRequest) as any);
 
     expect(() => unloadOllamaModels()).not.toThrow();
     expect(httpGetSpy).toHaveBeenCalledTimes(1);
@@ -166,10 +166,10 @@ describe("Ollama GPU cleanup", () => {
       on: vi.fn(() => mockGetRequest),
     };
 
-    const httpGetSpy = vi.spyOn(http, "get").mockImplementation((options, callback) => {
+    const httpGetSpy = vi.spyOn(http, "get").mockImplementation(((_options: any, callback: any) => {
       callback(mockResponse);
       return mockGetRequest;
-    });
+    }) as any);
 
     const httpRequestSpy = vi.spyOn(http, "request");
 
