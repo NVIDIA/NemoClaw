@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { GatewayInference } from "./inference-config";
+import { CLI_NAME } from "./branding";
 
 export interface SandboxEntry {
   name: string;
@@ -77,10 +78,10 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
         `  No sandboxes registered locally, but the last onboarded sandbox was '${session.sandboxName}'.`,
       );
       log(
-        "  Retry `nemoclaw <name> connect` or `nemoclaw <name> status` once the gateway/runtime is healthy.",
+        `  Retry \`${CLI_NAME} <name> connect\` or \`${CLI_NAME} <name> status\` once the gateway/runtime is healthy.`,
       );
     } else {
-      log("  No sandboxes registered. Run `nemoclaw onboard` to get started.");
+      log(`  No sandboxes registered. Run \`${CLI_NAME} onboard\` to get started.`);
     }
     log("");
     return;
@@ -176,7 +177,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
         );
       }
       log(
-        "    Run `nemoclaw <sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding with the channel disabled.",
+        `    Run \`${CLI_NAME} <sandbox> destroy\` on whichever sandbox should stop polling, or rerun onboarding with the channel disabled.`,
       );
     }
   }

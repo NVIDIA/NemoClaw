@@ -4,6 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { CLI_NAME } from "./branding";
+
 export interface OnboardCommandOptions {
   nonInteractive: boolean;
   resume: boolean;
@@ -32,16 +34,12 @@ export interface RunDeprecatedOnboardAliasCommandDeps extends RunOnboardCommandD
   kind: "setup" | "setup-spark";
 }
 
-const ONBOARD_BASE_ARGS = [
-  "--non-interactive",
-  "--resume",
-  "--fresh",
-  "--recreate-sandbox",
-];
+const ONBOARD_BASE_ARGS = ["--non-interactive", "--resume", "--fresh", "--recreate-sandbox"];
 
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
+  const name = CLI_NAME;
   return [
-    `  Usage: nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [${noticeAcceptFlag}]`,
+    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [${noticeAcceptFlag}]`,
     "",
     "  --from <Dockerfile> uses the Dockerfile's parent directory as the Docker build context.",
     "  Put files referenced by COPY/ADD next to that Dockerfile, or move the Dockerfile into",
@@ -186,14 +184,15 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
 export async function runDeprecatedOnboardAliasCommand(
   deps: RunDeprecatedOnboardAliasCommandDeps,
 ): Promise<void> {
+  const cliName = CLI_NAME;
   const log = deps.log ?? console.log;
   log("");
   if (deps.kind === "setup") {
-    log("  ⚠  `nemoclaw setup` is deprecated. Use `nemoclaw onboard` instead.");
+    log(`  ⚠  \`${cliName} setup\` is deprecated. Use \`${cliName} onboard\` instead.`);
   } else {
-    log("  ⚠  `nemoclaw setup-spark` is deprecated.");
+    log(`  ⚠  \`${cliName} setup-spark\` is deprecated.`);
     log("  Current OpenShell releases handle the old DGX Spark cgroup issue themselves.");
-    log("  Use `nemoclaw onboard` instead.");
+    log(`  Use \`${cliName} onboard\` instead.`);
   }
   log("");
   await runOnboardCommand(deps);

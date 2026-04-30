@@ -1795,6 +1795,82 @@ describe("installer pure helpers", () => {
     });
   }
 
+  it("verify_nemoclaw checks the active CLI alias", () => {
+    const script = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
+    const body = requireMatch(
+      script.match(
+        /verify_nemoclaw\(\)\s*\{[\s\S]*?\n\}\n\n# ---------------------------------------------------------------------------\n# 5\. Onboard/,
+      ),
+      "Expected verify_nemoclaw() function body to be present",
+    )[0];
+
+    expect(body).toContain('command_exists "$_CLI_BIN"');
+    expect(body).toContain('is_real_nemoclaw_cli "$(command -v "$_CLI_BIN")" "$_CLI_BIN"');
+    expect(body).toContain('"$npm_bin/$_CLI_BIN"');
+    expect(body).not.toContain("command_exists nemoclaw");
+    expect(body).not.toContain('"$npm_bin/nemoclaw"');
+  });
+
+  it("is_real_nemoclaw_cli accepts the active NemoHermes binary name", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-real-cli-"));
+    const fakeCli = path.join(tmp, "nemohermes");
+    writeExecutable(
+      fakeCli,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "nemohermes v0.1.0-test"
+  exit 0
+fi
+exit 1
+`,
+    );
+
+    const result = callInstallerFn(
+      `is_real_nemoclaw_cli ${JSON.stringify(fakeCli)} "nemohermes" && echo yes || echo no`,
+    );
+    expect(result.stdout.trim()).toBe("yes");
+  });
+
+  it("is_real_nemoclaw_cli accepts semver prerelease plus build metadata", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-real-cli-"));
+    const fakeCli = path.join(tmp, "nemohermes");
+    writeExecutable(
+      fakeCli,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "nemohermes v0.1.0-rc.1+build.5"
+  exit 0
+fi
+exit 1
+`,
+    );
+
+    const result = callInstallerFn(
+      `is_real_nemoclaw_cli ${JSON.stringify(fakeCli)} "nemohermes" && echo yes || echo no`,
+    );
+    expect(result.stdout.trim()).toBe("yes");
+  });
+
+  it("is_real_nemoclaw_cli rejects mismatched CLI aliases", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-real-cli-"));
+    const fakeCli = path.join(tmp, "nemohermes");
+    writeExecutable(
+      fakeCli,
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "nemohermes v0.1.0-test"
+  exit 0
+fi
+exit 1
+`,
+    );
+
+    const result = callInstallerFn(
+      `is_real_nemoclaw_cli ${JSON.stringify(fakeCli)} "nemoclaw" && echo yes || echo no`,
+    );
+    expect(result.stdout.trim()).toBe("no");
+  });
+
   // -- version_gte --
 
   it("version_gte: equal versions return 0", () => {

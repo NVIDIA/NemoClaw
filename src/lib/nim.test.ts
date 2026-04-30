@@ -110,6 +110,120 @@ describe("nim", () => {
       }
     });
 
+    it("populates name and memory from primary nvidia-smi path", () => {
+      // Primary path returns name+memory.total in a single CSV line per GPU.
+      // Regression guard for #2669: the GB300 preflight line was missing the
+      // GPU model because only memory.total was being queried.
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA GB300, 284208\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA GB300",
+          count: 1,
+          totalMemoryMB: 284208,
+          perGpuMB: 284208,
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("aggregates totalMemoryMB across multiple GPUs from primary path", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA H100 80GB HBM3, 81920\nNVIDIA H100 80GB HBM3, 81920\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA H100 80GB HBM3",
+          count: 2,
+          totalMemoryMB: 163840,
+          perGpuMB: 81920,
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("preserves commas inside the GPU model name (last-comma split)", () => {
+      // The CSV split must use the LAST comma, not the first, so that GPU
+      // models whose names contain a comma round-trip intact. The split was
+      // designed for this; the test guards against future "split on first
+      // comma" regressions.
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA RTX A,B, 81920\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA RTX A,B",
+          count: 1,
+          totalMemoryMB: 81920,
+          perGpuMB: 81920,
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("drops name on mixed-model multi-GPU hosts so we don't attribute one model to the others", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA H100 80GB HBM3, 81920\nNVIDIA A100-SXM4-80GB, 81920\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        const result = nimModule.detectGpu();
+        expect(result).toMatchObject({
+          type: "nvidia",
+          count: 2,
+          totalMemoryMB: 163840,
+        });
+        // Mixed-model hosts must not pin a single name; the preflight line
+        // would otherwise read "2x NVIDIA H100" on a host that's actually
+        // half H100 and half A100.
+        expect(result?.name).toBeUndefined();
+      } finally {
+        restore();
+      }
+    });
+
     it("detects GB10 unified-memory GPUs as Spark-capable NVIDIA devices", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");

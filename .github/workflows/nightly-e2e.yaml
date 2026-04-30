@@ -123,6 +123,7 @@ jobs:
           NEMOCLAW_POLICY_MODE: "custom"
           NEMOCLAW_POLICY_PRESETS: "npm,pypi"
           NEMOCLAW_SANDBOX_NAME: "e2e-cloud-onboard"
+          NEMOCLAW_INSTALL_REF: ${{ github.ref_name }}
         run: bash test/e2e/test-cloud-onboard-e2e.sh
 
       - name: Upload install log on failure
