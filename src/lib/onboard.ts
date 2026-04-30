@@ -4322,14 +4322,19 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
   let credentialEnv: string | null = REMOTE_PROVIDER_CONFIG.build.credentialEnv;
   let preferredInferenceApi: string | null = null;
 
-  // Detect local inference options
+  // Detect local inference options. Bound curl with --connect-timeout/--max-time
+  // so a half-open port or stalled listener cannot hang the onboard at step 3
+  // (#2674).
+  const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
   const hasOllama = hostCommandExists("ollama");
-  const ollamaRunning = !!runCapture(["curl", "-sf", `http://127.0.0.1:${OLLAMA_PORT}/api/tags`], {
-    ignoreError: true,
-  });
-  const vllmRunning = !!runCapture(["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`], {
-    ignoreError: true,
-  });
+  const ollamaRunning = !!runCapture(
+    ["curl", "-sf", ...localProbeCurlArgs, `http://127.0.0.1:${OLLAMA_PORT}/api/tags`],
+    { ignoreError: true },
+  );
+  const vllmRunning = !!runCapture(
+    ["curl", "-sf", ...localProbeCurlArgs, `http://127.0.0.1:${VLLM_PORT}/v1/models`],
+    { ignoreError: true },
+  );
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
