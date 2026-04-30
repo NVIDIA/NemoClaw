@@ -2707,7 +2707,7 @@ async function sandboxSkillRemove(sandboxName: string, args: string[] = []): Pro
   }
   if (!skillInstall.validateSkillName(skillName)) {
     console.error(`  Invalid skill name: '${skillName}'`);
-    console.error("  Skill names must match [A-Za-z0-9._-].");
+    console.error("  Skill names must match [A-Za-z0-9._-] and must not be '.' or '..'.");
     process.exit(1);
   }
 
