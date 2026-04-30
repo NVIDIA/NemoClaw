@@ -238,12 +238,21 @@ print_banner() {
   version_suffix="$(installer_version_for_display)"
   printf "\n"
   # ANSI Shadow ASCII art — hand-crafted, no figlet dependency
-  printf "  ${C_GREEN}${C_BOLD} ███╗   ██╗███████╗███╗   ███╗ ██████╗  ██████╗██╗      █████╗ ██╗    ██╗${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ████╗  ██║██╔════╝████╗ ████║██╔═══██╗██╔════╝██║     ██╔══██╗██║    ██║${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ██╔██╗ ██║█████╗  ██╔████╔██║██║   ██║██║     ██║     ███████║██║ █╗ ██║${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ██║╚██╗██║██╔══╝  ██║╚██╔╝██║██║   ██║██║     ██║     ██╔══██║██║███╗██║${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
+  if [[ "${NEMOCLAW_AGENT:-openclaw}" == "hermes" ]]; then
+    printf "  ${C_GREEN}${C_BOLD} ███╗   ██╗███████╗███╗   ███╗ ██████╗ ██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD} ████╗  ██║██╔════╝████╗ ████║██╔═══██╗██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD} ██╔██╗ ██║█████╗  ██╔████╔██║██║   ██║███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD} ██║╚██╗██║██╔══╝  ██║╚██╔╝██║██║   ██║██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝${C_RESET}\n"
+  else
+    printf "  ${C_GREEN}${C_BOLD} ███╗   ██╗███████╗███╗   ███╗ ██████╗  ██████╗██╗      █████╗ ██╗    ██╗${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD} ████╗  ██║██╔════╝████╗ ████║██╔═══██╗██╔════╝██║     ██╔══██╗██║    ██║${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD} ██╔██╗ ██║█████╗  ██╔████╔██║██║   ██║██║     ██║     ███████║██║ █╗ ██║${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD} ██║╚██╗██║██╔══╝  ██║╚██╔╝██║██║   ██║██║     ██║     ██╔══██║██║███╗██║${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
+  fi
   printf "\n"
   if [[ -n "${NEMOCLAW_AGENT:-}" && "${NEMOCLAW_AGENT}" != "openclaw" ]]; then
     printf "  ${C_DIM}Launch %s in an OpenShell sandbox.%s${C_RESET}\n" "${NEMOCLAW_AGENT^}" "$version_suffix"
@@ -260,7 +269,7 @@ print_done() {
 
   info "=== Installation complete ==="
   printf "\n"
-  printf "  ${C_GREEN}${C_BOLD}NemoClaw${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$elapsed"
+  printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
   if [[ "$ONBOARD_RAN" == true ]]; then
     local sandbox_name agent_name
@@ -277,7 +286,7 @@ print_done() {
     if [[ "$_needs_reload" == true ]]; then
       printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
     fi
-    printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
+    printf "  %s$%s %s %s connect\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN" "$sandbox_name"
     local agent_cmd
     case "$agent_name" in
       hermes)
@@ -292,17 +301,17 @@ print_done() {
     esac
     printf "  %ssandbox@%s$%s %s\n" "$C_GREEN" "$sandbox_name" "$C_RESET" "$agent_cmd"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
-    printf "  ${C_GREEN}NemoClaw CLI is installed.${C_RESET}\n"
+    printf "  ${C_GREEN}%s CLI is installed.${C_RESET}\n" "$_CLI_DISPLAY"
     printf "  ${C_DIM}Onboarding has not run yet.${C_RESET}\n"
     printf "\n"
     printf "  ${C_GREEN}Next:${C_RESET}\n"
     if [[ "$_needs_reload" == true ]]; then
       printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
     fi
-    printf "  %s$%s nemoclaw onboard\n" "$C_GREEN" "$C_RESET"
+    printf "  %s$%s %s onboard\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN"
   else
-    printf "  ${C_GREEN}NemoClaw CLI is installed.${C_RESET}\n"
-    printf "  ${C_DIM}Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.${C_RESET}\n"
+    printf "  ${C_GREEN}%s CLI is installed.${C_RESET}\n" "$_CLI_DISPLAY"
+    printf "  ${C_DIM}Onboarding did not run because this shell cannot resolve '%s' yet.${C_RESET}\n" "$_CLI_BIN"
     printf "\n"
     printf "  ${C_GREEN}Next:${C_RESET}\n"
     if [[ -n "$NEMOCLAW_RECOVERY_EXPORT_DIR" ]]; then
@@ -311,7 +320,7 @@ print_done() {
     if [[ -n "$NEMOCLAW_RECOVERY_PROFILE" ]]; then
       printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_PROFILE"
     fi
-    printf "  %s$%s nemoclaw onboard\n" "$C_GREEN" "$C_RESET"
+    printf "  %s$%s %s onboard\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN"
   fi
   printf "\n"
   printf "  ${C_BOLD}GitHub${C_RESET}  ${C_DIM}https://github.com/nvidia/nemoclaw${C_RESET}\n"
@@ -323,7 +332,7 @@ usage() {
   local version_suffix
   version_suffix="$(installer_version_for_display)"
   printf "\n"
-  printf "  ${C_BOLD}NemoClaw Installer${C_RESET}${C_DIM}%s${C_RESET}\n\n" "$version_suffix"
+  printf "  ${C_BOLD}%s Installer${C_RESET}${C_DIM}%s${C_RESET}\n\n" "$_CLI_DISPLAY" "$version_suffix"
   printf "  ${C_DIM}Usage:${C_RESET}\n"
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash\n"
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
@@ -447,7 +456,22 @@ command_exists() { command -v "$1" &>/dev/null; }
 
 MIN_NODE_VERSION="22.16.0"
 MIN_NPM_MAJOR=10
-RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
+
+# ── Agent branding — adapt user-visible names to the active agent ──
+case "${NEMOCLAW_AGENT:-openclaw}" in
+  hermes)
+    _CLI_DISPLAY="NemoHermes"
+    _AGENT_PRODUCT="Hermes"
+    _CLI_BIN="nemohermes"
+    ;;
+  *)
+    _CLI_DISPLAY="NemoClaw"
+    _AGENT_PRODUCT="OpenClaw"
+    _CLI_BIN="nemoclaw"
+    ;;
+esac
+
+RUNTIME_REQUIREMENT_MSG="${_CLI_DISPLAY} requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
 NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
 NEMOCLAW_READY_NOW=false
 NEMOCLAW_RECOVERY_PROFILE=""
@@ -569,12 +593,13 @@ refresh_path() {
   fi
 }
 
-ensure_nemoclaw_shim() {
+ensure_cli_shim() {
+  local cli_bin="${1:-$_CLI_BIN}"
   local npm_bin shim_path node_path node_dir cli_path
   npm_bin="$(resolve_npm_bin)" || true
-  shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw"
+  shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
 
-  if [[ -z "$npm_bin" || ! -x "$npm_bin/nemoclaw" ]]; then
+  if [[ -z "$npm_bin" || ! -x "$npm_bin/$cli_bin" ]]; then
     return 1
   fi
 
@@ -583,7 +608,7 @@ ensure_nemoclaw_shim() {
     return 1
   fi
 
-  cli_path="$npm_bin/nemoclaw"
+  cli_path="$npm_bin/$cli_bin"
   if [[ -z "$cli_path" || ! -x "$cli_path" ]]; then
     return 1
   fi
@@ -610,6 +635,15 @@ EOF
   ensure_local_bin_in_profile
   info "Created user-local shim at $shim_path"
   return 0
+}
+
+ensure_nemoclaw_shim() {
+  local status=0
+  ensure_cli_shim "$_CLI_BIN" || status=$?
+  if [[ "$_CLI_BIN" != "nemoclaw" ]]; then
+    ensure_cli_shim "nemoclaw" || true
+  fi
+  return "$status"
 }
 
 # Detect whether the parent shell likely needs a reload after install.
@@ -718,7 +752,7 @@ install_nodejs() {
       info "Node.js found: ${current_version}"
       return
     fi
-    warn "Node.js ${current_version}, npm major ${current_npm_major:-unknown} found but NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR} — upgrading via nvm…"
+    warn "Node.js ${current_version}, npm major ${current_npm_major:-unknown} found but ${_CLI_DISPLAY} requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR} — upgrading via nvm…"
   else
     info "Node.js not found — installing via nvm…"
   fi
@@ -877,8 +911,9 @@ install_or_start_vllm() {
     return 0
   fi
   if ! detect_gpu; then
-    warn "NEMOCLAW_PROVIDER=vllm but no GPU detected — skipping vLLM setup."
-    return 0
+    warn "NEMOCLAW_PROVIDER=vllm but no GPU detected — vLLM cannot start."
+    warn "Install on a host with an NVIDIA GPU, or unset NEMOCLAW_PROVIDER for a cloud provider."
+    return 1
   fi
 
   local model
@@ -1093,21 +1128,21 @@ install_nemoclaw() {
   export NEMOCLAW_INSTALLING=1
 
   if is_source_checkout "$repo_root"; then
-    info "NemoClaw package.json found in the selected source checkout — installing from source…"
+    info "${_CLI_DISPLAY} package.json found in the selected source checkout — installing from source…"
     NEMOCLAW_SOURCE_ROOT="$repo_root"
     if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
       spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$NEMOCLAW_SOURCE_ROOT" \
         || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     fi
-    spin "Installing NemoClaw dependencies" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm install --ignore-scripts"
-    spin "Building NemoClaw CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
-    spin "Building NemoClaw plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm install --ignore-scripts && npm run build"
-    spin "Linking NemoClaw CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
+    spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm install --ignore-scripts"
+    spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
+    spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm install --ignore-scripts && npm run build"
+    spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
   else
     if [[ -f "$package_json" ]]; then
       info "Installer payload is not a persistent source checkout — installing from GitHub…"
     fi
-    info "Installing NemoClaw from GitHub…"
+    info "Installing ${_CLI_DISPLAY} from GitHub…"
     # Resolve the latest release tag so we never install raw main.
     local release_ref
     release_ref="$(resolve_release_tag)"
@@ -1119,7 +1154,7 @@ install_nemoclaw() {
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
     NEMOCLAW_SOURCE_ROOT="$nemoclaw_src"
-    spin "Cloning NemoClaw source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
+    spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
     # Fetch version tags into the shallow clone so `git describe --tags
     # --match "v*"` works at runtime (the shallow clone only has the
     # single ref we asked for).
@@ -1132,14 +1167,14 @@ install_nemoclaw() {
       spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
         || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     fi
-    spin "Installing NemoClaw dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
-    spin "Building NemoClaw CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
-    spin "Building NemoClaw plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm install --ignore-scripts && npm run build"
-    spin "Linking NemoClaw CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
+    spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
+    spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
+    spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm install --ignore-scripts && npm run build"
+    spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
 
     # Install/upgrade the OpenShell CLI on the GitHub-clone path (curl|bash).
     # Without this, install.sh defers the openshell version gate entirely to
-    # `nemoclaw onboard`, so any later skip of onboard (preflight blocking,
+    # onboard, so any later skip of onboard (preflight blocking,
     # interrupted session) leaves openshell stale below blueprint's
     # min_openshell_version even though the new NemoClaw declared a higher
     # floor. The source-checkout branch intentionally skips this — a developer
@@ -1156,27 +1191,29 @@ install_nemoclaw() {
 # 4. Verify
 # ---------------------------------------------------------------------------
 
-# Verify that a nemoclaw binary is the real NemoClaw CLI and not the broken
+# Verify that a CLI binary is the real NemoClaw CLI and not the broken
 # placeholder npm package (npmjs.org/nemoclaw 0.1.0 — 249 bytes, no build
-# artifacts).  The real CLI prints "nemoclaw v<semver>" on --version.
+# artifacts).  The real CLI prints "<binary> v<semver>" on --version.
 # Mirrors the isOpenshellCLI() pattern from resolve-openshell.js (PR #970).
 is_real_nemoclaw_cli() {
   local bin_path="${1:-nemoclaw}"
+  local expected_name="${2:-$_CLI_BIN}"
   local version_output
   version_output="$("$bin_path" --version 2>/dev/null)" || return 1
-  # Real CLI outputs: "nemoclaw v0.1.0" (or any semver, with optional pre-release)
-  [[ "$version_output" =~ ^nemoclaw[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+  # Real CLI outputs: "nemoclaw v0.1.0" or "nemohermes v0.1.0"
+  # (or any semver, with optional pre-release/build metadata).
+  [[ "$version_output" =~ ^${expected_name}[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$ ]]
 }
 
 verify_nemoclaw() {
-  if command_exists nemoclaw; then
-    if is_real_nemoclaw_cli "$(command -v nemoclaw)"; then
+  if command_exists "$_CLI_BIN"; then
+    if is_real_nemoclaw_cli "$(command -v "$_CLI_BIN")" "$_CLI_BIN"; then
       NEMOCLAW_READY_NOW=true
       ensure_nemoclaw_shim || true
-      info "Verified: nemoclaw is available at $(command -v nemoclaw)"
+      info "Verified: ${_CLI_BIN} is available at $(command -v "$_CLI_BIN")"
       return 0
     else
-      warn "Found nemoclaw at $(command -v nemoclaw) but it is not the real NemoClaw CLI."
+      warn "Found ${_CLI_BIN} at $(command -v "$_CLI_BIN") but it is not the real ${_CLI_DISPLAY} CLI."
       warn "This is likely the broken placeholder npm package."
       npm uninstall -g nemoclaw 2>/dev/null || true
     fi
@@ -1185,33 +1222,33 @@ verify_nemoclaw() {
   local npm_bin
   npm_bin="$(resolve_npm_bin)" || true
 
-  if [[ -n "$npm_bin" && -x "$npm_bin/nemoclaw" ]]; then
-    if is_real_nemoclaw_cli "$npm_bin/nemoclaw"; then
+  if [[ -n "$npm_bin" && -x "$npm_bin/$_CLI_BIN" ]]; then
+    if is_real_nemoclaw_cli "$npm_bin/$_CLI_BIN" "$_CLI_BIN"; then
       ensure_nemoclaw_shim || true
-      if command_exists nemoclaw; then
+      if command_exists "$_CLI_BIN"; then
         NEMOCLAW_READY_NOW=true
-        info "Verified: nemoclaw is available at $(command -v nemoclaw)"
+        info "Verified: ${_CLI_BIN} is available at $(command -v "$_CLI_BIN")"
         return 0
       fi
 
       NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
-      if [[ -x "$NEMOCLAW_SHIM_DIR/nemoclaw" ]]; then
+      if [[ -x "$NEMOCLAW_SHIM_DIR/$_CLI_BIN" ]]; then
         NEMOCLAW_RECOVERY_EXPORT_DIR="$NEMOCLAW_SHIM_DIR"
       else
         NEMOCLAW_RECOVERY_EXPORT_DIR="$npm_bin"
       fi
-      warn "Found nemoclaw at $npm_bin/nemoclaw but this shell still cannot resolve it."
+      warn "Found ${_CLI_BIN} at $npm_bin/$_CLI_BIN but this shell still cannot resolve it."
       warn "Onboarding will be skipped until PATH is updated."
       return 0
     else
-      warn "Found nemoclaw at $npm_bin/nemoclaw but it is not the real NemoClaw CLI."
+      warn "Found ${_CLI_BIN} at $npm_bin/$_CLI_BIN but it is not the real ${_CLI_DISPLAY} CLI."
       npm uninstall -g nemoclaw 2>/dev/null || true
     fi
   fi
 
-  warn "Could not locate the nemoclaw executable."
+  warn "Could not locate the ${_CLI_BIN} executable."
   warn "Try re-running:  curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
-  error "Installation failed: nemoclaw binary not found."
+  error "Installation failed: ${_CLI_BIN} binary not found."
 }
 
 # ---------------------------------------------------------------------------
@@ -1294,11 +1331,11 @@ run_installer_host_preflight() {
 
 run_onboard() {
   show_usage_notice
-  info "Running nemoclaw onboard…"
+  info "Running ${_CLI_BIN} onboard…"
   local -a onboard_cmd=(onboard)
   local session_file="${HOME}/.nemoclaw/onboard-session.json"
   # --fresh takes precedence over any session state. We forward --fresh to
-  # `nemoclaw onboard` so the CLI clears the existing session file before
+  # the active CLI's onboard command so it clears the existing session file before
   # creating a new one — the install.sh classifier is bypassed entirely.
   if [ "${FRESH:-}" = "1" ]; then
     info "Starting a fresh onboarding session (--fresh)."
@@ -1343,19 +1380,19 @@ run_onboard() {
         # Refuse in non-interactive mode (no safe default); prompt in
         # interactive mode so the user can pick resume vs. fresh.
         if [ "${NON_INTERACTIVE:-}" = "1" ]; then
-          error "Previous onboarding session failed. Re-run with --fresh to discard it, or run 'nemoclaw onboard --resume' to retry the same session."
+          error "Previous onboarding session failed. Re-run with --fresh to discard it, or run '${_CLI_BIN} onboard --resume' to retry the same session."
         fi
         local _prompt_stdin="/dev/tty"
         if [ -t 0 ]; then _prompt_stdin="/dev/stdin"; fi
         if [ ! -r "$_prompt_stdin" ]; then
-          error "Previous onboarding session failed, and no TTY is available to prompt. Re-run with --fresh or run 'nemoclaw onboard --resume'."
+          error "Previous onboarding session failed, and no TTY is available to prompt. Re-run with --fresh or run '${_CLI_BIN} onboard --resume'."
         fi
         info "Previous onboarding session failed."
         local _resume_answer=""
         while :; do
           printf "  Resume the failed session, or start fresh? [R/f]: " >&2
           if ! IFS= read -r _resume_answer <"$_prompt_stdin"; then
-            error "Could not read response from TTY. Re-run with --fresh or run 'nemoclaw onboard --resume'."
+            error "Could not read response from TTY. Re-run with --fresh or run '${_CLI_BIN} onboard --resume'."
           fi
           case "${_resume_answer,,}" in
             "" | r | resume)
@@ -1381,13 +1418,13 @@ run_onboard() {
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
       onboard_cmd+=(--yes-i-accept-third-party-software)
     fi
-    nemoclaw "${onboard_cmd[@]}"
+    "${_CLI_BIN}" "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
-    nemoclaw "${onboard_cmd[@]}"
+    "${_CLI_BIN}" "${onboard_cmd[@]}"
   elif exec 3</dev/tty; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
     local status=0
-    nemoclaw "${onboard_cmd[@]}" <&3 || status=$?
+    "${_CLI_BIN}" "${onboard_cmd[@]}" <&3 || status=$?
     exec 3<&-
     return "$status"
   else
@@ -1412,16 +1449,16 @@ post_install_message() {
 
   echo ""
   echo "  ──────────────────────────────────────────────────"
-  warn "Your current shell cannot resolve 'nemoclaw' yet."
+  warn "Your current shell cannot resolve '${_CLI_BIN}' yet."
   echo ""
-  echo "  To use nemoclaw now, run:"
+  echo "  To use ${_CLI_BIN} now, run:"
   echo ""
   echo "    export PATH=\"${NEMOCLAW_RECOVERY_EXPORT_DIR}:\$PATH\""
   echo "    source ${NEMOCLAW_RECOVERY_PROFILE}"
   echo ""
   echo "  Then run:"
   echo ""
-  echo "    nemoclaw onboard"
+  echo "    ${_CLI_BIN} onboard"
   echo ""
   echo "  Or open a new terminal window after updating your shell profile."
   echo "  ──────────────────────────────────────────────────"
@@ -1472,7 +1509,7 @@ main() {
   install_nodejs
   ensure_supported_runtime
 
-  step 2 "NemoClaw CLI"
+  step 2 "${_CLI_DISPLAY} CLI"
   # Local inference setup is opt-in via NEMOCLAW_PROVIDER. Both functions
   # short-circuit when the env var doesn't match, so the regular cloud-only
   # install path runs unchanged.
@@ -1498,7 +1535,7 @@ main() {
   # Check the registry file directly to avoid shelling out to nemoclaw (which
   # may be a stub in test environments).
   local _reg_file="${HOME}/.nemoclaw/sandboxes.json"
-  if [ -f "$_reg_file" ] && command_exists nemoclaw && command_exists openshell; then
+  if [ -f "$_reg_file" ] && command_exists "$_CLI_BIN" && command_exists openshell; then
     local _has_sandboxes
     _has_sandboxes="$(python3 -c "
 import json, sys
@@ -1510,12 +1547,12 @@ except Exception:
 " "$_reg_file" 2>/dev/null || echo 0)"
     if [ "$_has_sandboxes" -gt 0 ]; then
       info "Backing up $_has_sandboxes sandbox(es) before upgrade…"
-      nemoclaw backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
+      "$_CLI_BIN" backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
     fi
   fi
 
   step 3 "Onboarding"
-  if command_exists nemoclaw; then
+  if command_exists "$_CLI_BIN"; then
     if [[ -f "${HOME}/.nemoclaw/sandboxes.json" ]] && node -e '
       const fs = require("fs");
       try {
@@ -1528,9 +1565,9 @@ except Exception:
     ' "${HOME}/.nemoclaw/sandboxes.json"; then
       warn "Existing sandbox sessions detected. Onboarding may disrupt running agents."
       if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
-        error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with 'nemoclaw <name> destroy' before reinstalling."
+        error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
       fi
-      warn "Consider destroying existing sessions with 'nemoclaw <name> destroy' first."
+      warn "Consider destroying existing sessions with '${_CLI_BIN} <name> destroy' first."
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
     if run_installer_host_preflight; then
@@ -1538,15 +1575,15 @@ except Exception:
       ONBOARD_RAN=true
       # After onboard, check for stale sandboxes that need rebuilding (#1904).
       # Uses --auto so it runs non-interactively in piped/CI contexts.
-      if [ "${_has_sandboxes:-0}" -gt 0 ] 2>/dev/null && command_exists nemoclaw; then
+      if [ "${_has_sandboxes:-0}" -gt 0 ] 2>/dev/null && command_exists "$_CLI_BIN"; then
         info "Checking for sandboxes that need upgrading…"
-        nemoclaw upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
+        "$_CLI_BIN" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
       fi
     else
       warn "Skipping onboarding until the host prerequisites above are fixed."
     fi
   else
-    warn "Skipping onboarding — this shell still cannot resolve 'nemoclaw'."
+    warn "Skipping onboarding — this shell still cannot resolve '${_CLI_BIN}'."
   fi
 
   print_done

@@ -4,7 +4,8 @@
   "description": "NemoClaw — run OpenClaw inside OpenShell with NVIDIA inference",
   "license": "Apache-2.0",
   "bin": {
-    "nemoclaw": "./bin/nemoclaw.js"
+    "nemoclaw": "./bin/nemoclaw.js",
+    "nemohermes": "./bin/nemohermes.js"
   },
   "scripts": {
     "test": "vitest run",

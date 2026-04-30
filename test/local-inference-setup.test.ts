@@ -82,4 +82,22 @@ describe("local inference setup (install.sh)", () => {
       /NEMOCLAW_PROVIDER:-.*==\s*"vllm"[\s\S]*install_or_start_vllm \|\| error/,
     );
   });
+
+  it("install_or_start_vllm fails when NEMOCLAW_PROVIDER=vllm and no GPU is detected", () => {
+    // detect_gpu is stubbed to fail. With NEMOCLAW_PROVIDER=vllm, the function
+    // must return non-zero so main()'s `|| error` wrapper trips and the
+    // installer aborts before onboarding runs against a non-existent vLLM.
+    // `set +e` is needed after sourcing because install.sh itself sets
+    // `set -euo pipefail`, which would short-circuit the test before $? is read.
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `SCRIPT_DIR="$(dirname "${INSTALL_SH}")"; source "${INSTALL_SH}"; set +e; detect_gpu() { return 1; }; NEMOCLAW_PROVIDER=vllm install_or_start_vllm; echo "rc=$?"`,
+      ],
+      { encoding: "utf-8" },
+    );
+    expect(result.stdout).toContain("rc=1");
+    expect(result.stdout + result.stderr).toContain("no GPU detected");
+  });
 });
