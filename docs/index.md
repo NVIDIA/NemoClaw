@@ -182,6 +182,16 @@ Install the CLI, configure inference, and launch your first sandboxed agent.
 {bdg-secondary}`Tutorial`
 :::
 
+:::{grid-item-card} NemoClaw Quickstart for Hermes
+:link: get-started/quickstart-hermes
+:link-type: doc
+
+Launch Hermes in an OpenShell sandbox with the `nemohermes` alias.
+
++++
+{bdg-secondary}`Tutorial`
+:::
+
 :::{grid-item-card} Commands
 :link: reference/commands
 :link-type: doc
@@ -287,7 +297,7 @@ This software automatically retrieves, accesses or interacts with external mater
 :hidden:
 
 Overview <about/overview>
-How It Works <about/how-it-works>
+Architecture Overview <about/how-it-works>
 Ecosystem <about/ecosystem>
 Release Notes <about/release-notes>
 ```
@@ -297,7 +307,8 @@ Release Notes <about/release-notes>
 :hidden:
 
 Prerequisites <get-started/prerequisites>
-Quickstart <get-started/quickstart>
+Quickstart with OpenClaw <get-started/quickstart>
+Quickstart with Hermes <get-started/quickstart-hermes>
 ```
 
 ```{toctree}

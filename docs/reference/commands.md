@@ -840,6 +840,8 @@ Every `nemohermes` command is equivalent to running `nemoclaw` with `--agent her
 ```console
 $ nemohermes onboard              # equivalent to: nemoclaw onboard --agent hermes
 $ nemohermes my-sandbox connect   # same as: nemoclaw my-sandbox connect
+$ nemohermes --help               # show NemoHermes-branded help
+$ nemohermes --version            # show the installed NemoHermes CLI version
 ```
 
 The alias is installed alongside `nemoclaw` via `npm link` or `npm install -g`.
