@@ -73,6 +73,36 @@ function getValidationProbeCurlArgs(opts) {
   return ["--connect-timeout", "10", "--max-time", "15"];
 }
 
+const RETRIABLE_HTTP_PROBE_STATUSES = new Set([429]);
+const HTTP_PROBE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
+
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function shouldRetryHttpProbe(result) {
+  return (
+    result &&
+    !result.ok &&
+    result.curlStatus === 0 &&
+    RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus)
+  );
+}
+
+function executeProbeWithHttpRetry(probe) {
+  let result = probe.execute();
+  for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
+    if (!shouldRetryHttpProbe(result)) break;
+    console.log(
+      `  ${probe.name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
+    );
+    sleepSync(delayMs);
+    result = probe.execute();
+  }
+  return result;
+}
+
 // ── Responses API probe ──────────────────────────────────────────
 
 function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
@@ -197,7 +227,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
 
   const failures = [];
   for (const probe of probes) {
-    const result = probe.execute();
+    const result = executeProbeWithHttpRetry(probe);
     if (result.ok) {
       // Streaming event validation — catch backends like SGLang that return
       // valid non-streaming responses but emit incomplete SSE events in

@@ -16,6 +16,8 @@ const {
   getBootstrapOllamaModelOptions,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
+  getResolvedOllamaHost,
+  OLLAMA_HOST_DOCKER_INTERNAL,
   validateOllamaModel,
 } = require("./local-inference");
 const { buildSubprocessEnv } = require("./subprocess-env");
@@ -303,7 +305,7 @@ function printOllamaExposureWarning() {
   console.log("");
 }
 
-function pullOllamaModel(model) {
+function pullOllamaModelViaCli(model) {
   const result = spawnSync("bash", ["-c", `ollama pull ${shellQuote(model)}`], {
     cwd: ROOT,
     encoding: "utf8",
@@ -320,11 +322,159 @@ function pullOllamaModel(model) {
   return result.status === 0;
 }
 
-function prepareOllamaModel(model, installedModels = []) {
+// Pull via Ollama's HTTP API instead of shelling out to the `ollama` CLI.
+// Used only when the resolved host is the Windows host (host.docker.internal),
+// where there is no `ollama` binary in WSL to shell out to. Native Linux/macOS
+// keeps the CLI path so existing behavior is unchanged.
+function pullOllamaModelViaHttp(model) {
+  return new Promise((resolve) => {
+    const host = getResolvedOllamaHost();
+    const url = `http://${host}:${OLLAMA_PORT}/api/pull`;
+    const body = JSON.stringify({ model, stream: true });
+    const TIMEOUT_MS = 600_000; // 10 min, matches the CLI path
+    const isTTY = Boolean(process.stdout.isTTY);
+    const BAR_WIDTH = 40;
+
+    const proc = spawn(
+      "curl",
+      [
+        "-sN",
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        String(Math.floor(TIMEOUT_MS / 1000)),
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        body,
+        url,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    const readline = require("readline");
+    const rl = readline.createInterface({ input: proc.stdout });
+    let currentStatus = "";
+    let progressActive = false;
+    let lastNonTtyLine = "";
+    let sawSuccess = false;
+    let sawError = false;
+
+    const formatSize = (bytes) => {
+      if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+      if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
+      if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(0)} KB`;
+      return `${bytes} B`;
+    };
+
+    const renderBar = (pct) => {
+      const filled = Math.floor((pct / 100) * BAR_WIDTH);
+      return `${"█".repeat(filled)}${" ".repeat(BAR_WIDTH - filled)}`;
+    };
+
+    const finishLine = () => {
+      if (isTTY && progressActive) {
+        process.stdout.write("\n");
+        progressActive = false;
+      }
+    };
+
+    rl.on("line", (line) => {
+      let evt;
+      try {
+        evt = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (typeof evt?.error === "string" && evt.error.trim()) {
+        finishLine();
+        console.error(`  Error: ${evt.error.trim()}`);
+        sawError = true;
+        return;
+      }
+      const status = typeof evt?.status === "string" ? evt.status : "";
+      if (!status) return;
+      if (status === "success") sawSuccess = true;
+
+      const hasProgress =
+        typeof evt.completed === "number" && typeof evt.total === "number" && evt.total > 0;
+
+      // Status changed (new layer or new phase): commit the previous line
+      // and either render the new status as a plain line (no progress) or
+      // fall through to the in-place progress renderer.
+      if (status !== currentStatus) {
+        finishLine();
+        currentStatus = status;
+        if (!hasProgress) {
+          console.log(`  ${status}`);
+          return;
+        }
+      } else if (!hasProgress) {
+        return;
+      }
+
+      const pct = Math.floor((evt.completed / evt.total) * 100);
+      if (isTTY) {
+        const bar = renderBar(pct);
+        const sz = `${formatSize(evt.completed)} / ${formatSize(evt.total)}`;
+        process.stdout.write(`\r  ${status}: ${pct}% ${bar} ${sz}`);
+        progressActive = true;
+      } else {
+        // Non-TTY (CI, logs): throttle to one line per percent change.
+        const summary = `  ${status}: ${pct}%`;
+        if (summary !== lastNonTtyLine) {
+          console.log(summary);
+          lastNonTtyLine = summary;
+        }
+      }
+    });
+
+    proc.on("error", (err) => {
+      finishLine();
+      console.error(`  Pull failed to start: ${err.message}`);
+      resolve(false);
+    });
+
+    // Use 'close' rather than 'exit' so the promise resolves only after the
+    // child's stdio streams are fully drained, ensuring readline has emitted
+    // the final 'line' event for the trailing `success` JSON.
+    proc.on("close", (code) => {
+      finishLine();
+      if (sawError) {
+        resolve(false);
+        return;
+      }
+      if (code !== 0) {
+        // curl exit 28 = CURLE_OPERATION_TIMEDOUT (--max-time hit).
+        if (code === 28) {
+          console.error(`  Model pull timed out after ${TIMEOUT_MS / 60_000} minutes.`);
+        } else {
+          console.error(`  Model pull exited with code ${String(code)} (network error).`);
+        }
+        console.error("  Already-downloaded layers are kept; re-running the pull resumes them.");
+        resolve(false);
+        return;
+      }
+      resolve(sawSuccess);
+    });
+  });
+}
+
+// Dispatch to HTTP pull when Ollama was resolved on the Windows host.
+async function pullOllamaModel(model) {
+  if (getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL) {
+    return pullOllamaModelViaHttp(model);
+  }
+  return pullOllamaModelViaCli(model);
+}
+
+async function prepareOllamaModel(model, installedModels = []) {
   const alreadyInstalled = installedModels.includes(model);
   if (!alreadyInstalled) {
     console.log(`  Pulling Ollama model: ${model}`);
-    if (!pullOllamaModel(model)) {
+    if (!(await pullOllamaModel(model))) {
       return {
         ok: false,
         message:

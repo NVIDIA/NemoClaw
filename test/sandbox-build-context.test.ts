@@ -26,6 +26,9 @@ describe("sandbox build context staging", () => {
           path.join(buildCtx, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
         ),
       ).toBe(true);
+      expect(
+        fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "scripts", "ws-proxy-fix.js")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "codex-acp-wrapper.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.py"))).toBe(
