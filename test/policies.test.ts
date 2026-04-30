@@ -231,7 +231,7 @@ describe("policies", () => {
     });
 
     it("extracts hosts from heygen preset including api2 for OAuth", () => {
-      const content = policies.loadPreset("heygen");
+      const content = requirePresetContent(policies.loadPreset("heygen"));
       const hosts = policies.getPresetEndpoints(content);
       expect(hosts.includes("api.heygen.com")).toBe(true);
       expect(hosts.includes("api2.heygen.com")).toBe(true);
