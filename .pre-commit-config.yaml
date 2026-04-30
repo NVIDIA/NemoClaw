@@ -177,7 +177,8 @@ repos:
     hooks:
       - id: hadolint
         name: hadolint
-        entry: hadolint
+        # Use wrapper so `git push` works when hadolint is not on PATH (CI installs it).
+        entry: bash scripts/run-hadolint.sh
         language: system
         files: (Dockerfile[^/]*|.*\.dockerfile)$
         types: [file]
