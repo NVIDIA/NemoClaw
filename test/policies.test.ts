@@ -128,6 +128,7 @@ describe("policies", () => {
     "heygen",
     "huggingface",
     "jira",
+    "local-inference",
     "npm",
     "outlook",
     "pypi",
@@ -136,9 +137,9 @@ describe("policies", () => {
   ];
 
   describe("listPresets", () => {
-    it("returns all 12 presets", () => {
+    it("returns all expected presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(12);
+      expect(presets.length).toBe(EXPECTED_PRESET_NAMES.length);
     });
 
     it("each preset has name and description", () => {
@@ -153,20 +154,7 @@ describe("policies", () => {
         .listPresets()
         .map((p) => p.name)
         .sort();
-      const expected = [
-        "brave",
-        "brew",
-        "discord",
-        "github",
-        "huggingface",
-        "jira",
-        "local-inference",
-        "npm",
-        "outlook",
-        "pypi",
-        "slack",
-        "telegram",
-      ];
+      const expected = [...EXPECTED_PRESET_NAMES].sort();
       expect(names).toEqual(expected);
     });
   });
