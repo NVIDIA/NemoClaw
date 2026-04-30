@@ -67,7 +67,7 @@ Group chats stay open by default so rebuilt sandboxes do not silently drop Teleg
 
 Complete the rest of the wizard so the blueprint can create OpenShell providers (for example `<sandbox>-telegram-bridge`), bake channel configuration into the image (`NEMOCLAW_MESSAGING_CHANNELS_B64`), and start the sandbox.
 
-Channel entries in `/sandbox/.openclaw/openclaw.json` are fixed at image build time. Landlock keeps that path read-only at runtime, so you cannot patch messaging config inside a running sandbox.
+Channel entries in `/sandbox/.openclaw/openclaw.json` are baked into the container image at build time. Changes made inside the running sandbox do not persist across rebuilds.
 
 If you add or change `TELEGRAM_BOT_TOKEN` (or toggle channels) after a sandbox already exists, you typically need to run `nemoclaw onboard` again so the image and provider attachments are rebuilt with the new settings.
 

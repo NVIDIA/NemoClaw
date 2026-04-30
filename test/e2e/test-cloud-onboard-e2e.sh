@@ -25,6 +25,7 @@
 #   NEMOCLAW_POLICY_PRESETS=npm,pypi                   — policy presets
 #   RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL=0        — set 0 for non-interactive (default), 1 for expect
 #   NEMOCLAW_INSTALL_SCRIPT_URL                        — override public installer URL
+#   NEMOCLAW_PUBLIC_INSTALL_CWD                        — override temp cwd for public install
 #   E2E_CLOUD_ONBOARD_INSTALL_LOG                      — install log path
 #
 # Usage:
@@ -75,9 +76,10 @@ unset _script_dir _candidate
 E2E_DIR="$(cd "$(dirname "$0")" && pwd)"
 E2E_CHECKS_DIR="${E2E_DIR}/e2e-cloud-experimental/checks"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}"
-CLOUD_MODEL="${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-moonshotai/kimi-k2.5}"
+CLOUD_MODEL="${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
 INSTALL_LOG="${E2E_CLOUD_ONBOARD_INSTALL_LOG:-/tmp/nemoclaw-e2e-cloud-onboard-install.log}"
 INTERACTIVE_INSTALL="${RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL:-0}"
+PUBLIC_INSTALL_CWD="${NEMOCLAW_PUBLIC_INSTALL_CWD:-}"
 
 # Source shared teardown helper
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
@@ -144,11 +146,6 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 section "Phase 3: Install via public URL"
 
-cd "$REPO" || {
-  fail "Could not cd to repo root: $REPO"
-  exit 1
-}
-
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_EXPERIMENTAL=1
 export NEMOCLAW_PROVIDER=cloud
@@ -156,10 +153,24 @@ export NEMOCLAW_MODEL="$CLOUD_MODEL"
 export NEMOCLAW_POLICY_MODE="${NEMOCLAW_POLICY_MODE:-custom}"
 export NEMOCLAW_POLICY_PRESETS="${NEMOCLAW_POLICY_PRESETS:-npm,pypi}"
 
-NEMOCLAW_INSTALL_SCRIPT_URL="${NEMOCLAW_INSTALL_SCRIPT_URL:-https://www.nvidia.com/nemoclaw.sh}"
+PUBLIC_INSTALL_REF="${NEMOCLAW_PUBLIC_INSTALL_REF:-${GITHUB_SHA:-}}"
+if [ -n "$PUBLIC_INSTALL_REF" ]; then
+  export NEMOCLAW_INSTALL_REF="$PUBLIC_INSTALL_REF"
+  export NEMOCLAW_INSTALL_TAG="$PUBLIC_INSTALL_REF"
+fi
+if [ -z "${NEMOCLAW_INSTALL_SCRIPT_URL:-}" ] && [ -n "$PUBLIC_INSTALL_REF" ]; then
+  NEMOCLAW_INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/NVIDIA/NemoClaw/${PUBLIC_INSTALL_REF}/install.sh"
+else
+  NEMOCLAW_INSTALL_SCRIPT_URL="${NEMOCLAW_INSTALL_SCRIPT_URL:-https://www.nvidia.com/nemoclaw.sh}"
+fi
 export NEMOCLAW_INSTALL_SCRIPT_URL
 
 info "Model: ${CLOUD_MODEL}, Policy: ${NEMOCLAW_POLICY_MODE} ${NEMOCLAW_POLICY_PRESETS}"
+if [ -n "${NEMOCLAW_INSTALL_REF:-}" ]; then
+  info "Public installer will clone NemoClaw ref: ${NEMOCLAW_INSTALL_REF}"
+else
+  info "Public installer will clone NemoClaw ref: latest"
+fi
 
 if [ "$INTERACTIVE_INSTALL" = "1" ]; then
   # Interactive install via expect is not currently supported in the split
@@ -169,8 +180,17 @@ if [ "$INTERACTIVE_INSTALL" = "1" ]; then
   fail "Interactive install (RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL=1) is not yet supported — use non-interactive mode"
   exit 1
 else
+  if [ -z "$PUBLIC_INSTALL_CWD" ]; then
+    PUBLIC_INSTALL_CWD="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-public-install.XXXXXX")"
+  else
+    mkdir -p "$PUBLIC_INSTALL_CWD"
+  fi
   info "Installing (non-interactive): curl -fsSL ${NEMOCLAW_INSTALL_SCRIPT_URL} | bash"
-  curl -fsSL "$NEMOCLAW_INSTALL_SCRIPT_URL" | bash >"$INSTALL_LOG" 2>&1 &
+  info "Public install cwd: ${PUBLIC_INSTALL_CWD}"
+  (
+    cd "$PUBLIC_INSTALL_CWD" || exit 1
+    curl -fsSL "$NEMOCLAW_INSTALL_SCRIPT_URL" | bash
+  ) >"$INSTALL_LOG" 2>&1 &
   install_pid=$!
   tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
   tail_pid=$!
@@ -199,6 +219,35 @@ else
   info "Last 30 lines of install log:"
   tail -30 "$INSTALL_LOG"
   exit 1
+fi
+
+if grep -q "NemoClaw package.json found in the selected source checkout" "$INSTALL_LOG"; then
+  fail "Public install unexpectedly used the local source checkout"
+  info "Last 30 lines of install log:"
+  tail -30 "$INSTALL_LOG"
+  exit 1
+fi
+
+if grep -q "Installing NemoClaw from GitHub" "$INSTALL_LOG" \
+  && grep -q "Resolved install ref:" "$INSTALL_LOG" \
+  && grep -q "Cloning NemoClaw source" "$INSTALL_LOG"; then
+  pass "Public install used the GitHub clone path"
+else
+  fail "Public install did not show the GitHub clone path"
+  info "Last 40 lines of install log:"
+  tail -40 "$INSTALL_LOG"
+  exit 1
+fi
+
+if [ -n "$PUBLIC_INSTALL_REF" ]; then
+  if grep -q "Resolved install ref: ${PUBLIC_INSTALL_REF}" "$INSTALL_LOG"; then
+    pass "Public install used requested ref ${PUBLIC_INSTALL_REF}"
+  else
+    fail "Public install did not use requested ref ${PUBLIC_INSTALL_REF}"
+    info "Last 40 lines of install log:"
+    tail -40 "$INSTALL_LOG"
+    exit 1
+  fi
 fi
 
 if command -v nemoclaw >/dev/null 2>&1; then

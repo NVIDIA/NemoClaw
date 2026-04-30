@@ -303,7 +303,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"moonshotai/kimi-k2.5"},{"id":"custom/provider-model"}]}'
+  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"custom/provider-model"}]}'
 fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
@@ -399,7 +399,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"moonshotai/kimi-k2.5"},{"id":"z-ai/glm-5.1"}]}'
+  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"z-ai/glm-5.1"}]}'
 fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"

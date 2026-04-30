@@ -16,10 +16,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 48 commands", () => {
+    it("should contain exactly 46 commands", () => {
       // 24 global (19 visible + 5 hidden help/version aliases)
-      // 24 sandbox (18 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(48);
+      // 22 sandbox (18 visible + 4 hidden shields/config)
+      expect(COMMANDS).toHaveLength(46);
     });
 
     it("should have unique usage strings", () => {
@@ -48,17 +48,56 @@ describe("command-registry", () => {
       expect(global.length).toBeLessThan(COMMANDS.length);
     });
 
-    it("sandboxCommands() should only return sandbox scope", () => {
-      const sandbox = sandboxCommands();
-      sandbox.forEach((c) => expect(c.scope).toBe("sandbox"));
-      expect(sandbox.length).toBeLessThan(COMMANDS.length);
+    it("every entry has scope global", () => {
+      for (const cmd of globalCommands()) {
+        expect(cmd.scope).toBe("global");
+      }
+    });
+  });
+
+  describe("sandboxCommands()", () => {
+    it("should return exactly 22 entries", () => {
+      // 18 visible + 4 hidden (shields×3 + config get)
+      expect(sandboxCommands()).toHaveLength(22);
     });
 
-    it("visibleCommands() should exclude hidden commands", () => {
-      const visible = visibleCommands();
+    it("every entry has scope sandbox", () => {
+      for (const cmd of sandboxCommands()) {
+        expect(cmd.scope).toBe("sandbox");
+      }
+    });
+  });
+
+  describe("visibleCommands()", () => {
+    it("should exclude 9 hidden commands (37 visible)", () => {
+      // 5 hidden global (help, --help, -h, --version, -v) +
+      // 4 hidden sandbox (shields×3, config get)
+      expect(visibleCommands()).toHaveLength(37);
+    });
+
+    it("no visible command has hidden=true", () => {
+      for (const cmd of visibleCommands()) {
+        expect(cmd.hidden).not.toBe(true);
+      }
+    });
+  });
+
+  describe("hidden commands", () => {
+    it("exactly 9 hidden commands: help/version aliases + shields + config", () => {
       const hidden = COMMANDS.filter((c) => c.hidden);
-      expect(visible.length + hidden.length).toBe(COMMANDS.length);
-      visible.forEach((c) => expect(c.hidden).not.toBe(true));
+      expect(hidden).toHaveLength(9);
+      const usages = hidden.map((c) => c.usage).sort();
+      expect(usages).toEqual([
+        "nemoclaw --help",
+        "nemoclaw --version",
+        "nemoclaw -h",
+        "nemoclaw -v",
+        "nemoclaw <name> config get",
+        "nemoclaw <name> shields down",
+        "nemoclaw <name> shields status",
+        "nemoclaw <name> shields up",
+        "nemoclaw help",
+      ]);
     });
 
     it("commandsByGroup() should group visible commands by their group header", () => {

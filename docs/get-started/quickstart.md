@@ -88,7 +88,7 @@ Respond to the wizard as follows.
 
 1. At the `Choose [1]:` prompt, press Enter (or type `1`) to select **NVIDIA Endpoints**.
 2. At the `NVIDIA_API_KEY:` prompt, paste your key if it is not already exported.
-3. At the `Choose model [1]:` prompt, pick a curated model from the list (for example, **Nemotron 3 Super 120B**, **Kimi K2.5**, **GLM-5.1**, **MiniMax M2.5**, or **GPT-OSS 120B**), or pick **Other...** to enter any model ID from the [NVIDIA Endpoints catalog](https://build.nvidia.com).
+3. At the `Choose model [1]:` prompt, pick a curated model from the list (for example, **Nemotron 3 Super 120B**, **GLM-5.1**, **MiniMax M2.5**, or **GPT-OSS 120B**), or pick **Other...** to enter any model ID from the [NVIDIA Endpoints catalog](https://build.nvidia.com).
 
 NemoClaw validates the model against the catalog API before creating the sandbox.
 

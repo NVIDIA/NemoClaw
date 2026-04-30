@@ -118,17 +118,30 @@ def build_config(env: dict | None = None) -> dict:
         "slack": "SLACK_BOT_TOKEN",
     }
 
+    # Slack's Bolt SDK validates token shape at App construction (^xoxb-…$ /
+    # ^xapp-…$) before any HTTP call leaves the process, so the canonical
+    # openshell:resolve:env:VAR placeholder is rejected synchronously. Emit a
+    # Bolt-regex-compatible placeholder instead; the slack-token-rewriter
+    # Node preload translates it to canonical form on outbound HTTP, where
+    # OpenShell's L7 proxy substitutes the real token from env.
+    def _placeholder(channel: str, env_key: str) -> str:
+        if channel == "slack" and env_key == "SLACK_BOT_TOKEN":
+            return f"xoxb-OPENSHELL-RESOLVE-ENV-{env_key}"
+        if channel == "slack" and env_key == "SLACK_APP_TOKEN":
+            return f"xapp-OPENSHELL-RESOLVE-ENV-{env_key}"
+        return f"openshell:resolve:env:{env_key}"
+
     _ch_cfg = {}
     for ch in msg_channels:
         if ch not in _token_keys:
             continue
         account = {
-            _token_keys[ch]: f"openshell:resolve:env:{_env_keys[ch]}",
+            _token_keys[ch]: _placeholder(ch, _env_keys[ch]),
             "enabled": True,
             "healthMonitor": {"enabled": False},
         }
         if ch == "slack":
-            account["appToken"] = "openshell:resolve:env:SLACK_APP_TOKEN"
+            account["appToken"] = _placeholder(ch, "SLACK_APP_TOKEN")
         if ch in ("telegram", "discord"):
             account["proxy"] = proxy_url
         if ch == "telegram":
