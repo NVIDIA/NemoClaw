@@ -904,7 +904,10 @@ install_or_start_vllm() {
   # must not be reused — otherwise the corrected HF repo id never gets applied.
   local running_models
   running_models="$(curl -fsS "http://localhost:${VLLM_PORT}/v1/models" 2>/dev/null || true)"
-  if [ -n "$running_models" ] && echo "$running_models" | grep -q "$model"; then
+  # grep -F: match $model as a literal string. A regex match would let a
+  # stale listener serving a superstring (e.g. "${model}-quantized") falsely
+  # register as the expected instance.
+  if [ -n "$running_models" ] && echo "$running_models" | grep -Fq "$model"; then
     info "vLLM already running on :${VLLM_PORT} with model ${model}"
     return 0
   fi
@@ -913,15 +916,20 @@ install_or_start_vllm() {
   nohup python3 -m vllm.entrypoints.openai.api_server \
     --model "$model" \
     --port "$VLLM_PORT" \
-    --host 0.0.0.0 \
+    --host 127.0.0.1 \
     --trust-remote-code \
     >/tmp/vllm-server.log 2>&1 &
   local vllm_pid=$!
 
   info "Waiting for vLLM (model load can take several minutes)…"
   local elapsed=0
+  local ready_models
   while [ "$elapsed" -lt "$VLLM_READY_TIMEOUT_SECS" ]; do
-    if curl -fsS "http://localhost:${VLLM_PORT}/v1/models" >/dev/null 2>&1; then
+    # Validate that the listener is serving $model — a stale vLLM still
+    # bound to :8000 will answer 200 with a different model id and would
+    # otherwise let us declare readiness against the wrong process.
+    ready_models="$(curl -fsS "http://localhost:${VLLM_PORT}/v1/models" 2>/dev/null || true)"
+    if [ -n "$ready_models" ] && echo "$ready_models" | grep -Fq "$model"; then
       info "vLLM ready (PID $vllm_pid)"
       return 0
     fi
@@ -932,6 +940,9 @@ install_or_start_vllm() {
     sleep 2
     elapsed=$((elapsed + 2))
   done
+  # Reap the orphan so a re-run isn't blocked by a process still bound to
+  # :8000 (kill -0 above only fires when the process is already dead).
+  kill "$vllm_pid" 2>/dev/null || true
   warn "vLLM did not become ready within ${VLLM_READY_TIMEOUT_SECS}s. See /tmp/vllm-server.log"
   return 1
 }
@@ -1467,7 +1478,15 @@ main() {
   if [[ "${NEMOCLAW_PROVIDER:-}" == "ollama" ]]; then
     install_or_upgrade_ollama
   fi
-  install_or_start_vllm || warn "vLLM setup failed — continuing without local inference."
+  # Fail fast when vLLM was explicitly requested — silently continuing leaves
+  # onboarding pointed at an unavailable localhost:8000, which is the failure
+  # mode this PR exists to fix. For other providers, install_or_start_vllm
+  # short-circuits with rc=0 so this branch is effectively a no-op.
+  if [[ "${NEMOCLAW_PROVIDER:-}" == "vllm" ]]; then
+    install_or_start_vllm || error "vLLM setup failed — aborting (NEMOCLAW_PROVIDER=vllm)."
+  else
+    install_or_start_vllm
+  fi
   fix_npm_permissions
   install_nemoclaw
   verify_nemoclaw

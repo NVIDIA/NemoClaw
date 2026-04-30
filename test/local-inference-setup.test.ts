@@ -56,4 +56,29 @@ describe("local inference setup (install.sh)", () => {
     const content = fs.readFileSync(INSTALL_SH, "utf-8");
     expect(content).toMatch(/vllm\.entrypoints\.openai\.api_server[\s\S]*--trust-remote-code/);
   });
+
+  it("vLLM binds to loopback, not all interfaces", () => {
+    const content = fs.readFileSync(INSTALL_SH, "utf-8");
+    expect(content).toMatch(/vllm\.entrypoints\.openai\.api_server[\s\S]*--host 127\.0\.0\.1/);
+    expect(content).not.toMatch(/vllm\.entrypoints\.openai\.api_server[\s\S]*--host 0\.0\.0\.0/);
+  });
+
+  it("readiness loop validates the served model id", () => {
+    // The readiness poll must not declare success on any 200 from /v1/models;
+    // it has to confirm the response actually advertises the requested model,
+    // otherwise a stale listener on :8000 masquerades as the new process.
+    const content = fs.readFileSync(INSTALL_SH, "utf-8");
+    expect(content).toMatch(
+      /Waiting for vLLM[\s\S]*ready_models=[\s\S]*grep -Fq "\$model"[\s\S]*vLLM ready/,
+    );
+  });
+
+  it("main() aborts the install when NEMOCLAW_PROVIDER=vllm and setup fails", () => {
+    // Silently warning-and-continuing leaves onboarding pointed at a broken
+    // localhost:8000 — the exact failure mode the vLLM path is meant to fix.
+    const content = fs.readFileSync(INSTALL_SH, "utf-8");
+    expect(content).toMatch(
+      /NEMOCLAW_PROVIDER:-.*==\s*"vllm"[\s\S]*install_or_start_vllm \|\| error/,
+    );
+  });
 });
