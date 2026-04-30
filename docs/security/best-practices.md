@@ -230,7 +230,7 @@ The container mounts system directories read-only to prevent the agent from modi
 ### Agent Config Directory
 
 The `/sandbox/.openclaw` directory contains the OpenClaw gateway configuration (model routing, CORS settings, channel config).
-The current entrypoint reads the gateway auth token from OpenClaw config when present, exports it as `OPENCLAW_GATEWAY_TOKEN`, and maintains marked blocks in `/sandbox/.bashrc` and `/sandbox/.profile` so interactive sandbox sessions can reach the gateway.
+The current entrypoint reads the gateway auth token from OpenClaw config when present, exports it as `OPENCLAW_GATEWAY_TOKEN`, and writes it to `/tmp/nemoclaw-proxy-env.sh` so interactive sandbox sessions can reach the gateway through the static `/sandbox/.bashrc` and `/sandbox/.profile` source shims.
 In root mode, the gateway process still runs as the separate `gateway` user, but the token is intentionally available to sandbox shells for local gateway access.
 
 Writable agent state such as plugins, skills, hooks, and workspace metadata lives directly under `/sandbox/.openclaw`.
@@ -240,12 +240,12 @@ Operators can opt into immutability by running `nemoclaw <name> shields up`, whi
 
 - **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `700` and `openclaw.json` with mode `600`, so the agent can read and write config directly.
 - **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. After `nemoclaw <name> shields up` locks the hash root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
-- **Gateway token environment.** The gateway auth token is exported as `OPENCLAW_GATEWAY_TOKEN` and written to marked shell rc blocks for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or with Shields UP.
+- **Gateway token environment.** The gateway exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or with Shields UP.
 - **Shields UP (opt-in).** `nemoclaw <name> shields up` applies root-owned read-only permissions and best-effort immutable bits to sensitive config files, and locks writable state directories such as workspace, memory, skills, hooks, cron, agents, and extensions.
 
 | Aspect | Detail |
 |---|---|
-| Default | `/sandbox/.openclaw` is writable (`700 sandbox:sandbox`; `openclaw.json` is `600 sandbox:sandbox`). The agent can read and write config, install skills, and manage state directly. The gateway auth token is exported as `OPENCLAW_GATEWAY_TOKEN` and made available to interactive sandbox shells through marked rc-file blocks. |
+| Default | The sandbox keeps `/sandbox/.openclaw` writable (`700 sandbox:sandbox`), sets `openclaw.json` to `600 sandbox:sandbox`, lets the agent manage state directly, and has the gateway place `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. |
 | What you can change | Run `nemoclaw <name> shields up` to lock config and state directories with DAC permissions and the immutable flag where available. Run `shields down` to return to the writable default. |
 | Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
 | Recommendation | For always-on assistants handling sensitive workloads, use `shields up` to lock config after initial setup. For development workflows, the writable default is appropriate. |

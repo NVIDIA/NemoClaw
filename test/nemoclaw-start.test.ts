@@ -10,6 +10,31 @@ import { describe, it, expect } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 
+function configureGuardBlock(src: string): string {
+  const start = src.indexOf("# nemoclaw-configure-guard begin");
+  const end = src.indexOf("# nemoclaw-configure-guard end", start);
+  const endMarker = "# nemoclaw-configure-guard end";
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  return src.slice(start, end + endMarker.length);
+}
+
+function runtimeShellEnvBlock(src: string): string {
+  const start = src.indexOf("write_runtime_shell_env() {");
+  const end = src.indexOf("# cleanup_on_signal", start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  return src.slice(start, end);
+}
+
+function runtimeShellEnvShimBlock(src: string): string {
+  const start = src.indexOf("ensure_runtime_shell_env_shim() {");
+  const end = src.indexOf("# ── Legacy layout migration", start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  return src.slice(start, end);
+}
+
 describe("nemoclaw-start non-root fallback", () => {
   it("detaches gateway output from sandbox create in non-root mode", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -102,7 +127,7 @@ describe("nemoclaw-start _SANDBOX_HOME variable (#1609)", () => {
 
     // All usages must come after the definition
     const usages = [...src.matchAll(/\$\{?_SANDBOX_HOME\}?/g)];
-    expect(usages.length).toBeGreaterThanOrEqual(3);
+    expect(usages.length).toBeGreaterThanOrEqual(2);
     for (const m of usages) {
       // Skip the definition line itself
       if (m.index === defPos) continue;
@@ -110,18 +135,45 @@ describe("nemoclaw-start _SANDBOX_HOME variable (#1609)", () => {
     }
   });
 
-  it("uses _SANDBOX_HOME for rc file paths in export_gateway_token", () => {
+  it("does not rewrite rc files while exporting the gateway token", () => {
     const exportFn = src.match(/export_gateway_token\(\) \{([\s\S]*?)^\}/m);
     expect(exportFn).toBeTruthy();
-    expect(exportFn[1]).toContain("${_SANDBOX_HOME}/.bashrc");
-    expect(exportFn[1]).toContain("${_SANDBOX_HOME}/.profile");
+    expect(exportFn[1]).not.toContain("${_SANDBOX_HOME}/.bashrc");
+    expect(exportFn[1]).not.toContain("${_SANDBOX_HOME}/.profile");
+    expect(exportFn[1]).not.toContain("rewrite_rc_marker_block");
   });
 
-  it("uses _SANDBOX_HOME for rc file paths in install_configure_guard", () => {
-    const guardFn = src.match(/install_configure_guard\(\) \{([\s\S]*?)^write_auth_profile/m);
-    expect(guardFn).toBeTruthy();
-    expect(guardFn[1]).toContain("${_SANDBOX_HOME}/.bashrc");
-    expect(guardFn[1]).toContain("${_SANDBOX_HOME}/.profile");
+  it("keeps dynamic shell state in the sourced runtime env file", () => {
+    const runtimeBlock = runtimeShellEnvBlock(src);
+    expect(runtimeBlock).toContain("/tmp/nemoclaw-proxy-env.sh");
+    expect(runtimeBlock).toContain("OPENCLAW_GATEWAY_TOKEN");
+    expect(runtimeBlock).toContain("nemoclaw-configure-guard begin");
+    expect(runtimeBlock).not.toContain("${_SANDBOX_HOME}/.bashrc");
+    expect(runtimeBlock).not.toContain("${_SANDBOX_HOME}/.profile");
+  });
+
+  it("backfills the runtime env shim into stale rc files before locking them", () => {
+    const shimBlock = runtimeShellEnvShimBlock(src);
+    expect(src).toContain(
+      '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+    );
+    expect(shimBlock).toContain('"${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"');
+    expect(shimBlock).toContain('grep -qxF "$_RUNTIME_SHELL_ENV_SHIM" "$rc_file"');
+    expect(shimBlock).toContain('chown root:root "$rc_file"');
+    expect(shimBlock).toContain("printf '\\n%s\\n%s\\n'");
+
+    for (const block of [
+      src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/)?.[1],
+      src.slice(src.indexOf("# ── Root path")),
+    ]) {
+      expect(block).toBeTruthy();
+      const writePos = block!.indexOf("write_runtime_shell_env");
+      const ensurePos = block!.indexOf("ensure_runtime_shell_env_shim");
+      const lockPos = block!.indexOf('lock_rc_files "$_SANDBOX_HOME"');
+      expect(writePos).toBeGreaterThan(-1);
+      expect(ensurePos).toBeGreaterThan(writePos);
+      expect(lockPos).toBeGreaterThan(ensurePos);
+    }
   });
 });
 
@@ -156,41 +208,17 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(unsetPos).toBeLessThan(returnPos);
   });
 
-  it("shell-escapes the token before embedding in rc snippet", () => {
-    const exportFn = src.match(/export_gateway_token\(\) \{([\s\S]*?)^\}/m);
-    expect(exportFn).toBeTruthy();
-    const body = exportFn[1];
-    // Must use single quotes around the escaped token value
-    expect(body).toContain("escaped_token");
-    expect(body).toMatch(/export OPENCLAW_GATEWAY_TOKEN='\$\{escaped_token\}'/);
+  it("shell-escapes the token before embedding it in proxy-env.sh", () => {
+    const runtimeBlock = runtimeShellEnvBlock(src);
+    expect(runtimeBlock).toContain("_escaped_gateway_token");
+    expect(runtimeBlock).toContain("sed \"s/'/'\\\\\\\\''/g\"");
+    expect(runtimeBlock).toMatch(/export OPENCLAW_GATEWAY_TOKEN='%s'/);
   });
 
-  it("rewrites rc marker blocks through a symlink-safe temp rename helper", () => {
-    const helperFn = src.match(/rewrite_rc_marker_block\(\) \{([\s\S]*?)^}/m);
-    expect(helperFn).toBeTruthy();
-    expect(helperFn![1]).toContain('[ -L "$rc_file" ]');
-    expect(helperFn![1]).toContain('mktemp "${dir}/.${base}.tmp.XXXXXX"');
-    expect(helperFn![1]).toContain('chown root:root "$tmp"');
-    expect(helperFn![1]).toContain('mv -f "$tmp" "$rc_file"');
-
-    const exportFn = src.match(/export_gateway_token\(\) \{([\s\S]*?)^}/m);
-    expect(exportFn).toBeTruthy();
-    expect(exportFn![1]).toContain("rewrite_rc_marker_block");
-    expect(exportFn![1]).not.toContain('>"$rc_file"');
-    expect(exportFn![1]).not.toContain('>>"$rc_file"');
-  });
-
-  it("fails closed on rc marker rewrite failures in root mode", () => {
-    const helperFn = src.match(/rewrite_rc_marker_block_or_fail_in_root\(\) \{([\s\S]*?)^}/m);
-    expect(helperFn).toBeTruthy();
-    expect(helperFn![1]).toContain('[ "$(id -u)" -eq 0 ]');
-    expect(helperFn![1]).toContain("return 1");
-    expect(src).not.toContain(
-      'rewrite_rc_marker_block "$rc_file" "$marker_begin" "$marker_end" "$snippet" || true',
-    );
-    expect(src).not.toContain(
-      'rewrite_rc_marker_block "$rc_file" "$marker_begin" "$marker_end" "" || true',
-    );
+  it("does not mutate .bashrc or .profile for token propagation", () => {
+    expect(src).not.toContain("rewrite_rc_marker_block");
+    expect(src).not.toContain(".bashrc.tmp");
+    expect(src).not.toContain("nemoclaw-gateway-token begin");
   });
 
   it("calls export_gateway_token in both root and non-root paths", () => {
@@ -203,49 +231,41 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
 describe("nemoclaw-start configure guard (#1114)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("defines install_configure_guard function", () => {
-    expect(src).toMatch(/install_configure_guard\(\) \{/);
+  it("emits configure guard through proxy-env.sh", () => {
+    const runtimeBlock = runtimeShellEnvBlock(src);
+    expect(runtimeBlock).toContain("nemoclaw-configure-guard begin");
+    expect(runtimeBlock).toContain("emit_sandbox_sourced_file");
   });
 
   it("intercepts openclaw configure with an actionable error", () => {
-    // The guard installs a heredoc containing a shell function — extract the
-    // full block between the function definition and the next top-level function.
-    const guardBlock = src.match(/install_configure_guard\(\) \{([\s\S]*?)^write_auth_profile/m);
-    expect(guardBlock).toBeTruthy();
-    const body = guardBlock[1];
+    const body = configureGuardBlock(src);
     expect(body).toContain("configure)");
     expect(body).toContain("nemoclaw onboard --resume");
     expect(body).toContain("return 1");
   });
 
   it("passes non-configure subcommands through to the real binary", () => {
-    const guardBlock = src.match(/install_configure_guard\(\) \{([\s\S]*?)^write_auth_profile/m);
-    expect(guardBlock).toBeTruthy();
-    expect(guardBlock[1]).toContain('command openclaw "$@"');
+    expect(configureGuardBlock(src)).toContain('command openclaw "$@"');
   });
 
-  it("uses idempotent marker blocks", () => {
-    const guardBlock = src.match(/install_configure_guard\(\) \{([\s\S]*?)^write_auth_profile/m);
-    expect(guardBlock).toBeTruthy();
-    const body = guardBlock[1];
+  it("keeps marker comments while relying on proxy-env replacement for idempotence", () => {
+    const body = configureGuardBlock(src);
     expect(body).toContain("nemoclaw-configure-guard begin");
     expect(body).toContain("nemoclaw-configure-guard end");
-    // Delegates marker replacement to the shared symlink-safe helper.
-    expect(body).toContain("rewrite_rc_marker_block");
+    expect(runtimeShellEnvBlock(src)).toContain('emit_sandbox_sourced_file "$_PROXY_ENV_FILE"');
   });
 
-  it("calls install_configure_guard in both root and non-root paths", () => {
-    const calls = src.match(/install_configure_guard/g) || [];
+  it("writes runtime shell env in both root and non-root paths", () => {
+    const calls = src.match(/write_runtime_shell_env/g) || [];
     // definition + 2 call sites
     expect(calls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("uses the symlink-safe rc marker helper for configure guard writes", () => {
-    const guardBlock = src.match(/install_configure_guard\(\) \{([\s\S]*?)^write_auth_profile/m);
-    expect(guardBlock).toBeTruthy();
-    expect(guardBlock![1]).toContain("rewrite_rc_marker_block");
-    expect(guardBlock![1]).not.toContain('>"$rc_file"');
-    expect(guardBlock![1]).not.toContain('>>"$rc_file"');
+  it("does not write configure guard into rc files", () => {
+    const runtimeBlock = runtimeShellEnvBlock(src);
+    expect(runtimeBlock).not.toContain('>"$rc_file"');
+    expect(runtimeBlock).not.toContain('>>"$rc_file"');
+    expect(src).not.toContain("install_configure_guard");
   });
 });
 
@@ -253,9 +273,7 @@ describe("nemoclaw-start configure guard blocks --local (#2016)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("blocks openclaw agent --local with a hard error and return 1", () => {
-    const guardBlock = src.match(/install_configure_guard\(\) \{([\s\S]*?)^write_auth_profile/m);
-    expect(guardBlock).toBeTruthy();
-    const body = guardBlock[1];
+    const body = configureGuardBlock(src);
     // Must contain the agent) case that checks for --local
     expect(body).toContain("agent)");
     expect(body).toContain('"--local"');
@@ -267,15 +285,11 @@ describe("nemoclaw-start configure guard blocks --local (#2016)", () => {
   });
 
   it("suggests the correct alternative command without --local", () => {
-    const guardBlock = src.match(/install_configure_guard\(\) \{([\s\S]*?)^write_auth_profile/m);
-    expect(guardBlock).toBeTruthy();
-    expect(guardBlock[1]).toContain("openclaw agent --agent main");
+    expect(configureGuardBlock(src)).toContain("openclaw agent --agent main");
   });
 
   it("allows openclaw agent without --local to pass through", () => {
-    const guardBlock = src.match(/install_configure_guard\(\) \{([\s\S]*?)^write_auth_profile/m);
-    expect(guardBlock).toBeTruthy();
-    const body = guardBlock[1];
+    const body = configureGuardBlock(src);
     // The agent) case only returns 1 inside the --local check.
     // After the for loop, execution falls through to `command openclaw "$@"`.
     expect(body).toContain('command openclaw "$@"');

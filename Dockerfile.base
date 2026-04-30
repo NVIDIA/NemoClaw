@@ -127,7 +127,8 @@ RUN printf '%s\n' \
         '# Source runtime proxy config' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
         > /sandbox/.profile \
-    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile
+    && chown root:root /sandbox/.bashrc /sandbox/.profile \
+    && chmod 444 /sandbox/.bashrc /sandbox/.profile
 
 # Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests.
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds

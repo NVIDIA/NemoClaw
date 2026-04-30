@@ -315,9 +315,9 @@ verify_config_integrity_if_locked() {
 }
 
 # ── RC file locking ──────────────────────────────────────────────
-# Lock .bashrc and .profile to 444 after all mutations (proxy snippets,
-# configure guard, gateway token export) are complete. This prevents the
-# sandbox user from injecting code that runs on every `nemoclaw connect`.
+# Lock .bashrc and .profile to 444 after startup has written dynamic shell
+# state to /tmp/nemoclaw-proxy-env.sh. This prevents the sandbox user from
+# injecting code that runs on every `nemoclaw connect`.
 #
 # SECURITY: This fixes the Hermes vulnerability where .bashrc/.profile
 # were never locked (unlike OpenClaw which had this via #2125).

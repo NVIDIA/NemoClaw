@@ -816,185 +816,15 @@ except Exception:
 PYTOKEN
 }
 
-rewrite_rc_marker_block() {
-  local rc_file="$1"
-  local marker_begin="$2"
-  local marker_end="$3"
-  local snippet="${4:-}"
-  local dir base tmp
-
-  [ -e "$rc_file" ] || return 0
-  if [ -L "$rc_file" ] || [ ! -f "$rc_file" ]; then
-    echo "[SECURITY] refusing unsafe rc file: $rc_file" >&2
-    return 1
-  fi
-
-  dir="$(dirname "$rc_file")"
-  base="$(basename "$rc_file")"
-  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
-
-  awk -v b="$marker_begin" -v e="$marker_end" \
-    '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
-    rm -f "$tmp"
-    return 1
-  }
-
-  if [ -n "$snippet" ]; then
-    printf '%s\n' "$snippet" >>"$tmp" || {
-      rm -f "$tmp"
-      return 1
-    }
-  fi
-
-  if [ "$(id -u)" -eq 0 ] && ! chown root:root "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  chmod 644 "$tmp" 2>/dev/null || true
-
-  if [ -L "$rc_file" ]; then
-    echo "[SECURITY] refusing symlinked rc file during replace: $rc_file" >&2
-    rm -f "$tmp"
-    return 1
-  fi
-  mv -f "$tmp" "$rc_file" 2>/dev/null || {
-    rm -f "$tmp"
-    return 1
-  }
-}
-
-rewrite_rc_marker_block_or_fail_in_root() {
-  local rc_file="$1"
-  if rewrite_rc_marker_block "$@"; then
-    return 0
-  fi
-  if [ "$(id -u)" -eq 0 ]; then
-    return 1
-  fi
-  echo "[setup] could not update rc file ${rc_file}; continuing in non-root mode" >&2
-  return 0
-}
-
 export_gateway_token() {
   local token
   token="$(_read_gateway_token)"
-  local marker_begin="# nemoclaw-gateway-token begin"
-  local marker_end="# nemoclaw-gateway-token end"
 
   if [ -z "$token" ]; then
-    # Remove any stale marker blocks from rc files so revoked/old tokens
-    # are not re-exported in later interactive sessions.
     unset OPENCLAW_GATEWAY_TOKEN
-    for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-      if [ -f "$rc_file" ] && ! [ -L "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-        rewrite_rc_marker_block_or_fail_in_root "$rc_file" "$marker_begin" "$marker_end" ""
-      fi
-    done
     return
   fi
   export OPENCLAW_GATEWAY_TOKEN="$token"
-
-  # Persist to .bashrc/.profile so interactive sessions (openshell sandbox
-  # connect) also see the token — same pattern as the proxy config above.
-  # Shell-escape the token so quotes/dollars/backticks cannot break the
-  # sourced snippet or allow code injection.
-  local escaped_token
-  escaped_token="$(printf '%s' "$token" | sed "s/'/'\\\\''/g")"
-  local snippet
-  snippet="${marker_begin}
-export OPENCLAW_GATEWAY_TOKEN='${escaped_token}'
-${marker_end}"
-
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    [ -f "$rc_file" ] || continue
-    # Landlock may still block writes in non-root mode; root mode fails closed
-    # so detected rc-file trust-boundary violations cannot be booted through.
-    rewrite_rc_marker_block_or_fail_in_root "$rc_file" "$marker_begin" "$marker_end" "$snippet"
-  done
-}
-
-install_configure_guard() {
-  # Installs a shell function that intercepts `openclaw configure` inside the
-  # sandbox. Config changes made inside the sandbox do not persist across
-  # rebuilds. Instead of letting the user make ephemeral changes, guide
-  # them to the correct host-side workflow.
-  local marker_begin="# nemoclaw-configure-guard begin"
-  local marker_end="# nemoclaw-configure-guard end"
-  local snippet
-  read -r -d '' snippet <<'GUARD' || true
-# nemoclaw-configure-guard begin
-openclaw() {
-  case "$1" in
-    configure)
-      echo "Error: 'openclaw configure' cannot modify config inside the sandbox." >&2
-      echo "Changes inside the sandbox do not persist across rebuilds." >&2
-      echo "" >&2
-      echo "To change your configuration, exit the sandbox and run:" >&2
-      echo "  nemoclaw onboard --resume" >&2
-      echo "" >&2
-      echo "This rebuilds the sandbox with your updated settings." >&2
-      return 1
-      ;;
-    config)
-      case "$2" in
-        set | unset)
-          echo "Error: 'openclaw config $2' cannot modify config inside the sandbox." >&2
-          echo "Changes inside the sandbox do not persist across rebuilds." >&2
-          echo "" >&2
-          echo "To change your configuration, exit the sandbox and run:" >&2
-          echo "  nemoclaw onboard --resume" >&2
-          echo "" >&2
-          echo "This rebuilds the sandbox with your updated settings." >&2
-          return 1
-          ;;
-      esac
-      ;;
-    channels)
-      case "$2" in
-        list | "" | -h | --help) ;;
-        *)
-          echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
-          echo "Changes inside the sandbox do not persist across rebuilds." >&2
-          echo "" >&2
-          echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack>" >&2
-          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack>" >&2
-          echo "" >&2
-          echo "These stage the change and rebuild the sandbox to apply it." >&2
-          return 1
-          ;;
-      esac
-      ;;
-    agent)
-      # Block --local inside sandbox — it bypasses gateway protections and can
-      # crash the container's main process, bricking the sandbox. Ref: #1632, #2016
-      local _arg
-      for _arg in "$@"; do
-        if [ "$_arg" = "--local" ]; then
-          echo "Error: 'openclaw agent --local' is not supported inside NemoClaw sandboxes." >&2
-          echo "The --local flag bypasses the gateway's security protections (secret scanning," >&2
-          echo "network policy, inference auth) and can crash the sandbox." >&2
-          echo "" >&2
-          echo "Instead, run without --local to use the gateway's managed inference route:" >&2
-          echo "  openclaw agent --agent main -m \"hello\"" >&2
-          return 1
-        fi
-      done
-      ;;
-  esac
-  command openclaw "$@"
-}
-# nemoclaw-configure-guard end
-GUARD
-
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    [ -f "$rc_file" ] || continue
-    # Try to write the guard snippet. Landlock may block writes in non-root
-    # mode, but root mode fails closed on unsafe rc files.
-    rewrite_rc_marker_block_or_fail_in_root "$rc_file" "$marker_begin" "$marker_end" "$snippet"
-  done
-  # Best-effort lock — Landlock may already enforce read-only.
-  lock_rc_files "$_SANDBOX_HOME"
 }
 
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
@@ -1810,8 +1640,8 @@ fi
 # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
 # ~/.profile or /etc/profile.d/*.
 #
-# We write the proxy config to /tmp/nemoclaw-proxy-env.sh. The pre-built
-# .bashrc and .profile source this file automatically.
+# We write dynamic connect-session config to /tmp/nemoclaw-proxy-env.sh. The
+# pre-built .bashrc and .profile source this file automatically.
 #
 # SECURITY: The proxy-env file is written via emit_sandbox_sourced_file()
 # which ensures root:root 444 in root mode (sandbox cannot modify) and
@@ -1822,9 +1652,13 @@ fi
 # Both uppercase and lowercase variants are required: Node.js undici prefers
 # lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
 # curl/wget use uppercase.  gRPC C-core uses lowercase.
-_PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
-{
-  cat <<PROXYEOF
+_RUNTIME_SHELL_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"
+
+write_runtime_shell_env() {
+  _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+  {
+    cat <<PROXYEOF
 # Proxy configuration (overrides narrow OpenShell defaults on connect)
 export HTTP_PROXY="$_PROXY_URL"
 export HTTPS_PROXY="$_PROXY_URL"
@@ -1833,43 +1667,172 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
-  # Global sandbox safety net for connect sessions — must be first.
-  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""
-  # HTTP library double-proxy fix: also expose NODE_OPTIONS in connect
-  # sessions so interactive shells and user commands started via
-  # `openshell sandbox connect` benefit from the preload. (NemoClaw#2109)
-  if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT\""
-  fi
-  # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
-  if [ -f "$_WS_FIX_SCRIPT" ]; then
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
-  fi
-  # Git TLS CA bundle for connect sessions (NemoClaw#2270)
-  if [ -n "${GIT_SSL_CAINFO:-}" ]; then
-    printf 'export GIT_SSL_CAINFO=%q\n' "$GIT_SSL_CAINFO"
-  fi
-  # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
-  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
-  # ciao network guard for connect sessions.
-  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
-  # Slack channel guard for connect sessions. The guard file is installed later
-  # by install_slack_channel_guard() — conditional on the file existing at
-  # source-time so connect sessions started before Slack is configured are safe.
-  echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
-  # Slack token rewriter for connect sessions — same conditional pattern.
-  echo "[ -f \"$_SLACK_REWRITER_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_REWRITER_SCRIPT\""
-  # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
-  echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
-  for _redir in "${_TOOL_REDIRECTS[@]}"; do
-    echo "export ${_redir?}"
-  done
-} | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
+    if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
+      _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
+      printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
+    fi
+    cat <<'GUARDENVEOF'
+# nemoclaw-configure-guard begin
+openclaw() {
+  case "$1" in
+    configure)
+      echo "Error: 'openclaw configure' cannot modify config inside the sandbox." >&2
+      echo "Changes inside the sandbox do not persist across rebuilds." >&2
+      echo "" >&2
+      echo "To change your configuration, exit the sandbox and run:" >&2
+      echo "  nemoclaw onboard --resume" >&2
+      echo "" >&2
+      echo "This rebuilds the sandbox with your updated settings." >&2
+      return 1
+      ;;
+    config)
+      case "$2" in
+        set | unset)
+          echo "Error: 'openclaw config $2' cannot modify config inside the sandbox." >&2
+          echo "Changes inside the sandbox do not persist across rebuilds." >&2
+          echo "" >&2
+          echo "To change your configuration, exit the sandbox and run:" >&2
+          echo "  nemoclaw onboard --resume" >&2
+          echo "" >&2
+          echo "This rebuilds the sandbox with your updated settings." >&2
+          return 1
+          ;;
+      esac
+      ;;
+    channels)
+      case "$2" in
+        list | "" | -h | --help) ;;
+        *)
+          echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
+          echo "Changes inside the sandbox do not persist across rebuilds." >&2
+          echo "" >&2
+          echo "To add or remove messaging channels, exit the sandbox and run:" >&2
+          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack>" >&2
+          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack>" >&2
+          echo "" >&2
+          echo "These stage the change and rebuild the sandbox to apply it." >&2
+          return 1
+          ;;
+      esac
+      ;;
+    agent)
+      # Block --local inside sandbox: it bypasses gateway protections and can
+      # crash the container's main process, bricking the sandbox. Ref: #1632, #2016
+      local _arg
+      for _arg in "$@"; do
+        if [ "$_arg" = "--local" ]; then
+          echo "Error: 'openclaw agent --local' is not supported inside NemoClaw sandboxes." >&2
+          echo "The --local flag bypasses the gateway's security protections (secret scanning," >&2
+          echo "network policy, inference auth) and can crash the sandbox." >&2
+          echo "" >&2
+          echo "Instead, run without --local to use the gateway's managed inference route:" >&2
+          echo "  openclaw agent --agent main -m \"hello\"" >&2
+          return 1
+        fi
+      done
+      ;;
+  esac
+  command openclaw "$@"
+}
+# nemoclaw-configure-guard end
+GUARDENVEOF
+    # Global sandbox safety net for connect sessions — must be first.
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""
+    # HTTP library double-proxy fix: also expose NODE_OPTIONS in connect
+    # sessions so interactive shells and user commands started via
+    # `openshell sandbox connect` benefit from the preload. (NemoClaw#2109)
+    if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+      echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT\""
+    fi
+    # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
+    if [ -f "$_WS_FIX_SCRIPT" ]; then
+      echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
+    fi
+    # Git TLS CA bundle for connect sessions (NemoClaw#2270)
+    if [ -n "${GIT_SSL_CAINFO:-}" ]; then
+      printf 'export GIT_SSL_CAINFO=%q\n' "$GIT_SSL_CAINFO"
+    fi
+    # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
+    # ciao network guard for connect sessions.
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
+    # Slack channel guard for connect sessions. The guard file is installed later
+    # by install_slack_channel_guard() — conditional on the file existing at
+    # source-time so connect sessions started before Slack is configured are safe.
+    echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
+    # Slack token rewriter for connect sessions — same conditional pattern.
+    echo "[ -f \"$_SLACK_REWRITER_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_REWRITER_SCRIPT\""
+    # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
+    echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
+    for _redir in "${_TOOL_REDIRECTS[@]}"; do
+      echo "export ${_redir?}"
+    done
+  } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
+}
 
 # cleanup_on_signal is provided by sandbox-init.sh. It reads
 # SANDBOX_CHILD_PIDS (array of all PIDs) and SANDBOX_WAIT_PID (the
 # primary process whose exit status is returned).
 # Each code path below sets these before registering the trap.
+
+# Stale base images may have rc files from before the runtime env source shim
+# was baked into Dockerfile.base. Backfill the static shim before lock_rc_files
+# makes those files read-only so connect sessions still receive proxy config,
+# gateway auth, and command guards through /tmp/nemoclaw-proxy-env.sh.
+ensure_runtime_shell_env_shim() {
+  local failed=0
+  local rc_file
+
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    if [ -L "$rc_file" ]; then
+      echo "[SECURITY] refusing symlinked rc file: $rc_file" >&2
+      failed=1
+      continue
+    fi
+    if [ -e "$rc_file" ] && [ ! -f "$rc_file" ]; then
+      echo "[SECURITY] refusing non-regular rc file: $rc_file" >&2
+      failed=1
+      continue
+    fi
+    if [ -f "$rc_file" ] && grep -qxF "$_RUNTIME_SHELL_ENV_SHIM" "$rc_file" 2>/dev/null; then
+      continue
+    fi
+
+    if [ "$(id -u)" -eq 0 ] && [ -f "$rc_file" ]; then
+      if ! chown root:root "$rc_file" 2>/dev/null; then
+        echo "[SECURITY] could not take ownership of $rc_file before shim backfill" >&2
+        failed=1
+        continue
+      fi
+      if ! chmod 644 "$rc_file" 2>/dev/null; then
+        echo "[SECURITY] could not make $rc_file writable before shim backfill" >&2
+        failed=1
+        continue
+      fi
+    elif [ -f "$rc_file" ]; then
+      chmod u+w "$rc_file" 2>/dev/null || true
+    fi
+
+    if [ -e "$rc_file" ]; then
+      if ! printf '\n%s\n%s\n' '# Source runtime proxy config' "$_RUNTIME_SHELL_ENV_SHIM" >>"$rc_file"; then
+        echo "[SECURITY] could not backfill runtime env shim into $rc_file" >&2
+        failed=1
+        continue
+      fi
+    elif ! printf '%s\n%s\n' '# Source runtime proxy config' "$_RUNTIME_SHELL_ENV_SHIM" >"$rc_file"; then
+      echo "[SECURITY] could not create $rc_file with runtime env shim" >&2
+      failed=1
+      continue
+    fi
+
+    if ! grep -qxF "$_RUNTIME_SHELL_ENV_SHIM" "$rc_file" 2>/dev/null; then
+      echo "[SECURITY] runtime env shim missing after backfill: $rc_file" >&2
+      failed=1
+    fi
+  done
+
+  return "$failed"
+}
 
 # ── Legacy layout migration ──────────────────────────────────────
 # Sandboxes created with the OLD base image have:
@@ -2127,7 +2090,9 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_model_override
   apply_cors_override
   export_gateway_token
-  install_configure_guard
+  write_runtime_shell_env
+  ensure_runtime_shell_env_shim
+  lock_rc_files "$_SANDBOX_HOME"
   configure_messaging_channels
   install_slack_token_rewriter
   install_slack_channel_guard
@@ -2212,7 +2177,9 @@ verify_config_integrity_if_locked /sandbox/.openclaw
 apply_model_override
 apply_cors_override
 export_gateway_token
-install_configure_guard
+write_runtime_shell_env
+ensure_runtime_shell_env_shim
+lock_rc_files "$_SANDBOX_HOME"
 
 # Inject messaging channel config if provider tokens are present.
 # Must run AFTER integrity check (to detect build-time tampering) and
