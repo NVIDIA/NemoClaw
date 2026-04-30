@@ -8,6 +8,7 @@
 
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
 
+# hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 # Harden: remove unnecessary build tools and network probes
