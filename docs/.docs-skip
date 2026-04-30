@@ -41,7 +41,6 @@ skip-features:
 
 skip-terms:
   - "permissive mode"                    # do not reference this concept in docs
-  - "Hermes"
   - "shields down"                       # experimental shields command, not advertised
   - "shields up"                         # experimental shields command, not advertised
   - "shields status"                     # experimental shields command, not advertised

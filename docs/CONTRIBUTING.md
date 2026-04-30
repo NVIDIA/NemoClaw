@@ -39,7 +39,7 @@ The current generated skills and their source pages are:
 | Skill | Source docs |
 |---|---|
 | `nemoclaw-user-overview` | `docs/about/overview.md`, `docs/about/ecosystem.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
-| `nemoclaw-user-get-started` | `docs/get-started/quickstart.md` |
+| `nemoclaw-user-get-started` | `docs/get-started/quickstart.md`, `docs/get-started/quickstart-hermes.md` |
 | `nemoclaw-user-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md` |
 | `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
 | `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |

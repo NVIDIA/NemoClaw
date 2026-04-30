@@ -1,7 +1,7 @@
 ---
 title:
-  page: "NemoClaw Quickstart: Install, Launch, and Run Your First Agent"
-  nav: "Quickstart"
+  page: "NemoClaw Quickstart with OpenClaw"
+  nav: "Quickstart with OpenClaw"
 description:
   main: "Install NemoClaw, launch a sandbox, and run your first agent prompt."
   agent: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time."
@@ -20,7 +20,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Quickstart
+# NemoClaw Quickstart with OpenClaw
 
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
 
@@ -52,8 +52,9 @@ If you export `NEMOCLAW_DISABLE_DEVICE_AUTH` after onboarding finishes, it has n
 
 ### Respond to the Onboard Wizard
 
-After the installer launches `nemoclaw onboard`, the wizard walks you through a sandbox name, an inference provider, and a network policy preset.
+After the installer launches `nemoclaw onboard`, the wizard runs preflight checks, starts or reuses the OpenShell gateway, and asks for an inference provider, sandbox name, optional web search, optional messaging channels, and network policy presets.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+If existing sandbox sessions are running, the installer warns before onboarding because the setup can rebuild or upgrade sandboxes after the new sandbox launches.
 
 The inference provider prompt presents a numbered list.
 
@@ -64,12 +65,13 @@ The inference provider prompt presents a numbered list.
   4) Anthropic
   5) Other Anthropic-compatible endpoint
   6) Google Gemini
-  7) Local Ollama        (only shown when Ollama is detected on the host)
+  7) Local Ollama (localhost:11434)
   Choose [1]:
 ```
 
 Pick the option that matches where you want inference traffic to go, then expand the matching helper below for the follow-up prompts and the API key environment variable to set.
 For the full list of providers and validation behavior, refer to [Inference Options](../inference/inference-options.md).
+Local Ollama appears only when NemoClaw detects Ollama on the host.
 
 :::{tip}
 Export the API key before launching the installer so the wizard does not have to ask for it.
@@ -123,9 +125,12 @@ Respond to the wizard as follows.
 1. At the `Choose [1]:` prompt, type `3` to select **Other OpenAI-compatible endpoint**.
 2. At the `OpenAI-compatible base URL` prompt, enter the provider's base URL. Find the exact value in your provider's API documentation. NemoClaw appends `/v1` automatically, so leave that suffix off.
 3. At the `COMPATIBLE_API_KEY:` prompt, paste your key if it is not already exported.
-4. At the `Other OpenAI-compatible endpoint model []:` prompt, enter the model ID exactly as it appears in your provider's model catalog (for example, `openai/gpt-5.4` on OpenRouter).
+4. At the `Other OpenAI-compatible endpoint model []:` prompt, enter the model ID exactly as it appears in your provider's model catalog.
 
-NemoClaw sends a real inference request to validate the endpoint and model. NemoClaw forces the chat completions API for compatible endpoints because many backends advertise `/v1/responses` but mishandle the `developer` role used by the Responses API.
+For example, when you use NVIDIA's OpenAI-compatible inference endpoint, enter `https://inference-api.nvidia.com` as the base URL and the model ID your endpoint exposes, such as `openai/openai/gpt-5.5`.
+
+NemoClaw sends a real inference request to validate the endpoint and model.
+If the endpoint does not return the streaming events OpenClaw needs from the Responses API, NemoClaw falls back to the chat completions API and configures OpenClaw to use `openai-completions`.
 
 :::{tip}
 NVIDIA Nemotron models expose OpenAI-compatible APIs, so this option is the right choice for any Nemotron deployment that does not live on `build.nvidia.com`. Common examples include a self-hosted NIM container, an enterprise NVIDIA AI Enterprise gateway, or a vLLM/SGLang server running Nemotron weights. Point the base URL at your endpoint and enter the Nemotron model ID exactly as your server reports it.
@@ -207,19 +212,22 @@ For setup, refer to [Use a Local Inference Server](../inference/use-local-infere
 
 ### Review the Configuration Before the Sandbox Build
 
-After you enter the sandbox name, the wizard prints a review summary and asks for final confirmation before starting the destructive sandbox image build. For example, if you picked NVIDIA Endpoints, the summary looks like the following:
+After you enter the sandbox name, the wizard prints a review summary and asks for final confirmation before registering the provider, prompting for optional integrations, and building the sandbox image.
+For example, if you picked an OpenAI-compatible endpoint, the summary looks like the following:
 
 ```text
   ──────────────────────────────────────────────────
   Review configuration
   ──────────────────────────────────────────────────
-  Provider:      nvidia-api
-  Model:         nvidia/nemotron-3-super-120b-a12b
-  API key:       NVIDIA_API_KEY (registered with the OpenShell gateway)
+  Provider:      compatible-endpoint
+  Model:         openai/openai/gpt-5.5
+  API key:       COMPATIBLE_API_KEY (staged for OpenShell gateway registration)
   Web search:    disabled
   Messaging:     none
-  Sandbox name:  my-assistant
+  Sandbox name:  my-gpt-claw
+  Note:          Sandbox build takes ~6 minutes on this host.
   ──────────────────────────────────────────────────
+  Web search and messaging channels will be prompted next.
   Apply this configuration? [Y/n]:
 ```
 
@@ -227,18 +235,38 @@ The default is `Y`, so you can press Enter once to continue. Answer `n` to abort
 
 Non-interactive runs (`NEMOCLAW_NON_INTERACTIVE=1`) print the summary for log clarity but skip the prompt.
 
+### Configure Web Search and Messaging
+
+After you confirm the summary, NemoClaw registers the selected provider with the OpenShell gateway and sets the `inference.local` route.
+The wizard then asks whether to enable Brave Web Search.
+If you enable it, enter a Brave Search API key when prompted.
+
+The wizard also offers messaging channels such as Telegram, Discord, and Slack.
+Press a channel number to toggle it, then press Enter to continue.
+If you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
+For example, Slack bot tokens must start with `xoxb-`.
+
+### Choose Network Policy Presets
+
+After the sandbox image builds and OpenClaw starts inside the sandbox, NemoClaw asks which network policy tier to apply.
+The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search.
+Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
+
+The preset selector lets you include more destinations, such as GitHub, Jira, Slack, Telegram, or local inference.
+Press `r` to toggle a selected preset between read-only and read-write when the preset supports both modes.
+
 When the install completes, a summary confirms the running environment.
 The `Model` and provider line reflects the inference option you picked during onboarding.
-The example below shows the result if you picked NVIDIA Endpoints during onboarding.
+The example below shows the result if you picked an OpenAI-compatible endpoint during onboarding.
 
 ```text
 ──────────────────────────────────────────────────
-Sandbox      my-assistant (Landlock + seccomp + netns)
-Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
+Sandbox      my-gpt-claw (Landlock + seccomp + netns)
+Model        openai/openai/gpt-5.5 (Other OpenAI-compatible endpoint)
 ──────────────────────────────────────────────────
-Run:         nemoclaw my-assistant connect
-Status:      nemoclaw my-assistant status
-Logs:        nemoclaw my-assistant logs --follow
+Run:         nemoclaw my-gpt-claw connect
+Status:      nemoclaw my-gpt-claw status
+Logs:        nemoclaw my-gpt-claw logs --follow
 ──────────────────────────────────────────────────
 
 [INFO]  === Installation complete ===
@@ -248,30 +276,34 @@ If you picked a different option, the `Model` line shows that provider's model a
 
 ## Open the OpenClaw UI in a Browser
 
-The onboard wizard automatically starts an SSH port forward from your host's `127.0.0.1:18789` to the sandbox dashboard, then prints a tokenized URL in the install summary.
+The onboard wizard starts a background port forward to the sandbox dashboard, then prints a tokenized URL in the install summary.
+The default host port is `18789`.
+If that port is already taken, NemoClaw uses the next free dashboard port, such as `18790`, and prints that port in the final URL.
 
 ```text
 ──────────────────────────────────────────────────
 OpenClaw UI (tokenized URL; treat it like a password; save it now - it will not be printed again)
-Port 18789 must be forwarded before opening these URLs.
-Dashboard: http://127.0.0.1:18789/#token=<auth-token>
+Port 18790 must be forwarded before opening these URLs.
+Dashboard: http://127.0.0.1:18790/#token=<auth-token>
 ──────────────────────────────────────────────────
 ```
 
-Open that URL in your browser. The `#token=<auth-token>` fragment authenticates the browser to the sandbox gateway, so save the URL securely and treat it like a password. NemoClaw prints the token only once.
+Open the printed URL in your browser.
+The `#token=<auth-token>` fragment authenticates the browser to the sandbox gateway, so save the URL securely and treat it like a password.
+NemoClaw prints the token only once.
 
 ### Restart the Port Forward
 
-If the forward stopped (for example, after a reboot) or you opened a new terminal and the URL no longer responds, restart it manually.
+If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart it manually with the port from the install summary.
 
-```bash
-openshell forward start --background 18789 my-assistant
+```console
+$ openshell forward start --background <dashboard-port> my-gpt-claw
 ```
 
 To list active forwards across all sandboxes, run the following command.
 
-```bash
-openshell forward list
+```console
+$ openshell forward list
 ```
 
 ### Run Multiple Sandboxes
@@ -280,8 +312,8 @@ Each sandbox needs its own dashboard port, since `openshell forward` refuses to 
 When the default port is already held by another sandbox, `nemoclaw onboard` scans ports `18789` through `18799` and uses the next free port.
 
 ```console
-$ nemoclaw onboard                                            # first sandbox uses 18789
-$ nemoclaw onboard                                            # second sandbox uses the next free port
+$ nemoclaw onboard                                      # first sandbox uses 18789
+$ nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
 ```
 
 To choose a specific port, pass `--control-ui-port`:
@@ -446,6 +478,7 @@ For a full comparison of the two forms — what they fetch, what they trust, and
 
 ## Next Steps
 
+- [NemoHermes Quickstart](quickstart-hermes.md) to launch Hermes instead of the default OpenClaw agent.
 - [Switch inference providers](../inference/switch-inference-providers.md) to use a different model or endpoint.
 - [Approve or deny network requests](../network-policy/approve-network-requests.md) when the agent tries to reach external hosts.
 - [Customize the network policy](../network-policy/customize-network-policy.md) to pre-approve trusted domains.
