@@ -3,6 +3,8 @@
 
 import { Config as OclifConfig } from "@oclif/core";
 
+import { CLI_NAME } from "./branding";
+
 export interface OclifCommandRunOptions {
   rootDir: string;
   error?: (message?: string) => void;
@@ -40,11 +42,20 @@ export async function runRegisteredOclifCommand(
   opts: OclifCommandRunOptions,
 ): Promise<void> {
   const config = await OclifConfig.load(opts.rootDir);
+  config.bin = CLI_NAME;
   const errorLine = opts.error ?? console.error;
   const exit = opts.exit ?? ((code: number) => process.exit(code));
 
   try {
-    await config.runCommand(commandId, args);
+    const commandRef = config.findCommand(commandId, { must: true });
+    const Command = await commandRef.load();
+    await config.runHook("prerun", { argv: args, Command });
+    const CommandCtor = Command as unknown as new (
+      argv: string[],
+      config: OclifConfig,
+    ) => { _run: () => Promise<unknown> };
+    const result = await new CommandCtor(args, config)._run();
+    await config.runHook("postrun", { argv: args, Command, result });
   } catch (error) {
     const exitCode = getOclifExitCode(error);
     if (exitCode === 0) {

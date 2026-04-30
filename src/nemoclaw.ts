@@ -1524,12 +1524,16 @@ function showStatus() {
   });
 }
 
-async function listSandboxes(args: string[] = []): Promise<void> {
-  await runRegisteredOclifCommand("list", args, {
+async function runOclif(commandId: string, args: string[] = []): Promise<void> {
+  await runRegisteredOclifCommand(commandId, args, {
     rootDir: ROOT,
     error: console.error,
     exit: (code: number) => process.exit(code),
   });
+}
+
+async function listSandboxes(args: string[] = []): Promise<void> {
+  await runOclif("list", args);
 }
 
 // ── Sandbox-scoped actions ───────────────────────────────────────

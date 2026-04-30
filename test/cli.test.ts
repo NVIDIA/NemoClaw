@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
+const HERMES_CLI = path.join(import.meta.dirname, "..", "bin", "nemohermes.js");
 
 type CliRunResult = {
   code: number;
@@ -246,6 +247,19 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("list [--json]");
     expect(r.out).toContain("List all sandboxes");
+  });
+
+  it("nemohermes list --help uses alias branding", () => {
+    const out = execSync(`node "${HERMES_CLI}" list --help`, {
+      encoding: "utf-8",
+      timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+      env: {
+        ...process.env,
+        HOME: `/tmp/nemoclaw-cli-test-${Date.now()}`,
+      },
+    });
+    expect(out).toContain("$ nemohermes list [--json]");
+    expect(out).not.toContain("$ nemoclaw list [--json]");
   });
 
   it("list --json emits structured empty inventory", () => {
