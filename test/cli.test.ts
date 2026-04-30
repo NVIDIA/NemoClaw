@@ -2953,4 +2953,27 @@ describe("list shows live gateway inference", () => {
       expect(r.out).toContain("up to date");
     },
   );
+
+  it("share with no subcommand prints usage help", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha share", { HOME: home });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Usage: nemoclaw <name> share");
+    expect(r.out).toContain("mount");
+    expect(r.out).toContain("unmount");
+    expect(r.out).toContain("status");
+  });
+
+  it("share is recognized as a valid sandbox action (not 'Unknown action')", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-action-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha share mount", { HOME: home });
+
+    // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
+    expect(r.out).not.toContain("Unknown action");
+  });
 });

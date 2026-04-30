@@ -630,6 +630,57 @@ $ nemoclaw my-assistant snapshot restore 2026-04-21T07-35-55-987Z
 $ nemoclaw my-assistant snapshot restore v3 --to my-assistant-clone
 ```
 
+### `nemoclaw <name> share mount`
+
+Mount the sandbox filesystem on the host machine via SSHFS for bidirectional file sharing.
+Files edited on the host appear instantly inside the sandbox, and vice versa.
+
+```console
+$ nemoclaw my-assistant share mount
+✓ Mounted /sandbox → ~/.nemoclaw/mounts/my-assistant
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `sandbox-path` | `/sandbox` | Remote path inside the sandbox to mount |
+| `local-mount-point` | `~/.nemoclaw/mounts/<name>` | Local directory to mount onto (auto-created) |
+
+Prerequisites:
+
+- `sshfs` must be installed on the host (`sudo apt-get install sshfs` on Linux, `brew install macfuse && brew install sshfs` on macOS).
+- The sandbox must be running.
+- Sandboxes created before the `openssh-sftp-server` base image update must be rebuilt with `nemoclaw <name> rebuild`.
+
+```console
+# mount a specific path to a custom local directory
+$ nemoclaw my-assistant share mount /sandbox/workspace ~/my-workspace
+```
+
+### `nemoclaw <name> share unmount`
+
+Unmount a previously mounted sandbox filesystem.
+
+```console
+$ nemoclaw my-assistant share unmount
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `local-mount-point` | `~/.nemoclaw/mounts/<name>` | Local directory to unmount |
+
+### `nemoclaw <name> share status`
+
+Check whether the sandbox filesystem is currently mounted.
+
+```console
+$ nemoclaw my-assistant share status
+● Mounted at ~/.nemoclaw/mounts/my-assistant
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `local-mount-point` | `~/.nemoclaw/mounts/<name>` | Local directory to check |
+
 ## `openshell term`
 
 Open the OpenShell TUI to monitor sandbox activity and approve network egress requests.

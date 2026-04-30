@@ -3805,6 +3805,171 @@ async function autoCreateSandboxFromSource(
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
 }
 
+// ── Share: SSHFS-based sandbox filesystem mount ─────────────────
+
+/**
+ * Check whether a path is an active mount point by inspecting `mount` output.
+ * Works on both Linux and macOS (unlike `mountpoint` which is Linux-only).
+ */
+function isMountPoint(dir: string): boolean {
+  const result = spawnSync("mount", [], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) return false;
+  const resolved = path.resolve(dir);
+  return (result.stdout || "").split("\n").some((line: string) => line.includes(` on ${resolved} `));
+}
+
+function defaultShareMountDir(sandboxName: string): string {
+  return path.join(process.env.HOME || os.homedir(), ".nemoclaw", "mounts", sandboxName);
+}
+
+async function sandboxShare(sandboxName: string, subArgs: string[]) {
+  const subcommand = subArgs[0] || "help";
+  switch (subcommand) {
+    case "mount": {
+      const remotePath = subArgs[1] || "/sandbox";
+      const localMount = subArgs[2] || defaultShareMountDir(sandboxName);
+
+      // Preflight: check sshfs binary
+      const sshfsCheck = spawnSync("sh", ["-c", "command -v sshfs"], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (sshfsCheck.status !== 0) {
+        console.error("  sshfs is not installed.");
+        if (process.platform === "darwin") {
+          console.error("  Install with: brew install macfuse && brew install sshfs");
+        } else {
+          console.error(
+            "  Install with: sudo apt-get install sshfs  (or: sudo dnf install fuse-sshfs)",
+          );
+        }
+        process.exit(1);
+      }
+
+      // Check not already mounted
+      if (isMountPoint(localMount)) {
+        console.error(`  ${localMount} is already mounted.`);
+        console.error(`  Run 'nemoclaw ${sandboxName} share unmount' first.`);
+        process.exit(1);
+      }
+
+      // Verify sandbox is running
+      await ensureLiveSandboxOrExit(sandboxName);
+
+      // Get SSH config
+      const sshConfigResult = captureOpenshell(
+        ["sandbox", "ssh-config", sandboxName],
+        { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+      );
+      if (sshConfigResult.status !== 0) {
+        console.error("  Failed to obtain SSH configuration for the sandbox.");
+        process.exit(1);
+      }
+
+      const tmpFile = path.join(
+        os.tmpdir(),
+        `nemoclaw-sshfs-${sandboxName}-${process.pid}.conf`,
+      );
+      fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
+
+      fs.mkdirSync(localMount, { recursive: true });
+
+      try {
+        const result = spawnSync(
+          "sshfs",
+          [
+            "-F", tmpFile,
+            "-o", "sftp_server=/usr/lib/openssh/sftp-server",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "reconnect",
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=3",
+            `openshell-${sandboxName}:${remotePath}`,
+            localMount,
+          ],
+          { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 30000 },
+        );
+        if (result.status !== 0) {
+          const stderr = (result.stderr || "").trim();
+          console.error("  SSHFS mount failed.");
+          if (stderr) console.error(`  ${stderr}`);
+          if (/sftp/i.test(stderr)) {
+            console.error(
+              "  The sandbox may lack openssh-sftp-server. Rebuild with: nemoclaw " +
+                sandboxName +
+                " rebuild --yes",
+            );
+          }
+          process.exit(1);
+        }
+        console.log(`  ${G}\u2713${R} Mounted ${remotePath} \u2192 ${localMount}`);
+        console.log(`  Edit files at ${localMount} — changes appear in the sandbox instantly.`);
+      } finally {
+        try {
+          fs.unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+      }
+      break;
+    }
+
+    case "unmount": {
+      const localMount = subArgs[1] || defaultShareMountDir(sandboxName);
+
+      const unmountCmd = process.platform === "darwin" ? "umount" : "fusermount";
+      const unmountArgs =
+        process.platform === "darwin" ? [localMount] : ["-u", localMount];
+
+      const result = spawnSync(unmountCmd, unmountArgs, {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status !== 0) {
+        const stderr = (result.stderr || "").trim();
+        if (/not mounted|not found|no mount/i.test(stderr)) {
+          console.error(`  ${localMount} is not currently mounted.`);
+        } else {
+          console.error(`  Unmount failed: ${stderr || "unknown error"}`);
+          if (process.platform !== "darwin") {
+            console.error("  Try: fusermount -uz " + localMount);
+          }
+        }
+        process.exit(1);
+      }
+      console.log(`  ${G}\u2713${R} Unmounted ${localMount}`);
+      break;
+    }
+
+    case "status": {
+      const localMount = subArgs[1] || defaultShareMountDir(sandboxName);
+      if (isMountPoint(localMount)) {
+        console.log(`  ${G}\u25cf${R} Mounted at ${localMount}`);
+      } else {
+        console.log(`  \u25cb Not mounted (expected at ${localMount})`);
+      }
+      break;
+    }
+
+    default:
+      console.error("  Usage: nemoclaw <name> share <mount|unmount|status>");
+      console.error(
+        "    mount   [sandbox-path] [local-mount-point]  Mount sandbox filesystem via SSHFS",
+      );
+      console.error(
+        "    unmount [local-mount-point]                 Unmount a previously mounted filesystem",
+      );
+      console.error(
+        "    status  [local-mount-point]                 Check current mount status",
+      );
+      process.exit(1);
+  }
+}
+
 // Returns true only when the gateway Docker container is confirmed running.
 // `openshell sandbox list` reads a local registry and exits 0 even when the
 // gateway is stopped (#2673), so we probe the container directly instead.
@@ -4411,6 +4576,9 @@ const [cmd, ...args] = process.argv.slice(2);
       case "snapshot":
         await sandboxSnapshot(cmd, actionArgs);
         break;
+      case "share":
+        await sandboxShare(cmd, actionArgs);
+        break;
       case "shields": {
         const shieldsSub = actionArgs[0];
         const shieldsFlags = actionArgs.slice(1);
@@ -4547,7 +4715,7 @@ const [cmd, ...args] = process.argv.slice(2);
       default:
         console.error(`  Unknown action: ${action}`);
         console.error(
-          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, channels, gateway-token, destroy`,
+          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, share, rebuild, shields, config, channels, gateway-token, destroy`,
         );
         process.exit(1);
     }
