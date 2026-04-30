@@ -178,18 +178,18 @@ OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 
 # ── Config integrity check (delegates to shared library) ────────
-# verify_config_integrity is provided by sandbox-init.sh (parameterized).
+# verify_config_integrity_if_locked is provided by sandbox-init.sh. OpenClaw
+# mutable-default startup skips strict hash enforcement until shields-up locks
+# .config-hash into a root-owned read-only trust anchor.
 
 # ── Runtime model/provider override ──────────────────────────────
 # Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
 # allowing model or provider changes without rebuilding the sandbox image.
-# Runs AFTER integrity check (detects build-time tampering) and BEFORE
-# chattr +i (locks the file permanently). Recomputes the config hash so
-# future integrity checks pass.
+# Runs AFTER integrity check (detects build-time tampering). Recomputes
+# the config hash so future integrity checks pass.
 #
 # SECURITY: These env vars come from the host (Docker/OpenShell), not from
-# inside the sandbox. The agent cannot set them. Landlock locks the file
-# after this function runs. Same trust model as NEMOCLAW_LOCAL_INFERENCE_TIMEOUT.
+# inside the sandbox. The agent cannot set them.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/759
 
 apply_model_override() {
@@ -213,7 +213,7 @@ apply_model_override() {
   local hash_file="/sandbox/.openclaw/.config-hash"
 
   # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
-  # Symlink validation (validate_openclaw_symlinks) runs later, so guard here too.
+  # Legacy-layout migration rejects symlinked config paths before overrides; guard here too.
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing model override — config or hash path is a symlink\n' >&2
     return 1
@@ -816,6 +816,65 @@ except Exception:
 PYTOKEN
 }
 
+rewrite_rc_marker_block() {
+  local rc_file="$1"
+  local marker_begin="$2"
+  local marker_end="$3"
+  local snippet="${4:-}"
+  local dir base tmp
+
+  [ -e "$rc_file" ] || return 0
+  if [ -L "$rc_file" ] || [ ! -f "$rc_file" ]; then
+    echo "[SECURITY] refusing unsafe rc file: $rc_file" >&2
+    return 1
+  fi
+
+  dir="$(dirname "$rc_file")"
+  base="$(basename "$rc_file")"
+  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
+
+  awk -v b="$marker_begin" -v e="$marker_end" \
+    '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
+    rm -f "$tmp"
+    return 1
+  }
+
+  if [ -n "$snippet" ]; then
+    printf '%s\n' "$snippet" >>"$tmp" || {
+      rm -f "$tmp"
+      return 1
+    }
+  fi
+
+  if [ "$(id -u)" -eq 0 ] && ! chown root:root "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  chmod 644 "$tmp" 2>/dev/null || true
+
+  if [ -L "$rc_file" ]; then
+    echo "[SECURITY] refusing symlinked rc file during replace: $rc_file" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$rc_file" 2>/dev/null || {
+    rm -f "$tmp"
+    return 1
+  }
+}
+
+rewrite_rc_marker_block_or_fail_in_root() {
+  local rc_file="$1"
+  if rewrite_rc_marker_block "$@"; then
+    return 0
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    return 1
+  fi
+  echo "[setup] could not update rc file ${rc_file}; continuing in non-root mode" >&2
+  return 0
+}
+
 export_gateway_token() {
   local token
   token="$(_read_gateway_token)"
@@ -827,16 +886,8 @@ export_gateway_token() {
     # are not re-exported in later interactive sessions.
     unset OPENCLAW_GATEWAY_TOKEN
     for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-      if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-        local tmp
-        tmp="$(mktemp)" || continue
-        awk -v b="$marker_begin" -v e="$marker_end" \
-          '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
-          rm -f "$tmp"
-          continue
-        }
-        cat "$tmp" >"$rc_file" 2>/dev/null || true
-        rm -f "$tmp"
+      if [ -f "$rc_file" ] && ! [ -L "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
+        rewrite_rc_marker_block_or_fail_in_root "$rc_file" "$marker_begin" "$marker_end" ""
       fi
     done
     return
@@ -856,30 +907,17 @@ ${marker_end}"
 
   for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
     [ -f "$rc_file" ] || continue
-    # All writes use || true because Landlock may block writes even though
-    # DAC (-w) says writable (#804) — same pattern as install_configure_guard.
-    if grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-      local tmp
-      tmp="$(mktemp)" || continue
-      awk -v b="$marker_begin" -v e="$marker_end" \
-        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
-        rm -f "$tmp"
-        continue
-      }
-      printf '%s\n' "$snippet" >>"$tmp"
-      cat "$tmp" >"$rc_file" 2>/dev/null || true
-      rm -f "$tmp"
-    else
-      printf '\n%s\n' "$snippet" >>"$rc_file" 2>/dev/null || true
-    fi
+    # Landlock may still block writes in non-root mode; root mode fails closed
+    # so detected rc-file trust-boundary violations cannot be booted through.
+    rewrite_rc_marker_block_or_fail_in_root "$rc_file" "$marker_begin" "$marker_end" "$snippet"
   done
 }
 
 install_configure_guard() {
   # Installs a shell function that intercepts `openclaw configure` inside the
-  # sandbox. The config is Landlock read-only — atomic writes to
-  # /sandbox/.openclaw/ fail with EACCES. Instead of a cryptic error, guide
-  # the user to the correct host-side workflow.
+  # sandbox. Config changes made inside the sandbox do not persist across
+  # rebuilds. Instead of letting the user make ephemeral changes, guide
+  # them to the correct host-side workflow.
   local marker_begin="# nemoclaw-configure-guard begin"
   local marker_end="# nemoclaw-configure-guard end"
   local snippet
@@ -889,7 +927,7 @@ openclaw() {
   case "$1" in
     configure)
       echo "Error: 'openclaw configure' cannot modify config inside the sandbox." >&2
-      echo "The sandbox config is read-only (Landlock enforced) for security." >&2
+      echo "Changes inside the sandbox do not persist across rebuilds." >&2
       echo "" >&2
       echo "To change your configuration, exit the sandbox and run:" >&2
       echo "  nemoclaw onboard --resume" >&2
@@ -901,7 +939,7 @@ openclaw() {
       case "$2" in
         set | unset)
           echo "Error: 'openclaw config $2' cannot modify config inside the sandbox." >&2
-          echo "The sandbox config is read-only (Landlock enforced) for security." >&2
+          echo "Changes inside the sandbox do not persist across rebuilds." >&2
           echo "" >&2
           echo "To change your configuration, exit the sandbox and run:" >&2
           echo "  nemoclaw onboard --resume" >&2
@@ -916,7 +954,7 @@ openclaw() {
         list | "" | -h | --help) ;;
         *)
           echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
-          echo "The sandbox config is read-only (Landlock enforced) for security." >&2
+          echo "Changes inside the sandbox do not persist across rebuilds." >&2
           echo "" >&2
           echo "To add or remove messaging channels, exit the sandbox and run:" >&2
           echo "  nemoclaw <sandbox> channels add <telegram|discord|slack>" >&2
@@ -951,35 +989,12 @@ GUARD
 
   for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
     [ -f "$rc_file" ] || continue
-    # Try to write the guard snippet. All writes use || true because
-    # Landlock may block writes even though DAC (-w) says writable (#804).
-    if grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-      local tmp
-      tmp="$(mktemp)" || continue
-      awk -v b="$marker_begin" -v e="$marker_end" \
-        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
-        rm -f "$tmp"
-        continue
-      }
-      printf '%s\n' "$snippet" >>"$tmp"
-      cat "$tmp" >"$rc_file" 2>/dev/null || true
-      rm -f "$tmp"
-    else
-      printf '\n%s\n' "$snippet" >>"$rc_file" 2>/dev/null || true
-    fi
+    # Try to write the guard snippet. Landlock may block writes in non-root
+    # mode, but root mode fails closed on unsafe rc files.
+    rewrite_rc_marker_block_or_fail_in_root "$rc_file" "$marker_begin" "$marker_end" "$snippet"
   done
   # Best-effort lock — Landlock may already enforce read-only.
   lock_rc_files "$_SANDBOX_HOME"
-}
-
-# validate_openclaw_symlinks / harden_openclaw_symlinks — thin wrappers
-# around shared library functions for backward compatibility with callsites.
-validate_openclaw_symlinks() {
-  validate_config_symlinks /sandbox/.openclaw /sandbox/.openclaw-data
-}
-
-harden_openclaw_symlinks() {
-  harden_config_symlinks /sandbox/.openclaw
 }
 
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
@@ -1030,6 +1045,48 @@ print_dashboard_urls() {
 
   echo "[gateway] Local UI: ${local_url}" >&2
   echo "[gateway] Remote UI: ${remote_url}" >&2
+}
+
+start_persistent_gateway_log_mirror() {
+  local log_dir="/sandbox/.openclaw/logs"
+  local log_file="${log_dir}/gateway-persistent.log"
+
+  if [ -L "$log_dir" ]; then
+    echo "[SECURITY] refusing symlinked persistent log directory: $log_dir" >&2
+    return 1
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    install -d -o root -g root -m 755 "$log_dir" 2>/dev/null || return 1
+  else
+    mkdir -p "$log_dir" 2>/dev/null || return 1
+    chmod 755 "$log_dir" 2>/dev/null || true
+  fi
+
+  if [ -L "$log_file" ] || { [ -e "$log_file" ] && [ ! -f "$log_file" ]; }; then
+    echo "[SECURITY] refusing unsafe persistent log path: $log_file" >&2
+    return 1
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    if [ ! -e "$log_file" ]; then
+      install -o root -g root -m 644 /dev/null "$log_file" 2>/dev/null || return 1
+    else
+      chown root:root "$log_file" 2>/dev/null || return 1
+      chmod 644 "$log_file" 2>/dev/null || return 1
+    fi
+  else
+    touch "$log_file" 2>/dev/null || return 1
+    chmod 644 "$log_file" 2>/dev/null || true
+  fi
+
+  if [ -L "$log_file" ] || [ ! -f "$log_file" ]; then
+    echo "[SECURITY] refusing unsafe persistent log path after create: $log_file" >&2
+    return 1
+  fi
+
+  { tail -n +1 -F /tmp/gateway.log 2>/dev/null >>"$log_file"; } &
+  GATEWAY_LOG_PERSIST_PID=$!
 }
 
 start_auto_pair() {
@@ -1753,9 +1810,8 @@ fi
 # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
 # ~/.profile or /etc/profile.d/*.
 #
-# The /sandbox home directory is Landlock read-only (#804), so we write the proxy
-# config to /tmp/nemoclaw-proxy-env.sh. The pre-built .bashrc and .profile
-# source this file automatically.
+# We write the proxy config to /tmp/nemoclaw-proxy-env.sh. The pre-built
+# .bashrc and .profile source this file automatically.
 #
 # SECURITY: The proxy-env file is written via emit_sandbox_sourced_file()
 # which ensures root:root 444 in root mode (sandbox cannot modify) and
@@ -1814,10 +1870,242 @@ PROXYEOF
 # SANDBOX_CHILD_PIDS (array of all PIDs) and SANDBOX_WAIT_PID (the
 # primary process whose exit status is returned).
 # Each code path below sets these before registering the trap.
+
+# ── Legacy layout migration ──────────────────────────────────────
+# Sandboxes created with the OLD base image have:
+#   .openclaw/ containing symlinks → .openclaw-data/<subdir>
+#   .openclaw-data/ containing real state data
+# Migrate to the new layout: real data lives directly in .openclaw/.
+# Idempotent: no-op if .openclaw-data doesn't exist.
+#
+# SECURITY (NC-2227-01): Guard against agent-planted data dirs.
+# Only migrate if (a) we are running as root (the agent cannot call
+# this path), (b) the data directory is NOT agent-writable (root-owned),
+# and (c) a migration-complete sentinel does not already exist.
+# After migration, reapply shields-up ownership if shields were active.
+path_has_immutable_bit() {
+  local target="$1"
+  command -v lsattr >/dev/null 2>&1 || return 1
+  [ -e "$target" ] || [ -L "$target" ] || return 1
+  lsattr -d "$target" 2>/dev/null | awk '{print $1}' | grep -q 'i'
+}
+
+ensure_mutable_for_migration() {
+  local target="$1" label="$2"
+  if ! path_has_immutable_bit "$target"; then
+    return 0
+  fi
+  if command -v chattr >/dev/null 2>&1 && chattr -i "$target" 2>/dev/null; then
+    return 0
+  fi
+  echo "[SECURITY] ${label}: ${target} is immutable; run 'nemoclaw <sandbox> shields down' before migration" >&2
+  return 1
+}
+
+restore_immutable_if_possible() {
+  command -v chattr >/dev/null 2>&1 || return 0
+  local target
+  for target in "$@"; do
+    [ -e "$target" ] || [ -L "$target" ] || continue
+    [ -L "$target" ] && continue
+    chattr +i "$target" 2>/dev/null || true
+  done
+}
+
+chown_tree_no_symlink_follow() {
+  local owner="$1" target="$2"
+  [ -d "$target" ] || return 0
+  find -P "$target" \( -type d -o -type f \) -exec chown "$owner" {} + 2>/dev/null || true
+}
+
+legacy_symlinks_exist() {
+  local config_dir="$1" data_dir="$2"
+  local data_real entry raw_target resolved_target
+  data_real="$(readlink -f "$data_dir" 2>/dev/null || echo "$data_dir")"
+  for entry in "$config_dir"/.[!.]* "$config_dir"/..?* "$config_dir"/*; do
+    [ -L "$entry" ] || continue
+    raw_target="$(readlink "$entry" 2>/dev/null || true)"
+    resolved_target="$(readlink -f "$entry" 2>/dev/null || true)"
+    case "$raw_target" in
+      "$data_real"/* | "$data_dir"/*) return 0 ;;
+    esac
+    case "$resolved_target" in
+      "$data_real"/* | "$data_dir"/*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+assert_no_legacy_layout() {
+  local config_dir="$1" data_dir="$2" label="$3"
+  local data_real entry raw_target resolved_target
+  if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then
+    echo "[SECURITY] ${label}: legacy data dir still exists after migration: ${data_dir}" >&2
+    return 1
+  fi
+  data_real="$(readlink -f "$data_dir" 2>/dev/null || echo "$data_dir")"
+  for entry in "$config_dir"/.[!.]* "$config_dir"/..?* "$config_dir"/*; do
+    [ -L "$entry" ] || continue
+    raw_target="$(readlink "$entry" 2>/dev/null || true)"
+    resolved_target="$(readlink -f "$entry" 2>/dev/null || true)"
+    case "$raw_target" in
+      "$data_real"/* | "$data_dir"/*)
+        echo "[SECURITY] ${label}: legacy symlink remains after migration: ${entry} -> ${raw_target}" >&2
+        return 1
+        ;;
+    esac
+    case "$resolved_target" in
+      "$data_real"/* | "$data_dir"/*)
+        echo "[SECURITY] ${label}: legacy symlink remains after migration: ${entry} -> ${resolved_target}" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
+migrate_legacy_layout() {
+  local config_dir="$1" data_dir="$2" label="$3"
+  if [ -L "$config_dir" ]; then
+    echo "[SECURITY] ${label}: refusing migration because ${config_dir} is a symlink" >&2
+    return 1
+  fi
+  if [ -L "$data_dir" ]; then
+    echo "[SECURITY] ${label}: refusing migration because ${data_dir} is a symlink" >&2
+    return 1
+  fi
+
+  local sentinel="${config_dir}/.migration-complete"
+
+  # Guard 1: Already migrated — the sentinel proves a prior trusted run.
+  if [ -e "$sentinel" ] || [ -L "$sentinel" ]; then
+    local sentinel_uid sentinel_mode
+    sentinel_uid="$(stat -c '%u' "$sentinel" 2>/dev/null || stat -f '%u' "$sentinel" 2>/dev/null || echo "unknown")"
+    sentinel_mode="$(stat -c '%a' "$sentinel" 2>/dev/null || stat -f '%Lp' "$sentinel" 2>/dev/null || echo "unknown")"
+    if [ -f "$sentinel" ] && [ ! -L "$sentinel" ] && [ "$sentinel_uid" = "0" ] && [ "$sentinel_mode" != "unknown" ] && (((8#$sentinel_mode & 0222) == 0)); then
+      if [ ! -d "$data_dir" ] && ! legacy_symlinks_exist "$config_dir" "$data_dir"; then
+        echo "[migration] ${label}: already migrated (trusted sentinel exists), skipping" >&2
+        return 0
+      fi
+      echo "[migration] ${label}: trusted sentinel exists but legacy artifacts remain; repairing" >&2
+      ensure_mutable_for_migration "$sentinel" "$label" || return 1
+      rm -f "$sentinel" || return 1
+    else
+      echo "[SECURITY] ${label}: ignoring untrusted migration sentinel ${sentinel}" >&2
+      ensure_mutable_for_migration "$sentinel" "$label" || return 1
+      rm -f "$sentinel" || return 1
+    fi
+  fi
+
+  if [ ! -d "$data_dir" ]; then
+    assert_no_legacy_layout "$config_dir" "$data_dir" "$label"
+    return $?
+  fi
+
+  # Guard 2: Only root may run migration. The sandbox user cannot reach
+  # this code path (entrypoint runs as root or the non-root branch never
+  # calls migrate), but be explicit.
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "[SECURITY] ${label}: migration skipped — requires root" >&2
+    return 0
+  fi
+
+  # Guard 3: Reject agent-planted data directories. A legitimate legacy
+  # data dir was created by the image build (root-owned). If the data dir
+  # is owned by sandbox, the agent may have planted it to trigger migration.
+  local data_owner
+  data_owner="$(stat -c '%U' "$data_dir" 2>/dev/null || stat -f '%Su' "$data_dir" 2>/dev/null || echo "unknown")"
+  if [ "$data_owner" = "sandbox" ] && ! legacy_symlinks_exist "$config_dir" "$data_dir"; then
+    echo "[SECURITY] ${label}: sandbox-owned ${data_dir} has no legacy symlink bridge — refusing migration (possible agent-planted trigger)" >&2
+    return 1
+  fi
+
+  # Check if shields were previously active (config dir is root-owned).
+  local shields_were_active=false
+  local config_dir_owner
+  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo "unknown")"
+  if [ "$config_dir_owner" = "root" ]; then
+    shields_were_active=true
+  fi
+
+  ensure_mutable_for_migration "$config_dir" "$label" || return 1
+  ensure_mutable_for_migration "$data_dir" "$label" || return 1
+
+  echo "[migration] Detected legacy ${label} layout (${data_dir} exists), migrating..." >&2
+  for entry in "$data_dir"/.[!.]* "$data_dir"/..?* "$data_dir"/*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    if [ -L "$entry" ]; then
+      echo "[SECURITY] ${label}: refusing migration because ${entry} is a symlink" >&2
+      return 1
+    fi
+    local name
+    name="$(basename "$entry")"
+    local target="${config_dir}/${name}"
+    if [ -L "$target" ]; then
+      ensure_mutable_for_migration "$target" "$label" || return 1
+      rm -f "$target"
+      cp -a "$entry" "$target"
+    elif [ -d "$target" ] && [ -d "$entry" ]; then
+      ensure_mutable_for_migration "$target" "$label" || return 1
+      cp -a "$entry"/. "$target"/
+    elif [ ! -e "$target" ]; then
+      cp -a "$entry" "$target"
+    fi
+  done
+
+  # Only chown state subdirectories, NOT the config dir itself or
+  # protected files (openclaw.json, .config-hash, .env).
+  # This prevents undoing shields-up root ownership on the config dir.
+  for entry in "$config_dir"/.[!.]* "$config_dir"/..?* "$config_dir"/*; do
+    [ -L "$entry" ] && continue
+    [ -d "$entry" ] || continue
+    chown_tree_no_symlink_follow sandbox:sandbox "$entry"
+  done
+
+  rm -rf "$data_dir"
+  assert_no_legacy_layout "$config_dir" "$data_dir" "$label" || return 1
+
+  # Write the migration sentinel (root-owned, read-only) so we never
+  # re-run migration on this sandbox.
+  printf 'migrated=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$sentinel"
+  chown root:root "$sentinel" 2>/dev/null || true
+  chmod 444 "$sentinel" 2>/dev/null || true
+
+  # Reapply shields-up ownership if config dir was previously root-locked.
+  if [ "$shields_were_active" = "true" ]; then
+    echo "[migration] Reapplying shields-up ownership on ${config_dir}" >&2
+    chown root:root "$config_dir" 2>/dev/null || true
+    chmod 755 "$config_dir" 2>/dev/null || true
+    # Re-lock known sensitive files if they exist
+    for f in "$config_dir"/openclaw.json "$config_dir"/.config-hash "$config_dir"/.env; do
+      if [ -f "$f" ]; then
+        chown root:root "$f" 2>/dev/null || true
+        chmod 444 "$f" 2>/dev/null || true
+      fi
+    done
+    for subdir in skills hooks cron agents extensions plugins; do
+      if [ -d "$config_dir/$subdir" ]; then
+        chown_tree_no_symlink_follow root:root "$config_dir/$subdir"
+        chmod 755 "$config_dir/$subdir" 2>/dev/null || true
+        chmod -R go-w "$config_dir/$subdir" 2>/dev/null || true
+        restore_immutable_if_possible "$config_dir/$subdir"
+      fi
+    done
+    restore_immutable_if_possible \
+      "$config_dir"/openclaw.json \
+      "$config_dir"/.config-hash \
+      "$config_dir"/.env \
+      "$config_dir"
+  fi
+
+  echo "[migration] Completed ${label} layout migration (${data_dir} removed)" >&2
+}
 # ── Main ─────────────────────────────────────────────────────────
 
+# Migrate legacy symlink layout before anything else reads .openclaw
+migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
+
 echo 'Setting up NemoClaw...' >&2
-# Best-effort: .env may not exist, and /sandbox is Landlock read-only (#804).
+# Best-effort: .env may not exist.
 if [ -f .env ]; then
   if ! chmod 600 .env 2>/dev/null; then
     echo "[SECURITY WARNING] Could not restrict .env permissions — file may be world-readable (read-only filesystem)" >&2
@@ -1832,7 +2120,7 @@ fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
-  if ! verify_config_integrity /sandbox/.openclaw; then
+  if ! verify_config_integrity_if_locked /sandbox/.openclaw; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
@@ -1844,68 +2132,27 @@ if [ "$(id -u)" -ne 0 ]; then
   install_slack_token_rewriter
   install_slack_channel_guard
   verify_no_slack_secrets_on_disk
-  validate_openclaw_symlinks
 
   # Ensure writable state directories exist and are owned by the current user.
   # The Docker build (Dockerfile) sets this up correctly, but the native curl
   # installer may create these directories as root, causing EACCES when openclaw
   # tries to write device-auth.json or other state files.  Ref: #692
-  # Ensure the identity symlink points from .openclaw/identity → .openclaw-data/identity.
-  # Uses early returns to keep each case flat.
-  ensure_identity_symlink() {
-    local data_dir="$1" openclaw_dir="$2"
-    local link_path="${openclaw_dir}/identity"
-    local target="${data_dir}/identity"
-    [ -d "$target" ] || return 0
-    mkdir -p "${openclaw_dir}" 2>/dev/null || true
-
-    # Already a correct symlink — nothing to do.
-    if [ -L "$link_path" ]; then
-      local current expected
-      current="$(readlink -f "$link_path" 2>/dev/null || true)"
-      expected="$(readlink -f "$target" 2>/dev/null || true)"
-      [ "$current" != "$expected" ] || return 0
-      ln -snf "$target" "$link_path" 2>/dev/null \
-        && echo "[setup] repaired identity symlink" >&2 \
-        || echo "[setup] could not repair identity symlink" >&2
-      return 0
-    fi
-
-    # Nothing exists yet — create the symlink.
-    if [ ! -e "$link_path" ]; then
-      ln -snf "$target" "$link_path" 2>/dev/null \
-        && echo "[setup] created identity symlink" >&2 \
-        || echo "[setup] could not create identity symlink" >&2
-      return 0
-    fi
-
-    # A non-symlink entry exists — back it up, then replace.
-    local backup
-    backup="${link_path}.bak.$(date +%s)"
-    if mv "$link_path" "$backup" 2>/dev/null \
-      && ln -snf "$target" "$link_path" 2>/dev/null; then
-      echo "[setup] replaced non-symlink identity path (backup: ${backup})" >&2
-    else
-      echo "[setup] could not replace ${link_path}; writes may fail" >&2
-    fi
-  }
-
-  fix_openclaw_data_ownership() {
-    local data_dir="${HOME}/.openclaw-data"
+  fix_openclaw_ownership() {
     local openclaw_dir="${HOME}/.openclaw"
-    [ -d "$data_dir" ] || return 0
-    local subdirs="agents/main/agent extensions workspace skills hooks identity devices canvas cron"
+    [ -d "$openclaw_dir" ] || return 0
+    local subdirs="agents/main/agent extensions workspace skills hooks identity devices canvas cron memory logs credentials flows sandbox telegram media"
     for sub in $subdirs; do
-      mkdir -p "${data_dir}/${sub}" 2>/dev/null || true
+      mkdir -p "${openclaw_dir}/${sub}" 2>/dev/null || true
     done
-    if find "$data_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
-      chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null \
-        && echo "[setup] fixed ownership on ${data_dir}" >&2 \
-        || echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
+    if find "$openclaw_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
+      chown -R "$(id -u):$(id -g)" "$openclaw_dir" 2>/dev/null \
+        && echo "[setup] fixed ownership on ${openclaw_dir}" >&2 \
+        || echo "[setup] could not fix ownership on ${openclaw_dir}; writes may fail" >&2
     fi
-    ensure_identity_symlink "$data_dir" "$openclaw_dir"
+    chmod 700 "$openclaw_dir" 2>/dev/null || true
+    chmod 600 "$openclaw_dir/openclaw.json" "$openclaw_dir/.config-hash" 2>/dev/null || true
   }
-  fix_openclaw_data_ownership
+  fix_openclaw_ownership
   write_auth_profile
   harden_auth_profiles
 
@@ -1939,9 +2186,7 @@ if [ "$(id -u)" -ne 0 ]; then
   { tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
   GATEWAY_LOG_TAIL_PID=$!
   # Persistent mirror: see root-mode block for rationale.
-  mkdir -p /sandbox/.openclaw-data/logs 2>/dev/null || true
-  { tail -n +1 -F /tmp/gateway.log 2>/dev/null >>/sandbox/.openclaw-data/logs/gateway-persistent.log; } &
-  GATEWAY_LOG_PERSIST_PID=$!
+  start_persistent_gateway_log_mirror || exit 1
   start_auto_pair
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
@@ -1961,8 +2206,9 @@ fi
 
 # ── Root path (full privilege separation via gosu) ─────────────
 
-# Verify config integrity before starting anything
-verify_config_integrity /sandbox/.openclaw
+# Verify locked config integrity before starting anything. Mutable-default
+# config is intentionally writable and is not a trust anchor until shields-up.
+verify_config_integrity_if_locked /sandbox/.openclaw
 apply_model_override
 apply_cors_override
 export_gateway_token
@@ -1976,8 +2222,8 @@ install_slack_token_rewriter
 install_slack_channel_guard
 verify_no_slack_secrets_on_disk
 
-# Write auth profile as sandbox user (needs writable .openclaw-data)
-# and recursively re-tighten any auth-profiles.json files under ~/.openclaw.
+# Write auth profile as sandbox user and recursively re-tighten any
+# auth-profiles.json files under ~/.openclaw.
 gosu sandbox bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
@@ -2002,76 +2248,81 @@ chmod 600 /tmp/auto-pair.log
 #
 # OpenClaw can be configured with multiple named agents (agents.defaults.workspace
 # + agents.list[*].workspace in openclaw.json), each producing its own
-# `/sandbox/.openclaw/workspace-<name>/` directory. Without intervention these
-# land as real directories under the root-owned immutable `.openclaw/` tree and
-# are lost on every sandbox restart.
-#
-# Mirror the default-workspace persistence pattern: any `workspace-<name>`
-# discovered under `.openclaw-data/` or `.openclaw/` gets (a) a writable backing
-# dir under `.openclaw-data/workspace-<name>/` and (b) a symlink from
-# `.openclaw/workspace-<name>/ → .openclaw-data/workspace-<name>/`. The symlinks
-# are then picked up by validate_openclaw_symlinks below.
+# `/sandbox/.openclaw/workspace-<name>/` directory. In the mutable-by-default
+# layout these live directly under `.openclaw/` (no symlink indirection).
+# Ensure they exist and are sandbox-writable.
 #
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1260
 provision_agent_workspaces() {
-  local data_dir="/sandbox/.openclaw-data"
   local config_dir="/sandbox/.openclaw"
   local names=""
-  local d name
+  local d name config_names
 
-  # Discover existing workspace-* dirs in either location.
-  if [ -d "$data_dir" ]; then
-    for d in "$data_dir"/workspace-*/; do
+  # Discover existing workspace-* dirs.
+  if [ -d "$config_dir" ]; then
+    for d in "$config_dir"/workspace-*; do
+      [ -e "$d" ] || [ -L "$d" ] || continue
+      if [ -L "$d" ]; then
+        echo "[SECURITY] refusing symlinked workspace dir: $d" >&2
+        continue
+      fi
       [ -d "$d" ] || continue
       name="$(basename "$d")"
       names="${names} ${name}"
     done
   fi
-  if [ -d "$config_dir" ]; then
-    for d in "$config_dir"/workspace-*/; do
-      # Skip the glob-fell-through sentinel ('workspace-*/' itself) and
-      # any existing symlink (already provisioned).
-      [ -e "$d" ] || continue
-      [ -L "${d%/}" ] && continue
-      name="$(basename "$d")"
-      names="${names} ${name}"
-    done
+
+  # Also provision workspace directories declared in openclaw.json. On first
+  # boot these may not exist yet, so directory discovery alone is insufficient.
+  if [ -f "$config_dir/openclaw.json" ] && command -v node >/dev/null 2>&1; then
+    config_names="$(
+      node - "$config_dir/openclaw.json" <<'NODE' 2>/dev/null || true
+  const fs = require("fs");
+  const configPath = process.argv[2];
+  const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const names = new Set();
+  const workspacePattern = /^workspace-[A-Za-z0-9._-]+$/;
+  function addWorkspace(value) {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith("/sandbox/.openclaw/")) {
+      const relative = trimmed.slice("/sandbox/.openclaw/".length);
+      if (workspacePattern.test(relative)) names.add(relative);
+      return;
+    }
+    if (/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+      const name = trimmed.startsWith("workspace-") ? trimmed : `workspace-${trimmed}`;
+      if (workspacePattern.test(name)) names.add(name);
+    }
+  }
+  addWorkspace(cfg?.agents?.defaults?.workspace);
+  for (const agent of cfg?.agents?.list || []) addWorkspace(agent?.workspace);
+  for (const name of names) console.log(name);
+NODE
+    )"
+    if [ -n "$config_names" ]; then
+      names="$({
+        for name in $names; do
+          printf '%s\n' "$name"
+        done
+        printf '%s\n' "$config_names"
+      } | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+    fi
   fi
 
-  local seen=""
   for name in $names; do
-    case " $seen " in *" $name "*) continue ;; esac
-    seen="${seen} ${name}"
-
-    local data_path="$data_dir/$name"
-    local link_path="$config_dir/$name"
-
-    mkdir -p "$data_path"
-    chown -R sandbox:sandbox "$data_path" 2>/dev/null || true
-
-    if [ -L "$link_path" ]; then
+    local ws_path="$config_dir/$name"
+    if [ -L "$ws_path" ]; then
+      echo "[SECURITY] refusing to provision symlinked workspace path: $ws_path" >&2
       continue
     fi
-    if [ -e "$link_path" ]; then
-      cp -a "$link_path/." "$data_path/" 2>/dev/null || true
-      rm -rf "$link_path"
-    fi
-    ln -s "$data_path" "$link_path"
-    echo "[setup] provisioned multi-agent workspace: $name → $data_path" >&2
+    mkdir -p "$ws_path"
+    chown_tree_no_symlink_follow sandbox:sandbox "$ws_path"
+    echo "[setup] provisioned multi-agent workspace: $name" >&2
   done
 }
 provision_agent_workspaces
-
-# Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
-# Dynamic scan so future OpenClaw symlinks are covered automatically.
-validate_openclaw_symlinks
-
-# Lock .openclaw directory after symlink validation: set the immutable flag
-# so symlinks cannot be swapped at runtime even if DAC or Landlock are
-# bypassed. chattr requires cap_linux_immutable which the entrypoint has
-# as root; the sandbox user cannot remove the flag.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/1019
-harden_openclaw_symlinks
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
@@ -2098,15 +2349,12 @@ echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" 
 GATEWAY_LOG_TAIL_PID=$!
 
 # Persistent mirror: append /tmp/gateway.log content to a file under
-# /sandbox/.openclaw-data/logs which is volume-mounted by openshell and
+# /sandbox/.openclaw/logs which is volume-mounted by openshell and
 # survives pod restarts. /tmp/gateway.log itself is wiped when the pod
 # restarts (TC-SBX-06 docker-kills the gateway container), so the
 # only durable record of pre-restart events lives here. The diag
 # streamer in the e2e workflow snapshots this file post-test.
-mkdir -p /sandbox/.openclaw-data/logs 2>/dev/null || true
-chown gateway:gateway /sandbox/.openclaw-data/logs 2>/dev/null || true
-{ tail -n +1 -F /tmp/gateway.log 2>/dev/null >>/sandbox/.openclaw-data/logs/gateway-persistent.log; } &
-GATEWAY_LOG_PERSIST_PID=$!
+start_persistent_gateway_log_mirror || exit 1
 
 start_auto_pair
 # NOTE: PIDs are collected after launch; a signal arriving between trap

@@ -43,7 +43,6 @@ describe("onboard command", () => {
       sandboxName: null,
       acceptThirdPartySoftware: true,
       agent: null,
-      dangerouslySkipPermissions: false,
       controlUiPort: null,
     });
   });
@@ -69,7 +68,6 @@ describe("onboard command", () => {
       sandboxName: null,
       acceptThirdPartySoftware: true,
       agent: null,
-      dangerouslySkipPermissions: false,
       controlUiPort: null,
     });
   });
@@ -94,7 +92,6 @@ describe("onboard command", () => {
       sandboxName: null,
       acceptThirdPartySoftware: false,
       agent: null,
-      dangerouslySkipPermissions: false,
       controlUiPort: null,
     });
   });
@@ -120,7 +117,6 @@ describe("onboard command", () => {
     expect(lines.join("\n")).toContain("node_modules, .git, .venv, __pycache__");
     expect(lines.join("\n")).toContain(".env*, .ssh, .aws");
     expect(lines.join("\n")).toContain("--agent <name>");
-    expect(lines.join("\n")).toContain("--dangerously-skip-permissions");
   });
 
   it("parses --from <Dockerfile>", () => {
@@ -148,7 +144,6 @@ describe("onboard command", () => {
       sandboxName: null,
       acceptThirdPartySoftware: false,
       agent: null,
-      dangerouslySkipPermissions: false,
       controlUiPort: null,
     });
   });
@@ -174,7 +169,6 @@ describe("onboard command", () => {
       sandboxName: null,
       acceptThirdPartySoftware: false,
       agent: null,
-      dangerouslySkipPermissions: false,
       controlUiPort: null,
     });
   });
@@ -221,7 +215,6 @@ describe("onboard command", () => {
       sandboxName: "second-assistant",
       acceptThirdPartySoftware: false,
       agent: null,
-      dangerouslySkipPermissions: false,
       controlUiPort: null,
     });
   });
@@ -335,10 +328,10 @@ describe("onboard command", () => {
     expect(errors.join("\n")).toContain("Usage: nemoclaw onboard");
   });
 
-  it("parses --agent and --dangerously-skip-permissions", () => {
+  it("parses --agent", () => {
     expect(
       parseOnboardArgs(
-        ["--agent", "openclaw", "--dangerously-skip-permissions"],
+        ["--agent", "openclaw"],
         "--yes-i-accept-third-party-software",
         "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
         {
@@ -357,7 +350,6 @@ describe("onboard command", () => {
       sandboxName: null,
       acceptThirdPartySoftware: false,
       agent: "openclaw",
-      dangerouslySkipPermissions: true,
       controlUiPort: null,
     });
   });
@@ -492,7 +484,6 @@ describe("onboard command", () => {
       sandboxName: null,
       acceptThirdPartySoftware: false,
       agent: null,
-      dangerouslySkipPermissions: false,
       controlUiPort: null,
     });
   });

@@ -374,7 +374,7 @@ export default function register(api: OpenClawPluginApi): void {
         const rawPath = event.params["file_path"] ?? event.params["path"];
         if (typeof rawPath !== "string" || rawPath.length === 0) return undefined;
         // Resolve symlinks and traversal before checking — prevents bypasses like
-        // /sandbox/project/../../.openclaw-data/memory/secrets.md
+        // /sandbox/project/../../.openclaw/memory/secrets.md
         const filePath = api.resolvePath(rawPath);
         if (!isMemoryPath(filePath)) return undefined;
 

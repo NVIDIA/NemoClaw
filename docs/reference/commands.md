@@ -64,7 +64,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--dangerously-skip-permissions] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes-i-accept-third-party-software]
 ```
 
 :::{warning}
@@ -127,6 +127,8 @@ $ BRAVE_API_KEY=... \
 ```
 
 `BRAVE_API_KEY` enables Brave Search in non-interactive mode and also enables `web_fetch`.
+If Brave Search key validation fails in non-interactive mode, onboarding prints a warning, skips web search setup, and continues with the rest of the sandbox setup.
+After fixing the key, re-enable web search with `nemoclaw config web-search`.
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
@@ -171,6 +173,9 @@ If the directory contains unreadable files (for example, Windows system files vi
 $ nemoclaw onboard --from path/to/Dockerfile
 ```
 
+The Dockerfile path must exist.
+Missing paths fail during command parsing before preflight, gateway setup, inference setup, or sandbox creation starts.
+
 The file can have any name; if it is not already named `Dockerfile`, onboard copies it to `Dockerfile` inside the staged build context automatically.
 To create an isolated build context, create a dedicated directory that contains only the Dockerfile and the files it needs:
 
@@ -203,30 +208,6 @@ $ nemoclaw onboard --non-interactive --name my-build --from path/to/Dockerfile
 The flag wins over `NEMOCLAW_SANDBOX_NAME`.
 When prompting is impossible (no TTY or `--non-interactive`), the env var is also honoured so existing CI scripts keep working.
 Combining `--from <Dockerfile>` with non-interactive onboarding requires one of `--name` or `NEMOCLAW_SANDBOX_NAME`; otherwise onboarding exits rather than silently defaulting to `my-assistant` and clobbering the default sandbox.
-
-#### `--dangerously-skip-permissions`
-
-:::{warning}
-For development and testing only. This flag disables the sandbox's network policy and filesystem permission restrictions, so the OpenClaw agent inside the sandbox can reach any host and write anywhere in its home directory. Do not use this flag with production credentials or on hosts where other agents run.
-:::
-
-Replace the default balanced sandbox policy with the permissive policy bundled at `nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml`. Concretely, this means:
-
-- **Network:** all known endpoints open with no HTTP method or path filtering.
-- **Filesystem:** the sandbox home directory is writable (normally Landlock-restricted).
-- **Messaging / inference:** unchanged — still gated by the provider credentials you supply.
-
-```console
-$ nemoclaw onboard --dangerously-skip-permissions
-```
-
-Onboarding prints an explicit warning at start so the reduced security posture is visible in logs. The flag is also honored via `NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS=1` for non-interactive runs:
-
-```console
-$ NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS=1 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
-```
-
-The flag is persisted on the sandbox registry entry, so `nemoclaw <sandbox> status` surfaces `Permissions: dangerously-skip-permissions (shields permanently down)` for sandboxes created this way. To tighten a sandbox after the fact, re-run `nemoclaw onboard` without the flag.
 
 ### `nemoclaw onboard --from`
 
@@ -315,6 +296,8 @@ $ nemoclaw my-assistant status
 
 View sandbox logs.
 Use `--follow` to stream output in real time.
+The command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream.
+If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source.
 
 ```console
 $ nemoclaw my-assistant logs [--follow]
@@ -483,7 +466,7 @@ $ nemoclaw my-assistant channels remove telegram
 
 As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` skips the rebuild prompt and queues the change for a manual `nemoclaw <name> rebuild`.
 
-Host-side removal is the supported path because `/sandbox/.openclaw/openclaw.json` is read-only at runtime; `openclaw channels remove` cannot modify the baked config from inside the sandbox.
+Host-side removal is the supported path because `/sandbox/.openclaw/openclaw.json` is baked into the container image at build time; `openclaw channels remove` inside the sandbox would modify the running config but not persist changes across rebuilds.
 
 ### `nemoclaw <name> channels stop <channel>`
 

@@ -102,6 +102,15 @@ resolve_release_tag() {
   printf "%s" "${NEMOCLAW_INSTALL_TAG:-latest}"
 }
 
+clone_nemoclaw_ref() {
+  local ref="$1" dest="$2"
+
+  git init --quiet "$dest"
+  git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
+  git -C "$dest" fetch --quiet --depth 1 origin "$ref"
+  git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
+}
+
 # ---------------------------------------------------------------------------
 # Color / style — disabled when NO_COLOR is set or stdout is not a TTY.
 # Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
@@ -1017,7 +1026,7 @@ install_nemoclaw() {
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
     NEMOCLAW_SOURCE_ROOT="$nemoclaw_src"
-    spin "Cloning NemoClaw source" git clone --depth 1 --branch "$release_ref" https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
+    spin "Cloning NemoClaw source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
     # Fetch version tags into the shallow clone so `git describe --tags
     # --match "v*"` works at runtime (the shallow clone only has the
     # single ref we asked for).

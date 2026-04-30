@@ -59,8 +59,8 @@ COPY my-plugin/ /opt/my-plugin/
 WORKDIR /opt/my-plugin
 RUN npm ci --no-audit --no-fund && npm run build
 
-RUN mkdir -p /sandbox/.openclaw-data/extensions \
- && cp -a /opt/my-plugin /sandbox/.openclaw-data/extensions/my-plugin \
+RUN mkdir -p /sandbox/.openclaw/extensions \
+ && cp -a /opt/my-plugin /sandbox/.openclaw/extensions/my-plugin \
  && openclaw doctor --fix
 
 WORKDIR /opt/nemoclaw

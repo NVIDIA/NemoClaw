@@ -1587,6 +1587,19 @@ exit 99`,
     expect(result.stdout.trim()).toBe("v0.2.0");
   });
 
+  it("clone_nemoclaw_ref uses fetch checkout so fully-qualified refs work", () => {
+    const payload = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
+    const bootstrap = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    for (const src of [payload, bootstrap]) {
+      const fn = src.match(/clone_nemoclaw_ref\(\) \{([\s\S]*?)^}/m);
+      expect(fn).toBeTruthy();
+      expect(fn![1]).toContain('git init --quiet "$dest"');
+      expect(fn![1]).toContain('git -C "$dest" fetch --quiet --depth 1 origin "$ref"');
+      expect(fn![1]).toContain("checkout --quiet --detach FETCH_HEAD");
+      expect(fn![1]).not.toContain("clone --quiet --depth 1 --branch");
+    }
+  });
+
   it("source-checkout path does NOT call resolve_release_tag / git clone", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-notag-"));
     const fakeBin = path.join(tmp, "bin");
@@ -2373,10 +2386,15 @@ main() {
       curlStub: `#!/usr/bin/env bash
 /usr/bin/curl "$@"`,
       gitStub: `#!/usr/bin/env bash
+repo=""
 if [ "\${1:-}" = "-c" ]; then
   shift 2
 fi
-if [ "$1" = "clone" ]; then
+if [ "\${1:-}" = "-C" ]; then
+  repo="$2"
+  shift 2
+fi
+if [ "$1" = "init" ]; then
   target="\${@: -1}"
   mkdir -p "$target/scripts"
   cat > "$target/scripts/install.sh" <<'EOS'
@@ -2392,6 +2410,9 @@ set -euo pipefail
 printf '%s\n' "\${NEMOCLAW_INSTALL_TAG:-unset}" > "\${LEGACY_LOG_PATH:?}"
 EOS
   chmod +x "$target/install.sh"
+  exit 0
+fi
+if [ "$1" = "remote" ] || [ "$1" = "fetch" ] || [ "$1" = "checkout" ]; then
   exit 0
 fi
 exit 0`,
@@ -2424,10 +2445,15 @@ exit 0`,
       curlStub: `#!/usr/bin/env bash
 /usr/bin/curl "$@"`,
       gitStub: `#!/usr/bin/env bash
+repo=""
 if [ "\${1:-}" = "-c" ]; then
   shift 2
 fi
-if [ "$1" = "clone" ]; then
+if [ "\${1:-}" = "-C" ]; then
+  repo="$2"
+  shift 2
+fi
+if [ "$1" = "init" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw" "$target/bin/lib" "$target/scripts"
   echo '{"name":"nemoclaw","version":"0.5.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
@@ -2445,6 +2471,9 @@ repo_root="\${NEMOCLAW_REPO_ROOT:-$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && p
 node "$repo_root/bin/lib/usage-notice.js"
 EOS
   chmod +x "$target/scripts/install.sh"
+  exit 0
+fi
+if [ "$1" = "remote" ] || [ "$1" = "fetch" ] || [ "$1" = "checkout" ]; then
   exit 0
 fi
 exit 0`,

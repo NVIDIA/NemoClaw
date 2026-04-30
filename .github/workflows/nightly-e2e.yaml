@@ -15,8 +15,6 @@
 #                            gateway stop/start, verify sandbox + workspace + inference).
 #   hermes-e2e               Hermes Agent E2E — install → onboard --agent hermes → health
 #                            probe → live inference. Validates the multi-agent architecture.
-#   skip-permissions-e2e     Validates --dangerously-skip-permissions activates the permissive
-#                            policy (not stuck in Pending) and sandbox egress works (not 403).
 #   credential-migration-e2e Validates legacy ~/.nemoclaw/credentials.json migration to the
 #                            OpenShell gateway, secure zero-fill on unlink, allowlist filter
 #                            on non-credential env keys, and symlink-safe deletion.
@@ -49,7 +47,7 @@ on:
           skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e,
-          skip-permissions-e2e, sandbox-operations-e2e, inference-routing-e2e,
+          sandbox-operations-e2e, inference-routing-e2e,
           network-policy-e2e, deployment-services-e2e, diagnostics-e2e,
           credential-migration-e2e,
           snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
@@ -412,41 +410,6 @@ jobs:
           path: /tmp/nemoclaw-e2e-hermes-install.log
           if-no-files-found: ignore
 
-  # ── Skip-permissions policy activation ────────────────────────
-  # Validates the --dangerously-skip-permissions onboard flag correctly
-  # activates the permissive network policy (not stuck in Pending).
-  # Reproduces the exact scenario from the bug report: onboard, verify
-  # policy is Active, curl from inside sandbox must not return 403.
-  skip-permissions-e2e:
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
-       inputs.jobs == '' ||
-       contains(format(',{0},', inputs.jobs), ',skip-permissions-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Run skip-permissions policy E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-skip-perms"
-          NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS: "1"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-skip-permissions-policy.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: skip-permissions-install-log
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
   # ── Sandbox operations (recovery + multi-sandbox isolation) ──
   # Validates sandbox list, connect, status, logs, destroy, gateway
   # auto-recovery after docker kill, registry rebuild, process recovery,
@@ -519,7 +482,7 @@ jobs:
                 pod_ns="${pod_match%%/*}"
                 pod_name="${pod_match##*/}"
                 docker exec openshell-cluster-nemoclaw kubectl exec -n "$pod_ns" "$pod_name" -- bash -c "
-                  for f in /sandbox/.openclaw-data/logs/gateway-persistent.log /tmp/gateway.log /tmp/openclaw-*/openclaw-*.log; do
+                  for f in /sandbox/.openclaw/logs/gateway-persistent.log /tmp/gateway.log /tmp/openclaw-*/openclaw-*.log; do
                     [ -f \"\$f\" ] || continue
                     printf \"\\n----- %s (size=%s) -----\\n\" \"\$f\" \"\$(stat -c%s \"\$f\" 2>/dev/null || echo ?)\"
                     cat -- \"\$f\" 2>/dev/null
@@ -613,7 +576,7 @@ jobs:
                   pod_name="${pod_ns_name##*/}"
                   k_out=$(mktemp)
                   docker exec openshell-cluster-nemoclaw kubectl exec -n "$pod_ns" "$pod_name" -- bash -c '
-                    for f in /sandbox/.openclaw-data/logs/gateway-persistent.log /tmp/gateway.log /tmp/openclaw-*/openclaw-*.log; do
+                    for f in /sandbox/.openclaw/logs/gateway-persistent.log /tmp/gateway.log /tmp/openclaw-*/openclaw-*.log; do
                       [ -f "$f" ] || continue
                       printf "\n----- %s (size=%s) -----\n" "$f" "$(stat -c%s "$f" 2>/dev/null || echo ?)"
                       cat -- "$f" 2>/dev/null || true
@@ -636,7 +599,7 @@ jobs:
                       -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                       -o ConnectTimeout=10 -o LogLevel=ERROR \
                       "openshell-${name}" \
-                      'for f in /sandbox/.openclaw-data/logs/gateway-persistent.log \
+                      'for f in /sandbox/.openclaw/logs/gateway-persistent.log \
                                /tmp/gateway.log \
                                /tmp/openclaw-*/openclaw-*.log; do
                          [ -f "$f" ] || continue
@@ -1466,7 +1429,6 @@ jobs:
         token-rotation-e2e,
         sandbox-survival-e2e,
         hermes-e2e,
-        skip-permissions-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         network-policy-e2e,
@@ -1547,7 +1509,6 @@ jobs:
         token-rotation-e2e,
         sandbox-survival-e2e,
         hermes-e2e,
-        skip-permissions-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         network-policy-e2e,
@@ -1643,7 +1604,6 @@ jobs:
         token-rotation-e2e,
         sandbox-survival-e2e,
         hermes-e2e,
-        skip-permissions-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         network-policy-e2e,

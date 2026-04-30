@@ -1,13 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Permissive policy for development/testing — used by --dangerously-skip-permissions.
+# Permissive policy for development/testing — applied by `shields down`.
 # All known endpoints use protocol: rest + access: full (allow any HTTP method on
 # any path). This routes traffic through the L7 proxy's normal TLS-termination
 # path so it works transparently from any execution context (sandbox exec, SSH,
 # interactive shell) without requiring proxy environment setup.
-# Filesystem: include_workdir must be false (see openclaw-sandbox.yaml for rationale).
-# Config file mutability is handled by shields down/up via kubectl exec (bypasses Landlock).
 #
 # WARNING: This policy disables most sandbox security restrictions.
 # Do not use in production.
@@ -15,12 +13,10 @@
 version: 1
 
 filesystem_policy:
-  # Filesystem section should mirror the default policy (openclaw-sandbox.yaml),
-  # except explicitly documented NemoClaw state paths (e.g. /sandbox/.nemoclaw).
+  # Filesystem section mirrors the default policy (openclaw-sandbox.yaml).
   # OpenShell rejects include_workdir changes and read_only path removals on
-  # live sandboxes. Config file mutability is handled separately by shields
-  # down/up via kubectl exec (bypasses Landlock).
-  include_workdir: false
+  # live sandboxes.
+  include_workdir: true
   read_only:
     - /usr
     - /lib
@@ -29,12 +25,10 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
-    - /sandbox
-    - /sandbox/.openclaw
   read_write:
     - /tmp
     - /dev/null
-    - /sandbox/.openclaw-data
+    - /sandbox/.openclaw
     - /sandbox/.nemoclaw
 
 landlock:
