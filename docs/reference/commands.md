@@ -127,6 +127,8 @@ $ BRAVE_API_KEY=... \
 ```
 
 `BRAVE_API_KEY` enables Brave Search in non-interactive mode and also enables `web_fetch`.
+If Brave Search key validation fails in non-interactive mode, onboarding prints a warning, skips web search setup, and continues with the rest of the sandbox setup.
+After fixing the key, re-enable web search with `nemoclaw config web-search`.
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
@@ -170,6 +172,9 @@ If the directory contains unreadable files (for example, Windows system files vi
 ```console
 $ nemoclaw onboard --from path/to/Dockerfile
 ```
+
+The Dockerfile path must exist.
+Missing paths fail during command parsing before preflight, gateway setup, inference setup, or sandbox creation starts.
 
 The file can have any name; if it is not already named `Dockerfile`, onboard copies it to `Dockerfile` inside the staged build context automatically.
 To create an isolated build context, create a dedicated directory that contains only the Dockerfile and the files it needs:
@@ -315,6 +320,8 @@ $ nemoclaw my-assistant status
 
 View sandbox logs.
 Use `--follow` to stream output in real time.
+The command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream.
+If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source.
 
 ```console
 $ nemoclaw my-assistant logs [--follow]

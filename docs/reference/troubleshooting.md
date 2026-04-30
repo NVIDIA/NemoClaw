@@ -41,6 +41,10 @@ The `nemoclaw` binary is installed but the shell session does not know where to 
 
 Run `source ~/.bashrc` (or `source ~/.zshrc` for zsh), or open a new terminal window.
 
+When installing from a source checkout with `npm install`, NemoClaw first tries `npm link`.
+If the global npm prefix is not writable, it writes a managed shim to `~/.local/bin/nemoclaw` instead.
+Add `~/.local/bin` to your `PATH` if the command is still not found.
+
 ### Installer fails on unsupported platform
 
 The installer checks for a supported OS and architecture before proceeding.
@@ -525,6 +529,16 @@ If they are missing on an older sandbox, upgrade NemoClaw and run:
 $ nemoclaw <name> rebuild
 ```
 
+### Sandbox creation reports a TLS certificate mismatch
+
+If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last trusted it.
+Refresh the gateway trust and then resume onboarding:
+
+```console
+$ openshell gateway trust -g nemoclaw
+$ nemoclaw onboard --resume
+```
+
 ### `openclaw update` hangs or times out inside the sandbox
 
 This is expected for the current NemoClaw deployment model.
@@ -552,13 +566,16 @@ If that line shows `unreachable`, start the local backend first and then retry t
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
 
-For local providers (Ollama, vLLM, NIM), the default timeout is 180 seconds.
+For Ollama, vLLM, NIM, and compatible-endpoint setup, the default timeout is 180 seconds.
 If large prompts still cause timeouts, increase it with `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` before re-running onboard:
 
 ```console
 $ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
 $ nemoclaw onboard
 ```
+
+For local Ollama and vLLM, onboarding retries the container reachability check and can fall back to the host-side health check when the local backend is healthy.
+If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
 
 ### Agent fails at runtime after onboarding succeeds with a compatible endpoint
 
@@ -731,6 +748,9 @@ $ nemoclaw onboard
 
 These are build-time settings baked into the sandbox image.
 Changing them after onboarding requires re-running `nemoclaw onboard` to rebuild the image.
+
+When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost` and `127.0.0.1` to `NO_PROXY` for managed subprocesses.
+This keeps local Ollama health checks and model pulls from being routed through a corporate or desktop proxy while preserving the proxy for external hosts.
 
 ### Agent cannot reach a host-side HTTP service
 
