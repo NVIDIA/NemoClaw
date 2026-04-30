@@ -65,11 +65,12 @@ describe("local inference setup (install.sh)", () => {
 
   it("readiness loop validates the served model id", () => {
     // The readiness poll must not declare success on any 200 from /v1/models;
-    // it has to confirm the response actually advertises the requested model,
-    // otherwise a stale listener on :8000 masquerades as the new process.
+    // it has to confirm the response advertises the requested model in the
+    // JSON-quoted id field, so a stale listener serving a superstring of
+    // $model can't masquerade as the new process.
     const content = fs.readFileSync(INSTALL_SH, "utf-8");
     expect(content).toMatch(
-      /Waiting for vLLM[\s\S]*ready_models=[\s\S]*grep -Fq "\$model"[\s\S]*vLLM ready/,
+      /Waiting for vLLM[\s\S]*ready_models=[\s\S]*grep -Fq "\\"id\\":\\"\$model\\""[\s\S]*vLLM ready/,
     );
   });
 

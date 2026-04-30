@@ -904,10 +904,11 @@ install_or_start_vllm() {
   # must not be reused — otherwise the corrected HF repo id never gets applied.
   local running_models
   running_models="$(curl -fsS "http://localhost:${VLLM_PORT}/v1/models" 2>/dev/null || true)"
-  # grep -F: match $model as a literal string. A regex match would let a
-  # stale listener serving a superstring (e.g. "${model}-quantized") falsely
-  # register as the expected instance.
-  if [ -n "$running_models" ] && echo "$running_models" | grep -Fq "$model"; then
+  # Match the JSON-quoted id field ("id":"$model") rather than the raw
+  # model string. Anchoring on the surrounding quotes prevents a stale
+  # listener serving a superstring (e.g. "${model}-quantized") from
+  # falsely registering as the expected instance.
+  if [ -n "$running_models" ] && echo "$running_models" | grep -Fq "\"id\":\"$model\""; then
     info "vLLM already running on :${VLLM_PORT} with model ${model}"
     return 0
   fi
@@ -929,7 +930,7 @@ install_or_start_vllm() {
     # bound to :8000 will answer 200 with a different model id and would
     # otherwise let us declare readiness against the wrong process.
     ready_models="$(curl -fsS "http://localhost:${VLLM_PORT}/v1/models" 2>/dev/null || true)"
-    if [ -n "$ready_models" ] && echo "$ready_models" | grep -Fq "$model"; then
+    if [ -n "$ready_models" ] && echo "$ready_models" | grep -Fq "\"id\":\"$model\""; then
       info "vLLM ready (PID $vllm_pid)"
       return 0
     fi
