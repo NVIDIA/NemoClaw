@@ -32,6 +32,10 @@
 
 set -euo pipefail
 
+# SECURITY: Lock down PATH before any commands run so an injected PATH
+# cannot resolve id/chown/chmod/tee from an attacker-controlled location.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 # ── Early stderr/stdout capture ──────────────────────────────────
 # Capture all entrypoint output to /tmp/nemoclaw-start.log so that if
 # the script crashes before touch /tmp/gateway.log (e.g., a Landlock
@@ -73,9 +77,8 @@ if ! ulimit -Hu 512 2>/dev/null; then
   echo "[SECURITY] Could not set hard nproc limit (container runtime may restrict ulimit)" >&2
 fi
 
-# SECURITY: Lock down PATH so the agent cannot inject malicious binaries
-# into commands executed by the entrypoint or auto-pair watcher.
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# PATH was already locked down at the top of this script (before the
+# early stderr capture). This comment marks the original location.
 
 # Redirect tool caches and state to /tmp so they don't fail on the read-only
 # /sandbox home directory (#804). Without these, tools would try to create

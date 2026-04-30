@@ -890,8 +890,13 @@ install_or_start_vllm() {
     info "vLLM already installed"
   fi
 
-  if curl -fsS "http://localhost:${VLLM_PORT}/v1/models" >/dev/null 2>&1; then
-    info "vLLM already running on :${VLLM_PORT}"
+  # Check if vLLM is already running with the expected model. A stale
+  # instance serving a different model (e.g., the old NIM catalog name)
+  # must not be reused — otherwise the corrected HF repo id never gets applied.
+  local running_models
+  running_models="$(curl -fsS "http://localhost:${VLLM_PORT}/v1/models" 2>/dev/null || true)"
+  if [ -n "$running_models" ] && echo "$running_models" | grep -q "$model"; then
+    info "vLLM already running on :${VLLM_PORT} with model ${model}"
     return 0
   fi
 
