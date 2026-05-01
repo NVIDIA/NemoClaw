@@ -101,12 +101,13 @@ describe("Issue #2681 — group-writable mutable-default contract", () => {
     expect(NEMOCLAW_START).toMatch(/normalize_mutable_config_perms\b[^(]/);
   });
 
-  it("shields.ts unlock path uses group-writable file mode (660) + setgid dir (2770)", () => {
-    // Pre-#2681 unlock used 600/700 which stripped group-write. After this
-    // PR both files and dirs must be group-writable so the gateway UID
-    // (member of sandbox group) can write OpenClaw config.
-    expect(SHIELDS_TS).toMatch(/const fileMode = "660"/);
-    expect(SHIELDS_TS).toMatch(/const dirMode = "2770"/);
+  it("shields.ts unlock path uses group-writable file mode (660) + setgid dir (2770) for openclaw", () => {
+    // Pre-#2681 openclaw unlock used 600/700 which stripped group-write.
+    // After this PR openclaw uses 660/2770 so the gateway UID (member of
+    // sandbox group) can write OpenClaw config. Hermes is left unchanged
+    // (no separate gateway UID, so the shared-group contract doesn't apply).
+    expect(SHIELDS_TS).toMatch(/agentName === "hermes" \? "640" : "660"/);
+    expect(SHIELDS_TS).toMatch(/agentName === "hermes" \? "750" : "2770"/);
   });
 
   it("applyStateDirLockMode preserves group-write when unlocking (shields down)", () => {

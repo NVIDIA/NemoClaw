@@ -349,16 +349,16 @@ function unlockAgentConfig(
 ): void {
   const errors: string[] = [];
   const filesToUnlock = [target.configPath, ...(target.sensitiveFiles || [])];
-  // Mutable-default mode: group-writable + setgid on the config dir so the
-  // gateway UID (a member of the sandbox group via Dockerfile.base) can
-  // write to OpenClaw config files. Without this, control-UI mutations
-  // (Enable Dreaming, account toggles) EACCES against sandbox:sandbox 600
-  // even after shields-down (#2681 supersedes #2693).
-  // hermes had 640/750 historically; both agents now use the same
-  // group-writable contract since the gateway-in-sandbox-group setup is
-  // identical for both.
-  const fileMode = "660";
-  const dirMode = "2770";
+  // Mutable-default mode for OpenClaw: group-writable + setgid on the
+  // config dir so the gateway UID (a member of the sandbox group via
+  // Dockerfile.base) can write to OpenClaw config files. Without this,
+  // control-UI mutations (Enable Dreaming, account toggles) EACCES
+  // against sandbox:sandbox 600 even after shields-down
+  // (#2681 supersedes #2693).
+  // Hermes is unchanged — its sandbox does not run a separate gateway UID,
+  // so the shared-group contract does not apply.
+  const fileMode = target.agentName === "hermes" ? "640" : "660";
+  const dirMode = target.agentName === "hermes" ? "750" : "2770";
   for (const f of filesToUnlock) {
     try {
       kubectlExec(sandboxName, ["chattr", "-i", f]);
