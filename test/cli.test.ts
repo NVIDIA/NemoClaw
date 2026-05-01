@@ -67,6 +67,7 @@ function runWithEnv(
   try {
     const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",
+      stdio: "pipe",
       timeout,
       env: {
         ...process.env,
@@ -322,6 +323,7 @@ describe("CLI dispatch", () => {
   it("nemohermes list --help uses alias branding", () => {
     const out = execSync(`node "${HERMES_CLI}" list --help`, {
       encoding: "utf-8",
+      stdio: "pipe",
       timeout: execTimeout(),
       env: {
         ...process.env,
