@@ -2135,6 +2135,7 @@ exit 0
 
     const r = callInstallerPayloadFn("restore_onboard_forward_after_post_checks", {
       HOME: tmp,
+      NEMOCLAW_SKIP_FORWARD_WATCHER: "1",
       OPENSHELL_LOG: openshellLog,
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
     });

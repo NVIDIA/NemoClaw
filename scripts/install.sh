@@ -253,7 +253,7 @@ resolve_onboarded_agent() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin attempt start_pid state_dir pid_file
+  local sandbox_name agent_name agent_display port openshell_bin attempt state_dir pid_file watcher_script
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -287,25 +287,41 @@ restore_onboard_forward_after_post_checks() {
       sleep 2
     fi
     "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
-    nohup bash -c '
-      set -u
-      openshell_bin="$1"
-      port="$2"
-      sandbox_name="$3"
-      while true; do
-        if ! curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-          "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 \
-            || "$openshell_bin" forward stop "$port" >/dev/null 2>&1 \
-            || true
-          "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
-        fi
-        sleep 10
-      done
-    ' nemoclaw-forward "$openshell_bin" "$port" "$sandbox_name" \
-      >"${pid_file}.log" 2>&1 </dev/null &
-    start_pid=$!
-    printf "%s\n" "$start_pid" >"$pid_file" 2>/dev/null || true
-    disown "$start_pid" 2>/dev/null || true
+    if [[ "${NEMOCLAW_SKIP_FORWARD_WATCHER:-}" != "1" ]] && command_exists node; then
+      watcher_script="${pid_file}.js"
+      cat >"$watcher_script" <<'NODE'
+const { spawnSync } = require("child_process");
+const [openshellBin, port, sandboxName] = process.argv.slice(2);
+function run(args) {
+  spawnSync(openshellBin, args, { stdio: "ignore" });
+}
+function healthy() {
+  return spawnSync("curl", ["-sf", "--max-time", "3", `http://127.0.0.1:${port}/health`], {
+    stdio: "ignore",
+  }).status === 0;
+}
+function tick() {
+  if (healthy()) return;
+  run(["forward", "stop", port, sandboxName]);
+  run(["forward", "stop", port]);
+  run(["forward", "start", "--background", port, sandboxName]);
+}
+tick();
+setInterval(tick, 10_000);
+NODE
+      node -e '
+        const { spawn } = require("child_process");
+        const fs = require("fs");
+        const [script, openshellBin, port, sandboxName, pidFile] = process.argv.slice(1);
+        const child = spawn(process.execPath, [script, openshellBin, port, sandboxName], {
+          detached: true,
+          stdio: "ignore",
+        });
+        fs.writeFileSync(pidFile, `${child.pid}\n`);
+        child.unref();
+      ' "$watcher_script" "$openshell_bin" "$port" "$sandbox_name" "$pid_file" \
+        >/dev/null 2>&1 || true
+    fi
     sleep 4
     if command_exists curl \
       && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
