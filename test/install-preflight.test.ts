@@ -2077,6 +2077,7 @@ exit 1
     const source = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
     expect(source).not.toContain("${NEMOCLAW_AGENT^}");
     expect(source).not.toContain("${agent_name^}");
+    expect(source).not.toContain("${agent_display_name");
 
     const r = callInstallerPayloadFn("agent_display_name hermes");
     expect(r.status).toBe(0);

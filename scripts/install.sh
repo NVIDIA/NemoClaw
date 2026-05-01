@@ -253,9 +253,10 @@ resolve_onboarded_agent() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name port openshell_bin attempt
+  local sandbox_name agent_name agent_display port openshell_bin attempt
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
+  agent_display="$(agent_display_name "$agent_name")"
 
   case "$agent_name" in
     hermes) port=8642 ;;
@@ -291,7 +292,7 @@ restore_onboard_forward_after_post_checks() {
     fi
   done
 
-  warn "Could not restore ${agent_display_name "$agent_name"} host forward on port ${port}."
+  warn "Could not restore ${agent_display} host forward on port ${port}."
   warn "Run: openshell forward start --background ${port} ${sandbox_name}"
 }
 
