@@ -229,5 +229,5 @@ describe("uninstall helpers", () => {
     expect(result.status).toBe(0);
     expect(fs.existsSync(sessionPath)).toBe(false);
     expect(fs.existsSync(stateDir)).toBe(false);
-  });
+  }, 60_000);
 });

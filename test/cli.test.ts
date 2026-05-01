@@ -426,6 +426,41 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("See more help with --help")).toBeTruthy();
   });
 
+  it("status --help exits 0 and shows status usage", () => {
+    const r = run("status --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("status");
+    expect(r.out).toContain("Show sandbox list and service status");
+  });
+
+  it("tunnel start --help exits 0 and shows tunnel usage", () => {
+    const r = run("tunnel start --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("tunnel start");
+    expect(r.out).toContain("Start the cloudflared public-URL tunnel");
+  });
+
+  it("deprecated start --help exits 0 and shows alias usage", () => {
+    const r = run("start --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("start");
+    expect(r.out).toContain("Deprecated alias");
+  });
+
+  it("tunnel stop --help exits 0 and shows tunnel usage", () => {
+    const r = run("tunnel stop --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("tunnel stop");
+    expect(r.out).toContain("Stop the cloudflared public-URL tunnel");
+  });
+
+  it("deprecated stop --help exits 0 and shows alias usage", () => {
+    const r = run("stop --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("stop");
+    expect(r.out).toContain("Deprecated alias");
+  });
+
   it("shows skill install help when --help follows install", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-skill-help-"));
     writeSandboxRegistry(home);

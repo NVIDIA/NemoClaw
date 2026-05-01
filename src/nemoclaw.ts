@@ -69,10 +69,8 @@ const {
   stripAnsi,
   versionGte,
 } = require("./lib/openshell");
-const { showStatusCommand } = require("./lib/inventory-commands");
 const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
 const { executeDeploy } = require("./lib/deploy");
-const { runStartCommand, runStopCommand } = require("./lib/services-command");
 const { buildVersionedUninstallUrl, runUninstallCommand } = require("./lib/uninstall-command");
 const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
@@ -1136,30 +1134,20 @@ async function deploy(instanceName: string): Promise<void> {
   });
 }
 
-async function start() {
-  const { startAll } = require("./lib/services");
-  await runStartCommand({
-    listSandboxes: () => registry.listSandboxes(),
-    startAll,
-  });
+async function start(args: string[] = []): Promise<void> {
+  await runOclif("start", args);
 }
 
-function stop() {
-  const { stopAll } = require("./lib/services");
-  runStopCommand({
-    listSandboxes: () => registry.listSandboxes(),
-    stopAll,
-  });
+async function stop(args: string[] = []): Promise<void> {
+  await runOclif("stop", args);
 }
 
 async function tunnel(args: string[]): Promise<void> {
   const sub = args[0];
   switch (sub) {
     case "start":
-      await start();
-      return;
     case "stop":
-      stop();
+      await runOclif(`tunnel:${sub}`, args.slice(1));
       return;
     default:
       console.error(`  Usage: ${CLI_NAME} tunnel <start|stop>`);
@@ -1412,116 +1400,8 @@ async function credentialsCommand(args: string[]): Promise<void> {
   process.exit(1);
 }
 
-/**
- * Inspect gateway logs for known Telegram conflict signatures without blocking
- * the broader status command when the probe cannot run.
- */
-function checkMessagingBridgeHealth(sandboxName: string, channels: string[]) {
-  // Only Telegram currently emits a recognizable conflict signature in the
-  // gateway log. Discord/Slack have similar single-consumer constraints but
-  // log differently; we can extend the regex when those patterns are known.
-  if (!Array.isArray(channels) || !channels.includes("telegram")) return [];
-  const { spawnSync } = require("child_process");
-  const script =
-    'tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE "getUpdates conflict|409[[:space:]:]+Conflict" || true';
-  try {
-    const result = spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
-      { encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const count = Number.parseInt((result.stdout || "").trim(), 10);
-    if (!Number.isFinite(count) || count === 0) return [];
-    return [{ channel: "telegram", conflicts: count }];
-  } catch {
-    return [];
-  }
-}
-
-function makeConflictProbe() {
-  // Upfront liveness check so we can distinguish "provider not attached" from
-  // "gateway unreachable". Without this, every non-zero `openshell provider
-  // get` collapses into "absent", and a transient gateway failure would
-  // persist messagingChannels: [] and permanently suppress future retries.
-  let gatewayAlive: boolean | null = null;
-  const isGatewayAlive = (): boolean => {
-    if (gatewayAlive === null) {
-      const result = captureOpenshell(["sandbox", "list"], {
-        ignoreError: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      });
-      gatewayAlive = result.status === 0;
-    }
-    return gatewayAlive;
-  };
-  return {
-    providerExists: (name: string) => {
-      if (!isGatewayAlive()) return "error";
-      const result = captureOpenshell(["provider", "get", name], {
-        ignoreError: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      });
-      return result.status === 0 ? "present" : "absent";
-    },
-  };
-}
-
-function backfillAndFindOverlaps() {
-  // Non-critical path: status must remain usable even if the gateway probe or
-  // registry write throws, so any failure yields an empty overlap list.
-  try {
-    const { backfillMessagingChannels, findAllOverlaps } = require("./lib/messaging-conflict");
-    backfillMessagingChannels(registry, makeConflictProbe());
-    return findAllOverlaps(registry);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Read a short tail of the gateway log for degraded messaging diagnostics.
- */
-function readGatewayLog(sandboxName: string) {
-  const { spawnSync } = require("child_process");
-  try {
-    const result = spawnSync(
-      getOpenshellBinary(),
-      [
-        "sandbox",
-        "exec",
-        "-n",
-        sandboxName,
-        "--",
-        "sh",
-        "-c",
-        "tail -n 10 /tmp/gateway.log 2>/dev/null",
-      ],
-      { encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const output = (result.stdout || "").trim();
-    return output || null;
-  } catch {
-    return null;
-  }
-}
-
-function showStatus() {
-  const { showStatus: showServiceStatus } = require("./lib/services");
-  showStatusCommand({
-    listSandboxes: () => registry.listSandboxes(),
-    getLiveInference: () =>
-      parseGatewayInference(
-        captureOpenshell(["inference", "get"], {
-          ignoreError: true,
-          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-        }).output,
-      ),
-    showServiceStatus,
-    checkMessagingBridgeHealth,
-    backfillAndFindOverlaps,
-    readGatewayLog,
-    log: console.log,
-  });
+async function showStatus(args: string[] = []): Promise<void> {
+  await runOclif("status", args);
 }
 
 async function runOclif(commandId: string, args: string[] = []): Promise<void> {
@@ -4357,22 +4237,16 @@ async function dispatchCli(argv = process.argv.slice(2)) {
         await deploy(args[0]);
         break;
       case "start":
-        console.error(
-          `  ${YW}Deprecated:${R} '${CLI_NAME} start' is now '${CLI_NAME} tunnel start'. See '${CLI_NAME} help'.`,
-        );
-        await start();
+        await start(args);
         break;
       case "stop":
-        console.error(
-          `  ${YW}Deprecated:${R} '${CLI_NAME} stop' is now '${CLI_NAME} tunnel stop'. See '${CLI_NAME} help'.`,
-        );
-        stop();
+        await stop(args);
         break;
       case "tunnel":
         await tunnel(args);
         break;
       case "status":
-        showStatus();
+        await showStatus(args);
         break;
       case "debug":
         debug(args);

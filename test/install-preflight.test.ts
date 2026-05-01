@@ -2132,6 +2132,12 @@ exit 0
 exit 0
 `,
     );
+    writeExecutable(
+      path.join(fakeBin, "sleep"),
+      `#!/usr/bin/env bash
+exit 0
+`,
+    );
 
     const r = callInstallerPayloadFn("restore_onboard_forward_after_post_checks", {
       HOME: tmp,

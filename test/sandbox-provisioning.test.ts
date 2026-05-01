@@ -65,6 +65,10 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
     expect(baseSrc).toMatch(/apt-get.*install.*procps/s);
   });
 
+  it("Dockerfile.base installs an SFTP server for SSHFS sharing", () => {
+    expect(baseSrc).toMatch(/apt-get.*install.*openssh-sftp-server/s);
+  });
+
   it("Dockerfile has a procps fallback for stale GHCR base images", () => {
     // The hardening step must protect procps from autoremove and install it
     // if the base image predates the procps addition.
