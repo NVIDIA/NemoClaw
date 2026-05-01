@@ -287,7 +287,7 @@ restore_onboard_forward_after_post_checks() {
       sleep 2
     fi
     nohup "$openshell_bin" forward start "$port" "$sandbox_name" \
-      >"${pid_file}.log" 2>&1 &
+      >"${pid_file}.log" 2>&1 </dev/null &
     start_pid=$!
     printf "%s\n" "$start_pid" >"$pid_file" 2>/dev/null || true
     sleep 4
