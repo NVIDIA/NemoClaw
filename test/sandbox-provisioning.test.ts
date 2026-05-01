@@ -20,6 +20,11 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const DOCKERFILE_SANDBOX = path.join(ROOT, "test", "Dockerfile.sandbox");
+const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
+const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
+const HERMES_POLICY = path.join(ROOT, "agents", "hermes", "policy-additions.yaml");
+const HERMES_POLICY_PERMISSIVE = path.join(ROOT, "agents", "hermes", "policy-permissive.yaml");
+const HERMES_START = path.join(ROOT, "agents", "hermes", "start.sh");
 
 describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
   const src = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
@@ -65,6 +70,48 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
     // if the base image predates the procps addition.
     expect(mainSrc).toMatch(/command -v ps/);
     expect(mainSrc).toMatch(/install.*procps/);
+  });
+});
+
+describe("Hermes sandbox provisioning", () => {
+  const src = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+  const baseSrc = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+  const startSrc = fs.readFileSync(HERMES_START, "utf-8");
+
+  it("final image validates the manifest-declared hermes binary path", () => {
+    expect(src).toContain('hermes_path="$(command -v hermes 2>/dev/null || true)"');
+    expect(src).toContain('[ "$hermes_path" != "/usr/local/bin/hermes" ]');
+    expect(src).toContain("test -x /usr/local/bin/hermes");
+    expect(src).toContain("/usr/local/bin/hermes --version");
+  });
+
+  it("grants the Hermes gateway group write access to runtime state directories", () => {
+    expect(baseSrc).toContain("usermod -a -G sandbox root");
+    expect(startSrc).toContain(
+      `nohup gosu gateway sh -c 'exec "$@" >/tmp/gateway.log 2>&1' sh "$HERMES" gateway run`,
+    );
+    for (const dockerSrc of [src, baseSrc]) {
+      expect(dockerSrc).toContain("chmod 750 /sandbox/.hermes");
+      expect(dockerSrc).toContain("/sandbox/.hermes/runtime");
+      expect(dockerSrc).toContain("/sandbox/.hermes/logs");
+      expect(dockerSrc).toContain("/sandbox/.hermes/cache");
+    }
+  });
+
+  it("captures Hermes entrypoint and gateway startup logs for diagnostics", () => {
+    expect(startSrc).toContain('_START_LOG="/tmp/nemoclaw-start.log"');
+    expect(startSrc).toContain('exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)');
+    expect(startSrc).toContain("start_gateway_log_stream");
+    expect(startSrc).toContain("sed -u 's/^/[gateway-log:] /'");
+    expect(startSrc).toContain('SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")');
+  });
+
+  it("allows OpenShell to execute the Hermes venv behind the /usr/local/bin symlink", () => {
+    const policySrc = fs.readFileSync(HERMES_POLICY, "utf-8");
+    const permissivePolicySrc = fs.readFileSync(HERMES_POLICY_PERMISSIVE, "utf-8");
+
+    expect(policySrc).toContain("- /opt/hermes");
+    expect(permissivePolicySrc).toContain("- /opt/hermes");
   });
 });
 

@@ -18,6 +18,7 @@ filesystem_policy:
   read_only:
     - /usr
     - /lib
+    - /opt/hermes
     - /proc
     - /dev/urandom
     - /app

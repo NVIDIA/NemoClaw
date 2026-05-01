@@ -176,8 +176,11 @@ export function renderSandboxInventoryText(
     const gpu = sandbox.gpuEnabled ? "GPU" : "CPU";
     const presets = sandbox.policies.length > 0 ? sandbox.policies.join(", ") : "none";
     const connected = sandbox.connected ? " ●" : "";
+    const agent = sandbox.agent || "openclaw";
     log(`    ${sandbox.name}${def}${connected}`);
-    log(`      model: ${model}  provider: ${provider}  ${gpu}  policies: ${presets}`);
+    log(
+      `      agent: ${agent}  model: ${model}  provider: ${provider}  ${gpu}  policies: ${presets}`,
+    );
     if (modelDrifted || providerDrifted) {
       const parts: string[] = [];
       if (modelDrifted) parts.push(`model=${sandbox.model || "unknown"}`);

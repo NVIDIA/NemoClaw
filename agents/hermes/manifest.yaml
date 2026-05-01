@@ -16,7 +16,7 @@ homepage: "https://github.com/NousResearch/hermes-agent"
 install_method: curl  # curl install.sh | bash
 binary_path: /usr/local/bin/hermes
 version_command: "hermes --version"
-expected_version: "2026.4.8"
+expected_version: "2026.4.23"
 gateway_command: "hermes gateway run"
 
 # ── Health probe ────────────────────────────────────────────────
@@ -33,8 +33,9 @@ health_probe:
 # etc.) can connect at http://localhost:8642/v1. Auth is via a bearer
 # token in the Authorization header, not a URL fragment.
 #
-# The optional `hermes dashboard` web UI (pip install hermes-agent[web])
-# listens on a different port and is not installed by default.
+# NemoClaw prebakes Hermes' `web` extra so the API/health runtime is available.
+# The optional `hermes dashboard` web UI listens on a different port and is not
+# exposed by default.
 dashboard:
   kind: api                    # "ui" or "api"
   label: "OpenAI-compatible API"

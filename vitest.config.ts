@@ -3,13 +3,23 @@
 
 import { defineConfig } from "vitest/config";
 
+import { testTimeout } from "./test/helpers/timeouts";
+
+const isGithubActions = process.env.GITHUB_ACTIONS === "true";
+const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === "1";
+
 export default defineConfig({
   test: {
+    // CI logs are easiest to scan when test chatter stays quiet and failures
+    // surface as GitHub annotations at the relevant file and line.
+    reporters: isGithubActions ? ["github-actions"] : ["default"],
+    silent: isCi,
+    hideSkippedTests: isCi,
     projects: [
       {
         test: {
           name: "cli",
-          testTimeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 15000),
+          testTimeout: testTimeout(),
           include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"],
           exclude: [
             "**/node_modules/**",
@@ -30,7 +40,9 @@ export default defineConfig({
           // Slow tests that spawn real bash install.sh processes.
           // Run in CI or explicitly: npx vitest run --project installer-integration
           // Excluded from pre-commit/pre-push to avoid flaky timeouts.
-          enabled: process.env.CI === "true" || process.env.CI === "1" ||
+          enabled:
+            process.env.CI === "true" ||
+            process.env.CI === "1" ||
             process.env.NEMOCLAW_RUN_INSTALLER_TESTS === "1",
         },
       },
@@ -54,7 +66,7 @@ export default defineConfig({
       provider: "v8",
       include: ["nemoclaw/src/**/*.ts"],
       exclude: ["**/*.test.ts"],
-      reporter: ["text", "json-summary"],
+      reporter: ["text-summary", "json-summary"],
     },
   },
 });

@@ -25,22 +25,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { execTimeout, testTimeout } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const tmpFixtures: string[] = [];
 
-function parsePositiveInt(value: string | undefined): number | null {
-  if (!value) return null;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-const CHILD_PROCESS_TIMEOUT_MS = Math.max(
-  10_000,
-  parsePositiveInt(process.env.NEMOCLAW_EXEC_TIMEOUT) ?? 0,
-  parsePositiveInt(process.env.NEMOCLAW_TEST_TIMEOUT) ?? 0,
-);
-const TEST_TIMEOUT_MS = Math.max(30_000, CHILD_PROCESS_TIMEOUT_MS + 10_000);
+const CHILD_PROCESS_TIMEOUT_MS = Math.max(execTimeout(10_000), testTimeout(10_000));
+const TEST_TIMEOUT_MS = testTimeout(Math.max(30_000, CHILD_PROCESS_TIMEOUT_MS + 10_000));
 
 afterEach(() => {
   for (const dir of tmpFixtures.splice(0)) {
@@ -121,8 +112,16 @@ describe("Issue #2273 Layer 1: credential hydration from legacy storage", () => 
     { name: "OpenAI", credentialEnv: "OPENAI_API_KEY", value: "sk-test-hydrate" },
     { name: "Anthropic", credentialEnv: "ANTHROPIC_API_KEY", value: "sk-ant-test-hydrate" },
     { name: "Google Gemini", credentialEnv: "GEMINI_API_KEY", value: "gemini-test-hydrate" },
-    { name: "Custom OpenAI-compatible", credentialEnv: "COMPATIBLE_API_KEY", value: "compat-test-hydrate" },
-    { name: "Custom Anthropic-compatible", credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY", value: "compat-ant-test-hydrate" },
+    {
+      name: "Custom OpenAI-compatible",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      value: "compat-test-hydrate",
+    },
+    {
+      name: "Custom Anthropic-compatible",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      value: "compat-ant-test-hydrate",
+    },
   ];
 
   for (const { name, credentialEnv, value } of providers) {

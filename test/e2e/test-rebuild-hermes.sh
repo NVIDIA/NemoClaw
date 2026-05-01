@@ -5,7 +5,7 @@
 # Hermes rebuild upgrade E2E — same upgrade scenario as OpenClaw but for Hermes:
 #
 #   1. Install NemoClaw (install.sh)
-#   2. Build a Hermes base image with an OLDER version (v2026.3.12)
+#   2. Build a Hermes base image with an OLDER version (v2026.4.13)
 #   3. Build a minimal Hermes sandbox image (no current-Dockerfile patches)
 #   4. Create sandbox via openshell directly
 #   5. Write marker files into Hermes state dirs
@@ -30,7 +30,9 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-rebuild-hm}"
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
-OLD_HERMES_VERSION="v2026.3.12"
+OLD_HERMES_VERSION="v2026.4.13"
+OLD_HERMES_REGISTRY_VERSION="${OLD_HERMES_VERSION#v}"
+OLD_HERMES_TARBALL_SHA256="5e4529b8cb6e4821eb916b81517e48125109b1764d6d1e68a204a9f0ddf2d98c"
 MARKER_FILE="/sandbox/.hermes/memories/rebuild-marker.txt"
 MARKER_CONTENT="REBUILD_HM_E2E_$(date +%s)"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
@@ -49,11 +51,37 @@ fail() {
   echo -e "${YELLOW}[DIAG]${NC} Session: $(cat "${SESSION_FILE}" 2>/dev/null || echo 'not found')" >&2
   echo -e "${YELLOW}[DIAG]${NC} Sandboxes: $(openshell sandbox list 2>&1 || echo 'openshell unavailable')" >&2
   echo -e "${YELLOW}[DIAG]${NC} Docker: $(docker ps --format '{{.Names}} {{.Image}} {{.Status}}' 2>&1 | head -5)" >&2
+  dump_hermes_sandbox_logs >&2 || true
   echo -e "${YELLOW}[DIAG]${NC} --- End diagnostics ---" >&2
   exit 1
 }
 info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
 diag() { echo -e "${YELLOW}[DIAG]${NC} $1"; }
+
+dump_hermes_sandbox_logs() {
+  command -v openshell >/dev/null 2>&1 || {
+    diag "openshell is not available for sandbox log diagnostics"
+    return
+  }
+  openshell sandbox list 2>&1 | grep -Fq -- "$SANDBOX_NAME" || {
+    diag "sandbox '${SANDBOX_NAME}' is not visible to openshell"
+    return
+  }
+
+  local diag_script
+  diag_script='set +e'
+  diag_script+='; echo "== identity =="; id 2>&1 || true'
+  diag_script+='; echo "== listening sockets =="; ss -tlnp 2>&1 || ss -tln 2>&1 || true'
+  diag_script+='; echo "== log and state paths =="; ls -ld /tmp /sandbox/.hermes /sandbox/.hermes/logs 2>&1 || true; ls -l /tmp/nemoclaw-start.log /tmp/gateway.log 2>&1 || true'
+  diag_script+='; echo "== hermes-related processes =="'
+  # shellcheck disable=SC2016  # script is intentionally evaluated inside the sandbox
+  diag_script+='; for p in /proc/[0-9]*; do cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true); case "$cmd" in *hermes*|*socat*|*nemoclaw-decode-proxy*) echo "$(basename "$p") $cmd" ;; esac; done'
+  diag_script+='; echo "== /tmp/nemoclaw-start.log tail =="; tail -n 80 /tmp/nemoclaw-start.log 2>&1 || true'
+  diag_script+='; echo "== /tmp/gateway.log tail =="; tail -n 120 /tmp/gateway.log 2>&1 || true'
+
+  diag "Hermes sandbox runtime logs:"
+  openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$diag_script" 2>&1 | sed 's/^/[DIAG]   /'
+}
 
 export NEMOCLAW_REBUILD_VERBOSE=1
 
@@ -110,6 +138,8 @@ OLD_BASE_TAG="nemoclaw-hermes-old-base:e2e-rebuild"
 
 docker build \
   --build-arg "HERMES_VERSION=${OLD_HERMES_VERSION}" \
+  --build-arg "HERMES_TARBALL_SHA256=${OLD_HERMES_TARBALL_SHA256}" \
+  --build-arg "HERMES_UV_EXTRAS=messaging" \
   -f "${REPO_ROOT}/agents/hermes/Dockerfile.base" \
   -t "${OLD_BASE_TAG}" \
   "${REPO_ROOT}" \
@@ -170,7 +200,7 @@ reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'policies': [],
     'policyTier': None,
     'agent': 'hermes',
-    'agentVersion': '2026.3.12'
+    'agentVersion': '${OLD_HERMES_REGISTRY_VERSION}'
 }}, 'defaultSandbox': '${SANDBOX_NAME}'}
 with open('${REGISTRY_FILE}', 'w') as f:
     json.dump(reg, f, indent=2)
@@ -249,10 +279,10 @@ with open('${REGISTRY_FILE}') as f:
 sb = data.get('sandboxes', {}).get('${SANDBOX_NAME}', {})
 print(sb.get('agentVersion', 'null'))
 " 2>/dev/null || echo "error")
-if [ "$REGISTRY_VERSION" != "null" ] && [ "$REGISTRY_VERSION" != "error" ] && [ "$REGISTRY_VERSION" != "2026.3.12" ]; then
+if [ "$REGISTRY_VERSION" != "null" ] && [ "$REGISTRY_VERSION" != "error" ] && [ "$REGISTRY_VERSION" != "$OLD_HERMES_REGISTRY_VERSION" ]; then
   pass "Registry agentVersion updated to ${REGISTRY_VERSION}"
 else
-  fail "Registry agentVersion not updated: got '${REGISTRY_VERSION}', expected != '2026.3.12'"
+  fail "Registry agentVersion not updated: got '${REGISTRY_VERSION}', expected != '${OLD_HERMES_REGISTRY_VERSION}'"
 fi
 
 # No credentials in backup
