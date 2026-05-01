@@ -1126,10 +1126,16 @@ const { setupNim } = require(${onboardPath});
     );
     // Pull only happened on the second confirmation, not on the declined first attempt.
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
-    assert.equal(
-      payload.messages.filter((message: string) => /Download Ollama model/.test(message)).length,
-      2,
+    const downloadPrompts = payload.messages.filter((message: string) =>
+      /Download Ollama model/.test(message),
     );
+    assert.equal(downloadPrompts.length, 2);
+    // Each prompt must surface the resolved size — the whole point of #2639 —
+    // either a "<value> <unit>" label or the explicit "size unknown" fallback.
+    const sizePattern = /\((\d+(\.\d+)? (B|KB|MB|GB|TB)( \(estimated\))?|size unknown)\)/;
+    for (const prompt of downloadPrompts) {
+      assert.match(prompt, sizePattern);
+    }
   });
 
   it("bypasses the size confirmation when NEMOCLAW_YES=1 is set", () => {
@@ -1237,6 +1243,15 @@ const { setupNim } = require(${onboardPath});
       payload.messages.filter((message: string) => /Download Ollama model/.test(message)).length,
       0,
     );
+    // The size is still surfaced in the auto-yes path so unattended installs
+    // record what was downloaded — assert the "Pulling Ollama model" log line
+    // includes a size label or the "size unknown" fallback.
+    const sizePattern = /\((\d+(\.\d+)? (B|KB|MB|GB|TB)( \(estimated\))?|size unknown)\)/;
+    const pullingLine = payload.lines.find((line: string) =>
+      /Pulling Ollama model 'qwen2.5:7b'/.test(line),
+    );
+    assert.ok(pullingLine, "expected a 'Pulling Ollama model' log line under NEMOCLAW_YES=1");
+    assert.match(pullingLine, sizePattern);
   });
 
   it("reprompts for an OpenAI Other model when /models validation rejects it", () => {
