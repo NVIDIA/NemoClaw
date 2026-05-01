@@ -137,4 +137,13 @@ describe("handleAgentSetup guards", () => {
     expect(source).toContain("gateway did not respond within");
     expect(source).not.toContain("gateway may still be starting");
   });
+
+  it("accepts Hermes JSON health responses without substring false positives", () => {
+    const source = fs.readFileSync(path.join(import.meta.dirname, "agent-onboard.ts"), "utf-8");
+
+    expect(source).toContain("function isHealthProbeOk");
+    expect(source).toContain("JSON.parse(body)");
+    expect(source).toContain('parsed.status === "ok"');
+    expect(source).not.toContain('.includes("ok")');
+  });
 });
