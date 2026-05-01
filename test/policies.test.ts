@@ -187,10 +187,10 @@ describe("policies", () => {
       expect(content).toContain("port: 8000");
     });
 
-    it("local-inference preset includes openclaw, claude, and common tool binaries", () => {
+    it("local-inference preset includes openclaw and common tool binaries", () => {
       const content = requirePresetContent(policies.loadPreset("local-inference"));
       expect(content).toContain("/usr/local/bin/openclaw");
-      expect(content).toContain("/usr/local/bin/claude");
+      expect(content).not.toContain("/usr/local/bin/claude");
       // node, curl, and python3 are needed for direct inference access (#2199)
       expect(content).toContain("/usr/local/bin/node");
       expect(content).toContain("/usr/bin/node");
