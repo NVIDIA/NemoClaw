@@ -110,10 +110,11 @@ describe("Issue #2681 — group-writable mutable-default contract", () => {
     expect(SHIELDS_TS).toMatch(/agentName === "hermes" \? "750" : "2770"/);
   });
 
-  it("applyStateDirLockMode preserves group-write when unlocking (shields down)", () => {
-    // The chmod in the unlock path must NOT strip group-write. Old code
-    // used `chmod -R go-w` which stripped both g and o; new code branches
-    // on locking vs unlocking.
-    expect(SHIELDS_TS).toMatch(/isLocking\s*\?\s*"go-w"\s*:\s*"o-w"/);
+  it("applyStateDirLockMode re-adds group-write when unlocking (shields down)", () => {
+    // The chmod in the unlock path must explicitly RE-ADD group-write,
+    // not just preserve it. A prior `chmod -R go-w` from shields-up
+    // already stripped g+w from descendants, so unlock must use `g+w,o-w`
+    // to restore the group-writable contract on the whole tree.
+    expect(SHIELDS_TS).toMatch(/isLocking\s*\?\s*"go-w"\s*:\s*"g\+w,o-w"/);
   });
 });
