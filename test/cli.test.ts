@@ -417,6 +417,88 @@ describe("CLI dispatch", () => {
     });
   });
 
+  it("status --json emits structured status without credentials", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-json-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const sandboxName = `alpha-${process.pid}-${Date.now()}`;
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          [sandboxName]: {
+            name: sandboxName,
+            model: "configured-model",
+            provider: "configured-provider",
+            gpuEnabled: true,
+            policies: ["npm"],
+            agent: "openclaw",
+            dashboardPort: 18789,
+            providerCredentialHashes: {
+              OPENAI_API_KEY: "sk-should-not-render",
+            },
+            messagingChannels: ["slack"],
+          },
+        },
+        defaultSandbox: sandboxName,
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: nvidia/nemotron'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("status --json", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    const parsed = JSON.parse(r.out);
+    expect(parsed).toMatchObject({
+      schemaVersion: 1,
+      defaultSandbox: sandboxName,
+      liveInference: {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron",
+      },
+      sandboxes: [
+        {
+          name: sandboxName,
+          model: "nvidia/nemotron",
+          provider: "nvidia-prod",
+          gpuEnabled: true,
+          policies: ["npm"],
+          agent: "openclaw",
+          dashboardPort: 18789,
+          isDefault: true,
+        },
+      ],
+    });
+    expect(parsed.services).toEqual([
+      {
+        name: "cloudflared",
+        running: false,
+        pid: null,
+      },
+    ]);
+    expect(r.out).not.toMatch(/Bearer|nvapi-|sk-|xoxb-|xapp-|password|api[-_]?key/i);
+  });
+
   it("list forwards oclif parse errors for unknown options", () => {
     const r = run("list --bogus");
     expect(r.code).toBe(2);

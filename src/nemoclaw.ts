@@ -139,6 +139,23 @@ type RecoveredSandboxMetadata = Partial<
   policyPresets?: string[] | null;
 };
 
+type StatusJsonSandbox = {
+  name: string;
+  model: string | null;
+  provider: string | null;
+  gpuEnabled: boolean;
+  policies: string[];
+  agent: string | null;
+  dashboardPort?: number | null;
+  isDefault: boolean;
+};
+
+type StatusJsonService = {
+  name: string;
+  running: boolean;
+  pid: number | null;
+};
+
 const REMOTE_UNINSTALL_URL = buildVersionedUninstallUrl(getVersion());
 let OPENSHELL_BIN: string | null = null;
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
@@ -1505,17 +1522,80 @@ function readGatewayLog(sandboxName: string) {
   }
 }
 
-function showStatus() {
+function getLiveGatewayInference() {
+  return parseGatewayInference(
+    captureOpenshell(["inference", "get"], {
+      ignoreError: true,
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    }).output,
+  );
+}
+
+function buildStatusJson() {
+  const { getServiceStatuses } = require("./lib/services");
+  const { sandboxes, defaultSandbox } = registry.listSandboxes();
+  const live = sandboxes.length > 0 ? getLiveGatewayInference() : null;
+  const rows: StatusJsonSandbox[] = sandboxes.map((sandbox: SandboxEntry) => {
+    const isDefault = sandbox.name === defaultSandbox;
+    return {
+      name: sandbox.name,
+      model: (isDefault && live?.model) || sandbox.model || null,
+      provider: (isDefault && live?.provider) || sandbox.provider || null,
+      gpuEnabled: sandbox.gpuEnabled === true,
+      policies: Array.isArray(sandbox.policies) ? sandbox.policies : [],
+      agent: sandbox.agent || null,
+      ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
+      isDefault,
+    };
+  });
+
+  return {
+    schemaVersion: 1,
+    defaultSandbox: defaultSandbox || null,
+    liveInference: live
+      ? {
+          provider: live.provider || null,
+          model: live.model || null,
+        }
+      : null,
+    sandboxes: rows,
+    services: getServiceStatuses({ sandboxName: defaultSandbox || undefined }).map(
+      (service: StatusJsonService) => ({
+        name: service.name,
+        running: service.running,
+        pid: service.pid,
+      }),
+    ),
+  };
+}
+
+function showStatus(args: string[] = []) {
+  if (args.includes("--help")) {
+    console.log(`  Usage: ${CLI_NAME} status [--json]`);
+    console.log("");
+    console.log("  Show sandbox list and service status.");
+    return;
+  }
+
+  const json = args.includes("--json");
+  const unknown = args.filter((arg) => arg !== "--json");
+  if (unknown.length > 0) {
+    console.error(
+      `  Unknown status argument${unknown.length === 1 ? "" : "s"}: ${unknown.join(" ")}`,
+    );
+    console.error(`  Usage: ${CLI_NAME} status [--json]`);
+    process.exit(1);
+  }
+
+  if (json) {
+    console.log(JSON.stringify(buildStatusJson(), null, 2));
+    return;
+  }
+
   const { showStatus: showServiceStatus } = require("./lib/services");
   showStatusCommand({
     listSandboxes: () => registry.listSandboxes(),
-    getLiveInference: () =>
-      parseGatewayInference(
-        captureOpenshell(["inference", "get"], {
-          ignoreError: true,
-          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-        }).output,
-      ),
+    getLiveInference: getLiveGatewayInference,
     showServiceStatus,
     checkMessagingBridgeHealth,
     backfillAndFindOverlaps,
@@ -4372,7 +4452,7 @@ const [cmd, ...args] = process.argv.slice(2);
         await tunnel(args);
         break;
       case "status":
-        showStatus();
+        showStatus(args);
         break;
       case "debug":
         debug(args);

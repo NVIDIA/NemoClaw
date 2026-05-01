@@ -325,6 +325,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw status",
     description: "Show sandbox list and service status",
+    flags: "[--json]",
     group: "Services",
     scope: "global",
   },

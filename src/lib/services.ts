@@ -224,12 +224,11 @@ export function showStatus(opts: ServiceOptions = {}): void {
   ensurePidDir(pidDir);
 
   console.log("");
-  for (const svc of SERVICE_NAMES) {
-    if (isRunning(pidDir, svc)) {
-      const pid = readPid(pidDir, svc);
-      console.log(`  ${GREEN}●${NC} ${svc}  (PID ${String(pid)})`);
+  for (const svc of getServiceStatuses({ ...opts, pidDir })) {
+    if (svc.running) {
+      console.log(`  ${GREEN}●${NC} ${svc.name}  (PID ${String(svc.pid)})`);
     } else {
-      console.log(`  ${RED}●${NC} ${svc}  (stopped)`);
+      console.log(`  ${RED}●${NC} ${svc.name}  (stopped)`);
     }
   }
   console.log("");
