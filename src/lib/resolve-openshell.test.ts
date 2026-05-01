@@ -2,11 +2,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { resolveOpenshell } from "../../dist/lib/resolve-openshell";
 
 describe("lib/resolve-openshell", () => {
   it("returns command -v result when absolute path", () => {
     expect(resolveOpenshell({ commandVResult: "/usr/bin/openshell" })).toBe("/usr/bin/openshell");
+  });
+
+  it("prefers explicit installer override over command -v", () => {
+    const previous = process.env.NEMOCLAW_OPENSHELL_BIN;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-bin-"));
+    const override = path.join(tmp, "openshell");
+    fs.writeFileSync(override, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    try {
+      process.env.NEMOCLAW_OPENSHELL_BIN = override;
+      expect(resolveOpenshell({ commandVResult: "/opt/homebrew/bin/openshell" })).toBe(override);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = previous;
+      }
+    }
   });
 
   it("rejects non-absolute command -v result (alias)", () => {
@@ -81,5 +102,4 @@ describe("lib/resolve-openshell", () => {
       }),
     ).toBeNull();
   });
-
 });

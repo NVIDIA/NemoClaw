@@ -4275,6 +4275,54 @@ function help() {
   console.log(lines.join("\n"));
 }
 
+function editDistance(left: string, right: string): number {
+  const rows = left.length + 1;
+  const cols = right.length + 1;
+  const matrix: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+  for (let i = 0; i < rows; i++) matrix[i][0] = i;
+  for (let j = 0; j < cols; j++) matrix[0][j] = j;
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost,
+      );
+    }
+  }
+  return matrix[left.length][right.length];
+}
+
+function suggestGlobalCommand(token: string): string | null {
+  let best: { command: string; distance: number } | null = null;
+  for (const command of GLOBAL_COMMANDS) {
+    if (command.startsWith("-")) continue;
+    const distance = editDistance(token, command);
+    if (!best || distance < best.distance) {
+      best = { command, distance };
+    }
+  }
+  if (!best) return null;
+  if (best.distance <= 1) return best.command;
+  if (token.length >= 5 && best.distance <= 2) return best.command;
+  return null;
+}
+
+function findRegisteredSandboxName(tokens: string[]): string | null {
+  const registered = new Set(
+    registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name),
+  );
+  return tokens.find((token) => registered.has(token)) || null;
+}
+
+function printConnectOrderHint(candidate: string | null): void {
+  console.error(`  Command order is: ${CLI_NAME} <sandbox-name> connect`);
+  if (candidate) {
+    console.error(`  Did you mean: ${CLI_NAME} ${candidate} connect?`);
+  }
+}
+
 // ── Dispatch ─────────────────────────────────────────────────────
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -4364,22 +4412,47 @@ const [cmd, ...args] = process.argv.slice(2);
   // command, attempt recovery — the sandbox may still be live with a stale registry.
   // Derived from command registry — single source of truth
   const sandboxActions = sandboxActionTokens();
-  if (!registry.getSandbox(cmd) && sandboxActions.includes(args[0] || "")) {
+  const requestedSandboxAction = args[0] || "connect";
+  if (!registry.getSandbox(cmd) && sandboxActions.includes(requestedSandboxAction)) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });
     if (!registry.getSandbox(cmd)) {
+      if (args.length === 0) {
+        const suggestion = suggestGlobalCommand(cmd);
+        if (suggestion) {
+          console.error(`  Unknown command: ${cmd}`);
+          console.error(`  Did you mean: ${CLI_NAME} ${suggestion}?`);
+          process.exit(1);
+        }
+      }
       console.error(`  Sandbox '${cmd}' does not exist.`);
       const allNames = registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name);
       if (allNames.length > 0) {
         console.error("");
         console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
         console.error(`  Run '${CLI_NAME} list' to see all sandboxes.`);
+        const reorderedCandidate =
+          args[0] === "connect" ? findRegisteredSandboxName(args.slice(1)) : null;
+        if (reorderedCandidate) {
+          console.error("");
+          printConnectOrderHint(reorderedCandidate);
+        }
       } else {
         console.error(`  Run '${CLI_NAME} onboard' to create one.`);
       }
       process.exit(1);
     }
   }
+
+  if (!registry.getSandbox(cmd)) {
+    const suggestion = suggestGlobalCommand(cmd);
+    if (suggestion) {
+      console.error(`  Unknown command: ${cmd}`);
+      console.error(`  Did you mean: ${CLI_NAME} ${suggestion}?`);
+      process.exit(1);
+    }
+  }
+
   const sandbox = registry.getSandbox(cmd);
   if (sandbox) {
     validateName(cmd, "sandbox name");
@@ -4396,6 +4469,10 @@ const [cmd, ...args] = process.argv.slice(2);
             console.error(
               "  --dangerously-skip-permissions was removed; use shields commands instead.",
             );
+          }
+          const reorderedCandidate = findRegisteredSandboxName(actionArgs);
+          if (reorderedCandidate) {
+            printConnectOrderHint(reorderedCandidate);
           }
           console.error(`  Usage: ${CLI_NAME} <name> connect`);
           process.exit(1);

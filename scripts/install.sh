@@ -89,6 +89,19 @@ installer_version_for_display() {
   printf "  v%s" "$NEMOCLAW_VERSION"
 }
 
+agent_display_name() {
+  case "${1:-}" in
+    hermes) printf "Hermes" ;;
+    openclaw | "") printf "OpenClaw" ;;
+    *)
+      local first rest
+      first="$(printf "%.1s" "$1" | tr '[:lower:]' '[:upper:]')"
+      rest="${1#?}"
+      printf "%s%s" "$first" "$rest"
+      ;;
+  esac
+}
+
 # Resolve which Git ref to install from.
 # Priority: NEMOCLAW_INSTALL_TAG env var > "latest" tag.
 resolve_release_tag() {
@@ -172,13 +185,13 @@ verify_downloaded_script() {
 
 resolve_default_sandbox_name() {
   local registry_file="${HOME}/.nemoclaw/sandboxes.json"
-  local sandbox_name="${NEMOCLAW_SANDBOX_NAME:-}"
+  local sandbox_name=""
 
   # Prefer the sandbox name from the current onboard session — it reflects
   # the sandbox just created, whereas sandboxes.json may hold a stale default
   # from a previous gateway that no longer exists (#1839).
   local session_file="${HOME}/.nemoclaw/onboard-session.json"
-  if [[ -z "$sandbox_name" && -f "$session_file" ]] && command_exists node; then
+  if [[ -f "$session_file" ]] && command_exists node; then
     sandbox_name="$(
       node -e '
         const fs = require("fs");
@@ -189,6 +202,16 @@ resolve_default_sandbox_name() {
         } catch {}
       ' "$session_file" 2>/dev/null || true
     )"
+  fi
+  if [[ -z "$sandbox_name" && -f "$session_file" ]]; then
+    sandbox_name="$(
+      sed -n 's/.*"sandboxName"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p' "$session_file" 2>/dev/null \
+        | head -n 1
+    )"
+  fi
+
+  if [[ -z "$sandbox_name" ]]; then
+    sandbox_name="${NEMOCLAW_SANDBOX_NAME:-}"
   fi
 
   if [[ -z "$sandbox_name" && -f "$registry_file" ]] && command_exists node; then
@@ -207,7 +230,11 @@ resolve_default_sandbox_name() {
     )"
   fi
 
-  printf "%s" "${sandbox_name:-my-assistant}"
+  local fallback="my-assistant"
+  if [[ "${NEMOCLAW_AGENT:-}" == "hermes" ]]; then
+    fallback="hermes"
+  fi
+  printf "%s" "${sandbox_name:-$fallback}"
 }
 
 resolve_onboarded_agent() {
@@ -223,6 +250,125 @@ resolve_onboarded_agent() {
   else
     printf "openclaw"
   fi
+}
+
+restore_onboard_forward_after_post_checks() {
+  local sandbox_name agent_name agent_display port openshell_bin attempt state_dir pid_file watcher_script watcher_pid
+  sandbox_name="$(resolve_default_sandbox_name)"
+  agent_name="$(resolve_onboarded_agent)"
+  agent_display="$(agent_display_name "$agent_name")"
+
+  case "$agent_name" in
+    hermes) port=8642 ;;
+    *) return 0 ;;
+  esac
+
+  if [[ -n "${NEMOCLAW_OPENSHELL_BIN:-}" && -x "$NEMOCLAW_OPENSHELL_BIN" ]]; then
+    openshell_bin="$NEMOCLAW_OPENSHELL_BIN"
+  elif command_exists openshell; then
+    openshell_bin="$(command -v openshell)"
+  else
+    return 0
+  fi
+
+  state_dir="${HOME}/.nemoclaw/state"
+  mkdir -p "$state_dir" 2>/dev/null || true
+  pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
+  if [[ -f "$pid_file" ]]; then
+    local old_pid expected_watcher_script current_uid old_uid old_args
+    old_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    expected_watcher_script="${pid_file}.js"
+    current_uid="$(id -u)"
+    if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" >/dev/null 2>&1; then
+      old_uid="$(ps -p "$old_pid" -o uid= 2>/dev/null | tr -d '[:space:]' || true)"
+      old_args="$(ps -p "$old_pid" -o args= 2>/dev/null || true)"
+      if [[ "$old_uid" == "$current_uid" && "$old_args" == *"$expected_watcher_script"* ]]; then
+        kill "$old_pid" >/dev/null 2>&1 || true
+      fi
+    fi
+    rm -f "$pid_file"
+  fi
+
+  stop_agent_forward_if_owned() {
+    local forward_list owner status
+    "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 && return 0
+    forward_list="$("$openshell_bin" forward list 2>/dev/null || true)"
+    owner="$(awk -v sandbox="$sandbox_name" -v port="$port" '
+      $1 == sandbox && $3 == port {
+        print $1
+        exit
+      }
+    ' <<<"$forward_list")"
+    status="$(awk -v sandbox="$sandbox_name" -v port="$port" '
+      $1 == sandbox && $3 == port {
+        print tolower($5)
+        exit
+      }
+    ' <<<"$forward_list")"
+    if [[ "$owner" == "$sandbox_name" && ("$status" == "running" || "$status" == "active") ]]; then
+      "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 || true
+    fi
+  }
+
+  for attempt in 1 2 3; do
+    stop_agent_forward_if_owned
+    if [ "$attempt" -gt 1 ]; then
+      sleep 2
+    fi
+    "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
+    watcher_pid=""
+    if [[ "${NEMOCLAW_SKIP_FORWARD_WATCHER:-}" != "1" ]] && command_exists node; then
+      watcher_script="${pid_file}.js"
+      cat >"$watcher_script" <<'NODE'
+const { spawnSync } = require("child_process");
+const [openshellBin, port, sandboxName] = process.argv.slice(2);
+function run(args) {
+  spawnSync(openshellBin, args, { stdio: "ignore" });
+}
+function healthy() {
+  return spawnSync("curl", ["-sf", "--max-time", "3", `http://127.0.0.1:${port}/health`], {
+    stdio: "ignore",
+  }).status === 0;
+}
+function tick() {
+  if (healthy()) return;
+  run(["forward", "stop", port, sandboxName]);
+  run(["forward", "start", "--background", port, sandboxName]);
+}
+tick();
+setInterval(tick, 10_000);
+NODE
+      node -e '
+        const { spawn } = require("child_process");
+        const fs = require("fs");
+        const [script, openshellBin, port, sandboxName, pidFile] = process.argv.slice(1);
+        const child = spawn(process.execPath, [script, openshellBin, port, sandboxName], {
+          detached: true,
+          stdio: "ignore",
+        });
+        fs.writeFileSync(pidFile, String(child.pid) + "\n");
+        child.unref();
+      ' "$watcher_script" "$openshell_bin" "$port" "$sandbox_name" "$pid_file" \
+        >/dev/null 2>&1 || true
+    fi
+    sleep 4
+    if command_exists curl \
+      && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    watcher_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if ! command_exists curl && [[ -n "$watcher_pid" ]] && kill -0 "$watcher_pid" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ -n "$watcher_pid" ]]; then
+      kill "$watcher_pid" >/dev/null 2>&1 || true
+    fi
+    rm -f "$pid_file"
+  done
+
+  warn "Could not restore ${agent_display} host forward on port ${port}."
+  warn "Run: openshell forward start --background ${port} ${sandbox_name}"
+  return 1
 }
 
 # step N "Description" — numbered section header
@@ -255,7 +401,7 @@ print_banner() {
   fi
   printf "\n"
   if [[ -n "${NEMOCLAW_AGENT:-}" && "${NEMOCLAW_AGENT}" != "openclaw" ]]; then
-    printf "  ${C_DIM}Launch %s in an OpenShell sandbox.%s${C_RESET}\n" "${NEMOCLAW_AGENT^}" "$version_suffix"
+    printf "  ${C_DIM}Launch %s in an OpenShell sandbox.%s${C_RESET}\n" "$(agent_display_name "$NEMOCLAW_AGENT")" "$version_suffix"
   else
     printf "  ${C_DIM}Launch OpenClaw in an OpenShell sandbox.%s${C_RESET}\n" "$version_suffix"
   fi
@@ -278,7 +424,7 @@ print_done() {
     if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
       printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
     else
-      printf "  ${C_GREEN}Your %s Sandbox is live.${C_RESET}\n" "${agent_name^}"
+      printf "  ${C_GREEN}Your %s Sandbox is live.${C_RESET}\n" "$(agent_display_name "$agent_name")"
     fi
     printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
     printf "\n"
@@ -590,6 +736,15 @@ refresh_path() {
 
   if [[ -d "$NEMOCLAW_SHIM_DIR" && ":$PATH:" != *":$NEMOCLAW_SHIM_DIR:"* ]]; then
     export PATH="$NEMOCLAW_SHIM_DIR:$PATH"
+  fi
+}
+
+prefer_user_local_openshell() {
+  local local_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  local openshell_bin="${local_bin}/openshell"
+  if [[ -x "$openshell_bin" ]]; then
+    export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
+    export PATH="$local_bin:$PATH"
   fi
 }
 
@@ -1181,6 +1336,7 @@ install_nemoclaw() {
     # running ./scripts/install.sh manages their own openshell. The script is
     # idempotent on the happy path. See #2272.
     spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
+    prefer_user_local_openshell
   fi
 
   refresh_path
@@ -1579,6 +1735,7 @@ except Exception:
         info "Checking for sandboxes that need upgrading…"
         "$_CLI_BIN" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
       fi
+      restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
     else
       warn "Skipping onboarding until the host prerequisites above are fixed."
     fi

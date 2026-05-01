@@ -6,6 +6,8 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { execTimeout } from "./helpers/timeouts";
+
 const HERMES_CLI = path.join(import.meta.dirname, "..", "bin", "nemohermes.js");
 const NEMOCLAW_CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
@@ -16,7 +18,7 @@ function runHermes(
   try {
     const out = execSync(`node "${HERMES_CLI}" ${args}`, {
       encoding: "utf-8",
-      timeout: 10000,
+      timeout: execTimeout(),
       env: {
         ...process.env,
         HOME: "/tmp/nemohermes-test-" + Date.now(),
@@ -41,7 +43,7 @@ function runNemoClaw(
   try {
     const out = execSync(`node "${NEMOCLAW_CLI}" ${args}`, {
       encoding: "utf-8",
-      timeout: 10000,
+      timeout: execTimeout(),
       env: {
         ...process.env,
         HOME: "/tmp/nemohermes-test-" + Date.now(),

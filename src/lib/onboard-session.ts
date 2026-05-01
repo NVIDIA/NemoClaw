@@ -638,6 +638,9 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     }
     safe.migratedLegacyValueHashes = cleaned;
   }
+  if (updates.gpuPassthrough === true || updates.gpuPassthrough === false) {
+    safe.gpuPassthrough = updates.gpuPassthrough;
+  }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
       gatewayName: updates.metadata.gatewayName,

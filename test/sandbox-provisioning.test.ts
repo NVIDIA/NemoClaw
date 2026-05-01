@@ -20,6 +20,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const DOCKERFILE_SANDBOX = path.join(ROOT, "test", "Dockerfile.sandbox");
+const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 
 describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
   const src = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
@@ -65,6 +66,17 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
     // if the base image predates the procps addition.
     expect(mainSrc).toMatch(/command -v ps/);
     expect(mainSrc).toMatch(/install.*procps/);
+  });
+});
+
+describe("Hermes sandbox provisioning", () => {
+  const src = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+
+  it("final image validates the manifest-declared hermes binary path", () => {
+    expect(src).toContain('hermes_path="$(command -v hermes 2>/dev/null || true)"');
+    expect(src).toContain('[ "$hermes_path" != "/usr/local/bin/hermes" ]');
+    expect(src).toContain("test -x /usr/local/bin/hermes");
+    expect(src).toContain("/usr/local/bin/hermes --version");
   });
 });
 
