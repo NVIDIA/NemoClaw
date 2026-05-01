@@ -2659,6 +2659,66 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /setupOpenclaw[\s\S]*?markStepSkipped\("agent_setup"\)/);
   });
 
+  it("uses named sandbox exec for dashboard and web-search probes", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"curl"/);
+    assert.match(source, /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"hermes"/);
+    assert.match(source, /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"cat"/);
+    assert.doesNotMatch(source, /\["sandbox",\s*"exec",\s*sandboxName,\s*"curl"/);
+    assert.doesNotMatch(source, /\["sandbox",\s*"exec",\s*sandboxName,\s*"hermes"/);
+    assert.doesNotMatch(source, /\["sandbox",\s*"exec",\s*sandboxName,\s*"cat"/);
+  });
+
+  it("re-establishes the agent dashboard forward after agent setup health checks", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const setupPos = source.indexOf("await agentOnboard.handleAgentSetup");
+    const forwardPos = source.indexOf(
+      "ensureAgentDashboardForward(sandboxName, agent)",
+      setupPos,
+    );
+
+    assert.ok(setupPos !== -1, "agent setup call not found");
+    assert.ok(
+      forwardPos > setupPos,
+      "agent dashboard forward should be re-established after agent health checks",
+    );
+  });
+
+  it("re-establishes the agent dashboard forward after policies are applied", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const policiesPos = source.indexOf("await setupPoliciesWithSelection");
+    const completePoliciesPos = source.indexOf(
+      'onboardSession.markStepComplete(\n        "policies"',
+      policiesPos,
+    );
+    const forwardPos = source.indexOf(
+      "ensureAgentDashboardForward(sandboxName, agent)",
+      completePoliciesPos,
+    );
+    const completeSessionPos = source.indexOf(
+      "onboardSession.completeSession",
+      completePoliciesPos,
+    );
+
+    assert.ok(policiesPos !== -1, "policy setup call not found");
+    assert.ok(completePoliciesPos !== -1, "policy completion call not found");
+    assert.ok(forwardPos > completePoliciesPos, "agent forward should be reset after policy setup");
+    assert.ok(
+      forwardPos < completeSessionPos,
+      "agent forward should be reset before onboarding is marked complete",
+    );
+  });
+
   it("starts the sandbox step before prompting for the sandbox name", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -2940,7 +3000,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
@@ -3051,7 +3111,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
@@ -3147,7 +3207,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:19000/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:19000/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 19000 12345 running";
   return "";
 };
@@ -4708,7 +4768,7 @@ runner.runCapture = (command) => {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
@@ -5103,7 +5163,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
@@ -5235,7 +5295,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
@@ -5852,7 +5912,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };

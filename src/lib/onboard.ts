@@ -1618,10 +1618,13 @@ function verifyWebSearchInsideSandbox(
     if (agentName === "hermes") {
       // `hermes dump` outputs config_overrides and active toolsets.
       // Look for the web backend in its output.
-      const dump = runCaptureOpenshell(["sandbox", "exec", sandboxName, "hermes", "dump"], {
-        ignoreError: true,
-        timeout: 10_000,
-      });
+      const dump = runCaptureOpenshell(
+        ["sandbox", "exec", "-n", sandboxName, "--", "hermes", "dump"],
+        {
+          ignoreError: true,
+          timeout: 10_000,
+        },
+      );
       if (!dump) {
         console.warn("  ⚠ Could not verify web search config inside sandbox (hermes dump failed).");
         return;
@@ -1644,7 +1647,7 @@ function verifyWebSearchInsideSandbox(
     } else if (agentName === "openclaw") {
       // OpenClaw: verify tools.web.search block exists in the baked config.
       const configCheck = runCaptureOpenshell(
-        ["sandbox", "exec", sandboxName, "cat", "/sandbox/.openclaw/openclaw.json"],
+        ["sandbox", "exec", "-n", sandboxName, "--", "cat", "/sandbox/.openclaw/openclaw.json"],
         { ignoreError: true, timeout: 10_000 },
       );
       if (!configCheck) {
@@ -4367,7 +4370,9 @@ async function createSandbox(
       [
         "sandbox",
         "exec",
+        "-n",
         sandboxName,
+        "--",
         "curl",
         "-sf",
         `http://localhost:${effectiveDashboardPort}/`,
@@ -7201,6 +7206,19 @@ function ensureDashboardForward(
   return actualPort;
 }
 
+function ensureAgentDashboardForward(
+  sandboxName: string,
+  agent: { forwardPort?: number | null },
+): number {
+  const agentDashboardPort = agent.forwardPort || CONTROL_UI_PORT;
+  const agentDashboardUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${agentDashboardPort}`;
+  const actualAgentDashboardPort = ensureDashboardForward(sandboxName, agentDashboardUrl);
+  if (actualAgentDashboardPort !== Number(getDashboardForwardPort(agentDashboardUrl))) {
+    process.env.CHAT_UI_URL = `http://127.0.0.1:${actualAgentDashboardPort}`;
+  }
+  return actualAgentDashboardPort;
+}
+
 function findOpenclawJsonPath(dir: string): string | null {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -8180,6 +8198,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         startRecordedStep,
         skippedStepMessage,
       });
+      ensureAgentDashboardForward(sandboxName, agent);
       onboardSession.markStepSkipped("openclaw");
     } else {
       const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
@@ -8249,6 +8268,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         "policies",
         toSessionUpdates({ sandboxName, provider, model, policyPresets: appliedPolicyPresets }),
       );
+    }
+
+    if (agent) {
+      ensureAgentDashboardForward(sandboxName, agent);
     }
 
     onboardSession.completeSession(toSessionUpdates({ sandboxName, provider, model }));
