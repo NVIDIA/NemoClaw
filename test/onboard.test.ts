@@ -6576,6 +6576,24 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(findDashboardForwardOwner(falsePositive, "18789"), null);
   });
 
+  it("ensureDashboardForward clears stale preferred-port forwards before reallocating", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /const preferredEntry = findForwardEntry/);
+    assert.match(source, /preferredEntry\.status !== "running"/);
+    assert.match(
+      source,
+      /runOpenshell\(\["forward", "stop", String\(preferredPort\)\], \{ ignoreError: true \}\)/,
+    );
+    assert.match(
+      source,
+      /findAvailableDashboardPort\(sandboxName, preferredPort, existingForwards\)/,
+    );
+  });
+
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {
     const summary = formatOnboardConfigSummary({
       provider: "gemini-api",

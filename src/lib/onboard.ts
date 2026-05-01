@@ -7002,6 +7002,23 @@ function findDashboardForwardOwner(
   return portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
 }
 
+function findForwardEntry(
+  forwardListOutput: string | null | undefined,
+  port: string,
+): { sandboxName: string; status: string } | null {
+  if (!forwardListOutput) return null;
+  for (const line of forwardListOutput.split("\n")) {
+    if (/^\s*SANDBOX\s/i.test(line)) continue;
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 3 || parts[2] !== port) continue;
+    return {
+      sandboxName: parts[0] || "",
+      status: (parts[4] || "").toLowerCase(),
+    };
+  }
+  return null;
+}
+
 /**
  * Parse `openshell forward list` output into a Map<port, sandboxName>.
  * Only includes running forwards — stopped/stale entries are ignored so
@@ -7125,7 +7142,15 @@ function ensureDashboardForward(
 ): number {
   const { rollbackSandboxOnFailure = false } = options;
   const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
-  const existingForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
+  let existingForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
+  const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
+  if (
+    preferredEntry &&
+    (preferredEntry.sandboxName === sandboxName || preferredEntry.status !== "running")
+  ) {
+    runOpenshell(["forward", "stop", String(preferredPort)], { ignoreError: true });
+    existingForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
+  }
   let actualPort: number;
   try {
     actualPort = findAvailableDashboardPort(sandboxName, preferredPort, existingForwards);
