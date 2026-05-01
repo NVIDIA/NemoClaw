@@ -286,7 +286,22 @@ restore_onboard_forward_after_post_checks() {
     if [ "$attempt" -gt 1 ]; then
       sleep 2
     fi
-    nohup "$openshell_bin" forward start "$port" "$sandbox_name" \
+    "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
+    nohup bash -c '
+      set -u
+      openshell_bin="$1"
+      port="$2"
+      sandbox_name="$3"
+      while true; do
+        if ! curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+          "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 \
+            || "$openshell_bin" forward stop "$port" >/dev/null 2>&1 \
+            || true
+          "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
+        fi
+        sleep 10
+      done
+    ' nemoclaw-forward "$openshell_bin" "$port" "$sandbox_name" \
       >"${pid_file}.log" 2>&1 </dev/null &
     start_pid=$!
     printf "%s\n" "$start_pid" >"$pid_file" 2>/dev/null || true
