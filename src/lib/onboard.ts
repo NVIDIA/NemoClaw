@@ -2155,7 +2155,8 @@ function isOpenshellInstalled(): boolean {
 }
 
 function getFutureShellPathHint(binDir: string, pathValue = process.env.PATH || ""): string | null {
-  if (String(pathValue).split(path.delimiter).includes(binDir)) {
+  const parts = String(pathValue).split(path.delimiter).filter(Boolean);
+  if (parts[0] === binDir) {
     return null;
   }
   return `export PATH="${binDir}:$PATH"`;
@@ -2204,6 +2205,9 @@ function installOpenshell(): {
     process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH}`;
   }
   OPENSHELL_BIN = resolveOpenshell();
+  if (OPENSHELL_BIN) {
+    process.env.NEMOCLAW_OPENSHELL_BIN = OPENSHELL_BIN;
+  }
   return {
     installed: OPENSHELL_BIN !== null,
     localBin,
@@ -2238,6 +2242,33 @@ function getGatewayClusterContainerState(): string {
     .trim()
     .toLowerCase();
   return state || "missing";
+}
+
+function parseGatewayClusterImageVersion(imageRef: string | null | undefined): string | null {
+  const match = String(imageRef || "").match(/openshell\/cluster:([0-9]+\.[0-9]+\.[0-9]+)/);
+  return match ? match[1] : null;
+}
+
+function getGatewayClusterImageRef(): string | null {
+  const containerName = getGatewayClusterContainerName();
+  const imageRef = dockerContainerInspectFormat("{{.Config.Image}}", containerName, {
+    ignoreError: true,
+  }).trim();
+  return imageRef || null;
+}
+
+function getGatewayClusterImageDrift(): {
+  currentImage: string;
+  currentVersion: string;
+  expectedVersion: string;
+} | null {
+  const expectedVersion = getInstalledOpenshellVersion();
+  const currentImage = getGatewayClusterImageRef();
+  const currentVersion = parseGatewayClusterImageVersion(currentImage);
+  if (!expectedVersion || !currentImage || !currentVersion || currentVersion === expectedVersion) {
+    return null;
+  }
+  return { currentImage, currentVersion, expectedVersion };
 }
 
 function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
@@ -2795,6 +2826,18 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
       console.log(
         "  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.",
       );
+    } else {
+      const imageDrift = getGatewayClusterImageDrift();
+      if (imageDrift) {
+        console.log(
+          `  Gateway image ${imageDrift.currentVersion} does not match openshell ${imageDrift.expectedVersion}. Recreating...`,
+        );
+        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+        destroyGateway();
+        registry.clearAll();
+        gatewayReuseState = "missing";
+        console.log("  ✓ Previous gateway cleaned up");
+      }
     }
   }
 
@@ -7931,6 +7974,18 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         console.log(
           "  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.",
         );
+      } else {
+        const imageDrift = getGatewayClusterImageDrift();
+        if (imageDrift) {
+          console.log(
+            `  Gateway image ${imageDrift.currentVersion} does not match openshell ${imageDrift.expectedVersion}. Recreating...`,
+          );
+          runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+          destroyGateway();
+          registry.clearAll();
+          gatewayReuseState = "missing";
+          console.log("  ✓ Previous gateway cleaned up");
+        }
       }
     }
 
