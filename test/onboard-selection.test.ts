@@ -315,7 +315,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "custom/provider-model"];
+const answers = ["1", "5", "custom/provider-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -411,7 +411,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "bad/model", "z-ai/glm-5.1"];
+const answers = ["1", "5", "bad/model", "z-ai/glm-5.1"];
 const messages = [];
 
 credentials.prompt = async (message) => {

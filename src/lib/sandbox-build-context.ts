@@ -75,6 +75,9 @@ function stageOptimizedSandboxBuildContext(
   fs.cpSync(path.join(sourceBlueprintDir, "policies"), path.join(stagedBlueprintDir, "policies"), {
     recursive: true,
   });
+  fs.cpSync(path.join(sourceBlueprintDir, "scripts"), path.join(stagedBlueprintDir, "scripts"), {
+    recursive: true,
+  });
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });
   fs.copyFileSync(

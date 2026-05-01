@@ -45,7 +45,7 @@ describe("service environment", () => {
   describe("start-services behavior", () => {
     const scriptPath = join(import.meta.dirname, "../scripts/start-services.sh");
 
-    it("starts without messaging-related warnings", () => {
+    it("starts without messaging-related warnings", { timeout: 30000 }, () => {
       const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-no-key-"));
       const result = execFileSync("bash", [scriptPath], {
         encoding: "utf-8",

@@ -25,6 +25,7 @@
 #   NEMOCLAW_POLICY_PRESETS=npm,pypi                   — policy presets
 #   RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL=0        — set 0 for non-interactive (default), 1 for expect
 #   NEMOCLAW_INSTALL_SCRIPT_URL                        — override public installer URL
+#   NEMOCLAW_INSTALL_REF                               — Git ref cloned by public installer
 #   NEMOCLAW_PUBLIC_INSTALL_CWD                        — override temp cwd for public install
 #   E2E_CLOUD_ONBOARD_INSTALL_LOG                      — install log path
 #

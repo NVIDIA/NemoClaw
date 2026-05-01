@@ -6,6 +6,7 @@ import type { OpenClawPluginApi } from "./index.js";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 vi.mock("./onboard/config.js", () => ({
@@ -58,6 +59,22 @@ describe("plugin registration", () => {
   it("registers an inference provider", () => {
     const api = createMockApi();
     register(api);
+    expect(api.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "inference" }));
+  });
+
+  it("continues registration when the runtime context hook is unsupported", () => {
+    const api = createMockApi();
+    vi.mocked(api.on).mockImplementation((hookName: string) => {
+      if (hookName === "before_agent_start") {
+        throw new Error("unsupported hook");
+      }
+    });
+
+    register(api);
+
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Could not register runtime context hook: unsupported hook"),
+    );
     expect(api.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "inference" }));
   });
 
@@ -291,7 +308,7 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     const api = createMockApi();
     const handler = getHookHandler(api);
     const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
-    handler({
+    void handler({
       toolName: "write",
       params: {
         file_path: "/sandbox/.openclaw/memory/creds.md",

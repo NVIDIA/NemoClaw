@@ -2,12 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Typed command registry — single source of truth for all NemoClaw CLI commands.
+ * Typed command registry — single source of truth for all CLI commands.
  *
  * Every command that the CLI dispatches, documents, or prints in help() is
  * defined here. Helper functions derive GLOBAL_COMMANDS, sandboxActions,
  * help() groupings, and the canonical usage list consumed by check-docs.sh.
+ *
+ * Usage strings use "nemoclaw" as a canonical placeholder. The exported
+ * {@link brandedUsage} helper replaces it with the active CLI_NAME
+ * (e.g. "nemohermes") for display.
  */
+
+import { CLI_NAME } from "./branding";
+
+/** Replace the canonical "nemoclaw" prefix in a usage string with CLI_NAME. */
+export function brandedUsage(usage: string): string {
+  return usage.replace(/^nemoclaw/, CLI_NAME);
+}
 
 export type CommandGroup =
   | "Getting Started"
@@ -78,7 +89,7 @@ export const COMMANDS: readonly CommandDef[] = [
 
   // ── Sandbox Management ──
   {
-    usage: "nemoclaw list",
+    usage: "nemoclaw list [--json]",
     description: "List all sandboxes",
     group: "Sandbox Management",
     scope: "global",
@@ -120,6 +131,27 @@ export const COMMANDS: readonly CommandDef[] = [
     description: "Restore state from a snapshot",
     flags:
       "[v<N>|name|timestamp] [--to <dst>] (omit version for latest; auto-creates <dst> from this sandbox image if needed)",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> share mount",
+    description: "Mount sandbox filesystem on the host via SSHFS",
+    flags: "[sandbox-path] [local-mount-point]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> share unmount",
+    description: "Unmount a previously mounted sandbox filesystem",
+    flags: "[local-mount-point]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> share status",
+    description: "Check whether the sandbox filesystem is currently mounted",
+    flags: "[local-mount-point]",
     group: "Sandbox Management",
     scope: "sandbox",
   },
@@ -405,12 +437,19 @@ export function visibleCommands(): CommandDef[] {
   return COMMANDS.filter((c) => !c.hidden);
 }
 
-/** Visible commands grouped by CommandGroup, ordered by GROUP_ORDER. */
+/** Visible commands grouped by CommandGroup, ordered by GROUP_ORDER.
+ *  Usage strings are branded with the active CLI_NAME. */
 export function commandsByGroup(): Map<CommandGroup, CommandDef[]> {
   const visible = visibleCommands();
   const grouped = new Map<CommandGroup, CommandDef[]>();
   for (const group of GROUP_ORDER) {
-    const cmds = visible.filter((c) => c.group === group);
+    const cmds = visible
+      .filter((c) => c.group === group)
+      .map((c) => ({
+        ...c,
+        usage: brandedUsage(c.usage),
+        description: c.description.replace(/nemoclaw/g, CLI_NAME),
+      }));
     if (cmds.length > 0) {
       grouped.set(group, cmds);
     }

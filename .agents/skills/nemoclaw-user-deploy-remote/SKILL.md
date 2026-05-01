@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-deploy-remote"
-description: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow. Use when deploying NemoClaw to a remote VM, onboarding a Brev instance, or migrating away from the legacy `nemoclaw deploy` wrapper. Trigger keywords - deploy nemoclaw remote gpu, nemoclaw brev cloud deployment, nemoclaw plugins, openclaw plugins, install openclaw plugin, nemoclaw onboard from dockerfile, nemoclaw sandbox hardening, container security, docker capabilities, process limits, nemoclaw telegram, telegram bot openclaw agent, openshell channel messaging."
+description: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow. Use when deploying NemoClaw to a remote VM, onboarding a Brev instance, or migrating away from the legacy `nemoclaw deploy` wrapper. Trigger keywords - deploy nemoclaw remote gpu, nemoclaw brev cloud deployment, nemoclaw plugins, openclaw plugins, install openclaw plugin, nemoclaw onboard from dockerfile, nemoclaw telegram, telegram bot openclaw agent, openshell channel messaging, nemoclaw sandbox hardening, container security, docker capabilities, process limits."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -17,9 +17,8 @@ description: "Explains how to run NemoClaw on a remote GPU instance, including t
 
 - The [Brev CLI](https://brev.nvidia.com) installed and authenticated.
 - A provider credential for the inference backend you want to use during onboarding.
+- `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exported when your remote vLLM or Hugging Face workflow needs access to gated models.
 - NemoClaw installed locally if you plan to use the deprecated `nemoclaw deploy` wrapper. Otherwise, install NemoClaw directly on the remote host after provisioning it.
-- A machine where you can run `nemoclaw onboard` (local or remote host that runs the gateway and sandbox).
-- A Telegram bot token from [BotFather](https://t.me/BotFather).
 
 Run NemoClaw on a remote GPU instance through [Brev](https://brev.nvidia.com).
 The preferred path is to provision the VM, run the standard NemoClaw installer on that host, and then run `nemoclaw onboard`.
@@ -59,6 +58,7 @@ The legacy compatibility flow performs the following steps on the VM:
 4. Starts optional host auxiliary services (for example the cloudflared tunnel) when `cloudflared` is available. Channel messaging is configured during onboarding and runs through OpenShell-managed processes, not through `nemoclaw tunnel start`.
 
 By default, the compatibility wrapper asks Brev to provision on `gcp`. Override this with `NEMOCLAW_BREV_PROVIDER` if you need a different Brev cloud provider.
+If you export `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`, the wrapper forwards those values to the VM so remote setup can pull gated Hugging Face model repositories.
 
 ## Step 3: Connect to the Remote Sandbox
 
@@ -121,6 +121,7 @@ $ nemoclaw onboard
 ```
 
 These values are baked into the sandbox image at build time.
+They are also forwarded into the runtime container during sandbox creation, so `/tmp/nemoclaw-proxy-env.sh` uses the same host and port that the image build used.
 Only alphanumeric characters, dots, hyphens, and colons are accepted for the host.
 The port must be numeric (0-65535).
 Changing the proxy after onboarding requires re-running `nemoclaw onboard`.
@@ -136,163 +137,10 @@ $ export NEMOCLAW_GPU="a2-highgpu-1g:nvidia-tesla-a100:2"
 $ nemoclaw deploy <instance-name>
 ```
 
----
-
-OpenClaw plugins extend the OpenClaw runtime with hooks, services, tools, or
-provider integrations. They are different from NemoClaw-managed agent skills:
-
-- **Plugins** are code packages loaded by OpenClaw.
-- **Skills** are `SKILL.md` directories that teach an agent how to perform a task.
-- **Policy presets** are network-egress rules that control what sandboxed code can reach.
-
-Today, the supported NemoClaw path for OpenClaw plugins is to bake the plugin
-into a custom sandbox image and onboard from that Dockerfile.
-
-## Step 9: Prepare a Build Directory
-
-Put the Dockerfile and everything it needs to `COPY` in one directory.
-`nemoclaw onboard --from <Dockerfile>` uses the Dockerfile's parent directory as
-the Docker build context.
-
-```text
-my-plugin-sandbox/
-├── Dockerfile
-└── my-plugin/
-    ├── package.json
-    └── src/
-```
-
-## Step 10: Example Dockerfile
-
-Use the custom image to copy the plugin into the OpenClaw extensions directory
-and let OpenClaw refresh its config before NemoClaw starts the sandbox.
-
-```dockerfile
-ARG SANDBOX_BASE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
-FROM ${SANDBOX_BASE}
-
-COPY my-plugin/ /opt/my-plugin/
-WORKDIR /opt/my-plugin
-RUN npm ci --no-audit --no-fund && npm run build
-
-RUN mkdir -p /sandbox/.openclaw/extensions \
- && cp -a /opt/my-plugin /sandbox/.openclaw/extensions/my-plugin \
- && openclaw doctor --fix
-
-WORKDIR /opt/nemoclaw
-```
-
-If the plugin needs configuration in `openclaw.json`, apply it after
-`openclaw doctor --fix` so the base config exists first.
-
-## Step 11: Create the Sandbox
-
-Point `nemoclaw onboard --from` at the Dockerfile in the build directory.
-
-```console
-$ nemoclaw onboard --from ./my-plugin-sandbox/Dockerfile
-```
-
-If you need a second sandbox alongside an existing one, use a dedicated build
-directory and rerun onboarding with the sandbox name and ports you intend to
-use.
-
-## Step 12: Network Access
-
-Plugins still run inside the sandbox policy boundary. If a plugin needs network
-egress, add or update a policy preset for the required hostnames and binaries
-before rebuilding the sandbox.
-
-For example, see Network Policies (use the `nemoclaw-user-reference` skill) for
-policy concepts and Customize Network Policy (use the `nemoclaw-user-manage-policy` skill)
-for custom preset workflows.
-
-## Step 13: Common Mistakes
-
-These are the most common places where plugin installation gets mixed up with
-other NemoClaw extension paths.
-
-- Do not use `nemoclaw <sandbox> skill install` for OpenClaw plugins. That
-  command only installs `SKILL.md` agent skills.
-- Do not put a Dockerfile in a broad directory such as `/tmp` unless you intend
-  to send that whole directory as the Docker build context.
-- Keep plugin dependencies in the build stage or plugin directory; avoid copying
-  unrelated host files into the sandbox image.
-
----
-
-Telegram, Discord, and Slack reach your agent through OpenShell-managed processes and gateway constructs.
-NemoClaw configures those channels during `nemoclaw onboard`. Tokens are registered with OpenShell providers, channel configuration is baked into the sandbox image, and runtime delivery stays under OpenShell control.
-
-`nemoclaw tunnel start` does not start Telegram (or other chat bridges). It only starts optional host services such as the cloudflared tunnel when that binary is present. (`nemoclaw start` is kept as a deprecated alias.)
-For details, refer to Commands (use the `nemoclaw-user-reference` skill).
-
-## Step 14: Create a Telegram Bot
-
-Open Telegram and send `/newbot` to [@BotFather](https://t.me/BotFather).
-Follow the prompts to create a bot and copy the bot token.
-
-## Step 15: Provide the Bot Token and Optional Allowlist
-
-Onboarding reads Telegram credentials from either host environment variables or the NemoClaw credential store (`getCredential` / `saveCredential` in the onboard flow). You do not have to export variables if you enter the token when the wizard asks.
-
-### Option A: Environment variables (CI, scripts, or before you start the wizard)
-
-```console
-$ export TELEGRAM_BOT_TOKEN=<your-bot-token>
-```
-
-Optional comma-separated allowlist (maps to the wizard field “Telegram User ID (for DM access)”):
-
-```console
-$ export TELEGRAM_ALLOWED_IDS="123456789,987654321"
-```
-
-### Option B: Interactive `nemoclaw onboard`
-
-When the wizard reaches **Messaging channels**, it lists Telegram, Discord, and Slack.
-Press **1** to toggle Telegram on or off, then **Enter** when done.
-If the token is not already in the environment or credential store, the wizard prompts for it and saves it to the store.
-If `TELEGRAM_ALLOWED_IDS` is not set, the wizard can prompt for allowed sender IDs for Telegram DMs (you can leave this blank and rely on OpenClaw pairing instead).
-NemoClaw applies that allowlist to Telegram DMs only.
-Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
-
-## Step 16: Run `nemoclaw onboard`
-
-Complete the rest of the wizard so the blueprint can create OpenShell providers (for example `<sandbox>-telegram-bridge`), bake channel configuration into the image (`NEMOCLAW_MESSAGING_CHANNELS_B64`), and start the sandbox.
-
-Channel entries in `/sandbox/.openclaw/openclaw.json` are baked into the container image at build time. Changes made inside the running sandbox do not persist across rebuilds.
-
-If you add or change `TELEGRAM_BOT_TOKEN` (or toggle channels) after a sandbox already exists, you typically need to run `nemoclaw onboard` again so the image and provider attachments are rebuilt with the new settings.
-
-NemoClaw stores a SHA-256 hash of each messaging token in the sandbox registry at creation time.
-When you re-run `nemoclaw onboard --non-interactive` with a new token, NemoClaw detects the change, backs up workspace state, deletes the sandbox, recreates it with the new credential, and restores the backup.
-This makes credential rotation safe to script.
-
-Telegram, Discord, and Slack each allow only one active consumer per bot token.
-If you enable a messaging channel and another sandbox already uses the same token, onboard prompts you to confirm before continuing in interactive mode and exits non-zero in non-interactive mode.
-`nemoclaw status` also reports cross-sandbox overlaps so you can resolve duplicates before messages start dropping.
-
-For a full first-time flow, refer to Quickstart (use the `nemoclaw-user-get-started` skill).
-
-## Step 17: Confirm Delivery
-
-After the sandbox is running, send a message to your bot in Telegram.
-If something fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the Telegram API (see Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) and the `telegram` preset).
-
-## Step 18: `nemoclaw tunnel start` (cloudflared Only)
-
-`nemoclaw tunnel start` starts cloudflared when it is installed, which can expose the dashboard with a public URL.
-It does not affect Telegram connectivity. The older `nemoclaw start` still works as a deprecated alias.
-
-```console
-$ nemoclaw tunnel start
-```
-
-To pause the Telegram bridge without removing its credentials or destroying the sandbox, use `nemoclaw <name> channels stop telegram`. Re-enable it later with `nemoclaw <name> channels start telegram`.
-
 ## References
 
+- **Load [references/install-openclaw-plugins.md](references/install-openclaw-plugins.md)** when users ask how to install, build, or configure OpenClaw plugins under NemoClaw. Explains the difference between OpenClaw plugins and agent skills, and shows the current Dockerfile-based workflow for baking a plugin into a NemoClaw sandbox.
+- **Load [references/set-up-telegram-bridge.md](references/set-up-telegram-bridge.md)** when setting up Telegram, a chat interface, or messaging integration without relying on nemoclaw tunnel start for bridges. Explains how Telegram reaches the sandboxed OpenClaw agent through OpenShell-managed processes and onboarding-time channel configuration.
 - **Load [references/sandbox-hardening.md](references/sandbox-hardening.md)** when reviewing sandbox image security controls, auditing capability drops, or looking up the runtime resource limits. Includes the sandbox container image hardening reference, covering Docker capabilities and process limits.
 
 ## Related Skills

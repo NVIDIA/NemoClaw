@@ -91,5 +91,6 @@ You can edit them in two ways:
 
 ## Next Steps
 
+- Set Up Task-Specific Sub-Agents (use the `nemoclaw-user-configure-inference` skill)
 - Backup and Restore workspace files (use the `nemoclaw-user-workspace` skill)
 - Commands reference (use the `nemoclaw-user-reference` skill)

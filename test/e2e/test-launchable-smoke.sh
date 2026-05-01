@@ -443,10 +443,6 @@ info "[ROUTING] inference.local DNS + OpenShell proxy reachable from sandbox..."
 ssh_config="$(mktemp)"
 sandbox_response=""
 
-TIMEOUT_CMD=""
-command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout"
-command -v gtimeout >/dev/null 2>&1 && TIMEOUT_CMD="gtimeout"
-
 if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
   sandbox_response=$(run_with_timeout 90 ssh -F "$ssh_config" \
     -o StrictHostKeyChecking=no \
