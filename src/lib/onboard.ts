@@ -3672,6 +3672,21 @@ async function createSandbox(
       : { changed: false, changedProviders: [] };
 
     if (!isRecreateSandbox() && !needsProviderMigration && !credentialRotation.changed) {
+      // Guard against reusing a CPU-only sandbox when --gpu was requested.
+      // Placed before the non-interactive / interactive split so all reuse
+      // paths are covered (interactive prompt, non-interactive ready, unknown drift).
+      if (gpuPassthrough) {
+        const entry = registry.getSandbox(sandboxName);
+        if (entry && !entry.gpuEnabled) {
+          console.error(`  Sandbox '${sandboxName}' exists but was created without --gpu.`);
+          console.error(
+            "  Pass --recreate-sandbox to recreate with GPU, or destroy and re-onboard:",
+          );
+          console.error(`    nemoclaw onboard --gpu --recreate-sandbox`);
+          process.exit(1);
+        }
+      }
+
       if (isNonInteractive()) {
         if (existingSandboxState === "ready") {
           if (confirmedSelectionDrift) {
@@ -3688,17 +3703,6 @@ async function createSandbox(
                 "  [non-interactive] Set NEMOCLAW_RECREATE_SANDBOX=1 (or --recreate-sandbox) to force recreation.",
               );
             } else {
-              if (gpuPassthrough) {
-                const entry = registry.getSandbox(sandboxName);
-                if (entry && !entry.gpuEnabled) {
-                  console.error(`  Sandbox '${sandboxName}' exists but was created without --gpu.`);
-                  console.error(
-                    "  Pass --recreate-sandbox to recreate with GPU, or destroy and re-onboard:",
-                  );
-                  console.error(`    nemoclaw onboard --gpu --recreate-sandbox`);
-                  process.exit(1);
-                }
-              }
               note(`  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`);
               note(
                 "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
@@ -7455,8 +7459,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   }
   if (resume && opts.gpu) {
     console.error("  --gpu cannot be combined with --resume.");
-    console.error("  GPU mode is not persisted across sessions. Start a fresh onboard instead:");
-    console.error("    nemoclaw onboard --gpu");
+    console.error("  GPU intent is persisted in the session. Resume without --gpu:");
+    console.error("    nemoclaw onboard --resume");
     process.exit(1);
   }
   // In non-interactive mode also accept the env var so CI pipelines can set it.
@@ -7679,10 +7683,16 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       session = onboardSession.saveSession(
         onboardSession.createSession({
           mode: isNonInteractive() ? "non-interactive" : "interactive",
+          gpuPassthrough: opts.gpu === true,
           metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
         }),
       );
     }
+
+    // Merge GPU intent: on resume, restore from the persisted session so a
+    // plain `--resume` continues the GPU run that was originally requested.
+    // On a fresh run, opts.gpu is authoritative and was already persisted above.
+    const gpuRequested = resume ? session?.gpuPassthrough === true : opts.gpu === true;
 
     // Backstop for the resume path: a session may exist (so the early guard
     // skipped because resume === true) but never have recorded a sandboxName
@@ -7743,7 +7753,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSession.markStepComplete("preflight");
     }
 
-    if (opts.gpu && gpu?.type !== "nvidia") {
+    if (gpuRequested && gpu?.type !== "nvidia") {
       console.error("  --gpu requires an NVIDIA GPU. None detected by nvidia-smi.");
       console.error("  Verify drivers are installed: nvidia-smi");
       process.exit(1);
@@ -7780,7 +7790,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     if (resumeGateway) {
       skippedStepMessage("gateway", "running");
     } else if (!resume && canReuseHealthyGateway) {
-      if (opts.gpu) {
+      if (gpuRequested) {
         // Check if the running gateway has GPU enabled. If not, the user must
         // destroy and recreate — we don't auto-recreate because it's destructive
         // (wipes providers, inference config, and all sandboxes).
@@ -7813,7 +7823,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
       }
       startRecordedStep("gateway");
-      await startGateway(gpu, { gpuPassthrough: opts.gpu === true });
+      await startGateway(gpu, { gpuPassthrough: gpuRequested });
       onboardSession.markStepComplete("gateway");
     }
 
@@ -8018,7 +8028,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         fromDockerfile,
         agent,
         opts.controlUiPort || null,
-        opts.gpu === true,
+        gpuRequested,
       );
       webSearchConfig = nextWebSearchConfig;
       // Persist model and provider after the sandbox entry exists in the registry.
