@@ -11,18 +11,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { execTimeout } from "./helpers/timeouts";
+
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
 type CliRunResult = { code: number; out: string };
 
-function runCli(
-  args: string,
-  env: Record<string, string | undefined> = {},
-): CliRunResult {
+function runCli(args: string, env: Record<string, string | undefined> = {}): CliRunResult {
   try {
     const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",
-      timeout: 10000,
+      timeout: execTimeout(),
       env: {
         ...process.env,
         NEMOCLAW_HEALTH_POLL_COUNT: "1",

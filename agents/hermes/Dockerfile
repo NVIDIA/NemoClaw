@@ -11,6 +11,17 @@ ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
+# Keep the final image contract explicit even when the published base image
+# changes independently of this Dockerfile.
+RUN set -eu; \
+    hermes_path="$(command -v hermes 2>/dev/null || true)"; \
+    if [ "$hermes_path" != "/usr/local/bin/hermes" ]; then \
+        echo "ERROR: expected hermes at /usr/local/bin/hermes, got ${hermes_path:-missing}" >&2; \
+        exit 1; \
+    fi; \
+    test -x /usr/local/bin/hermes; \
+    /usr/local/bin/hermes --version
+
 # Harden: remove unnecessary build tools and network probes
 RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
         netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \

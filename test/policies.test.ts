@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import policies from "../dist/lib/policies";
+import { execTimeout } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "nemoclaw.js"));
@@ -108,7 +109,7 @@ selectFromList(items, options)
   return spawnSync(process.execPath, ["-e", script], {
     cwd: REPO_ROOT,
     encoding: "utf-8",
-    timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 5000),
+    timeout: execTimeout(5_000),
     input,
     env: {
       ...process.env,
@@ -865,7 +866,7 @@ selectForRemoval(items, options)
       return spawnSync(process.execPath, ["-e", script], {
         cwd: REPO_ROOT,
         encoding: "utf-8",
-        timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 5000),
+        timeout: execTimeout(5_000),
         input,
         env: {
           ...process.env,
@@ -1477,11 +1478,11 @@ setImmediate(() => {
 
     it("--from-dir skips hidden dotfile yaml presets", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-hidden-"));
+      fs.writeFileSync(path.join(dir, ".bad.yaml"), "preset:\n  name: bad\nnetwork_policies: {}\n");
       fs.writeFileSync(
-        path.join(dir, ".bad.yaml"),
-        "preset:\n  name: bad\nnetwork_policies: {}\n",
+        path.join(dir, "real.yaml"),
+        "preset:\n  name: real\nnetwork_policies: {}\n",
       );
-      fs.writeFileSync(path.join(dir, "real.yaml"), "preset:\n  name: real\nnetwork_policies: {}\n");
       const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
       expect(result.status).toBe(0);
       const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
@@ -1516,10 +1517,7 @@ setImmediate(() => {
 
   describe("interactive prompt cleanup", () => {
     it("releases stdin after preset prompts so the event loop drains on a TTY", () => {
-      const source = fs.readFileSync(
-        path.join(REPO_ROOT, "src", "lib", "policies.ts"),
-        "utf-8",
-      );
+      const source = fs.readFileSync(path.join(REPO_ROOT, "src", "lib", "policies.ts"), "utf-8");
       // A TTY-only guard around pause/unref pins the event loop on
       // interactive runs and stops the wizard from exiting after its last
       // prompt resolves.
@@ -1532,10 +1530,7 @@ setImmediate(() => {
     });
 
     it("re-refs stdin before each preset prompt so a follow-up prompt is not stranded by a sticky unref()", () => {
-      const source = fs.readFileSync(
-        path.join(REPO_ROOT, "src", "lib", "policies.ts"),
-        "utf-8",
-      );
+      const source = fs.readFileSync(path.join(REPO_ROOT, "src", "lib", "policies.ts"), "utf-8");
       // unref() above is sticky — a subsequent createInterface will not
       // re-ref by itself; an explicit ref() before each one keeps follow-up
       // prompts able to wait for input.
