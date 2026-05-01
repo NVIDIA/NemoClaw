@@ -2103,6 +2103,37 @@ exit 1
     expect(pathValue.startsWith(`${localBin}:`)).toBe(true);
   });
 
+  it("restore_onboard_forward_after_post_checks: restores Hermes forward from session", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-forward-restore-"));
+    const fakeBin = path.join(tmp, "bin");
+    const stateDir = path.join(tmp, ".nemoclaw");
+    const openshellLog = path.join(tmp, "openshell.log");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "onboard-session.json"),
+      JSON.stringify({ sandboxName: "created-by-onboard", agent: "hermes" }),
+    );
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$OPENSHELL_LOG"
+exit 0
+`,
+    );
+
+    const r = callInstallerPayloadFn("restore_onboard_forward_after_post_checks", {
+      HOME: tmp,
+      OPENSHELL_LOG: openshellLog,
+      PATH: `${fakeBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.status).toBe(0);
+    const openshellCalls = fs.readFileSync(openshellLog, "utf-8");
+    expect(openshellCalls).toContain("forward stop 8642 created-by-onboard");
+    expect(openshellCalls).toContain("forward start --background 8642 created-by-onboard");
+  });
+
   // -- resolve_default_sandbox_name --
 
   it("resolve_default_sandbox_name: returns 'my-assistant' with no registry", () => {

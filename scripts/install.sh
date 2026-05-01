@@ -252,6 +252,33 @@ resolve_onboarded_agent() {
   fi
 }
 
+restore_onboard_forward_after_post_checks() {
+  local sandbox_name agent_name port openshell_bin
+  sandbox_name="$(resolve_default_sandbox_name)"
+  agent_name="$(resolve_onboarded_agent)"
+
+  case "$agent_name" in
+    hermes) port=8642 ;;
+    *) return 0 ;;
+  esac
+
+  if [[ -n "${NEMOCLAW_OPENSHELL_BIN:-}" && -x "$NEMOCLAW_OPENSHELL_BIN" ]]; then
+    openshell_bin="$NEMOCLAW_OPENSHELL_BIN"
+  elif command_exists openshell; then
+    openshell_bin="$(command -v openshell)"
+  else
+    return 0
+  fi
+
+  "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 \
+    || "$openshell_bin" forward stop "$port" >/dev/null 2>&1 \
+    || true
+  if ! "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1; then
+    warn "Could not restore ${agent_display_name "$agent_name"} host forward on port ${port}."
+    warn "Run: openshell forward start --background ${port} ${sandbox_name}"
+  fi
+}
+
 # step N "Description" — numbered section header
 step() {
   local n=$1 msg=$2
@@ -1616,6 +1643,7 @@ except Exception:
         info "Checking for sandboxes that need upgrading…"
         "$_CLI_BIN" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
       fi
+      restore_onboard_forward_after_post_checks
     else
       warn "Skipping onboarding until the host prerequisites above are fixed."
     fi
