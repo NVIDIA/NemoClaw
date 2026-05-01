@@ -275,7 +275,17 @@ restore_onboard_forward_after_post_checks() {
   mkdir -p "$state_dir" 2>/dev/null || true
   pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
   if [[ -f "$pid_file" ]]; then
-    kill "$(cat "$pid_file" 2>/dev/null)" >/dev/null 2>&1 || true
+    local old_pid expected_watcher_script current_uid old_uid old_args
+    old_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    expected_watcher_script="${pid_file}.js"
+    current_uid="$(id -u)"
+    if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" >/dev/null 2>&1; then
+      old_uid="$(ps -p "$old_pid" -o uid= 2>/dev/null | tr -d '[:space:]' || true)"
+      old_args="$(ps -p "$old_pid" -o args= 2>/dev/null || true)"
+      if [[ "$old_uid" == "$current_uid" && "$old_args" == *"$expected_watcher_script"* ]]; then
+        kill "$old_pid" >/dev/null 2>&1 || true
+      fi
+    fi
     rm -f "$pid_file"
   fi
 
