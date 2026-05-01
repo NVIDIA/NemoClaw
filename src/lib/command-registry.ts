@@ -89,8 +89,9 @@ export const COMMANDS: readonly CommandDef[] = [
 
   // ── Sandbox Management ──
   {
-    usage: "nemoclaw list [--json]",
+    usage: "nemoclaw list",
     description: "List all sandboxes",
+    flags: "[--json]",
     group: "Sandbox Management",
     scope: "global",
   },
@@ -103,6 +104,12 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> status",
     description: "Sandbox health + NIM status",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> doctor",
+    description: "Run host, gateway, sandbox, and inference health checks",
     group: "Sandbox Management",
     scope: "sandbox",
   },
