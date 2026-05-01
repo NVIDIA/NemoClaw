@@ -8,7 +8,7 @@ The OpenShell gateway is the only system of record for stored credentials.
 When you provide a provider credential — interactively during `nemoclaw onboard` or via an environment variable — NemoClaw holds the value in memory only long enough to register it with the OpenShell gateway through `openshell provider create` or `openshell provider update`.
 The gateway stores the credential and the OpenShell L7 proxy substitutes it into outbound requests at egress, so sandboxed agents see placeholders instead of the raw secret.
 
-`nemoclaw config rotate-token` is a separate flow that rotates a sandbox-side OpenClaw auth token; it is not a provider-credential upsert and is documented under Commands (use the `nemoclaw-user-reference` skill).
+The sandbox-side OpenClaw gateway token is generated at container startup and is not rotated through provider credential commands.
 
 ## Where Credentials Live
 
@@ -46,10 +46,12 @@ A typical deploy invocation looks like:
 
 ```console
 $ NVIDIA_API_KEY=nvapi-... \
+    HF_TOKEN=hf_... \
     TELEGRAM_BOT_TOKEN=... \
     nemoclaw deploy my-instance
 ```
 
+For remote vLLM or Hugging Face workflows that need gated model access, `nemoclaw deploy` also forwards `HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` to the VM when either variable is present.
 If a required credential is missing the deploy aborts before any remote work begins.
 
 ## GitHub Tokens

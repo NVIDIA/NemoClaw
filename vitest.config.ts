@@ -3,13 +3,15 @@
 
 import { defineConfig } from "vitest/config";
 
+import { testTimeout } from "./test/helpers/timeouts";
+
 export default defineConfig({
   test: {
     projects: [
       {
         test: {
           name: "cli",
-          testTimeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 15000),
+          testTimeout: testTimeout(),
           include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"],
           exclude: [
             "**/node_modules/**",
@@ -30,7 +32,9 @@ export default defineConfig({
           // Slow tests that spawn real bash install.sh processes.
           // Run in CI or explicitly: npx vitest run --project installer-integration
           // Excluded from pre-commit/pre-push to avoid flaky timeouts.
-          enabled: process.env.CI === "true" || process.env.CI === "1" ||
+          enabled:
+            process.env.CI === "true" ||
+            process.env.CI === "1" ||
             process.env.NEMOCLAW_RUN_INSTALLER_TESTS === "1",
         },
       },
@@ -42,9 +46,10 @@ export default defineConfig({
       },
       {
         test: {
-          name: "e2e-brev",
+          name: "e2e-branch-validation",
           include: ["test/e2e/brev-e2e.test.ts"],
-          // Only run when explicitly targeted: npx vitest run --project e2e-brev
+          // Branch validation E2E: installs from source on a Brev instance.
+          // Only run when explicitly targeted: npx vitest run --project e2e-branch-validation
           enabled: !!process.env.BREV_API_TOKEN,
         },
       },

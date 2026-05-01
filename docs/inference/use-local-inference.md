@@ -52,6 +52,7 @@ $ nemoclaw onboard
 Select **Local Ollama** from the provider list.
 NemoClaw lists installed models or offers starter models if none are installed.
 It pulls the selected model, loads it into memory, and validates it before continuing.
+On WSL, if Ollama is running on the Windows host, NemoClaw pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
 
 ### Authenticated Reverse Proxy
 
@@ -67,6 +68,7 @@ The onboard wizard manages the proxy automatically:
   `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
 - Starts the proxy after Ollama and verifies it before continuing.
 - Cleans up stale proxy processes from previous runs.
+- Retries the sandbox container reachability check and can continue when the host-side proxy is healthy even if the container probe fails.
 - Reuses the persisted token after a host reboot so you do not need to re-run
   onboard.
 
@@ -82,6 +84,12 @@ All other endpoints (including `POST /api/tags`) require the Bearer token.
 If Ollama is already running on a non-loopback address when you start onboard,
 the wizard restarts it on `127.0.0.1:11434` so the proxy is the only network
 path to the model server.
+
+### GPU Memory Cleanup
+
+When you switch away from Ollama, stop host services, or destroy an Ollama-backed sandbox, NemoClaw asks Ollama to unload currently loaded models from GPU memory.
+The cleanup sends `keep_alive: 0` for each model reported by Ollama and runs on a best-effort basis, so shutdown continues if Ollama is already stopped.
+This does not delete downloaded model files.
 
 ### Non-Interactive Setup
 
@@ -257,7 +265,7 @@ To select a specific model, set `NEMOCLAW_MODEL`.
 ## Timeout Configuration
 
 Local inference requests use a default timeout of 180 seconds.
-Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so NemoClaw sets a higher default for local providers (Ollama, vLLM, NIM).
+Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so NemoClaw sets a higher default for Ollama, vLLM, NIM, and compatible-endpoint setup.
 
 To override the timeout, set the `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` environment variable before onboarding:
 

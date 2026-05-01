@@ -84,12 +84,18 @@ describe("WSL2 inference verification timeouts (issue #987)", () => {
     it("does not retry on curl exit code 0 (success) or 22 (HTTP error)", () => {
       // The isTimeoutOrConnFailure guard only matches 6, 7, and 28.
       // A successful probe (exit 0) returns early before reaching the retry
-      // block, and HTTP errors (exit 22) are not in the retry set.
+      // block, and HTTP curl failures (exit 22) are not in the retry set.
       // Verify the retry guard is exactly these three codes.
       const guardMatch = onboardSrc.match(
         /isTimeoutOrConnFailure\s*=\s*\(cs\)\s*=>\s*cs\s*===\s*28\s*\|\|\s*cs\s*===\s*6\s*\|\|\s*cs\s*===\s*7/,
       );
       expect(guardMatch).not.toBeNull();
+    });
+
+    it("retries HTTP 429 validation throttling from successful curl invocations", () => {
+      expect(onboardSrc).toMatch(/RETRIABLE_HTTP_PROBE_STATUSES\s*=\s*new Set\(\[429\]\)/);
+      expect(onboardSrc).toMatch(/result\.curlStatus\s*===\s*0/);
+      expect(onboardSrc).toMatch(/executeProbeWithHttpRetry/);
     });
 
     it("doubles timeout values for the retry attempt", () => {

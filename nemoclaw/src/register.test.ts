@@ -6,6 +6,7 @@ import type { OpenClawPluginApi } from "./index.js";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 vi.mock("./onboard/config.js", () => ({
@@ -58,6 +59,22 @@ describe("plugin registration", () => {
   it("registers an inference provider", () => {
     const api = createMockApi();
     register(api);
+    expect(api.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "inference" }));
+  });
+
+  it("continues registration when the runtime context hook is unsupported", () => {
+    const api = createMockApi();
+    vi.mocked(api.on).mockImplementation((hookName: string) => {
+      if (hookName === "before_agent_start") {
+        throw new Error("unsupported hook");
+      }
+    });
+
+    register(api);
+
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Could not register runtime context hook: unsupported hook"),
+    );
     expect(api.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "inference" }));
   });
 
@@ -190,7 +207,7 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     const result = handler({
       toolName: "write",
       params: {
-        file_path: "/sandbox/.openclaw-data/memory/project.md",
+        file_path: "/sandbox/.openclaw/memory/project.md",
         content: `api key: ${fakeKey}`,
       },
     });
@@ -205,7 +222,7 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     const result = handler({
       toolName: "edit",
       params: {
-        file_path: "/sandbox/.openclaw-data/memory/notes.md",
+        file_path: "/sandbox/.openclaw/memory/notes.md",
         new_string: `token: ${fakeToken}`,
       },
     });
@@ -219,7 +236,7 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     const result = handler({
       toolName: "apply_patch",
       params: {
-        file_path: "/sandbox/.openclaw-data/agents/config.json",
+        file_path: "/sandbox/.openclaw/agents/config.json",
         patch: fakeKey,
       },
     });
@@ -233,7 +250,7 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     const result = handler({
       toolName: "notebook_edit",
       params: {
-        file_path: "/sandbox/.openclaw-data/memory/notebook.ipynb",
+        file_path: "/sandbox/.openclaw/memory/notebook.ipynb",
         content: `api_key: ${fakeKey}`,
       },
     });
@@ -246,7 +263,7 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     const result = handler({
       toolName: "write",
       params: {
-        file_path: "/sandbox/.openclaw-data/memory/project.md",
+        file_path: "/sandbox/.openclaw/memory/project.md",
         content: "# My Project\n\nThis is a regular memory note.",
       },
     });
@@ -273,7 +290,7 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     const result = handler({
       toolName: "read",
       params: {
-        file_path: "/sandbox/.openclaw-data/memory/project.md",
+        file_path: "/sandbox/.openclaw/memory/project.md",
       },
     });
     expect(result).toBeUndefined();
@@ -291,10 +308,10 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     const api = createMockApi();
     const handler = getHookHandler(api);
     const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
-    handler({
+    void handler({
       toolName: "write",
       params: {
-        file_path: "/sandbox/.openclaw-data/memory/creds.md",
+        file_path: "/sandbox/.openclaw/memory/creds.md",
         content: fakeKey,
       },
     });

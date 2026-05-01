@@ -66,7 +66,7 @@ jobs:
       - name: Commit generated skills
         env:
           GH_TOKEN: ${{ github.token }}
-          SYNC_BRANCH: automation/docs-to-skills-sync
+          SYNC_BRANCH: automation/docs-to-skills-sync-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
 
@@ -81,14 +81,8 @@ jobs:
           git add .agents/skills .claude/skills
           git commit -m "chore(skills): sync generated skills"
 
-          if git push origin HEAD:main; then
-            echo "Pushed generated skills to main."
-            exit 0
-          fi
-
-          echo "::notice::Direct push to main failed; opening or updating a sync PR instead."
-          git fetch origin "$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" || true
-          git push --force-with-lease origin HEAD:"$SYNC_BRANCH"
+          echo "::notice::Opening generated skills sync PR from $SYNC_BRANCH."
+          git push origin HEAD:"$SYNC_BRANCH"
 
           pr_body="$(cat <<'EOF'
           This PR was opened by the Docs to Skills workflow after documentation changed on `main`.
@@ -101,10 +95,4 @@ jobs:
           EOF
           )"
 
-          existing_pr="$(gh pr list --head "$SYNC_BRANCH" --base main --state open --json number --jq '.[0].number // empty')"
-          if [ -n "$existing_pr" ]; then
-            gh pr edit "$existing_pr" --title "chore(skills): sync generated skills" --body "$pr_body"
-            echo "Updated docs-to-skills sync PR #$existing_pr."
-          else
-            gh pr create --title "chore(skills): sync generated skills" --body "$pr_body" --base main --head "$SYNC_BRANCH"
-          fi
+          gh pr create --title "chore(skills): sync generated skills" --body "$pr_body" --base main --head "$SYNC_BRANCH"

@@ -124,15 +124,14 @@ proxy_env_contents() {
 # to kernel.yama.ptrace_scope=1, so we verify the guards by their effects:
 #   1. proxy-env.sh contains the safety-net + ciao preload exports (the
 #      recovery script will pick these up on the next respawn).
-#   2. gateway.log contains the ciao guard activation signature
-#      `[guard] os.networkInterfaces() failed:` — that line is *only*
-#      emitted by our preload, so its presence proves the preload code
-#      executed inside the running gateway's Node process.
+#   2. gateway.log contains deterministic gateway-process preload markers
+#      from the safety-net and ciao guards. Older builds also emitted
+#      `[guard] os.networkInterfaces() failed:` when ciao happened to touch
+#      os.networkInterfaces(), but that library call is not a stable
+#      post-respawn oracle.
 #   3. The gateway PID is alive after the guard activations (proves the
 #      guard prevented a crash, which is the whole point).
-# Waits up to $2 seconds (default 30) for log signature to accrue, since
-# bonjour mDNS retries advertising eagerly so the line appears within
-# seconds on a healthy gateway.
+# Waits up to $2 seconds (default 30) for log signatures to accrue.
 gateway_guards_active() {
   local pid="$1"
   local timeout="${2:-30}"
@@ -154,8 +153,18 @@ gateway_guards_active() {
   fi
 
   while [ "$elapsed" -lt "$timeout" ]; do
-    if gateway_log_tail 200 | grep -q '\[guard\] os\.networkInterfaces() failed:'; then
+    if sandbox_exec sh -c "grep -Eq '\\[sandbox-safety-net\\] loaded \\((openclaw-gateway|launcher)\\)' /tmp/gateway.log 2>/dev/null" \
+      && sandbox_exec sh -c "grep -Eq '\\[guard\\] ciao-network-guard loaded \\((openclaw-gateway|launcher)\\)' /tmp/gateway.log 2>/dev/null"; then
       # Confirm gateway is still alive after guard activations.
+      if [ -n "$(gateway_pid)" ]; then
+        return 0
+      fi
+      echo "  [guards] guard fired but gateway no longer running"
+      return 1
+    fi
+    # Backward-compatible proof for older images: this line is emitted by
+    # the ciao preload only when ciao calls os.networkInterfaces().
+    if sandbox_exec sh -c "grep -Fq '[guard] os.networkInterfaces() failed:' /tmp/gateway.log 2>/dev/null"; then
       if [ -n "$(gateway_pid)" ]; then
         return 0
       fi
@@ -166,7 +175,7 @@ gateway_guards_active() {
     elapsed=$((elapsed + 3))
   done
 
-  echo "  [guards] no [guard] activation signature in gateway.log within ${timeout}s"
+  echo "  [guards] no gateway-process guard activation signatures in gateway.log within ${timeout}s"
   return 1
 }
 
@@ -337,7 +346,7 @@ fi
 pass "Gateway up (pid=$INIT_PID)"
 
 if gateway_guards_active "$INIT_PID" 30; then
-  pass "Initial gateway has guard chain active (proxy-env exports + ciao preload firing in process)"
+  pass "Initial gateway has guard chain active (proxy-env exports + gateway preloads loaded)"
 else
   fail "Initial gateway missing library guard chain — fix is not deployed?"
   gateway_diagnostics "$INIT_PID"
@@ -381,7 +390,7 @@ for cycle in $(seq 1 "$CRASH_CYCLES"); do
   pass "Cycle $cycle: gateway respawned (pid $prev_pid → $new_pid)"
 
   if gateway_guards_active "$new_pid" 30; then
-    pass "Cycle $cycle: respawned gateway retains guard chain (proxy-env + ciao preload firing)"
+    pass "Cycle $cycle: respawned gateway retains guard chain (proxy-env + gateway preloads loaded)"
   else
     fail "Cycle $cycle: respawned gateway LOST guard chain — recovery hardening regressed"
     gateway_diagnostics "$new_pid"

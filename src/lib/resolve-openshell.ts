@@ -21,6 +21,21 @@ export interface ResolveOpenshellOptions {
  */
 export function resolveOpenshell(opts: ResolveOpenshellOptions = {}): string | null {
   const home = opts.home ?? process.env.HOME;
+  const checkExecutable =
+    opts.checkExecutable ??
+    ((p: string): boolean => {
+      try {
+        accessSync(p, constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+  const override = process.env.NEMOCLAW_OPENSHELL_BIN;
+  if (override?.startsWith("/") && checkExecutable(override)) {
+    return override;
+  }
 
   // Step 1: command -v
   if (opts.commandVResult === undefined) {
@@ -35,17 +50,6 @@ export function resolveOpenshell(opts: ResolveOpenshellOptions = {}): string | n
   }
 
   // Step 2: fallback candidates
-  const checkExecutable =
-    opts.checkExecutable ??
-    ((p: string): boolean => {
-      try {
-        accessSync(p, constants.X_OK);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-
   const candidates = [
     ...(home?.startsWith("/") ? [`${home}/.local/bin/openshell`] : []),
     "/usr/local/bin/openshell",

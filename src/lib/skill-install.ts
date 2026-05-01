@@ -3,8 +3,8 @@
 //
 // Skill install logic for `nemoclaw <sandbox> skill install <path>`.
 // Validates a local SKILL.md, uploads it to the sandbox via SSH, and
-// performs agent-specific post-install steps (OpenClaw mirror + session
-// refresh). Non-OpenClaw agents get a "restart gateway" hint until a
+// performs agent-specific post-install steps (session refresh for
+// OpenClaw). Non-OpenClaw agents get a "restart gateway" hint until a
 // generic refresh contract is defined in the manifest schema.
 
 import fs from "node:fs";
@@ -81,39 +81,33 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 // ── Path resolution ──────────────────────────────────────────────
 
 export interface SkillPaths {
-  /** Primary upload target — the immutableDir/skills/{name}/ symlink path */
+  /** Upload target directory for the skill */
   uploadDir: string;
-  /** OpenClaw-only: $HOME/.openclaw/skills/{name}/ mirror path, or null */
-  mirrorDir: string | null;
   /** OpenClaw-only: session index to clear, or null */
   sessionFile: string | null;
-  /** Whether the agent is OpenClaw (drives mirror + refresh behavior) */
+  /** Whether the agent is OpenClaw (drives refresh behavior) */
   isOpenClaw: boolean;
 }
 
 /**
  * Resolve skill install paths from the agent definition.
+ * Uses a single directory for skill uploads (no immutable/writable split).
  * @param agent - AgentDefinition from getSessionAgent(), or null for OpenClaw
  * @param skillName - validated skill name from frontmatter
  */
 export function resolveSkillPaths(
-  agent: { name: string; configPaths: { immutableDir: string; writableDir: string } } | null,
+  agent: { name: string; configPaths: { dir: string } } | null,
   skillName: string,
 ): SkillPaths {
   const isOpenClaw = !agent || agent.name === "openclaw";
 
-  const immutableDir = agent ? agent.configPaths.immutableDir : "/sandbox/.openclaw";
-  const writableDir = agent ? agent.configPaths.writableDir : "/sandbox/.openclaw-data";
+  const dir = agent ? agent.configPaths.dir : "/sandbox/.openclaw";
 
-  const uploadDir = `${immutableDir}/skills/${skillName}`;
+  const uploadDir = `${dir}/skills/${skillName}`;
 
   return {
     uploadDir,
-    // Mirror uses $HOME at runtime — the sandbox user's home varies
-    // (/sandbox on stock images, /home/sandbox on some custom images).
-    // We expand $HOME in the SSH command rather than hardcoding a path.
-    mirrorDir: isOpenClaw ? `\$HOME/.openclaw/skills/${skillName}` : null,
-    sessionFile: isOpenClaw ? `${writableDir}/agents/main/sessions/sessions.json` : null,
+    sessionFile: isOpenClaw ? `${dir}/agents/main/sessions/sessions.json` : null,
     isOpenClaw,
   };
 }
@@ -276,14 +270,13 @@ export function uploadDirectory(
 }
 
 /**
- * Run post-install steps: OpenClaw mirror + session refresh, or
+ * Run post-install steps: session refresh for OpenClaw, or
  * non-OpenClaw restart hint.
- * @param localSkillDir - the skill directory (contains SKILL.md and optional siblings)
  */
 export function postInstall(
   ctx: SshContext,
   paths: SkillPaths,
-  localSkillDir: string,
+  _localSkillDir: string,
   opts: {
     skipRefresh?: boolean;
     sshExecImpl?: typeof sshExec;
@@ -293,34 +286,6 @@ export function postInstall(
   const runSsh = opts.sshExecImpl ?? sshExec;
 
   if (paths.isOpenClaw) {
-    // Mirror to $HOME/.openclaw/skills/ — OpenClaw resolves skills from
-    // ~/.openclaw/skills/ via os.homedir(). Use double quotes so $HOME
-    // expands on the remote shell (the sandbox user's home varies:
-    // /sandbox on stock images, /home/sandbox on custom images).
-    if (paths.mirrorDir) {
-      const { files } = collectFiles(localSkillDir);
-      let mirrorFailed = false;
-      for (const rel of files) {
-        const content = fs.readFileSync(path.join(localSkillDir, rel));
-        const mirrorSubdir = rel.includes("/")
-          ? `${paths.mirrorDir}/${path.dirname(rel)}`
-          : paths.mirrorDir;
-        const mirrorFile = `${paths.mirrorDir}/${rel}`;
-        // mirrorDir contains $HOME which must expand, so we use double
-        // quotes (not shellQuote). Safe because validateRelativePath
-        // restricts filenames to [A-Za-z0-9._-/] before we reach here.
-        const result = runSsh(ctx, `mkdir -p "${mirrorSubdir}" && cat > "${mirrorFile}"`, {
-          input: content,
-        });
-        if (!result || result.status !== 0) {
-          mirrorFailed = true;
-        }
-      }
-      if (mirrorFailed) {
-        messages.push("Warning: failed to mirror some files to $HOME/.openclaw/skills/");
-      }
-    }
-
     // Clear sessions.json so OpenClaw re-discovers skills on the next
     // session even after an in-place skill update.
     if (paths.sessionFile && !opts.skipRefresh) {

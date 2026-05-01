@@ -65,6 +65,10 @@ type OnboardTestInternals = {
   getRequestedModelHint: ShimFn<string | null>;
   getRequestedProviderHint: ShimFn<string | null>;
   getRequestedSandboxNameHint: ShimFn<string | null>;
+  getDefaultSandboxNameForAgent: (agent?: AgentDefinition | null) => string;
+  getSandboxPromptDefault: (agent?: AgentDefinition | null) => string;
+  getRequestedSandboxAgentName: (agent?: AgentDefinition | null) => string;
+  normalizeSandboxAgentName: (agentName?: string | null) => string;
   getResumeConfigConflicts: ShimFn<ResumeConflict[]>;
   getResumeSandboxConflict: ShimFn<{
     requestedSandboxName: string;
@@ -117,6 +121,10 @@ function isOnboardTestInternals(
     value !== null &&
     typeof value.buildProviderArgs === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
+    typeof value.getDefaultSandboxNameForAgent === "function" &&
+    typeof value.getSandboxPromptDefault === "function" &&
+    typeof value.getRequestedSandboxAgentName === "function" &&
+    typeof value.normalizeSandboxAgentName === "function" &&
     typeof value.agentSupportsWebSearch === "function" &&
     typeof value.configureWebSearch === "function" &&
     typeof value.writeSandboxConfigSyncFile === "function"
@@ -151,6 +159,10 @@ const {
   getRequestedModelHint,
   getRequestedProviderHint,
   getRequestedSandboxNameHint,
+  getDefaultSandboxNameForAgent,
+  getSandboxPromptDefault,
+  getRequestedSandboxAgentName,
+  normalizeSandboxAgentName,
   getResumeConfigConflicts,
   getResumeSandboxConflict,
   getSandboxStateFromOutputs,
@@ -177,6 +189,28 @@ const {
 } = onboardTestInternals;
 
 describe("onboard helpers", () => {
+  it("uses Hermes-oriented sandbox defaults when NemoHermes selects Hermes", () => {
+    const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
+    try {
+      delete process.env.NEMOCLAW_SANDBOX_NAME;
+      const hermes = loadAgent("hermes");
+      expect(getRequestedSandboxAgentName(null)).toBe("openclaw");
+      expect(normalizeSandboxAgentName(null)).toBe("openclaw");
+      expect(getDefaultSandboxNameForAgent(null)).toBe("my-assistant");
+      expect(getDefaultSandboxNameForAgent(hermes)).toBe("hermes");
+      expect(getSandboxPromptDefault(hermes)).toBe("hermes");
+
+      process.env.NEMOCLAW_SANDBOX_NAME = "custom-hermes";
+      expect(getSandboxPromptDefault(hermes)).toBe("hermes");
+    } finally {
+      if (previousSandboxName === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previousSandboxName;
+      }
+    }
+  });
+
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
     expect(
       classifySandboxCreateFailure("Error: failed to read image export stream\nTimeout error").kind,
@@ -2629,6 +2663,63 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /setupOpenclaw[\s\S]*?markStepSkipped\("agent_setup"\)/);
   });
 
+  it("uses named sandbox exec for dashboard and web-search probes", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"curl"/);
+    assert.match(source, /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"hermes"/);
+    assert.match(source, /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"cat"/);
+    assert.doesNotMatch(source, /\["sandbox",\s*"exec",\s*sandboxName,\s*"curl"/);
+    assert.doesNotMatch(source, /\["sandbox",\s*"exec",\s*sandboxName,\s*"hermes"/);
+    assert.doesNotMatch(source, /\["sandbox",\s*"exec",\s*sandboxName,\s*"cat"/);
+  });
+
+  it("re-establishes the agent dashboard forward after agent setup health checks", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const setupPos = source.indexOf("await agentOnboard.handleAgentSetup");
+    const forwardPos = source.indexOf("ensureAgentDashboardForward(sandboxName, agent)", setupPos);
+
+    assert.ok(setupPos !== -1, "agent setup call not found");
+    assert.ok(
+      forwardPos > setupPos,
+      "agent dashboard forward should be re-established after agent health checks",
+    );
+  });
+
+  it("re-establishes the agent dashboard forward after policies are applied", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const policiesPos = source.indexOf("await setupPoliciesWithSelection");
+    const completePoliciesPos = source.indexOf(
+      'onboardSession.markStepComplete(\n        "policies"',
+      policiesPos,
+    );
+    const forwardPos = source.indexOf(
+      "ensureAgentDashboardForward(sandboxName, agent)",
+      completePoliciesPos,
+    );
+    const completeSessionPos = source.indexOf(
+      "onboardSession.completeSession",
+      completePoliciesPos,
+    );
+
+    assert.ok(policiesPos !== -1, "policy setup call not found");
+    assert.ok(completePoliciesPos !== -1, "policy completion call not found");
+    assert.ok(forwardPos > completePoliciesPos, "agent forward should be reset after policy setup");
+    assert.ok(
+      forwardPos < completeSessionPos,
+      "agent forward should be reset before onboarding is marked complete",
+    );
+  });
+
   it("starts the sandbox step before prompting for the sandbox name", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -2637,7 +2728,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*opts\.controlUiPort \|\| null,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*opts\.controlUiPort \|\| null,\s*\);/,
     );
   });
 
@@ -2657,27 +2748,6 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
-  it("enters permanent shields-down state when dangerouslySkipPermissions is true", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
-      "utf-8",
-    );
-
-    // The dangerouslySkipPermissions branch must call shields.shieldsDownPermanent
-    // to activate the permissive policy, unlock the config file with doctor-aligned
-    // permissions, and record permanent shields-down state. This replaced the
-    // previous policies.applyPermissivePolicy call to unify the shields state machine.
-    assert.match(
-      source,
-      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*if \(!waitForSandboxReady\(sandboxName\)\) \{[\s\S]*?\}\s*shields\.shieldsDownPermanent\(sandboxName\);/,
-    );
-    // Must NOT just print a skip message without activating the policy.
-    assert.doesNotMatch(
-      source,
-      /dangerouslySkipPermissions\)[\s\S]*?Skipped —.*permissive base policy/,
-    );
-  });
-
   it("re-checks RESERVED_SANDBOX_NAMES against a resumed session's sandboxName", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -2689,7 +2759,6 @@ const { setupInference } = require(${onboardPath});
       /let sandboxName = session\?\.sandboxName \|\| requestedSandboxName \|\| null;\s*if \(sandboxName && RESERVED_SANDBOX_NAMES\.has\(sandboxName\)\) \{[\s\S]*?process\.exit\(1\);\s*\}/,
     );
   });
-
   it("delegates sandbox-create progress streaming to the extracted helper module", () => {
     const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -2896,23 +2965,26 @@ console.log(JSON.stringify({ liveExists, sandbox: registry.getSandbox("my-assist
     assert.equal(payload.sandbox, null);
   });
 
-  it("builds the sandbox without uploading an external OpenClaw config file", async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-sandbox-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "create-sandbox-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+  it(
+    "builds the sandbox without uploading an external OpenClaw config file",
+    { timeout: 90_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-sandbox-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "create-sandbox-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -2922,6 +2994,9 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const registerCalls = [];
+const updateCalls = [];
+const defaultCalls = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -2929,11 +3004,22 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.registerSandbox = () => true;
+registry.registerSandbox = (entry) => {
+  registerCalls.push(entry);
+  return true;
+};
+registry.updateSandbox = (name, updates) => {
+  updateCalls.push({ name, updates });
+  return true;
+};
+registry.setDefault = (name) => {
+  defaultCalls.push(name);
+  return true;
+};
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -2955,54 +3041,72 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(null, "gpt-5.4");
-  console.log(JSON.stringify({ sandboxName, commands }));
+  console.log(JSON.stringify({ sandboxName, commands, registerCalls, updateCalls, defaultCalls }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
-    assert.equal(payload.sandboxName, "my-assistant");
-    const createCommand = payload.commands.find((entry: CommandEntry) =>
-      entry.command.includes("sandbox create"),
-    );
-    assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /nemoclaw-start/);
-    assert.doesNotMatch(createCommand.command, /--upload/);
-    assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
-    assert.doesNotMatch(createCommand.command, /NVIDIA_API_KEY=/);
-    assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
-    assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
-    assert.ok(
-      payload.commands.some(
-        (entry: CommandEntry) =>
-          entry.command.includes("forward start --background 18789 my-assistant") ||
-          entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
-      ),
-      "expected dashboard forward (loopback or WSL 0.0.0.0)",
-    );
-  });
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+      assert.equal(payload.sandboxName, "my-assistant");
+      assert.deepEqual(payload.defaultCalls, ["my-assistant"]);
+      assert.ok(
+        payload.registerCalls.some(
+          (entry: Record<string, unknown>) =>
+            entry.name === "my-assistant" &&
+            entry.model === "gpt-5.4" &&
+            Object.prototype.hasOwnProperty.call(entry, "agentVersion"),
+        ),
+        "expected registry metadata for created sandbox",
+      );
+      assert.ok(
+        payload.updateCalls.every(
+          (call: { name: string; updates: Record<string, unknown> }) =>
+            call.name === "my-assistant" && call.updates,
+        ),
+        "expected any registry metadata updates to target the created sandbox",
+      );
+      const createCommand = payload.commands.find((entry: CommandEntry) =>
+        entry.command.includes("sandbox create"),
+      );
+      assert.ok(createCommand, "expected sandbox create command");
+      assert.match(createCommand.command, /nemoclaw-start/);
+      assert.doesNotMatch(createCommand.command, /--upload/);
+      assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
+      assert.doesNotMatch(createCommand.command, /NVIDIA_API_KEY=/);
+      assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
+      assert.ok(
+        payload.commands.some(
+          (entry: CommandEntry) =>
+            entry.command.includes("forward start --background 18789 my-assistant") ||
+            entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
+        ),
+        "expected dashboard forward (loopback or WSL 0.0.0.0)",
+      );
+    },
+  );
 
   it("binds the dashboard forward to 0.0.0.0 when CHAT_UI_URL points to a remote host", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -3037,11 +3141,13 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -3131,11 +3237,13 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:19000/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:19000/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 19000 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -3265,6 +3373,8 @@ runner.runCapture = (command) => {
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -3446,6 +3556,8 @@ runner.runCapture = (command) => {
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -3705,6 +3817,8 @@ runner.runCapture = (command) => {
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
 const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
@@ -3819,6 +3933,8 @@ registry.getSandbox = () => ({
   policyTier: "balanced",
 });
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
 const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
@@ -4073,6 +4189,8 @@ runner.runCapture = (command) => {
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
 const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
@@ -4196,6 +4314,8 @@ runner.runCapture = (command) => {
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
 const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
@@ -4678,11 +4798,13 @@ runner.runCapture = (command) => {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -5071,11 +5193,13 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -5201,11 +5325,13 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -5762,6 +5888,22 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       ].join("\n"),
     );
     fs.writeFileSync(path.join(customBuildDir, "extra.txt"), "extra build context file");
+    fs.writeFileSync(path.join(customBuildDir, "large.bin"), "small file with large mocked stat");
+    fs.mkdirSync(path.join(customBuildDir, "node_modules", "pkg"), { recursive: true });
+    fs.writeFileSync(path.join(customBuildDir, "node_modules", "pkg", "ignored.txt"), "skip me");
+    fs.mkdirSync(path.join(customBuildDir, ".ssh"), { recursive: true });
+    fs.writeFileSync(path.join(customBuildDir, ".ssh", "id_ed25519"), "fake test key");
+    fs.mkdirSync(path.join(customBuildDir, ".aws"), { recursive: true });
+    fs.writeFileSync(path.join(customBuildDir, ".aws", "credentials"), "fake test credentials");
+    fs.mkdirSync(path.join(customBuildDir, "secrets"), { recursive: true });
+    fs.writeFileSync(path.join(customBuildDir, "secrets", "token.txt"), "fake test token");
+    fs.writeFileSync(path.join(customBuildDir, ".env.local"), "EXAMPLE=fake");
+    fs.writeFileSync(
+      path.join(customBuildDir, ".npmrc"),
+      "registry=https://registry.example.test\n",
+    );
+    fs.writeFileSync(path.join(customBuildDir, "model.pem"), "fake test certificate");
+    fs.writeFileSync(path.join(customBuildDir, "credentials.json"), "{}");
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -5779,9 +5921,20 @@ const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
+const path = require("node:path");
 
 const commands = [];
 let hasExtraFileAtSpawn = false;
+let stagedIgnoredFilesAtSpawn = null;
+const largeFilePath = ${JSON.stringify(path.join(customBuildDir, "large.bin"))};
+const originalStatSync = fs.statSync;
+fs.statSync = (target, ...rest) => {
+  const stats = originalStatSync(target, ...rest);
+  if (target === largeFilePath) {
+    return { ...stats, size: 101_000_000 };
+  }
+  return stats;
+};
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -5789,11 +5942,13 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("sandbox exec -n my-assistant -- curl -sf http://localhost:18789/")) return "ok";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -5808,8 +5963,18 @@ childProcess.spawn = (...args) => {
   // flight — onboard deletes it once streamSandboxCreate resolves.
   const fromMatch = cmd.match(/--from\s+(\S+)/);
   if (fromMatch) {
-    const stagedDir = require("node:path").dirname(fromMatch[1]);
-    hasExtraFileAtSpawn = fs.existsSync(require("node:path").join(stagedDir, "extra.txt"));
+    const stagedDir = path.dirname(fromMatch[1]);
+    hasExtraFileAtSpawn = fs.existsSync(path.join(stagedDir, "extra.txt"));
+    stagedIgnoredFilesAtSpawn = {
+      nodeModules: fs.existsSync(path.join(stagedDir, "node_modules")),
+      ssh: fs.existsSync(path.join(stagedDir, ".ssh")),
+      aws: fs.existsSync(path.join(stagedDir, ".aws")),
+      secrets: fs.existsSync(path.join(stagedDir, "secrets")),
+      env: fs.existsSync(path.join(stagedDir, ".env.local")),
+      npmrc: fs.existsSync(path.join(stagedDir, ".npmrc")),
+      pem: fs.existsSync(path.join(stagedDir, "model.pem")),
+      credentialsJson: fs.existsSync(path.join(stagedDir, "credentials.json")),
+    };
   }
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -5823,7 +5988,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
-  console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn }));
+  console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn, stagedIgnoredFiles: stagedIgnoredFilesAtSpawn }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -5852,11 +6017,25 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
     const payload = JSON.parse(payloadLine);
     assert.equal(payload.sandboxName, "my-assistant");
+    assert.match(result.stdout, /Using custom Dockerfile:/);
+    assert.match(result.stdout, /Docker build context:/);
+    assert.match(result.stdout, /Docker build context:.*custom-image/);
+    assert.match(result.stderr, /WARN: build context contains about 101\.0 MB/);
     assert.equal(
       payload.hasExtraFile,
       true,
       "extra.txt from custom build context should be staged",
     );
+    assert.deepEqual(payload.stagedIgnoredFiles, {
+      nodeModules: false,
+      ssh: false,
+      aws: false,
+      secrets: false,
+      env: false,
+      npmrc: false,
+      pem: false,
+      credentialsJson: false,
+    });
   });
 
   it("exits with an error when the --from Dockerfile path does not exist", async () => {
@@ -5887,6 +6066,8 @@ const credentials = require(${credentialsPath});
 runner.run = () => ({ status: 0 });
 runner.runCapture = () => "";
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -5918,6 +6099,222 @@ const { createSandbox } = require(${onboardPath});
     assert.match(result.stderr, /Custom Dockerfile not found/);
   });
 
+  it("exits with an error when the --from Dockerfile path is a directory", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-dir-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "create-sandbox-dir.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const directoryPath = JSON.stringify(tmpDir);
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${directoryPath});
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 1, "should exit 1 when fromDockerfile path is a directory");
+    assert.match(result.stderr, /Custom Dockerfile path is not a file/);
+  });
+
+  it("exits clearly when the --from Dockerfile is inside an ignored context path", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-ignored-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "create-sandbox-ignored.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const ignoredDir = path.join(tmpDir, "node_modules", "pkg");
+
+    fs.mkdirSync(ignoredDir, { recursive: true });
+    fs.writeFileSync(path.join(ignoredDir, "Dockerfile"), "FROM ubuntu:22.04\n");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const customDockerfilePath = JSON.stringify(path.join(ignoredDir, "Dockerfile"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 1, "should exit 1 when fromDockerfile is ignored");
+    assert.match(result.stderr, /inside an ignored build-context path/);
+  });
+
+  it("cleans up the custom build context when staging fails", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-cleanup-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "create-sandbox-cleanup.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const customBuildDir = path.join(tmpDir, "custom-image");
+
+    fs.mkdirSync(customBuildDir, { recursive: true });
+    fs.writeFileSync(path.join(customBuildDir, "Dockerfile"), "FROM ubuntu:22.04\n");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const customDockerfilePath = JSON.stringify(path.join(customBuildDir, "Dockerfile"));
+    const customBuildDirLiteral = JSON.stringify(customBuildDir);
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+
+let createdBuildContext = null;
+const originalMkdtempSync = fs.mkdtempSync;
+fs.mkdtempSync = (prefix, ...rest) => {
+  const dir = originalMkdtempSync(prefix, ...rest);
+  if (String(prefix).includes("nemoclaw-build-")) {
+    createdBuildContext = dir;
+  }
+  return dir;
+};
+const originalCpSync = fs.cpSync;
+fs.cpSync = (src, dest, options) => {
+  if (src === ${customBuildDirLiteral}) {
+    fs.writeFileSync(path.join(dest, "partial.txt"), "partial custom context");
+    throw new Error("simulated custom context copy failure");
+  }
+  return originalCpSync(src, dest, options);
+};
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  try {
+    await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
+  } catch (error) {
+    console.log(JSON.stringify({
+      removed: Boolean(createdBuildContext) && !fs.existsSync(createdBuildContext),
+      message: error.message,
+    }));
+    return;
+  }
+  console.error("expected createSandbox to throw");
+  process.exit(1);
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop()!);
+    assert.equal(payload.removed, true, result.stdout);
+    assert.match(payload.message, /simulated custom context copy failure/);
+  });
+
   it("re-prompts on invalid sandbox names instead of exiting in interactive mode", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -5925,7 +6322,7 @@ const { createSandbox } = require(${onboardPath});
     );
     // Extract the promptValidatedSandboxName function body
     const fnMatch = source.match(
-      /async function promptValidatedSandboxName\(\)\s*\{([\s\S]*?)\n\}/,
+      /async function promptValidatedSandboxName\([^)]*\)\s*\{([\s\S]*?)\n\}/,
     );
     assert.ok(fnMatch, "promptValidatedSandboxName function not found");
     const fnBody = fnMatch[1];
@@ -5940,6 +6337,28 @@ const { createSandbox } = require(${onboardPath});
     assert.match(fnBody, /process\.exit\(1\)/);
   });
 
+  it("guards against reusing the same sandbox name for a different agent", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    assert.match(source, /getSandboxAgentDrift/);
+    assert.match(
+      source,
+      /Side-by-side agents are supported, but each sandbox name has one agent type/,
+    );
+    assert.match(source, /UNKNOWN_SANDBOX_AGENT_NAME/);
+    assert.match(source, /if \(!existingEntry\) \{[\s\S]*?changed: true/);
+    assert.match(source, /recreateForAgentDrift/);
+    assert.match(source, /getSandboxAgentRegistryFields/);
+    assert.match(source, /getSandboxAgentRegistryFields\(agent, agentVersionKnown\)/);
+    assert.match(
+      source,
+      /const existingEntry = registry\.getSandbox\(sandboxName\)[\s\S]*?existingEntry\?\.agentVersion !== null/,
+    );
+    assert.match(source, /registry\.setDefault\(sandboxName\)/);
+  });
+
   it("regression #1881: registry.updateSandbox(model/provider) is called AFTER createSandbox", () => {
     // updateSandbox() silently no-ops when the entry does not exist yet.
     // This asserts that the model/provider update comes AFTER createSandbox()
@@ -5951,7 +6370,7 @@ const { createSandbox } = require(${onboardPath});
     const createSandboxPos = source.indexOf("sandboxName = await createSandbox(");
     assert.ok(createSandboxPos !== -1, "createSandbox call not found in onboard.ts");
     const updateAfterCreate = source.indexOf(
-      "registry.updateSandbox(sandboxName, { model, provider })",
+      "registry.updateSandbox(sandboxName, {",
       createSandboxPos,
     );
     assert.ok(
@@ -6245,6 +6664,25 @@ const { createSandbox } = require(${onboardPath});
     // match — guard against false-positive substring matches.
     const falsePositive = "sandbox18789 127.0.0.1 42001 9999 active";
     assert.equal(findDashboardForwardOwner(falsePositive, "18789"), null);
+  });
+
+  it("ensureDashboardForward clears stale preferred-port forwards before reallocating", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /const preferredEntry = findForwardEntry/);
+    assert.match(source, /function isLiveForwardStatus/);
+    assert.match(source, /!isLiveForwardStatus\(preferredEntry\.status\)/);
+    assert.match(
+      source,
+      /runOpenshell\(\["forward", "stop", String\(preferredPort\)\], \{ ignoreError: true \}\)/,
+    );
+    assert.match(
+      source,
+      /findAvailableDashboardPort\(sandboxName, preferredPort, existingForwards\)/,
+    );
   });
 
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {

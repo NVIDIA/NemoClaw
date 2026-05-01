@@ -358,7 +358,7 @@ else
   fail "Hermes config.yaml not found at /sandbox/.hermes/config.yaml"
 fi
 
-# 4d: Verify immutable config directory (Landlock read-only)
+# 4d: Verify config directory is writable (mutable default)
 writable_check=$($TIMEOUT_CMD ssh -F "$ssh_config" \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null \
@@ -368,10 +368,10 @@ writable_check=$($TIMEOUT_CMD ssh -F "$ssh_config" \
   "touch /sandbox/.hermes/test-write 2>&1 && echo WRITABLE && rm -f /sandbox/.hermes/test-write || echo READ_ONLY" \
   2>&1) || true
 
-if echo "$writable_check" | grep -q "READ_ONLY"; then
-  pass "Hermes config directory is read-only (immutable)"
-elif echo "$writable_check" | grep -q "WRITABLE"; then
-  fail "Hermes config directory is writable — should be immutable"
+if echo "$writable_check" | grep -q "WRITABLE"; then
+  pass "Hermes config directory is writable (mutable default)"
+elif echo "$writable_check" | grep -q "READ_ONLY"; then
+  fail "Hermes config directory is read-only — should be writable by default"
 else
   skip "Could not determine config directory mutability: ${writable_check:0:100}"
 fi
@@ -383,13 +383,13 @@ data_dir_check=$($TIMEOUT_CMD ssh -F "$ssh_config" \
   -o ConnectTimeout=10 \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}" \
-  "test -d /sandbox/.hermes-data && echo EXISTS || echo MISSING" \
+  "test -d /sandbox/.hermes && echo EXISTS || echo MISSING" \
   2>&1) || true
 
 if echo "$data_dir_check" | grep -q "EXISTS"; then
-  pass "Hermes writable data directory exists at /sandbox/.hermes-data"
+  pass "Hermes config/state directory exists at /sandbox/.hermes"
 else
-  fail "Hermes writable data directory not found at /sandbox/.hermes-data"
+  fail "Hermes config/state directory not found at /sandbox/.hermes"
 fi
 
 rm -f "$ssh_config"

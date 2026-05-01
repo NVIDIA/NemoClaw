@@ -9,6 +9,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
+const http = require("http");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("./ports");
 const {
@@ -16,6 +17,8 @@ const {
   getBootstrapOllamaModelOptions,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
+  getResolvedOllamaHost,
+  OLLAMA_HOST_DOCKER_INTERNAL,
   validateOllamaModel,
 } = require("./local-inference");
 const { buildSubprocessEnv } = require("./subprocess-env");
@@ -234,6 +237,40 @@ function getOllamaProxyToken(): string | null {
   return ollamaProxyToken;
 }
 
+/**
+ * Check whether the Ollama auth proxy is actually healthy — not just that
+ * the PID exists, but that the proxy endpoint responds to HTTP requests.
+ *
+ * This is the correct check for the setupInference fallback: if the
+ * container reachability test fails (Docker bridge issue) but the proxy
+ * is confirmed healthy on the host, onboarding can safely continue.
+ */
+function isProxyHealthy(): boolean {
+  // 1. PID check — informational, but don't early-return on failure.
+  //    The proxy may have been restarted with a new PID that isn't in our
+  //    PID file, so the HTTP probe is the authoritative signal.
+  const pid = loadPersistedProxyPid();
+  const hasValidPid = isOllamaProxyProcess(pid);
+
+  // 2. HTTP probe — confirm the proxy actually responds. This is the
+  //    authoritative check: a successful probe wins even if the PID file
+  //    is missing or stale (e.g., after a manual restart).
+  const proxyUrl = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
+  const token = loadPersistedProxyToken();
+  const probeCmd = token
+    ? ["curl", "-sf", "--connect-timeout", "3", "--max-time", "5",
+       "-H", `Authorization: Bearer ${token}`, proxyUrl]
+    : ["curl", "-sf", "--connect-timeout", "3", "--max-time", "5", proxyUrl];
+
+  const output = runCapture(probeCmd, { ignoreError: true });
+  if (output) return true;
+
+  // HTTP probe failed — fall back to PID as a weaker signal.
+  // This covers edge cases where the probe transiently fails but the
+  // process is confirmed alive.
+  return hasValidPid;
+}
+
 async function promptOllamaModel(gpu = null) {
   const installed = getOllamaModelOptions();
   const options = installed.length > 0 ? installed : getBootstrapOllamaModelOptions(gpu);
@@ -269,7 +306,7 @@ function printOllamaExposureWarning() {
   console.log("");
 }
 
-function pullOllamaModel(model) {
+function pullOllamaModelViaCli(model) {
   const result = spawnSync("bash", ["-c", `ollama pull ${shellQuote(model)}`], {
     cwd: ROOT,
     encoding: "utf8",
@@ -286,11 +323,159 @@ function pullOllamaModel(model) {
   return result.status === 0;
 }
 
-function prepareOllamaModel(model, installedModels = []) {
+// Pull via Ollama's HTTP API instead of shelling out to the `ollama` CLI.
+// Used only when the resolved host is the Windows host (host.docker.internal),
+// where there is no `ollama` binary in WSL to shell out to. Native Linux/macOS
+// keeps the CLI path so existing behavior is unchanged.
+function pullOllamaModelViaHttp(model) {
+  return new Promise((resolve) => {
+    const host = getResolvedOllamaHost();
+    const url = `http://${host}:${OLLAMA_PORT}/api/pull`;
+    const body = JSON.stringify({ model, stream: true });
+    const TIMEOUT_MS = 600_000; // 10 min, matches the CLI path
+    const isTTY = Boolean(process.stdout.isTTY);
+    const BAR_WIDTH = 40;
+
+    const proc = spawn(
+      "curl",
+      [
+        "-sN",
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        String(Math.floor(TIMEOUT_MS / 1000)),
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        body,
+        url,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    const readline = require("readline");
+    const rl = readline.createInterface({ input: proc.stdout });
+    let currentStatus = "";
+    let progressActive = false;
+    let lastNonTtyLine = "";
+    let sawSuccess = false;
+    let sawError = false;
+
+    const formatSize = (bytes) => {
+      if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+      if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
+      if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(0)} KB`;
+      return `${bytes} B`;
+    };
+
+    const renderBar = (pct) => {
+      const filled = Math.floor((pct / 100) * BAR_WIDTH);
+      return `${"█".repeat(filled)}${" ".repeat(BAR_WIDTH - filled)}`;
+    };
+
+    const finishLine = () => {
+      if (isTTY && progressActive) {
+        process.stdout.write("\n");
+        progressActive = false;
+      }
+    };
+
+    rl.on("line", (line) => {
+      let evt;
+      try {
+        evt = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (typeof evt?.error === "string" && evt.error.trim()) {
+        finishLine();
+        console.error(`  Error: ${evt.error.trim()}`);
+        sawError = true;
+        return;
+      }
+      const status = typeof evt?.status === "string" ? evt.status : "";
+      if (!status) return;
+      if (status === "success") sawSuccess = true;
+
+      const hasProgress =
+        typeof evt.completed === "number" && typeof evt.total === "number" && evt.total > 0;
+
+      // Status changed (new layer or new phase): commit the previous line
+      // and either render the new status as a plain line (no progress) or
+      // fall through to the in-place progress renderer.
+      if (status !== currentStatus) {
+        finishLine();
+        currentStatus = status;
+        if (!hasProgress) {
+          console.log(`  ${status}`);
+          return;
+        }
+      } else if (!hasProgress) {
+        return;
+      }
+
+      const pct = Math.floor((evt.completed / evt.total) * 100);
+      if (isTTY) {
+        const bar = renderBar(pct);
+        const sz = `${formatSize(evt.completed)} / ${formatSize(evt.total)}`;
+        process.stdout.write(`\r  ${status}: ${pct}% ${bar} ${sz}`);
+        progressActive = true;
+      } else {
+        // Non-TTY (CI, logs): throttle to one line per percent change.
+        const summary = `  ${status}: ${pct}%`;
+        if (summary !== lastNonTtyLine) {
+          console.log(summary);
+          lastNonTtyLine = summary;
+        }
+      }
+    });
+
+    proc.on("error", (err) => {
+      finishLine();
+      console.error(`  Pull failed to start: ${err.message}`);
+      resolve(false);
+    });
+
+    // Use 'close' rather than 'exit' so the promise resolves only after the
+    // child's stdio streams are fully drained, ensuring readline has emitted
+    // the final 'line' event for the trailing `success` JSON.
+    proc.on("close", (code) => {
+      finishLine();
+      if (sawError) {
+        resolve(false);
+        return;
+      }
+      if (code !== 0) {
+        // curl exit 28 = CURLE_OPERATION_TIMEDOUT (--max-time hit).
+        if (code === 28) {
+          console.error(`  Model pull timed out after ${TIMEOUT_MS / 60_000} minutes.`);
+        } else {
+          console.error(`  Model pull exited with code ${String(code)} (network error).`);
+        }
+        console.error("  Already-downloaded layers are kept; re-running the pull resumes them.");
+        resolve(false);
+        return;
+      }
+      resolve(sawSuccess);
+    });
+  });
+}
+
+// Dispatch to HTTP pull when Ollama was resolved on the Windows host.
+async function pullOllamaModel(model) {
+  if (getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL) {
+    return pullOllamaModelViaHttp(model);
+  }
+  return pullOllamaModelViaCli(model);
+}
+
+async function prepareOllamaModel(model, installedModels = []) {
   const alreadyInstalled = installedModels.includes(model);
   if (!alreadyInstalled) {
     console.log(`  Pulling Ollama model: ${model}`);
-    if (!pullOllamaModel(model)) {
+    if (!(await pullOllamaModel(model))) {
       return {
         ok: false,
         message:
@@ -305,13 +490,74 @@ function prepareOllamaModel(model, installedModels = []) {
   return validateOllamaModel(model);
 }
 
+/**
+ * Unload all running Ollama models from GPU memory.
+ * Best-effort operation: silently ignores errors if Ollama is not running.
+ */
+function unloadOllamaModels() {
+  try {
+    const req = http.get(
+      {
+        hostname: "localhost",
+        port: OLLAMA_PORT,
+        path: "/api/ps",
+        timeout: 3000,
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          if (res.statusCode !== 200) return;
+          try {
+            const parsed = JSON.parse(data);
+            const models = parsed.models || [];
+            for (const entry of models) {
+              if (!entry.name) continue;
+              const unloadReq = http.request(
+                {
+                  hostname: "localhost",
+                  port: OLLAMA_PORT,
+                  path: "/api/generate",
+                  method: "POST",
+                  timeout: 3000,
+                  headers: { "Content-Type": "application/json" },
+                },
+                () => {
+                  /* ignore response */
+                },
+              );
+              unloadReq.on("error", () => {
+                /* best-effort */
+              });
+              unloadReq.write(JSON.stringify({ model: entry.name, keep_alive: 0 }));
+              unloadReq.end();
+            }
+          } catch {
+            /* best-effort */
+          }
+        });
+      },
+    );
+    req.on("error", () => {
+      /* best-effort */
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
 module.exports = {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
+  isProxyHealthy,
+  killStaleProxy,
   persistProxyToken,
   startOllamaAuthProxy,
   promptOllamaModel,
   printOllamaExposureWarning,
   pullOllamaModel,
   prepareOllamaModel,
+  unloadOllamaModels,
 };

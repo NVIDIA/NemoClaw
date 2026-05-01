@@ -16,8 +16,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     forwardPort: 19000,
     dashboard: { kind: "ui", label: "UI", path: "/" },
     configPaths: {
-      immutableDir: "/tmp/agent/immutable",
-      writableDir: "/tmp/agent/writable",
+      dir: "/tmp/agent",
       configFile: "/tmp/agent/config.yaml",
       envFile: null,
       format: "yaml",
@@ -104,10 +103,12 @@ describe("buildRecoveryScript", () => {
       expect(script).not.toContain(". /tmp/nemoclaw-proxy-env.sh 2>/dev/null");
     });
 
-    it("checks NODE_OPTIONS for the safety-net preload after sourcing", () => {
+    it("checks NODE_OPTIONS for the safety-net and ciao preloads after sourcing", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
       expect(script).toContain("nemoclaw-sandbox-safety-net");
+      expect(script).toContain("nemoclaw-ciao-network-guard");
       expect(script).toContain("NODE_OPTIONS missing safety-net preload");
+      expect(script).toContain("or ciao preload");
     });
 
     it("sources proxy-env.sh BEFORE launching the gateway binary", () => {

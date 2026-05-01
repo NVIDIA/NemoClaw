@@ -70,27 +70,24 @@ else
   fail "gateway and sandbox IDs not distinct or incomplete: $OUT"
 fi
 
-# ── Test 2: openclaw.json is not writable by sandbox user ────────
+# ── Test 2: openclaw.json is writable by sandbox user (mutable default) ──
 
-info "2. openclaw.json is not writable by sandbox user"
-OUT=$(run_as_sandbox "touch /sandbox/.openclaw/openclaw.json 2>&1 || echo BLOCKED")
-if echo "$OUT" | grep -q "BLOCKED\|Permission denied\|Read-only"; then
-  pass "sandbox cannot write to openclaw.json"
+info "2. openclaw.json is writable by sandbox user (mutable default)"
+OUT=$(run_as_sandbox "test -w /sandbox/.openclaw/openclaw.json && echo WRITABLE || echo BLOCKED")
+if echo "$OUT" | grep -q "WRITABLE"; then
+  pass "sandbox can write to openclaw.json (mutable default)"
 else
-  fail "sandbox CAN write to openclaw.json: $OUT"
+  fail "sandbox should be able to write to openclaw.json in mutable default: $OUT"
 fi
 
-# ── Test 3: .openclaw directory is not writable by sandbox ───────
+# ── Test 3: .openclaw directory is writable by sandbox (mutable default) ──
 
-info "3. .openclaw directory not writable by sandbox (no symlink replacement)"
-# ln -sf may return 0 even when it fails to replace (silent failure on perm denied).
-# Verify the symlink still points to the expected target after the attempt.
-OUT=$(run_as_sandbox "ln -sf /tmp/evil /sandbox/.openclaw/hooks 2>&1; readlink /sandbox/.openclaw/hooks")
-TARGET=$(echo "$OUT" | tail -1)
-if [ "$TARGET" = "/sandbox/.openclaw-data/hooks" ]; then
-  pass "sandbox cannot replace symlinks in .openclaw (target unchanged)"
+info "3. .openclaw directory is writable by sandbox (mutable default)"
+OUT=$(run_as_sandbox "touch /sandbox/.openclaw/test-write && rm /sandbox/.openclaw/test-write && echo OK || echo BLOCKED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can write to .openclaw directory (mutable default)"
 else
-  fail "sandbox replaced symlink — hooks now points to: $TARGET"
+  fail "sandbox should be able to write to .openclaw in mutable default: $OUT"
 fi
 
 # ── Test 4: Config hash file exists and is valid ─────────────────
@@ -113,14 +110,14 @@ else
   fail "startup update hints not disabled: $OUT"
 fi
 
-# ── Test 6: Config hash is not writable by sandbox ───────────────
+# ── Test 6: Config hash is writable by sandbox (mutable default) ──
 
-info "6. Config hash not writable by sandbox user"
-OUT=$(run_as_sandbox "echo fake > /sandbox/.openclaw/.config-hash 2>&1 || echo BLOCKED")
-if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
-  pass "sandbox cannot tamper with config hash"
+info "6. Config hash writable by sandbox user (mutable default)"
+OUT=$(run_as_sandbox "test -w /sandbox/.openclaw/.config-hash && echo WRITABLE || echo BLOCKED")
+if echo "$OUT" | grep -q "WRITABLE"; then
+  pass "sandbox can write to config hash (mutable default)"
 else
-  fail "sandbox CAN write to config hash: $OUT"
+  fail "sandbox cannot write to config hash — should be writable: $OUT"
 fi
 
 # ── Test 7: gosu is installed ────────────────────────────────────
@@ -154,20 +151,20 @@ else
   fail "openclaw resolves to unexpected path: $OUT"
 fi
 
-# ── Test 10: Symlinks point to expected targets ──────────────────
+# ── Test 10: State directories exist directly in .openclaw ──────
 
-info "10. All .openclaw symlinks point to .openclaw-data"
-FAILED_LINKS=""
-for link in agents extensions workspace skills hooks identity devices canvas cron memory logs credentials sandbox telegram; do
-  OUT=$(run_as_root "readlink -f /sandbox/.openclaw/$link")
-  if [ "$OUT" != "/sandbox/.openclaw-data/$link" ]; then
-    FAILED_LINKS="$FAILED_LINKS $link->$OUT"
+info "10. Agent state directories exist in .openclaw"
+MISSING_DIRS=""
+for dir in agents extensions workspace skills hooks memory; do
+  OUT=$(run_as_root "test -d /sandbox/.openclaw/$dir && echo EXISTS || echo MISSING")
+  if echo "$OUT" | grep -q "MISSING"; then
+    MISSING_DIRS="$MISSING_DIRS $dir"
   fi
 done
-if [ -z "$FAILED_LINKS" ]; then
-  pass "all symlinks point to .openclaw-data"
+if [ -z "$MISSING_DIRS" ]; then
+  pass "all expected state directories exist in .openclaw"
 else
-  fail "symlink targets wrong:$FAILED_LINKS"
+  fail "missing directories in .openclaw:$MISSING_DIRS"
 fi
 
 # ── Test 11: iptables is installed (required for network policy enforcement) ──
@@ -182,12 +179,12 @@ fi
 
 # ── Test 12: chattr is available for immutable hardening ─────────
 
-info "12. chattr is available for immutable symlink hardening"
+info "12. chattr is available for shields up immutability"
 OUT=$(run_as_root "command -v chattr 2>/dev/null || true")
 if [ -n "$OUT" ]; then
   pass "chattr available at $OUT"
 else
-  fail "chattr not found — nemoclaw-start immutable hardening will be skipped"
+  fail "chattr not found — shields up immutability will not work"
 fi
 
 # ── Test 13: Sandbox user cannot kill gateway-user processes ─────
@@ -240,11 +237,11 @@ else
   fi
 fi
 
-# ── Test 13: Sandbox user cannot write to .nemoclaw parent ────────
+# ── Test 13b: Sandbox user cannot write to .nemoclaw parent ───────
 # Note: /sandbox itself is sandbox-owned (DAC allows writes). Landlock makes it
 # read-only in production — tested in checks/04-landlock-readonly.sh instead.
 
-info "13. Sandbox user cannot create files in /sandbox/.nemoclaw"
+info "13b. Sandbox user cannot create files in /sandbox/.nemoclaw"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/testfile 2>&1 || echo BLOCKED")
 if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
   pass "sandbox cannot create files in .nemoclaw parent (root-owned)"
@@ -252,9 +249,9 @@ else
   fail "sandbox CAN create files in .nemoclaw parent: $OUT"
 fi
 
-# ── Test 14: Sandbox user cannot modify blueprints ────────────────
+# ── Test 14b: Sandbox user cannot modify blueprints ──────────────
 
-info "14. Sandbox user cannot modify blueprints"
+info "14b. Sandbox user cannot modify blueprints"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/blueprints/testfile 2>&1 || echo BLOCKED")
 if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
   pass "sandbox cannot write to blueprints (root-owned)"
@@ -272,14 +269,14 @@ else
   fail "sandbox cannot write to .nemoclaw/state: $OUT"
 fi
 
-# ── Test 16: Sandbox user CAN write to .openclaw-data ─────────────
+# ── Test 16: Sandbox user CAN write to .openclaw ──────────────────
 
-info "16. Sandbox user can write to .openclaw-data"
-OUT=$(run_as_sandbox "touch /sandbox/.openclaw-data/testfile && echo OK || echo FAILED")
+info "16. Sandbox user can write to .openclaw"
+OUT=$(run_as_sandbox "touch /sandbox/.openclaw/testfile && rm -f /sandbox/.openclaw/testfile && echo OK || echo FAILED")
 if echo "$OUT" | grep -q "OK"; then
-  pass "sandbox can write to .openclaw-data (sandbox-owned)"
+  pass "sandbox can write to .openclaw (sandbox-owned, mutable default)"
 else
-  fail "sandbox cannot write to .openclaw-data: $OUT"
+  fail "sandbox cannot write to .openclaw: $OUT"
 fi
 
 # ── Test 17: Sandbox user cannot rename/delete blueprints dir ─────
@@ -332,14 +329,14 @@ else
   fail "sandbox cannot write to .nemoclaw/config.json: $OUT"
 fi
 
-# ── Test 22: Sandbox user cannot create new files in .openclaw ────
+# ── Test 22: Sandbox user can create new files in .openclaw (mutable default) ──
 
-info "22. Sandbox user cannot create new files in .openclaw directory"
-OUT=$(run_as_sandbox "touch /sandbox/.openclaw/newfile 2>&1 || echo BLOCKED")
-if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
-  pass "sandbox cannot create new files in .openclaw (root-owned dir)"
+info "22. Sandbox user can create new files in .openclaw directory (mutable default)"
+OUT=$(run_as_sandbox "touch /sandbox/.openclaw/newfile && rm -f /sandbox/.openclaw/newfile && echo OK || echo BLOCKED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can create new files in .openclaw (mutable default)"
 else
-  fail "sandbox CAN create new files in .openclaw: $OUT"
+  fail "sandbox cannot create new files in .openclaw — should be writable: $OUT"
 fi
 
 # ── Test 23: .bashrc sources proxy-env from /tmp ──────────────────

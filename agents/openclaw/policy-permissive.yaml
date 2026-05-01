@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Permissive policy for OpenClaw — used by --dangerously-skip-permissions.
+# Permissive policy for OpenClaw — applied by `shields down`.
 # All known OpenClaw-relevant endpoints opened with access: full (no L7 filtering).
 # Filesystem: include_workdir: true makes the sandbox home directory writable.
 #
@@ -23,7 +23,7 @@ filesystem_policy:
   read_write:
     - /tmp
     - /dev/null
-    - /sandbox/.openclaw-data
+    - /sandbox/.openclaw
     - /sandbox/.nemoclaw
 
 landlock:
