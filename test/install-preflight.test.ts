@@ -634,7 +634,7 @@ fi`,
       /Found an interrupted onboarding session — resuming it\./,
     );
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --resume --non-interactive --yes-i-accept-third-party-software$/m,
+      /^onboard --resume --non-interactive --yes-i-accept-third-party-software --yes$/m,
     );
   });
 
@@ -831,7 +831,9 @@ fi`,
     // onboard was called with --fresh (forwarded so the CLI clears the
     // existing session file) and without --resume.
     const log = fs.readFileSync(onboardLog, "utf-8");
-    expect(log).toMatch(/^onboard --fresh --non-interactive --yes-i-accept-third-party-software$/m);
+    expect(log).toMatch(
+      /^onboard --fresh --non-interactive --yes-i-accept-third-party-software --yes$/m,
+    );
     expect(log).not.toMatch(/--resume/);
   });
 
@@ -992,7 +994,7 @@ exit 0
       /Podman may work in some environments, but it is not a supported runtime/,
     );
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --non-interactive --yes-i-accept-third-party-software$/m,
+      /^onboard --non-interactive --yes-i-accept-third-party-software --yes$/m,
     );
   });
 
@@ -1136,7 +1138,7 @@ fi`,
 
     expect(result.status).toBe(0);
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --non-interactive --yes-i-accept-third-party-software$/m,
+      /^onboard --non-interactive --yes-i-accept-third-party-software --yes$/m,
     );
   });
 
