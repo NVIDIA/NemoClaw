@@ -2142,7 +2142,7 @@ exit 0
     expect(r.status).toBe(0);
     const openshellCalls = fs.readFileSync(openshellLog, "utf-8");
     expect(openshellCalls).toContain("forward stop 8642 created-by-onboard");
-    expect(openshellCalls).toContain("forward start --background 8642 created-by-onboard");
+    expect(openshellCalls).toContain("forward start 8642 created-by-onboard");
   });
 
   // -- resolve_default_sandbox_name --

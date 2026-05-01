@@ -253,7 +253,7 @@ resolve_onboarded_agent() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin attempt start_pid
+  local sandbox_name agent_name agent_display port openshell_bin attempt start_pid state_dir pid_file
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -271,6 +271,14 @@ restore_onboard_forward_after_post_checks() {
     return 0
   fi
 
+  state_dir="${HOME}/.nemoclaw/state"
+  mkdir -p "$state_dir" 2>/dev/null || true
+  pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
+  if [[ -f "$pid_file" ]]; then
+    kill "$(cat "$pid_file" 2>/dev/null)" >/dev/null 2>&1 || true
+    rm -f "$pid_file"
+  fi
+
   for attempt in 1 2 3; do
     "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 \
       || "$openshell_bin" forward stop "$port" >/dev/null 2>&1 \
@@ -278,22 +286,20 @@ restore_onboard_forward_after_post_checks() {
     if [ "$attempt" -gt 1 ]; then
       sleep 2
     fi
-    nohup "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 &
+    nohup "$openshell_bin" forward start "$port" "$sandbox_name" \
+      >"${pid_file}.log" 2>&1 &
     start_pid=$!
-    wait "$start_pid" || continue
+    printf "%s\n" "$start_pid" >"$pid_file" 2>/dev/null || true
     sleep 4
     if command_exists curl \
       && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
       return 0
     fi
-    if ! command_exists curl \
-      && NO_COLOR=1 "$openshell_bin" forward list 2>/dev/null \
-      | awk -v sandbox="$sandbox_name" -v fwd_port="$port" '
-          $1 == sandbox && $3 == fwd_port && tolower($5) == "running" { found = 1 }
-          END { exit found ? 0 : 1 }
-        '; then
+    if ! command_exists curl && kill -0 "$start_pid" >/dev/null 2>&1; then
       return 0
     fi
+    kill "$start_pid" >/dev/null 2>&1 || true
+    rm -f "$pid_file"
   done
 
   warn "Could not restore ${agent_display} host forward on port ${port}."
