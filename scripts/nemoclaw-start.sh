@@ -1153,15 +1153,35 @@ emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <<'SAFETY_NET_EOF'
 //      want to avoid.
 //
 //   5. Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime),
-//      and only for `openclaw gateway run …` invocations
-//      (process.argv[2] === "gateway"). CLI commands (agent, doctor,
-//      plugins, tui, etc.) get default Node behavior so errors surface
-//      promptly to users running short-lived tools.
+//      and only for gateway processes. The gateway can appear as the
+//      launcher (`openclaw gateway run ...`) or the re-execed
+//      `openclaw-gateway` child. CLI commands (agent, doctor, plugins,
+//      tui, etc.) get default Node behavior so errors surface promptly
+//      to users running short-lived tools.
 
 (function () {
   'use strict';
   if (process.env.OPENSHELL_SANDBOX !== '1') return;
-  if (process.argv[2] !== 'gateway') return;
+
+  function basename(value) {
+    return String(value || '').split(/[\\/]/).pop();
+  }
+
+  function gatewayProcessFlavor() {
+    if (basename(process.argv0) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.title) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (process.argv[2] === 'gateway') return 'launcher';
+    if (basename(process.argv[1]) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.argv[0]) === 'openclaw-gateway') return 'openclaw-gateway';
+    return '';
+  }
+
+  var _gatewayProcess = gatewayProcessFlavor();
+  if (!_gatewayProcess) return;
+
+  try {
+    process.stderr.write('[sandbox-safety-net] loaded (' + _gatewayProcess + ')\n');
+  } catch (_) {}
 
   // KNOWN-BENIGN ERROR PATTERNS
   //
@@ -1571,6 +1591,26 @@ emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <<'CIAO_GUARD_EOF'
 (function () {
   'use strict';
 
+  function basename(value) {
+    return String(value || '').split(/[\\/]/).pop();
+  }
+
+  function gatewayProcessFlavor() {
+    if (basename(process.argv0) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.title) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (process.argv[2] === 'gateway') return 'launcher';
+    if (basename(process.argv[1]) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.argv[0]) === 'openclaw-gateway') return 'openclaw-gateway';
+    return '';
+  }
+
+  var _gatewayProcess = gatewayProcessFlavor();
+  if (_gatewayProcess) {
+    try {
+      process.stderr.write('[guard] ciao-network-guard loaded (' + _gatewayProcess + ')\n');
+    } catch (_) {}
+  }
+
   // Monkey-patch os.networkInterfaces to return empty on failure.
   var os = require('os');
   var _origNetworkInterfaces = os.networkInterfaces;
@@ -1617,7 +1657,7 @@ emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <<'CIAO_GUARD_EOF'
   // For gateway processes, non-ciao errors fall through (return) to the
   // sandbox safety net registered later in the preload chain. The safety
   // net is the single point of "keep gateway alive on unknown errors".
-  if (process.argv[2] === 'gateway') {
+  if (_gatewayProcess) {
     process.on('uncaughtException', function (err, origin) {
       if (
         err && err.code === 'ERR_SYSTEM_ERROR' &&

@@ -12,6 +12,8 @@ content:
   type: get_started
   difficulty: technical_beginner
   audience: ["developer", "engineer"]
+skill:
+  priority: 10
 status: published
 ---
 

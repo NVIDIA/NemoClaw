@@ -35,6 +35,32 @@ function runtimeShellEnvShimBlock(src: string): string {
   return src.slice(start, end);
 }
 
+function startScriptHeredoc(src: string, marker: string): string {
+  const match = src.match(new RegExp(`<<'${marker}'\\n([\\s\\S]*?)\\n${marker}`));
+  expect(match).toBeTruthy();
+  return match![1];
+}
+
+function runEmbeddedPreload(
+  script: string,
+  argv1: string,
+  argv2: string,
+  title = "node",
+): ReturnType<typeof spawnSync> {
+  return spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `process.env.OPENSHELL_SANDBOX = '1';
+process.title = ${JSON.stringify(title)};
+process.argv[1] = ${JSON.stringify(argv1)};
+process.argv[2] = ${JSON.stringify(argv2)};
+${script}`,
+    ],
+    { encoding: "utf-8" },
+  );
+}
+
 describe("nemoclaw-start non-root fallback", () => {
   it("detaches gateway output from sandbox create in non-root mode", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -115,6 +141,58 @@ describe("nemoclaw-start non-root fallback", () => {
     for (const dir of ["workspace", "memory", "credentials", "flows", "telegram", "media"]) {
       expect(fn![1]).toContain(dir);
     }
+  });
+});
+
+describe("nemoclaw-start gateway preload process detection (#2478)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const safetyNetScript = startScriptHeredoc(src, "SAFETY_NET_EOF");
+  const ciaoGuardScript = startScriptHeredoc(src, "CIAO_GUARD_EOF");
+
+  it("activates the safety net for the re-execed openclaw-gateway child", () => {
+    const run = runEmbeddedPreload(safetyNetScript, "/usr/local/bin/openclaw-gateway", "--port");
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("[sandbox-safety-net] loaded (openclaw-gateway)");
+  });
+
+  it("activates the ciao guard fallback for the re-execed openclaw-gateway child", () => {
+    const run = runEmbeddedPreload(ciaoGuardScript, "/usr/local/bin/openclaw-gateway", "--port");
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("[guard] ciao-network-guard loaded (openclaw-gateway)");
+  });
+
+  it("still recognizes the openclaw gateway launcher path", () => {
+    const safetyNet = runEmbeddedPreload(safetyNetScript, "/usr/local/bin/openclaw", "gateway");
+    const ciaoGuard = runEmbeddedPreload(ciaoGuardScript, "/usr/local/bin/openclaw", "gateway");
+    expect(safetyNet.status).toBe(0);
+    expect(ciaoGuard.status).toBe(0);
+    expect(safetyNet.stderr).toContain("[sandbox-safety-net] loaded (launcher)");
+    expect(ciaoGuard.stderr).toContain("[guard] ciao-network-guard loaded (launcher)");
+  });
+
+  it("prefers the re-execed process title over launcher argv", () => {
+    const safetyNet = runEmbeddedPreload(
+      safetyNetScript,
+      "/usr/local/bin/openclaw",
+      "gateway",
+      "openclaw-gateway",
+    );
+    const ciaoGuard = runEmbeddedPreload(
+      ciaoGuardScript,
+      "/usr/local/bin/openclaw",
+      "gateway",
+      "openclaw-gateway",
+    );
+    expect(safetyNet.status).toBe(0);
+    expect(ciaoGuard.status).toBe(0);
+    expect(safetyNet.stderr).toContain("[sandbox-safety-net] loaded (openclaw-gateway)");
+    expect(ciaoGuard.stderr).toContain("[guard] ciao-network-guard loaded (openclaw-gateway)");
+  });
+
+  it("does not install the safety net for non-gateway CLI commands", () => {
+    const run = runEmbeddedPreload(safetyNetScript, "/usr/local/bin/openclaw", "agent");
+    expect(run.status).toBe(0);
+    expect(run.stderr).not.toContain("[sandbox-safety-net] loaded");
   });
 });
 
