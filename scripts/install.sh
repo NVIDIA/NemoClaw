@@ -279,16 +279,18 @@ restore_onboard_forward_after_post_checks() {
       sleep 2
     fi
     "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || continue
-    sleep 2
-    if "$openshell_bin" forward list 2>/dev/null \
+    sleep 4
+    if command_exists curl \
+      && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! command_exists curl \
+      && NO_COLOR=1 "$openshell_bin" forward list 2>/dev/null \
       | awk -v sandbox="$sandbox_name" -v fwd_port="$port" '
           $1 == sandbox && $3 == fwd_port && tolower($5) == "running" { found = 1 }
           END { exit found ? 0 : 1 }
         '; then
-      if ! command_exists curl \
-        || curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-        return 0
-      fi
+      return 0
     fi
   done
 
