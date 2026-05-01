@@ -8064,29 +8064,31 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
+
+    // Verify the reusable gateway has GPU passthrough when needed. Runs for
+    // both fresh-reuse and resume paths so a gateway recreated without GPU
+    // between runs is caught.
+    if (canReuseHealthyGateway && gpuPassthrough) {
+      const container = `openshell-cluster-${GATEWAY_NAME}`;
+      const gpuCheck = docker.dockerInspect(
+        ["--type", "container", "--format", "{{json .HostConfig.DeviceRequests}}", container],
+        { ignoreError: true, suppressOutput: true },
+      );
+      const gpuOutput = String(gpuCheck.stdout || "").trim();
+      const gatewayHasGpu = gpuCheck.status === 0 && gpuOutput !== "null" && gpuOutput !== "[]";
+      if (!gatewayHasGpu) {
+        console.error("  Existing gateway was started without GPU passthrough.");
+        console.error("  To enable GPU, destroy the existing sandbox and gateway, then re-onboard:");
+        console.error(`    nemoclaw <name> destroy --yes && nemoclaw onboard`);
+        process.exit(1);
+      }
+    }
+
     const resumeGateway =
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
     if (resumeGateway) {
       skippedStepMessage("gateway", "running");
     } else if (!resume && canReuseHealthyGateway) {
-      if (gpuPassthrough) {
-        // Check if the running gateway has GPU enabled. If not, the user must
-        // destroy and recreate — we don't auto-recreate because it's destructive
-        // (wipes providers, inference config, and all sandboxes).
-        const container = `openshell-cluster-${GATEWAY_NAME}`;
-        const gpuCheck = docker.dockerInspect(
-          ["--type", "container", "--format", "{{json .HostConfig.DeviceRequests}}", container],
-          { ignoreError: true, suppressOutput: true },
-        );
-        const gpuOutput = String(gpuCheck.stdout || "").trim();
-        const gatewayHasGpu = gpuCheck.status === 0 && gpuOutput !== "null" && gpuOutput !== "[]";
-        if (!gatewayHasGpu) {
-          console.error("  Existing gateway was started without GPU passthrough.");
-          console.error("  To enable GPU, destroy the existing sandbox and gateway, then re-onboard:");
-          console.error(`    nemoclaw <name> destroy --yes && nemoclaw onboard`);
-          process.exit(1);
-        }
-      }
       skippedStepMessage("gateway", "running", "reuse");
       note("  Reusing healthy NemoClaw gateway.");
     } else {
