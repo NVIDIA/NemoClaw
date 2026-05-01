@@ -253,7 +253,7 @@ resolve_onboarded_agent() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin attempt state_dir pid_file watcher_script
+  local sandbox_name agent_name agent_display port openshell_bin attempt state_dir pid_file watcher_script watcher_pid
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -287,6 +287,7 @@ restore_onboard_forward_after_post_checks() {
       sleep 2
     fi
     "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
+    watcher_pid=""
     if [[ "${NEMOCLAW_SKIP_FORWARD_WATCHER:-}" != "1" ]] && command_exists node; then
       watcher_script="${pid_file}.js"
       cat >"$watcher_script" <<'NODE'
@@ -317,7 +318,7 @@ NODE
           detached: true,
           stdio: "ignore",
         });
-        fs.writeFileSync(pidFile, `${child.pid}\n`);
+        fs.writeFileSync(pidFile, String(child.pid) + "\n");
         child.unref();
       ' "$watcher_script" "$openshell_bin" "$port" "$sandbox_name" "$pid_file" \
         >/dev/null 2>&1 || true
@@ -327,10 +328,13 @@ NODE
       && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
       return 0
     fi
-    if ! command_exists curl && kill -0 "$start_pid" >/dev/null 2>&1; then
+    watcher_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if ! command_exists curl && [[ -n "$watcher_pid" ]] && kill -0 "$watcher_pid" >/dev/null 2>&1; then
       return 0
     fi
-    kill "$start_pid" >/dev/null 2>&1 || true
+    if [[ -n "$watcher_pid" ]]; then
+      kill "$watcher_pid" >/dev/null 2>&1 || true
+    fi
     rm -f "$pid_file"
   done
 
