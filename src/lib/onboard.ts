@@ -8004,6 +8004,17 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const gpuPassthrough = gpu?.type === "nvidia";
     if (gpuPassthrough) {
       note("  NVIDIA GPU detected — enabling GPU passthrough.");
+    } else if (process.platform === "linux") {
+      // Hint when hardware is present but drivers are missing.
+      try {
+        const lspci = spawnSync("lspci", { encoding: "utf-8", timeout: 5000 });
+        if (lspci.status === 0 && /nvidia/i.test(lspci.stdout || "")) {
+          note("  NVIDIA GPU hardware detected but nvidia-smi is not available.");
+          note("  Install NVIDIA drivers and the Container Toolkit to enable GPU passthrough.");
+        }
+      } catch {
+        /* lspci not available — skip hint */
+      }
     }
     // Persist GPU intent in the session so resume can restore it.
     if (session && session.gpuPassthrough !== gpuPassthrough) {
