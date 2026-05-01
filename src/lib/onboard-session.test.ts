@@ -342,14 +342,31 @@ describe("onboard session", () => {
     }
   });
 
-  it("treats unreadable or transient lock contents as a retry, not a stale lock", () => {
+  it("treats recent malformed lock as transient and does not remove it", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    // Write a malformed lock with the current timestamp (< 30 s old)
     fs.writeFileSync(session.LOCK_FILE, "{not-json", { mode: 0o600 });
 
     const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
     expect(acquired.acquired).toBe(false);
     expect(acquired.stale).toBe(true);
+    // Recent malformed lock is preserved (may be mid-write)
     expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+  });
+
+  it("removes a stale malformed lock file older than 30 seconds (#2765)", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    fs.writeFileSync(session.LOCK_FILE, "{not-json", { mode: 0o600 });
+    // Back-date the lock file mtime to 60 seconds ago so it looks stale
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(session.LOCK_FILE, past, past);
+
+    const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
+    expect(acquired.acquired).toBe(true);
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(true); // re-created by acquirer
+    const written = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"));
+    expect(written.pid).toBe(process.pid);
+    session.releaseOnboardLock();
   });
 
   it("ignores malformed lock files when releasing the onboard lock", () => {

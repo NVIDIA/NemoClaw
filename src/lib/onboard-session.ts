@@ -454,9 +454,23 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         throw readError;
       }
       if (!existing) {
-        // Malformed lock file — leave it on disk (a human or another
-        // process may be mid-write) and retry. Pre-#1281 behavior
-        // preserved: never unlink a malformed lock automatically.
+        // Malformed lock file. If the file is very recent (<30 s), a
+        // concurrent process may be mid-write — leave it and retry.
+        // Otherwise the file is stale debris from a crash between
+        // openSync("wx") and writeSync() — remove it so subsequent
+        // onboard runs are not permanently blocked (#2765).
+        const MALFORMED_STALE_SECONDS = 30;
+        try {
+          const lockStat = fs.statSync(LOCK_FILE);
+          const ageMs = Date.now() - lockStat.mtimeMs;
+          if (ageMs > MALFORMED_STALE_SECONDS * 1000) {
+            unlinkIfInodeMatches(LOCK_FILE, staleInode);
+          }
+        } catch (statErr) {
+          if (!(isErrnoException(statErr) && statErr.code === "ENOENT")) {
+            throw statErr;
+          }
+        }
         continue;
       }
       if (isProcessAlive(existing.pid)) {
