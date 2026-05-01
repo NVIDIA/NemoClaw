@@ -121,6 +121,7 @@ Use the [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-dem
 
 - **Load [references/switch-inference-providers.md](references/switch-inference-providers.md)** when switching inference providers, changing the model runtime, or reconfiguring inference routing. Changes the active inference model without restarting the sandbox.
 - **Load [references/use-local-inference.md](references/use-local-inference.md)** when setting up Ollama, vLLM, TensorRT-LLM, NIM, or any OpenAI-compatible local model server with NemoClaw. Connects NemoClaw to a local inference server.
+- **Load [references/tool-calling-reliability.md](references/tool-calling-reliability.md)** when a local model shows raw JSON tool-call text in the TUI, when deciding whether Ollama is sufficient for agent tool loops, or when recommending vLLM with `--tool-call-parser`.
 - **Load [references/inference-options.md](references/inference-options.md)** when explaining which providers are available, what the onboard wizard presents, or how inference routing works. Lists all inference providers offered during NemoClaw onboarding.
 
 ## Related Skills

@@ -54,6 +54,14 @@ NemoClaw lists installed models or offers starter models if none are installed.
 It pulls the selected model, loads it into memory, and validates it before continuing.
 On WSL, if Ollama is running on the Windows host, NemoClaw pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
 
+:::{caution}
+Ollama is convenient for local chat, but some model/template combinations can
+return tool calls as plain text under realistic agent load. If the TUI shows raw
+JSON such as `{"name":"memory_search","arguments":{...}}` instead of running a
+tool, switch to vLLM with `--enable-auto-tool-choice` and the correct
+`--tool-call-parser`. See [Tool-Calling Reliability](tool-calling-reliability.md).
+:::
+
 ### Authenticated Reverse Proxy
 
 NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated
@@ -304,5 +312,6 @@ If the provider itself needs to change (for example, switching from vLLM to a cl
 ## Next Steps
 
 - [Inference Options](inference-options.md) for the full list of providers available during onboarding.
+- [Tool-Calling Reliability](tool-calling-reliability.md) for diagnosing raw JSON tool-call output with local models.
 - [Switch Inference Models](switch-inference-providers.md) for runtime model switching.
 - [Quickstart](../get-started/quickstart.md) for first-time installation.
