@@ -2,18 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ROOT } from "../runner";
-import { dockerCapture, dockerRun, type DockerCaptureOptions, type DockerRunOptions } from "./run";
+import {
+  dockerCapture,
+  dockerRun,
+  type DockerCaptureOptions,
+  type DockerRunOptions,
+  type DockerRunResult,
+} from "./run";
 
 export function dockerBuild(
   dockerfilePath: string,
   tag: string,
   contextDir: string = ROOT,
   opts: DockerRunOptions = {},
-) {
+): DockerRunResult {
   return dockerRun(["build", "-f", dockerfilePath, "-t", tag, contextDir], opts);
 }
 
-export function dockerRmi(imageRef: string, opts: DockerRunOptions = {}) {
+export function dockerRmi(imageRef: string, opts: DockerRunOptions = {}): DockerRunResult {
   return dockerRun(["rmi", imageRef], opts);
 }
 

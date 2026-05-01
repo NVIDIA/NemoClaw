@@ -1,21 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerCapture, dockerRun, type DockerCaptureOptions, type DockerRunOptions } from "./run";
+import {
+  dockerCapture,
+  dockerRun,
+  type DockerCaptureOptions,
+  type DockerRunOptions,
+  type DockerRunResult,
+} from "./run";
 
-export function dockerStop(containerName: string, opts: DockerRunOptions = {}) {
+export function dockerStop(containerName: string, opts: DockerRunOptions = {}): DockerRunResult {
   return dockerRun(["stop", containerName], opts);
 }
 
-export function dockerRm(containerName: string, opts: DockerRunOptions = {}) {
+export function dockerRm(containerName: string, opts: DockerRunOptions = {}): DockerRunResult {
   return dockerRun(["rm", containerName], opts);
 }
 
-export function dockerForceRm(containerName: string, opts: DockerRunOptions = {}) {
+export function dockerForceRm(containerName: string, opts: DockerRunOptions = {}): DockerRunResult {
   return dockerRun(["rm", "-f", containerName], opts);
 }
 
-export function dockerRunDetached(args: readonly string[], opts: DockerRunOptions = {}) {
+export function dockerRunDetached(
+  args: readonly string[],
+  opts: DockerRunOptions = {},
+): DockerRunResult {
   return dockerRun(["run", "-d", ...args], opts);
 }
 
