@@ -1418,6 +1418,10 @@ run_onboard() {
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
       onboard_cmd+=(--yes-i-accept-third-party-software)
     fi
+    # A non-interactive install is by definition unattended consent;
+    # forward --yes so the Ollama size-confirmation gate does not abort
+    # the unattended download (the size is still printed to logs).
+    onboard_cmd+=(--yes)
     "${_CLI_BIN}" "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
     "${_CLI_BIN}" "${onboard_cmd[@]}"

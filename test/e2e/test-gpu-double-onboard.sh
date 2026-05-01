@@ -386,7 +386,7 @@ info "This exercises the exact code path from issue #2553:"
 info "  startOllamaAuthProxy() → killStaleProxy() → token generation → persistProxyToken()"
 
 export NEMOCLAW_RECREATE_SANDBOX=1
-nemoclaw onboard --non-interactive >"$REONBOARD_LOG" 2>&1 &
+nemoclaw onboard --non-interactive --yes >"$REONBOARD_LOG" 2>&1 &
 reonboard_pid=$!
 tail -f "$REONBOARD_LOG" --pid=$reonboard_pid 2>/dev/null &
 tail_pid=$!

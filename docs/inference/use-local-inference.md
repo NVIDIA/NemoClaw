@@ -96,15 +96,19 @@ This does not delete downloaded model files.
 ```console
 $ NEMOCLAW_PROVIDER=ollama \
   NEMOCLAW_MODEL=qwen2.5:14b \
-  nemoclaw onboard --non-interactive
+  nemoclaw onboard --non-interactive --yes
 ```
 
 If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
+
+`--yes` (or `NEMOCLAW_YES=1`) authorises the Ollama model download without an interactive confirmation prompt.
+Omit it for an interactive `[y/N]` prompt that shows the model size before downloading.
 
 | Variable | Purpose |
 |---|---|
 | `NEMOCLAW_PROVIDER` | Set to `ollama`. |
 | `NEMOCLAW_MODEL` | Ollama model tag to use. Optional. |
+| `NEMOCLAW_YES` | Set to `1` to auto-accept the model-download confirmation prompt. Optional. |
 
 ## OpenAI-Compatible Server
 
