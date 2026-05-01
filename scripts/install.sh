@@ -253,7 +253,7 @@ resolve_onboarded_agent() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin attempt
+  local sandbox_name agent_name agent_display port openshell_bin attempt start_pid
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -278,7 +278,9 @@ restore_onboard_forward_after_post_checks() {
     if [ "$attempt" -gt 1 ]; then
       sleep 2
     fi
-    "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || continue
+    nohup "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 &
+    start_pid=$!
+    wait "$start_pid" || continue
     sleep 4
     if command_exists curl \
       && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
