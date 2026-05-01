@@ -2,23 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Additional coverage on top of the --gpu flag PR (#1751).
+ * Coverage for GPU passthrough session persistence (#1751, #999).
  *
- * The PR's own tests cover:
- *   - --gpu flag parsing in onboard-command (37 lines)
- *   - command-registry counts updated for the new flag (8 lines)
- *   - cli.test.ts dispatch (16 lines)
+ * GPU passthrough is auto-detected (enabled when NVIDIA GPU found),
+ * but the intent is persisted in the session so resume flows preserve it.
  *
- * What's not covered, that this file locks down:
- *   1. filterSafeUpdates → gpuPassthrough roundtrip. The CR review caught
- *      that gpuPassthrough was declared in SessionUpdates but not applied
- *      in filterSafeUpdates; the fix at session.ts:641-642 is unguarded.
- *      Without this regression test, a future refactor of filterSafeUpdates
- *      could silently drop gpuPassthrough again.
- *   2. Save/load roundtrip with gpuPassthrough=true persists the flag
- *      across session reloads (resume flows depend on this).
- *   3. Non-boolean gpuPassthrough updates are filtered out (defends against
- *      malformed session data resurrecting the silent-drop regression).
+ * What this file locks down:
+ *   1. filterSafeUpdates → gpuPassthrough roundtrip.
+ *   2. Save/load roundtrip with gpuPassthrough=true persists across reloads.
+ *   3. Non-boolean gpuPassthrough updates are filtered out.
  */
 
 import fs from "node:fs";
@@ -41,7 +33,7 @@ afterEach(() => {
   }
 });
 
-describe("Issue #1751 — extra coverage on --gpu flag persistence", () => {
+describe("Issue #1751 — GPU passthrough session persistence", () => {
   it("filterSafeUpdates: gpuPassthrough=true is propagated to safe", () => {
     session.saveSession(session.createSession());
     session.markStepComplete("provider_selection", { gpuPassthrough: true });
@@ -80,5 +72,26 @@ describe("Issue #1751 — extra coverage on --gpu flag persistence", () => {
   it("default for fresh session is gpuPassthrough=false (no implicit GPU intent)", () => {
     const fresh = session.createSession();
     expect(fresh.gpuPassthrough).toBe(false);
+  });
+
+  it("gpuPassthrough can be set to true via createSession override (simulates auto-detect)", () => {
+    const s = session.createSession({ gpuPassthrough: true });
+    session.saveSession(s);
+    const loaded = session.loadSession();
+    expect(loaded.gpuPassthrough).toBe(true);
+    // Verify summarizeForDebug includes it
+    const summary = session.summarizeForDebug(loaded);
+    expect(summary.gpuPassthrough).toBe(true);
+  });
+
+  it("normalizeSession handles missing gpuPassthrough (pre-auto-detect sessions)", () => {
+    // Simulate a session saved before gpuPassthrough existed
+    const s = session.createSession();
+    session.saveSession(s);
+    const raw = session.loadSession();
+    // Remove gpuPassthrough to simulate old session data
+    delete (raw as Record<string, unknown>).gpuPassthrough;
+    const normalized = session.normalizeSession(raw);
+    expect(normalized.gpuPassthrough).toBe(false);
   });
 });

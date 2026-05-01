@@ -44,7 +44,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: true,
       agent: null,
       controlUiPort: null,
-      gpu: false,
+
     });
   });
 
@@ -70,7 +70,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: true,
       agent: null,
       controlUiPort: null,
-      gpu: false,
+
     });
   });
 
@@ -95,7 +95,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
-      gpu: false,
+
     });
   });
 
@@ -148,7 +148,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
-      gpu: false,
+
     });
   });
 
@@ -174,7 +174,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
-      gpu: false,
+
     });
   });
 
@@ -221,7 +221,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
-      gpu: false,
+
     });
   });
 
@@ -357,7 +357,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: "openclaw",
       controlUiPort: null,
-      gpu: false,
+
     });
   });
 
@@ -492,7 +492,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
-      gpu: false,
+
     });
   });
 
@@ -515,22 +515,24 @@ describe("onboard command", () => {
     expect(runOnboard).toHaveBeenCalledTimes(1);
   });
 
-  it("parses --gpu flag", () => {
-    const result = parseOnboardArgs(
-      ["--gpu", "--non-interactive"],
-      "--yes-i-accept-third-party-software",
-      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
-      {
-        env: {},
-        error: () => {},
-        exit: exitWithCode,
-      },
-    );
-    expect(result.gpu).toBe(true);
-    expect(result.nonInteractive).toBe(true);
+  it("rejects --gpu as an unknown option (GPU passthrough is auto-detected)", () => {
+    const errors: string[] = [];
+    expect(() =>
+      parseOnboardArgs(
+        ["--gpu", "--non-interactive"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: (message = "") => errors.push(message),
+          exit: exitWithPrefixedCode,
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("Unknown onboard option(s): --gpu");
   });
 
-  it("defaults gpu to false when omitted", () => {
+  it("does not include gpu in parsed result", () => {
     const result = parseOnboardArgs(
       ["--non-interactive"],
       "--yes-i-accept-third-party-software",
@@ -541,6 +543,6 @@ describe("onboard command", () => {
         exit: exitWithCode,
       },
     );
-    expect(result.gpu).toBe(false);
+    expect(result).not.toHaveProperty("gpu");
   });
 });
