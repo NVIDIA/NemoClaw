@@ -89,6 +89,19 @@ installer_version_for_display() {
   printf "  v%s" "$NEMOCLAW_VERSION"
 }
 
+agent_display_name() {
+  case "${1:-}" in
+    hermes) printf "Hermes" ;;
+    openclaw | "") printf "OpenClaw" ;;
+    *)
+      local first rest
+      first="$(printf "%.1s" "$1" | tr '[:lower:]' '[:upper:]')"
+      rest="${1#?}"
+      printf "%s%s" "$first" "$rest"
+      ;;
+  esac
+}
+
 # Resolve which Git ref to install from.
 # Priority: NEMOCLAW_INSTALL_TAG env var > "latest" tag.
 resolve_release_tag() {
@@ -269,7 +282,7 @@ print_banner() {
   fi
   printf "\n"
   if [[ -n "${NEMOCLAW_AGENT:-}" && "${NEMOCLAW_AGENT}" != "openclaw" ]]; then
-    printf "  ${C_DIM}Launch %s in an OpenShell sandbox.%s${C_RESET}\n" "${NEMOCLAW_AGENT^}" "$version_suffix"
+    printf "  ${C_DIM}Launch %s in an OpenShell sandbox.%s${C_RESET}\n" "$(agent_display_name "$NEMOCLAW_AGENT")" "$version_suffix"
   else
     printf "  ${C_DIM}Launch OpenClaw in an OpenShell sandbox.%s${C_RESET}\n" "$version_suffix"
   fi
@@ -292,7 +305,7 @@ print_done() {
     if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
       printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
     else
-      printf "  ${C_GREEN}Your %s Sandbox is live.${C_RESET}\n" "${agent_name^}"
+      printf "  ${C_GREEN}Your %s Sandbox is live.${C_RESET}\n" "$(agent_display_name "$agent_name")"
     fi
     printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
     printf "\n"

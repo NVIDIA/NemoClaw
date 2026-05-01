@@ -2073,6 +2073,16 @@ exit 1
     expect(r.stdout).toBe("  v0.0.21");
   });
 
+  it("agent_display_name: formats Hermes without Bash 4 uppercase expansion", () => {
+    const source = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
+    expect(source).not.toContain("${NEMOCLAW_AGENT^}");
+    expect(source).not.toContain("${agent_name^}");
+
+    const r = callInstallerPayloadFn("agent_display_name hermes");
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("Hermes");
+  });
+
   // -- resolve_default_sandbox_name --
 
   it("resolve_default_sandbox_name: returns 'my-assistant' with no registry", () => {
