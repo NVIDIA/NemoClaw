@@ -128,6 +128,12 @@ describe("command-registry", () => {
       }
     });
 
+    it("keeps optional flags out of canonical usage strings", () => {
+      for (const entry of canonicalUsageList()) {
+        expect(entry).not.toContain("[");
+      }
+    });
+
     it("excludes hidden commands", () => {
       const list = canonicalUsageList();
       expect(list).not.toContain("nemoclaw <name> shields down");
