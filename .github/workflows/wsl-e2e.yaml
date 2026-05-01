@@ -60,15 +60,44 @@ jobs:
           # Native commands do not throw in PowerShell; check LASTEXITCODE.
           $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
           if ($LASTEXITCODE -ne 0) {
-            Write-Host 'Ubuntu not found - installing via wsl --install'
-            wsl --install -d $env:WSL_DISTRO --no-launch --web-download
-            if ($LASTEXITCODE -ne 0) {
-              throw ('wsl --install failed with exit code ' + $LASTEXITCODE)
+            $maxAttempts = 3
+            $installed = $false
+            for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+              Write-Host "Ubuntu not found - installing via wsl --install (attempt $attempt/$maxAttempts)"
+              wsl --install -d $env:WSL_DISTRO --no-launch --web-download
+              $installExitCode = $LASTEXITCODE
+              if ($installExitCode -eq 0) {
+                # The first launch initialises the distro with the default root user.
+                wsl -d $env:WSL_DISTRO -- bash -c 'echo distro initialised'
+                $launchExitCode = $LASTEXITCODE
+                if ($launchExitCode -eq 0) {
+                  $installed = $true
+                  break
+                }
+                Write-Warning "distro first-launch failed with exit code $launchExitCode"
+              } else {
+                Write-Warning "wsl --install failed with exit code $installExitCode"
+              }
+
+              # Some WSL installs return a non-zero code after registering a usable distro.
+              $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
+              if ($LASTEXITCODE -eq 0) {
+                Write-Host 'Ubuntu became available after the install command returned non-zero'
+                $installed = $true
+                break
+              }
+
+              if ($attempt -lt $maxAttempts) {
+                Write-Host 'Cleaning up any partial WSL registration before retrying'
+                $null = wsl --unregister $env:WSL_DISTRO 2>&1
+                $delaySeconds = [Math]::Min(60, 20 * $attempt)
+                Write-Host "Retrying WSL install in $delaySeconds seconds..."
+                Start-Sleep -Seconds $delaySeconds
+              }
             }
-            # The first launch initialises the distro with the default root user.
-            wsl -d $env:WSL_DISTRO -- bash -c 'echo distro initialised'
-            if ($LASTEXITCODE -ne 0) {
-              throw ('distro first-launch failed with exit code ' + $LASTEXITCODE)
+
+            if (-not $installed) {
+              throw ("failed to install and initialize $env:WSL_DISTRO after $maxAttempts attempts")
             }
           } else {
             Write-Host 'Ubuntu already available'
