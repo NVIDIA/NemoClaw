@@ -677,12 +677,27 @@ describe("policies", () => {
       }
     });
 
-    it("telegram REST preset uses tls: terminate for L7 proxy", () => {
+    it("REST policy presets avoid deprecated tls: terminate", () => {
+      const policyFiles = [
+        path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
+        ...policies.listPresets().map((preset) =>
+          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets", preset.file),
+        ),
+      ];
+
+      for (const file of policyFiles) {
+        const content = fs.readFileSync(file, "utf8");
+        expect(content).not.toContain("tls: terminate");
+      }
+    });
+
+    it("telegram REST preset relies on automatic TLS handling", () => {
       const content = requirePresetContent(policies.loadPreset("telegram"));
       expect(content).toBeTruthy();
       expect(content).toMatch(
-        /host:\s*api\.telegram\.org[\s\S]*?protocol:\s*rest[\s\S]*?tls:\s*terminate/,
+        /host:\s*api\.telegram\.org[\s\S]*?protocol:\s*rest[\s\S]*?enforcement:\s*enforce/,
       );
+      expect(content).not.toMatch(/host:\s*api\.telegram\.org[\s\S]*?tls:/);
     });
 
     it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {
