@@ -305,6 +305,7 @@ restore_onboard_forward_after_post_checks() {
       >"${pid_file}.log" 2>&1 </dev/null &
     start_pid=$!
     printf "%s\n" "$start_pid" >"$pid_file" 2>/dev/null || true
+    disown "$start_pid" 2>/dev/null || true
     sleep 4
     if command_exists curl \
       && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
