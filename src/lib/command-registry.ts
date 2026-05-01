@@ -89,8 +89,9 @@ export const COMMANDS: readonly CommandDef[] = [
 
   // ── Sandbox Management ──
   {
-    usage: "nemoclaw list [--json]",
+    usage: "nemoclaw list",
     description: "List all sandboxes",
+    flags: "[--json]",
     group: "Sandbox Management",
     scope: "global",
   },
