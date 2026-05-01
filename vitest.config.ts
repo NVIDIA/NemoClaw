@@ -5,8 +5,16 @@ import { defineConfig } from "vitest/config";
 
 import { testTimeout } from "./test/helpers/timeouts";
 
+const isGithubActions = process.env.GITHUB_ACTIONS === "true";
+const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === "1";
+
 export default defineConfig({
   test: {
+    // CI logs are easiest to scan when test chatter stays quiet and failures
+    // surface as GitHub annotations at the relevant file and line.
+    reporters: isGithubActions ? ["github-actions"] : ["default"],
+    silent: isCi,
+    hideSkippedTests: isCi,
     projects: [
       {
         test: {
@@ -58,7 +66,7 @@ export default defineConfig({
       provider: "v8",
       include: ["nemoclaw/src/**/*.ts"],
       exclude: ["**/*.test.ts"],
-      reporter: ["text", "json-summary"],
+      reporter: ["text-summary", "json-summary"],
     },
   },
 });
