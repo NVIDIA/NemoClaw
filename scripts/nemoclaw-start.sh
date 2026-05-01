@@ -32,6 +32,29 @@
 
 set -euo pipefail
 
+# SECURITY: Lock down PATH before any commands run so an injected PATH
+# cannot resolve id/chown/chmod/tee from an attacker-controlled location.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# ── Early stderr/stdout capture ──────────────────────────────────
+# Capture all entrypoint output to /tmp/nemoclaw-start.log so that if
+# the script crashes before touch /tmp/gateway.log (e.g., a Landlock
+# read failure), the output is still available for diagnostics.
+# The log is written in append mode and also forwarded to the original
+# stderr/stdout via tee so openshell sandbox create can still stream it.
+# SECURITY: restrict permissions before writing — the script later prints
+# tokenized dashboard URLs to stderr (#token=...).
+_START_LOG="/tmp/nemoclaw-start.log"
+if [ "$(id -u)" -eq 0 ]; then
+  : >"$_START_LOG"
+  chown root:root "$_START_LOG"
+  chmod 600 "$_START_LOG"
+else
+  : >"$_START_LOG"
+  chmod 600 "$_START_LOG" 2>/dev/null || true
+fi
+exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
+
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
 # agents/hermes/start.sh. Ref: https://github.com/NVIDIA/NemoClaw/issues/2277
@@ -54,9 +77,8 @@ if ! ulimit -Hu 512 2>/dev/null; then
   echo "[SECURITY] Could not set hard nproc limit (container runtime may restrict ulimit)" >&2
 fi
 
-# SECURITY: Lock down PATH so the agent cannot inject malicious binaries
-# into commands executed by the entrypoint or auto-pair watcher.
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# PATH was already locked down at the top of this script (before the
+# early stderr capture). This comment marks the original location.
 
 # Redirect tool caches and state to /tmp so they don't fail on the read-only
 # /sandbox home directory (#804). Without these, tools would try to create
@@ -178,27 +200,28 @@ OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 
 # ── Config integrity check (delegates to shared library) ────────
-# verify_config_integrity is provided by sandbox-init.sh (parameterized).
+# verify_config_integrity_if_locked is provided by sandbox-init.sh. OpenClaw
+# mutable-default startup skips strict hash enforcement until shields-up locks
+# .config-hash into a root-owned read-only trust anchor.
 
 # ── Runtime model/provider override ──────────────────────────────
 # Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
 # allowing model or provider changes without rebuilding the sandbox image.
-# Runs AFTER integrity check (detects build-time tampering) and BEFORE
-# chattr +i (locks the file permanently). Recomputes the config hash so
-# future integrity checks pass.
+# Runs AFTER integrity check (detects build-time tampering). Recomputes
+# the config hash so future integrity checks pass.
 #
 # SECURITY: These env vars come from the host (Docker/OpenShell), not from
-# inside the sandbox. The agent cannot set them. Landlock locks the file
-# after this function runs. Same trust model as NEMOCLAW_LOCAL_INFERENCE_TIMEOUT.
+# inside the sandbox. The agent cannot set them.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/759
 
 apply_model_override() {
-  # Any of these env vars trigger a config patch
+  # Only explicit override env vars trigger a config patch. NEMOCLAW_CONTEXT_WINDOW,
+  # NEMOCLAW_MAX_TOKENS, and NEMOCLAW_REASONING are promoted from Dockerfile build
+  # ARGs to ENV and are always set — they should only take effect when accompanied
+  # by an explicit model or API override. Without this guard the function runs on
+  # every container start even with no override requested. Ref: #2653
   [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] \
     || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
-    || [ -n "${NEMOCLAW_CONTEXT_WINDOW:-}" ] \
-    || [ -n "${NEMOCLAW_MAX_TOKENS:-}" ] \
-    || [ -n "${NEMOCLAW_REASONING:-}" ] \
     || return 0
 
   # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
@@ -212,7 +235,7 @@ apply_model_override() {
   local hash_file="/sandbox/.openclaw/.config-hash"
 
   # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
-  # Symlink validation (validate_openclaw_symlinks) runs later, so guard here too.
+  # Legacy-layout migration rejects symlinked config paths before overrides; guard here too.
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing model override — config or hash path is a symlink\n' >&2
     return 1
@@ -236,8 +259,8 @@ apply_model_override() {
     case "$api_override" in
       openai-completions | anthropic-messages) ;;
       *)
-        printf '[SECURITY] NEMOCLAW_INFERENCE_API_OVERRIDE must be "openai-completions" or "anthropic-messages", got "%s"\n' "$api_override" >&2
-        return 1
+        printf '[SECURITY] NEMOCLAW_INFERENCE_API_OVERRIDE must be "openai-completions" or "anthropic-messages", got "%s" — skipping override\n' "$api_override" >&2
+        return 0
         ;;
     esac
   fi
@@ -248,20 +271,20 @@ apply_model_override() {
 
   # Validate numeric values
   if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[0-9]+$'; then
-    printf '[SECURITY] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "%s"\n' "$context_window" >&2
-    return 1
+    printf '[SECURITY] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "%s" — skipping override\n' "$context_window" >&2
+    return 0
   fi
   if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[0-9]+$'; then
-    printf '[SECURITY] NEMOCLAW_MAX_TOKENS must be a positive integer, got "%s"\n' "$max_tokens" >&2
-    return 1
+    printf '[SECURITY] NEMOCLAW_MAX_TOKENS must be a positive integer, got "%s" — skipping override\n' "$max_tokens" >&2
+    return 0
   fi
   # Validate reasoning is true/false
   if [ -n "$reasoning" ]; then
     case "$reasoning" in
       true | false) ;;
       *)
-        printf '[SECURITY] NEMOCLAW_REASONING must be "true" or "false", got "%s"\n' "$reasoning" >&2
-        return 1
+        printf '[SECURITY] NEMOCLAW_REASONING must be "true" or "false", got "%s" — skipping override\n' "$reasoning" >&2
+        return 0
         ;;
     esac
   fi
@@ -272,10 +295,15 @@ apply_model_override() {
   [ -n "$max_tokens" ] && printf '[config] Applying max tokens override: %s\n' "$max_tokens" >&2
   [ -n "$reasoning" ] && printf '[config] Applying reasoning override: %s\n' "$reasoning" >&2
 
+  # Relax 444 → 644 so writes succeed after CAP_DAC_OVERRIDE is dropped (#2653).
+  # Re-lock in all exit paths so files are never left at 644 on failure.
+  relax_config_for_write "$config_file" "$hash_file"
+  local _write_rc=0
+
   NEMOCLAW_CONTEXT_WINDOW="$context_window" \
     NEMOCLAW_MAX_TOKENS="$max_tokens" \
     NEMOCLAW_REASONING="$reasoning" \
-    python3 - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE'
+    python3 - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE' || _write_rc=$?
 import json, os, sys
 
 config_file, model_override, api_override = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -311,9 +339,18 @@ with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYOVERRIDE
 
-  # Recompute config hash so integrity check passes on next startup
-  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
-  printf '[SECURITY] Config hash recomputed after model override\n' >&2
+  if [ "$_write_rc" -eq 0 ]; then
+    # Recompute config hash so integrity check passes on next startup
+    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      printf '[SECURITY] Config hash recomputed after model override\n' >&2
+    else
+      _write_rc=$?
+    fi
+  fi
+
+  # Re-lock 644 → 444 — always runs, even on write/hash failure (#2653)
+  lock_config_after_write "$config_file" "$hash_file"
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
 # ── Runtime CORS origin override ──────────────────────────────────
@@ -350,13 +387,18 @@ apply_cors_override() {
     return 1
   fi
   if ! printf '%s' "$cors_origin" | grep -qE '^https?://'; then
-    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN must start with http:// or https://, got "%s"\n' "$cors_origin" >&2
-    return 1
+    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN must start with http:// or https://, got "%s" — skipping override\n' "$cors_origin" >&2
+    return 0
   fi
 
   printf '[config] Adding CORS origin: %s\n' "$cors_origin" >&2
 
-  python3 - "$config_file" "$cors_origin" <<'PYCORS'
+  # Relax 444 → 644 so writes succeed after CAP_DAC_OVERRIDE is dropped (#2653).
+  # Re-lock in all exit paths so files are never left at 644 on failure.
+  relax_config_for_write "$config_file" "$hash_file"
+  local _write_rc=0
+
+  python3 - "$config_file" "$cors_origin" <<'PYCORS' || _write_rc=$?
 import json, sys
 
 config_file, cors_origin = sys.argv[1], sys.argv[2]
@@ -373,98 +415,282 @@ with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYCORS
 
-  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
-  printf '[config] Config hash recomputed after CORS override\n' >&2
+  if [ "$_write_rc" -eq 0 ]; then
+    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      printf '[config] Config hash recomputed after CORS override\n' >&2
+    else
+      _write_rc=$?
+    fi
+  fi
+
+  # Re-lock 644 → 444 — always runs, even on write/hash failure (#2653)
+  lock_config_after_write "$config_file" "$hash_file"
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
-# ── Slack token placeholder resolution ────────────────────────────
-# Resolves openshell:resolve:env:SLACK_* placeholders in openclaw.json at
-# container startup, before chattr +i locks the file. This ensures Bolt's
-# in-process token validation (appToken must start with xapp-) succeeds even
-# before the L7 proxy can intercept HTTP calls.
-# Same trust model as apply_model_override: host-set env vars, root-only,
-# applied before Landlock/chattr +i, hash recomputed. Tokens are unset from
-# the process env after patching so they are not visible inside the sandbox.
+# ── Slack token rewriter (Bolt-shape → canonical placeholder) ────
+# Installs a Node preload that translates the Bolt-compatible placeholder
+# (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR — emitted into openclaw.json by
+# generate-openclaw-config.py — into the canonical openshell:resolve:env:VAR
+# form on outbound HTTP. OpenShell's L7 proxy then substitutes the real
+# token from env on the wire, the same path Discord/Telegram/Brave already
+# take. No real Slack token ever touches openclaw.json, /tmp, or any other
+# disk surface readable by the sandbox uid.
+#
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2085
 
-apply_slack_token_override() {
-  [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
+_SLACK_REWRITER_SCRIPT="/tmp/nemoclaw-slack-token-rewriter.js"
 
-  # Non-root cannot write to /sandbox/.openclaw (root:root 444), so the
-  # placeholder token cannot be resolved here. Log a warning and continue —
-  # the Slack channel guard will catch the inevitable auth failure at runtime
-  # without crashing the gateway. Ref: #2340
-  if [ "$(id -u)" -ne 0 ]; then
-    printf '[channels] Slack token override skipped (non-root) — channel guard will handle auth failure at runtime\n' >&2
+install_slack_token_rewriter() {
+  local config_file="/sandbox/.openclaw/openclaw.json"
+
+  # Only install if a Slack channel placeholder is present in the config.
+  # Same conditional shape as install_slack_channel_guard — both are no-ops
+  # for sandboxes without Slack configured.
+  if ! grep -q 'OPENSHELL-RESOLVE-ENV-SLACK_' "$config_file" 2>/dev/null; then
     return 0
   fi
 
-  local config_file="/sandbox/.openclaw/openclaw.json"
-  local hash_file="/sandbox/.openclaw/.config-hash"
+  printf '[channels] Installing Slack token rewriter (Bolt-shape → canonical)\n' >&2
 
-  # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing Slack token override — config or hash path is a symlink\n' >&2
-    return 1
-  fi
+  emit_sandbox_sourced_file "$_SLACK_REWRITER_SCRIPT" <<'SLACK_REWRITER_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// slack-token-rewriter.js — translates the Bolt-compatible placeholder
+// (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR into the canonical
+// openshell:resolve:env:VAR form on outbound HTTP, so Slack tokens travel
+// the same OpenShell substitution path Discord / Telegram / Brave already
+// use without any real token touching openclaw.json.
+//
+// Why this preload exists:
+//   Slack's Bolt SDK validates token shape (^xoxb-[A-Za-z0-9_-]+$ /
+//   ^xapp-…$) at App construction, before any HTTP call leaves the
+//   process — so the canonical openshell:resolve:env:VAR placeholder is
+//   rejected synchronously and the gateway crashes. We emit a Bolt-shape
+//   placeholder into openclaw.json (which Bolt accepts), then translate
+//   it back to canonical form here, just before the bytes hit the wire,
+//   where OpenShell's L7 proxy substitutes the real token from env.
+//
+// Wraps http.request / https.request — every Node HTTP client bottoms
+// out here, including @slack/web-api (axios → follow-redirects → http)
+// and Bolt's Socket Mode HTTPS auth (apps.connections.open → http).
+// Also wraps http.get / https.get because they call the module-local
+// `request` function, not module.exports.request — wrapping `request`
+// alone would miss any `get` caller.
+// Request body chunks are wrapped too: Bolt's auth.test path can put the
+// token in both Authorization and the urlencoded body.
+//
+// Invariants:
+//   - No env reads. Translation is purely structural.
+//   - Mutates options/headers in place. axios reuses the headers object
+//     after request creation, so cloning would break the request lifecycle.
+//   - Idempotent. The output (openshell:resolve:env:VAR) does not match
+//     the Bolt-shape regex, so re-entering the wrapper on a retry is safe.
+//   - Fast path: indexOf short-circuits the regex on the 99.9% of
+//     requests that don't contain a placeholder.
+//
+// This file is the canonical source for review and tests. At sandbox boot,
+// nemoclaw-start.sh writes a byte-identical copy to /tmp and loads it via
+// NODE_OPTIONS=--require. A sync test enforces byte-for-byte equality.
+// Mirrors the http-proxy-fix.js / ws-proxy-fix.js convention; see those
+// files for the rationale on why the content cannot live under
+// /opt/nemoclaw-blueprint/scripts/ in the optimized sandbox build.
+//
+// Ref: https://github.com/NVIDIA/NemoClaw/issues/2085
 
-  # SECURITY: Validate token prefixes — reject anything that doesn't look like a real Slack token.
-  case "${SLACK_BOT_TOKEN}" in
-    xoxb-*) ;;
-    *)
-      printf '[channels] SLACK_BOT_TOKEN does not start with xoxb- — skipping Slack placeholder resolution\n' >&2
-      return 0
-      ;;
-  esac
+(function () {
+  'use strict';
 
-  if [ -n "${SLACK_APP_TOKEN:-}" ]; then
-    case "$SLACK_APP_TOKEN" in
-      xapp-*) ;;
-      *)
-        printf '[channels] SLACK_APP_TOKEN does not start with xapp- — skipping Slack placeholder resolution\n' >&2
-        return 0
-        ;;
-    esac
-  else
-    printf '[channels] Warning: SLACK_BOT_TOKEN is set but SLACK_APP_TOKEN is missing — Socket Mode requires both tokens\n' >&2
-  fi
+  // Bolt-shape placeholder → canonical form. Single source of truth used
+  // by every code path below. <VAR> = [A-Z_][A-Z0-9_]* — the charset
+  // OpenShell's substitution layer accepts.
+  var BOLT_PLACEHOLDER =
+    /\b(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-([A-Z_][A-Z0-9_]*)\b/g;
+  var FAST_PATH = 'OPENSHELL-RESOLVE-ENV-';
 
-  printf '[channels] Resolving Slack token placeholders in openclaw.json\n' >&2
+  function rewriteString(s) {
+    if (typeof s !== 'string') return s;
+    if (s.indexOf(FAST_PATH) === -1) return s;
+    return s.replace(BOLT_PLACEHOLDER, 'openshell:resolve:env:$1');
+  }
 
-  SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
-    SLACK_APP_TOKEN="${SLACK_APP_TOKEN:-}" \
-    python3 - "$config_file" <<'PYSLACK'
-import json, os, re, sys
+  function rewriteHeaders(headers) {
+    if (!headers || typeof headers !== 'object') return headers;
+    var keys = Object.keys(headers);
+    for (var i = 0; i < keys.length; i++) {
+      var v = headers[keys[i]];
+      if (Array.isArray(v)) {
+        for (var j = 0; j < v.length; j++) v[j] = rewriteString(v[j]);
+      } else {
+        headers[keys[i]] = rewriteString(v);
+      }
+    }
+    return headers;
+  }
 
-config_file = sys.argv[1]
-bot_token = os.environ["SLACK_BOT_TOKEN"]
-app_token = os.environ.get("SLACK_APP_TOKEN", "")
-# json.dumps produces a quoted string; strip the outer quotes to get a
-# JSON-safe value that can be spliced directly into the existing string literal.
-bot_token_json = json.dumps(bot_token)[1:-1]
-app_token_json = json.dumps(app_token)[1:-1]
+  function rewriteOptions(options) {
+    if (!options || typeof options !== 'object') return options;
+    if (typeof options.path === 'string') {
+      options.path = rewriteString(options.path);
+    }
+    if (options.headers) rewriteHeaders(options.headers);
+    return options;
+  }
 
-with open(config_file) as f:
+  function adjustContentLength(req, beforeLength, afterLength) {
+    var delta = afterLength - beforeLength;
+    if (!delta || !req || typeof req.getHeader !== 'function' || typeof req.setHeader !== 'function') {
+      return;
+    }
+    // Once Node has built/sent the header block, changing Content-Length would
+    // be too late. Axios writes the urlencoded Slack body in one chunk before
+    // headers are flushed, which is the path this adjustment is for.
+    if (req.headersSent || req._header) return;
+    var current = req.getHeader('content-length');
+    if (Array.isArray(current)) current = current[0];
+    if (current === undefined || current === null || current === '') return;
+    var n = Number(current);
+    if (!isFinite(n)) return;
+    req.setHeader('Content-Length', String(n + delta));
+  }
+
+  function rewriteBodyChunk(req, chunk, encoding) {
+    if (typeof chunk === 'string') {
+      var rewritten = rewriteString(chunk);
+      if (rewritten !== chunk) {
+        adjustContentLength(
+          req,
+          Buffer.byteLength(chunk, encoding),
+          Buffer.byteLength(rewritten, encoding)
+        );
+      }
+      return rewritten;
+    }
+
+    if (!chunk || typeof chunk !== 'object') return chunk;
+    var isBuffer = Buffer.isBuffer(chunk);
+    if (!isBuffer && !(chunk instanceof Uint8Array)) return chunk;
+
+    var buf = isBuffer
+      ? chunk
+      : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    if (buf.indexOf(FAST_PATH) === -1) return chunk;
+    var s = buf.toString('utf8');
+    if (s.indexOf(FAST_PATH) === -1) return chunk;
+    // Do not rewrite arbitrary binary data. Slack's urlencoded bodies are
+    // valid UTF-8 and round-trip exactly.
+    if (!Buffer.from(s, 'utf8').equals(buf)) return chunk;
+    var rs = rewriteString(s);
+    if (rs === s) return chunk;
+    var out = Buffer.from(rs, 'utf8');
+    adjustContentLength(req, buf.length, out.length);
+    return out;
+  }
+
+  function wrapClientRequest(req) {
+    if (!req || typeof req !== 'object') return req;
+    if (req.__nemoclawSlackTokenRewriter) return req;
+    try {
+      Object.defineProperty(req, '__nemoclawSlackTokenRewriter', { value: true });
+    } catch (_e) {
+      req.__nemoclawSlackTokenRewriter = true;
+    }
+
+    var origWrite = req.write;
+    if (typeof origWrite === 'function') {
+      req.write = function (chunk, encoding, cb) {
+        if (typeof encoding === 'function') {
+          cb = encoding;
+          encoding = undefined;
+        }
+        chunk = rewriteBodyChunk(this, chunk, encoding);
+        if (cb) return origWrite.call(this, chunk, encoding, cb);
+        if (encoding !== undefined) return origWrite.call(this, chunk, encoding);
+        return origWrite.call(this, chunk);
+      };
+    }
+
+    var origEnd = req.end;
+    if (typeof origEnd === 'function') {
+      req.end = function (chunk, encoding, cb) {
+        if (arguments.length === 0) return origEnd.call(this);
+        if (typeof chunk === 'function') return origEnd.call(this, chunk);
+        if (typeof encoding === 'function') {
+          cb = encoding;
+          encoding = undefined;
+        }
+        if (chunk !== undefined && chunk !== null) {
+          chunk = rewriteBodyChunk(this, chunk, encoding);
+        }
+        if (cb) return origEnd.call(this, chunk, encoding, cb);
+        if (encoding !== undefined) return origEnd.call(this, chunk, encoding);
+        return origEnd.call(this, chunk);
+      };
+    }
+
+    return req;
+  }
+
+  function wrap(mod, methodName) {
+    var orig = mod[methodName];
+    if (typeof orig !== 'function') return;
+    mod[methodName] = function (arg1, arg2, arg3) {
+      // Signatures: m(options[, cb]); m(url[, options][, cb])
+      if (typeof arg1 === 'string') {
+        arg1 = rewriteString(arg1);
+        if (arg2 && typeof arg2 === 'object' && typeof arg2 !== 'function') {
+          rewriteOptions(arg2);
+        }
+      } else if (arg1 instanceof URL) {
+        // URL instances are immutable by component; rebuild only if needed.
+        var s = arg1.href;
+        var rs = rewriteString(s);
+        if (rs !== s) arg1 = new URL(rs);
+        if (arg2 && typeof arg2 === 'object' && typeof arg2 !== 'function') {
+          rewriteOptions(arg2);
+        }
+      } else {
+        rewriteOptions(arg1);
+      }
+      return wrapClientRequest(orig.call(this, arg1, arg2, arg3));
+    };
+  }
+
+  var http = require('http');
+  var https = require('https');
+  wrap(http, 'request');
+  wrap(http, 'get');
+  wrap(https, 'request');
+  wrap(https, 'get');
+})();
+SLACK_REWRITER_EOF
+
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_REWRITER_SCRIPT"
+  printf '[channels] Slack token rewriter installed (NODE_OPTIONS updated)\n' >&2
+}
+
+# ── Slack secrets-on-disk tripwire ────────────────────────────────
+# Defense-in-depth: refuse to serve if a real Slack token (anything
+# starting with xoxb- or xapp- that is NOT the OPENSHELL-RESOLVE-ENV-
+# placeholder) ever appears in openclaw.json. This catches a regression
+# where someone re-introduces inline token mutation, or a bug in the
+# config generator that emits raw env values. Runs once at startup,
+# after configure_messaging_channels has finalized the config.
+verify_no_slack_secrets_on_disk() {
+  local config="/sandbox/.openclaw/openclaw.json"
+  [ -f "$config" ] || return 0
+  if python3 - "$config" <<'PYSLACKSECRET'; then
+import re
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8", errors="ignore") as f:
     content = f.read()
-
-content = re.sub(
-    r'("botToken"\s*:\s*")openshell:resolve:env:SLACK_BOT_TOKEN(")',
-    lambda m: m.group(1) + bot_token_json + m.group(2),
-    content,
-)
-if app_token:
-    content = re.sub(
-        r'("appToken"\s*:\s*")openshell:resolve:env:SLACK_APP_TOKEN(")',
-        lambda m: m.group(1) + app_token_json + m.group(2),
-        content,
-    )
-
-with open(config_file, "w") as f:
-    f.write(content)
-PYSLACK
-
-  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
-  printf '[channels] Config hash recomputed after Slack token override\n' >&2
+sys.exit(0 if re.search(r"(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)", content) else 1)
+PYSLACKSECRET
+    printf '[SECURITY] Slack token leaked into %s — refusing to serve\n' "$config" >&2
+    exit 78 # EX_CONFIG
+  fi
 }
 
 # ── Slack channel guard (unhandled-rejection safety net) ─────────
@@ -502,9 +728,10 @@ install_slack_channel_guard() {
 // fatal (--unhandled-rejections=throw is the default), taking down
 // inference, chat, and TUI alongside the failed Slack channel.
 //
-// This preload installs a process-level handler that detects Slack-specific
-// rejections (by error code or stack trace) and logs a warning instead of
-// crashing. Non-Slack rejections are re-thrown to preserve normal behavior.
+// This preload wraps process.emit for Slack-specific process-level failures
+// and consumes those events before later OpenClaw handlers can treat the
+// provider startup failure as fatal. Non-Slack failures pass through to the
+// original event machinery unchanged.
 //
 // Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
 
@@ -576,24 +803,22 @@ install_slack_channel_guard() {
     return false;
   }
 
-  // Catch async Slack errors (rejected promises from @slack/web-api).
-  process.on('unhandledRejection', function (reason, promise) {
-    if (handleSlackError(reason, 'unhandledRejection')) return;
-    // Non-Slack: re-throw to preserve default --unhandled-rejections=throw.
-    throw reason;
-  });
+  if (process.__nemoclawSlackChannelGuardInstalled) return;
+  try {
+    Object.defineProperty(process, '__nemoclawSlackChannelGuardInstalled', { value: true });
+  } catch (_e) {
+    process.__nemoclawSlackChannelGuardInstalled = true;
+  }
 
-  // Catch sync Slack errors (e.g., Bolt token format validation throws
-  // synchronously when appToken doesn't start with xapp-).
-  process.on('uncaughtException', function (err, origin) {
-    if (handleSlackError(err, 'uncaughtException')) return;
-    // Non-Slack: re-throw to preserve normal crash behavior.
-    // Print the error first since re-throw inside uncaughtException handler
-    // may not print the original stack.
-    process.stderr.write(err.stack || String(err));
-    process.stderr.write('\n');
-    process.exit(1);
-  });
+  var origEmit = process.emit;
+  process.emit = function (eventName) {
+    if (eventName === 'unhandledRejection') {
+      if (handleSlackError(arguments[1], 'unhandledRejection')) return true;
+    } else if (eventName === 'uncaughtException') {
+      if (handleSlackError(arguments[1], 'uncaughtException')) return true;
+    }
+    return origEmit.apply(this, arguments);
+  };
 })();
 SLACK_GUARD_EOF
 
@@ -616,167 +841,12 @@ PYTOKEN
 export_gateway_token() {
   local token
   token="$(_read_gateway_token)"
-  local marker_begin="# nemoclaw-gateway-token begin"
-  local marker_end="# nemoclaw-gateway-token end"
 
   if [ -z "$token" ]; then
-    # Remove any stale marker blocks from rc files so revoked/old tokens
-    # are not re-exported in later interactive sessions.
     unset OPENCLAW_GATEWAY_TOKEN
-    for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-      if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-        local tmp
-        tmp="$(mktemp)" || continue
-        awk -v b="$marker_begin" -v e="$marker_end" \
-          '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
-          rm -f "$tmp"
-          continue
-        }
-        cat "$tmp" >"$rc_file" 2>/dev/null || true
-        rm -f "$tmp"
-      fi
-    done
     return
   fi
   export OPENCLAW_GATEWAY_TOKEN="$token"
-
-  # Persist to .bashrc/.profile so interactive sessions (openshell sandbox
-  # connect) also see the token — same pattern as the proxy config above.
-  # Shell-escape the token so quotes/dollars/backticks cannot break the
-  # sourced snippet or allow code injection.
-  local escaped_token
-  escaped_token="$(printf '%s' "$token" | sed "s/'/'\\\\''/g")"
-  local snippet
-  snippet="${marker_begin}
-export OPENCLAW_GATEWAY_TOKEN='${escaped_token}'
-${marker_end}"
-
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    [ -f "$rc_file" ] || continue
-    # All writes use || true because Landlock may block writes even though
-    # DAC (-w) says writable (#804) — same pattern as install_configure_guard.
-    if grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-      local tmp
-      tmp="$(mktemp)" || continue
-      awk -v b="$marker_begin" -v e="$marker_end" \
-        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
-        rm -f "$tmp"
-        continue
-      }
-      printf '%s\n' "$snippet" >>"$tmp"
-      cat "$tmp" >"$rc_file" 2>/dev/null || true
-      rm -f "$tmp"
-    else
-      printf '\n%s\n' "$snippet" >>"$rc_file" 2>/dev/null || true
-    fi
-  done
-}
-
-install_configure_guard() {
-  # Installs a shell function that intercepts `openclaw configure` inside the
-  # sandbox. The config is Landlock read-only — atomic writes to
-  # /sandbox/.openclaw/ fail with EACCES. Instead of a cryptic error, guide
-  # the user to the correct host-side workflow.
-  local marker_begin="# nemoclaw-configure-guard begin"
-  local marker_end="# nemoclaw-configure-guard end"
-  local snippet
-  read -r -d '' snippet <<'GUARD' || true
-# nemoclaw-configure-guard begin
-openclaw() {
-  case "$1" in
-    configure)
-      echo "Error: 'openclaw configure' cannot modify config inside the sandbox." >&2
-      echo "The sandbox config is read-only (Landlock enforced) for security." >&2
-      echo "" >&2
-      echo "To change your configuration, exit the sandbox and run:" >&2
-      echo "  nemoclaw onboard --resume" >&2
-      echo "" >&2
-      echo "This rebuilds the sandbox with your updated settings." >&2
-      return 1
-      ;;
-    config)
-      case "$2" in
-        set | unset)
-          echo "Error: 'openclaw config $2' cannot modify config inside the sandbox." >&2
-          echo "The sandbox config is read-only (Landlock enforced) for security." >&2
-          echo "" >&2
-          echo "To change your configuration, exit the sandbox and run:" >&2
-          echo "  nemoclaw onboard --resume" >&2
-          echo "" >&2
-          echo "This rebuilds the sandbox with your updated settings." >&2
-          return 1
-          ;;
-      esac
-      ;;
-    channels)
-      case "$2" in
-        list | "" | -h | --help) ;;
-        *)
-          echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
-          echo "The sandbox config is read-only (Landlock enforced) for security." >&2
-          echo "" >&2
-          echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack>" >&2
-          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack>" >&2
-          echo "" >&2
-          echo "These stage the change and rebuild the sandbox to apply it." >&2
-          return 1
-          ;;
-      esac
-      ;;
-    agent)
-      # Block --local inside sandbox — it bypasses gateway protections and can
-      # crash the container's main process, bricking the sandbox. Ref: #1632, #2016
-      local _arg
-      for _arg in "$@"; do
-        if [ "$_arg" = "--local" ]; then
-          echo "Error: 'openclaw agent --local' is not supported inside NemoClaw sandboxes." >&2
-          echo "The --local flag bypasses the gateway's security protections (secret scanning," >&2
-          echo "network policy, inference auth) and can crash the sandbox." >&2
-          echo "" >&2
-          echo "Instead, run without --local to use the gateway's managed inference route:" >&2
-          echo "  openclaw agent --agent main -m \"hello\"" >&2
-          return 1
-        fi
-      done
-      ;;
-  esac
-  command openclaw "$@"
-}
-# nemoclaw-configure-guard end
-GUARD
-
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    [ -f "$rc_file" ] || continue
-    # Try to write the guard snippet. All writes use || true because
-    # Landlock may block writes even though DAC (-w) says writable (#804).
-    if grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-      local tmp
-      tmp="$(mktemp)" || continue
-      awk -v b="$marker_begin" -v e="$marker_end" \
-        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
-        rm -f "$tmp"
-        continue
-      }
-      printf '%s\n' "$snippet" >>"$tmp"
-      cat "$tmp" >"$rc_file" 2>/dev/null || true
-      rm -f "$tmp"
-    else
-      printf '\n%s\n' "$snippet" >>"$rc_file" 2>/dev/null || true
-    fi
-  done
-  # Best-effort lock — Landlock may already enforce read-only.
-  lock_rc_files "$_SANDBOX_HOME"
-}
-
-# validate_openclaw_symlinks / harden_openclaw_symlinks — thin wrappers
-# around shared library functions for backward compatibility with callsites.
-validate_openclaw_symlinks() {
-  validate_config_symlinks /sandbox/.openclaw /sandbox/.openclaw-data
-}
-
-harden_openclaw_symlinks() {
-  harden_config_symlinks /sandbox/.openclaw
 }
 
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
@@ -827,6 +897,48 @@ print_dashboard_urls() {
 
   echo "[gateway] Local UI: ${local_url}" >&2
   echo "[gateway] Remote UI: ${remote_url}" >&2
+}
+
+start_persistent_gateway_log_mirror() {
+  local log_dir="/sandbox/.openclaw/logs"
+  local log_file="${log_dir}/gateway-persistent.log"
+
+  if [ -L "$log_dir" ]; then
+    echo "[SECURITY] refusing symlinked persistent log directory: $log_dir" >&2
+    return 1
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    install -d -o root -g root -m 755 "$log_dir" 2>/dev/null || return 1
+  else
+    mkdir -p "$log_dir" 2>/dev/null || return 1
+    chmod 755 "$log_dir" 2>/dev/null || true
+  fi
+
+  if [ -L "$log_file" ] || { [ -e "$log_file" ] && [ ! -f "$log_file" ]; }; then
+    echo "[SECURITY] refusing unsafe persistent log path: $log_file" >&2
+    return 1
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    if [ ! -e "$log_file" ]; then
+      install -o root -g root -m 644 /dev/null "$log_file" 2>/dev/null || return 1
+    else
+      chown root:root "$log_file" 2>/dev/null || return 1
+      chmod 644 "$log_file" 2>/dev/null || return 1
+    fi
+  else
+    touch "$log_file" 2>/dev/null || return 1
+    chmod 644 "$log_file" 2>/dev/null || true
+  fi
+
+  if [ -L "$log_file" ] || [ ! -f "$log_file" ]; then
+    echo "[SECURITY] refusing unsafe persistent log path after create: $log_file" >&2
+    return 1
+  fi
+
+  { tail -n +1 -F /tmp/gateway.log 2>/dev/null >>"$log_file"; } &
+  GATEWAY_LOG_PERSIST_PID=$!
 }
 
 start_auto_pair() {
@@ -898,17 +1010,34 @@ while time.time() < DEADLINE:
         time.sleep(1)
         continue
 
-    if has_browser:
-        QUIET_POLLS += 1
-        if QUIET_POLLS >= 4:
+    QUIET_POLLS += 1
+    # Exit-on-quiet conditions, checked in order of strength:
+    #   1. Browser device paired — original control-UI workflow
+    #   2. Any paired device — covers dangerouslyDisableDeviceAuth setups
+    #      where the gateway auto-pairs CLI clients directly without the
+    #      watcher running `openclaw devices approve` (so APPROVED stays
+    #      0 forever in those configurations)
+    #   3. We approved at least one device explicitly
+    # Without these, the watcher polled `openclaw devices list --json`
+    # every 1 second for 10 minutes whenever no browser device joined,
+    # saturating the gateway connect handler and starving concurrent
+    # `openclaw agent` connects (NemoClaw#2484: WS handshake-timeout).
+    if QUIET_POLLS >= 4:
+        if has_browser:
             print(f'[auto-pair] browser pairing converged approvals={APPROVED}')
             break
-    elif APPROVED > 0:
-        QUIET_POLLS += 1
-    else:
-        QUIET_POLLS = 0
+        if paired:
+            print(f'[auto-pair] devices paired ({len(paired)}); exiting approvals={APPROVED}')
+            break
+        if APPROVED > 0:
+            print(f'[auto-pair] non-browser pairing converged approvals={APPROVED}')
+            break
 
-    time.sleep(1)
+    # Back off polling once anything is paired or approved: 1s when
+    # actively processing pending requests / waiting for first pairing,
+    # 5s thereafter. The 5s cadence avoids connect-handler pile-up under
+    # high gateway connect latency.
+    time.sleep(5 if (APPROVED > 0 or paired) else 1)
 else:
     print(f'[auto-pair] watcher timed out approvals={APPROVED}')
 PYAUTOPAIR
@@ -973,17 +1102,21 @@ fi
 # src/lib/sandbox-build-context.ts. A sync test enforces that the
 # embedded copy is byte-identical to the canonical file.
 # ── Global sandbox safety net ──────────────────────────────────
-# Catch-all handler for uncaught exceptions and unhandled rejections
-# that would otherwise crash the gateway. In a sandbox environment,
-# a crashed gateway means total loss of inference, chat, and TUI —
-# worse than degraded service from a swallowed error.
+# Last-resort handler for uncaught exceptions and unhandled rejections
+# that would otherwise crash the gateway. The gateway is shared sandbox
+# infrastructure; user-initiated actions must not be able to take it down.
 #
-# This MUST be the first --require preload so its handlers register
-# before any library code runs. Specific guards (Slack, ciao) provide
-# targeted handling; this catches everything else.
+# This is intentionally NOT a catch-all swallow. Known-benign error
+# patterns are documented inline in the script; unknown patterns are
+# logged with full stack so they can be diagnosed and either fixed
+# upstream or added to the allow-list with explicit justification.
+# Specific guards (Slack, ciao) pre-empt their own error patterns;
+# this is the backstop for everything else.
 #
-# Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime).
-# Outside a sandbox, normal Node.js crash behavior is preserved.
+# Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime),
+# and only for gateway processes. Outside a sandbox or in CLI processes
+# (agent, doctor, plugins, tui, etc.) normal Node.js crash behavior is
+# preserved so errors surface promptly to users running short-lived tools.
 _SANDBOX_SAFETY_NET="/tmp/nemoclaw-sandbox-safety-net.js"
 emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <<'SAFETY_NET_EOF'
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -991,53 +1124,130 @@ emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <<'SAFETY_NET_EOF'
 //
 // sandbox-safety-net.js — last-resort handler that keeps the gateway alive
 // when any library throws an uncaught exception or unhandled rejection.
-// Only active inside OpenShell sandboxes (OPENSHELL_SANDBOX=1).
+//
+// Contract:
+//
+//   1. Inside the OpenShell sandbox the gateway is shared infrastructure.
+//      User-initiated actions (loading a plugin, starting a sidecar,
+//      running an agent against the gateway) must not be able to take it
+//      down. Node.js 22+ defaults --unhandled-rejections=throw which
+//      crashes on the first stray rejection from any library — including
+//      libraries we don't control.
+//
+//   2. Specific known-benign patterns are documented inline below. They
+//      get a single-line summary and are absorbed silently. Each pattern
+//      MUST document which library produces it, why it's safe to absorb
+//      in the sandbox context, and what the upstream fix is. Prefer
+//      disabling/configuring the upstream component so the rejection
+//      never fires; this list is the safety net, not the policy.
+//
+//   3. Unknown errors do NOT crash the gateway either, but they are
+//      logged with full stack so they can be diagnosed and either fixed
+//      upstream or added to the allow-list with explicit justification.
+//      "Unknown means crash" is the wrong default for shared
+//      infrastructure; "unknown means log loudly" is the right default.
+//
+//   4. No process.exit interception. An earlier iteration intercepted
+//      process.exit during swallow windows, which masked legitimate
+//      shutdown signals and was itself the kind of catch-all hack we
+//      want to avoid.
+//
+//   5. Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime),
+//      and only for gateway processes. The gateway can appear as the
+//      launcher (`openclaw gateway run ...`) or the re-execed
+//      `openclaw-gateway` child. CLI commands (agent, doctor, plugins,
+//      tui, etc.) get default Node behavior so errors surface promptly
+//      to users running short-lived tools.
 
 (function () {
   'use strict';
   if (process.env.OPENSHELL_SANDBOX !== '1') return;
 
-  // Track whether we're inside an unhandledRejection we chose to swallow.
-  // OpenClaw's own handler calls process.exit(1) for non-transient rejections.
-  // We intercept process.exit during swallowed rejections to prevent that.
-  var _swallowing = false;
-  var _origExit = process.exit;
-  process.exit = function (code) {
-    if (_swallowing) {
-      try {
-        process.stderr.write(
-          '[sandbox-safety-net] blocked process.exit(' + code +
-          ') during swallowed rejection — gateway continues\n'
-        );
-      } catch (_) {}
-      return;
+  function basename(value) {
+    return String(value || '').split(/[\\/]/).pop();
+  }
+
+  function gatewayProcessFlavor() {
+    if (basename(process.argv0) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.title) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (process.argv[2] === 'gateway') return 'launcher';
+    if (basename(process.argv[1]) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.argv[0]) === 'openclaw-gateway') return 'openclaw-gateway';
+    return '';
+  }
+
+  var _gatewayProcess = gatewayProcessFlavor();
+  if (!_gatewayProcess) return;
+
+  try {
+    process.stderr.write('[sandbox-safety-net] loaded (' + _gatewayProcess + ')\n');
+  } catch (_) {}
+
+  // KNOWN-BENIGN ERROR PATTERNS
+  //
+  // ciao / @homebridge/ciao — mDNS service-discovery library used by the
+  // OpenClaw bonjour plugin (introduced in 2026.4.15). Sandboxes have
+  // restricted network namespaces with no multicast. Two failure modes:
+  //   - sync: os.networkInterfaces() throws ERR_SYSTEM_ERROR
+  //     uv_interface_addresses. Pre-empted by ciao-network-guard.js,
+  //     which monkey-patches os.networkInterfaces() to return {}.
+  //   - async: the probe state machine cancels itself during gateway
+  //     startup/reload and emits "CIAO PROBING CANCELLED" as an unhandled
+  //     rejection. This is the path we catch here.
+  // Upstream fix: bonjour is disabled via plugins.entries.bonjour.enabled
+  // = false in the sandbox openclaw.json. This pattern is a backstop in
+  // case the disable is bypassed or a future release introduces another
+  // mDNS code path.
+  function classifyBenignRejection(reason) {
+    if (!reason) return null;
+    var msg = String((reason && reason.message) || reason);
+    var stack = (reason && reason.stack) || '';
+
+    if (msg.indexOf('CIAO') !== -1 ||
+        stack.indexOf('@homebridge/ciao') !== -1 ||
+        stack.indexOf('/ciao/') !== -1) {
+      return 'ciao/mDNS (sandbox lacks multicast; bonjour should be disabled in openclaw.json)';
     }
-    return _origExit.call(process, code);
-  };
+    if (reason && reason.code === 'ERR_SYSTEM_ERROR' &&
+        msg.indexOf('uv_interface_addresses') !== -1) {
+      return 'uv_interface_addresses (restricted netns)';
+    }
+    return null;
+  }
 
   process.on('uncaughtException', function (err, origin) {
+    // Sync error paths are pre-empted by the targeted guards
+    // (ciao-network-guard.js, slack-channel-guard.js when Slack is
+    // configured). If we get here it's an error those guards didn't
+    // recognize. Log full stack and stay alive — registering this
+    // listener is what tells Node "don't crash on uncaughtException".
     try {
       process.stderr.write(
-        '[sandbox-safety-net] uncaughtException: ' +
-        (err && err.stack ? err.stack : String(err)) +
-        ' (origin: ' + origin + ') — swallowed, gateway continues\n'
+        '[sandbox-safety-net] uncaughtException [unhandled by upstream guards \u2014 please diagnose]: ' +
+        ((err && err.stack) ? err.stack : String(err)) +
+        ' (origin: ' + origin + ') \u2014 gateway continues\n'
       );
     } catch (_) {}
   });
 
   process.on('unhandledRejection', function (reason, promise) {
-    _swallowing = true;
+    var benign = classifyBenignRejection(reason);
+    if (benign) {
+      try {
+        process.stderr.write(
+          '[sandbox-safety-net] unhandledRejection [known-benign: ' + benign + ']: ' +
+          ((reason && reason.message) ? reason.message : String(reason)) + '\n'
+        );
+      } catch (_) {}
+      return;
+    }
     try {
       process.stderr.write(
-        '[sandbox-safety-net] unhandledRejection: ' +
-        (reason && reason.stack ? reason.stack : String(reason)) +
-        ' — swallowed, gateway continues\n'
+        '[sandbox-safety-net] unhandledRejection [UNKNOWN PATTERN \u2014 please diagnose]: ' +
+        ((reason && reason.stack) ? reason.stack : String(reason)) +
+        ' \u2014 gateway continues\n'
       );
     } catch (_) {}
-    // Keep _swallowing=true through this tick so OpenClaw's handler
-    // (which runs in the same microtask delivery) hits our process.exit
-    // intercept. Reset on next tick.
-    Promise.resolve().then(function () { _swallowing = false; });
   });
 })();
 SAFETY_NET_EOF
@@ -1381,6 +1591,26 @@ emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <<'CIAO_GUARD_EOF'
 (function () {
   'use strict';
 
+  function basename(value) {
+    return String(value || '').split(/[\\/]/).pop();
+  }
+
+  function gatewayProcessFlavor() {
+    if (basename(process.argv0) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.title) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (process.argv[2] === 'gateway') return 'launcher';
+    if (basename(process.argv[1]) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.argv[0]) === 'openclaw-gateway') return 'openclaw-gateway';
+    return '';
+  }
+
+  var _gatewayProcess = gatewayProcessFlavor();
+  if (_gatewayProcess) {
+    try {
+      process.stderr.write('[guard] ciao-network-guard loaded (' + _gatewayProcess + ')\n');
+    } catch (_) {}
+  }
+
   // Monkey-patch os.networkInterfaces to return empty on failure.
   var os = require('os');
   var _origNetworkInterfaces = os.networkInterfaces;
@@ -1419,32 +1649,37 @@ emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <<'CIAO_GUARD_EOF'
   };
 
   // Fallback: catch uncaughtException from ciao if the monkey-patch
-  // doesn't cover all call sites.
-  process.on('uncaughtException', function (err, origin) {
-    if (
-      err && err.code === 'ERR_SYSTEM_ERROR' &&
-      String(err.message || '').indexOf('uv_interface_addresses') !== -1
-    ) {
-      process.stderr.write(
-        '[guard] ciao/networkInterfaces crash caught: ' + (err.message || err) +
-        ' — gateway continues\n'
-      );
-      return;
-    }
-    // Check stack for ciao/NetworkManager
-    if (err && err.stack && err.stack.indexOf('ciao') !== -1 &&
-        String(err.message || '').indexOf('networkInterfaces') !== -1) {
-      process.stderr.write(
-        '[guard] ciao network error caught: ' + (err.message || err) +
-        ' — gateway continues\n'
-      );
-      return;
-    }
-    // Not a ciao error — re-throw to preserve normal crash behavior.
-    process.stderr.write((err && err.stack) || String(err));
-    process.stderr.write('\n');
-    process.exit(1);
-  });
+  // doesn't cover all call sites. Gateway-only — registering ANY
+  // uncaughtException listener tells Node "don't crash by default", and
+  // we want CLI processes (agent, doctor, plugins, tui) to keep default
+  // Node crash behavior so errors surface promptly.
+  //
+  // For gateway processes, non-ciao errors fall through (return) to the
+  // sandbox safety net registered later in the preload chain. The safety
+  // net is the single point of "keep gateway alive on unknown errors".
+  if (_gatewayProcess) {
+    process.on('uncaughtException', function (err, origin) {
+      if (
+        err && err.code === 'ERR_SYSTEM_ERROR' &&
+        String(err.message || '').indexOf('uv_interface_addresses') !== -1
+      ) {
+        process.stderr.write(
+          '[guard] ciao/networkInterfaces crash caught: ' + (err.message || err) +
+          ' \u2014 gateway continues\n'
+        );
+        return;
+      }
+      if (err && err.stack && err.stack.indexOf('ciao') !== -1 &&
+          String(err.message || '').indexOf('networkInterfaces') !== -1) {
+        process.stderr.write(
+          '[guard] ciao network error caught: ' + (err.message || err) +
+          ' \u2014 gateway continues\n'
+        );
+        return;
+      }
+      // Not ciao — let the sandbox safety net handle it.
+    });
+  }
 })();
 CIAO_GUARD_EOF
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT"
@@ -1457,19 +1692,69 @@ export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIP
 # The preload patches https.request() to inject a CONNECT tunnel agent for
 # WebSocket upgrade requests. Activates whenever HTTPS_PROXY is set (the
 # script itself guards on the env var).
-_WS_FIX_SCRIPT="/opt/nemoclaw-blueprint/scripts/ws-proxy-fix.js"
-if [ -f "$_WS_FIX_SCRIPT" ]; then
+_WS_FIX_SOURCE="/usr/local/lib/nemoclaw/ws-proxy-fix.js"
+_WS_FIX_SCRIPT="/tmp/nemoclaw-ws-proxy-fix.js"
+if [ -f "$_WS_FIX_SOURCE" ]; then
+  # Copy to /tmp so the sandbox user can read it — /usr/local/lib/ may be
+  # Landlock-restricted in some runtimes. Same pattern as the other preloads.
+  emit_sandbox_sourced_file "$_WS_FIX_SCRIPT" <"$_WS_FIX_SOURCE"
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_WS_FIX_SCRIPT"
 fi
+
+# ── Seccomp syscall guard ─────────────────────────────────────
+# OpenShell ≥0.0.36 seccomp policy blocks syscalls like getifaddrs
+# (used by Node's os.networkInterfaces()). Third-party libraries (e.g.,
+# @homebridge/ciao mDNS) call these without error handling, producing
+# unhandled promise rejections that crash the gateway under Node v22's
+# default --unhandled-rejections=throw.
+#
+# This preload catches those specific sandbox-infrastructure errors
+# and logs them as warnings instead of letting them kill the process.
+# Unlike the Slack channel guard, this is always installed because the
+# seccomp-blocked syscalls affect all sandboxes, not just Slack ones.
+_SECCOMP_GUARD_SCRIPT="/tmp/nemoclaw-seccomp-guard.js"
+emit_sandbox_sourced_file "$_SECCOMP_GUARD_SCRIPT" <<'SECCOMP_GUARD_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// seccomp-guard.js — patch syscalls that are blocked by OpenShell ≥0.0.36
+// seccomp policy. Third-party libraries (e.g., @homebridge/ciao mDNS) call
+// os.networkInterfaces() without error handling, producing unhandled promise
+// rejections. OpenClaw's rejection handler (unhandled-rejections-*.js) calls
+// process.exit(1) for unrecognised errors, crashing the gateway.
+//
+// Rather than trying to catch the rejection (which races with OpenClaw's own
+// handler), this preload patches the syscall wrappers to return safe defaults
+// when the underlying call is blocked by seccomp.
+
+(function () {
+  'use strict';
+  var os = require('os');
+  var _origNetworkInterfaces = os.networkInterfaces;
+
+  os.networkInterfaces = function () {
+    try {
+      return _origNetworkInterfaces.call(os);
+    } catch (err) {
+      if (err && String(err.message || '').indexOf('uv_interface_addresses') !== -1) {
+        // seccomp blocks getifaddrs — return empty result.
+        // mDNS discovery is not needed inside a sandbox.
+        return {};
+      }
+      throw err;
+    }
+  };
+})();
+SECCOMP_GUARD_EOF
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT"
 
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns
 # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
 # ~/.profile or /etc/profile.d/*.
 #
-# The /sandbox home directory is Landlock read-only (#804), so we write the proxy
-# config to /tmp/nemoclaw-proxy-env.sh. The pre-built .bashrc and .profile
-# source this file automatically.
+# We write dynamic connect-session config to /tmp/nemoclaw-proxy-env.sh. The
+# pre-built .bashrc and .profile source this file automatically.
 #
 # SECURITY: The proxy-env file is written via emit_sandbox_sourced_file()
 # which ensures root:root 444 in root mode (sandbox cannot modify) and
@@ -1480,9 +1765,13 @@ fi
 # Both uppercase and lowercase variants are required: Node.js undici prefers
 # lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
 # curl/wget use uppercase.  gRPC C-core uses lowercase.
-_PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
-{
-  cat <<PROXYEOF
+_RUNTIME_SHELL_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"
+
+write_runtime_shell_env() {
+  _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+  {
+    cat <<PROXYEOF
 # Proxy configuration (overrides narrow OpenShell defaults on connect)
 export HTTP_PROXY="$_PROXY_URL"
 export HTTPS_PROXY="$_PROXY_URL"
@@ -1491,45 +1780,410 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
-  # Global sandbox safety net for connect sessions — must be first.
-  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""
-  # HTTP library double-proxy fix: also expose NODE_OPTIONS in connect
-  # sessions so interactive shells and user commands started via
-  # `openshell sandbox connect` benefit from the preload. (NemoClaw#2109)
-  if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT\""
-  fi
-  # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
-  if [ -f "$_WS_FIX_SCRIPT" ]; then
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
-  fi
-  # Git TLS CA bundle for connect sessions (NemoClaw#2270)
-  if [ -n "${GIT_SSL_CAINFO:-}" ]; then
-    printf 'export GIT_SSL_CAINFO=%q\n' "$GIT_SSL_CAINFO"
-  fi
-  # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
-  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
-  # ciao network guard for connect sessions.
-  echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
-  # Slack channel guard for connect sessions. The guard file is installed later
-  # by install_slack_channel_guard() — conditional on the file existing at
-  # source-time so connect sessions started before Slack is configured are safe.
-  echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
-  # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
-  echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
-  for _redir in "${_TOOL_REDIRECTS[@]}"; do
-    echo "export ${_redir?}"
-  done
-} | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
+    if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
+      _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
+      printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
+    fi
+    cat <<'GUARDENVEOF'
+# nemoclaw-configure-guard begin
+openclaw() {
+  case "$1" in
+    configure)
+      echo "Error: 'openclaw configure' cannot modify config inside the sandbox." >&2
+      echo "Changes inside the sandbox do not persist across rebuilds." >&2
+      echo "" >&2
+      echo "To change your configuration, exit the sandbox and run:" >&2
+      echo "  nemoclaw onboard --resume" >&2
+      echo "" >&2
+      echo "This rebuilds the sandbox with your updated settings." >&2
+      return 1
+      ;;
+    config)
+      case "$2" in
+        set | unset)
+          echo "Error: 'openclaw config $2' cannot modify config inside the sandbox." >&2
+          echo "Changes inside the sandbox do not persist across rebuilds." >&2
+          echo "" >&2
+          echo "To change your configuration, exit the sandbox and run:" >&2
+          echo "  nemoclaw onboard --resume" >&2
+          echo "" >&2
+          echo "This rebuilds the sandbox with your updated settings." >&2
+          return 1
+          ;;
+      esac
+      ;;
+    channels)
+      case "$2" in
+        list | "" | -h | --help) ;;
+        *)
+          echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
+          echo "Changes inside the sandbox do not persist across rebuilds." >&2
+          echo "" >&2
+          echo "To add or remove messaging channels, exit the sandbox and run:" >&2
+          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack>" >&2
+          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack>" >&2
+          echo "" >&2
+          echo "These stage the change and rebuild the sandbox to apply it." >&2
+          return 1
+          ;;
+      esac
+      ;;
+    agent)
+      # Block --local inside sandbox: it bypasses gateway protections and can
+      # crash the container's main process, bricking the sandbox. Ref: #1632, #2016
+      local _arg
+      for _arg in "$@"; do
+        if [ "$_arg" = "--local" ]; then
+          echo "Error: 'openclaw agent --local' is not supported inside NemoClaw sandboxes." >&2
+          echo "The --local flag bypasses the gateway's security protections (secret scanning," >&2
+          echo "network policy, inference auth) and can crash the sandbox." >&2
+          echo "" >&2
+          echo "Instead, run without --local to use the gateway's managed inference route:" >&2
+          echo "  openclaw agent --agent main -m \"hello\"" >&2
+          return 1
+        fi
+      done
+      ;;
+  esac
+  command openclaw "$@"
+}
+# nemoclaw-configure-guard end
+GUARDENVEOF
+    # Global sandbox safety net for connect sessions — must be first.
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""
+    # HTTP library double-proxy fix: also expose NODE_OPTIONS in connect
+    # sessions so interactive shells and user commands started via
+    # `openshell sandbox connect` benefit from the preload. (NemoClaw#2109)
+    if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+      echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT\""
+    fi
+    # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
+    if [ -f "$_WS_FIX_SCRIPT" ]; then
+      echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
+    fi
+    # Git TLS CA bundle for connect sessions (NemoClaw#2270)
+    if [ -n "${GIT_SSL_CAINFO:-}" ]; then
+      printf 'export GIT_SSL_CAINFO=%q\n' "$GIT_SSL_CAINFO"
+    fi
+    # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
+    # Seccomp guard for connect sessions.
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT\""
+    # ciao network guard for connect sessions.
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
+    # Slack channel guard for connect sessions. The guard file is installed later
+    # by install_slack_channel_guard() — conditional on the file existing at
+    # source-time so connect sessions started before Slack is configured are safe.
+    echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
+    # Slack token rewriter for connect sessions — same conditional pattern.
+    echo "[ -f \"$_SLACK_REWRITER_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_REWRITER_SCRIPT\""
+    # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
+    echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
+    for _redir in "${_TOOL_REDIRECTS[@]}"; do
+      echo "export ${_redir?}"
+    done
+  } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
+}
 
 # cleanup_on_signal is provided by sandbox-init.sh. It reads
 # SANDBOX_CHILD_PIDS (array of all PIDs) and SANDBOX_WAIT_PID (the
 # primary process whose exit status is returned).
 # Each code path below sets these before registering the trap.
+
+# Stale base images may have rc files from before the runtime env source shim
+# was baked into Dockerfile.base. Backfill the static shim before lock_rc_files
+# makes those files read-only so connect sessions still receive proxy config,
+# gateway auth, and command guards through /tmp/nemoclaw-proxy-env.sh.
+ensure_runtime_shell_env_shim() {
+  local failed=0
+  local rc_file
+
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    if [ -L "$rc_file" ]; then
+      echo "[SECURITY] refusing symlinked rc file: $rc_file" >&2
+      failed=1
+      continue
+    fi
+    if [ -e "$rc_file" ] && [ ! -f "$rc_file" ]; then
+      echo "[SECURITY] refusing non-regular rc file: $rc_file" >&2
+      failed=1
+      continue
+    fi
+    if [ -f "$rc_file" ] && grep -qxF "$_RUNTIME_SHELL_ENV_SHIM" "$rc_file" 2>/dev/null; then
+      continue
+    fi
+
+    if [ "$(id -u)" -eq 0 ] && [ -f "$rc_file" ]; then
+      if ! chown root:root "$rc_file" 2>/dev/null; then
+        echo "[SECURITY] could not take ownership of $rc_file before shim backfill" >&2
+        failed=1
+        continue
+      fi
+      if ! chmod 644 "$rc_file" 2>/dev/null; then
+        echo "[SECURITY] could not make $rc_file writable before shim backfill" >&2
+        failed=1
+        continue
+      fi
+    elif [ -f "$rc_file" ]; then
+      chmod u+w "$rc_file" 2>/dev/null || true
+    fi
+
+    if [ -e "$rc_file" ]; then
+      if ! printf '\n%s\n%s\n' '# Source runtime proxy config' "$_RUNTIME_SHELL_ENV_SHIM" >>"$rc_file"; then
+        echo "[SECURITY] could not backfill runtime env shim into $rc_file" >&2
+        failed=1
+        continue
+      fi
+    elif ! printf '%s\n%s\n' '# Source runtime proxy config' "$_RUNTIME_SHELL_ENV_SHIM" >"$rc_file"; then
+      echo "[SECURITY] could not create $rc_file with runtime env shim" >&2
+      failed=1
+      continue
+    fi
+
+    if ! grep -qxF "$_RUNTIME_SHELL_ENV_SHIM" "$rc_file" 2>/dev/null; then
+      echo "[SECURITY] runtime env shim missing after backfill: $rc_file" >&2
+      failed=1
+    fi
+  done
+
+  return "$failed"
+}
+
+# ── Legacy layout migration ──────────────────────────────────────
+# Sandboxes created with the OLD base image have:
+#   .openclaw/ containing symlinks → .openclaw-data/<subdir>
+#   .openclaw-data/ containing real state data
+# Migrate to the new layout: real data lives directly in .openclaw/.
+# Idempotent: no-op if .openclaw-data doesn't exist.
+#
+# SECURITY (NC-2227-01): Guard against agent-planted data dirs.
+# Only migrate if (a) we are running as root (the agent cannot call
+# this path), (b) the data directory is NOT agent-writable (root-owned),
+# and (c) a migration-complete sentinel does not already exist.
+# After migration, reapply shields-up ownership if shields were active.
+path_has_immutable_bit() {
+  local target="$1"
+  command -v lsattr >/dev/null 2>&1 || return 1
+  [ -e "$target" ] || [ -L "$target" ] || return 1
+  lsattr -d "$target" 2>/dev/null | awk '{print $1}' | grep -q 'i'
+}
+
+ensure_mutable_for_migration() {
+  local target="$1" label="$2"
+  if ! path_has_immutable_bit "$target"; then
+    return 0
+  fi
+  if command -v chattr >/dev/null 2>&1 && chattr -i "$target" 2>/dev/null; then
+    return 0
+  fi
+  echo "[SECURITY] ${label}: ${target} is immutable; run 'nemoclaw <sandbox> shields down' before migration" >&2
+  return 1
+}
+
+restore_immutable_if_possible() {
+  command -v chattr >/dev/null 2>&1 || return 0
+  local target
+  for target in "$@"; do
+    [ -e "$target" ] || [ -L "$target" ] || continue
+    [ -L "$target" ] && continue
+    chattr +i "$target" 2>/dev/null || true
+  done
+}
+
+chown_tree_no_symlink_follow() {
+  local owner="$1" target="$2"
+  [ -d "$target" ] || return 0
+  find -P "$target" \( -type d -o -type f \) -exec chown "$owner" {} + 2>/dev/null || true
+}
+
+legacy_symlinks_exist() {
+  local config_dir="$1" data_dir="$2"
+  local data_real entry raw_target resolved_target
+  data_real="$(readlink -f "$data_dir" 2>/dev/null || echo "$data_dir")"
+  for entry in "$config_dir"/.[!.]* "$config_dir"/..?* "$config_dir"/*; do
+    [ -L "$entry" ] || continue
+    raw_target="$(readlink "$entry" 2>/dev/null || true)"
+    resolved_target="$(readlink -f "$entry" 2>/dev/null || true)"
+    case "$raw_target" in
+      "$data_real"/* | "$data_dir"/*) return 0 ;;
+    esac
+    case "$resolved_target" in
+      "$data_real"/* | "$data_dir"/*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+assert_no_legacy_layout() {
+  local config_dir="$1" data_dir="$2" label="$3"
+  local data_real entry raw_target resolved_target
+  if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then
+    echo "[SECURITY] ${label}: legacy data dir still exists after migration: ${data_dir}" >&2
+    return 1
+  fi
+  data_real="$(readlink -f "$data_dir" 2>/dev/null || echo "$data_dir")"
+  for entry in "$config_dir"/.[!.]* "$config_dir"/..?* "$config_dir"/*; do
+    [ -L "$entry" ] || continue
+    raw_target="$(readlink "$entry" 2>/dev/null || true)"
+    resolved_target="$(readlink -f "$entry" 2>/dev/null || true)"
+    case "$raw_target" in
+      "$data_real"/* | "$data_dir"/*)
+        echo "[SECURITY] ${label}: legacy symlink remains after migration: ${entry} -> ${raw_target}" >&2
+        return 1
+        ;;
+    esac
+    case "$resolved_target" in
+      "$data_real"/* | "$data_dir"/*)
+        echo "[SECURITY] ${label}: legacy symlink remains after migration: ${entry} -> ${resolved_target}" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
+migrate_legacy_layout() {
+  local config_dir="$1" data_dir="$2" label="$3"
+  if [ -L "$config_dir" ]; then
+    echo "[SECURITY] ${label}: refusing migration because ${config_dir} is a symlink" >&2
+    return 1
+  fi
+  if [ -L "$data_dir" ]; then
+    echo "[SECURITY] ${label}: refusing migration because ${data_dir} is a symlink" >&2
+    return 1
+  fi
+
+  local sentinel="${config_dir}/.migration-complete"
+
+  # Guard 1: Already migrated — the sentinel proves a prior trusted run.
+  if [ -e "$sentinel" ] || [ -L "$sentinel" ]; then
+    local sentinel_uid sentinel_mode
+    sentinel_uid="$(stat -c '%u' "$sentinel" 2>/dev/null || stat -f '%u' "$sentinel" 2>/dev/null || echo "unknown")"
+    sentinel_mode="$(stat -c '%a' "$sentinel" 2>/dev/null || stat -f '%Lp' "$sentinel" 2>/dev/null || echo "unknown")"
+    if [ -f "$sentinel" ] && [ ! -L "$sentinel" ] && [ "$sentinel_uid" = "0" ] && [ "$sentinel_mode" != "unknown" ] && (((8#$sentinel_mode & 0222) == 0)); then
+      if [ ! -d "$data_dir" ] && ! legacy_symlinks_exist "$config_dir" "$data_dir"; then
+        echo "[migration] ${label}: already migrated (trusted sentinel exists), skipping" >&2
+        return 0
+      fi
+      echo "[migration] ${label}: trusted sentinel exists but legacy artifacts remain; repairing" >&2
+      ensure_mutable_for_migration "$sentinel" "$label" || return 1
+      rm -f "$sentinel" || return 1
+    else
+      echo "[SECURITY] ${label}: ignoring untrusted migration sentinel ${sentinel}" >&2
+      ensure_mutable_for_migration "$sentinel" "$label" || return 1
+      rm -f "$sentinel" || return 1
+    fi
+  fi
+
+  if [ ! -d "$data_dir" ]; then
+    assert_no_legacy_layout "$config_dir" "$data_dir" "$label"
+    return $?
+  fi
+
+  # Guard 2: Only root may run migration. The sandbox user cannot reach
+  # this code path (entrypoint runs as root or the non-root branch never
+  # calls migrate), but be explicit.
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "[SECURITY] ${label}: migration skipped — requires root" >&2
+    return 0
+  fi
+
+  # Guard 3: Reject agent-planted data directories. A legitimate legacy
+  # data dir was created by the image build (root-owned). If the data dir
+  # is owned by sandbox, the agent may have planted it to trigger migration.
+  local data_owner
+  data_owner="$(stat -c '%U' "$data_dir" 2>/dev/null || stat -f '%Su' "$data_dir" 2>/dev/null || echo "unknown")"
+  if [ "$data_owner" = "sandbox" ] && ! legacy_symlinks_exist "$config_dir" "$data_dir"; then
+    echo "[SECURITY] ${label}: sandbox-owned ${data_dir} has no legacy symlink bridge — refusing migration (possible agent-planted trigger)" >&2
+    return 1
+  fi
+
+  # Check if shields were previously active (config dir is root-owned).
+  local shields_were_active=false
+  local config_dir_owner
+  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo "unknown")"
+  if [ "$config_dir_owner" = "root" ]; then
+    shields_were_active=true
+  fi
+
+  ensure_mutable_for_migration "$config_dir" "$label" || return 1
+  ensure_mutable_for_migration "$data_dir" "$label" || return 1
+
+  echo "[migration] Detected legacy ${label} layout (${data_dir} exists), migrating..." >&2
+  for entry in "$data_dir"/.[!.]* "$data_dir"/..?* "$data_dir"/*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    if [ -L "$entry" ]; then
+      echo "[SECURITY] ${label}: refusing migration because ${entry} is a symlink" >&2
+      return 1
+    fi
+    local name
+    name="$(basename "$entry")"
+    local target="${config_dir}/${name}"
+    if [ -L "$target" ]; then
+      ensure_mutable_for_migration "$target" "$label" || return 1
+      rm -f "$target"
+      cp -a "$entry" "$target"
+    elif [ -d "$target" ] && [ -d "$entry" ]; then
+      ensure_mutable_for_migration "$target" "$label" || return 1
+      cp -a "$entry"/. "$target"/
+    elif [ ! -e "$target" ]; then
+      cp -a "$entry" "$target"
+    fi
+  done
+
+  # Only chown state subdirectories, NOT the config dir itself or
+  # protected files (openclaw.json, .config-hash, .env).
+  # This prevents undoing shields-up root ownership on the config dir.
+  for entry in "$config_dir"/.[!.]* "$config_dir"/..?* "$config_dir"/*; do
+    [ -L "$entry" ] && continue
+    [ -d "$entry" ] || continue
+    chown_tree_no_symlink_follow sandbox:sandbox "$entry"
+  done
+
+  rm -rf "$data_dir"
+  assert_no_legacy_layout "$config_dir" "$data_dir" "$label" || return 1
+
+  # Write the migration sentinel (root-owned, read-only) so we never
+  # re-run migration on this sandbox.
+  printf 'migrated=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$sentinel"
+  chown root:root "$sentinel" 2>/dev/null || true
+  chmod 444 "$sentinel" 2>/dev/null || true
+
+  # Reapply shields-up ownership if config dir was previously root-locked.
+  if [ "$shields_were_active" = "true" ]; then
+    echo "[migration] Reapplying shields-up ownership on ${config_dir}" >&2
+    chown root:root "$config_dir" 2>/dev/null || true
+    chmod 755 "$config_dir" 2>/dev/null || true
+    # Re-lock known sensitive files if they exist
+    for f in "$config_dir"/openclaw.json "$config_dir"/.config-hash "$config_dir"/.env; do
+      if [ -f "$f" ]; then
+        chown root:root "$f" 2>/dev/null || true
+        chmod 444 "$f" 2>/dev/null || true
+      fi
+    done
+    for subdir in skills hooks cron agents extensions plugins; do
+      if [ -d "$config_dir/$subdir" ]; then
+        chown_tree_no_symlink_follow root:root "$config_dir/$subdir"
+        chmod 755 "$config_dir/$subdir" 2>/dev/null || true
+        chmod -R go-w "$config_dir/$subdir" 2>/dev/null || true
+        restore_immutable_if_possible "$config_dir/$subdir"
+      fi
+    done
+    restore_immutable_if_possible \
+      "$config_dir"/openclaw.json \
+      "$config_dir"/.config-hash \
+      "$config_dir"/.env \
+      "$config_dir"
+  fi
+
+  echo "[migration] Completed ${label} layout migration (${data_dir} removed)" >&2
+}
 # ── Main ─────────────────────────────────────────────────────────
 
+# Migrate legacy symlink layout before anything else reads .openclaw
+migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
+
 echo 'Setting up NemoClaw...' >&2
-# Best-effort: .env may not exist, and /sandbox is Landlock read-only (#804).
+# Best-effort: .env may not exist.
 if [ -f .env ]; then
   if ! chmod 600 .env 2>/dev/null; then
     echo "[SECURITY WARNING] Could not restrict .env permissions — file may be world-readable (read-only filesystem)" >&2
@@ -1544,79 +2198,41 @@ fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
-  if ! verify_config_integrity /sandbox/.openclaw; then
+  if ! verify_config_integrity_if_locked /sandbox/.openclaw; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
   apply_model_override
   apply_cors_override
-  apply_slack_token_override
   export_gateway_token
-  install_configure_guard
+  write_runtime_shell_env
+  ensure_runtime_shell_env_shim
+  lock_rc_files "$_SANDBOX_HOME"
   configure_messaging_channels
+  install_slack_token_rewriter
   install_slack_channel_guard
-  validate_openclaw_symlinks
+  verify_no_slack_secrets_on_disk
 
   # Ensure writable state directories exist and are owned by the current user.
   # The Docker build (Dockerfile) sets this up correctly, but the native curl
   # installer may create these directories as root, causing EACCES when openclaw
   # tries to write device-auth.json or other state files.  Ref: #692
-  # Ensure the identity symlink points from .openclaw/identity → .openclaw-data/identity.
-  # Uses early returns to keep each case flat.
-  ensure_identity_symlink() {
-    local data_dir="$1" openclaw_dir="$2"
-    local link_path="${openclaw_dir}/identity"
-    local target="${data_dir}/identity"
-    [ -d "$target" ] || return 0
-    mkdir -p "${openclaw_dir}" 2>/dev/null || true
-
-    # Already a correct symlink — nothing to do.
-    if [ -L "$link_path" ]; then
-      local current expected
-      current="$(readlink -f "$link_path" 2>/dev/null || true)"
-      expected="$(readlink -f "$target" 2>/dev/null || true)"
-      [ "$current" != "$expected" ] || return 0
-      ln -snf "$target" "$link_path" 2>/dev/null \
-        && echo "[setup] repaired identity symlink" >&2 \
-        || echo "[setup] could not repair identity symlink" >&2
-      return 0
-    fi
-
-    # Nothing exists yet — create the symlink.
-    if [ ! -e "$link_path" ]; then
-      ln -snf "$target" "$link_path" 2>/dev/null \
-        && echo "[setup] created identity symlink" >&2 \
-        || echo "[setup] could not create identity symlink" >&2
-      return 0
-    fi
-
-    # A non-symlink entry exists — back it up, then replace.
-    local backup
-    backup="${link_path}.bak.$(date +%s)"
-    if mv "$link_path" "$backup" 2>/dev/null \
-      && ln -snf "$target" "$link_path" 2>/dev/null; then
-      echo "[setup] replaced non-symlink identity path (backup: ${backup})" >&2
-    else
-      echo "[setup] could not replace ${link_path}; writes may fail" >&2
-    fi
-  }
-
-  fix_openclaw_data_ownership() {
-    local data_dir="${HOME}/.openclaw-data"
+  fix_openclaw_ownership() {
     local openclaw_dir="${HOME}/.openclaw"
-    [ -d "$data_dir" ] || return 0
-    local subdirs="agents/main/agent extensions workspace skills hooks identity devices canvas cron"
+    [ -d "$openclaw_dir" ] || return 0
+    local subdirs="agents/main/agent extensions workspace skills hooks identity devices canvas cron memory logs credentials flows sandbox telegram media"
     for sub in $subdirs; do
-      mkdir -p "${data_dir}/${sub}" 2>/dev/null || true
+      mkdir -p "${openclaw_dir}/${sub}" 2>/dev/null || true
     done
-    if find "$data_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
-      chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null \
-        && echo "[setup] fixed ownership on ${data_dir}" >&2 \
-        || echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
+    if find "$openclaw_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
+      chown -R "$(id -u):$(id -g)" "$openclaw_dir" 2>/dev/null \
+        && echo "[setup] fixed ownership on ${openclaw_dir}" >&2 \
+        || echo "[setup] could not fix ownership on ${openclaw_dir}; writes may fail" >&2
     fi
-    ensure_identity_symlink "$data_dir" "$openclaw_dir"
+    chmod 700 "$openclaw_dir" 2>/dev/null || true
+    chmod 600 "$openclaw_dir/openclaw.json" "$openclaw_dir/.config-hash" 2>/dev/null || true
   }
-  fix_openclaw_data_ownership
+  fix_openclaw_ownership
   write_auth_profile
   harden_auth_profiles
 
@@ -1639,18 +2255,26 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_SLACK_REWRITER_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
+  # Diagnostic: mirror gateway log to PID 1's stderr — see root-mode block
+  # below for rationale (NVIDIA/NemoClaw#2484).
+  { tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
+  GATEWAY_LOG_TAIL_PID=$!
+  # Persistent mirror: see root-mode block for rationale.
+  start_persistent_gateway_log_mirror || exit 1
   start_auto_pair
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
   # the shared-library refactor). Acceptable for entrypoint-level cleanup.
   SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
   [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
+  [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
+  [ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   trap cleanup_on_signal SIGTERM SIGINT
@@ -1662,22 +2286,26 @@ fi
 
 # ── Root path (full privilege separation via gosu) ─────────────
 
-# Verify config integrity before starting anything
-verify_config_integrity /sandbox/.openclaw
+# Verify locked config integrity before starting anything. Mutable-default
+# config is intentionally writable and is not a trust anchor until shields-up.
+verify_config_integrity_if_locked /sandbox/.openclaw
 apply_model_override
 apply_cors_override
-apply_slack_token_override
 export_gateway_token
-install_configure_guard
+write_runtime_shell_env
+ensure_runtime_shell_env_shim
+lock_rc_files "$_SANDBOX_HOME"
 
 # Inject messaging channel config if provider tokens are present.
 # Must run AFTER integrity check (to detect build-time tampering) and
 # BEFORE chattr +i (which locks the config permanently).
 configure_messaging_channels
+install_slack_token_rewriter
 install_slack_channel_guard
+verify_no_slack_secrets_on_disk
 
-# Write auth profile as sandbox user (needs writable .openclaw-data)
-# and recursively re-tighten any auth-profiles.json files under ~/.openclaw.
+# Write auth profile as sandbox user and recursively re-tighten any
+# auth-profiles.json files under ~/.openclaw.
 gosu sandbox bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
@@ -1702,82 +2330,87 @@ chmod 600 /tmp/auto-pair.log
 #
 # OpenClaw can be configured with multiple named agents (agents.defaults.workspace
 # + agents.list[*].workspace in openclaw.json), each producing its own
-# `/sandbox/.openclaw/workspace-<name>/` directory. Without intervention these
-# land as real directories under the root-owned immutable `.openclaw/` tree and
-# are lost on every sandbox restart.
-#
-# Mirror the default-workspace persistence pattern: any `workspace-<name>`
-# discovered under `.openclaw-data/` or `.openclaw/` gets (a) a writable backing
-# dir under `.openclaw-data/workspace-<name>/` and (b) a symlink from
-# `.openclaw/workspace-<name>/ → .openclaw-data/workspace-<name>/`. The symlinks
-# are then picked up by validate_openclaw_symlinks below.
+# `/sandbox/.openclaw/workspace-<name>/` directory. In the mutable-by-default
+# layout these live directly under `.openclaw/` (no symlink indirection).
+# Ensure they exist and are sandbox-writable.
 #
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1260
 provision_agent_workspaces() {
-  local data_dir="/sandbox/.openclaw-data"
   local config_dir="/sandbox/.openclaw"
   local names=""
-  local d name
+  local d name config_names
 
-  # Discover existing workspace-* dirs in either location.
-  if [ -d "$data_dir" ]; then
-    for d in "$data_dir"/workspace-*/; do
+  # Discover existing workspace-* dirs.
+  if [ -d "$config_dir" ]; then
+    for d in "$config_dir"/workspace-*; do
+      [ -e "$d" ] || [ -L "$d" ] || continue
+      if [ -L "$d" ]; then
+        echo "[SECURITY] refusing symlinked workspace dir: $d" >&2
+        continue
+      fi
       [ -d "$d" ] || continue
       name="$(basename "$d")"
       names="${names} ${name}"
     done
   fi
-  if [ -d "$config_dir" ]; then
-    for d in "$config_dir"/workspace-*/; do
-      # Skip the glob-fell-through sentinel ('workspace-*/' itself) and
-      # any existing symlink (already provisioned).
-      [ -e "$d" ] || continue
-      [ -L "${d%/}" ] && continue
-      name="$(basename "$d")"
-      names="${names} ${name}"
-    done
+
+  # Also provision workspace directories declared in openclaw.json. On first
+  # boot these may not exist yet, so directory discovery alone is insufficient.
+  if [ -f "$config_dir/openclaw.json" ] && command -v node >/dev/null 2>&1; then
+    config_names="$(
+      node - "$config_dir/openclaw.json" <<'NODE' 2>/dev/null || true
+  const fs = require("fs");
+  const configPath = process.argv[2];
+  const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const names = new Set();
+  const workspacePattern = /^workspace-[A-Za-z0-9._-]+$/;
+  function addWorkspace(value) {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith("/sandbox/.openclaw/")) {
+      const relative = trimmed.slice("/sandbox/.openclaw/".length);
+      if (workspacePattern.test(relative)) names.add(relative);
+      return;
+    }
+    if (/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+      const name = trimmed.startsWith("workspace-") ? trimmed : `workspace-${trimmed}`;
+      if (workspacePattern.test(name)) names.add(name);
+    }
+  }
+  addWorkspace(cfg?.agents?.defaults?.workspace);
+  for (const agent of cfg?.agents?.list || []) addWorkspace(agent?.workspace);
+  for (const name of names) console.log(name);
+NODE
+    )"
+    if [ -n "$config_names" ]; then
+      names="$({
+        for name in $names; do
+          printf '%s\n' "$name"
+        done
+        printf '%s\n' "$config_names"
+      } | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+    fi
   fi
 
-  local seen=""
   for name in $names; do
-    case " $seen " in *" $name "*) continue ;; esac
-    seen="${seen} ${name}"
-
-    local data_path="$data_dir/$name"
-    local link_path="$config_dir/$name"
-
-    mkdir -p "$data_path"
-    chown -R sandbox:sandbox "$data_path" 2>/dev/null || true
-
-    if [ -L "$link_path" ]; then
+    local ws_path="$config_dir/$name"
+    if [ -L "$ws_path" ]; then
+      echo "[SECURITY] refusing to provision symlinked workspace path: $ws_path" >&2
       continue
     fi
-    if [ -e "$link_path" ]; then
-      cp -a "$link_path/." "$data_path/" 2>/dev/null || true
-      rm -rf "$link_path"
-    fi
-    ln -s "$data_path" "$link_path"
-    echo "[setup] provisioned multi-agent workspace: $name → $data_path" >&2
+    mkdir -p "$ws_path"
+    chown_tree_no_symlink_follow sandbox:sandbox "$ws_path"
+    echo "[setup] provisioned multi-agent workspace: $name" >&2
   done
 }
 provision_agent_workspaces
-
-# Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
-# Dynamic scan so future OpenClaw symlinks are covered automatically.
-validate_openclaw_symlinks
-
-# Lock .openclaw directory after symlink validation: set the immutable flag
-# so symlinks cannot be swapped at runtime even if DAC or Landlock are
-# bypassed. chattr requires cap_linux_immutable which the entrypoint has
-# as root; the sandbox user cannot remove the flag.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/1019
-harden_openclaw_symlinks
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT"
+validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_SLACK_REWRITER_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
@@ -1787,12 +2420,32 @@ nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gat
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 
+# Diagnostic: mirror gateway log to PID 1's stderr so its content surfaces in
+# docker logs. /tmp/gateway.log is otherwise only readable from inside the
+# sandbox via `nemoclaw <sandbox> logs` and is not captured by the e2e test
+# framework on failure. Streaming it to PID 1's stderr lets a workflow-level
+# `docker logs` capture pick it up. Each line is prefixed with [gateway-log:]
+# so it can be filtered out post-hoc when not investigating.
+# Ref: NVIDIA/NemoClaw#2484 (TC-SBX-02 hang investigation)
+{ tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
+GATEWAY_LOG_TAIL_PID=$!
+
+# Persistent mirror: append /tmp/gateway.log content to a file under
+# /sandbox/.openclaw/logs which is volume-mounted by openshell and
+# survives pod restarts. /tmp/gateway.log itself is wiped when the pod
+# restarts (TC-SBX-06 docker-kills the gateway container), so the
+# only durable record of pre-restart events lives here. The diag
+# streamer in the e2e workflow snapshots this file post-test.
+start_persistent_gateway_log_mirror || exit 1
+
 start_auto_pair
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.
 SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
 [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
+[ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
+[ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
 # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
 SANDBOX_WAIT_PID="$GATEWAY_PID"
 trap cleanup_on_signal SIGTERM SIGINT

@@ -9,12 +9,20 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-LOCAL_PAYLOAD="${SCRIPT_DIR}/scripts/install.sh"
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  SCRIPT_DIR=""
+fi
+LOCAL_PAYLOAD="${SCRIPT_DIR:+${SCRIPT_DIR}/scripts/install.sh}"
 BOOTSTRAP_TMPDIR=""
 PAYLOAD_MARKER="NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1"
 
 resolve_release_tag() {
+  if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]]; then
+    printf "%s" "${NEMOCLAW_INSTALL_REF}"
+    return
+  fi
   printf "%s" "${NEMOCLAW_INSTALL_TAG:-latest}"
 }
 
@@ -52,6 +60,15 @@ has_payload_marker() {
   [[ -f "$file" ]] && grep -q "$PAYLOAD_MARKER" "$file"
 }
 
+clone_nemoclaw_ref() {
+  local ref="$1" dest="$2"
+
+  git init --quiet "$dest"
+  git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
+  git -C "$dest" fetch --quiet --depth 1 origin "$ref"
+  git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
+}
+
 exec_installer_from_ref() {
   local ref="$1"
   shift
@@ -62,8 +79,7 @@ exec_installer_from_ref() {
   trap 'rm -rf "${BOOTSTRAP_TMPDIR:-}"' EXIT
   source_root="${tmpdir}/source"
 
-  git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$ref" \
-    https://github.com/NVIDIA/NemoClaw.git "$source_root"
+  clone_nemoclaw_ref "$ref" "$source_root"
 
   payload_script="${source_root}/scripts/install.sh"
   legacy_script="${source_root}/install.sh"
@@ -96,6 +112,7 @@ bootstrap_usage() {
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  Environment:\n"
+  printf "    NEMOCLAW_INSTALL_REF         Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1   Same as --non-interactive\n"
   printf "    NEMOCLAW_FRESH=1             Same as --fresh\n"

@@ -4,7 +4,7 @@
 version: "0.1.0"
 min_openshell_version: "0.0.32"
 max_openshell_version: "0.0.36"
-min_openclaw_version: "2026.4.9"
+min_openclaw_version: "2026.4.24"
 # Mirrors the components.sandbox.image manifest digest below. Lets a
 # downstream consumer (or release tooling) verify the blueprint declares
 # a specific sandbox image without parsing the components tree, and
@@ -63,7 +63,9 @@ components:
         provider_type: "openai"
         provider_name: "vllm-local"
         endpoint: "http://localhost:8000/v1"
-        model: "nvidia/nemotron-3-nano-30b-a3b"
+        # HF repo id (not the NIM catalog name); vLLM must be started with
+        # --trust-remote-code for models that ship custom code.
+        model: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8"
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
         timeout_secs: 180

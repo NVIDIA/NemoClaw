@@ -79,6 +79,10 @@ describe("local inference helpers", () => {
       "--add-host",
       "host.openshell.internal:host-gateway",
       CONTAINER_REACHABILITY_IMAGE,
+      "--connect-timeout",
+      "5",
+      "--max-time",
+      "10",
       "-sf",
       "http://host.openshell.internal:8000/v1/models",
     ]);
@@ -92,6 +96,10 @@ describe("local inference helpers", () => {
       "--add-host",
       "host.openshell.internal:host-gateway",
       CONTAINER_REACHABILITY_IMAGE,
+      "--connect-timeout",
+      "5",
+      "--max-time",
+      "10",
       "-sf",
       `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
     ]);
@@ -149,14 +157,96 @@ describe("local inference helpers", () => {
     let callCount = 0;
     const mockCapture = () => {
       callCount += 1;
-      return callCount === 1 ? '{"models":[]}' : "";
+      // Call 1: host check succeeds
+      if (callCount === 1) return '{"models":[]}';
+      // Calls 2-4: container check fails (3 retries)
+      // Calls 5-6: diagnostic commands fail
+      return "";
     };
-    const result = validateLocalProvider("ollama-local", mockCapture);
+    const noopSleep = () => {};
+    const result = validateLocalProvider("ollama-local", mockCapture, noopSleep);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(
       new RegExp(`host\\.openshell\\.internal:${OLLAMA_CONTAINER_PORT}`),
     );
-    expect(result.message).toMatch(/auth proxy/);
+    expect(result.message).toMatch(/Docker container reachability check failed/);
+    expect(result.message).toMatch(/sandbox uses a different network path/);
+    expect(result.message).not.toMatch(/Ensure the Ollama auth proxy is running/);
+    expect(result.diagnostic).toMatch(/Docker command failed/);
+  });
+
+  it("succeeds after container check retry", () => {
+    let callCount = 0;
+    const mockCapture = () => {
+      callCount += 1;
+      // Call 1: host check succeeds
+      if (callCount === 1) return '{"models":[]}';
+      // Call 2: container attempt 1 fails
+      if (callCount === 2) return "";
+      // Call 3: container attempt 2 succeeds
+      return '{"models":[]}';
+    };
+    const sleepCalls: number[] = [];
+    const mockSleep = (s: number) => { sleepCalls.push(s); };
+    const result = validateLocalProvider("ollama-local", mockCapture, mockSleep);
+    expect(result).toEqual({ ok: true });
+    expect(sleepCalls).toEqual([2]);
+  });
+
+  it("includes HTTP diagnostic when retries exhausted and diagnostic commands succeed", () => {
+    let callCount = 0;
+    const mockCapture = () => {
+      callCount += 1;
+      // Call 1: host check succeeds
+      if (callCount === 1) return '{"models":[]}';
+      // Calls 2-4: container check fails (3 retries)
+      if (callCount <= 4) return "";
+      // Call 5: diagnostic HTTP status
+      if (callCount === 5) return "502";
+      // Call 6: diagnostic /etc/hosts
+      return "172.17.0.1\thost.openshell.internal";
+    };
+    const sleepCalls: number[] = [];
+    const mockSleep = (s: number) => { sleepCalls.push(s); };
+    const result = validateLocalProvider("ollama-local", mockCapture, mockSleep);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostic).toMatch(/HTTP 502/);
+    expect(result.diagnostic).toMatch(/host-gateway resolved to/);
+    expect(sleepCalls).toEqual([2, 2]);
+  });
+
+  it("includes docker-failed diagnostic when diagnostic commands also fail", () => {
+    let callCount = 0;
+    const mockCapture = () => {
+      callCount += 1;
+      if (callCount === 1) return '{"models":[]}';
+      return "";
+    };
+    const noopSleep = () => {};
+    const result = validateLocalProvider("ollama-local", mockCapture, noopSleep);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostic).toMatch(/Docker command failed/);
+  });
+
+  it("calls sleepFn between container check retries", () => {
+    let callCount = 0;
+    const mockCapture = () => {
+      callCount += 1;
+      if (callCount === 1) return '{"models":[]}';
+      return "";
+    };
+    const sleepCalls: number[] = [];
+    const mockSleep = (s: number) => { sleepCalls.push(s); };
+    validateLocalProvider("ollama-local", mockCapture, mockSleep);
+    expect(sleepCalls).toEqual([2, 2]);
+  });
+
+  it("does not retry when host check fails", () => {
+    const sleepCalls: number[] = [];
+    const mockSleep = (s: number) => { sleepCalls.push(s); };
+    const result = validateLocalProvider("ollama-local", () => "", mockSleep);
+    expect(result.ok).toBe(false);
+    expect(sleepCalls).toEqual([]);
   });
 
   it("returns a clear error when vllm-local is unavailable", () => {
@@ -211,11 +301,18 @@ describe("local inference helpers", () => {
     let callCount = 0;
     const mockCapture = () => {
       callCount += 1;
-      return callCount === 1 ? '{"data":[]}' : "";
+      // Call 1: host check succeeds
+      if (callCount === 1) return '{"data":[]}';
+      // Calls 2+: container check + diagnostics all fail
+      return "";
     };
-    const result = validateLocalProvider("vllm-local", mockCapture);
+    const noopSleep = () => {};
+    const result = validateLocalProvider("vllm-local", mockCapture, noopSleep);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/host\.openshell\.internal:8000/);
+    expect(result.message).toMatch(/Docker container reachability check failed/);
+    expect(result.message).toMatch(/sandbox uses a different network path/);
+    expect(result.message).not.toMatch(/Ensure the server is reachable from containers/);
   });
 
   it("treats unknown local providers as already valid", () => {

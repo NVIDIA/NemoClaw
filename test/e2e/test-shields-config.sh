@@ -2,20 +2,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Shields & Config E2E — validates the full shields down/up lifecycle and
-# config get/set/rotate-token against a live sandbox:
+# Shields & Config E2E — validates the full shields up/down lifecycle and
+# config get against a live sandbox:
 #
 #   Phase 1: Install NemoClaw
-#   Phase 2: Verify config is immutable (shields UP)
-#   Phase 3: shields down — verify config becomes writable
+#   Phase 2: Verify config is writable (mutable default)
+#   Phase 3: shields up — verify config becomes immutable
 #   Phase 4: config get — read-only inspection
-#   Phase 5: config set — host-initiated config mutation
-#   Phase 6: shields status — shows DOWN with remaining timeout
-#   Phase 7: shields up — verify config re-locked
-#   Phase 8: Verify config changes persisted through shields cycle
-#   Phase 9: shields down + rotate-token + shields up
-#   Phase 10: Audit trail completeness
-#   Phase 11: Auto-restore timer (shields down with short timeout)
+#   Phase 5: shields status — shows UP
+#   Phase 6: shields down — verify config returns to writable
+#   Phase 7: shields status — shows DOWN
+#   Phase 8: Audit trail completeness
+#   Phase 9: Auto-restore timer (shields up with short timeout)
+#   Phase 10: Double shields-up rejected
 #
 # Prerequisites:
 #   - Docker running
@@ -153,9 +152,87 @@ command -v openshell >/dev/null 2>&1 || {
 pass "NemoClaw installed (sandbox: $SANDBOX_NAME)"
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 2: Config is immutable (shields UP)
+# Phase 2: Config is writable (mutable default)
 # ══════════════════════════════════════════════════════════════════
-section "Phase 2: Config is immutable with shields UP"
+section "Phase 2: Config is writable (mutable default)"
+
+# Verify file permissions — should start as 600 sandbox:sandbox
+PERMS=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  stat -c '%a %U:%G' "${CONFIG_PATH}" 2>/dev/null || true)
+info "Config perms (default): ${PERMS}"
+
+if [ "$(echo "$PERMS" | awk '{print $1}')" = "600" ]; then
+  pass "Config file mode is 600 (mutable default)"
+else
+  fail "Config file should start as mode 600: ${PERMS}"
+fi
+
+if [ "$(echo "$PERMS" | awk '{print $2}')" = "sandbox:sandbox" ]; then
+  pass "Config file owned by sandbox:sandbox (mutable default)"
+else
+  fail "Config file should be owned by sandbox:sandbox: ${PERMS}"
+fi
+
+DIR_PERMS=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  stat -c '%a %U:%G' "$(dirname "${CONFIG_PATH}")" 2>/dev/null || true)
+info "Config dir perms (default): ${DIR_PERMS}"
+
+if [ "$(echo "$DIR_PERMS" | awk '{print $1}')" = "700" ]; then
+  pass "Config directory mode is 700 (mutable default)"
+else
+  fail "Config directory should be mode 700: ${DIR_PERMS}"
+fi
+
+STATUS_DEFAULT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
+echo "$STATUS_DEFAULT"
+if echo "$STATUS_DEFAULT" | grep -q "Shields: NOT CONFIGURED"; then
+  pass "Fresh sandbox status reports default mutable state"
+else
+  fail "Fresh sandbox status should report NOT CONFIGURED mutable default: ${STATUS_DEFAULT}"
+fi
+
+# OpenShell rejects command arguments containing newlines, so keep the probe
+# as a single shell argument.
+# shellcheck disable=SC2016  # expanded inside the sandbox by sh -c
+LAYOUT_PROBE='bad=0; if [ -e /sandbox/.openclaw-data ] || [ -L /sandbox/.openclaw-data ]; then echo "legacy data dir exists: /sandbox/.openclaw-data"; bad=1; fi; for entry in /sandbox/.openclaw/*; do [ -L "$entry" ] || continue; target="$(readlink -f "$entry" 2>/dev/null || readlink "$entry" 2>/dev/null || true)"; case "$target" in /sandbox/.openclaw-data/*) echo "legacy symlink remains: $entry -> $target"; bad=1 ;; esac; done; exit "$bad"'
+LAYOUT_CHECK=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- sh -c "$LAYOUT_PROBE" 2>&1)
+if [ -z "$LAYOUT_CHECK" ]; then
+  pass "Unified .openclaw layout has no .openclaw-data mirror or symlink bridge"
+else
+  fail "Legacy .openclaw-data layout should not exist: ${LAYOUT_CHECK}"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 3: shields up — config becomes immutable
+# ══════════════════════════════════════════════════════════════════
+section "Phase 3: shields up"
+
+SHIELDS_UP_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields up 2>&1)
+echo "$SHIELDS_UP_OUTPUT"
+
+if echo "$SHIELDS_UP_OUTPUT" | grep -q "Lockdown active"; then
+  pass "shields up succeeded"
+else
+  fail "shields up did not report success: ${SHIELDS_UP_OUTPUT}"
+fi
+
+# Verify config is now immutable
+PERMS_UP=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  stat -c '%a %U:%G' "${CONFIG_PATH}" 2>/dev/null || true)
+info "Config perms (shields UP): ${PERMS_UP}"
+
+if echo "$PERMS_UP" | grep -qE "^4[0-4][0-4]"; then
+  pass "Config file has restrictive permissions after shields up (${PERMS_UP})"
+else
+  fail "Config file should be locked after shields up: ${PERMS_UP}"
+fi
+
+OWNER_UP=$(echo "$PERMS_UP" | awk '{print $2}')
+if echo "$OWNER_UP" | grep -q "root:root"; then
+  pass "Config file ownership changed to root:root"
+else
+  fail "Config file ownership not changed to root:root: ${OWNER_UP}"
+fi
 
 # Verify the sandbox user cannot write to the config file
 WRITE_RESULT=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
@@ -169,69 +246,15 @@ else
   fail "Config file should be immutable but sandbox could write: ${WRITE_RESULT}"
 fi
 
-# Verify file permissions
-PERMS=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
-  stat -c '%a %U:%G' "${CONFIG_PATH}" 2>/dev/null || true)
-info "Config perms (shields UP): ${PERMS}"
+WORKSPACE_WRITE_RESULT=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  sh -c "touch /sandbox/.openclaw/workspace/.shields-up-probe 2>&1 && echo WRITABLE || echo BLOCKED" 2>&1)
 
-if echo "$PERMS" | grep -qE "^4[0-4][0-4] root:root"; then
-  pass "Config file has restrictive permissions (${PERMS})"
+if echo "$WORKSPACE_WRITE_RESULT" | grep -q "BLOCKED"; then
+  pass "Workspace state is read-only for sandbox user (shields UP)"
+elif echo "$WORKSPACE_WRITE_RESULT" | grep -q "Permission denied\|Read-only\|Operation not permitted"; then
+  pass "Workspace write rejected by OS (shields UP)"
 else
-  info "Unexpected permissions: ${PERMS} (may vary by OS — non-fatal)"
-fi
-
-# ══════════════════════════════════════════════════════════════════
-# Phase 3: shields down — config becomes writable
-# ══════════════════════════════════════════════════════════════════
-section "Phase 3: shields down"
-
-SHIELDS_DOWN_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields down \
-  --timeout 5m --reason "E2E config mutation test" 2>&1)
-echo "$SHIELDS_DOWN_OUTPUT"
-
-# Diagnostic: dump state file immediately after shields down
-info "State file after shields down:"
-cat "$HOME/.nemoclaw/state/nemoclaw.json" 2>&1 | while IFS= read -r line; do info "  $line"; done
-info "Docker containers:"
-docker ps --format '{{.Names}}' 2>&1 | while IFS= read -r line; do info "  $line"; done
-
-if echo "$SHIELDS_DOWN_OUTPUT" | grep -q "Shields DOWN"; then
-  pass "shields down succeeded"
-else
-  fail "shields down did not report success: ${SHIELDS_DOWN_OUTPUT}"
-fi
-
-# Check permissions changed — should be sandbox:sandbox 600/700 (doctor-aligned)
-PERMS_DOWN=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
-  stat -c '%a %U:%G' "${CONFIG_PATH}" 2>/dev/null || true)
-info "Config perms (shields DOWN): ${PERMS_DOWN}"
-
-if [ "$(echo "$PERMS_DOWN" | awk '{print $1}')" = "600" ]; then
-  pass "Config file mode is 600 (doctor-aligned, ${PERMS_DOWN})"
-else
-  fail "Config file should be mode 600 after shields down: ${PERMS_DOWN}"
-fi
-
-if [ "$(echo "$PERMS_DOWN" | awk '{print $2}')" = "sandbox:sandbox" ]; then
-  pass "Config file owned by sandbox:sandbox after shields down"
-else
-  fail "Config file should be owned by sandbox:sandbox: ${PERMS_DOWN}"
-fi
-
-DIR_PERMS_DOWN=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
-  stat -c '%a %U:%G' "$(dirname "${CONFIG_PATH}")" 2>/dev/null || true)
-info "Config dir perms (shields DOWN): ${DIR_PERMS_DOWN}"
-
-if [ "$(echo "$DIR_PERMS_DOWN" | awk '{print $1}')" = "700" ]; then
-  pass "Config directory mode is 700 (doctor-aligned)"
-else
-  fail "Config directory should be mode 700 after shields down: ${DIR_PERMS_DOWN}"
-fi
-
-if [ "$(echo "$DIR_PERMS_DOWN" | awk '{print $2}')" = "sandbox:sandbox" ]; then
-  pass "Config directory owned by sandbox:sandbox after shields down"
-else
-  fail "Config directory should be owned by sandbox:sandbox: ${DIR_PERMS_DOWN}"
+  fail "Workspace should be locked after shields up: ${WORKSPACE_WRITE_RESULT}"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -270,179 +293,133 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 5: config set — host-initiated config mutation
+# Phase 5: shields status — shows UP
 # ══════════════════════════════════════════════════════════════════
-section "Phase 5: config set"
-
-# Set a test key
-CONFIG_SET_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" config set \
-  --key "agents.defaults.model.primary" --value '"shields-config-e2e"' 2>&1)
-echo "$CONFIG_SET_OUTPUT"
-
-if echo "$CONFIG_SET_OUTPUT" | grep -q "Config updated\|config updated"; then
-  pass "config set succeeded"
-else
-  fail "config set did not report success: ${CONFIG_SET_OUTPUT}"
-fi
-
-# Verify the change is visible via config get
-VERIFY_SET=$(nemoclaw "${SANDBOX_NAME}" config get --key agents.defaults.model.primary 2>&1)
-if echo "$VERIFY_SET" | grep -q "shields-config-e2e"; then
-  pass "config set change visible in config get"
-else
-  fail "config set change not visible: ${VERIFY_SET}"
-fi
-
-# Verify gateway section cannot be modified
-GATEWAY_SET=$(nemoclaw "${SANDBOX_NAME}" config set \
-  --key "gateway.token" --value '"hacked"' 2>&1 || true)
-if echo "$GATEWAY_SET" | grep -q "Cannot modify the gateway"; then
-  pass "config set blocks gateway section writes"
-else
-  fail "config set should block gateway writes: ${GATEWAY_SET}"
-fi
-
-# Verify SSRF validation on URLs
-SSRF_SET=$(nemoclaw "${SANDBOX_NAME}" config set \
-  --key "agents.defaults.model.primary" --value '"http://127.0.0.1:8080/steal"' 2>&1 || true)
-if echo "$SSRF_SET" | grep -qi "private\|validation failed"; then
-  pass "config set blocks private IP URLs (SSRF)"
-else
-  fail "config set should block SSRF URLs: ${SSRF_SET}"
-fi
-
-# ══════════════════════════════════════════════════════════════════
-# Phase 6: shields status — shows DOWN
-# ══════════════════════════════════════════════════════════════════
-section "Phase 6: shields status"
+section "Phase 5: shields status"
 
 STATUS_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
 echo "$STATUS_OUTPUT"
 
-if echo "$STATUS_OUTPUT" | grep -q "Shields: DOWN"; then
+if echo "$STATUS_OUTPUT" | grep -q "Shields: UP"; then
+  pass "shields status reports UP"
+else
+  fail "shields status should show UP: ${STATUS_OUTPUT}"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 6: shields down — config returns to writable
+# ══════════════════════════════════════════════════════════════════
+section "Phase 6: shields down"
+
+SHIELDS_DOWN_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields down \
+  --timeout 5m --reason "E2E shields lifecycle test" 2>&1)
+echo "$SHIELDS_DOWN_OUTPUT"
+
+if echo "$SHIELDS_DOWN_OUTPUT" | grep -q "Config unlocked"; then
+  pass "shields down succeeded"
+else
+  fail "shields down did not report success: ${SHIELDS_DOWN_OUTPUT}"
+fi
+
+# Check permissions changed — should be sandbox:sandbox 600/700 (doctor-aligned)
+PERMS_DOWN=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  stat -c '%a %U:%G' "${CONFIG_PATH}" 2>/dev/null || true)
+info "Config perms (shields DOWN): ${PERMS_DOWN}"
+
+if [ "$(echo "$PERMS_DOWN" | awk '{print $1}')" = "600" ]; then
+  pass "Config file mode is 600 (restored to mutable default)"
+else
+  fail "Config file should be mode 600 after shields down: ${PERMS_DOWN}"
+fi
+
+if [ "$(echo "$PERMS_DOWN" | awk '{print $2}')" = "sandbox:sandbox" ]; then
+  pass "Config file owned by sandbox:sandbox after shields down"
+else
+  fail "Config file should be owned by sandbox:sandbox: ${PERMS_DOWN}"
+fi
+
+DIR_PERMS_DOWN=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  stat -c '%a %U:%G' "$(dirname "${CONFIG_PATH}")" 2>/dev/null || true)
+info "Config dir perms (shields DOWN): ${DIR_PERMS_DOWN}"
+
+if [ "$(echo "$DIR_PERMS_DOWN" | awk '{print $1}')" = "700" ]; then
+  pass "Config directory mode is 700 (restored to mutable default)"
+else
+  fail "Config directory should be mode 700 after shields down: ${DIR_PERMS_DOWN}"
+fi
+
+if [ "$(echo "$DIR_PERMS_DOWN" | awk '{print $2}')" = "sandbox:sandbox" ]; then
+  pass "Config directory owned by sandbox:sandbox after shields down"
+else
+  fail "Config directory should be owned by sandbox:sandbox: ${DIR_PERMS_DOWN}"
+fi
+
+WORKSPACE_DOWN_RESULT=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  sh -c "touch /sandbox/.openclaw/workspace/.shields-down-probe 2>&1 && rm -f /sandbox/.openclaw/workspace/.shields-down-probe && echo WRITABLE || echo BLOCKED" 2>&1)
+if echo "$WORKSPACE_DOWN_RESULT" | grep -q "WRITABLE"; then
+  pass "Workspace state is writable again after shields down"
+else
+  fail "Workspace should be writable after shields down: ${WORKSPACE_DOWN_RESULT}"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 7: shields status — shows DOWN
+# ══════════════════════════════════════════════════════════════════
+section "Phase 7: shields status"
+
+STATUS_DOWN=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
+echo "$STATUS_DOWN"
+
+if echo "$STATUS_DOWN" | grep -q "Shields: DOWN"; then
   pass "shields status reports DOWN"
 else
-  fail "shields status should show DOWN: ${STATUS_OUTPUT}"
+  fail "shields status should show DOWN: ${STATUS_DOWN}"
 fi
 
-if echo "$STATUS_OUTPUT" | grep -q "E2E config mutation test"; then
+if echo "$STATUS_DOWN" | grep -q "E2E shields lifecycle test"; then
   pass "shields status shows reason"
 else
-  fail "shields status should show reason: ${STATUS_OUTPUT}"
+  fail "shields status should show reason: ${STATUS_DOWN}"
 fi
 
-if echo "$STATUS_OUTPUT" | grep -q "remaining"; then
+if echo "$STATUS_DOWN" | grep -q "remaining"; then
   pass "shields status shows timeout remaining"
 else
   info "shields status timeout display not found — non-fatal"
 fi
 
-# ══════════════════════════════════════════════════════════════════
-# Phase 7: shields up — config re-locked
-# ══════════════════════════════════════════════════════════════════
-section "Phase 7: shields up"
-
-SHIELDS_UP_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields up 2>&1)
-echo "$SHIELDS_UP_OUTPUT"
-
-if echo "$SHIELDS_UP_OUTPUT" | grep -q "Shields UP"; then
-  pass "shields up succeeded"
+# Restore shields for the next phase
+if RESTORE_UP_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields up 2>&1); then
+  echo "$RESTORE_UP_OUTPUT"
+  pass "shields up restored for audit trail test"
 else
-  fail "shields up did not report success: ${SHIELDS_UP_OUTPUT}"
-fi
-
-# Verify config is immutable again
-PERMS_UP=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
-  stat -c '%a' "${CONFIG_PATH}" 2>/dev/null || true)
-info "Config perms (shields UP again): ${PERMS_UP}"
-
-if echo "$PERMS_UP" | grep -qE "^4[0-4][0-4]"; then
-  pass "Config file re-locked after shields up (${PERMS_UP})"
-else
-  fail "Config file not re-locked after shields up: ${PERMS_UP}"
-fi
-
-OWNER_UP=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
-  stat -c '%U:%G' "${CONFIG_PATH}" 2>/dev/null || true)
-if echo "$OWNER_UP" | grep -q "root:root"; then
-  pass "Config file ownership restored to root:root"
-else
-  fail "Config file ownership not restored: ${OWNER_UP}"
-fi
-
-# Verify shields status now shows UP
-STATUS_UP=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
-if echo "$STATUS_UP" | grep -q "Shields: UP"; then
-  pass "shields status reports UP after shields up"
-else
-  fail "shields status should show UP: ${STATUS_UP}"
+  echo "$RESTORE_UP_OUTPUT"
+  fail "Failed to restore shields up before audit phase: ${RESTORE_UP_OUTPUT}"
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 8: Config changes persisted through shields cycle
+# Phase 8: Audit trail
 # ══════════════════════════════════════════════════════════════════
-section "Phase 8: Config changes persist"
-
-PERSIST_CHECK=$(nemoclaw "${SANDBOX_NAME}" config get --key agents.defaults.model.primary 2>&1)
-if echo "$PERSIST_CHECK" | grep -q "shields-config-e2e"; then
-  pass "Config changes survived shields up (persisted)"
-else
-  fail "Config changes lost after shields up: ${PERSIST_CHECK}"
-fi
-
-# ══════════════════════════════════════════════════════════════════
-# Phase 9: rotate-token (shields down → rotate → shields up)
-# ══════════════════════════════════════════════════════════════════
-section "Phase 9: rotate-token"
-
-nemoclaw "${SANDBOX_NAME}" shields down --timeout 5m --reason "Token rotation E2E" 2>&1
-pass "shields down for token rotation"
-
-# Rotate using --from-env
-export E2E_ROTATED_KEY="${NVIDIA_API_KEY}"
-ROTATE_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" config rotate-token \
-  --from-env E2E_ROTATED_KEY 2>&1)
-echo "$ROTATE_OUTPUT"
-
-if echo "$ROTATE_OUTPUT" | grep -q "Token rotated"; then
-  pass "rotate-token succeeded"
-else
-  fail "rotate-token did not report success: ${ROTATE_OUTPUT}"
-fi
-
-# Verify token value is NOT in the output (redacted)
-if echo "$ROTATE_OUTPUT" | grep -q "${NVIDIA_API_KEY}"; then
-  fail "rotate-token leaked the actual token value"
-else
-  pass "rotate-token output does not leak token"
-fi
-
-nemoclaw "${SANDBOX_NAME}" shields up 2>&1
-pass "shields up after token rotation"
-
-# ══════════════════════════════════════════════════════════════════
-# Phase 10: Audit trail
-# ══════════════════════════════════════════════════════════════════
-section "Phase 10: Audit trail"
+section "Phase 8: Audit trail"
 
 if [ -f "$AUDIT_FILE" ]; then
   AUDIT_LINES=$(wc -l <"$AUDIT_FILE")
   info "Audit entries: ${AUDIT_LINES}"
 
-  # Should have at least: shields_down, shields_up, shields_down (rotate), shields_up (rotate)
+  # Should have at least: shields_up, shields_down, shields_up
   DOWN_COUNT=$(grep -c '"shields_down"' "$AUDIT_FILE" || true)
   UP_COUNT=$(grep -c '"shields_up"' "$AUDIT_FILE" || true)
-
-  if [ "$DOWN_COUNT" -ge 2 ]; then
-    pass "Audit has ≥2 shields_down entries (got ${DOWN_COUNT})"
-  else
-    fail "Expected ≥2 shields_down audit entries, got ${DOWN_COUNT}"
-  fi
 
   if [ "$UP_COUNT" -ge 2 ]; then
     pass "Audit has ≥2 shields_up entries (got ${UP_COUNT})"
   else
     fail "Expected ≥2 shields_up audit entries, got ${UP_COUNT}"
+  fi
+
+  if [ "$DOWN_COUNT" -ge 1 ]; then
+    pass "Audit has ≥1 shields_down entries (got ${DOWN_COUNT})"
+  else
+    fail "Expected ≥1 shields_down audit entries, got ${DOWN_COUNT}"
   fi
 
   # Verify no credentials in audit
@@ -470,11 +447,12 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 11: Auto-restore timer
+# Phase 9: Auto-restore timer
 # ══════════════════════════════════════════════════════════════════
-section "Phase 11: Auto-restore timer"
+section "Phase 9: Auto-restore timer"
 
-info "Lowering shields with 10s timeout..."
+# shields down with a 10s timeout starts an auto-restore timer that
+# re-locks config (shields up) after the timeout expires.
 nemoclaw "${SANDBOX_NAME}" shields down --timeout 10s --reason "Auto-restore timer E2E" 2>&1
 
 # Verify shields are down
@@ -485,53 +463,63 @@ else
   fail "shields should be DOWN: ${STATUS_TIMER}"
 fi
 
-info "Waiting 25s for auto-restore..."
-sleep 25
+info "Polling for auto-restore to shields UP (up to 60s)..."
+TIMER_RESTORED=false
+for _poll in $(seq 1 12); do
+  sleep 5
+  STATUS_AFTER_TIMER=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
+  if echo "$STATUS_AFTER_TIMER" | grep -q "Shields: UP"; then
+    TIMER_RESTORED=true
+    break
+  fi
+done
 
-# Check if the timer process restored shields
-# The timer runs as a detached process — it restores the policy and
-# updates the state file. We verify by checking shields status.
-STATUS_AFTER_TIMER=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
-if echo "$STATUS_AFTER_TIMER" | grep -q "Shields: UP"; then
-  pass "Auto-restore timer restored shields after timeout"
+if [ "$TIMER_RESTORED" = "true" ]; then
+  pass "Auto-restore timer re-locked config after timeout"
 else
   info "Auto-restore may not have fired (timer runs as detached process)"
   info "Status: ${STATUS_AFTER_TIMER}"
-  # Clean up manually
-  nemoclaw "${SANDBOX_NAME}" shields up 2>/dev/null || true
-  fail "Auto-restore timer did not restore shields within 25s"
+  fail "Auto-restore timer did not re-lock within 60s"
 fi
 
-# Verify config is re-locked after auto-restore
+# Verify config is locked after auto-restore
 PERMS_TIMER=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
   stat -c '%a' "${CONFIG_PATH}" 2>/dev/null || true)
 if echo "$PERMS_TIMER" | grep -qE "^4[0-4][0-4]"; then
-  pass "Config re-locked after auto-restore (${PERMS_TIMER})"
+  pass "Config locked after auto-restore (${PERMS_TIMER})"
 else
-  info "Config permissions after auto-restore: ${PERMS_TIMER} — timer may not re-lock perms"
+  fail "Config should be locked after auto-restore, got: ${PERMS_TIMER}"
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 12: Double shields-down rejected
+# Phase 10: Double shields-up rejected
 # ══════════════════════════════════════════════════════════════════
-section "Phase 12: Double shields-down rejected"
+section "Phase 10: Double shields-up rejected"
 
-# First shields down may fail if openshell policy set --wait times out
-# on a slow CI runner. Retry once before testing the double-down guard.
-if ! nemoclaw "${SANDBOX_NAME}" shields down --timeout 5m --reason "Double-down test" 2>&1; then
-  info "First shields down failed (policy set timeout?) — retrying..."
-  nemoclaw "${SANDBOX_NAME}" shields down --timeout 5m --reason "Double-down test" 2>&1
+nemoclaw "${SANDBOX_NAME}" shields up 2>&1
+DOUBLE_UP=$(nemoclaw "${SANDBOX_NAME}" shields up 2>&1 || true)
+
+if echo "$DOUBLE_UP" | grep -q "already active"; then
+  pass "Double shields-up rejected"
+else
+  fail "Double shields-up should be rejected: ${DOUBLE_UP}"
 fi
+
+nemoclaw "${SANDBOX_NAME}" shields down --timeout 5m --reason "Cleanup" 2>&1
+pass "Cleanup: shields down"
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 11: Double shields-down rejected
+# ══════════════════════════════════════════════════════════════════
+section "Phase 11: Double shields-down rejected"
+
 DOUBLE_DOWN=$(nemoclaw "${SANDBOX_NAME}" shields down --timeout 5m --reason "Should fail" 2>&1 || true)
 
-if echo "$DOUBLE_DOWN" | grep -q "already DOWN"; then
+if echo "$DOUBLE_DOWN" | grep -q "already unlocked"; then
   pass "Double shields-down rejected"
 else
   fail "Double shields-down should be rejected: ${DOUBLE_DOWN}"
 fi
-
-nemoclaw "${SANDBOX_NAME}" shields up 2>&1
-pass "Cleanup: shields up"
 
 # ══════════════════════════════════════════════════════════════════
 # Cleanup

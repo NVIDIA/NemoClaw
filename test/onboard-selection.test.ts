@@ -303,7 +303,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"moonshotai/kimi-k2.5"},{"id":"custom/provider-model"}]}'
+  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"custom/provider-model"}]}'
 fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
@@ -315,7 +315,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "custom/provider-model"];
+const answers = ["1", "5", "custom/provider-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -399,7 +399,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"moonshotai/kimi-k2.5"},{"id":"z-ai/glm-5.1"}]}'
+  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"z-ai/glm-5.1"}]}'
 fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
@@ -411,7 +411,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "bad/model", "z-ai/glm-5.1"];
+const answers = ["1", "5", "bad/model", "z-ai/glm-5.1"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -3381,6 +3381,85 @@ const { setupNim } = require(${onboardPath});
     assert.ok(
       !payload.runCommands.some((cmd: string) => cmd.includes("brew install")),
       "Should NOT use brew on Linux",
+    );
+  });
+
+  it("honours NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for compatible-endpoint during inference setup (#2403)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-compatible-endpoint-timeout-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const stateFile = path.join(tmpDir, "state.json");
+    const scriptPath = path.join(tmpDir, "compatible-timeout-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(stateFile, JSON.stringify({ inferenceSetArgs: null }));
+
+    // Fake openshell: records inference set args, stubs provider/gateway ops
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!${process.execPath}
+const fs = require("fs");
+const args = process.argv.slice(2);
+const stateFile = ${JSON.stringify(stateFile)};
+if (args[0] === "inference" && args[1] === "set") {
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  state.inferenceSetArgs = args.slice(2);
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  process.exit(0);
+}
+// provider get: exit 1 so upsertProvider uses "create"
+if (args[0] === "provider" && args[1] === "get") { process.exit(1); }
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+// Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
+// Handles verifyInferenceRoute's "openshell inference get" call.
+runner.runCapture = (cmd) => {
+  const args = Array.isArray(cmd) ? cmd : [];
+  if (args[1] === "inference" && args[2] === "get") {
+    return "Gateway inference:\n  Provider: compatible-endpoint\n  Model: qwen3.6:35b\n";
+  }
+  return "";
+};
+process.env.COMPATIBLE_API_KEY = "test-key";
+const { setupInference } = require(${onboardPath});
+(async () => {
+  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://lan-server:11434/v1", "COMPATIBLE_API_KEY");
+  process.exit(0);
+})().catch((err) => { console.error(err); process.exit(1); });
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "600",
+        COMPATIBLE_API_KEY: "test-key",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+    assert.ok(state.inferenceSetArgs !== null, "openshell inference set was not called");
+    assert.ok(
+      state.inferenceSetArgs.includes("--timeout"),
+      `Expected --timeout in inference set args, got: ${JSON.stringify(state.inferenceSetArgs)}`,
+    );
+    assert.ok(
+      state.inferenceSetArgs.includes("600"),
+      `Expected 600 in inference set args, got: ${JSON.stringify(state.inferenceSetArgs)}`,
     );
   });
 });

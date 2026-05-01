@@ -135,7 +135,7 @@ The sandbox starts with a default policy that controls network egress, filesyste
 | Layer | What it protects | When it applies |
 |---|---|---|
 | Network | Blocks unauthorized outbound connections. | Hot-reloadable at runtime. |
-| Filesystem | Prevents reads and writes outside `/sandbox` and `/tmp`. | Locked at sandbox creation. |
+| Filesystem | Restricts system paths to read-only; `/sandbox` and `/tmp` are writable. | Locked at sandbox creation. |
 | Process | Blocks privilege escalation and dangerous syscalls. | Locked at sandbox creation. |
 | Inference | Reroutes model API calls to controlled backends. | Hot-reloadable at runtime. |
 

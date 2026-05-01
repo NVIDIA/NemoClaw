@@ -71,7 +71,7 @@ unset _script_dir _candidate
 E2E_DIR="$(cd "$(dirname "$0")" && pwd)"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-skill-agent}"
 SKILL_ID="skill-smoke-fixture"
-VERIFY_TOKEN="SKILL_SMOKE_VERIFY_K9X2"
+VERIFY_PHRASE="SKILL_SMOKE_VERIFY_K9X2"
 MAX_ATTEMPTS="${E2E_SKILL_AGENT_MAX_ATTEMPTS:-3}"
 RETRY_SLEEP="${E2E_SKILL_AGENT_RETRY_SLEEP_SEC:-15}"
 [[ "$MAX_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || MAX_ATTEMPTS=3
@@ -167,6 +167,7 @@ section "Phase 3: Agent verification (${MAX_ATTEMPTS} attempts, ${RETRY_SLEEP}s 
 attempt=1
 agent_ok=0
 last_fail=""
+last_agent_out=""
 
 while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
   info "Attempt ${attempt}/${MAX_ATTEMPTS}: running openclaw agent turn..."
@@ -176,14 +177,15 @@ while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
     NVIDIA_API_KEY="$NVIDIA_API_KEY" \
       SANDBOX_NAME="$SANDBOX_NAME" \
       SKILL_ID="$SKILL_ID" \
-      VERIFY_TOKEN="$VERIFY_TOKEN" \
+      VERIFY_TOKEN="$VERIFY_PHRASE" \
       bash "$E2E_DIR/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh" 2>&1
   )
   agent_rc=$?
   set -uo pipefail
+  last_agent_out="$agent_out"
 
   if [ "$agent_rc" -eq 0 ]; then
-    pass "Agent returned ${VERIFY_TOKEN} (attempt ${attempt}/${MAX_ATTEMPTS})"
+    pass "Agent returned ${VERIFY_PHRASE} (attempt ${attempt}/${MAX_ATTEMPTS})"
     agent_ok=1
     break
   fi
@@ -196,16 +198,16 @@ while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
   agent_section=$(printf '%s' "$agent_out" | sed -n '/--- agent stdout\/stderr/,/--- end ---/p')
   if [ -n "$agent_section" ]; then
     collapsed=$(printf '%s' "$agent_section" | tr -d '\n\r' | tr -d '`"'\''' | tr '[:upper:]' '[:lower:]')
-    token_lower=$(printf '%s' "$VERIFY_TOKEN" | tr '[:upper:]' '[:lower:]')
+    token_lower=$(printf '%s' "$VERIFY_PHRASE" | tr '[:upper:]' '[:lower:]')
     if printf '%s' "$collapsed" | grep -Fq "$token_lower"; then
       info "Token found in agent output section (fuzzy match — script exited ${agent_rc} but token present in delimited output)"
-      pass "Agent returned ${VERIFY_TOKEN} via fuzzy match (attempt ${attempt}/${MAX_ATTEMPTS})"
+      pass "Agent returned ${VERIFY_PHRASE} via fuzzy match (attempt ${attempt}/${MAX_ATTEMPTS})"
       agent_ok=1
       break
     fi
   fi
 
-  last_fail="Agent verification failed (exit ${agent_rc}): ${agent_out:0:400}"
+  last_fail="Agent verification failed (exit ${agent_rc})"
 
   if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then break; fi
   info "Attempt ${attempt}/${MAX_ATTEMPTS} failed — sleeping ${RETRY_SLEEP}s before retry..."
@@ -214,6 +216,9 @@ while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
 done
 
 if [ "$agent_ok" -ne 1 ]; then
+  info "Last agent verification output (tail):"
+  printf '%s\n' "$last_agent_out" | tail -c 12000
+  printf '\n'
   fail "$last_fail"
   exit 1
 fi

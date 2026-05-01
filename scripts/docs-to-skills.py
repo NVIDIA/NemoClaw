@@ -19,9 +19,10 @@ What it does:
   2. Classifies each page by content type (how_to, concept, reference,
      get_started) using the frontmatter `content.type` field.
   3. Groups pages into skills using one of three strategies:
-       - smart (default): groups by directory; one primary procedure page
-         becomes the main SKILL.md body, while sibling procedure, concept,
-         and reference pages ride along as reference files.
+       - smart (default): groups by directory; the procedure page with the
+         lowest frontmatter `skill.priority` becomes the main SKILL.md body,
+         while sibling procedure, concept, and reference pages ride along as
+         reference files.
        - grouped: groups all pages in the same parent directory.
        - individual: each doc page becomes its own skill.
   4. Generates a skill directory per group containing:
@@ -165,6 +166,7 @@ class DocPage:
     keywords: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     audience: list[str] = field(default_factory=list)
+    skill_priority: int = 100
     sections: list[tuple[str, str]] = field(default_factory=list)  # (heading, body)
     category: str = ""  # parent directory name
 
@@ -284,10 +286,31 @@ def parse_doc(path: Path) -> DocPage:
         page.difficulty = content.get("difficulty", "")
         page.audience = content.get("audience", [])
 
+    skill = fm.get("skill", {})
+    if isinstance(skill, dict):
+        page.skill_priority = _parse_skill_priority(skill.get("priority"), path)
+    else:
+        page.skill_priority = _parse_skill_priority(fm.get("skill_priority"), path)
+
     page.category = path.parent.name if path.parent.name != "docs" else "root"
     page.sections = _extract_sections(body)
 
     return page
+
+
+def _parse_skill_priority(value: object, path: Path) -> int:
+    """Parse the frontmatter priority used to choose SKILL.md lead pages."""
+    default = 100
+    if value is None or value == "":
+        return default
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        print(
+            f"  warning: invalid skill.priority for {path}; using default {default}",
+            file=sys.stderr,
+        )
+        return default
 
 
 def _extract_sections(body: str) -> list[tuple[str, str]]:
@@ -1087,9 +1110,10 @@ def partition_skill_pages(
     """Split a doc group into inline procedures and deferred references.
 
     The converter preserves the existing one-skill-per-docs-area grouping, but
-    keeps SKILL.md focused by inlining only one primary procedure. Additional
-    how-to/tutorial pages still contribute triggers through the skill
-    description and are written to references/ for progressive disclosure.
+    keeps SKILL.md focused by inlining only one primary procedure. The primary
+    procedure is the page with the lowest frontmatter ``skill.priority``;
+    additional how-to/tutorial pages still contribute triggers through the
+    skill description and are written to references/ for progressive disclosure.
     """
     procedures = [
         p for p in pages if CONTENT_TYPE_ROLE.get(p.content_type) == "procedure"
@@ -1107,6 +1131,7 @@ def partition_skill_pages(
     if not procedures:
         return [], [], context_pages, reference_pages
 
+    procedures = sorted(procedures, key=lambda p: (p.skill_priority, str(p.path)))
     primary = [procedures[0]]
     deferred = procedures[1:]
     return primary, deferred, context_pages, reference_pages
@@ -1455,7 +1480,8 @@ def main():
             Strategies:
               grouped     Group docs by parent directory
               individual  Each doc page becomes its own skill
-              smart       Group by directory, inline one procedure, defer siblings
+              smart       Group by directory, inline the lowest-priority procedure,
+                          defer siblings
 
             Examples:
               %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user
