@@ -177,7 +177,7 @@ If JSON still appears as text, confirm that vLLM was started with both
 `--enable-auto-tool-choice` and the correct `--tool-call-parser` value for your
 model.
 
-## Related Pages
+## Next Steps
 
 - [Use a Local Inference Server](use-local-inference.md)
 - [Inference Options](inference-options.md)
