@@ -44,6 +44,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: true,
       agent: null,
       controlUiPort: null,
+      gpu: false,
     });
   });
 
@@ -69,6 +70,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: true,
       agent: null,
       controlUiPort: null,
+      gpu: false,
     });
   });
 
@@ -93,6 +95,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
+      gpu: false,
     });
   });
 
@@ -145,6 +148,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
+      gpu: false,
     });
   });
 
@@ -170,6 +174,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
+      gpu: false,
     });
   });
 
@@ -216,6 +221,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
+      gpu: false,
     });
   });
 
@@ -351,6 +357,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: "openclaw",
       controlUiPort: null,
+      gpu: false,
     });
   });
 
@@ -485,6 +492,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
+      gpu: false,
     });
   });
 
@@ -505,5 +513,34 @@ describe("onboard command", () => {
     expect(lines.join("\n")).toContain("`nemoclaw setup` is deprecated");
     expect(lines.join("\n")).toContain("Use `nemoclaw onboard` instead");
     expect(runOnboard).toHaveBeenCalledTimes(1);
+  });
+
+  it("parses --gpu flag", () => {
+    const result = parseOnboardArgs(
+      ["--gpu", "--non-interactive"],
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.gpu).toBe(true);
+    expect(result.nonInteractive).toBe(true);
+  });
+
+  it("defaults gpu to false when omitted", () => {
+    const result = parseOnboardArgs(
+      ["--non-interactive"],
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.gpu).toBe(false);
   });
 });

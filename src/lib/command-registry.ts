@@ -86,6 +86,12 @@ export const COMMANDS: readonly CommandDef[] = [
     group: "Getting Started",
     scope: "global",
   },
+  {
+    usage: "nemoclaw onboard --gpu",
+    description: "Enable GPU passthrough into the sandbox for compute workloads",
+    group: "Getting Started",
+    scope: "global",
+  },
 
   // ── Sandbox Management ──
   {
