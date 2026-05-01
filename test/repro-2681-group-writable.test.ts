@@ -66,6 +66,15 @@ describe("Issue #2681 — group-writable mutable-default contract", () => {
     );
   });
 
+  it("Dockerfile creates .config-hash group-writable (664), not read-only-for-group (644)", () => {
+    // Aaron's spec item 3 explicitly calls out "group-writable config/hash
+    // files". The .config-hash sha256 is created AFTER the recursive chmod
+    // g+w pass, so it gets its own explicit chmod. Lock it to 664 so a
+    // future change can't silently revert to 644 and break gateway writes.
+    expect(DOCKERFILE).toMatch(/chmod\s+664\s+\/sandbox\/\.openclaw\/\.config-hash/);
+    expect(DOCKERFILE).not.toMatch(/chmod\s+644\s+\/sandbox\/\.openclaw\/\.config-hash/);
+  });
+
   it("Dockerfile does NOT introduce a mutateConfigFile EACCES swallow patch", () => {
     // The PR explicitly replaces #2693's approach. If a future PR adds
     // Patch 4b back, this test fails and forces re-evaluation.

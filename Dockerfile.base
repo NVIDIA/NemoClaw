@@ -92,7 +92,7 @@ RUN arch="$(dpkg --print-architecture)" \
 # mutations — see #2681. UIDs stay distinct (security separation preserved);
 # the shared group only governs the mutable-default state directory.
 RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
-    && groupadd -r sandbox && useradd -r -g sandbox -G sandbox -d /sandbox -s /bin/bash sandbox \
+    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
     && usermod -aG sandbox gateway \
     && mkdir -p /sandbox/.nemoclaw \
     && chown -R sandbox:sandbox /sandbox

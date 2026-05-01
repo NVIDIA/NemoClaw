@@ -510,7 +510,7 @@ RUN chown -R sandbox:sandbox /sandbox/.openclaw \
 
 # Pin config hash at build time so the entrypoint can verify integrity.
 RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
-    && chmod 644 /sandbox/.openclaw/.config-hash \
+    && chmod 664 /sandbox/.openclaw/.config-hash \
     && chown sandbox:sandbox /sandbox/.openclaw/.config-hash
 
 # DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write
