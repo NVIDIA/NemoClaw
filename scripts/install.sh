@@ -279,10 +279,31 @@ restore_onboard_forward_after_post_checks() {
     rm -f "$pid_file"
   fi
 
+  stop_agent_forward_if_owned() {
+    local forward_list owner status
+    "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 && return 0
+    forward_list="$("$openshell_bin" forward list 2>/dev/null || true)"
+    owner="$(awk -v sandbox="$sandbox_name" -v port="$port" '
+      $1 == sandbox && $3 == port {
+        print $1
+        exit
+      }
+    ' <<<"$forward_list")"
+    status="$(awk -v sandbox="$sandbox_name" -v port="$port" '
+      $1 == sandbox && $3 == port {
+        print tolower($5)
+        exit
+      }
+    ' <<<"$forward_list")"
+    if [[ "$owner" == "$sandbox_name" && ("$status" == "running" || "$status" == "active") ]]; then
+      "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 \
+        || "$openshell_bin" forward stop "$port" >/dev/null 2>&1 \
+        || true
+    fi
+  }
+
   for attempt in 1 2 3; do
-    "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 \
-      || "$openshell_bin" forward stop "$port" >/dev/null 2>&1 \
-      || true
+    stop_agent_forward_if_owned
     if [ "$attempt" -gt 1 ]; then
       sleep 2
     fi
@@ -304,7 +325,6 @@ function healthy() {
 function tick() {
   if (healthy()) return;
   run(["forward", "stop", port, sandboxName]);
-  run(["forward", "stop", port]);
   run(["forward", "start", "--background", port, sandboxName]);
 }
 tick();
@@ -340,6 +360,7 @@ NODE
 
   warn "Could not restore ${agent_display} host forward on port ${port}."
   warn "Run: openshell forward start --background ${port} ${sandbox_name}"
+  return 1
 }
 
 # step N "Description" — numbered section header
@@ -1706,7 +1727,7 @@ except Exception:
         info "Checking for sandboxes that need upgrading…"
         "$_CLI_BIN" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
       fi
-      restore_onboard_forward_after_post_checks
+      restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
     else
       warn "Skipping onboarding until the host prerequisites above are fixed."
     fi
