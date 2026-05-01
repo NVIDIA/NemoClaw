@@ -21,7 +21,7 @@ const { isIP } = require("node:net");
 const { validateName } = require("./runner");
 const { dockerExecFileSync } = require("./docker/exec");
 const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
-const { stripCredentials, isConfigObject, isConfigValue } = credentialFilter;
+const { stripCredentials, isConfigObject, isConfigValue, isCredentialField } = credentialFilter;
 const { appendAuditEntry } = require("./shields-audit");
 const { isPrivateHostname, isPrivateIp } = require("./private-networks");
 
@@ -62,7 +62,26 @@ interface AgentConfigTarget {
   sensitiveFiles?: string[];
 }
 
-type LookupFn = (hostname: string, options: { all: true }) => Promise<Array<{ address: string }>>;
+type LookupFn = (
+  hostname: string,
+  options: { all: true },
+) => Promise<Array<{ address: string; family?: number }>>;
+
+interface DnsValidatedUrl {
+  protocol: "http:" | "https:";
+  originalUrl: string;
+  pinnedUrl: string;
+}
+
+class ConfigUrlValidationError extends Error {
+  constructor(
+    readonly urlValue: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ConfigUrlValidationError";
+  }
+}
 
 const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   agentName: "openclaw",
@@ -387,19 +406,22 @@ function validateUrlValue(value: string): void {
   assertPublicHost(parsed.hostname);
 }
 
-async function validateUrlValueWithDns(
+async function validateUrlValueWithDnsResult(
   value: string,
   lookup: LookupFn = dnsPromises.lookup as LookupFn,
-): Promise<void> {
-  const parsed = parseHttpUrl(value);
-  if (!parsed) return;
+): Promise<DnsValidatedUrl | null> {
+  const originalUrl = value.trim();
+  const parsed = parseHttpUrl(originalUrl);
+  if (!parsed) return null;
 
   const hostname = parsed.hostname;
   assertPublicHost(hostname);
   const lookupHostname = hostnameForDnsLookup(hostname);
-  if (isIP(lookupHostname)) return;
+  if (isIP(lookupHostname)) {
+    return { protocol: parsed.protocol as "http:" | "https:", originalUrl, pinnedUrl: originalUrl };
+  }
 
-  let addresses: Array<{ address: string }>;
+  let addresses: Array<{ address: string; family?: number }>;
   try {
     addresses = await lookup(lookupHostname, { all: true });
   } catch (err: unknown) {
@@ -419,36 +441,20 @@ async function validateUrlValueWithDns(
       );
     }
   }
+
+  const pinned = new URL(originalUrl);
+  const first = addresses[0];
+  const family = first.family ?? isIP(first.address);
+  pinned.hostname = family === 6 ? `[${first.address}]` : first.address;
+
+  return { protocol: parsed.protocol as "http:" | "https:", originalUrl, pinnedUrl: pinned.toString() };
 }
 
-function collectHttpUrls(value: ConfigValue): string[] {
-  const urls: string[] = [];
-  const stack: ConfigValue[] = [value];
-
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (current == null) continue;
-
-    if (typeof current === "string") {
-      const trimmed = current.trim();
-      const lower = trimmed.toLowerCase();
-      if (lower.startsWith("http://") || lower.startsWith("https://")) {
-        urls.push(trimmed);
-      }
-      continue;
-    }
-
-    if (Array.isArray(current)) {
-      stack.push(...current);
-      continue;
-    }
-
-    if (isConfigObject(current)) {
-      stack.push(...Object.values(current));
-    }
-  }
-
-  return urls;
+async function validateUrlValueWithDns(
+  value: string,
+  lookup: LookupFn = dnsPromises.lookup as LookupFn,
+): Promise<void> {
+  await validateUrlValueWithDnsResult(value, lookup);
 }
 
 function redactUrlForLogs(urlValue: string): string {
@@ -459,6 +465,70 @@ function redactUrlForLogs(urlValue: string): string {
   } catch {
     return "<invalid-url>";
   }
+}
+
+function redactStringForConfigPreview(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return "[REDACTED_URL]";
+  }
+  return "[REDACTED_STRING]";
+}
+
+function redactConfigValueForPreview(value: ConfigValue): ConfigValue {
+  if (typeof value === "string") return redactStringForConfigPreview(value);
+  if (Array.isArray(value)) return value.map((entry) => redactConfigValueForPreview(entry));
+  if (isConfigObject(value)) {
+    const redacted: ConfigObject = {};
+    for (const [key, entry] of Object.entries(value)) {
+      redacted[key] = isCredentialField(key) ? "[REDACTED]" : redactConfigValueForPreview(entry);
+    }
+    return redacted;
+  }
+  return value;
+}
+
+function formatConfigValueForLogs(value: ConfigValue | undefined): string {
+  if (value === undefined) return "(not set)";
+  return JSON.stringify(redactConfigValueForPreview(value));
+}
+
+async function rewriteConfigUrlsWithDnsPinning(
+  value: ConfigValue,
+  lookup: LookupFn = dnsPromises.lookup as LookupFn,
+): Promise<ConfigValue> {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const lower = trimmed.toLowerCase();
+    if (!lower.startsWith("http://") && !lower.startsWith("https://")) return value;
+
+    try {
+      const validated = await validateUrlValueWithDnsResult(trimmed, lookup);
+      if (!validated) return value;
+      // HTTP has no TLS hostname binding, so persist the DNS-pinned URL to avoid
+      // a config-time/public → runtime/private DNS-rebinding window. For HTTPS,
+      // preserve the original hostname so normal certificate validation still
+      // protects the connection.
+      return validated.protocol === "http:" ? validated.pinnedUrl : validated.originalUrl;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new ConfigUrlValidationError(trimmed, message);
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return Promise.all(value.map((entry) => rewriteConfigUrlsWithDnsPinning(entry, lookup)));
+  }
+
+  if (isConfigObject(value)) {
+    const rewritten: ConfigObject = {};
+    for (const [key, entry] of Object.entries(value)) {
+      rewritten[key] = await rewriteConfigUrlsWithDnsPinning(entry, lookup);
+    }
+    return rewritten;
+  }
+
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -553,8 +623,8 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   const oldValue = extractDotpath(config, opts.key);
   console.log(`  Agent:     ${target.agentName}`);
   console.log(`  Key:       ${opts.key}`);
-  console.log(`  Old value: ${oldValue !== undefined ? JSON.stringify(oldValue) : "(not set)"}`);
-  console.log(`  New value: ${JSON.stringify(parsedValue)}`);
+  console.log(`  Old value: ${formatConfigValueForLogs(oldValue)}`);
+  console.log(`  New value: ${formatConfigValueForLogs(parsedValue)}`);
 
   // Refuse outright if writing this path would silently overwrite an
   // existing scalar ancestor or target an array index — setDotpath would
@@ -597,20 +667,23 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     }
   }
 
-  // Validate URLs for SSRF (supports nested object/array values).
-  const urlsToValidate = collectHttpUrls(parsedValue);
-  for (const urlValue of urlsToValidate) {
-    try {
-      await validateUrlValueWithDns(urlValue);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`  URL validation failed for ${redactUrlForLogs(urlValue)}: ${message}`);
-      process.exit(1);
-    }
+  // Validate URLs for SSRF (supports nested object/array values). HTTP URLs
+  // are persisted with DNS-pinned hosts so later use cannot re-resolve the same
+  // hostname to private/internal space after config-time validation succeeds.
+  let safeValue: ConfigValue;
+  try {
+    safeValue = await rewriteConfigUrlsWithDnsPinning(parsedValue);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    const suffix = err instanceof ConfigUrlValidationError
+      ? ` for ${redactUrlForLogs(err.urlValue)}`
+      : "";
+    console.error(`  URL validation failed${suffix}: ${message}`);
+    process.exit(1);
   }
 
   // Apply change
-  setDotpath(config, opts.key, parsedValue);
+  setDotpath(config, opts.key, safeValue);
 
   // Write to temp file in the agent's native format
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
@@ -889,6 +962,8 @@ export {
   classifyNewKeyGate,
   validateUrlValue,
   validateUrlValueWithDns,
+  rewriteConfigUrlsWithDnsPinning,
+  formatConfigValueForLogs,
   parseConfig,
   readStdin,
 };

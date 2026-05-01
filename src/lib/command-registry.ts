@@ -263,10 +263,24 @@ export const COMMANDS: readonly CommandDef[] = [
     hidden: true,
   },
 
-  // ── Hidden: config subcommands (undocumented) ──
+  // ── Hidden: config subcommands (advanced / security-sensitive) ──
   {
     usage: "nemoclaw <name> config get",
     description: "Get sandbox configuration",
+    group: "Sandbox Management",
+    scope: "sandbox",
+    hidden: true,
+  },
+  {
+    usage: "nemoclaw <name> config set",
+    description: "Set sandbox configuration with SSRF validation",
+    group: "Sandbox Management",
+    scope: "sandbox",
+    hidden: true,
+  },
+  {
+    usage: "nemoclaw <name> config rotate-token",
+    description: "Rotate sandbox provider credentials",
     group: "Sandbox Management",
     scope: "sandbox",
     hidden: true,

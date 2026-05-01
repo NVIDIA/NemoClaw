@@ -446,12 +446,13 @@ describe("config set nested URL SSRF enforcement", () => {
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("URL validation failed for http://127.0.0.1:8080/private/path"),
       );
-      expect(
-        errorSpy.mock.calls.some((call) => {
-          const text = String(call[0]);
-          return text.includes("user:pass") || text.includes("token=secret") || text.includes("#frag");
-        }),
-      ).toBe(false);
+      const consoleOutput = [...errorSpy.mock.calls, ...logSpy.mock.calls]
+        .flat()
+        .map((entry) => String(entry))
+        .join("\n");
+      expect(consoleOutput).not.toContain("user:pass");
+      expect(consoleOutput).not.toContain("token=secret");
+      expect(consoleOutput).not.toContain("#frag");
       expect(execSpy).not.toHaveBeenCalled();
     } finally {
       exitSpy.mockRestore();

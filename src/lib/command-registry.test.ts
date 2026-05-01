@@ -17,10 +17,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 48 commands", () => {
+    it("should contain exactly 50 commands", () => {
       // 23 global (18 visible + 5 hidden help/version aliases)
-      // 25 sandbox (21 visible + 4 hidden shields/config)
-      expect(COMMANDS).toHaveLength(48);
+      // 27 sandbox (21 visible + 6 hidden shields/config)
+      expect(COMMANDS).toHaveLength(50);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -52,9 +52,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 25 entries", () => {
-      // 21 visible + 4 hidden (shields×3 + config get)
-      expect(sandboxCommands()).toHaveLength(25);
+    it("should return exactly 27 entries", () => {
+      // 21 visible + 6 hidden (shields×3 + config×3)
+      expect(sandboxCommands()).toHaveLength(27);
     });
 
     it("every entry has scope sandbox", () => {
@@ -65,9 +65,9 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 9 hidden commands (39 visible)", () => {
+    it("should exclude 11 hidden commands (39 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
-      // 4 hidden sandbox (shields×3, config get)
+      // 6 hidden sandbox (shields×3, config×3)
       expect(visibleCommands()).toHaveLength(39);
     });
 
@@ -79,9 +79,9 @@ describe("command-registry", () => {
   });
 
   describe("hidden commands", () => {
-    it("exactly 9 hidden commands: help/version aliases + shields + config", () => {
+    it("exactly 11 hidden commands: help/version aliases + shields + config", () => {
       const hidden = COMMANDS.filter((c) => c.hidden);
-      expect(hidden).toHaveLength(9);
+      expect(hidden).toHaveLength(11);
       const usages = hidden.map((c) => c.usage).sort();
       expect(usages).toEqual([
         "nemoclaw --help",
@@ -89,6 +89,8 @@ describe("command-registry", () => {
         "nemoclaw -h",
         "nemoclaw -v",
         "nemoclaw <name> config get",
+        "nemoclaw <name> config rotate-token",
+        "nemoclaw <name> config set",
         "nemoclaw <name> shields down",
         "nemoclaw <name> shields status",
         "nemoclaw <name> shields up",
@@ -138,6 +140,8 @@ describe("command-registry", () => {
       const list = canonicalUsageList();
       expect(list).not.toContain("nemoclaw <name> shields down");
       expect(list).not.toContain("nemoclaw <name> config get");
+      expect(list).not.toContain("nemoclaw <name> config set");
+      expect(list).not.toContain("nemoclaw <name> config rotate-token");
     });
   });
 

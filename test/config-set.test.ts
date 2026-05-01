@@ -14,6 +14,8 @@ const {
   setDotpath,
   validateUrlValue,
   validateUrlValueWithDns,
+  rewriteConfigUrlsWithDnsPinning,
+  formatConfigValueForLogs,
   resolveAgentConfig,
 } = require("../dist/lib/sandbox-config");
 
@@ -309,6 +311,31 @@ describe("config set helpers", () => {
     });
   });
 
+  describe("formatConfigValueForLogs", () => {
+    it("redacts scalar strings and URLs in preview output", () => {
+      expect(formatConfigValueForLogs("super-secret-value")).toBe('"[REDACTED_STRING]"');
+      expect(formatConfigValueForLogs("https://user:pass@example.com/v1?token=secret#frag")).toBe(
+        '"[REDACTED_URL]"',
+      );
+    });
+
+    it("redacts nested credential fields and string leaves", () => {
+      const output = formatConfigValueForLogs({
+        endpoint: "https://user:pass@example.com/v1?token=secret#frag",
+        apiKey: "sk-secret",
+        nested: { model: "nemotron", temperature: 0.2 },
+      });
+      expect(output).toContain("[REDACTED_URL]");
+      expect(output).toContain("[REDACTED]");
+      expect(output).toContain("[REDACTED_STRING]");
+      expect(output).toContain("0.2");
+      expect(output).not.toContain("user:pass");
+      expect(output).not.toContain("token=secret");
+      expect(output).not.toContain("sk-secret");
+      expect(output).not.toContain("nemotron");
+    });
+  });
+
   describe("validateUrlValueWithDns", () => {
     it("rejects hostname resolving to private IPv4", async () => {
       const lookup = async () => [{ address: "169.254.169.254", family: 4 }];
@@ -376,6 +403,42 @@ describe("config set helpers", () => {
       await expect(validateUrlValueWithDns("https://empty.example/v1", lookup)).rejects.toThrow(
         /no addresses returned/i,
       );
+    });
+  });
+
+  describe("rewriteConfigUrlsWithDnsPinning", () => {
+    it("pins HTTP hostname URLs to the validated DNS address", async () => {
+      const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+      await expect(rewriteConfigUrlsWithDnsPinning("http://example.com/v1", lookup)).resolves.toBe(
+        "http://93.184.216.34/v1",
+      );
+    });
+
+    it("preserves HTTPS hostnames after DNS validation", async () => {
+      const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+      await expect(rewriteConfigUrlsWithDnsPinning("https://example.com/v1", lookup)).resolves.toBe(
+        "https://example.com/v1",
+      );
+    });
+
+    it("recursively rewrites nested HTTP URLs and leaves non-URLs unchanged", async () => {
+      const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+      await expect(
+        rewriteConfigUrlsWithDnsPinning(
+          {
+            primary: "http://api.example.com/v1",
+            secure: "https://secure.example.com/v1",
+            label: "production",
+            fallbacks: ["http://backup.example.com/v2"],
+          },
+          lookup,
+        ),
+      ).resolves.toEqual({
+        primary: "http://93.184.216.34/v1",
+        secure: "https://secure.example.com/v1",
+        label: "production",
+        fallbacks: ["http://93.184.216.34/v2"],
+      });
     });
   });
 });
