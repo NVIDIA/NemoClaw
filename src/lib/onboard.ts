@@ -3842,6 +3842,11 @@ async function createSandbox(
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
       // paths are covered (interactive prompt, non-interactive ready, unknown drift).
+      // Note: legacy registries had gpuEnabled always true (bug fixed in this PR),
+      // so gpuEnabled=true on a legacy entry doesn't guarantee GPU support.
+      // The gateway Docker-inspect check (above) catches legacy CPU-only gateways
+      // before we reach this point, so a legacy sandbox behind a verified GPU
+      // gateway is safe to reuse — the sandbox will be recreated if needed.
       if (gpuPassthrough) {
         const entry = registry.getSandbox(sandboxName);
         if (entry && !entry.gpuEnabled) {
