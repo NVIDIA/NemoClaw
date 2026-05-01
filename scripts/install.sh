@@ -253,7 +253,7 @@ resolve_onboarded_agent() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name port openshell_bin
+  local sandbox_name agent_name port openshell_bin attempt
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
 
@@ -270,13 +270,29 @@ restore_onboard_forward_after_post_checks() {
     return 0
   fi
 
-  "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 \
-    || "$openshell_bin" forward stop "$port" >/dev/null 2>&1 \
-    || true
-  if ! "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1; then
-    warn "Could not restore ${agent_display_name "$agent_name"} host forward on port ${port}."
-    warn "Run: openshell forward start --background ${port} ${sandbox_name}"
-  fi
+  for attempt in 1 2 3; do
+    "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 \
+      || "$openshell_bin" forward stop "$port" >/dev/null 2>&1 \
+      || true
+    if [ "$attempt" -gt 1 ]; then
+      sleep 2
+    fi
+    "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || continue
+    sleep 2
+    if "$openshell_bin" forward list 2>/dev/null \
+      | awk -v sandbox="$sandbox_name" -v fwd_port="$port" '
+          $1 == sandbox && $3 == fwd_port && tolower($5) == "running" { found = 1 }
+          END { exit found ? 0 : 1 }
+        '; then
+      if ! command_exists curl \
+        || curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+  done
+
+  warn "Could not restore ${agent_display_name "$agent_name"} host forward on port ${port}."
+  warn "Run: openshell forward start --background ${port} ${sandbox_name}"
 }
 
 # step N "Description" — numbered section header

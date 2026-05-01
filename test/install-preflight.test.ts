@@ -2118,6 +2118,16 @@ exit 1
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$OPENSHELL_LOG"
+if [ "$1" = "forward" ] && [ "$2" = "list" ]; then
+  echo "SANDBOX BIND PORT PID STATUS"
+  echo "created-by-onboard 127.0.0.1 8642 123 running"
+fi
+exit 0
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
 exit 0
 `,
     );
