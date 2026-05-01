@@ -620,6 +620,15 @@ refresh_path() {
   fi
 }
 
+prefer_user_local_openshell() {
+  local local_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  local openshell_bin="${local_bin}/openshell"
+  if [[ -x "$openshell_bin" ]]; then
+    export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
+    export PATH="$local_bin:$PATH"
+  fi
+}
+
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
   local npm_bin shim_path node_path node_dir cli_path
@@ -1208,6 +1217,7 @@ install_nemoclaw() {
     # running ./scripts/install.sh manages their own openshell. The script is
     # idempotent on the happy path. See #2272.
     spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
+    prefer_user_local_openshell
   fi
 
   refresh_path

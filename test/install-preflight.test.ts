@@ -2083,6 +2083,26 @@ exit 1
     expect(r.stdout.trim()).toBe("Hermes");
   });
 
+  it("prefer_user_local_openshell: exports the freshly installed OpenShell path", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-path-"));
+    const localBin = path.join(tmp, ".local", "bin");
+    const openshell = path.join(localBin, "openshell");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeExecutable(openshell, "#!/usr/bin/env bash\nexit 0\n");
+
+    const r = callInstallerPayloadFn(
+      'prefer_user_local_openshell; printf "%s\\n%s\\n" "$NEMOCLAW_OPENSHELL_BIN" "$PATH"',
+      {
+        HOME: tmp,
+        PATH: "/opt/homebrew/bin:/usr/bin:/bin",
+      },
+    );
+    const [resolved, pathValue] = r.stdout.trim().split("\n");
+    expect(r.status).toBe(0);
+    expect(resolved).toBe(openshell);
+    expect(pathValue.startsWith(`${localBin}:`)).toBe(true);
+  });
+
   // -- resolve_default_sandbox_name --
 
   it("resolve_default_sandbox_name: returns 'my-assistant' with no registry", () => {
