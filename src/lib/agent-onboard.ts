@@ -148,6 +148,10 @@ function failAgentSetup(sandboxName: string, agent: AgentDefinition, message: st
   process.exit(1);
 }
 
+function isHealthProbeOk(result: string | null | undefined): boolean {
+  return (result ?? "").trim() === "ok";
+}
+
 /**
  * Handle the full agent setup step (step 7) including resume detection.
  * For non-OpenClaw agents: writes config into the sandbox and verifies
@@ -181,7 +185,7 @@ export async function handleAgentSetup(
         ["sandbox", "exec", sandboxName, "curl", "-sf", "--max-time", "3", probe.url],
         { ignoreError: true },
       );
-      if (result && result.includes("ok")) {
+      if (isHealthProbeOk(result)) {
         skippedStepMessage("agent_setup", sandboxName);
         onboardSession.markStepComplete("agent_setup", { sandboxName, provider, model });
         return;
@@ -232,7 +236,7 @@ export async function handleAgentSetup(
         ["sandbox", "exec", sandboxName, "curl", "-sf", "--max-time", "3", probe.url],
         { ignoreError: true },
       );
-      if (result && result.includes("ok")) {
+      if (isHealthProbeOk(result)) {
         healthy = true;
         break;
       }
