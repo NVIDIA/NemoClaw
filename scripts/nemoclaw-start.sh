@@ -204,6 +204,41 @@ _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /s
 # mutable-default startup skips strict hash enforcement until shields-up locks
 # .config-hash into a root-owned read-only trust anchor.
 
+# ── Mutable-default permission normalize (#2681) ─────────────────
+# OpenClaw's control-UI toggles (Enable Dreaming, account toggles, etc.)
+# write through mutateConfigFile to /sandbox/.openclaw/openclaw.json.
+# In root mode the gateway runs as the gateway UID; the file is owned
+# sandbox:sandbox. Without group write, every toggle EACCESs.
+#
+# Make the mutable-default tree group-writable + setgid so both
+# `gateway` (now a member of the sandbox group via Dockerfile.base
+# usermod -aG) and `sandbox` can write. Setgid means new files
+# inherit group=sandbox regardless of which UID created them, so the
+# agent keeps read access and shields-up locking still works the same.
+#
+# Idempotent. Skips when shields are UP (config dir owned by root) so
+# the lock is not weakened.
+normalize_mutable_config_perms() {
+  # Only effective in root mode. Non-root containers can't chmod files
+  # they don't own; if shields are down they were normalized by an
+  # earlier root-mode startup.
+  [ "$(id -u)" -eq 0 ] || return 0
+
+  local config_dir="/sandbox/.openclaw"
+  [ -d "$config_dir" ] || return 0
+
+  # Detect shields-up. Config dir owned by root means shields are
+  # currently locked; normalizing would weaken the contract.
+  local config_dir_owner
+  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
+  if [ "$config_dir_owner" = "root" ]; then
+    return 0
+  fi
+
+  chmod -R g+w "$config_dir" 2>/dev/null || true
+  find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
+}
+
 # ── Runtime model/provider override ──────────────────────────────
 # Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
 # allowing model or provider changes without rebuilding the sandbox image.
@@ -2289,6 +2324,7 @@ fi
 # Verify locked config integrity before starting anything. Mutable-default
 # config is intentionally writable and is not a trust anchor until shields-up.
 verify_config_integrity_if_locked /sandbox/.openclaw
+normalize_mutable_config_perms
 apply_model_override
 apply_cors_override
 export_gateway_token
