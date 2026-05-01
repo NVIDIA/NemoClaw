@@ -718,6 +718,17 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
   });
 
+  it("gateway-token help keeps the public sandbox-scoped usage", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-token-help-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha gateway-token --help", { HOME: home });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Usage: nemoclaw <name> gateway-token [--quiet|-q]");
+    expect(r.out).not.toContain("sandbox:gateway-token");
+  });
+
   it("routes logs to OpenClaw and OpenShell log sources", () => {
     const setup = createLogsTestSetup("nemoclaw-cli-logs-routing-");
     const r = setup.runLogs();

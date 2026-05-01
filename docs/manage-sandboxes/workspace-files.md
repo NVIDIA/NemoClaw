@@ -88,20 +88,23 @@ shared-file tooling (shared mount, `workspaces list` command) in
 
 ## Persistence Behavior
 
-Understanding when these files persist and when they are lost is critical.
+Workspace files live in the sandbox's persistent state volume, not in the container image.
+This means they survive normal container restarts, but they are deleted when you destroy the sandbox.
 
-### Survives: Sandbox Restart
+### Preserved During Restart, Rebuild, and Upgrade
 
-Sandbox restarts (`openshell sandbox restart`) preserve workspace files.
-The sandbox uses a **Persistent Volume Claim (PVC)** that outlives individual container restarts.
+Sandbox restarts preserve workspace files because the persistent state volume outlives individual container restarts.
 
-### Lost: Sandbox Destroy
+The `nemoclaw <name> rebuild` command and the sandbox upgrade flow also preserve workspace state.
+Before replacing the container, NemoClaw snapshots the workspace state directories and restores them into the rebuilt sandbox.
 
-Running `nemoclaw <name> destroy` **deletes the sandbox and its PVC**.
-All workspace files are permanently lost unless you back them up first.
+### Deleted During Sandbox Destroy
+
+Running `nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
+Workspace files are removed from the sandbox unless you created a snapshot or backup first.
 
 :::{warning}
-Always back up your workspace files before running `nemoclaw <name> destroy`.
+Back up your workspace files before running `nemoclaw <name> destroy`.
 See [Backup and Restore](backup-restore.md) for instructions.
 :::
 
@@ -110,8 +113,8 @@ See [Backup and Restore](backup-restore.md) for instructions.
 The agent reads these files at the start of every session.
 You can edit them in two ways:
 
-1. **Let the agent do it** — Ask your agent to update its persona, memory, or user context.
-2. **Edit manually** — Use `openshell sandbox shell` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
+1. Let the agent do it. Ask your agent to update its persona, memory, or user context.
+2. Edit manually. Use `openshell sandbox shell` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
 
 ## Next Steps
 

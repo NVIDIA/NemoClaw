@@ -477,7 +477,7 @@ Follow these steps to reconnect.
 
 If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
 The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
+Back up your workspace first by following the instructions at [Back Up and Restore](../manage-sandboxes/backup-restore.md).
 :::
 
 ### Sandbox is running an outdated agent version

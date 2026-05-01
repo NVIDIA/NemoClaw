@@ -12,6 +12,8 @@ content:
   type: how_to
   difficulty: technical_beginner
   audience: ["developer", "engineer", "security_engineer"]
+skill:
+  priority: 20
 status: published
 ---
 

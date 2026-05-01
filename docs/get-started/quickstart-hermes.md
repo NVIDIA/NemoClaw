@@ -166,5 +166,5 @@ $ nemohermes my-hermes destroy
 
 - [Inference Options](../inference/inference-options.md) to choose a provider and model.
 - [Commands](../reference/commands.md) to see the full `nemohermes` alias behavior.
-- [Backup and Restore](../workspace/backup-restore.md) to preserve sandbox state before destructive operations.
+- [Backup and Restore](../manage-sandboxes/backup-restore.md) to preserve sandbox state before destructive operations.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) to inspect OpenShell events and sandbox logs.

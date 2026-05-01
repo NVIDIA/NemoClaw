@@ -38,14 +38,12 @@ const {
 } = require("./lib/docker");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
 const {
-  fetchGatewayAuthTokenFromSandbox,
   startGatewayForRecovery,
   pruneKnownHostsEntries,
   hydrateCredentialEnv,
   isNonInteractive,
 } = require("./lib/onboard");
 const { ensureOllamaAuthProxy } = require("./lib/onboard-ollama-proxy");
-const { parseGatewayTokenArgs, runGatewayTokenCommand } = require("./lib/gateway-token-command");
 const { getCredential, prompt: askPrompt } = require("./lib/credentials");
 const registry = require("./lib/registry");
 import type { SandboxEntry } from "./lib/registry";
@@ -60,7 +58,6 @@ const onboardSession = require("./lib/onboard-session");
 import type { Session } from "./lib/onboard-session";
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
 const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
-const { runDebugCommand } = require("./lib/debug-command");
 const { runDeprecatedOnboardAliasCommand, runOnboardCommand } = require("./lib/onboard-command");
 const {
   captureOpenshellCommand,
@@ -71,7 +68,6 @@ const {
 } = require("./lib/openshell");
 const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
 const { executeDeploy } = require("./lib/deploy");
-const { buildVersionedUninstallUrl, runUninstallCommand } = require("./lib/uninstall-command");
 const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
@@ -137,7 +133,6 @@ type RecoveredSandboxMetadata = Partial<
   policyPresets?: string[] | null;
 };
 
-const REMOTE_UNINSTALL_URL = buildVersionedUninstallUrl(getVersion());
 let OPENSHELL_BIN: string | null = null;
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
@@ -1155,56 +1150,12 @@ async function tunnel(args: string[]): Promise<void> {
   }
 }
 
-function debug(args: string[]) {
-  const { runDebug } = require("./lib/debug");
-  const getDefaultSandbox = (): string | undefined => {
-    const { defaultSandbox, sandboxes } = registry.listSandboxes();
-    if (!defaultSandbox) return undefined;
-    if (!sandboxes.find((s: { name: string }) => s.name === defaultSandbox)) {
-      console.error(
-        `${_RD}Warning:${R} default sandbox '${defaultSandbox}' is no longer in the registry.`,
-      );
-      console.error(
-        `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
-      );
-      return undefined;
-    }
-    const liveList = captureOpenshell(["sandbox", "list"], {
-      ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
-    if (liveList.status === 0 && !parseLiveSandboxNames(liveList.output).has(defaultSandbox)) {
-      console.error(
-        `${_RD}Warning:${R} default sandbox '${defaultSandbox}' exists in the local registry but not in OpenShell.`,
-      );
-      console.error(
-        `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
-      );
-      return undefined;
-    }
-    return defaultSandbox;
-  };
-  runDebugCommand(args, {
-    getDefaultSandbox,
-    runDebug,
-    log: console.log,
-    error: console.error,
-    exit: (code: number) => process.exit(code),
-  });
+async function debug(args: string[]): Promise<void> {
+  await runOclif("debug", args);
 }
 
-function uninstall(args: string[]) {
-  runUninstallCommand({
-    args,
-    rootDir: ROOT,
-    currentDir: __dirname,
-    remoteScriptUrl: REMOTE_UNINSTALL_URL,
-    env: process.env,
-    spawnSyncImpl: spawnSync,
-    log: console.log,
-    error: console.error,
-    exit: (code: number) => process.exit(code),
-  });
+async function uninstall(args: string[]): Promise<void> {
+  await runOclif("uninstall", args);
 }
 
 // Suffixes that mark a per-sandbox messaging integration in the gateway's
@@ -4249,10 +4200,10 @@ async function dispatchCli(argv = process.argv.slice(2)) {
         await showStatus(args);
         break;
       case "debug":
-        debug(args);
+        await debug(args);
         break;
       case "uninstall":
-        uninstall(args);
+        await uninstall(args);
         break;
       case "credentials":
         await credentialsCommand(args);
@@ -4371,25 +4322,13 @@ async function dispatchCli(argv = process.argv.slice(2)) {
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
-      case "gateway-token": {
-        const { options: gatewayTokenOpts, unknown: gatewayTokenUnknown } =
-          parseGatewayTokenArgs(actionArgs);
-        if (gatewayTokenUnknown.length > 0) {
-          console.error(`  Unknown flag: ${gatewayTokenUnknown[0]}`);
-          console.error(`  Usage: ${CLI_NAME} <name> gateway-token [--quiet|-q]`);
-          process.exit(1);
+      case "gateway-token":
+        if (actionArgs.includes("--help") || actionArgs.includes("-h")) {
+          console.log(`  Usage: ${CLI_NAME} <name> gateway-token [--quiet|-q]`);
+          break;
         }
-        // Suppress EPIPE traces when the consumer closes the pipe early
-        // (e.g. `... | head -c 0`). The token has already been written.
-        process.stdout.on("error", (err: NodeJS.ErrnoException) => {
-          if (err.code === "EPIPE") process.exit(0);
-        });
-        const exitCode = runGatewayTokenCommand(cmd, gatewayTokenOpts, {
-          fetchToken: fetchGatewayAuthTokenFromSandbox,
-        });
-        if (exitCode !== 0) process.exit(exitCode);
+        await runOclif("sandbox:gateway-token", [cmd, ...actionArgs]);
         break;
-      }
       case "skill":
         await sandboxSkillInstall(cmd, actionArgs);
         break;
