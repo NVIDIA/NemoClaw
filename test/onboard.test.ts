@@ -197,7 +197,7 @@ describe("onboard helpers", () => {
       expect(getSandboxPromptDefault(hermes)).toBe("hermes");
 
       process.env.NEMOCLAW_SANDBOX_NAME = "custom-hermes";
-      expect(getSandboxPromptDefault(hermes)).toBe("custom-hermes");
+      expect(getSandboxPromptDefault(hermes)).toBe("hermes");
     } finally {
       if (previousSandboxName === undefined) {
         delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -5808,7 +5808,10 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
     fs.mkdirSync(path.join(customBuildDir, "secrets"), { recursive: true });
     fs.writeFileSync(path.join(customBuildDir, "secrets", "token.txt"), "fake test token");
     fs.writeFileSync(path.join(customBuildDir, ".env.local"), "EXAMPLE=fake");
-    fs.writeFileSync(path.join(customBuildDir, ".npmrc"), "registry=https://registry.example.test\n");
+    fs.writeFileSync(
+      path.join(customBuildDir, ".npmrc"),
+      "registry=https://registry.example.test\n",
+    );
     fs.writeFileSync(path.join(customBuildDir, "model.pem"), "fake test certificate");
     fs.writeFileSync(path.join(customBuildDir, "credentials.json"), "{}");
 
@@ -6254,8 +6257,15 @@ const { createSandbox } = require(${onboardPath});
       source,
       /Side-by-side agents are supported, but each sandbox name has one agent type/,
     );
+    assert.match(source, /UNKNOWN_SANDBOX_AGENT_NAME/);
+    assert.match(source, /if \(!existingEntry\) \{[\s\S]*?changed: true/);
     assert.match(source, /recreateForAgentDrift/);
     assert.match(source, /getSandboxAgentRegistryFields/);
+    assert.match(source, /getSandboxAgentRegistryFields\(agent, agentVersionKnown\)/);
+    assert.match(
+      source,
+      /updateReusedSandboxMetadata\([\s\S]*?reusedPort[\s\S]*?!fromDockerfile[\s\S]*?\)/,
+    );
     assert.match(source, /registry\.setDefault\(sandboxName\)/);
   });
 

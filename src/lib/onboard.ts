@@ -3370,6 +3370,8 @@ function normalizeSandboxAgentName(agentName: string | null | undefined): string
   return trimmed && trimmed !== "openclaw" ? trimmed : "openclaw";
 }
 
+const UNKNOWN_SANDBOX_AGENT_NAME = "unknown";
+
 function getRequestedSandboxAgentName(agent: AgentDefinition | null | undefined): string {
   return normalizeSandboxAgentName(agent?.name);
 }
@@ -3386,8 +3388,7 @@ function getDefaultSandboxNameForAgent(agent: AgentDefinition | null | undefined
 }
 
 function getSandboxPromptDefault(agent: AgentDefinition | null | undefined): string {
-  const envName = process.env.NEMOCLAW_SANDBOX_NAME?.trim();
-  return envName || getDefaultSandboxNameForAgent(agent);
+  return getDefaultSandboxNameForAgent(agent);
 }
 
 function getEffectiveSandboxAgent(agent: AgentDefinition | null | undefined): AgentDefinition {
@@ -3411,6 +3412,13 @@ function getSandboxAgentDrift(
   requestedAgentName: string,
 ): { changed: boolean; existingAgentName: string; requestedAgentName: string } {
   const existingEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
+  if (!existingEntry) {
+    return {
+      changed: true,
+      existingAgentName: UNKNOWN_SANDBOX_AGENT_NAME,
+      requestedAgentName,
+    };
+  }
   const existingAgentName = normalizeSandboxAgentName(existingEntry?.agent);
   return {
     changed: existingAgentName !== requestedAgentName,
@@ -3425,12 +3433,13 @@ function updateReusedSandboxMetadata(
   model: string,
   provider: string,
   dashboardPort: number,
+  agentVersionKnown = true,
 ): void {
   registry.updateSandbox(sandboxName, {
     model,
     provider,
     dashboardPort,
-    ...getSandboxAgentRegistryFields(agent),
+    ...getSandboxAgentRegistryFields(agent, agentVersionKnown),
   });
   registry.setDefault(sandboxName);
 }
@@ -3801,7 +3810,14 @@ async function createSandbox(
             }
             const reusedPort = ensureDashboardForward(sandboxName, chatUiUrl);
             process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort}`;
-            updateReusedSandboxMetadata(sandboxName, agent, model, provider, reusedPort);
+            updateReusedSandboxMetadata(
+              sandboxName,
+              agent,
+              model,
+              provider,
+              reusedPort,
+              !fromDockerfile,
+            );
             return sandboxName;
           }
         } else {
@@ -3830,7 +3846,14 @@ async function createSandbox(
             upsertMessagingProviders(messagingTokenDefs);
             const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
             process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort2}`;
-            updateReusedSandboxMetadata(sandboxName, agent, model, provider, reusedPort2);
+            updateReusedSandboxMetadata(
+              sandboxName,
+              agent,
+              model,
+              provider,
+              reusedPort2,
+              !fromDockerfile,
+            );
             return sandboxName;
           }
         }
@@ -3870,7 +3893,14 @@ async function createSandbox(
           }
           const reusedPort3 = ensureDashboardForward(sandboxName, chatUiUrl);
           process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort3}`;
-          updateReusedSandboxMetadata(sandboxName, agent, model, provider, reusedPort3);
+          updateReusedSandboxMetadata(
+            sandboxName,
+            agent,
+            model,
+            provider,
+            reusedPort3,
+            !fromDockerfile,
+          );
           return sandboxName;
         }
       } catch (err) {
@@ -3888,7 +3918,14 @@ async function createSandbox(
         }
         const reusedPort4 = ensureDashboardForward(sandboxName, chatUiUrl);
         process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort4}`;
-        updateReusedSandboxMetadata(sandboxName, agent, model, provider, reusedPort4);
+        updateReusedSandboxMetadata(
+          sandboxName,
+          agent,
+          model,
+          provider,
+          reusedPort4,
+          !fromDockerfile,
+        );
         return sandboxName;
       }
     }

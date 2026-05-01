@@ -4400,7 +4400,16 @@ const [cmd, ...args] = process.argv.slice(2);
     return;
   }
 
-  if (!registry.getSandbox(cmd)) {
+  // Sandbox-scoped commands: nemoclaw <name> <action>
+  // If the registry doesn't know this name but the action is a sandbox-scoped
+  // command, attempt recovery — the sandbox may still be live with a stale registry.
+  // Derived from command registry — single source of truth
+  const sandboxActions = sandboxActionTokens();
+  const requestedSandboxAction = args[0] || "";
+  // Bare command typos should stay cheap: do not start gateway recovery just
+  // to tell a user that `liost` probably meant `list`. Explicit sandbox
+  // actions still run recovery before the later typo-suggestion exit.
+  if (!registry.getSandbox(cmd) && args.length === 0) {
     const suggestion = suggestGlobalCommand(cmd);
     if (suggestion) {
       console.error(`  Unknown command: ${cmd}`);
@@ -4408,13 +4417,7 @@ const [cmd, ...args] = process.argv.slice(2);
       process.exit(1);
     }
   }
-
-  // Sandbox-scoped commands: nemoclaw <name> <action>
-  // If the registry doesn't know this name but the action is a sandbox-scoped
-  // command, attempt recovery — the sandbox may still be live with a stale registry.
-  // Derived from command registry — single source of truth
-  const sandboxActions = sandboxActionTokens();
-  if (!registry.getSandbox(cmd) && sandboxActions.includes(args[0] || "")) {
+  if (!registry.getSandbox(cmd) && sandboxActions.includes(requestedSandboxAction)) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });
     if (!registry.getSandbox(cmd)) {
@@ -4436,6 +4439,16 @@ const [cmd, ...args] = process.argv.slice(2);
       process.exit(1);
     }
   }
+
+  if (!registry.getSandbox(cmd)) {
+    const suggestion = suggestGlobalCommand(cmd);
+    if (suggestion) {
+      console.error(`  Unknown command: ${cmd}`);
+      console.error(`  Did you mean: ${CLI_NAME} ${suggestion}?`);
+      process.exit(1);
+    }
+  }
+
   const sandbox = registry.getSandbox(cmd);
   if (sandbox) {
     validateName(cmd, "sandbox name");

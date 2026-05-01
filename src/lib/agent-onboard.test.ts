@@ -128,6 +128,10 @@ describe("handleAgentSetup guards", () => {
     const source = fs.readFileSync(path.join(import.meta.dirname, "agent-onboard.ts"), "utf-8");
 
     expect(source).toContain("verifyAgentBinaryAvailable");
+    expect(source).toContain(
+      'resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"',
+    );
+    expect(source).toContain('[ "$resolved" = ${shellQuote(binaryPath)} ]');
     expect(source).toContain("failAgentSetup");
     expect(source).toContain('onboardSession.markStepFailed("agent_setup"');
     expect(source).toContain("gateway did not respond within");

@@ -127,11 +127,14 @@ function verifyAgentBinaryAvailable(
 ): boolean {
   const executable = agentExecutableName(agent);
   const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
-  const script = [
-    `command -v ${shellQuote(executable)} >/dev/null 2>&1 && echo ok && exit 0`,
-    binaryPath ? `[ -x ${shellQuote(binaryPath)} ] && echo ok && exit 0` : "true",
-    "exit 1",
-  ].join("; ");
+  const script = binaryPath
+    ? [
+        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
+        `[ "$resolved" = ${shellQuote(binaryPath)} ]`,
+        `[ -x ${shellQuote(binaryPath)} ]`,
+        "echo ok",
+      ].join(" && ")
+    : `command -v ${shellQuote(executable)} >/dev/null 2>&1 && echo ok`;
   const result = runCaptureOpenshell(["sandbox", "exec", sandboxName, "sh", "-lc", script], {
     ignoreError: true,
   });

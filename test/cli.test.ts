@@ -246,6 +246,22 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Did you mean: nemoclaw list?");
   });
 
+  it("attempts sandbox recovery before typo suggestion exits", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"),
+      "utf-8",
+    );
+    const scopedRecovery = source.indexOf(
+      "if (!registry.getSandbox(cmd) && sandboxActions.includes(requestedSandboxAction))",
+    );
+    const suggestion = source.indexOf(
+      "const suggestion = suggestGlobalCommand(cmd)",
+      scopedRecovery,
+    );
+    expect(scopedRecovery).toBeGreaterThan(-1);
+    expect(suggestion).toBeGreaterThan(scopedRecovery);
+  });
+
   it("explains sandbox connect command order when the sandbox name is last", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-order-"));
     const localBin = path.join(home, "bin");
