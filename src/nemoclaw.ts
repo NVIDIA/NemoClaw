@@ -50,7 +50,6 @@ import type { SandboxEntry } from "./lib/registry";
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 const shields = require("./lib/shields");
-const sandboxConfig = require("./lib/sandbox-config");
 const { parseGatewayInference } = require("./lib/inference-config");
 const { probeProviderHealth } = require("./lib/inference-health");
 const { buildStatusCommandDeps } = require("./lib/status-command-deps");
@@ -588,12 +587,18 @@ async function recoverRegistryEntries({
 }
 
 exports.captureOpenshell = captureOpenshell;
+exports.backupAll = backupAll;
+exports.garbageCollectImages = garbageCollectImages;
 exports.recoverNamedGatewayRuntime = recoverNamedGatewayRuntime;
 exports.recoverRegistryEntries = recoverRegistryEntries;
 exports.runOpenshell = runOpenshell;
+exports.sandboxChannelsList = sandboxChannelsList;
+exports.sandboxPolicyList = sandboxPolicyList;
+exports.sandboxStatus = sandboxStatus;
 exports.ensureLiveSandboxOrExit = ensureLiveSandboxOrExit;
 exports.G = G;
 exports.R = R;
+exports.upgradeSandboxes = upgradeSandboxes;
 
 function hasNamedGateway(output = ""): boolean {
   return stripAnsi(output).includes("Gateway: nemoclaw");
@@ -1212,6 +1217,14 @@ async function runOclif(commandId: string, args: string[] = []): Promise<void> {
 
 async function listSandboxes(args: string[] = []): Promise<void> {
   await runOclif("list", args);
+}
+
+function hasHelpFlag(args: string[]): boolean {
+  return args.includes("--help") || args.includes("-h");
+}
+
+function printSandboxActionUsage(action: string): void {
+  console.log(`  Usage: ${CLI_NAME} <name> ${action}`);
 }
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
@@ -4576,13 +4589,13 @@ const [cmd, ...args] = process.argv.slice(2);
         await listSandboxes(args);
         break;
       case "backup-all":
-        backupAll();
+        await runOclif("backup-all", args);
         break;
       case "upgrade-sandboxes":
-        await upgradeSandboxes(args);
+        await runOclif("upgrade-sandboxes", args);
         break;
       case "gc":
-        await garbageCollectImages(args);
+        await runOclif("gc", args);
         break;
       case "--version":
       case "-v": {
@@ -4669,7 +4682,11 @@ const [cmd, ...args] = process.argv.slice(2);
         await sandboxConnect(cmd);
         break;
       case "status":
-        await sandboxStatus(cmd);
+        if (hasHelpFlag(actionArgs)) {
+          printSandboxActionUsage("status");
+          break;
+        }
+        await runOclif("sandbox:status", [cmd, ...actionArgs]);
         break;
       case "doctor":
         await sandboxDoctor(cmd, actionArgs);
@@ -4684,7 +4701,11 @@ const [cmd, ...args] = process.argv.slice(2);
         await sandboxPolicyRemove(cmd, actionArgs);
         break;
       case "policy-list":
-        sandboxPolicyList(cmd);
+        if (hasHelpFlag(actionArgs)) {
+          printSandboxActionUsage("policy-list");
+          break;
+        }
+        await runOclif("sandbox:policy-list", [cmd, ...actionArgs]);
         break;
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
@@ -4771,9 +4792,15 @@ const [cmd, ...args] = process.argv.slice(2);
         const channelsArgs = actionArgs.slice(1);
         switch (channelsSub) {
           case "list":
+            if (hasHelpFlag(channelsArgs)) {
+              printSandboxActionUsage("channels list");
+              break;
+            }
+            await runOclif("sandbox:channels:list", [cmd, ...channelsArgs]);
+            break;
           case undefined:
           case "":
-            sandboxChannelsList(cmd);
+            await runOclif("sandbox:channels:list", [cmd]);
             break;
           case "add":
             await sandboxChannelsAdd(cmd, channelsArgs);
@@ -4786,6 +4813,10 @@ const [cmd, ...args] = process.argv.slice(2);
             break;
           case "start":
             await sandboxChannelsStart(cmd, channelsArgs);
+            break;
+          case "--help":
+          case "-h":
+            printSandboxActionUsage("channels list");
             break;
           default:
             console.error(`  Unknown channels subcommand: ${channelsSub}`);
@@ -4804,15 +4835,17 @@ const [cmd, ...args] = process.argv.slice(2);
       case "config": {
         const configSub = actionArgs[0];
         switch (configSub) {
-          case "get": {
-            const parsedConfigGet = sandboxConfig.parseConfigGetArgs(actionArgs.slice(1), CLI_NAME);
-            if (!parsedConfigGet.ok) {
-              for (const line of parsedConfigGet.errors) console.error(line);
-              process.exit(1);
+          case "get":
+            if (hasHelpFlag(actionArgs.slice(1))) {
+              printSandboxActionUsage("config get [--key dotpath] [--format json|yaml]");
+              break;
             }
-            sandboxConfig.configGet(cmd, parsedConfigGet.opts);
+            await runOclif("sandbox:config:get", [cmd, ...actionArgs.slice(1)]);
             break;
-          }
+          case "--help":
+          case "-h":
+            printSandboxActionUsage("config get [--key dotpath] [--format json|yaml]");
+            break;
           default:
             console.error(
               `  Usage: ${CLI_NAME} <name> config get [--key dotpath] [--format json|yaml]`,

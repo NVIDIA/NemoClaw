@@ -565,6 +565,46 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("PROVIDER is an OpenShell provider name");
   });
 
+  it("maintenance command help exits 0 and shows migrated usage", () => {
+    const backup = run("backup-all --help");
+    expect(backup.code).toBe(0);
+    expect(backup.out).toContain("backup-all");
+    expect(backup.out).toContain("Back up all sandbox state before upgrade");
+
+    const upgrade = run("upgrade-sandboxes --help");
+    expect(upgrade.code).toBe(0);
+    expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes]");
+    expect(upgrade.out).toContain("Detect and rebuild stale sandboxes");
+
+    const gc = run("gc --help");
+    expect(gc.code).toBe(0);
+    expect(gc.out).toContain("gc [--dry-run] [--yes|--force]");
+    expect(gc.out).toContain("Remove orphaned sandbox Docker images");
+  });
+
+  it("maintenance commands dispatch through oclif", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-maintenance-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      ["#!/bin/sh", "if [ \"$1\" = \"images\" ]; then exit 0; fi", "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const backup = runWithEnv("backup-all", { HOME: home });
+    expect(backup.code).toBe(0);
+    expect(backup.out).toContain("No sandboxes registered. Nothing to back up.");
+
+    const upgrade = runWithEnv("upgrade-sandboxes --check", { HOME: home });
+    expect(upgrade.code).toBe(0);
+    expect(upgrade.out).toContain("No sandboxes found in the registry.");
+
+    const gc = runWithEnv("gc --dry-run", { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` });
+    expect(gc.code).toBe(0);
+    expect(gc.out).toContain("No sandbox images found on the host.");
+  });
+
   it("shows skill install help when --help follows install", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-skill-help-"));
     writeSandboxRegistry(home);
@@ -875,6 +915,31 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("OpenShell status");
     expect(r.out).toContain("Gateway: other");
     expect(setup.readCalls()).not.toContain("sandbox list");
+  });
+
+  it("sandbox inspection help keeps public sandbox-scoped usage", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inspection-help-"));
+    writeSandboxRegistry(home);
+
+    const status = runWithEnv("alpha status --help", { HOME: home });
+    expect(status.code).toBe(0);
+    expect(status.out).toContain("<name> status");
+    expect(status.out).not.toContain("sandbox:status");
+
+    const policy = runWithEnv("alpha policy-list --help", { HOME: home });
+    expect(policy.code).toBe(0);
+    expect(policy.out).toContain("<name> policy-list");
+    expect(policy.out).not.toContain("sandbox:policy-list");
+
+    const channels = runWithEnv("alpha channels list --help", { HOME: home });
+    expect(channels.code).toBe(0);
+    expect(channels.out).toContain("<name> channels list");
+    expect(channels.out).not.toContain("sandbox:channels:list");
+
+    const config = runWithEnv("alpha config get --help", { HOME: home });
+    expect(config.code).toBe(0);
+    expect(config.out).toContain("<name> config get");
+    expect(config.out).not.toContain("sandbox:config:get");
   });
 
   it("routes logs to OpenClaw and OpenShell log sources", () => {
