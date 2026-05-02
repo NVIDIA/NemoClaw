@@ -17,10 +17,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 50 commands", () => {
+    it("should contain exactly 49 commands", () => {
       // 23 global (18 visible + 5 hidden help/version aliases)
-      // 27 sandbox (21 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(50);
+      // 26 sandbox (22 visible + 4 hidden shields/config)
+      expect(COMMANDS).toHaveLength(49);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -52,9 +52,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 27 entries", () => {
-      // 21 visible + 6 hidden (shields×3 + config×3)
-      expect(sandboxCommands()).toHaveLength(27);
+    it("should return exactly 26 entries", () => {
+      // 22 visible + 4 hidden (shields×3 + config get)
+      expect(sandboxCommands()).toHaveLength(26);
     });
 
     it("every entry has scope sandbox", () => {
@@ -65,10 +65,10 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 11 hidden commands (39 visible)", () => {
+    it("should exclude 9 hidden commands (40 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
-      // 6 hidden sandbox (shields×3, config×3)
-      expect(visibleCommands()).toHaveLength(39);
+      // 4 hidden sandbox (shields×3, config get)
+      expect(visibleCommands()).toHaveLength(40);
     });
 
     it("no visible command has hidden=true", () => {
@@ -175,13 +175,14 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 16 unique action tokens including empty string", () => {
+    it("returns exactly 17 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(16);
-      // Must contain the same set as the old sandboxActions array
+      expect(tokens).toHaveLength(17);
+      // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "connect",
         "status",
+        "doctor",
         "logs",
         "policy-add",
         "policy-remove",

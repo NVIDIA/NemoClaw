@@ -20,7 +20,9 @@ import {
   SandboxPolicyListCommand,
   SandboxStatusCommand,
 } from "./sandbox-inspection-cli-command";
+import SandboxLogsCommand from "./sandbox-logs-cli-command";
 import ShareCommand from "./share-command";
+import SkillInstallCliCommand from "./skill-install-cli-command";
 import StatusCommand from "./status-command";
 import {
   DeprecatedStartCommand,
@@ -39,7 +41,9 @@ export default {
   list: ListCommand,
   "sandbox:channels:list": SandboxChannelsListCommand,
   "sandbox:config:get": SandboxConfigGetCommand,
+  "sandbox:logs": SandboxLogsCommand,
   "sandbox:policy-list": SandboxPolicyListCommand,
+  "sandbox:skill:install": SkillInstallCliCommand,
   "sandbox:status": SandboxStatusCommand,
   share: ShareCommand,
   status: StatusCommand,

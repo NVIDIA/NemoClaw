@@ -299,6 +299,19 @@ The command also tails `/tmp/gateway.log` inside the default sandbox and flags T
 $ nemoclaw my-assistant status
 ```
 
+### `nemoclaw <name> doctor`
+
+Run a focused health check for one sandbox and the host services it depends on.
+The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, provider reachability, messaging channel conflicts, Ollama reachability, and the cloudflared tunnel state.
+
+Warnings do not make the command fail.
+Failed checks exit non-zero so scripts can use `doctor` as a readiness gate.
+Use `--json` for machine-readable output.
+
+```console
+$ nemoclaw my-assistant doctor [--json]
+```
+
 ### `nemoclaw <name> logs`
 
 View sandbox logs.

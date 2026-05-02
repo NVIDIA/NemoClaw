@@ -566,6 +566,7 @@ describe("nemoclaw-start persistent gateway log hardening", () => {
   it("creates a regular read-only persistent log mirror and refuses unsafe paths", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-persistent-log-"));
     const gatewayLog = path.join(tmpDir, "gateway.log");
+    const persistentLog = path.join(tmpDir, "logs", "gateway-persistent.log");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.writeFileSync(gatewayLog, "initial gateway line\n");
     fs.writeFileSync(
@@ -577,7 +578,7 @@ describe("nemoclaw-start persistent gateway log hardening", () => {
         "start_persistent_gateway_log_mirror",
         "sleep 0.2",
         `printf '%s\\n' later-line >> ${JSON.stringify(gatewayLog)}`,
-        "sleep 0.4",
+        `for _ in {1..30}; do grep -Fq later-line ${JSON.stringify(persistentLog)} 2>/dev/null && break; sleep 0.1; done`,
         'kill "$GATEWAY_LOG_PERSIST_PID" 2>/dev/null || true',
         'wait "$GATEWAY_LOG_PERSIST_PID" 2>/dev/null || true',
         "printf 'PID=%s\\n' \"$GATEWAY_LOG_PERSIST_PID\"",
@@ -589,7 +590,6 @@ describe("nemoclaw-start persistent gateway log hardening", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("PID=");
-      const persistentLog = path.join(tmpDir, "logs", "gateway-persistent.log");
       const stat = fs.statSync(persistentLog);
       expect(stat.isFile()).toBe(true);
       expect((stat.mode & 0o777).toString(8)).toBe("644");

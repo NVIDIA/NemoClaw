@@ -149,6 +149,7 @@ RUN set -eu; \
 #
 # Both patches fail-close: if grep finds no targets, the build aborts so
 # the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
+COPY scripts/rcf_patch.py /usr/local/lib/nemoclaw/rcf_patch.py
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
     OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
@@ -192,7 +193,7 @@ RUN set -eu; \
     # auto-discovery from the extensions directory. \
     rcf_file="$(grep -RIlE --include='*.js' 'async function replaceConfigFile\(params\)' "$OC_DIST" | head -n 1)"; \
     test -n "$rcf_file" || { echo "ERROR: replaceConfigFile function not found in OpenClaw dist" >&2; exit 1; }; \
-    python3 -c "import sys; p=sys.argv[1]; f=open(p); src=f.read(); f.close(); old='\tif (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t});'; new='\ttry { if (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t}); } catch(_rcfErr) { if (process.env.OPENSHELL_SANDBOX === \"1\" && _rcfErr.code === \"EACCES\") { console.error(\"[nemoclaw] Config is read-only in sandbox \\u2014 plugin metadata not persisted (plugins auto-load from extensions/)\"); } else { throw _rcfErr; } }'; assert old in src, 'tryWriteSingleTopLevelIncludeMutation/writeConfigFile pattern not found in replaceConfigFile'; f=open(p,'w'); f.write(src.replace(old,new,1)); f.close()" "$rcf_file"; \
+    python3 /usr/local/lib/nemoclaw/rcf_patch.py "$rcf_file"; \
     grep -REq --include='*.js' 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }; \
     # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
     # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
