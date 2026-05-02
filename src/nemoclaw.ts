@@ -36,12 +36,7 @@ const {
   dockerRmi,
 } = require("./lib/docker");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
-const {
-  startGatewayForRecovery,
-  pruneKnownHostsEntries,
-  hydrateCredentialEnv,
-  isNonInteractive,
-} = require("./lib/onboard");
+const { pruneKnownHostsEntries, hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
 const { ensureOllamaAuthProxy } = require("./lib/onboard-ollama-proxy");
 const { prompt: askPrompt } = require("./lib/credentials");
 const registry = require("./lib/registry");
@@ -66,6 +61,11 @@ const {
   isCommandTimeout,
   runOpenshell,
 } = require("./lib/openshell-runtime");
+const {
+  getNamedGatewayLifecycleState,
+  recoverNamedGatewayRuntime,
+} = require("./lib/gateway-runtime-action");
+const { recoverRegistryEntries } = require("./lib/registry-recovery-action");
 const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
 const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
 const agentRuntime = require("../bin/lib/agent-runtime");
@@ -450,179 +450,7 @@ function checkAndRecoverSandboxProcesses(
   return { checked: true, wasRunning: false, recovered };
 }
 
-function buildRecoveredSandboxEntry(
-  name: string,
-  metadata: RecoveredSandboxMetadata = {},
-): SandboxEntry {
-  return {
-    name,
-    model: metadata.model || null,
-    provider: metadata.provider || null,
-    gpuEnabled: metadata.gpuEnabled === true,
-    policies: Array.isArray(metadata.policies)
-      ? metadata.policies
-      : Array.isArray(metadata.policyPresets)
-        ? metadata.policyPresets
-        : [],
-    nimContainer: metadata.nimContainer || null,
-    agent: metadata.agent || null,
-  };
-}
-
-function upsertRecoveredSandbox(name: string, metadata: RecoveredSandboxMetadata = {}) {
-  let validName;
-  try {
-    validName = validateName(name, "sandbox name");
-  } catch {
-    return false;
-  }
-
-  const entry = buildRecoveredSandboxEntry(validName, metadata);
-  if (registry.getSandbox(validName)) {
-    registry.updateSandbox(validName, entry);
-    return false;
-  }
-  registry.registerSandbox(entry);
-  return true;
-}
-
-function shouldRecoverRegistryEntries(
-  current: { sandboxes: Array<{ name: string }>; defaultSandbox?: string | null },
-  session: Session | null,
-  requestedSandboxName: string | null,
-) {
-  const sessionSandboxName = session?.sandboxName ?? null;
-  const hasSessionSandbox = Boolean(sessionSandboxName);
-  const missingSessionSandbox =
-    hasSessionSandbox && !current.sandboxes.some((sandbox) => sandbox.name === sessionSandboxName);
-  const missingRequestedSandbox =
-    Boolean(requestedSandboxName) &&
-    !current.sandboxes.some((sandbox) => sandbox.name === requestedSandboxName);
-  const hasRecoverySeed =
-    current.sandboxes.length > 0 || hasSessionSandbox || Boolean(requestedSandboxName);
-  return {
-    missingRequestedSandbox,
-    shouldRecover:
-      hasRecoverySeed &&
-      (current.sandboxes.length === 0 || missingRequestedSandbox || missingSessionSandbox),
-  };
-}
-
-function seedRecoveryMetadata(
-  current: { sandboxes: SandboxEntry[] },
-  session: Session | null,
-  requestedSandboxName: string | null,
-) {
-  const metadataByName = new Map<string, RecoveredSandboxMetadata>(
-    current.sandboxes.map((sandbox: SandboxEntry) => [sandbox.name, sandbox]),
-  );
-  let recoveredFromSession = false;
-
-  if (!session?.sandboxName) {
-    return { metadataByName, recoveredFromSession };
-  }
-
-  metadataByName.set(
-    session.sandboxName,
-    buildRecoveredSandboxEntry(session.sandboxName, {
-      model: session.model || null,
-      provider: session.provider || null,
-      nimContainer: session.nimContainer || null,
-      policyPresets: session.policyPresets || null,
-    }),
-  );
-  const sessionSandboxMissing = !current.sandboxes.some(
-    (sandbox: { name: string }) => sandbox.name === session.sandboxName,
-  );
-  const shouldRecoverSessionSandbox =
-    current.sandboxes.length === 0 ||
-    sessionSandboxMissing ||
-    requestedSandboxName === session.sandboxName;
-  if (shouldRecoverSessionSandbox) {
-    recoveredFromSession = upsertRecoveredSandbox(
-      session.sandboxName,
-      metadataByName.get(session.sandboxName),
-    );
-  }
-  return { metadataByName, recoveredFromSession };
-}
-
-async function recoverRegistryFromLiveGateway(
-  metadataByName: Map<string, RecoveredSandboxMetadata>,
-) {
-  if (!resolveOpenshell()) {
-    return 0;
-  }
-  const recovery = await recoverNamedGatewayRuntime();
-  const canInspectLiveGateway =
-    recovery.recovered ||
-    recovery.before?.state === "healthy_named" ||
-    recovery.after?.state === "healthy_named";
-  if (!canInspectLiveGateway) {
-    return 0;
-  }
-
-  let recoveredFromGateway = 0;
-  const liveList = captureOpenshell(["sandbox", "list"], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  const liveNames = Array.from<string>(parseLiveSandboxNames(liveList.output));
-  for (const name of liveNames) {
-    const metadata = metadataByName.get(name) || undefined;
-    if (upsertRecoveredSandbox(name, metadata)) {
-      recoveredFromGateway += 1;
-    }
-  }
-  return recoveredFromGateway;
-}
-
-function applyRecoveredDefault(
-  currentDefaultSandbox: string | null,
-  requestedSandboxName: string | null,
-  session: Session | null,
-) {
-  const recovered = registry.listSandboxes();
-  const preferredDefault =
-    requestedSandboxName || (!currentDefaultSandbox ? session?.sandboxName || null : null);
-  if (
-    preferredDefault &&
-    recovered.sandboxes.some((sandbox: { name: string }) => sandbox.name === preferredDefault)
-  ) {
-    registry.setDefault(preferredDefault);
-  }
-  return registry.listSandboxes();
-}
-
-async function recoverRegistryEntries({
-  requestedSandboxName = null,
-}: { requestedSandboxName?: string | null } = {}) {
-  const current = registry.listSandboxes();
-  const session = onboardSession.loadSession();
-  const recoveryCheck = shouldRecoverRegistryEntries(current, session, requestedSandboxName);
-  if (!recoveryCheck.shouldRecover) {
-    return { ...current, recoveredFromSession: false, recoveredFromGateway: 0 };
-  }
-
-  const seeded = seedRecoveryMetadata(current, session, requestedSandboxName);
-  const shouldProbeLiveGateway =
-    current.sandboxes.length > 0 || Boolean(session?.sandboxName) || Boolean(requestedSandboxName);
-  const recoveredFromGateway = shouldProbeLiveGateway
-    ? await recoverRegistryFromLiveGateway(seeded.metadataByName)
-    : 0;
-  const recovered = applyRecoveredDefault(current.defaultSandbox, requestedSandboxName, session);
-  return {
-    ...recovered,
-    recoveredFromSession: seeded.recoveredFromSession,
-    recoveredFromGateway,
-  };
-}
-
 exports.runtimeBridge = {
-  captureOpenshell,
-  recoverNamedGatewayRuntime,
-  recoverRegistryEntries,
-  runOpenshell,
   sandboxConnect,
   sandboxDestroy,
   sandboxRebuild,
@@ -633,109 +461,6 @@ exports.runtimeBridge = {
 exports.ensureLiveSandboxOrExit = ensureLiveSandboxOrExit;
 exports.G = G;
 exports.R = R;
-
-function hasNamedGateway(output = ""): boolean {
-  return stripAnsi(output).includes("Gateway: nemoclaw");
-}
-
-function getActiveGatewayName(output = ""): string | null {
-  const match = stripAnsi(output).match(/^\s*Gateway:\s+(.+?)\s*$/m);
-  return match ? match[1].trim() : null;
-}
-
-function getNamedGatewayLifecycleState() {
-  const status = captureOpenshell(["status"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS });
-  const gatewayInfo = captureOpenshell(["gateway", "info", "-g", "nemoclaw"], {
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  const cleanStatus = stripAnsi(status.output);
-  const activeGateway = getActiveGatewayName(status.output);
-  const connected = /^\s*Status:\s*Connected\b/im.test(cleanStatus);
-  const named = hasNamedGateway(gatewayInfo.output);
-  const refusing = /Connection refused|client error \(Connect\)|tcp connect error/i.test(
-    cleanStatus,
-  );
-  if (connected && activeGateway === "nemoclaw" && named) {
-    return {
-      state: "healthy_named",
-      status: status.output,
-      gatewayInfo: gatewayInfo.output,
-      activeGateway,
-    };
-  }
-  if (activeGateway === "nemoclaw" && named && refusing) {
-    return {
-      state: "named_unreachable",
-      status: status.output,
-      gatewayInfo: gatewayInfo.output,
-      activeGateway,
-    };
-  }
-  if (activeGateway === "nemoclaw" && named) {
-    return {
-      state: "named_unhealthy",
-      status: status.output,
-      gatewayInfo: gatewayInfo.output,
-      activeGateway,
-    };
-  }
-  if (connected) {
-    return {
-      state: "connected_other",
-      status: status.output,
-      gatewayInfo: gatewayInfo.output,
-      activeGateway,
-    };
-  }
-  return {
-    state: "missing_named",
-    status: status.output,
-    gatewayInfo: gatewayInfo.output,
-    activeGateway,
-  };
-}
-
-/** Attempt to recover the named NemoClaw gateway after a restart or connectivity loss. */
-async function recoverNamedGatewayRuntime() {
-  const before = getNamedGatewayLifecycleState();
-  if (before.state === "healthy_named") {
-    return { recovered: true, before, after: before, attempted: false };
-  }
-
-  runOpenshell(["gateway", "select", "nemoclaw"], {
-    ignoreError: true,
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-  let after = getNamedGatewayLifecycleState();
-  if (after.state === "healthy_named") {
-    process.env.OPENSHELL_GATEWAY = "nemoclaw";
-    return { recovered: true, before, after, attempted: true, via: "select" };
-  }
-
-  const shouldStartGateway = [before.state, after.state].some((state) =>
-    ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"].includes(state),
-  );
-
-  if (shouldStartGateway) {
-    try {
-      await startGatewayForRecovery();
-    } catch {
-      // Fall through to the lifecycle re-check below so we preserve the
-      // existing recovery result shape and emit the correct classification.
-    }
-    runOpenshell(["gateway", "select", "nemoclaw"], {
-      ignoreError: true,
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    });
-    after = getNamedGatewayLifecycleState();
-    if (after.state === "healthy_named") {
-      process.env.OPENSHELL_GATEWAY = "nemoclaw";
-      return { recovered: true, before, after, attempted: true, via: "start" };
-    }
-  }
-
-  return { recovered: false, before, after, attempted: true };
-}
 
 function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutput: string): string {
   const rawLines = String(output).split("\n");

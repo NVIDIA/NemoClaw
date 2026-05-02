@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
 import { getCredential, prompt as askPrompt } from "./credentials";
-import { getNemoClawRuntimeBridge } from "./nemoclaw-runtime-bridge";
+import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 const { isNonInteractive } = require("./onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("./onboard-providers");
 import * as policies from "./policies";
@@ -284,7 +284,7 @@ async function applyChannelAddToGatewayAndRegistry(
   channelName: string,
   acquired: Record<string, string>,
 ): Promise<void> {
-  const recovery = await getNemoClawRuntimeBridge().recoverNamedGatewayRuntime();
+  const recovery = await recoverNamedGatewayRuntime();
   if (!recovery.recovered) {
     console.error(
       `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
@@ -324,7 +324,7 @@ async function applyChannelRemoveToGatewayAndRegistry(
   channelName: string,
   channelTokenKeys: string[],
 ): Promise<void> {
-  const recovery = await getNemoClawRuntimeBridge().recoverNamedGatewayRuntime();
+  const recovery = await recoverNamedGatewayRuntime();
   if (!recovery.recovered) {
     console.error(
       `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway to delete the bridge.`,
