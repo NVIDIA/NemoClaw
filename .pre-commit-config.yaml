@@ -16,8 +16,8 @@
 # Priority groups (prek runs same-priority hooks in parallel):
 #   0  — General file fixers (whitespace, EOF, line endings)
 #   4  — SPDX header insertion (--fix)
-#   5  — Shell / TS formatters (shfmt, prettier)
-#   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
+#   5  — Shell / JS / TS formatters (shfmt, Biome)
+#   6  — Fixes that should follow formatters (ruff check --fix, Biome lint --write)
 #  10  — Linters and read-only checks
 #  20  — Project-level checks (vitest, coverage, ratchet)
 
@@ -96,40 +96,22 @@ repos:
 
   - repo: local
     hooks:
-      - id: prettier-plugin
-        name: Prettier (plugin)
-        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx prettier --write "${files[@]}"' --
+      - id: biome-format
+        name: Biome format
+        entry: npx biome format --write
         language: system
-        files: ^nemoclaw/.*\.ts$
-        pass_filenames: true
-        priority: 5
-
-      - id: prettier-js
-        name: Prettier (JavaScript)
-        entry: npx prettier --write
-        language: system
-        files: ^(bin|test)/.*\.js$
+        files: ^(biome\.json|package(-lock)?\.json|nemoclaw/package(-lock)?\.json|commitlint\.config\.js|bin/.*\.js|src/.*\.ts|scripts/.*\.(js|ts)|test/.*\.js|nemoclaw/src/.*\.ts)$
         pass_filenames: true
         priority: 5
 
   # ── Priority 6: auto-fix after formatting ─────────────────────────────────
   - repo: local
     hooks:
-      - id: eslint-plugin
-        name: ESLint (plugin)
-        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx eslint --fix "${files[@]}"' --
+      - id: biome-lint-fix
+        name: Biome lint fixes
+        entry: npx biome lint --write
         language: system
-        files: ^nemoclaw/.*\.ts$
-        pass_filenames: true
-        priority: 6
-
-  - repo: local
-    hooks:
-      - id: eslint-cli
-        name: ESLint (CLI)
-        entry: npx eslint --fix
-        language: system
-        files: ^(bin|test|scripts|docs/_ext)/.*\.js$
+        files: ^(commitlint\.config\.js|bin/.*\.js|src/.*\.ts|scripts/.*\.(js|ts)|test/.*\.js|docs/_ext/.*\.js|nemoclaw/src/.*\.ts)$
         pass_filenames: true
         priority: 6
 
@@ -165,6 +147,14 @@ repos:
         language: system
         pass_filenames: false
         files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
+        priority: 10
+
+      - id: direct-credential-env
+        name: Direct credential env guard
+        entry: npx tsx scripts/check-direct-credential-env.ts
+        language: system
+        files: ^src/lib/onboard\.ts$
+        pass_filenames: true
         priority: 10
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
@@ -288,6 +278,14 @@ repos:
         language: system
         pass_filenames: false
         files: ^nemoclaw/
+        priority: 20
+
+      - id: source-shape-test-budget
+        name: Source-shape test budget
+        entry: npm run source-shape:check
+        language: system
+        pass_filenames: false
+        files: ^(test/|scripts/find-source-shape-tests\.ts$|ci/source-shape-test-budget\.json$)
         priority: 20
 
       - id: test-skills-yaml

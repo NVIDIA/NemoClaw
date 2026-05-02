@@ -85,8 +85,15 @@ RUN arch="$(dpkg --print-architecture)" \
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot
 # kill it or restart it with a tampered HOME/config.
+#
+# `gateway` is also a member of the `sandbox` group so both users can write
+# to the mutable-default OpenClaw config tree (chmod g+w + setgid below).
+# This replaces the previous EACCES-swallow approach for control-UI config
+# mutations — see #2681. UIDs stay distinct (security separation preserved);
+# the shared group only governs the mutable-default state directory.
 RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
     && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+    && usermod -aG sandbox gateway \
     && mkdir -p /sandbox/.nemoclaw \
     && chown -R sandbox:sandbox /sandbox
 
@@ -112,7 +119,9 @@ RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
         /sandbox/.openclaw/plugin-runtime-deps \
     && touch /sandbox/.openclaw/update-check.json \
     && touch /sandbox/.openclaw/exec-approvals.json \
-    && chown -R sandbox:sandbox /sandbox/.openclaw
+    && chown -R sandbox:sandbox /sandbox/.openclaw \
+    && chmod -R g+w /sandbox/.openclaw \
+    && find /sandbox/.openclaw -type d -exec chmod g+s {} +
 
 # Pre-create shell init files for the sandbox user.
 # Runtime proxy config is written by the entrypoint to /tmp/nemoclaw-proxy-env.sh

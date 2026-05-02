@@ -168,6 +168,30 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.agents.defaults.thinkingDefault).toBe("off");
   });
 
+  it("keeps compatible endpoints on the managed inference.local OpenClaw provider", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "deepseek-ai/DeepSeek-V4-Flash",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/deepseek-ai/DeepSeek-V4-Flash",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(JSON.stringify({ supportsStore: false })).toString(
+        "base64",
+      ),
+    });
+
+    expect(Object.keys(config.models.providers)).toEqual(["inference"]);
+    expect(config.models.providers.inference.baseUrl).toBe("https://inference.local/v1");
+    expect(config.models.providers.inference.apiKey).toBe("unused");
+    expect(config.models.providers.inference.models[0]).toMatchObject({
+      id: "deepseek-ai/DeepSeek-V4-Flash",
+      name: "inference/deepseek-ai/DeepSeek-V4-Flash",
+      compat: { supportsStore: false },
+    });
+    expect(config.agents.defaults.model.primary).toBe("inference/deepseek-ai/DeepSeek-V4-Flash");
+    expect(config.models.providers.deepinfra).toBeUndefined();
+  });
+
   it("sets gateway auth token to empty string", () => {
     const config = runConfigScript();
     expect(config.gateway.auth.token).toBe("");

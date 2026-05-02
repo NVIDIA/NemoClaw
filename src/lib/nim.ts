@@ -3,9 +3,7 @@
 //
 // NIM container management — pull, start, stop, health-check NIM images.
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { runCapture } = require("./runner");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const {
   dockerContainerInspectFormat,
   dockerForceRm,
@@ -16,9 +14,7 @@ const {
   dockerRunDetached,
   dockerStop,
 } = require("./docker");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { sleepSeconds } = require("./wait");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const nimImages = require("../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "./ports";

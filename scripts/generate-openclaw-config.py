@@ -26,6 +26,7 @@ Environment variables:
     NEMOCLAW_MESSAGING_CHANNELS_B64     Base64-encoded channel list
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map
     NEMOCLAW_DISCORD_GUILDS_B64         Base64-encoded Discord guild config
+    NEMOCLAW_TELEGRAM_CONFIG_B64        Base64-encoded Telegram config (e.g. {"requireMention": true})
     NEMOCLAW_DISABLE_DEVICE_AUTH        Set to "1" to force-disable device auth
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
@@ -110,6 +111,11 @@ def build_config(env: dict | None = None) -> dict:
             env.get("NEMOCLAW_DISCORD_GUILDS_B64", "e30=") or "e30="
         ).decode("utf-8")
     )
+    _telegram_config = json.loads(
+        base64.b64decode(
+            env.get("NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=") or "e30="
+        ).decode("utf-8")
+    )
 
     _token_keys = {"discord": "token", "telegram": "botToken", "slack": "botToken"}
     _env_keys = {
@@ -145,7 +151,9 @@ def build_config(env: dict | None = None) -> dict:
         if ch in ("telegram", "discord"):
             account["proxy"] = proxy_url
         if ch == "telegram":
-            account["groupPolicy"] = "open"
+            account["groupPolicy"] = (
+                "mentions" if _telegram_config.get("requireMention") else "open"
+            )
         if ch in _allowed_ids and _allowed_ids[ch]:
             account["dmPolicy"] = "allowlist"
             account["allowFrom"] = _allowed_ids[ch]

@@ -23,8 +23,9 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toEqual([
       "nvidia/nemotron-3-super-120b-a12b",
       "z-ai/glm-5.1",
-      "minimaxai/minimax-m2.5",
+      "minimaxai/minimax-m2.7",
       "openai/gpt-oss-120b",
+      "deepseek-ai/deepseek-v4-pro",
     ]);
   });
 
@@ -90,12 +91,16 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("gemini-api", "gemini-2.5-pro")).toEqual(
       expect.objectContaining({ model: "gemini-2.5-pro", providerLabel: "Google Gemini" }),
     );
-    expect(getProviderSelectionConfig("compatible-endpoint", "openrouter/auto")).toEqual(
-      expect.objectContaining({
-        model: "openrouter/auto",
-        providerLabel: "Other OpenAI-compatible endpoint",
-      }),
-    );
+    expect(getProviderSelectionConfig("compatible-endpoint", "openrouter/auto")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "openrouter/auto",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      provider: "compatible-endpoint",
+      providerLabel: "Other OpenAI-compatible endpoint",
+    });
     // Full-object assertion for one local provider — uses dedicated
     // credential env, not OPENAI_API_KEY (GH #2519).
     expect(getProviderSelectionConfig("vllm-local", "meta-llama")).toEqual({

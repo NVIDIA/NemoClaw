@@ -36,6 +36,7 @@ No restart is required.
 
 Switching happens through the OpenShell inference route.
 Use the provider and model that match the upstream you want to use.
+This is one of the cases where a NemoClaw workflow intentionally uses `openshell`; see [CLI Selection Guide](../reference/cli-selection-guide.md) for the general boundary.
 
 ### NVIDIA Endpoints
 

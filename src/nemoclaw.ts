@@ -48,9 +48,9 @@ const { getCredential, prompt: askPrompt } = require("./lib/credentials");
 const registry = require("./lib/registry");
 import type { SandboxEntry } from "./lib/registry";
 const nim = require("./lib/nim");
+const sandboxConfig = require("./lib/sandbox-config");
 const policies = require("./lib/policies");
 const shields = require("./lib/shields");
-const sandboxConfig = require("./lib/sandbox-config");
 const { parseGatewayInference } = require("./lib/inference-config");
 const { probeProviderHealth } = require("./lib/inference-health");
 const { getVersion } = require("./lib/version");
@@ -570,10 +570,18 @@ async function recoverRegistryEntries({
 }
 
 exports.captureOpenshell = captureOpenshell;
+exports.backupAll = backupAll;
+exports.garbageCollectImages = garbageCollectImages;
+exports.recoverNamedGatewayRuntime = recoverNamedGatewayRuntime;
 exports.recoverRegistryEntries = recoverRegistryEntries;
+exports.runOpenshell = runOpenshell;
+exports.sandboxChannelsList = sandboxChannelsList;
+exports.sandboxPolicyList = sandboxPolicyList;
+exports.sandboxStatus = sandboxStatus;
 exports.ensureLiveSandboxOrExit = ensureLiveSandboxOrExit;
 exports.G = G;
 exports.R = R;
+exports.upgradeSandboxes = upgradeSandboxes;
 
 function hasNamedGateway(output = ""): boolean {
   return stripAnsi(output).includes("Gateway: nemoclaw");
@@ -855,7 +863,6 @@ function printGatewayLifecycleHint(output = "", sandboxName = "", writer = conso
   }
 }
 
-// eslint-disable-next-line complexity
 async function getReconciledSandboxGatewayState(sandboxName: string) {
   let lookup = getSandboxGatewayState(sandboxName);
   if (lookup.state === "present") {
@@ -1158,197 +1165,25 @@ async function uninstall(args: string[]): Promise<void> {
   await runOclif("uninstall", args);
 }
 
-// Suffixes that mark a per-sandbox messaging integration in the gateway's
-// provider list, not a NemoClaw-managed credential. The bridge providers are
-// created during onboarding (see src/lib/onboard.ts:3203,3208,3218) and torn
-// down by the channels/sandbox-delete flows. `nemoclaw credentials list`
-// hides them and `nemoclaw credentials reset` refuses to touch them so
-// users cannot accidentally break a live integration via the credentials
-// surface.
-const BRIDGE_PROVIDER_SUFFIXES: readonly string[] = [
-  "-telegram-bridge",
-  "-discord-bridge",
-  "-slack-bridge",
-  // Slack registers a second provider for the App-Level Token (used for
-  // Socket Mode). bridgeProviderName() emits `${sandbox}-slack-app` for
-  // SLACK_APP_TOKEN, so the guardrails must match that suffix too —
-  // otherwise the slack-app provider shows up as an ordinary credential
-  // and `credentials reset` would happily delete it.
-  "-slack-app",
-];
-
-function isBridgeProviderName(name: string): boolean {
-  return BRIDGE_PROVIDER_SUFFIXES.some((suffix) => name.endsWith(suffix));
-}
-
 async function credentialsCommand(args: string[]): Promise<void> {
   const sub = args[0];
   if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
-    console.log("");
-    console.log(`  Usage: ${CLI_NAME} credentials <subcommand>`);
-    console.log("");
-    console.log("  Subcommands:");
-    console.log(
-      "    list                  List provider credentials registered with the OpenShell gateway",
-    );
-    console.log(
-      "    reset <PROVIDER> [--yes]   Remove a provider credential so onboard re-prompts",
-    );
-    console.log("");
-    console.log(
-      "  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.",
-    );
-    console.log(
-      "  Nothing is persisted to host disk; deploy/non-onboard commands read from env vars.",
-    );
-    console.log("");
+    await runOclif("credentials", []);
     return;
   }
 
-  if (sub === "list") {
-    // Pin to the NemoClaw gateway so a different active gateway cannot make
-    // us list (or later delete) providers from the wrong place.
-    const recovery = await recoverNamedGatewayRuntime();
-    if (!recovery.recovered) {
-      console.error(`  Could not query the ${CLI_DISPLAY_NAME} OpenShell gateway. Is it running?`);
-      console.error(
-        `  Run 'openshell gateway start --name nemoclaw' or '${CLI_NAME} onboard' first.`,
-      );
+  switch (sub) {
+    case "list":
+      await runOclif("credentials:list", args.slice(1));
+      return;
+    case "reset":
+      await runOclif("credentials:reset", args.slice(1));
+      return;
+    default:
+      console.error(`  Unknown credentials subcommand: ${sub}`);
+      console.error(`  Run '${CLI_NAME} credentials help' for usage.`);
       process.exit(1);
-    }
-    const result = runOpenshell(["provider", "list", "--names"], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status !== 0) {
-      console.error("  Could not query OpenShell gateway. Is it running?");
-      console.error(
-        `  Run 'openshell gateway start --name nemoclaw' or '${CLI_NAME} onboard' first.`,
-      );
-      process.exit(1);
-    }
-    const allNames = String(result.stdout || "")
-      .split("\n")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    // Show only credential providers. Per-sandbox messaging bridges are
-    // live integrations managed by the channels surface; surfacing them
-    // here would invite users to "reset" what looks like a credential and
-    // accidentally destroy a running bridge.
-    const credentialNames = allNames.filter((n) => !isBridgeProviderName(n)).sort();
-    const bridgeNames = allNames.filter((n) => isBridgeProviderName(n));
-    if (credentialNames.length === 0) {
-      console.log("  No provider credentials registered.");
-    } else {
-      console.log("  Providers registered with the OpenShell gateway:");
-      for (const name of credentialNames) {
-        console.log(`    ${name}`);
-      }
-    }
-    if (bridgeNames.length > 0) {
-      console.log("");
-      console.log(
-        `  ${String(bridgeNames.length)} per-sandbox messaging bridge(s) are also registered.`,
-      );
-      console.log(
-        `  Manage those with \`${CLI_NAME} <sandbox> channels list/remove/stop\` — not this command.`,
-      );
-    }
-    return;
   }
-
-  if (sub === "reset") {
-    const key = args[1];
-    // Validate that <PROVIDER> is a real positional argument, not a flag like
-    // `--yes` that the user passed without a key.
-    if (!key || key.startsWith("-")) {
-      console.error(`  Usage: ${CLI_NAME} credentials reset <PROVIDER> [--yes]`);
-      console.error(
-        `  PROVIDER is an OpenShell provider name. Run '${CLI_NAME} credentials list' first.`,
-      );
-      process.exit(1);
-    }
-    // Reject unknown trailing arguments to keep scripted use predictable.
-    const extraArgs = args.slice(2).filter((arg) => arg !== "--yes" && arg !== "-y");
-    if (extraArgs.length > 0) {
-      console.error(`  Unknown argument(s) for credentials reset: ${extraArgs.join(", ")}`);
-      console.error(`  Usage: ${CLI_NAME} credentials reset <PROVIDER> [--yes]`);
-      process.exit(1);
-    }
-    // Refuse to delete a per-sandbox messaging bridge — those are live
-    // integrations created/destroyed by the channels surface, not
-    // NemoClaw-managed credentials. Without this guard, scripting against
-    // the gateway provider list could tear down a running bridge and
-    // leave the sandbox in a half-configured state.
-    if (isBridgeProviderName(key)) {
-      console.error(`  '${key}' is a per-sandbox messaging bridge, not a credential.`);
-      console.error(
-        `  Use \`${CLI_NAME} <sandbox> channels remove <telegram|discord|slack>\` to retire`,
-      );
-      console.error(
-        "  the integration (it tears down the bridge provider and rebuilds the sandbox),",
-      );
-      console.error(
-        `  or \`${CLI_NAME} <sandbox> channels stop <…>\` to pause it without clearing tokens.`,
-      );
-      process.exit(1);
-    }
-    const skipPrompt = args.includes("--yes") || args.includes("-y");
-    if (!skipPrompt) {
-      const answer = (
-        await askPrompt(`  Remove provider '${key}' from the OpenShell gateway? [y/N]: `)
-      )
-        .trim()
-        .toLowerCase();
-      if (answer !== "y" && answer !== "yes") {
-        console.log("  Cancelled.");
-        return;
-      }
-    }
-    // Pin to the NemoClaw gateway so we cannot accidentally delete a
-    // provider from a different active gateway. We deliberately do NOT
-    // touch process.env here — `key` is an OpenShell provider name, and
-    // calling deleteCredential on it would silently strip an unrelated
-    // env entry whenever a provider name happens to share the shape of
-    // a credential env variable.
-    const recovery = await recoverNamedGatewayRuntime();
-    if (!recovery.recovered) {
-      console.error(`  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Is it running?`);
-      console.error(
-        `  Run 'openshell gateway start --name nemoclaw' or '${CLI_NAME} onboard' first.`,
-      );
-      process.exit(1);
-    }
-    const result = runOpenshell(["provider", "delete", key], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status === 0) {
-      console.log(`  Removed provider '${key}' from the OpenShell gateway.`);
-      console.log(`  Re-run '${CLI_NAME} onboard' to enter a new value.`);
-    } else {
-      console.error(`  Could not remove provider '${key}'.`);
-      // Earlier releases accepted a credential env-var name (e.g.
-      // NVIDIA_API_KEY) here; the API now takes an OpenShell provider
-      // name (nvidia-prod, openai-api, telegram-bridge, …). Surface the
-      // rename to anyone whose script is still passing the old shape.
-      if (/^[A-Z][A-Z0-9_]+$/.test(key)) {
-        console.error("");
-        console.error(`  '${key}' looks like a credential env variable name.`);
-        console.error("  As of this release, 'credentials reset' takes an OpenShell");
-        console.error(`  provider name. Run '${CLI_NAME} credentials list' to see the`);
-        console.error("  registered providers, then retry with one of those names.");
-      }
-      const stderr = String(result.stderr || "").trim();
-      if (stderr) console.error(`  ${stderr}`);
-      process.exit(1);
-    }
-    return;
-  }
-
-  console.error(`  Unknown credentials subcommand: ${sub}`);
-  console.error(`  Run '${CLI_NAME} credentials help' for usage.`);
-  process.exit(1);
 }
 
 async function showStatus(args: string[] = []): Promise<void> {
@@ -1365,6 +1200,14 @@ async function runOclif(commandId: string, args: string[] = []): Promise<void> {
 
 async function listSandboxes(args: string[] = []): Promise<void> {
   await runOclif("list", args);
+}
+
+function hasHelpFlag(args: string[]): boolean {
+  return args.includes("--help") || args.includes("-h");
+}
+
+function printSandboxActionUsage(action: string): void {
+  console.log(`  Usage: ${CLI_NAME} <name> ${action}`);
 }
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
@@ -1553,7 +1396,6 @@ async function sandboxConnect(sandboxName: string) {
   exitWithSpawnResult(result);
 }
 
-// eslint-disable-next-line complexity
 async function sandboxStatus(sandboxName: string) {
   const sb = registry.getSandbox(sandboxName);
   const live = parseGatewayInference(
@@ -4212,13 +4054,13 @@ async function dispatchCli(argv = process.argv.slice(2)) {
         await listSandboxes(args);
         break;
       case "backup-all":
-        backupAll();
+        await runOclif("backup-all", args);
         break;
       case "upgrade-sandboxes":
-        await upgradeSandboxes(args);
+        await runOclif("upgrade-sandboxes", args);
         break;
       case "gc":
-        await garbageCollectImages(args);
+        await runOclif("gc", args);
         break;
       case "--version":
       case "-v": {
@@ -4305,7 +4147,11 @@ async function dispatchCli(argv = process.argv.slice(2)) {
         await sandboxConnect(cmd);
         break;
       case "status":
-        await sandboxStatus(cmd);
+        if (hasHelpFlag(actionArgs)) {
+          printSandboxActionUsage("status");
+          break;
+        }
+        await runOclif("sandbox:status", [cmd, ...actionArgs]);
         break;
       case "logs":
         sandboxLogs(cmd, actionArgs.includes("--follow"));
@@ -4317,7 +4163,11 @@ async function dispatchCli(argv = process.argv.slice(2)) {
         await sandboxPolicyRemove(cmd, actionArgs);
         break;
       case "policy-list":
-        sandboxPolicyList(cmd);
+        if (hasHelpFlag(actionArgs)) {
+          printSandboxActionUsage("policy-list");
+          break;
+        }
+        await runOclif("sandbox:policy-list", [cmd, ...actionArgs]);
         break;
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
@@ -4404,9 +4254,15 @@ async function dispatchCli(argv = process.argv.slice(2)) {
         const channelsArgs = actionArgs.slice(1);
         switch (channelsSub) {
           case "list":
+            if (hasHelpFlag(channelsArgs)) {
+              printSandboxActionUsage("channels list");
+              break;
+            }
+            await runOclif("sandbox:channels:list", [cmd, ...channelsArgs]);
+            break;
           case undefined:
           case "":
-            sandboxChannelsList(cmd);
+            await runOclif("sandbox:channels:list", [cmd]);
             break;
           case "add":
             await sandboxChannelsAdd(cmd, channelsArgs);
@@ -4419,6 +4275,10 @@ async function dispatchCli(argv = process.argv.slice(2)) {
             break;
           case "start":
             await sandboxChannelsStart(cmd, channelsArgs);
+            break;
+          case "--help":
+          case "-h":
+            printSandboxActionUsage("channels list");
             break;
           default:
             console.error(`  Unknown channels subcommand: ${channelsSub}`);
@@ -4437,47 +4297,17 @@ async function dispatchCli(argv = process.argv.slice(2)) {
       case "config": {
         const configSub = actionArgs[0];
         switch (configSub) {
-          case "get": {
-            const configOpts: { key: string | null; format: string } = {
-              key: null,
-              format: "json",
-            };
-            for (let i = 1; i < actionArgs.length; i++) {
-              const flag = actionArgs[i];
-              if (flag === "--key") {
-                if (i + 1 >= actionArgs.length || actionArgs[i + 1].startsWith("--")) {
-                  console.error("  --key requires a value.");
-                  console.error(
-                    `  Usage: ${CLI_NAME} <name> config get [--key dotpath] [--format json|yaml]`,
-                  );
-                  process.exit(1);
-                }
-                configOpts.key = actionArgs[++i];
-              } else if (flag === "--format") {
-                if (i + 1 >= actionArgs.length || actionArgs[i + 1].startsWith("--")) {
-                  console.error("  --format requires a value (json|yaml).");
-                  console.error(
-                    `  Usage: ${CLI_NAME} <name> config get [--key dotpath] [--format json|yaml]`,
-                  );
-                  process.exit(1);
-                }
-                const format = actionArgs[++i];
-                if (format !== "json" && format !== "yaml") {
-                  console.error(`  Unknown format: ${format}. Use json or yaml.`);
-                  process.exit(1);
-                }
-                configOpts.format = format;
-              } else {
-                console.error(`  Unknown flag: ${flag}`);
-                console.error(
-                  `  Usage: ${CLI_NAME} <name> config get [--key dotpath] [--format json|yaml]`,
-                );
-                process.exit(1);
-              }
+          case "get":
+            if (hasHelpFlag(actionArgs.slice(1))) {
+              printSandboxActionUsage("config get [--key dotpath] [--format json|yaml]");
+              break;
             }
-            sandboxConfig.configGet(cmd, configOpts);
+            await runOclif("sandbox:config:get", [cmd, ...actionArgs.slice(1)]);
             break;
-          }
+          case "--help":
+          case "-h":
+            printSandboxActionUsage("config get [--key dotpath] [--format json|yaml]");
+            break;
           case "set": {
             const setOpts: {
               key: string | null;

@@ -105,6 +105,24 @@ RUN mkdir -p /sandbox/.hermes/memories \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
     done
 
+# Pre-create shell init files for the sandbox user.
+# The /sandbox home directory is Landlock read-only at runtime (#804), so these
+# files must exist at build time. The Hermes entrypoint writes proxy vars and
+# HERMES_HOME to /tmp/nemoclaw-proxy-env.sh (root-owned, mode 444); these rc
+# files source it on every interactive `openshell sandbox connect` session.
+# Ref: #2376.
+# hadolint ignore=SC2028
+RUN printf '%s\n' \
+        '# Source runtime proxy + HERMES_HOME config (Landlock read-only home, #804)' \
+        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        > /sandbox/.bashrc \
+    && printf '%s\n' \
+        '# Source runtime proxy + HERMES_HOME config (Landlock read-only home, #804)' \
+        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        > /sandbox/.profile \
+    && chown root:root /sandbox/.bashrc /sandbox/.profile \
+    && chmod 444 /sandbox/.bashrc /sandbox/.profile
+
 # Install Hermes Agent from the selected GitHub release.
 # The image prebakes only the extras mapped to NemoClaw-supported onboarding
 # integrations: messaging (Telegram, Discord, Slack) and web (API health/UI

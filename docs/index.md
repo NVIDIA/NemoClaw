@@ -369,7 +369,8 @@ OpenClaw Controls <security/openclaw-controls>
 :hidden:
 
 Architecture <reference/architecture>
-Commands <reference/commands>
+CLI Commands Reference <reference/commands>
+CLI Selection Guide <reference/cli-selection-guide>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
 ```

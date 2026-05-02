@@ -127,10 +127,6 @@ Use the exact template structure below. Fill in each section based on the diff (
 - [ ] Doc pages follow the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md) (doc changes only)
 - [ ] New doc pages include SPDX header and frontmatter (new pages only)
 
-## AI Disclosure
-<!-- If an AI agent authored or co-authored this PR, check the box and name the tool. Remove this section for fully human-authored PRs. -->
-- [ ] AI-assisted — tool: <!-- e.g., Claude Code, Cursor, GitHub Copilot -->
-
 ---
 <!-- DCO sign-off required by CI. Run: git config user.name && git config user.email -->
 Signed-off-by: {name} <{email}>
@@ -145,7 +141,6 @@ Follow these rules when filling in the template:
 - **Changes:** Bullet list of key changes. Be specific — reference file names, commands, or behaviors that changed.
 - **Type of Change:** Check exactly one box. Use `[x]` for checked, `[ ]` for unchecked.
 - **Verification:** Check only the boxes for steps you actually ran and confirmed passing. Do not check boxes for steps you skipped or did not verify.
-- **AI Disclosure:** As an AI agent, always check this box and name yourself (e.g., "Claude Code", "Cursor"). Do not remove this section. (Note: Human contributors may remove this section if the PR is fully human-authored.)
 - **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
 
 ## Step 6: Create the PR

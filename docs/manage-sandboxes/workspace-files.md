@@ -113,8 +113,8 @@ See [Backup and Restore](backup-restore.md) for instructions.
 The agent reads these files at the start of every session.
 You can edit them in two ways:
 
-1. Let the agent do it. Ask your agent to update its persona, memory, or user context.
-2. Edit manually. Use `openshell sandbox shell` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
+1. Ask your agent to update its persona, memory, or user context.
+2. Use `nemoclaw <name> connect` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
 
 ## Next Steps
 

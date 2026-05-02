@@ -467,7 +467,9 @@ if [ "$restored_size" != "$SNAPSHOT_SIZE" ]; then
 fi
 info "proxy-env.sh restored (${restored_size} bytes verified)"
 
-# Trigger recovery to bring the gateway back with guards intact.
+# Stop the no-guard gateway started by the negative case, then trigger
+# recovery to bring the gateway back with guards intact.
+sandbox_exec sh -c "pkill -9 -f '[o]penclaw' 2>/dev/null; sleep 2; pgrep -af '[o]penclaw' || echo ALL_DEAD" >/dev/null
 timeout 60 nemoclaw "$SANDBOX_NAME" status >/dev/null 2>&1 || true
 SOAK_START_PID="$(wait_for_gateway_up 30)"
 if [ -z "$SOAK_START_PID" ]; then

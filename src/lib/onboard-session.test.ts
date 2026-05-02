@@ -182,6 +182,44 @@ describe("onboard session", () => {
     expect(fresh.messagingChannels).toBeNull();
   });
 
+  it("#1737: persists telegramConfig across save/load roundtrips (requireMention=true)", () => {
+    const created = session.createSession();
+    created.telegramConfig = { requireMention: true };
+    session.saveSession(created);
+
+    const loaded = session.loadSession()!;
+    expect(loaded.telegramConfig).toEqual({ requireMention: true });
+  });
+
+  it("#1737: persists telegramConfig across save/load roundtrips (requireMention=false)", () => {
+    const created = session.createSession();
+    created.telegramConfig = { requireMention: false };
+    session.saveSession(created);
+
+    const loaded = session.loadSession()!;
+    expect(loaded.telegramConfig).toEqual({ requireMention: false });
+  });
+
+  it("#1737: rejects malformed telegramConfig on load", () => {
+    // Simulate a hand-edited session file with garbage in telegramConfig.
+    // Going through saveSession() would re-normalize the value before it
+    // hits disk, so write raw JSON directly to exercise the load-time
+    // parseTelegramConfig() path.
+    const seed = session.createSession();
+    session.saveSession(seed);
+    const onDisk = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
+    onDisk.telegramConfig = { requireMention: "yes" };
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(onDisk));
+
+    const loaded = session.loadSession()!;
+    expect(loaded.telegramConfig).toBeNull();
+  });
+
+  it("#1737: defaults telegramConfig to null for fresh sessions", () => {
+    const fresh = session.createSession();
+    expect(fresh.telegramConfig).toBeNull();
+  });
+
   it("persists and clears web search config through safe session updates", () => {
     session.saveSession(session.createSession());
     session.markStepComplete("provider_selection", {
@@ -407,6 +445,32 @@ describe("onboard session", () => {
 
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.messagingChannels).toEqual(["slack", "discord"]);
+  });
+
+  it("#1737: filterSafeUpdates routes telegramConfig through markStepComplete", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      telegramConfig: { requireMention: true },
+    });
+
+    const loaded = session.loadSession()!;
+    expect(loaded.telegramConfig).toEqual({ requireMention: true });
+
+    // Explicit null (clearing the field) should also round-trip.
+    session.markStepComplete("provider_selection", { telegramConfig: null });
+    const cleared = session.loadSession()!;
+    expect(cleared.telegramConfig).toBeNull();
+  });
+
+  it("#1737: filterSafeUpdates drops malformed telegramConfig values", () => {
+    session.saveSession(session.createSession());
+    // Non-boolean requireMention — must not leak through.
+    session.markStepComplete("provider_selection", {
+      telegramConfig: { requireMention: "yes" } as unknown as { requireMention: boolean },
+    });
+
+    const loaded = session.loadSession()!;
+    expect(loaded.telegramConfig).toBeNull();
   });
 
   it("createSession with messagingChannels override", () => {

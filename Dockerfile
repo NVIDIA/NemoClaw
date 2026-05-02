@@ -266,6 +266,10 @@ ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).
 # Used to enable guild-channel responses for native Discord. Default: empty map.
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
+# Base64-encoded JSON Telegram config (e.g. {"requireMention":true}).
+# When requireMention is true, Telegram groups get groupPolicy: mentions;
+# otherwise groupPolicy: open (existing default). See #1737. Default: empty map.
+ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
 # since terminal-based pairing is impossible in those contexts.
@@ -305,6 +309,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
+    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
@@ -480,17 +485,37 @@ RUN set -eu; \
     done; \
     rm -rf /root/.npm /sandbox/.npm
 
+# Stale-base fallback for the gateway-in-sandbox-group setup (#2681).
+# Newer base images already add the gateway user to the sandbox group, but
+# the derived image must remain build-clean against older sandbox-base:latest
+# tags too. The `id -nG` check makes this idempotent.
+# hadolint ignore=DL4006
+RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
+        if ! id -nG gateway | tr ' ' '\n' | grep -qx sandbox; then \
+            usermod -aG sandbox gateway; \
+        fi; \
+    fi
+
 # Keep the image readable to the root entrypoint after capabilities are
 # dropped. OpenShell starts the runtime as the sandbox user; the entrypoint
 # restores the stricter mutable-default 600/700 permissions there.
 # Shields-up applies 444 root:root + chattr +i on top.
+#
+# `chmod g+w` + setgid (chmod g+s on dirs) on the mutable config tree means
+# both `sandbox` and `gateway` (now a member of the sandbox group) can write
+# to OpenClaw config/state in default mode. New files created in setgid
+# directories inherit group=sandbox regardless of which UID created them,
+# so OpenClaw's mutateConfigFile path (control-UI toggles) writes succeed
+# without needing an EACCES-swallow patch (#2681 supersedes #2693).
 RUN chown -R sandbox:sandbox /sandbox/.openclaw \
     && chmod 755 /sandbox/.openclaw \
-    && chmod 644 /sandbox/.openclaw/openclaw.json
+    && chmod 644 /sandbox/.openclaw/openclaw.json \
+    && chmod -R g+w /sandbox/.openclaw \
+    && find /sandbox/.openclaw -type d -exec chmod g+s {} +
 
 # Pin config hash at build time so the entrypoint can verify integrity.
 RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
-    && chmod 644 /sandbox/.openclaw/.config-hash \
+    && chmod 664 /sandbox/.openclaw/.config-hash \
     && chown sandbox:sandbox /sandbox/.openclaw/.config-hash
 
 # DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write

@@ -13,8 +13,9 @@ export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 export const CLOUD_MODEL_OPTIONS = [
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
   { id: "z-ai/glm-5.1", label: "GLM-5" },
-  { id: "minimaxai/minimax-m2.5", label: "MiniMax M2.5" },
+  { id: "minimaxai/minimax-m2.7", label: "MiniMax M2.7" },
   { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+  { id: "deepseek-ai/deepseek-v4-pro", label: "DeepSeek V4 Pro" },
 ];
 export const DEFAULT_ROUTE_PROFILE = "inference-local";
 export const DEFAULT_ROUTE_CREDENTIAL_ENV = "OPENAI_API_KEY";
@@ -125,7 +126,6 @@ export function getOpenClawPrimaryModel(provider: string, model?: string): strin
 
 export function parseGatewayInference(output: string | null | undefined): GatewayInference | null {
   if (!output) return null;
-  // eslint-disable-next-line no-control-regex
   const stripped = output.replace(/\u001b\[[0-9;]*m/g, "");
   const lines = stripped.split("\n");
   let inGateway = false;

@@ -41,6 +41,8 @@ type OnboardTestInternals = {
     credentialEnv: string,
     baseUrl: string | null,
   ) => string[];
+  buildCompatibleEndpointSandboxSmokeCommand: (model: string) => string;
+  buildCompatibleEndpointSandboxSmokeScript: (model: string) => string;
   buildSandboxConfigSyncScript: ShimFn<string>;
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
   compactText: (value?: string) => string;
@@ -103,6 +105,11 @@ type OnboardTestInternals = {
   summarizeCurlFailure: ShimFn<string>;
   summarizeProbeFailure: ShimFn<string>;
   shouldIncludeBuildContextPath: ShimFn<boolean>;
+  shouldRunCompatibleEndpointSandboxSmoke: (
+    provider?: string | null,
+    messagingChannels?: string[] | null,
+    agent?: AgentDefinition | null,
+  ) => boolean;
   writeSandboxConfigSyncFile: (script: string) => string;
 };
 
@@ -120,6 +127,9 @@ function isOnboardTestInternals(
   return (
     value !== null &&
     typeof value.buildProviderArgs === "function" &&
+    typeof value.buildCompatibleEndpointSandboxSmokeCommand === "function" &&
+    typeof value.buildCompatibleEndpointSandboxSmokeScript === "function" &&
+    typeof value.buildSandboxConfigSyncScript === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
     typeof value.getDefaultSandboxNameForAgent === "function" &&
     typeof value.getSandboxPromptDefault === "function" &&
@@ -127,6 +137,7 @@ function isOnboardTestInternals(
     typeof value.normalizeSandboxAgentName === "function" &&
     typeof value.agentSupportsWebSearch === "function" &&
     typeof value.configureWebSearch === "function" &&
+    typeof value.shouldRunCompatibleEndpointSandboxSmoke === "function" &&
     typeof value.writeSandboxConfigSyncFile === "function"
   );
 }
@@ -142,6 +153,8 @@ if (!isOnboardTestInternals(onboardTestInternals)) {
 
 const {
   buildProviderArgs,
+  buildCompatibleEndpointSandboxSmokeCommand,
+  buildCompatibleEndpointSandboxSmokeScript,
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
   compactText,
@@ -183,6 +196,7 @@ const {
   summarizeCurlFailure,
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
+  shouldRunCompatibleEndpointSandboxSmoke,
   writeSandboxConfigSyncFile,
   findDashboardForwardOwner,
   formatOnboardConfigSummary,
@@ -264,6 +278,58 @@ describe("onboard helpers", () => {
     assert.doesNotMatch(script, /cat > ~\/\.openclaw\/openclaw\.json/);
     assert.doesNotMatch(script, /openclaw models set/);
     assert.match(script, /^exit$/m);
+  });
+
+  it("runs the compatible-endpoint sandbox smoke only for OpenClaw messaging sandboxes", () => {
+    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"], null)).toBe(
+      true,
+    );
+    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", [], null)).toBe(false);
+    expect(shouldRunCompatibleEndpointSandboxSmoke("openai-api", ["telegram"], null)).toBe(false);
+    expect(
+      shouldRunCompatibleEndpointSandboxSmoke(
+        "compatible-endpoint",
+        ["telegram"],
+        loadAgent("hermes"),
+      ),
+    ).toBe(false);
+  });
+
+  it("builds a compatible-endpoint smoke script that validates managed inference config", () => {
+    const script = buildCompatibleEndpointSandboxSmokeScript("deepseek-ai/DeepSeek-V4-Flash");
+
+    assert.match(script, /models\.providers\.inference/);
+    assert.match(script, /https:\/\/inference\.local\/v1/);
+    assert.match(script, /apiKey.*unused/);
+    assert.match(script, /agents\.defaults\.model\.primary/);
+    assert.match(script, /curl[\s\S]*\/chat\/completions/);
+    assert.doesNotMatch(script, /COMPATIBLE_API_KEY/);
+    assert.doesNotMatch(script, /api\.deepinfra\.com/);
+  });
+
+  it("wraps compatible-endpoint smoke script without newlines for OpenShell exec", () => {
+    const command = buildCompatibleEndpointSandboxSmokeCommand("deepseek-ai/DeepSeek-V4-Flash");
+
+    assert.doesNotMatch(command, /[\r\n]/);
+    assert.match(command, /base64\.b64decode/);
+    assert.match(command, /sh "\$tmp"/);
+    assert.doesNotMatch(command, /COMPATIBLE_API_KEY/);
+  });
+
+  it("uses active sandbox channels for compatible-endpoint smoke gating", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(
+      source,
+      /const activeMessagingChannels = registry\.getSandbox\(sandboxName\)\?\.messagingChannels;/,
+    );
+    assert.match(
+      source,
+      /messagingChannels: Array\.isArray\(activeMessagingChannels\) \? activeMessagingChannels : \[\]/,
+    );
   });
 
   it("uses explicit messaging selections for policy suggestions when provided", () => {
@@ -548,6 +614,148 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("#1737: patches the staged Dockerfile with Telegram mention-only config", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-mention-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-tg-mention",
+        "openai-api",
+        null,
+        null,
+        ["telegram"],
+        {},
+        {},
+        null,
+        { requireMention: true },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const line = patched
+        .split("\n")
+        .find((l) => l.startsWith("ARG NEMOCLAW_TELEGRAM_CONFIG_B64="));
+      assert.ok(line, "expected telegram config build arg");
+      const encoded = line.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, { requireMention: true });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#1737: patches the staged Dockerfile with Telegram open-group config when requireMention=false", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-open-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-tg-open",
+        "openai-api",
+        null,
+        null,
+        ["telegram"],
+        {},
+        {},
+        null,
+        { requireMention: false },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const line = patched
+        .split("\n")
+        .find((l) => l.startsWith("ARG NEMOCLAW_TELEGRAM_CONFIG_B64="));
+      assert.ok(line, "expected telegram config build arg");
+      const encoded = line.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, { requireMention: false });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#1737: preserves default Telegram group-open behavior when telegramConfig is empty", () => {
+    // Backward compatibility guard: the ARG default stays at e30= ({} base64)
+    // and patchStagedDockerfile does not rewrite it when no config is passed.
+    // The Dockerfile Python generator reads empty config as requireMention=false
+    // which maps to groupPolicy=open (matches pre-#1737 behavior).
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-empty-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-tg-default",
+        "openai-api",
+        null,
+        null,
+        ["telegram"],
+        {},
+        {},
+        null,
+        {},
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("maps NVIDIA Endpoints to the routed inference provider", () => {
     assert.deepEqual(
       getSandboxInferenceConfig("qwen/qwen3.5-397b-a17b", "nvidia-prod", "openai-completions"),
@@ -557,6 +765,21 @@ describe("onboard helpers", () => {
         inferenceBaseUrl: "https://inference.local/v1",
         inferenceApi: "openai-completions",
         inferenceCompat: null,
+      },
+    );
+  });
+
+  it("maps OpenAI-compatible endpoints to the managed inference provider", () => {
+    assert.deepEqual(
+      getSandboxInferenceConfig("deepseek-ai/DeepSeek-V4-Flash", "compatible-endpoint"),
+      {
+        providerKey: "inference",
+        primaryModelRef: "inference/deepseek-ai/DeepSeek-V4-Flash",
+        inferenceBaseUrl: "https://inference.local/v1",
+        inferenceApi: "openai-completions",
+        inferenceCompat: {
+          supportsStore: false,
+        },
       },
     );
   });
@@ -1073,7 +1296,7 @@ describe("onboard helpers", () => {
     expect(agentSupportsWebSearch(loadAgent("hermes"))).toBe(false);
   });
 
-  it("#2433: agentSupportsWebSearch honors the effective custom Dockerfile", () => {
+  it("#2433: agentSupportsWebSearch honors the effective custom Dockerfile for Brave-capable agents", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-web-search-custom-"));
     const withoutArg = path.join(tmpDir, "Dockerfile.no-web");
     const withArg = path.join(tmpDir, "Dockerfile.web");
@@ -1082,7 +1305,7 @@ describe("onboard helpers", () => {
     fs.writeFileSync(withArg, "FROM scratch\n  ARG NEMOCLAW_WEB_SEARCH_ENABLED=0\n");
     try {
       expect(agentSupportsWebSearch(loadAgent("openclaw"), withoutArg)).toBe(false);
-      expect(agentSupportsWebSearch(loadAgent("hermes"), withArg)).toBe(true);
+      expect(agentSupportsWebSearch(loadAgent("hermes"), withArg)).toBe(false);
       expect(agentSupportsWebSearch(loadAgent("openclaw"), missing)).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1400,6 +1623,17 @@ const { loadAgent } = require(${agentDefsPath});
       source,
       /runOpenshell\(\s*\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
     );
+  });
+
+  it("allows slow sandbox create recovery to wait beyond 60 seconds", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 180/);
+    assert.match(source, /Math\.ceil\(SANDBOX_READY_TIMEOUT_SECS \/ 2\)/);
+    assert.match(source, /within \$\{SANDBOX_READY_TIMEOUT_SECS\}s/);
   });
 
   it("classifies gateway reuse states conservatively", () => {
@@ -2019,7 +2253,7 @@ const { setupInference } = require(${onboardPath});
 
 (async () => {
   await setupInference("test-box", "nvidia/nemotron-3-super-120b-a12b", "nvidia-nim");
-  console.log(JSON.stringify(commands));
+  console.log(JSON.stringify({ commands, nvidiaApiKey: process.env.NVIDIA_API_KEY || null }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -2038,7 +2272,10 @@ const { setupInference } = require(${onboardPath});
     });
 
     expect(result.status).toBe(0);
-    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
+    const payload = parseStdoutJson<{ commands: CommandEntry[]; nvidiaApiKey: string | null }>(
+      result.stdout,
+    );
+    const commands = payload.commands;
     assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway select nemoclaw/);
     assert.match(commands[1].command, /provider get/);
@@ -2046,6 +2283,7 @@ const { setupInference } = require(${onboardPath});
     assert.doesNotMatch(commands[2].command, /nvapi-secret-value/);
     assert.match(commands[2].command, /provider update/);
     assert.match(commands[3].command, /inference set/);
+    assert.equal(payload.nvidiaApiKey, "nvapi-secret-value");
   });
 
   it("does not delete saved OpenAI credentials when configuring local vLLM", () => {
@@ -3277,7 +3515,6 @@ const { createSandbox } = require(${onboardPath});
     // Without this, a CHAT_UI_URL set in the developer's shell or CI would be
     // inherited, causing chatUiUrl to use the wrong port and making the forward
     // command assertion below fail spuriously.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { CHAT_UI_URL: _stripped, ...inheritedEnv } = process.env;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
@@ -3399,6 +3636,8 @@ const { createSandbox } = require(${onboardPath});
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token-value";
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
+  process.env.KUBECONFIG = "/tmp/host-kubeconfig";
+  process.env.SSH_AUTH_SOCK = "/tmp/host-ssh-agent.sock";
   const sandboxName = await createSandbox(null, "gpt-5.4");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -3495,6 +3734,16 @@ const { createSandbox } = require(${onboardPath});
         createCommand.env.NVIDIA_API_KEY,
         undefined,
         "NVIDIA_API_KEY must not be in sandbox env",
+      );
+      assert.equal(
+        createCommand.env.KUBECONFIG,
+        undefined,
+        "KUBECONFIG must not be in sandbox env",
+      );
+      assert.equal(
+        createCommand.env.SSH_AUTH_SOCK,
+        undefined,
+        "SSH_AUTH_SOCK must not be in sandbox env",
       );
 
       // Belt-and-suspenders: raw token values must not appear anywhere in env

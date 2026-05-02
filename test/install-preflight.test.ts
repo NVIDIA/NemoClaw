@@ -1757,21 +1757,81 @@ fi`,
   // "Node.js installed" line, not only in the generic bottom-of-output Next
   // block where it's easy to miss.
   it("install_nodejs upgrade path emits a Node-specific shell-reload hint", () => {
-    const script = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
-    const installNodejs = requireMatch(
-      script.match(/install_nodejs\(\)\s*\{[\s\S]*?\n\}/),
-      "Expected install_nodejs() function body to be present",
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-nvm-upgrade-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v18.19.1"; exit 0; fi
+exit 99
+`,
     );
-    const body = installNodejs[0];
-    // Anchor to the actual warn/printf calls (not the comment) so the test
-    // fails if the executable statements are removed. A child process can't
-    // mutate the parent's PATH, so the honest fix is printing the exact
-    // command the user can run in their existing shell (no exec tricks —
-    // those create a nested shell that masks the problem; see PR #2298).
-    expect(body).toMatch(/\n\s*warn\s+"Your current shell may still resolve/);
-    // Single-quoted printf avoids bash expansion of $NVM_DIR / $HOME in the
-    // printed text — the user gets a literal, env-aware command to paste.
-    expect(body).toMatch(/\n\s*printf\s+'[^']*NVM_DIR:-\$HOME\/\.nvm[^']*nvm use 22/);
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "9.8.1"; exit 0; fi
+exit 98
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "sha256sum"),
+      `#!/usr/bin/env bash
+echo "4b7412c49960c7d31e8df72da90c1fb5b8cccb419ac99537b737028d497aba4f  $1"
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out="$2"; shift 2; else shift; fi
+done
+cat > "$out" <<'INSTALL'
+#!/usr/bin/env bash
+set -euo pipefail
+nvm_dir="\${NVM_DIR:-$HOME/.nvm}"
+mkdir -p "$nvm_dir"
+cat > "$nvm_dir/nvm.sh" <<'NVM'
+nvm() {
+  case "$1" in
+    install)
+      mkdir -p "$NVM_DIR/versions/node/v22/bin"
+      cat > "$NVM_DIR/versions/node/v22/bin/node" <<'NODE'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.16.0"; exit 0; fi
+exit 0
+NODE
+      chmod +x "$NVM_DIR/versions/node/v22/bin/node"
+      ;;
+    use)
+      export PATH="$NVM_DIR/versions/node/v22/bin:$PATH"
+      ;;
+    alias)
+      return 0
+      ;;
+  esac
+}
+NVM
+INSTALL
+`,
+    );
+
+    const result = spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; install_nodejs`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        HOME: tmp,
+        NVM_DIR: path.join(tmp, ".nvm"),
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      },
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).toBe(0);
+    expect(output).toContain("Node.js installed via nvm: v22.16.0");
+    expect(output).toContain("Your current shell may still resolve `node` to an older version");
+    expect(output).toContain('source "${NVM_DIR:-$HOME/.nvm}/nvm.sh" && nvm use 22');
   });
 });
 
@@ -1808,19 +1868,41 @@ describe("installer pure helpers", () => {
   }
 
   it("verify_nemoclaw checks the active CLI alias", () => {
-    const script = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
-    const body = requireMatch(
-      script.match(
-        /verify_nemoclaw\(\)\s*\{[\s\S]*?\n\}\n\n# ---------------------------------------------------------------------------\n# 5\. Onboard/,
-      ),
-      "Expected verify_nemoclaw() function body to be present",
-    )[0];
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-verify-cli-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "nemohermes"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "nemohermes v0.1.0-test"
+  exit 0
+fi
+exit 1
+`,
+    );
 
-    expect(body).toContain('command_exists "$_CLI_BIN"');
-    expect(body).toContain('is_real_nemoclaw_cli "$(command -v "$_CLI_BIN")" "$_CLI_BIN"');
-    expect(body).toContain('"$npm_bin/$_CLI_BIN"');
-    expect(body).not.toContain("command_exists nemoclaw");
-    expect(body).not.toContain('"$npm_bin/nemoclaw"');
+    const r = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER}" 2>/dev/null; verify_nemoclaw; printf 'READY=%s\n' "$NEMOCLAW_READY_NOW"`,
+      ],
+      {
+        cwd: path.join(import.meta.dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          NEMOCLAW_AGENT: "hermes",
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        },
+      },
+    );
+
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("READY=true");
+    expect(r.stdout).toContain("Verified: nemohermes is available");
   });
 
   it("is_real_nemoclaw_cli accepts the active NemoHermes binary name", () => {
@@ -1941,14 +2023,11 @@ exit 1
   });
 
   it("resolve_openclaw_version: falls back to Dockerfile.base when package.json omits it", () => {
-    const dockerfileContent = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "Dockerfile.base"),
-      "utf-8",
-    );
-    const expected = dockerfileContent.match(/ARG\s+OPENCLAW_VERSION\s*=\s*(\S+)/)?.[1];
-    expect(expected).toBeDefined();
-    const r = callInstallerFn('resolve_openclaw_version "$PWD"');
-    expect(r.stdout.trim()).toBe(expected);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-version-"));
+    fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "fixture" }));
+    fs.writeFileSync(path.join(tmp, "Dockerfile.base"), "ARG OPENCLAW_VERSION=1.2.3\n");
+    const r = callInstallerFn(`resolve_openclaw_version ${JSON.stringify(tmp)}`);
+    expect(r.stdout.trim()).toBe("1.2.3");
   });
 
   it("is_source_checkout: rejects a payload-like checkout without git metadata", () => {
@@ -2073,15 +2152,14 @@ exit 1
     expect(r.stdout).toBe("  v0.0.21");
   });
 
-  it("agent_display_name: formats Hermes without Bash 4 uppercase expansion", () => {
-    const source = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
-    expect(source).not.toContain("${NEMOCLAW_AGENT^}");
-    expect(source).not.toContain("${agent_name^}");
-    expect(source).not.toContain("${agent_display_name");
+  it("agent_display_name: formats Hermes and NemoClaw names", () => {
+    const hermes = callInstallerPayloadFn("agent_display_name hermes");
+    expect(hermes.status).toBe(0);
+    expect(hermes.stdout.trim()).toBe("Hermes");
 
-    const r = callInstallerPayloadFn("agent_display_name hermes");
-    expect(r.status).toBe(0);
-    expect(r.stdout.trim()).toBe("Hermes");
+    const nemoclaw = callInstallerPayloadFn("agent_display_name nemoclaw");
+    expect(nemoclaw.status).toBe(0);
+    expect(nemoclaw.stdout.trim()).toBe("Nemoclaw");
   });
 
   it("prefer_user_local_openshell: exports the freshly installed OpenShell path", () => {

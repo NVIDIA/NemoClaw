@@ -303,9 +303,9 @@ describe("inventory commands", () => {
 
   it("flags messaging bridge as degraded when checkMessagingBridgeHealth reports conflicts", () => {
     const lines: string[] = [];
-    const checkMessagingBridgeHealth = vi.fn().mockReturnValue([
-      { channel: "telegram", conflicts: 7 },
-    ]);
+    const checkMessagingBridgeHealth = vi
+      .fn()
+      .mockReturnValue([{ channel: "telegram", conflicts: 7 }]);
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
@@ -349,9 +349,9 @@ describe("inventory commands", () => {
 
   it("prints a cross-sandbox overlap warning when backfillAndFindOverlaps reports overlaps", () => {
     const lines: string[] = [];
-    const backfillAndFindOverlaps = vi.fn().mockReturnValue([
-      { channel: "telegram", sandboxes: ["alice", "bob"] },
-    ]);
+    const backfillAndFindOverlaps = vi
+      .fn()
+      .mockReturnValue([{ channel: "telegram", sandboxes: ["alice", "bob"] }]);
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
@@ -367,20 +367,22 @@ describe("inventory commands", () => {
     });
 
     expect(backfillAndFindOverlaps).toHaveBeenCalled();
-    expect(
-      lines.some((l) => l.includes("telegram is enabled on both 'alice' and 'bob'")),
-    ).toBe(true);
+    expect(lines.some((l) => l.includes("telegram is enabled on both 'alice' and 'bob'"))).toBe(
+      true,
+    );
   });
 
   it("surfaces Hermes gateway log when messaging is degraded", () => {
     const lines: string[] = [];
-    const checkMessagingBridgeHealth = vi.fn().mockReturnValue([
-      { channel: "telegram", conflicts: 3 },
-    ]);
-    const readGatewayLog = vi.fn().mockReturnValue(
-      "2026-04-17 getUpdates conflict: terminated by other getUpdates\n" +
-      "2026-04-17 retrying in 5s",
-    );
+    const checkMessagingBridgeHealth = vi
+      .fn()
+      .mockReturnValue([{ channel: "telegram", conflicts: 3 }]);
+    const readGatewayLog = vi
+      .fn()
+      .mockReturnValue(
+        "2026-04-17 getUpdates conflict: terminated by other getUpdates\n" +
+          "2026-04-17 retrying in 5s",
+      );
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
@@ -407,9 +409,9 @@ describe("inventory commands", () => {
 
   it("does not show gateway log for non-Hermes sandboxes", () => {
     const lines: string[] = [];
-    const checkMessagingBridgeHealth = vi.fn().mockReturnValue([
-      { channel: "telegram", conflicts: 3 },
-    ]);
+    const checkMessagingBridgeHealth = vi
+      .fn()
+      .mockReturnValue([{ channel: "telegram", conflicts: 3 }]);
     const readGatewayLog = vi.fn();
     showStatusCommand({
       listSandboxes: () => ({
@@ -449,7 +451,7 @@ describe("inventory commands", () => {
         ],
         defaultSandbox: "alpha",
       }),
-      getLiveInference: () => ({ provider: "nvidia-prod", model: "minimaxai/minimax-m2.5" }),
+      getLiveInference: () => ({ provider: "nvidia-prod", model: "minimaxai/minimax-m2.7" }),
       showServiceStatus,
       log: (message = "") => lines.push(message),
     });
@@ -457,7 +459,7 @@ describe("inventory commands", () => {
     expect(lines).toContain("  Sandboxes:");
     // Default sandbox shows the live gateway model (#2369), annotated with
     // the onboarded model when they differ.
-    expect(lines).toContain("    alpha * (minimaxai/minimax-m2.5)");
+    expect(lines).toContain("    alpha * (minimaxai/minimax-m2.7)");
     expect(lines).toContain("      (onboarded: nvidia/nemotron-3-super-120b-a12b)");
     // Non-default sandbox keeps its stored model — the gateway only applies
     // to whichever sandbox is currently connected.
@@ -508,12 +510,12 @@ describe("inventory commands", () => {
         sandboxes: [{ name: "alpha" }],
         defaultSandbox: "alpha",
       }),
-      getLiveInference: () => ({ provider: "nvidia-prod", model: "minimaxai/minimax-m2.5" }),
+      getLiveInference: () => ({ provider: "nvidia-prod", model: "minimaxai/minimax-m2.7" }),
       showServiceStatus: vi.fn(),
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("    alpha * (minimaxai/minimax-m2.5)");
+    expect(lines).toContain("    alpha * (minimaxai/minimax-m2.7)");
     expect(lines).toContain("      (onboarded: unknown)");
   });
 });

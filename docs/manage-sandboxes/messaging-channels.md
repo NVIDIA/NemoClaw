@@ -44,7 +44,7 @@ For details, refer to [Commands](../reference/commands.md).
 
 | Channel | Required tokens | Optional settings |
 |---------|-----------------|-------------------|
-| Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting |
+| Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting, `TELEGRAM_REQUIRE_MENTION` for group-chat replies |
 | Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | None |
 
@@ -52,6 +52,8 @@ Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
 `TELEGRAM_ALLOWED_IDS` is a comma-separated list of Telegram user IDs for DM access.
 Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
+Set `TELEGRAM_REQUIRE_MENTION=1` to make the bot reply in Telegram groups only when users mention it.
+Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 
 Discord uses a bot token from the Discord Developer Portal.
 For server channels, enable Developer Mode in Discord, right-click the server, and copy the Server ID into `DISCORD_SERVER_ID`.
@@ -72,6 +74,7 @@ For scripted setup, export the credentials and optional settings for the channel
 
 ```console
 $ export TELEGRAM_BOT_TOKEN=<your-bot-token>
+$ export TELEGRAM_REQUIRE_MENTION=1
 $ export DISCORD_BOT_TOKEN=<your-discord-bot-token>
 $ export DISCORD_SERVER_ID=<your-discord-server-id>
 $ export SLACK_BOT_TOKEN=<your-slack-bot-token>
@@ -105,7 +108,7 @@ $ nemoclaw my-assistant channels add slack
 
 `channels add` prompts for missing credentials, registers the bridge with the OpenShell gateway, updates the sandbox registry, and asks whether to rebuild immediately.
 Choose the rebuild so the running sandbox image picks up the new channel.
-If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, or `DISCORD_REQUIRE_MENTION`, export them before the rebuild starts.
+If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, or `DISCORD_REQUIRE_MENTION`, export them before the rebuild starts.
 If you defer the rebuild, apply the change later:
 
 ```console
@@ -152,6 +155,12 @@ Telegram, Discord, and Slack each allow only one active consumer per bot token.
 If you enable a messaging channel and another sandbox already uses the same token, onboarding prompts you to confirm before continuing in interactive mode and exits non-zero in non-interactive mode.
 `nemoclaw status` reports cross-sandbox overlaps so you can resolve duplicates before messages start dropping.
 
+## Stop Messaging Delivery
+
+Use `channels stop` when you want to pause one bridge and keep the sandbox running.
+Use `nemoclaw tunnel stop` or its deprecated alias `nemoclaw stop` when you want to stop host auxiliary services and also ask NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
+Stopping the in-sandbox gateway stops Telegram, Discord, and Slack polling for that sandbox until you restart the sandbox or gateway.
+
 ## Confirm Delivery
 
 After the sandbox is running, send a message to the configured bot or app.
@@ -160,8 +169,8 @@ Use the matching policy preset (`telegram`, `discord`, or `slack`) or review [Cu
 
 ## Tunnel Command
 
-`nemoclaw tunnel start` starts cloudflared when it is installed, which can expose the dashboard with a public URL.
-It does not affect messaging channel connectivity.
+When the host has `cloudflared`, `nemoclaw tunnel start` starts a cloudflared tunnel that can expose the dashboard with a public URL.
+`nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
 The older `nemoclaw start` still works as a deprecated alias.
 
 ```console

@@ -265,18 +265,13 @@ describe("shields — unit logic", () => {
   // NC-2227-02: Three-state shields model
   // -------------------------------------------------------------------
   describe("NC-2227-02: three-state shields model", () => {
-    it("deriveShieldsMode encodes the fresh, locked, unlocked, and legacy-state cases", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "src", "lib", "shields.ts"),
-        "utf-8",
-      );
-      const fn = src.match(/function deriveShieldsMode\([\s\S]*?^}/m);
-      expect(fn).toBeTruthy();
-      expect(fn![0]).toContain('if (!hasStateFile) return "mutable_default"');
-      expect(fn![0]).toContain('if (state.shieldsDown === true) return "temporarily_unlocked"');
-      expect(fn![0]).toContain('if (state.shieldsDown === false) return "locked"');
-      expect(fn![0]).toContain('return "mutable_default"');
-      expect(src).toContain("deriveShieldsMode(state, state._hasStateFile)");
+    it("deriveShieldsMode encodes the fresh, locked, unlocked, and legacy-state cases", async () => {
+      const { deriveShieldsMode } = await import("../dist/lib/shields.js");
+
+      expect(deriveShieldsMode({}, false)).toBe("mutable_default");
+      expect(deriveShieldsMode({ shieldsDown: true }, true)).toBe("temporarily_unlocked");
+      expect(deriveShieldsMode({ shieldsDown: false }, true)).toBe("locked");
+      expect(deriveShieldsMode({}, true)).toBe("mutable_default");
     });
   });
 });

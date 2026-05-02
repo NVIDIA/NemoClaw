@@ -31,6 +31,16 @@ describe("model prompt helpers", () => {
     expect(result).toBe("llama");
   });
 
+  it("returns DeepSeek V4 Pro from the default cloud model menu", async () => {
+    const promptFn = promptSequence(["5"]);
+    const result = await promptCloudModel({
+      promptFn,
+      writeLine: vi.fn(),
+    });
+
+    expect(result).toBe("deepseek-ai/deepseek-v4-pro");
+  });
+
   it("validates manual cloud model ids against the saved NVIDIA key", async () => {
     const promptFn = promptSequence(["9", "bad-model", "nemotron-custom"]);
     const errorLine = vi.fn();
@@ -78,9 +88,7 @@ describe("model prompt helpers", () => {
     );
 
     expect(result).toBe("custom-model");
-    expect(errorLine).toHaveBeenCalledWith(
-      "  Could not validate model against /models: timeout",
-    );
+    expect(errorLine).toHaveBeenCalledWith("  Could not validate model against /models: timeout");
   });
 
   it("returns back-to-selection for manual ids and input prompts", async () => {

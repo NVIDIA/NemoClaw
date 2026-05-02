@@ -8,6 +8,9 @@
 #                            for Telegram + Discord + Slack. Uses fake tokens. Slack additionally
 #                            exercises the slack-token-rewriter Bolt-shape → canonical placeholder
 #                            translation (#2085). See PR #1081.
+#   messaging-compatible-endpoint-e2e
+#                            Validates Telegram + OpenAI-compatible endpoint inference routing
+#                            through inference.local with a hermetic local mock (#2766).
 #   token-rotation-e2e       Validates that rotating a messaging token and re-running onboard
 #                            propagates the new credential to the sandbox. Combined Telegram +
 #                            Discord + Slack coverage with cross-talk assertions. See issue #1903.
@@ -45,6 +48,7 @@ on:
           Comma-separated job names to run (empty = all).
           Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
           skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
+          messaging-compatible-endpoint-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e,
           sandbox-operations-e2e, inference-routing-e2e,
@@ -268,6 +272,40 @@ jobs:
         with:
           name: install-log-messaging-providers
           path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  # ── Messaging + compatible endpoint regression (#2766) ───────
+  # Hermetic Telegram + OpenAI-compatible endpoint path. Uses a local mock
+  # endpoint and fake Telegram token, then asserts sandbox inference.local
+  # reaches the mock through the gateway provider route.
+  messaging-compatible-endpoint-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',messaging-compatible-endpoint-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run messaging compatible endpoint E2E test
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-msg-compat"
+          GITHUB_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e"
+          TELEGRAM_ALLOWED_IDS: "123456789"
+        run: bash test/e2e/test-messaging-compatible-endpoint.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-messaging-compatible-endpoint
+          path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
           if-no-files-found: ignore
 
   # ── Token rotation (credential propagation to L7 proxy) ─────
@@ -1427,6 +1465,7 @@ jobs:
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
+        messaging-compatible-endpoint-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         hermes-e2e,
@@ -1507,6 +1546,7 @@ jobs:
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
+        messaging-compatible-endpoint-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         hermes-e2e,
@@ -1602,6 +1642,7 @@ jobs:
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
+        messaging-compatible-endpoint-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         hermes-e2e,

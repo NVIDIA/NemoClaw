@@ -21,6 +21,7 @@ export type CurlProbeResult = ProbeResult;
 export interface CurlProbeOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
   spawnSyncImpl?: (
     command: string,
     args: readonly string[],
@@ -111,7 +112,6 @@ export function summarizeProbeFailure(body = "", status = 0, curlStatus = 0, std
   return summarizeProbeError(body, status);
 }
 
-// eslint-disable-next-line complexity
 export function runCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlProbeResult {
   const bodyFile = secureTempFile("nemoclaw-curl-probe", ".json");
   try {
@@ -124,7 +124,7 @@ export function runCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlP
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
-        timeout: 30_000,
+        timeout: opts.timeoutMs ?? 30_000,
         env: {
           ...process.env,
           ...opts.env,
@@ -182,6 +182,113 @@ export function runCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlP
   }
 }
 
+function hasChatCompletionsStreamingData(body: string): boolean {
+  let seenChoices = false;
+  for (const line of body.split("\n")) {
+    const match = /^data:\s*(.+)$/i.exec(line.trim());
+    if (!match) continue;
+    const data = match[1].trim();
+    if (data === "[DONE]") return seenChoices;
+    try {
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed?.choices) && parsed.choices.length > 0) {
+        seenChoices = true;
+      }
+    } catch {
+      /* Ignore malformed SSE data lines and keep scanning. */
+    }
+  }
+  return seenChoices;
+}
+
+export function runChatCompletionsStreamingProbe(
+  argv: string[],
+  opts: CurlProbeOptions = {},
+): CurlProbeResult {
+  const bodyFile = secureTempFile("nemoclaw-chat-streaming-probe", ".sse");
+  try {
+    const args = [...argv];
+    const url = args.pop();
+    const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+    const result = spawnSyncImpl(
+      "curl",
+      [...args, "-N", "-o", bodyFile, "-w", "%{http_code}", String(url || "")],
+      {
+        cwd: opts.cwd ?? ROOT,
+        encoding: "utf8",
+        timeout: opts.timeoutMs ?? 30_000,
+        env: {
+          ...process.env,
+          ...opts.env,
+        },
+      },
+    );
+
+    const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
+    if (result.error) {
+      const rawErrorCode = isErrnoException(result.error)
+        ? (result.error.errno ?? result.error.code)
+        : undefined;
+      const errorCode = typeof rawErrorCode === "number" ? rawErrorCode : 1;
+      const errorMessage = compactText(
+        `${result.error.message || String(result.error)} ${String(result.stderr || "")}`,
+      );
+      return {
+        ok: false,
+        httpStatus: 0,
+        curlStatus: errorCode,
+        body,
+        stderr: errorMessage,
+        message: summarizeProbeFailure(body, 0, errorCode, errorMessage),
+      };
+    }
+
+    const status = Number(String(result.stdout || "").trim());
+    const curlStatus = result.status || 0;
+    const hasStreamingData = hasChatCompletionsStreamingData(body);
+    const httpOk = Number.isFinite(status) && status >= 200 && status < 300;
+    if (httpOk && hasStreamingData && (curlStatus === 0 || curlStatus === 28)) {
+      return {
+        ok: true,
+        httpStatus: status,
+        curlStatus,
+        body,
+        stderr: String(result.stderr || ""),
+        message: `HTTP ${status}: chat completions stream returned SSE data`,
+      };
+    }
+
+    const message =
+      httpOk && !hasStreamingData
+        ? `HTTP ${status}: chat completions stream did not return SSE data`
+        : summarizeProbeFailure(body, status || 0, curlStatus, String(result.stderr || ""));
+    return {
+      ok: false,
+      httpStatus: Number.isFinite(status) ? status : 0,
+      curlStatus,
+      body,
+      stderr: String(result.stderr || ""),
+      message,
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      httpStatus: 0,
+      curlStatus:
+        typeof error === "object" && error && "status" in error ? Number(error.status) || 1 : 1,
+      body: "",
+      stderr: detail,
+      message: summarizeCurlFailure(
+        typeof error === "object" && error && "status" in error ? Number(error.status) || 1 : 1,
+        detail,
+      ),
+    };
+  } finally {
+    cleanupTempDir(bodyFile, "nemoclaw-chat-streaming-probe");
+  }
+}
+
 /**
  * The minimum set of streaming events that OpenClaw requires from a
  * `/v1/responses` endpoint. Backends that only emit the top-level lifecycle
@@ -211,7 +318,7 @@ export function runStreamingEventProbe(
     const result = spawnSyncImpl("curl", [...args, "-N", "-o", bodyFile, String(url || "")], {
       cwd: opts.cwd ?? ROOT,
       encoding: "utf8",
-      timeout: 30_000,
+      timeout: opts.timeoutMs ?? 30_000,
       env: {
         ...process.env,
         ...opts.env,

@@ -204,8 +204,8 @@ $ nemoclaw <name> policy-add
 ```
 
 :::{note}
-Preset selection is interactive.
-Positional preset arguments are ignored.
+Preset selection is interactive when you omit a preset name.
+Pass a preset name with `--yes` for scripted workflows.
 :::
 
 For example, to interactively add PyPI access to a running sandbox:

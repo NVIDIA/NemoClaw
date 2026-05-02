@@ -257,6 +257,19 @@ const HIGH_RISK_STATE_DIRS = [
 ];
 
 function applyStateDirLockMode(sandboxName: string, configDir: string, owner: string): void {
+  // Locking (shields-up) strips group + world write. Unlocking (shields-down)
+  // re-adds group write and strips world write, plus setgid so the gateway
+  // UID — now in the sandbox group via Dockerfile.base — can write to
+  // OpenClaw's mutable config tree (#2681).
+  //
+  // The unlock variant uses `g+w,o-w` (not `o-w` alone) because a prior
+  // lock already stripped g+w from descendants via `chmod -R go-w`. Without
+  // re-adding g+w explicitly, shields-down would leave nested files at
+  // 644 — group-write gone, contract broken.
+  const isLocking = owner === "root:root";
+  const writeStrip = isLocking ? "go-w" : "g+w,o-w";
+  const dirMode = isLocking ? "755" : "2775";
+
   for (const dirName of HIGH_RISK_STATE_DIRS) {
     const dirPath = `${configDir}/${dirName}`;
     try {
@@ -265,8 +278,8 @@ function applyStateDirLockMode(sandboxName: string, configDir: string, owner: st
       // Directory may not exist for this agent — silently skip
     }
     try {
-      kubectlExec(sandboxName, ["chmod", "755", dirPath]);
-      kubectlExec(sandboxName, ["chmod", "-R", "go-w", dirPath]);
+      kubectlExec(sandboxName, ["chmod", dirMode, dirPath]);
+      kubectlExec(sandboxName, ["chmod", "-R", writeStrip, dirPath]);
     } catch {
       // Silently skip
     }
@@ -282,16 +295,20 @@ function applyStateDirLockMode(sandboxName: string, configDir: string, owner: st
 set -u
 config_dir="$1"
 owner="$2"
+write_strip="$3"
+dir_mode="$4"
 for dir in "$config_dir"/workspace-*; do
   [ -d "$dir" ] || continue
   chown -R "$owner" "$dir" 2>/dev/null || true
-  chmod 755 "$dir" 2>/dev/null || true
-  chmod -R go-w "$dir" 2>/dev/null || true
+  chmod "$dir_mode" "$dir" 2>/dev/null || true
+  chmod -R "$write_strip" "$dir" 2>/dev/null || true
 done
 `,
       "sh",
       configDir,
       owner,
+      writeStrip,
+      dirMode,
     ]);
   } catch {
     // Best effort; verification below catches the primary config lock.
@@ -337,8 +354,16 @@ function unlockAgentConfig(
 ): void {
   const errors: string[] = [];
   const filesToUnlock = [target.configPath, ...(target.sensitiveFiles || [])];
-  const fileMode = target.agentName === "hermes" ? "640" : "600";
-  const dirMode = target.agentName === "hermes" ? "750" : "700";
+  // Mutable-default mode for OpenClaw: group-writable + setgid on the
+  // config dir so the gateway UID (a member of the sandbox group via
+  // Dockerfile.base) can write to OpenClaw config files. Without this,
+  // control-UI mutations (Enable Dreaming, account toggles) EACCES
+  // against sandbox:sandbox 600 even after shields-down
+  // (#2681 supersedes #2693).
+  // Hermes is unchanged — its sandbox does not run a separate gateway UID,
+  // so the shared-group contract does not apply.
+  const fileMode = target.agentName === "hermes" ? "640" : "660";
+  const dirMode = target.agentName === "hermes" ? "750" : "2770";
   for (const f of filesToUnlock) {
     try {
       kubectlExec(sandboxName, ["chattr", "-i", f]);

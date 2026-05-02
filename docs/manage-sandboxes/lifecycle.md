@@ -3,9 +3,9 @@ title:
   page: "Manage Sandbox Lifecycle"
   nav: "Manage Sandbox Lifecycle"
 description:
-  main: "Open the sandbox UI, manage dashboard ports, reconfigure providers, rebuild safely, upgrade sandboxes, and uninstall NemoClaw."
-  agent: "Explains operational tasks after the quickstart: browser access, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall."
-keywords: ["manage nemoclaw sandboxes", "nemoclaw dashboard port", "nemoclaw rebuild", "nemoclaw upgrade sandboxes", "nemoclaw uninstall"]
+  main: "List sandboxes, check health, inspect logs, manage dashboard ports, reconfigure providers, rebuild safely, upgrade sandboxes, and uninstall NemoClaw."
+  agent: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall."
+keywords: ["manage nemoclaw sandboxes", "nemoclaw status", "nemoclaw list", "nemoclaw dashboard port", "nemoclaw rebuild", "nemoclaw upgrade sandboxes", "nemoclaw uninstall"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "operations", "nemoclaw"]
 content:
@@ -25,9 +25,71 @@ status: published
 # Manage Sandbox Lifecycle
 
 Use this guide after you finish the [OpenClaw quickstart](../get-started/quickstart.md).
-It covers day-two sandbox operations such as managing ports, rebuilding safely, upgrading, and uninstalling.
+It covers day-two sandbox operations such as listing sandboxes, checking health, managing ports, rebuilding safely, upgrading, and uninstalling.
+When a workflow uses the lower-level OpenShell CLI, see [CLI Selection Guide](../reference/cli-selection-guide.md) for the boundary between `nemoclaw` and `openshell`.
 
-## Restart the Port Forward
+## List Sandboxes
+
+List every sandbox registered on this host:
+
+```console
+$ nemoclaw list
+```
+
+The list shows each sandbox's model, provider, policy presets, active SSH session indicator, and dashboard URL when a dashboard port is recorded.
+Use JSON output for scripts:
+
+```console
+$ nemoclaw list --json
+```
+
+## Check Sandbox Health
+
+Check a specific sandbox's health, inference route, active connections, live policy, update status, and messaging-channel overlap warnings:
+
+```console
+$ nemoclaw my-assistant status
+```
+
+Use the host-level status command when you want the sandbox inventory plus host auxiliary service state, such as cloudflared:
+
+```console
+$ nemoclaw status
+```
+
+## Inspect Logs
+
+View recent sandbox logs:
+
+```console
+$ nemoclaw my-assistant logs
+```
+
+Stream logs while you reproduce a problem:
+
+```console
+$ nemoclaw my-assistant logs --follow
+```
+
+The log command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+
+## Collect Diagnostics
+
+Collect diagnostics for bug reports or support handoff:
+
+```console
+$ nemoclaw debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
+```
+
+Use `--quick` for a smaller local summary:
+
+```console
+$ nemoclaw debug --quick --sandbox my-assistant
+```
+
+The debug command gathers system information, Docker state, gateway logs, and sandbox status.
+
+## Manage Dashboard Ports
 
 If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart it manually with the port from the install summary.
 
@@ -65,26 +127,6 @@ $ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 ```
 
 For full details on port conflicts and overrides, refer to [Port already in use](../reference/troubleshooting.md#port-already-in-use).
-
-## Chat with the Agent from the Terminal
-
-Connect to the sandbox and use the OpenClaw terminal UI.
-
-```bash
-nemoclaw my-assistant connect
-```
-
-In the sandbox shell, open the OpenClaw terminal UI and start a chat.
-
-```bash
-openclaw tui
-```
-
-To send a single message and print the response instead, run:
-
-```bash
-openclaw agent --agent main --local -m "hello" --session-id test
-```
 
 ## Reconfigure or Recover
 

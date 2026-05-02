@@ -189,20 +189,52 @@ function createDebugCommandTestEnv(prefix: string): Record<string, string> {
 }
 
 describe("CLI dispatch", () => {
-  it("config get validates flags and values before dispatch", () => {
-    const src = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"),
-      "utf-8",
+  it("config get validates flags and values before dispatch", async () => {
+    const sandboxConfigModule = await import("../dist/lib/sandbox-config.js");
+    const { parseConfigGetArgs } = (sandboxConfigModule.default ?? sandboxConfigModule) as {
+      parseConfigGetArgs: (
+        args: string[],
+      ) =>
+        | { ok: true; opts: { key: string | null; format: string } }
+        | { ok: false; errors: string[] };
+    };
+
+    const missingKey = parseConfigGetArgs(["--key"]);
+    expect(missingKey.ok).toBe(false);
+    expect(missingKey).toEqual(
+      expect.objectContaining({
+        errors: expect.arrayContaining([expect.stringContaining("--key requires a value")]),
+      }),
     );
-    const configGet = src.match(
-      /case "get": \{([\s\S]*?)sandboxConfig\.configGet\(cmd, configOpts\);/,
+
+    const missingFormat = parseConfigGetArgs(["--format"]);
+    expect(missingFormat.ok).toBe(false);
+    expect(missingFormat).toEqual(
+      expect.objectContaining({
+        errors: expect.arrayContaining([expect.stringContaining("--format requires a value")]),
+      }),
     );
-    expect(configGet).toBeTruthy();
-    expect(configGet![1]).toContain("--key requires a value");
-    expect(configGet![1]).toContain("--format requires a value");
-    expect(configGet![1]).toContain("Unknown format");
-    expect(configGet![1]).toContain("Unknown flag");
-    expect(configGet![1]).toContain('format !== "json" && format !== "yaml"');
+
+    const badFormat = parseConfigGetArgs(["--format", "xml"]);
+    expect(badFormat.ok).toBe(false);
+    expect(badFormat).toEqual(
+      expect.objectContaining({
+        errors: expect.arrayContaining([expect.stringContaining("Unknown format: xml")]),
+      }),
+    );
+
+    const unknownFlag = parseConfigGetArgs(["--bogus"]);
+    expect(unknownFlag.ok).toBe(false);
+    expect(unknownFlag).toEqual(
+      expect.objectContaining({
+        errors: expect.arrayContaining([expect.stringContaining("Unknown flag: --bogus")]),
+      }),
+    );
+
+    expect(parseConfigGetArgs(["--key", "gateway.auth", "--format", "yaml"])).toEqual({
+      ok: true,
+      opts: { key: "gateway.auth", format: "yaml" },
+    });
   });
 
   it("help exits 0 and shows sections", () => {
@@ -459,6 +491,68 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("stop");
     expect(r.out).toContain("Deprecated alias");
+  });
+
+  it("credentials help exits 0 and shows credential subcommands", () => {
+    const r = run("credentials --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Usage: nemoclaw credentials <subcommand>");
+    expect(r.out).toContain("list");
+    expect(r.out).toContain("reset <PROVIDER> [--yes]");
+  });
+
+  it("credentials list --help exits 0 and shows list usage", () => {
+    const r = run("credentials list --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("credentials list");
+    expect(r.out).toContain("List provider credentials");
+  });
+
+  it("credentials reset without provider keeps provider-specific usage", () => {
+    const r = run("credentials reset --yes");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Usage: nemoclaw credentials reset <PROVIDER> [--yes]");
+    expect(r.out).toContain("PROVIDER is an OpenShell provider name");
+  });
+
+  it("maintenance command help exits 0 and shows migrated usage", () => {
+    const backup = run("backup-all --help");
+    expect(backup.code).toBe(0);
+    expect(backup.out).toContain("backup-all");
+    expect(backup.out).toContain("Back up all sandbox state before upgrade");
+
+    const upgrade = run("upgrade-sandboxes --help");
+    expect(upgrade.code).toBe(0);
+    expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes]");
+    expect(upgrade.out).toContain("Detect and rebuild stale sandboxes");
+
+    const gc = run("gc --help");
+    expect(gc.code).toBe(0);
+    expect(gc.out).toContain("gc [--dry-run] [--yes|--force]");
+    expect(gc.out).toContain("Remove orphaned sandbox Docker images");
+  });
+
+  it("maintenance commands dispatch through oclif", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-maintenance-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      ["#!/bin/sh", "if [ \"$1\" = \"images\" ]; then exit 0; fi", "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const backup = runWithEnv("backup-all", { HOME: home });
+    expect(backup.code).toBe(0);
+    expect(backup.out).toContain("No sandboxes registered. Nothing to back up.");
+
+    const upgrade = runWithEnv("upgrade-sandboxes --check", { HOME: home });
+    expect(upgrade.code).toBe(0);
+    expect(upgrade.out).toContain("No sandboxes found in the registry.");
+
+    const gc = runWithEnv("gc --dry-run", { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` });
+    expect(gc.code).toBe(0);
+    expect(gc.out).toContain("No sandbox images found on the host.");
   });
 
   it("shows skill install help when --help follows install", () => {
@@ -727,6 +821,31 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Usage: nemoclaw <name> gateway-token [--quiet|-q]");
     expect(r.out).not.toContain("sandbox:gateway-token");
+  });
+
+  it("sandbox inspection help keeps public sandbox-scoped usage", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inspection-help-"));
+    writeSandboxRegistry(home);
+
+    const status = runWithEnv("alpha status --help", { HOME: home });
+    expect(status.code).toBe(0);
+    expect(status.out).toContain("<name> status");
+    expect(status.out).not.toContain("sandbox:status");
+
+    const policy = runWithEnv("alpha policy-list --help", { HOME: home });
+    expect(policy.code).toBe(0);
+    expect(policy.out).toContain("<name> policy-list");
+    expect(policy.out).not.toContain("sandbox:policy-list");
+
+    const channels = runWithEnv("alpha channels list --help", { HOME: home });
+    expect(channels.code).toBe(0);
+    expect(channels.out).toContain("<name> channels list");
+    expect(channels.out).not.toContain("sandbox:channels:list");
+
+    const config = runWithEnv("alpha config get --help", { HOME: home });
+    expect(config.code).toBe(0);
+    expect(config.out).toContain("<name> config get");
+    expect(config.out).not.toContain("sandbox:config:get");
   });
 
   it("routes logs to OpenClaw and OpenShell log sources", () => {

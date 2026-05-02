@@ -408,7 +408,7 @@ fi
 # designed to run as that sandbox user.
 
 info "27. Non-root mode executes command without gosu"
-OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" "$IMAGE" echo "NON_ROOT_EXEC_OK" 2>&1 || true)
+OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" "$IMAGE" bash -c 'printf "%s\n" "NON_ROOT_EXEC_OK"; sleep 0.2' 2>&1 || true)
 if echo "$OUT" | grep -q "NON_ROOT_EXEC_OK"; then
   pass "non-root mode executed command directly (no gosu)"
 else
