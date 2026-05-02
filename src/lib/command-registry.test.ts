@@ -17,10 +17,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 49 commands", () => {
-      // 23 global (18 visible + 5 hidden help/version aliases)
+    it("should contain exactly 50 commands", () => {
+      // 24 global (19 visible + 5 hidden help/version aliases)
       // 26 sandbox (22 visible + 4 hidden shields/config)
-      expect(COMMANDS).toHaveLength(49);
+      expect(COMMANDS).toHaveLength(50);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -65,10 +65,10 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 9 hidden commands (40 visible)", () => {
+    it("should exclude 9 hidden commands (41 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
       // 4 hidden sandbox (shields×3, config get)
-      expect(visibleCommands()).toHaveLength(40);
+      expect(visibleCommands()).toHaveLength(41);
     });
 
     it("no visible command has hidden=true", () => {
