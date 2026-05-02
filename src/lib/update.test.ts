@@ -209,7 +209,9 @@ describe("runUpdateCommand", () => {
     if (!payload) {
       throw new Error("Expected detached update payload");
     }
-    expect(normalizePathForAssert(payload.logFilePath)).toBe("/home/tester/.nemoclaw/update.log");
+    expect(normalizePathForAssert(payload.logFilePath)).toMatch(
+      /(?:^|.*\/)(home\/tester\/\.nemoclaw\/update\.log)$/,
+    );
     expect(payload.sandboxSyncCommand).toBe("/usr/local/bin/nemoclaw");
   });
 
@@ -324,5 +326,40 @@ describe("runDetachedUpdateWorker", () => {
     expect(result.sandboxSyncStatus).toBe(null);
     expect(result.warnings.join("\n")).toContain("Detached install failed");
     expect(result.warnings.join("\n")).not.toContain("passwordless sudo failed");
+  });
+
+  it("surfaces spawn errors when detached install cannot start", () => {
+    const spawnError = Object.assign(new Error("spawn npm ENOENT"), { code: "ENOENT" });
+
+    const result = runDetachedUpdateWorker(
+      {
+        npmCommand: "npm",
+        useSudo: false,
+        installArgs: ["install", "-g", "nemoclaw@latest"],
+        runSandboxSync: false,
+        sandboxSyncCommand: "nemoclaw",
+        credentialsFilePath: null,
+        credentialsMode: null,
+        logFilePath: "/tmp/update.log",
+      },
+      {
+        spawnSyncImpl: () =>
+          ({
+            status: null,
+            stdout: "",
+            stderr: "",
+            signal: null,
+            error: spawnError,
+          }) as never,
+        existsSyncImpl: () => false,
+        statSyncImpl: () => ({ mode: 0o100600 }),
+        chmodSyncImpl: vi.fn(),
+        appendFileSyncImpl: vi.fn(),
+      },
+    );
+
+    expect(result.installStatus).toBe(1);
+    expect(result.warnings.join("\n")).toContain("ENOENT");
+    expect(result.warnings.join("\n")).toContain("spawn npm ENOENT");
   });
 });

@@ -10,14 +10,13 @@ import {
   type SpawnSyncReturns,
 } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import pRetry from "p-retry";
 import { clean, coerce, gt, lt, valid } from "semver";
 import { parse as parseYaml } from "yaml";
 
-import { getCredsFile } from "./credentials";
+import { getCredsFile, resolveHomeDir } from "./credentials";
 import { getInstalledOpenshellVersion } from "./openshell";
 import { assessHost, type HostAssessment } from "./preflight";
 import { resolveOpenshell } from "./resolve-openshell";
@@ -153,12 +152,38 @@ export interface RunUpdateCommandResult {
   detachedWorkerPid: number | null;
 }
 
-function resolveHomeDirectory(env: NodeJS.ProcessEnv): string {
-  const candidate = env.HOME ?? env.USERPROFILE;
-  if (candidate && candidate.trim()) {
-    return candidate;
+function resolveValidatedHomeDirectory(env: NodeJS.ProcessEnv): string {
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+
+  try {
+    if (Object.prototype.hasOwnProperty.call(env, "HOME")) {
+      if (typeof env.HOME === "string") {
+        process.env.HOME = env.HOME;
+      } else {
+        delete process.env.HOME;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(env, "USERPROFILE")) {
+      if (typeof env.USERPROFILE === "string") {
+        process.env.USERPROFILE = env.USERPROFILE;
+      } else {
+        delete process.env.USERPROFILE;
+      }
+    }
+    return resolveHomeDir();
+  } finally {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalUserProfile;
+    }
   }
-  return os.homedir();
 }
 
 function getDefaultNpmCommand(platform: NodeJS.Platform = process.platform): string {
@@ -483,6 +508,18 @@ function describeWorkerResult(result: SpawnSyncReturns<string>): string {
   if (result.signal) {
     return `signal ${result.signal}`;
   }
+  if (result.error) {
+    const error = result.error;
+    const errno = error as NodeJS.ErrnoException;
+    const details = [error.name || "Error"];
+    if (errno.code) {
+      details.push(String(errno.code));
+    }
+    if (error.message) {
+      details.push(error.message);
+    }
+    return `error ${details.join(": ")}`;
+  }
   return "unknown exit";
 }
 
@@ -509,7 +546,7 @@ function resolveUpdateLogFilePath(
 ): string {
   const baseDir = credentialFilePath
     ? path.dirname(credentialFilePath)
-    : path.join(resolveHomeDirectory(env), ".nemoclaw");
+    : path.join(resolveValidatedHomeDirectory(env), ".nemoclaw");
   try {
     fs.mkdirSync(baseDir, { recursive: true });
   } catch (error) {
