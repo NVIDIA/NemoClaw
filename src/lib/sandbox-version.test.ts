@@ -50,6 +50,7 @@ vi.mock("child_process", async (importOriginal) => {
 import { checkAgentVersion, formatStalenessWarning } from "./sandbox-version.js";
 import * as registry from "./registry.js";
 import { captureOpenshellCommand } from "./openshell.js";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts.js";
 import { spawnSync } from "child_process";
 
 describe("checkAgentVersion", () => {
@@ -130,6 +131,11 @@ describe("checkAgentVersion", () => {
     expect(result.detectionMethod).toBe("ssh-exec");
     expect(result.sandboxVersion).toBe("2026.4.24");
     expect(result.isStale).toBe(false);
+    expect(captureOpenshellCommand).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["sandbox", "ssh-config", "test-sb"],
+      { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+    );
 
     // Should have cached the version in registry
     const updated = registry.getSandbox("test-sb");

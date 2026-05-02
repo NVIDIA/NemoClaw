@@ -2,136 +2,101 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Tests for the no-direct-credential-env ESLint rule.
+ * Tests for the direct credential env guard.
  *
- * Verifies that the rule flags direct process.env reads for known
- * credential keys while allowing assignments, deletions, and
- * non-credential keys.
+ * Verifies that the guard flags direct process.env reads for known credential
+ * keys while allowing assignments, deletions, suppressions, and non-credential
+ * keys.
  *
  * See #2306.
  */
 
-import { describe, expect, it } from "vitest";
-import { RuleTester } from "eslint";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { describe, expect, it } from "vitest";
+import { findDirectCredentialEnvReads } from "../scripts/check-direct-credential-env";
 
-// Import the CJS rule via dynamic import
-const rulePath = path.join(import.meta.dirname, "..", "eslint-rules", "no-direct-credential-env.js");
-const rule = (await import(pathToFileURL(rulePath).href)).default;
+describe("direct credential env guard", () => {
+  it.each([
+    // Assignments (write context) — allowed
+    'process.env.NVIDIA_API_KEY = "test";',
+    "process.env.OPENAI_API_KEY = value;",
+    "process.env[credentialEnv] = providerKey;",
 
-const ruleTester = new RuleTester({
-  languageOptions: {
-    ecmaVersion: 2022,
-    sourceType: "module",
-  },
-});
+    // Deletions (write context) — allowed
+    "delete process.env.NVIDIA_API_KEY;",
+    "delete process.env.ANTHROPIC_API_KEY;",
 
-describe("ESLint rule: nemoclaw/no-direct-credential-env", () => {
-  it("flags and allows the expected patterns", () => {
-    ruleTester.run("no-direct-credential-env", rule, {
-      valid: [
-        // Assignments (write context) — allowed
-        { code: 'process.env.NVIDIA_API_KEY = "test";' },
-        { code: 'process.env.OPENAI_API_KEY = value;' },
-        { code: "process.env[credentialEnv] = providerKey;" },
+    // Non-credential env vars — allowed
+    "const x = process.env.NEMOCLAW_MODEL;",
+    "const x = process.env.HOME;",
+    "const x = process.env.PATH;",
 
-        // Deletions (write context) — allowed
-        { code: "delete process.env.NVIDIA_API_KEY;" },
-        { code: "delete process.env.ANTHROPIC_API_KEY;" },
+    // NEMOCLAW_PROVIDER_KEY is a user-facing override, not credential resolution.
+    "const x = process.env.NEMOCLAW_PROVIDER_KEY;",
 
-        // Non-credential env vars — allowed
-        { code: "const x = process.env.NEMOCLAW_MODEL;" },
-        { code: "const x = process.env.HOME;" },
-        { code: "const x = process.env.PATH;" },
+    // Correct patterns — allowed
+    'const key = getCredential("NVIDIA_API_KEY");',
+    'const key = resolveProviderCredential("NVIDIA_API_KEY");',
 
-        // NEMOCLAW_PROVIDER_KEY is a user-facing override, not credential resolution
-        { code: "const x = process.env.NEMOCLAW_PROVIDER_KEY;" },
+    // Bracketed string-literal assignments — allowed
+    'process.env["NVIDIA_API_KEY"] = "test";',
 
-        // Correct patterns — allowed
-        { code: 'const key = getCredential("NVIDIA_API_KEY");' },
-        { code: 'const key = resolveProviderCredential("NVIDIA_API_KEY");' },
+    // Dynamic access with non-credential variable name — allowed
+    "const x = process.env[someKey];",
+    "const x = process.env[envName];",
 
-        // Bracketed string-literal assignments — allowed
-        { code: 'process.env["NVIDIA_API_KEY"] = "test";' },
-
-        // Dynamic access with non-credential variable name — allowed
-        { code: "const x = process.env[someKey];" },
-        { code: "const x = process.env[envName];" },
-      ],
-
-      invalid: [
-        // Static reads of known credential keys
-        {
-          code: "const key = process.env.NVIDIA_API_KEY;",
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-        {
-          code: "const key = process.env.OPENAI_API_KEY;",
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-        {
-          code: "const key = process.env.ANTHROPIC_API_KEY;",
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-        {
-          code: "const key = process.env.GEMINI_API_KEY;",
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-        {
-          code: "const key = process.env.COMPATIBLE_API_KEY;",
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-        {
-          code: "const key = process.env.COMPATIBLE_ANTHROPIC_API_KEY;",
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-
-        // Conditional check (read context)
-        {
-          code: "if (!process.env.NVIDIA_API_KEY) {}",
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-
-        // Bracketed string-literal reads
-        {
-          code: 'const key = process.env["NVIDIA_API_KEY"];',
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-        {
-          code: 'if (!process.env["OPENAI_API_KEY"]) {}',
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-
-        // Dynamic read with credential-containing variable name
-        {
-          code: "if (!process.env[credentialEnv]) {}",
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-        {
-          code: "const x = process.env[resolvedCredentialEnv];",
-          errors: [{ messageId: "noDirectCredentialEnv" }],
-        },
-      ],
-    });
+    // Explicitly suppressed raw-env reads — allowed
+    "// check-direct-credential-env-ignore -- raw env check required\nconst key = process.env.NVIDIA_API_KEY;",
+    "// no-direct-credential-env -- backward-compatible suppression\nconst key = process.env.NVIDIA_API_KEY;",
+  ])("allows %s", (code) => {
+    expect(findDirectCredentialEnvReads(code)).toEqual([]);
   });
 
-  it("onboard.ts has zero violations (Phase 1 already fixed all patterns)", async () => {
-    const { spawnSync } = await import("node:child_process");
+  it.each([
+    // Static reads of known credential keys
+    ["const key = process.env.NVIDIA_API_KEY;", "NVIDIA_API_KEY"],
+    ["const key = process.env.OPENAI_API_KEY;", "OPENAI_API_KEY"],
+    ["const key = process.env.ANTHROPIC_API_KEY;", "ANTHROPIC_API_KEY"],
+    ["const key = process.env.GEMINI_API_KEY;", "GEMINI_API_KEY"],
+    ["const key = process.env.COMPATIBLE_API_KEY;", "COMPATIBLE_API_KEY"],
+    [
+      "const key = process.env.COMPATIBLE_ANTHROPIC_API_KEY;",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ],
+
+    // Conditional check (read context)
+    ["if (!process.env.NVIDIA_API_KEY) {}", "NVIDIA_API_KEY"],
+
+    // Bracketed string-literal reads
+    ['const key = process.env["NVIDIA_API_KEY"];', "NVIDIA_API_KEY"],
+    ['if (!process.env["OPENAI_API_KEY"]) {}', "OPENAI_API_KEY"],
+
+    // Dynamic read with credential-containing variable name
+    ["if (!process.env[credentialEnv]) {}", "[credentialEnv]"],
+    ["const x = process.env[resolvedCredentialEnv];", "[resolvedCredentialEnv]"],
+
+    // Suppression token inside non-comment text must not suppress.
+    [
+      "const marker = 'no-direct-credential-env';\nconst key = process.env.NVIDIA_API_KEY;",
+      "NVIDIA_API_KEY",
+    ],
+  ])("flags %s", (code, key) => {
+    expect(findDirectCredentialEnvReads(code)).toMatchObject([{ key }]);
+  });
+
+  it("onboard.ts has zero violations", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const result = spawnSync(
       "npx",
-      ["eslint", "src/lib/onboard.ts", "--format", "json"],
+      ["tsx", "scripts/check-direct-credential-env.ts", "src/lib/onboard.ts"],
       {
         cwd: repoRoot,
         encoding: "utf-8",
         timeout: 60_000,
       },
     );
-    const output = JSON.parse(result.stdout);
-    const violations = output[0].messages.filter(
-      (m: any) => m.ruleId === "nemoclaw/no-direct-credential-env",
-    );
-    expect(violations).toHaveLength(0);
+
+    expect(result.status, result.stderr).toBe(0);
   });
 });

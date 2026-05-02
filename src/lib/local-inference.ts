@@ -9,13 +9,11 @@
 import type { CurlProbeResult } from "./http-probe";
 import { runCurlProbe } from "./http-probe";
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { shellQuote, runCapture } = require("./runner");
 
 import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "./ports";
 import { sleepSeconds } from "./wait";
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { isWsl } = require("./platform");
 
 /** Port containers use to reach Ollama — proxy on non-WSL, direct on WSL2. */

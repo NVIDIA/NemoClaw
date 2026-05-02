@@ -61,8 +61,8 @@ function parseJson<T>(text: string): T {
 
 // Reflect.get is used throughout the codebase as a type-safe alternative to
 // direct property access on loosely-typed objects.  Unlike an `as Record<…>`
-// cast it never widens the target type and avoids eslint no-unsafe-member-access
-// warnings.  See also: deploy.ts, onboard.ts, ws-proxy-fix.ts.
+// cast it never widens the target type and keeps loosely-typed member access
+// explicit. See also: deploy.ts, onboard.ts, ws-proxy-fix.ts.
 function readStringProperty(value: object | null, key: string): string | undefined {
   if (!value) {
     return undefined;
@@ -212,11 +212,16 @@ export async function ensureUsageNoticeConsent({
   }
 
   // credentials is still CJS
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const ask = promptFn || require("./credentials").prompt;
-  const answer = String(await ask(`  ${config.interactivePrompt}`))
-    .trim()
-    .toLowerCase();
+  const ask: PromptFn = promptFn ?? (require("./credentials") as { prompt: PromptFn }).prompt;
+  let answer: string;
+  try {
+    answer = String(await ask(`  ${config.interactivePrompt}`))
+      .trim()
+      .toLowerCase();
+  } catch {
+    writeLine("  Installation cancelled");
+    return false;
+  }
   if (answer !== "yes") {
     writeLine("  Installation cancelled");
     return false;

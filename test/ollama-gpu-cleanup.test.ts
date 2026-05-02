@@ -1,71 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Note: onboard-ollama-proxy.ts uses CJS require("./runner") etc. which
-// doesn't resolve correctly under vitest's ESM transform (same issue as
-// shields.test.ts). We reproduce the unload logic here to verify the HTTP
-// interaction pattern until the module is migrated to ESM imports.
-
 import { describe, expect, it, vi } from "vitest";
 import http from "node:http";
 
-/** Mirror of unloadOllamaModels() from src/lib/onboard-ollama-proxy.ts */
-function unloadOllamaModels() {
-  try {
-    const req = http.get(
-      {
-        hostname: "localhost",
-        port: 11434,
-        path: "/api/ps",
-        timeout: 3000,
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (chunk) => {
-          data += chunk;
-        });
-        res.on("end", () => {
-          if (res.statusCode !== 200) return;
-          try {
-            const parsed = JSON.parse(data);
-            const models = parsed.models || [];
-            for (const entry of models) {
-              if (!entry.name) continue;
-              const unloadReq = http.request(
-                {
-                  hostname: "localhost",
-                  port: 11434,
-                  path: "/api/generate",
-                  method: "POST",
-                  timeout: 3000,
-                  headers: { "Content-Type": "application/json" },
-                },
-                () => {
-                  /* ignore response */
-                },
-              );
-              unloadReq.on("error", () => {
-                /* best-effort */
-              });
-              unloadReq.write(JSON.stringify({ model: entry.name, keep_alive: 0 }));
-              unloadReq.end();
-            }
-          } catch {
-            /* best-effort */
-          }
-        });
-      },
-    );
-    req.on("error", () => {
-      /* best-effort */
-    });
-  } catch {
-    /* best-effort */
-  }
-}
+import { unloadOllamaModels } from "../dist/lib/onboard-ollama-proxy.js";
 
 describe("Ollama GPU cleanup", () => {
-  it("should unload all running Ollama models via HTTP API", async () => {
+  it("unloads all running Ollama models via the production HTTP implementation", async () => {
     const mockModels = {
       models: [{ name: "llama3.1:8b" }, { name: "qwen:7b" }],
     };
@@ -86,11 +28,11 @@ describe("Ollama GPU cleanup", () => {
       on: vi.fn(() => mockGetRequest),
     };
 
-    const mockUnloadRequest = {
-      on: vi.fn(() => mockUnloadRequest),
-      write: vi.fn(),
-      end: vi.fn(),
-    };
+    const mockUnloadRequests: Array<{
+      on: ReturnType<typeof vi.fn>;
+      write: ReturnType<typeof vi.fn>;
+      end: ReturnType<typeof vi.fn>;
+    }> = [];
 
     const httpGetSpy = vi.spyOn(http, "get").mockImplementation(((options: any, callback: any) => {
       expect(options.hostname).toBe("localhost");
@@ -100,14 +42,23 @@ describe("Ollama GPU cleanup", () => {
       return mockGetRequest;
     }) as any);
 
-    const httpRequestSpy = vi.spyOn(http, "request").mockImplementation(((options: any, callback: any) => {
+    const httpRequestSpy = vi.spyOn(http, "request").mockImplementation(((
+      options: any,
+      callback: any,
+    ) => {
       expect(options.hostname).toBe("localhost");
       expect(options.port).toBe(11434);
       expect(options.path).toBe("/api/generate");
       expect(options.method).toBe("POST");
       expect(options.headers["Content-Type"]).toBe("application/json");
+      const req = {
+        on: vi.fn(() => req),
+        write: vi.fn(),
+        end: vi.fn(),
+      };
+      mockUnloadRequests.push(req);
       callback();
-      return mockUnloadRequest;
+      return req;
     }) as any);
 
     unloadOllamaModels();
@@ -117,19 +68,17 @@ describe("Ollama GPU cleanup", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(httpRequestSpy).toHaveBeenCalledTimes(2);
-    expect(mockUnloadRequest.write).toHaveBeenCalledWith(
+    expect(mockUnloadRequests.map((req) => req.write.mock.calls[0]?.[0])).toEqual([
       JSON.stringify({ model: "llama3.1:8b", keep_alive: 0 }),
-    );
-    expect(mockUnloadRequest.write).toHaveBeenCalledWith(
       JSON.stringify({ model: "qwen:7b", keep_alive: 0 }),
-    );
-    expect(mockUnloadRequest.end).toHaveBeenCalledTimes(2);
+    ]);
+    expect(mockUnloadRequests.every((req) => req.end.mock.calls.length === 1)).toBe(true);
 
     httpGetSpy.mockRestore();
     httpRequestSpy.mockRestore();
   });
 
-  it("should handle errors gracefully when Ollama is not running", () => {
+  it("handles errors gracefully when Ollama is not running", () => {
     const mockGetRequest = {
       on: vi.fn((event, handler) => {
         if (event === "error") {
@@ -147,7 +96,7 @@ describe("Ollama GPU cleanup", () => {
     httpGetSpy.mockRestore();
   });
 
-  it("should handle empty model list", async () => {
+  it("does not unload anything when Ollama reports no loaded models", async () => {
     const mockModels = { models: [] };
 
     const mockResponse = {

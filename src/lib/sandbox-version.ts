@@ -18,6 +18,7 @@ import * as registry from "./registry.js";
 import { loadAgent } from "./agent-defs.js";
 import { resolveOpenshell } from "./resolve-openshell.js";
 import { captureOpenshellCommand } from "./openshell.js";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts.js";
 
 export interface VersionCheckResult {
   sandboxVersion: string | null;
@@ -49,7 +50,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
   const sshConfigResult = captureOpenshellCommand(
     openshellBinary,
     ["sandbox", "ssh-config", sandboxName],
-    { ignoreError: true },
+    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
   );
   if (sshConfigResult.status !== 0) return null;
 

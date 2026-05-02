@@ -118,9 +118,9 @@ describe("image cleanup: gc command exists (#2086)", () => {
     expect(nemoclawSrc).toContain("globalCommandTokens()");
   });
 
-  it("gc command is dispatched in the CLI switch", () => {
-    expect(nemoclawSrc).toContain('case "gc"');
-    expect(nemoclawSrc).toContain("garbageCollectImages");
+  it("gc command is dispatched through the oclif bridge", () => {
+    expect(nemoclawSrc).toContain("resolveGlobalOclifDispatch");
+    expect(registrySrc).toContain('"nemoclaw gc"');
   });
 
   it("garbageCollectImages lists sandbox-from images and cross-references registry", () => {

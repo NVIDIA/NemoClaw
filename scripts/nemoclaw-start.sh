@@ -204,6 +204,133 @@ _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /s
 # mutable-default startup skips strict hash enforcement until shields-up locks
 # .config-hash into a root-owned read-only trust anchor.
 
+# ── Mutable-default permission normalize (#2681) ─────────────────
+# OpenClaw's control-UI toggles (Enable Dreaming, account toggles, etc.)
+# write through mutateConfigFile to /sandbox/.openclaw/openclaw.json.
+# In root mode the gateway runs as the gateway UID; the file is owned
+# sandbox:sandbox. Without group write, every toggle EACCESs.
+#
+# Make the mutable-default tree group-readable/writable + setgid so both
+# `gateway` (now a member of the sandbox group via Dockerfile.base
+# usermod -aG) and `sandbox` can write. Setgid means new files
+# inherit group=sandbox regardless of which UID created them, so the
+# agent keeps read access and shields-up locking still works the same.
+#
+# Idempotent. Skips when shields are UP (config dir owned by root) so
+# the lock is not weakened.
+normalize_mutable_config_perms() {
+  local config_dir="/sandbox/.openclaw"
+  [ -d "$config_dir" ] || return 0
+
+  # Detect shields-up. Config dir owned by root means shields are
+  # currently locked; normalizing would weaken the contract.
+  local config_dir_owner
+  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown)"
+  if [ "$config_dir_owner" = "root" ]; then
+    return 0
+  fi
+
+  chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
+  find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
+  chmod 2770 "$config_dir" 2>/dev/null || true
+  chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
+}
+
+openclaw_config_dir_owner() {
+  local config_dir="$1"
+  stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown
+}
+
+prepare_openclaw_config_for_write() {
+  local config_file="$1"
+  local hash_file="$2"
+  local config_dir
+  config_dir="$(dirname "$config_file")"
+
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing config override — config directory or file path is a symlink\n' >&2
+    return 1
+  fi
+
+  _NEMOCLAW_CONFIG_WRITE_MODE="locked"
+  if [ "$(openclaw_config_dir_owner "$config_dir")" != "root" ]; then
+    _NEMOCLAW_CONFIG_WRITE_MODE="mutable"
+    if [ "$(id -u)" -eq 0 ]; then
+      if ! chown root:sandbox "$config_dir"; then
+        printf '[SECURITY] Failed to take ownership of %s for write\n' "$config_dir" >&2
+        return 1
+      fi
+      local f
+      for f in "$config_file" "$hash_file"; do
+        [ -e "$f" ] || continue
+        if ! chown root:sandbox "$f"; then
+          printf '[SECURITY] Failed to take ownership of %s for write\n' "$f" >&2
+          return 1
+        fi
+      done
+    fi
+    if ! chmod 2770 "$config_dir"; then
+      printf '[SECURITY] Failed to relax permissions on %s\n' "$config_dir" >&2
+      return 1
+    fi
+    local f
+    for f in "$config_file" "$hash_file"; do
+      [ -e "$f" ] || continue
+      if ! chmod 660 "$f"; then
+        printf '[SECURITY] Failed to relax permissions on %s\n' "$f" >&2
+        return 1
+      fi
+    done
+    return 0
+  fi
+
+  relax_config_for_write "$config_file" "$hash_file"
+}
+
+restore_openclaw_config_after_write() {
+  local config_file="$1"
+  local hash_file="$2"
+  local config_dir
+  config_dir="$(dirname "$config_file")"
+
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing config override restore — config directory or file path is a symlink\n' >&2
+    return 1
+  fi
+
+  if [ "${_NEMOCLAW_CONFIG_WRITE_MODE:-locked}" = "mutable" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+      if ! chown sandbox:sandbox "$config_dir"; then
+        printf '[SECURITY] Failed to restore ownership of %s\n' "$config_dir" >&2
+        return 1
+      fi
+      local f
+      for f in "$config_file" "$hash_file"; do
+        [ -e "$f" ] || continue
+        if ! chown sandbox:sandbox "$f"; then
+          printf '[SECURITY] Failed to restore ownership of %s\n' "$f" >&2
+          return 1
+        fi
+      done
+    fi
+    if ! chmod 2770 "$config_dir"; then
+      printf '[SECURITY] Failed to restore permissions on %s\n' "$config_dir" >&2
+      return 1
+    fi
+    local f
+    for f in "$config_file" "$hash_file"; do
+      [ -e "$f" ] || continue
+      if ! chmod 660 "$f"; then
+        printf '[SECURITY] Failed to restore permissions on %s\n' "$f" >&2
+        return 1
+      fi
+    done
+    return 0
+  fi
+
+  lock_config_after_write "$config_file" "$hash_file"
+}
+
 # ── Runtime model/provider override ──────────────────────────────
 # Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
 # allowing model or provider changes without rebuilding the sandbox image.
@@ -269,16 +396,15 @@ apply_model_override() {
   local max_tokens="${NEMOCLAW_MAX_TOKENS:-}"
   local reasoning="${NEMOCLAW_REASONING:-}"
 
-  # Validate numeric values
-  if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[0-9]+$'; then
+  # Validate supplemental override values before relaxing or writing config.
+  if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[1-9][0-9]*$'; then
     printf '[SECURITY] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "%s" — skipping override\n' "$context_window" >&2
     return 0
   fi
-  if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[0-9]+$'; then
+  if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[1-9][0-9]*$'; then
     printf '[SECURITY] NEMOCLAW_MAX_TOKENS must be a positive integer, got "%s" — skipping override\n' "$max_tokens" >&2
     return 0
   fi
-  # Validate reasoning is true/false
   if [ -n "$reasoning" ]; then
     case "$reasoning" in
       true | false) ;;
@@ -295,9 +421,10 @@ apply_model_override() {
   [ -n "$max_tokens" ] && printf '[config] Applying max tokens override: %s\n' "$max_tokens" >&2
   [ -n "$reasoning" ] && printf '[config] Applying reasoning override: %s\n' "$reasoning" >&2
 
-  # Relax 444 → 644 so writes succeed after CAP_DAC_OVERRIDE is dropped (#2653).
-  # Re-lock in all exit paths so files are never left at 644 on failure.
-  relax_config_for_write "$config_file" "$hash_file"
+  # Shields-up configs are root-owned and re-locked after writing; mutable
+  # default configs are briefly root-owned so writes still work after
+  # CAP_DAC_OVERRIDE is dropped, then restored to sandbox:sandbox 2770/660.
+  prepare_openclaw_config_for_write "$config_file" "$hash_file"
   local _write_rc=0
 
   NEMOCLAW_CONTEXT_WINDOW="$context_window" \
@@ -348,8 +475,8 @@ PYOVERRIDE
     fi
   fi
 
-  # Re-lock 644 → 444 — always runs, even on write/hash failure (#2653)
-  lock_config_after_write "$config_file" "$hash_file"
+  # Always restore ownership/mode, even on write/hash failure (#2653, #2877).
+  restore_openclaw_config_after_write "$config_file" "$hash_file"
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
@@ -393,9 +520,8 @@ apply_cors_override() {
 
   printf '[config] Adding CORS origin: %s\n' "$cors_origin" >&2
 
-  # Relax 444 → 644 so writes succeed after CAP_DAC_OVERRIDE is dropped (#2653).
-  # Re-lock in all exit paths so files are never left at 644 on failure.
-  relax_config_for_write "$config_file" "$hash_file"
+  # See apply_model_override for the locked-vs-mutable config mode split.
+  prepare_openclaw_config_for_write "$config_file" "$hash_file"
   local _write_rc=0
 
   python3 - "$config_file" "$cors_origin" <<'PYCORS' || _write_rc=$?
@@ -423,8 +549,8 @@ PYCORS
     fi
   fi
 
-  # Re-lock 644 → 444 — always runs, even on write/hash failure (#2653)
-  lock_config_after_write "$config_file" "$hash_file"
+  # Always restore ownership/mode, even on write/hash failure (#2653, #2877).
+  restore_openclaw_config_after_write "$config_file" "$hash_file"
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
@@ -824,6 +950,152 @@ SLACK_GUARD_EOF
 
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT"
   printf '[channels] Slack channel guard installed (NODE_OPTIONS updated)\n' >&2
+}
+
+# ── Telegram diagnostics (provider-ready + inference-failure clarity) ─
+_TELEGRAM_DIAGNOSTICS_SCRIPT="/tmp/nemoclaw-telegram-diagnostics.js"
+
+install_telegram_diagnostics() {
+  local config_file="/sandbox/.openclaw/openclaw.json"
+
+  # Only install when Telegram is configured in the baked OpenClaw config.
+  if ! grep -q '"telegram"' "$config_file" 2>/dev/null; then
+    return 0
+  fi
+
+  printf '[channels] Installing Telegram diagnostics (provider readiness + inference errors)\n' >&2
+
+  emit_sandbox_sourced_file "$_TELEGRAM_DIAGNOSTICS_SCRIPT" <<'TELEGRAM_DIAGNOSTICS_EOF'
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// telegram-diagnostics.js — adds runtime breadcrumbs for OpenClaw's Telegram
+// channel without changing channel behavior. The important distinction for
+// NemoClaw#2766 is that "[telegram] [default] starting provider" means the
+// channel is initializing; an agent-turn failure later can be an inference
+// provider failure through inference.local, not a Telegram Bot API failure.
+
+(function () {
+  'use strict';
+
+  if (process.__nemoclawTelegramDiagnosticsInstalled) return;
+  try {
+    Object.defineProperty(process, '__nemoclawTelegramDiagnosticsInstalled', { value: true });
+  } catch (_e) {
+    process.__nemoclawTelegramDiagnosticsInstalled = true;
+  }
+
+  var providerStarted = false;
+  var readyLogged = false;
+  var inferenceLogged = false;
+  var inDiagnosticWrite = false;
+
+  function sanitize(value) {
+    var text = String(value || '');
+    text = text.replace(/\/bot[^/\s"']+/g, '/bot<redacted>');
+    text = text.replace(/\/file\/bot[^/\s"']+/g, '/file/bot<redacted>');
+    text = text.replace(/Bearer\s+[A-Za-z0-9._~+\/=-]+/g, 'Bearer <redacted>');
+    text = text.replace(
+      /\b(api[_-]?key|token|authorization)\b(["']?\s*[:=]\s*["']?)[^"'\s,)]+/gi,
+      '$1$2<redacted>'
+    );
+    return text;
+  }
+
+  var originalStderrWrite = process.stderr.write.bind(process.stderr);
+
+  function emit(line) {
+    if (inDiagnosticWrite) return;
+    inDiagnosticWrite = true;
+    try {
+      originalStderrWrite(line + '\n');
+    } finally {
+      inDiagnosticWrite = false;
+    }
+  }
+
+  function describeRequest(arg1, arg2) {
+    var url = null;
+    var opts = null;
+    if (typeof arg1 === 'string' || arg1 instanceof URL) {
+      try {
+        url = new URL(String(arg1));
+      } catch (_e) {
+        url = null;
+      }
+      if (arg2 && typeof arg2 === 'object' && typeof arg2 !== 'function') opts = arg2;
+    } else if (arg1 && typeof arg1 === 'object') {
+      opts = arg1;
+    }
+
+    var hostname = '';
+    var path = '';
+    if (url) {
+      hostname = url.hostname || '';
+      path = (url.pathname || '') + (url.search || '');
+    }
+    if (opts) {
+      hostname = String(opts.hostname || opts.host || hostname || '');
+      path = String(opts.path || path || '');
+    }
+    if (hostname.indexOf(':') !== -1) hostname = hostname.split(':')[0];
+    return { hostname: hostname, path: path };
+  }
+
+  function maybeLogTelegramReady(info, statusCode) {
+    if (readyLogged) return;
+    if (!info || info.hostname !== 'api.telegram.org') return;
+    if (!/\/(?:bot[^/]+\/)?(?:getUpdates|getMe|getWebhookInfo)(?:\?|$)/.test(info.path)) return;
+    if (Number(statusCode) < 200 || Number(statusCode) >= 300) return;
+    providerStarted = true;
+    readyLogged = true;
+    emit('[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)');
+  }
+
+  function wrapHttp(mod, methodName) {
+    var original = mod[methodName];
+    if (typeof original !== 'function') return;
+    mod[methodName] = function () {
+      var info = describeRequest(arguments[0], arguments[1]);
+      var req = original.apply(this, arguments);
+      if (info && info.hostname === 'api.telegram.org' && req && typeof req.once === 'function') {
+        req.once('response', function (res) {
+          maybeLogTelegramReady(info, res && res.statusCode);
+        });
+      }
+      return req;
+    };
+  }
+
+  process.stderr.write = function (chunk, encoding, cb) {
+    var ret = originalStderrWrite.apply(process.stderr, arguments);
+    if (!inDiagnosticWrite && !inferenceLogged) {
+      var text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk || '');
+      if (!providerStarted && /\[telegram\] \[default\] starting provider\b/i.test(text)) {
+        providerStarted = true;
+      }
+      if (providerStarted && /Embedded agent failed before reply|LLM request failed|FailoverError/i.test(text)) {
+        inferenceLogged = true;
+        var line = text.split(/\r?\n/).find(function (entry) {
+          return /Embedded agent failed before reply|LLM request failed|FailoverError/i.test(entry);
+        }) || text;
+        emit('[telegram] [default] agent turn failed after provider startup; inference error: ' + sanitize(line).slice(0, 600));
+      }
+    }
+    return ret;
+  };
+
+  var http = require('http');
+  var https = require('https');
+  wrapHttp(http, 'request');
+  wrapHttp(http, 'get');
+  wrapHttp(https, 'request');
+  wrapHttp(https, 'get');
+})();
+TELEGRAM_DIAGNOSTICS_EOF
+
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_TELEGRAM_DIAGNOSTICS_SCRIPT"
+  printf '[channels] Telegram diagnostics installed (NODE_OPTIONS updated)\n' >&2
 }
 
 _read_gateway_token() {
@@ -1443,27 +1715,31 @@ HTTP_PROXY_FIX_EOF
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT"
 fi
 
-# Nemotron inference parameter injection (NemoClaw#1193, NemoClaw#2051).
+# NVIDIA endpoint model-specific inference parameter injection
+# (NemoClaw#1193, NemoClaw#2051).
 # Nemotron models may return empty content (tool call instead of text) or
 # thinking-only blocks (stalls the conversation) when the model's chat
 # template produces an empty assistant turn. The vLLM / NIM chat template
 # kwarg `force_nonempty_content` prevents this by ensuring the template
 # always emits a non-empty content field.
 #
+# DeepSeek V4 Pro on NVIDIA Build expects its chat template thinking mode
+# disabled for NemoClaw's OpenAI-compatible chat-completions path.
+#
 # The preload wraps http.request() — the lowest common denominator every
 # HTTP client bottoms out at — buffers the JSON body for POST requests
-# to /v1/chat/completions, and injects the kwarg when the model ID
-# contains "nemotron". Backends that do not recognise the extra field
+# to /v1/chat/completions, and injects model-specific kwargs for the affected
+# NVIDIA endpoint models. Backends that do not recognise the extra field
 # silently ignore it (OpenAI-compatible contract).
 #
-# Scoped strictly to Nemotron models: non-Nemotron requests pass through
+# Scoped strictly to known affected models: unrelated requests pass through
 # completely untouched.
 _NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
 emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <<'NEMOTRON_FIX_EOF'
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// nemotron-inference-fix.js — inject chat_template_kwargs for Nemotron models.
+// nemotron-inference-fix.js — inject chat_template_kwargs for affected models.
 //
 // Problem (NemoClaw#1193, NemoClaw#2051):
 //   Nemotron models sometimes generate tool calls instead of text for simple
@@ -1479,9 +1755,13 @@ emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <<'NEMOTRON_FIX_EOF'
 //   template to always produce non-empty content alongside any tool calls
 //   or thinking blocks.
 //
-//   Scoped strictly to Nemotron models — all other requests pass through
-//   untouched. Backends that do not support chat_template_kwargs silently
-//   ignore the extra field per the OpenAI-compatible API contract.
+//   Also inject `chat_template_kwargs: { thinking: false }` for
+//   deepseek-ai/deepseek-v4-pro, matching NVIDIA Build's tested invocation
+//   shape for the OpenAI-compatible chat-completions endpoint.
+//
+//   Scoped strictly to known affected models — all other requests pass
+//   through untouched. Backends that do not support chat_template_kwargs
+//   silently ignore the extra field per the OpenAI-compatible API contract.
 
 (function () {
   'use strict';
@@ -1490,6 +1770,7 @@ emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <<'NEMOTRON_FIX_EOF'
   var https = require('https');
 
   var NEMOTRON_RE = /nemotron/i;
+  var DEEPSEEK_V4_PRO_RE = /^deepseek-ai\/deepseek-v4-pro$/i;
   var COMPLETIONS_RE = /\/v1\/chat\/completions/;
 
   function wrapModule(mod) {
@@ -1536,11 +1817,16 @@ emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <<'NEMOTRON_FIX_EOF'
         var raw = Buffer.concat(chunks);
         try {
           var body = JSON.parse(raw.toString('utf-8'));
-          if (body && body.model && NEMOTRON_RE.test(body.model)) {
+          if (body && body.model && (NEMOTRON_RE.test(body.model) || DEEPSEEK_V4_PRO_RE.test(body.model))) {
             if (!body.chat_template_kwargs) {
               body.chat_template_kwargs = {};
             }
-            body.chat_template_kwargs.force_nonempty_content = true;
+            if (NEMOTRON_RE.test(body.model)) {
+              body.chat_template_kwargs.force_nonempty_content = true;
+            }
+            if (DEEPSEEK_V4_PRO_RE.test(body.model)) {
+              body.chat_template_kwargs.thinking = false;
+            }
             intercepted = true;
             var modified = Buffer.from(JSON.stringify(body), 'utf-8');
             // Update Content-Length so the proxy/server reads the full body.
@@ -1871,6 +2157,8 @@ GUARDENVEOF
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT\""
     # ciao network guard for connect sessions.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
+    # Telegram diagnostics for connect sessions — same conditional pattern.
+    echo "[ -f \"$_TELEGRAM_DIAGNOSTICS_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_TELEGRAM_DIAGNOSTICS_SCRIPT\""
     # Slack channel guard for connect sessions. The guard file is installed later
     # by install_slack_channel_guard() — conditional on the file existing at
     # source-time so connect sessions started before Slack is configured are safe.
@@ -2202,13 +2490,20 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  normalize_mutable_config_perms
   apply_model_override
   apply_cors_override
   export_gateway_token
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
-  lock_rc_files "$_SANDBOX_HOME"
+  lock_rc_files "$_SANDBOX_HOME" || true
+
+  if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
+    exec "${NEMOCLAW_CMD[@]}"
+  fi
+
   configure_messaging_channels
+  install_telegram_diagnostics
   install_slack_token_rewriter
   install_slack_channel_guard
   verify_no_slack_secrets_on_disk
@@ -2229,16 +2524,13 @@ if [ "$(id -u)" -ne 0 ]; then
         && echo "[setup] fixed ownership on ${openclaw_dir}" >&2 \
         || echo "[setup] could not fix ownership on ${openclaw_dir}; writes may fail" >&2
     fi
-    chmod 700 "$openclaw_dir" 2>/dev/null || true
-    chmod 600 "$openclaw_dir/openclaw.json" "$openclaw_dir/.config-hash" 2>/dev/null || true
+    chmod 2770 "$openclaw_dir" 2>/dev/null || true
+    chmod 660 "$openclaw_dir/openclaw.json" "$openclaw_dir/.config-hash" 2>/dev/null || true
   }
   fix_openclaw_ownership
+  normalize_mutable_config_perms
   write_auth_profile
   harden_auth_profiles
-
-  if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
-    exec "${NEMOCLAW_CMD[@]}"
-  fi
 
   # In non-root mode, detach gateway stdout/stderr from the sandbox-create
   # stream so openshell sandbox create can return once the container is ready.
@@ -2255,7 +2547,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_SLACK_REWRITER_SCRIPT"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_SLACK_REWRITER_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
@@ -2289,6 +2581,7 @@ fi
 # Verify locked config integrity before starting anything. Mutable-default
 # config is intentionally writable and is not a trust anchor until shields-up.
 verify_config_integrity_if_locked /sandbox/.openclaw
+normalize_mutable_config_perms
 apply_model_override
 apply_cors_override
 export_gateway_token
@@ -2300,6 +2593,7 @@ lock_rc_files "$_SANDBOX_HOME"
 # Must run AFTER integrity check (to detect build-time tampering) and
 # BEFORE chattr +i (which locks the config permanently).
 configure_messaging_channels
+install_telegram_diagnostics
 install_slack_token_rewriter
 install_slack_channel_guard
 verify_no_slack_secrets_on_disk
@@ -2410,7 +2704,7 @@ provision_agent_workspaces
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_SLACK_REWRITER_SCRIPT"
+validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_SLACK_REWRITER_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

@@ -149,6 +149,7 @@ RUN set -eu; \
 #
 # Both patches fail-close: if grep finds no targets, the build aborts so
 # the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
+COPY scripts/rcf_patch.py /usr/local/lib/nemoclaw/rcf_patch.py
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
     OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
@@ -192,7 +193,7 @@ RUN set -eu; \
     # auto-discovery from the extensions directory. \
     rcf_file="$(grep -RIlE --include='*.js' 'async function replaceConfigFile\(params\)' "$OC_DIST" | head -n 1)"; \
     test -n "$rcf_file" || { echo "ERROR: replaceConfigFile function not found in OpenClaw dist" >&2; exit 1; }; \
-    python3 -c "import sys; p=sys.argv[1]; f=open(p); src=f.read(); f.close(); old='\tif (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t});'; new='\ttry { if (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t}); } catch(_rcfErr) { if (process.env.OPENSHELL_SANDBOX === \"1\" && _rcfErr.code === \"EACCES\") { console.error(\"[nemoclaw] Config is read-only in sandbox \\u2014 plugin metadata not persisted (plugins auto-load from extensions/)\"); } else { throw _rcfErr; } }'; assert old in src, 'tryWriteSingleTopLevelIncludeMutation/writeConfigFile pattern not found in replaceConfigFile'; f=open(p,'w'); f.write(src.replace(old,new,1)); f.close()" "$rcf_file"; \
+    python3 /usr/local/lib/nemoclaw/rcf_patch.py "$rcf_file"; \
     grep -REq --include='*.js' 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }; \
     # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
     # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
@@ -266,6 +267,10 @@ ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).
 # Used to enable guild-channel responses for native Discord. Default: empty map.
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
+# Base64-encoded JSON Telegram config (e.g. {"requireMention":true}).
+# When requireMention is true, Telegram groups get groupPolicy: mentions;
+# otherwise groupPolicy: open (existing default). See #1737. Default: empty map.
+ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
 # since terminal-based pairing is impossible in those contexts.
@@ -305,6 +310,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
+    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
@@ -321,8 +327,8 @@ USER sandbox
 #   Non-root mode: $XDG_RUNTIME_DIR/nemoclaw/gateway-token (sandbox:sandbox 0400)
 # See: scripts/nemoclaw-start.sh generate_gateway_token()
 #
-# Config is mutable by default (600 sandbox:sandbox). Immutability is opt-in
-# via `shields up` (DAC 444 root:root + chattr +i).
+# Config is mutable by default (group-writable sandbox:sandbox). Immutability
+# is opt-in via `shields up` (DAC 444 root:root + chattr +i).
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
 # Temporary workaround for NemoClaw#1738: the OpenClaw Discord extension's
@@ -480,17 +486,37 @@ RUN set -eu; \
     done; \
     rm -rf /root/.npm /sandbox/.npm
 
+# Stale-base fallback for the gateway-in-sandbox-group setup (#2681).
+# Newer base images already add the gateway user to the sandbox group, but
+# the derived image must remain build-clean against older sandbox-base:latest
+# tags too. The `id -nG` check makes this idempotent.
+# hadolint ignore=DL4006
+RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
+        if ! id -nG gateway | tr ' ' '\n' | grep -qx sandbox; then \
+            usermod -aG sandbox gateway; \
+        fi; \
+    fi
+
 # Keep the image readable to the root entrypoint after capabilities are
 # dropped. OpenShell starts the runtime as the sandbox user; the entrypoint
-# restores the stricter mutable-default 600/700 permissions there.
+# and onboard flow normalize the mutable-default group-writable permissions.
 # Shields-up applies 444 root:root + chattr +i on top.
+#
+# `chmod g+w` + setgid (chmod g+s on dirs) on the mutable config tree means
+# both `sandbox` and `gateway` (now a member of the sandbox group) can write
+# to OpenClaw config/state in default mode. New files created in setgid
+# directories inherit group=sandbox regardless of which UID created them,
+# so OpenClaw's mutateConfigFile path (control-UI toggles) writes succeed
+# without needing an EACCES-swallow patch (#2681 supersedes #2693).
 RUN chown -R sandbox:sandbox /sandbox/.openclaw \
-    && chmod 755 /sandbox/.openclaw \
-    && chmod 644 /sandbox/.openclaw/openclaw.json
+    && chmod -R g+rwX,o-rwx /sandbox/.openclaw \
+    && find /sandbox/.openclaw -type d -exec chmod g+s {} + \
+    && chmod 2770 /sandbox/.openclaw \
+    && chmod 660 /sandbox/.openclaw/openclaw.json
 
 # Pin config hash at build time so the entrypoint can verify integrity.
 RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
-    && chmod 644 /sandbox/.openclaw/.config-hash \
+    && chmod 660 /sandbox/.openclaw/.config-hash \
     && chown sandbox:sandbox /sandbox/.openclaw/.config-hash
 
 # DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write

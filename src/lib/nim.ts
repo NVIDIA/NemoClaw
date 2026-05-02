@@ -3,9 +3,7 @@
 //
 // NIM container management — pull, start, stop, health-check NIM images.
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { runCapture } = require("./runner");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const {
   dockerContainerInspectFormat,
   dockerForceRm,
@@ -16,14 +14,13 @@ const {
   dockerRunDetached,
   dockerStop,
 } = require("./docker");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { sleepSeconds } = require("./wait");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const nimImages = require("../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "./ports";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier"];
+const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
 
 export interface NimModel {
   name: string;
@@ -342,14 +339,20 @@ export function nimStatus(sandboxName: string, port?: number): NimStatus {
 
 export function nimStatusByName(name: string, port?: number): NimStatus {
   try {
-    const state = dockerContainerInspectFormat("{{.State.Status}}", name, { ignoreError: true });
+    const state = dockerContainerInspectFormat("{{.State.Status}}", name, {
+      ignoreError: true,
+      timeout: NIM_STATUS_PROBE_TIMEOUT_MS,
+    });
     if (!state) return { running: false, container: name };
 
     let healthy = false;
     if (state === "running") {
       let resolvedHostPort = port != null ? Number(port) : 0;
       if (!resolvedHostPort) {
-        const mapping = dockerPort(name, "8000", { ignoreError: true });
+        const mapping = dockerPort(name, "8000", {
+          ignoreError: true,
+          timeout: NIM_STATUS_PROBE_TIMEOUT_MS,
+        });
         const m = mapping && mapping.match(/:(\d+)\s*$/);
         resolvedHostPort = m ? Number(m[1]) : VLLM_PORT;
       }
@@ -363,7 +366,7 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
           "5",
           `http://127.0.0.1:${resolvedHostPort}/v1/models`,
         ],
-        { ignoreError: true },
+        { ignoreError: true, timeout: NIM_STATUS_PROBE_TIMEOUT_MS + 1000 },
       );
       healthy = !!health;
     }

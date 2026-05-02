@@ -243,7 +243,7 @@ Egress control, operator approval flow, and policy configuration.
 :::
 
 :::{grid-item-card} Workspace Files
-:link: workspace/workspace-files
+:link: manage-sandboxes/workspace-files
 :link-type: doc
 
 Understand `SOUL.md`, `USER.md`, and other workspace files, plus backup and restore.
@@ -322,11 +322,37 @@ Set Up Task-Specific Sub-Agents <inference/set-up-sub-agent>
 ```
 
 ```{toctree}
+:caption: Manage Sandboxes
+:hidden:
+
+Manage Sandbox Lifecycle <manage-sandboxes/lifecycle>
+Set Up Messaging Channels <manage-sandboxes/messaging-channels>
+Workspace Files <manage-sandboxes/workspace-files>
+Backup and Restore <manage-sandboxes/backup-restore>
+```
+
+```{toctree}
 :caption: Network Policy
 :hidden:
 
 Approve or Deny Network Requests <network-policy/approve-network-requests>
 Customize the Network Policy <network-policy/customize-network-policy>
+```
+
+```{toctree}
+:caption: Deployment
+:hidden:
+
+Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
+Install OpenClaw Plugins <deployment/install-openclaw-plugins>
+Sandbox Hardening <deployment/sandbox-hardening>
+```
+
+```{toctree}
+:caption: Monitoring
+:hidden:
+
+Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
 ```
 
 ```{toctree}
@@ -339,36 +365,12 @@ OpenClaw Controls <security/openclaw-controls>
 ```
 
 ```{toctree}
-:caption: Deployment
-:hidden:
-
-Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
-Set Up Telegram <deployment/set-up-telegram-bridge>
-Install OpenClaw Plugins <deployment/install-openclaw-plugins>
-Sandbox Hardening <deployment/sandbox-hardening>
-```
-
-```{toctree}
-:caption: Workspace
-:hidden:
-
-Workspace Files <workspace/workspace-files>
-Backup & Restore <workspace/backup-restore>
-```
-
-```{toctree}
-:caption: Monitoring
-:hidden:
-
-Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
-```
-
-```{toctree}
 :caption: Reference
 :hidden:
 
 Architecture <reference/architecture>
-Commands <reference/commands>
+CLI Commands Reference <reference/commands>
+CLI Selection Guide <reference/cli-selection-guide>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
 ```

@@ -183,10 +183,12 @@ reviews:
         - `cloud-e2e` — full onboard + cloud inference
         - `sandbox-operations-e2e` — multi-sandbox lifecycle
         - `rebuild-openclaw-e2e` — workspace state survives rebuild
+        - `messaging-compatible-endpoint-e2e` — Telegram + compatible endpoint
+          inference.local regression
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,messaging-compatible-endpoint-e2e
         ```
 
     - path: "src/nemoclaw.ts"
@@ -366,6 +368,22 @@ reviews:
 
     - path: "docs/reference/commands.md"
       instructions: *e2e-docs-validation
+
+    - path: "test/e2e/test-messaging-compatible-endpoint.sh"
+      instructions: |
+        This script validates the Telegram + OpenAI-compatible endpoint
+        regression path with a local mock endpoint. Changes here affect
+        the hermetic coverage for managed inference.local routing from
+        messaging-triggered agent turns.
+
+        **E2E test recommendation:**
+        - `messaging-compatible-endpoint-e2e` — Telegram + compatible
+          endpoint inference.local routing
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=messaging-compatible-endpoint-e2e
+        ```
 
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |

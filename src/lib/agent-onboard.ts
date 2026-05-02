@@ -129,7 +129,10 @@ type AgentBinaryAvailability =
       resolvedPath?: string;
     };
 
-function verifyAgentBinaryAvailable(
+const AGENT_BINARY_CHECK_PREFIX = "NEMOCLAW_AGENT_BINARY_CHECK:";
+
+// Exported for unit coverage of the sandbox-side guard without running onboarding.
+export function verifyAgentBinaryAvailable(
   sandboxName: string,
   agent: AgentDefinition,
   runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
@@ -138,13 +141,16 @@ function verifyAgentBinaryAvailable(
   const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
   const script = binaryPath
     ? [
+        `if [ -x ${shellQuote(binaryPath)} ]; then echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)}; exit 0; fi`,
         `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
-        `[ -n "$resolved" ] || { echo not_found; exit 1; }`,
-        `[ -x ${shellQuote(binaryPath)} ] || { echo not_executable; exit 1; }`,
-        `[ "$resolved" = ${shellQuote(binaryPath)} ] || { printf 'path_mismatch:%s\\n' "$resolved"; exit 1; }`,
-        "echo ok",
-      ].join(" && ")
-    : `command -v ${shellQuote(executable)} >/dev/null 2>&1 && echo ok || echo not_found`;
+        `[ -n "$resolved" ] || { echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}; exit 0; }`,
+        `[ -x "$resolved" ] || { printf '${AGENT_BINARY_CHECK_PREFIX}not_executable:%s\\n' "$resolved"; exit 0; }`,
+        `printf '${AGENT_BINARY_CHECK_PREFIX}path_mismatch:%s\\n' "$resolved"`,
+      ].join("; ")
+    : [
+        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
+        `[ -n "$resolved" ] && [ -x "$resolved" ] && echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)} || echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}`,
+      ].join("; ");
   const result = runCaptureOpenshell(
     ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", script],
     {
@@ -152,11 +158,16 @@ function verifyAgentBinaryAvailable(
     },
   );
   const status = result?.trim() ?? "";
-  if (status === "ok") {
+  const marker = status
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith(AGENT_BINARY_CHECK_PREFIX));
+  const checkStatus = marker?.slice(AGENT_BINARY_CHECK_PREFIX.length) ?? "";
+  if (checkStatus === "ok") {
     return { available: true };
   }
-  if (binaryPath && result) {
-    const mismatch = result.match(/path_mismatch:([^\n]+)/);
+  if (binaryPath && checkStatus) {
+    const mismatch = checkStatus.match(/^path_mismatch:(.+)$/);
     if (mismatch) {
       return {
         available: false,
@@ -165,7 +176,7 @@ function verifyAgentBinaryAvailable(
         resolvedPath: mismatch[1].trim(),
       };
     }
-    if (result.includes("not_executable")) {
+    if (checkStatus.startsWith("not_executable")) {
       return { available: false, reason: "not_executable", binaryPath };
     }
   }
