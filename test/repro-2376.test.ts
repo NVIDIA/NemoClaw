@@ -25,7 +25,11 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-function runRcFile(rcFileName: ".bashrc" | ".profile", proxyEnvContents?: string): string {
+function runRcFile(
+  rcFileName: ".bashrc" | ".profile",
+  proxyEnvContents?: string,
+  command = `printf '%s' "\${HERMES_HOME:-}"`,
+): string {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nc-2376-"));
   try {
     const childEnv = { ...process.env };
@@ -37,9 +41,16 @@ function runRcFile(rcFileName: ".bashrc" | ".profile", proxyEnvContents?: string
     if (proxyEnvContents !== undefined) {
       fs.writeFileSync(proxyEnv, proxyEnvContents);
     }
-    fs.writeFileSync(rcFile, `[ -f ${proxyEnv} ] && . ${proxyEnv}\n`);
+    fs.writeFileSync(
+      rcFile,
+      [
+        `[ -f ${proxyEnv} ] && . ${proxyEnv}`,
+        'export PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"',
+        "",
+      ].join("\n"),
+    );
 
-    return execFileSync("bash", ["-c", `. "${rcFile}"; printf '%s' "\${HERMES_HOME:-}"`], {
+    return execFileSync("bash", ["-c", `. "${rcFile}"; ${command}`], {
       encoding: "utf-8",
       env: childEnv,
     });
@@ -53,6 +64,11 @@ describe("Issue #2376: Hermes rc files source HERMES_HOME from proxy-env", () =>
     it(`${rcFileName} exports HERMES_HOME when proxy-env exists`, () => {
       const out = runRcFile(rcFileName, "export HERMES_HOME=/sandbox/.hermes\n");
       expect(out).toBe("/sandbox/.hermes");
+    });
+
+    it(`${rcFileName} prepends Hermes command directories to PATH`, () => {
+      const out = runRcFile(rcFileName, undefined, `printf '%s' "$PATH"`);
+      expect(out.split(":").slice(0, 2)).toEqual(["/usr/local/bin", "/opt/hermes/.venv/bin"]);
     });
   }
 

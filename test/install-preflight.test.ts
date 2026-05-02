@@ -2488,6 +2488,113 @@ exit 0`,
   });
 });
 
+describe("installer license acceptance (sourced)", () => {
+  /**
+   * Source scripts/install.sh and invoke show_usage_notice() in isolation. The
+   * helper stubs the usage-notice.js script to record the argv it received so
+   * tests can assert which flags flowed through, without actually downloading
+   * or evaluating the real notice.
+   */
+  function callShowUsageNotice(env: Record<string, string | undefined>) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-show-usage-"));
+    const fakeBin = path.join(tmp, "bin");
+    const sourceRoot = path.join(tmp, "src");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(sourceRoot, "bin", "lib"), { recursive: true });
+    const argLog = path.join(tmp, "notice-args.log");
+
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+# Stub node: write argv (excluding the script path) to argLog and exit 0.
+{ shift; printf '%s\\n' "$*"; } > ${JSON.stringify(argLog)}
+exit 0`,
+    );
+
+    fs.writeFileSync(path.join(sourceRoot, "bin", "lib", "usage-notice.js"), "// stub\n");
+
+    // Source scripts/install.sh and invoke show_usage_notice in a fresh
+    // session with no controlling TTY. On Linux/WSL we wrap the child in
+    // setsid because WSL runners keep /dev/tty openable from the child
+    // process even when stdin is /dev/null — `(: </dev/tty)` succeeds and
+    // show_usage_notice takes its TTY-fallback branch instead of the
+    // `else error` we mean to exercise. setsid creates a new session with
+    // no controlling terminal so /dev/tty becomes unopenable.
+    //
+    // macOS does not ship setsid (it's a util-linux binary). Headless
+    // GitHub-hosted macOS runners have no controlling TTY in the first
+    // place, so plain bash is sufficient there.
+    //
+    // 2>/dev/null suppresses any top-level noise the source may emit
+    // before main()'s guard.
+    //
+    // The env object below is constructed as a fresh literal — process.env
+    // is intentionally NOT merged so ambient runner vars
+    // (NON_INTERACTIVE, ACCEPT_THIRD_PARTY_SOFTWARE) cannot leak into the
+    // child. Callers control the env entirely via the `env` parameter.
+    const useSetsid = process.platform !== "darwin";
+    const bashScript = `source ${JSON.stringify(INSTALLER_PAYLOAD)} 2>/dev/null; show_usage_notice </dev/null`;
+    const result = useSetsid
+      ? spawnSync("setsid", ["bash", "-c", bashScript], {
+          cwd: tmp,
+          encoding: "utf-8",
+          env: {
+            HOME: tmp,
+            PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+            NEMOCLAW_SOURCE_ROOT: sourceRoot,
+            ...env,
+          },
+        })
+      : spawnSync("bash", ["-c", bashScript], {
+          cwd: tmp,
+          encoding: "utf-8",
+          env: {
+            HOME: tmp,
+            PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+            NEMOCLAW_SOURCE_ROOT: sourceRoot,
+            ...env,
+          },
+        });
+    const args = fs.existsSync(argLog) ? fs.readFileSync(argLog, "utf-8").trim() : "";
+    return { result, args };
+  }
+
+  it("#2670: ACCEPT_THIRD_PARTY_SOFTWARE=1 alone clears the notice in non-TTY mode", () => {
+    const { result, args } = callShowUsageNotice({
+      // Simulates curl|bash mode: stdin is not a TTY, NON_INTERACTIVE is unset,
+      // and only --yes-i-accept-third-party-software was passed.
+      ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    });
+    expect(result.status).toBe(0);
+    // Notice script must receive both flags so it actually accepts and exits.
+    expect(args).toMatch(/--non-interactive/);
+    expect(args).toMatch(/--yes-i-accept-third-party-software/);
+    expect(`${result.stdout}${result.stderr}`).not.toMatch(
+      /Interactive third-party software acceptance requires a TTY/,
+    );
+  });
+
+  it("NON_INTERACTIVE=1 alone keeps the notice prompt-driven (regression)", () => {
+    // Existing behavior preserved: --non-interactive without --yes-i-accept-... still
+    // launches the notice helper non-interactively (which itself prompts/declines).
+    const { result, args } = callShowUsageNotice({ NON_INTERACTIVE: "1" });
+    expect(result.status).toBe(0);
+    expect(args).toMatch(/--non-interactive/);
+    expect(args).not.toMatch(/--yes-i-accept-third-party-software/);
+  });
+
+  it("errors with the friendly hint when neither flag is set in non-TTY mode", () => {
+    const { result } = callShowUsageNotice({});
+    expect(result.status).not.toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(output).toMatch(/--yes-i-accept-third-party-software/);
+    // No raw /dev/tty shell noise should leak (e.g. "exec 3</dev/tty")
+    // — the friendly hint is the only TTY-related output we expect.
+    expect(output).not.toMatch(/\/dev\/tty/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // scripts/install.sh (curl-pipe installer) release-tag resolution
 // ---------------------------------------------------------------------------

@@ -327,8 +327,8 @@ USER sandbox
 #   Non-root mode: $XDG_RUNTIME_DIR/nemoclaw/gateway-token (sandbox:sandbox 0400)
 # See: scripts/nemoclaw-start.sh generate_gateway_token()
 #
-# Config is mutable by default (600 sandbox:sandbox). Immutability is opt-in
-# via `shields up` (DAC 444 root:root + chattr +i).
+# Config is mutable by default (group-writable sandbox:sandbox). Immutability
+# is opt-in via `shields up` (DAC 444 root:root + chattr +i).
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
 # Temporary workaround for NemoClaw#1738: the OpenClaw Discord extension's
@@ -499,7 +499,7 @@ RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
 
 # Keep the image readable to the root entrypoint after capabilities are
 # dropped. OpenShell starts the runtime as the sandbox user; the entrypoint
-# restores the stricter mutable-default 600/700 permissions there.
+# and onboard flow normalize the mutable-default group-writable permissions.
 # Shields-up applies 444 root:root + chattr +i on top.
 #
 # `chmod g+w` + setgid (chmod g+s on dirs) on the mutable config tree means
@@ -509,14 +509,14 @@ RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
 # so OpenClaw's mutateConfigFile path (control-UI toggles) writes succeed
 # without needing an EACCES-swallow patch (#2681 supersedes #2693).
 RUN chown -R sandbox:sandbox /sandbox/.openclaw \
-    && chmod 755 /sandbox/.openclaw \
-    && chmod 644 /sandbox/.openclaw/openclaw.json \
-    && chmod -R g+w /sandbox/.openclaw \
-    && find /sandbox/.openclaw -type d -exec chmod g+s {} +
+    && chmod -R g+rwX,o-rwx /sandbox/.openclaw \
+    && find /sandbox/.openclaw -type d -exec chmod g+s {} + \
+    && chmod 2770 /sandbox/.openclaw \
+    && chmod 660 /sandbox/.openclaw/openclaw.json
 
 # Pin config hash at build time so the entrypoint can verify integrity.
 RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
-    && chmod 664 /sandbox/.openclaw/.config-hash \
+    && chmod 660 /sandbox/.openclaw/.config-hash \
     && chown sandbox:sandbox /sandbox/.openclaw/.config-hash
 
 # DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write

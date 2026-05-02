@@ -5,21 +5,31 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { showStatusCommand } from "./inventory-commands";
+import { getStatusReport, showStatusCommand } from "./inventory-commands";
 import { buildStatusCommandDeps } from "./status-command-deps";
 
 export default class StatusCommand extends Command {
   static id = "status";
   static strict = true;
+  static enableJsonFlag = true;
   static summary = "Show sandbox list and service status";
   static description = "Show registered sandboxes, live inference, services, and messaging health.";
-  static usage = ["status"];
+  static usage = ["status [--json]"];
   static flags = {
     help: Flags.help({ char: "h" }),
   };
 
-  public async run(): Promise<void> {
+  protected logJson(json: unknown): void {
+    console.log(JSON.stringify(json, null, 2));
+  }
+
+  public async run(): Promise<unknown> {
     await this.parse(StatusCommand);
-    showStatusCommand(buildStatusCommandDeps(this.config.root));
+    const deps = buildStatusCommandDeps(this.config.root);
+    if (this.jsonEnabled()) {
+      return getStatusReport(deps);
+    }
+
+    showStatusCommand(deps);
   }
 }

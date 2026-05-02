@@ -111,14 +111,16 @@ RUN mkdir -p /sandbox/.hermes/memories \
 # HERMES_HOME to /tmp/nemoclaw-proxy-env.sh (root-owned, mode 444); these rc
 # files source it on every interactive `openshell sandbox connect` session.
 # Ref: #2376.
-# hadolint ignore=SC2028
+# hadolint ignore=SC2016,SC2028
 RUN printf '%s\n' \
         '# Source runtime proxy + HERMES_HOME config (Landlock read-only home, #804)' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        'export PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"' \
         > /sandbox/.bashrc \
     && printf '%s\n' \
         '# Source runtime proxy + HERMES_HOME config (Landlock read-only home, #804)' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        'export PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"' \
         > /sandbox/.profile \
     && chown root:root /sandbox/.bashrc /sandbox/.profile \
     && chmod 444 /sandbox/.bashrc /sandbox/.profile

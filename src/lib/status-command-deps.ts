@@ -1,17 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+/* v8 ignore start -- runtime dependency adapter covered through CLI integration tests. */
+
 import { spawnSync } from "node:child_process";
 
-import type { CaptureOpenshellResult } from "./openshell";
-import type { ShowStatusCommandDeps, MessagingBridgeHealth } from "./inventory-commands";
-import * as registry from "./registry";
 import { parseGatewayInference } from "./inference-config";
+import type { MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory-commands";
 import { backfillMessagingChannels, findAllOverlaps } from "./messaging-conflict";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
+import type { CaptureOpenshellResult } from "./openshell";
 import { captureOpenshellCommand, stripAnsi } from "./openshell";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
+import * as registry from "./registry";
 import { resolveOpenshell } from "./resolve-openshell";
-import { showStatus as showServiceStatus } from "./services";
+import { getServiceStatuses, showStatus as showServiceStatus } from "./services";
 
 function captureOpenshell(
   rootDir: string,
@@ -143,6 +145,7 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
         ),
       ),
     showServiceStatus,
+    getServiceStatuses,
     checkMessagingBridgeHealth: (sandboxName, channels) =>
       checkMessagingBridgeHealth(rootDir, sandboxName, channels),
     backfillAndFindOverlaps: () => backfillAndFindOverlaps(rootDir),

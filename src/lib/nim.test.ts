@@ -50,6 +50,17 @@ function hasCurlTimeoutArgs(cmd: string | string[]): boolean {
   return cmd[0] === "curl" && cmd[connectTimeout + 1] === "5" && cmd[maxTime + 1] === "5";
 }
 
+function timeoutForCommand(
+  runCapture: Mock,
+  predicate: (cmd: string | string[]) => boolean,
+): number | undefined {
+  const call = runCapture.mock.calls.find((mockCall) => {
+    const cmd = mockCall[0] as string | string[];
+    return predicate(cmd);
+  });
+  return (call?.[1] as { timeout?: number } | undefined)?.timeout;
+}
+
 describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
@@ -353,6 +364,18 @@ describe("nim", () => {
           true,
         );
         expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);
+        expect(
+          timeoutForCommand(
+            runCapture,
+            (c) => Array.isArray(c) && c[0] === "docker" && c.includes("inspect"),
+          ),
+        ).toBe(5000);
+        expect(
+          timeoutForCommand(
+            runCapture,
+            (c) => Array.isArray(c) && c[0] === "curl" && c.includes("http://127.0.0.1:9000/v1/models"),
+          ),
+        ).toBe(6000);
       } finally {
         restore();
       }
@@ -375,6 +398,18 @@ describe("nim", () => {
 
           expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
           expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(true);
+          expect(
+            timeoutForCommand(
+              runCapture,
+              (c) => Array.isArray(c) && c[0] === "docker" && c.includes("inspect"),
+            ),
+          ).toBe(5000);
+          expect(
+            timeoutForCommand(
+              runCapture,
+              (c) => Array.isArray(c) && c[0] === "docker" && c.includes("port"),
+            ),
+          ).toBe(5000);
         } finally {
           restore();
         }
@@ -410,6 +445,12 @@ describe("nim", () => {
       try {
         const st = nimModule.nimStatusByName("foo");
         expect(st).toMatchObject({ running: false, healthy: false, container: "foo", state: "exited" });
+        expect(
+          timeoutForCommand(
+            runCapture,
+            (c) => Array.isArray(c) && c[0] === "docker" && c.includes("inspect"),
+          ),
+        ).toBe(5000);
         expect(runCapture.mock.calls).toHaveLength(1);
       } finally {
         restore();

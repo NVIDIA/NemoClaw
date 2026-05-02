@@ -30,11 +30,12 @@
 #   2. Verifies the *initial* gateway has the safety-net + ciao guard active
 #      (via /proc/<pid>/environ on the gateway PID).
 #   3. Crash-recovery loop (NORMAL): kill the gateway 5x, each time triggers
-#      `nemoclaw <name> connect` (which calls recoverSandboxProcesses), and
-#      checks the respawned gateway still has guards in NODE_OPTIONS.
+#      `nemoclaw <name> connect --probe-only` (which calls
+#      recoverSandboxProcesses), and checks the respawned gateway still has
+#      guards in NODE_OPTIONS.
 #   4. Negative case: removes /tmp/nemoclaw-proxy-env.sh, kills the gateway,
 #      triggers recovery — expects the new "[gateway-recovery] WARNING"
-#      line in stderr (visible via gateway.log) instead of silent guard loss.
+#      line in gateway.log instead of silent guard loss.
 #   5. Soak: leaves the sandbox idle for $NEMOCLAW_E2E_SOAK_SECONDS
 #      (default 300) so the health-monitor restart cadence (~4 min in prod)
 #      gets at least one chance to fire, then asserts the gateway has not
@@ -245,6 +246,20 @@ gateway_diagnostics() {
   echo "  ---------------------------"
 }
 
+run_probe_only_or_fail() {
+  local context="$1"
+  local probe_out
+  probe_out="$(mktemp)"
+  if ! timeout 60 nemoclaw "$SANDBOX_NAME" connect --probe-only >"$probe_out" 2>&1; then
+    fail "${context}: connect --probe-only exited nonzero"
+    sed 's/^/    /' "$probe_out"
+    rm -f "$probe_out"
+    gateway_diagnostics ""
+    exit 1
+  fi
+  rm -f "$probe_out"
+}
+
 # Wait until gateway PID is non-empty (or timeout). Echoes pid, returns 0/1.
 wait_for_gateway_up() {
   local timeout="${1:-30}"
@@ -371,11 +386,18 @@ for cycle in $(seq 1 "$CRASH_CYCLES"); do
   info "Cycle $cycle/$CRASH_CYCLES — killing gateway pid=$prev_pid"
   sandbox_exec sh -c "kill -9 $prev_pid 2>/dev/null; sleep 1; pgrep -fo '[o]penclaw[ -]gateway' || echo DEAD" >/dev/null
 
-  # Trigger recovery via the actual code path: `nemoclaw <name> status`
-  # calls checkAndRecoverSandboxProcesses() → recoverSandboxProcesses(),
-  # which is the hardened path #2478 changes. Bound it with `timeout`
-  # so a hang in CLI internals cannot eat the whole 30-min job budget.
-  timeout 60 nemoclaw "$SANDBOX_NAME" status >/dev/null 2>&1 || true
+  # Trigger recovery via the actual operator probe path:
+  # `nemoclaw <name> connect --probe-only` calls
+  # checkAndRecoverSandboxProcesses() -> recoverSandboxProcesses() without
+  # opening an interactive SSH session. Bound it with `timeout` so a hang in
+  # CLI internals cannot eat the whole 30-min job budget.
+  run_probe_only_or_fail "Cycle $cycle after gateway kill"
+
+  if ! sandbox_exec sh -c 'test -s /tmp/gateway.log'; then
+    fail "Cycle $cycle: connect --probe-only did not leave /tmp/gateway.log evidence"
+    gateway_diagnostics ""
+    exit 1
+  fi
 
   new_pid="$(wait_for_gateway_up 45)"
   if [ -z "$new_pid" ]; then
@@ -435,9 +457,10 @@ info "Snapshotted proxy-env.sh ($SNAPSHOT_SIZE bytes, ${#SNAPSHOT_B64}-char base
 # recovery script (which is the only path that emits the warning).
 sandbox_exec sh -c 'rm -f /tmp/nemoclaw-proxy-env.sh' >/dev/null
 sandbox_exec sh -c "pkill -9 -f '[o]penclaw' 2>/dev/null; sleep 2; pgrep -af '[o]penclaw' || echo ALL_DEAD" >/dev/null
-timeout 60 nemoclaw "$SANDBOX_NAME" status >/dev/null 2>&1 || true
+run_probe_only_or_fail "Negative case after proxy-env removal"
 
-# The new gateway.log should contain the [gateway-recovery] WARNING line.
+# The new gateway.log should contain the [gateway-recovery] WARNING line and
+# recovery should have attempted a real gateway respawn.
 warn_seen=false
 for _ in 1 2 3 4 5; do
   if gateway_log_tail 100 | grep -q '\[gateway-recovery\] WARNING'; then
@@ -452,6 +475,13 @@ else
   fail "Recovery silently launched without warning (regression of #2478 fix)"
   gateway_log_tail 100
 fi
+NEGATIVE_PID="$(wait_for_gateway_up 45)"
+if [ -z "$NEGATIVE_PID" ]; then
+  fail "Recovery warning was logged, but gateway did not respawn within 45s"
+  gateway_diagnostics ""
+  exit 1
+fi
+info "Negative-case recovery respawned gateway pid=$NEGATIVE_PID"
 
 # Restore proxy-env.sh by base64-injecting the snapshot via argv. `openshell
 # sandbox exec` does not pipe stdin from the caller through to the subshell,
@@ -467,10 +497,10 @@ if [ "$restored_size" != "$SNAPSHOT_SIZE" ]; then
 fi
 info "proxy-env.sh restored (${restored_size} bytes verified)"
 
-# Stop the no-guard gateway started by the negative case, then trigger
-# recovery to bring the gateway back with guards intact.
+# Kill the guardless negative-case gateway, then trigger recovery to bring the
+# gateway back with guards intact from the restored env file.
 sandbox_exec sh -c "pkill -9 -f '[o]penclaw' 2>/dev/null; sleep 2; pgrep -af '[o]penclaw' || echo ALL_DEAD" >/dev/null
-timeout 60 nemoclaw "$SANDBOX_NAME" status >/dev/null 2>&1 || true
+run_probe_only_or_fail "Guard restore recovery"
 SOAK_START_PID="$(wait_for_gateway_up 30)"
 if [ -z "$SOAK_START_PID" ]; then
   fail "Gateway not up entering soak phase"

@@ -214,19 +214,12 @@ def build_config(env: dict | None = None) -> dict:
         }
     }
 
-    # OpenClaw 2026.4.24 stages runtime dependencies for every bundled
-    # enabledByDefault provider plugin during `openclaw doctor --fix`.
-    # NemoClaw bakes one model provider into openclaw.json, so keeping unused
-    # default providers enabled bloats the sandbox image and can exhaust the
-    # CI k3s/containerd import volume before tests even start.
+    # OpenClaw stages runtime dependencies for every bundled enabledByDefault
+    # provider plugin. NemoClaw bakes one model provider into openclaw.json, so
+    # keeping unused default providers enabled bloats image builds and, once the
+    # gateway has write access to plugin-runtime-deps, can stall first startup.
     plugin_entries = {
-        "acpx": {
-            "config": {
-                "agents": {
-                    "codex": {"command": "/usr/local/bin/nemoclaw-codex-acp"},
-                }
-            }
-        },
+        "acpx": {"enabled": False},
         "bonjour": {"enabled": False},
         "qqbot": {"enabled": False},
     }
@@ -235,7 +228,13 @@ def build_config(env: dict | None = None) -> dict:
         "amazon-bedrock-mantle": {"amazon-bedrock-mantle"},
         "anthropic": {"anthropic"},
         "anthropic-vertex": {"anthropic-vertex"},
+        "fireworks": {"fireworks"},
         "google": {"google", "google-gemini-cli"},
+        "kimi": {"kimi"},
+        "lmstudio": {"lmstudio"},
+        "ollama": {"ollama", "ollama-local"},
+        "openai": {"openai"},
+        "xai": {"xai"},
     }
     for _plugin_id, _provider_keys in _bundled_provider_plugins.items():
         if provider_key not in _provider_keys:
@@ -277,14 +276,9 @@ def build_config(env: dict | None = None) -> dict:
         #     gateway can't service openclaw-agent requests — that's the
         #     TC-SBX-02 hang in 2026.4.24.
         #
-        # acpx stays enabled, but its default codex adapter command is
-        # `npx @zed-industries/codex-acp@^0.11.1`. npm refreshes registry
-        # metadata for that package spec even when codex-acp is globally
-        # installed, which hits the L7 proxy deny path during gateway startup.
-        # The sandbox image pre-installs /usr/local/bin/codex-acp. The wrapper
-        # below points ACPx at that binary with writable per-UID Codex/XDG
-        # state so the gateway user does not try to write under /sandbox or
-        # the sandbox user's redirected /tmp directories.
+        # acpx is disabled by default because its runtime dependency staging
+        # also reaches npm during gateway startup. NemoClaw's primary CLI path
+        # invokes openclaw-agent directly, not ACPx.
         #
         # Provider plugins with staged runtime dependencies are disabled above
         # unless they match NEMOCLAW_PROVIDER_KEY. That keeps the baked image

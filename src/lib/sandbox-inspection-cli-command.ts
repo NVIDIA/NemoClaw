@@ -6,17 +6,9 @@
 import { Args, Command, Flags } from "@oclif/core";
 
 import { CLI_NAME } from "./branding";
+import { listSandboxChannels, listSandboxPolicies } from "./policy-channel-actions";
 import * as sandboxConfig from "./sandbox-config";
-
-type RuntimeBridge = {
-  sandboxChannelsList: (sandboxName: string) => void;
-  sandboxPolicyList: (sandboxName: string) => void;
-  sandboxStatus: (sandboxName: string) => Promise<void>;
-};
-
-function getRuntimeBridge(): RuntimeBridge {
-  return require("../nemoclaw") as RuntimeBridge;
-}
+import { showSandboxStatus } from "./sandbox-runtime-actions";
 
 const sandboxNameArg = Args.string({
   name: "sandbox",
@@ -39,7 +31,7 @@ export class SandboxStatusCommand extends Command {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(SandboxStatusCommand);
-    await getRuntimeBridge().sandboxStatus(args.sandboxName);
+    await showSandboxStatus(args.sandboxName);
   }
 }
 
@@ -58,7 +50,7 @@ export class SandboxPolicyListCommand extends Command {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(SandboxPolicyListCommand);
-    getRuntimeBridge().sandboxPolicyList(args.sandboxName);
+    listSandboxPolicies(args.sandboxName);
   }
 }
 
@@ -77,7 +69,7 @@ export class SandboxChannelsListCommand extends Command {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(SandboxChannelsListCommand);
-    getRuntimeBridge().sandboxChannelsList(args.sandboxName);
+    listSandboxChannels(args.sandboxName);
   }
 }
 

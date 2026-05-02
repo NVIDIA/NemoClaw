@@ -261,7 +261,7 @@ describe("onboard helpers", () => {
     });
   });
 
-  it("builds a sandbox sync script that only writes nemoclaw config", () => {
+  it("builds a sandbox sync script that does not rewrite OpenClaw config content", () => {
     const script = buildSandboxConfigSyncScript({
       endpointType: "custom",
       endpointUrl: "https://inference.local/v1",
@@ -277,7 +277,13 @@ describe("onboard helpers", () => {
     assert.match(script, /"credentialEnv": "OPENAI_API_KEY"/);
     assert.doesNotMatch(script, /cat > ~\/\.openclaw\/openclaw\.json/);
     assert.doesNotMatch(script, /openclaw models set/);
-    assert.match(script, /^exit$/m);
+    assert.match(script, /config_dir=\/sandbox\/\.openclaw/);
+    assert.match(script, /chmod -R g\+rwX,o-rwx "\$config_dir"/);
+    assert.match(script, /find "\$config_dir" -type d -exec chmod g\+s \{\} \+/);
+    assert.match(script, /chmod 2770 "\$config_dir"/);
+    assert.match(script, /chmod 660 "\$config_dir\/openclaw\.json" "\$config_dir\/\.config-hash"/);
+    assert.match(script, /\[ "\$config_dir_owner" != "root" \]/);
+    assert.match(script, /^\s*exit$/m);
   });
 
   it("runs the compatible-endpoint sandbox smoke only for OpenClaw messaging sandboxes", () => {

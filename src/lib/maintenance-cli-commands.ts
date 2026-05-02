@@ -5,15 +5,11 @@
 
 import { Command, Flags } from "@oclif/core";
 
-type RuntimeBridge = {
-  backupAll: () => void;
-  garbageCollectImages: (args?: string[]) => Promise<void>;
-  upgradeSandboxes: (args?: string[]) => Promise<void>;
-};
-
-function getRuntimeBridge(): RuntimeBridge {
-  return require("../nemoclaw") as RuntimeBridge;
-}
+import {
+  runBackupAllAction,
+  runGarbageCollectImagesAction,
+  runUpgradeSandboxesAction,
+} from "./global-cli-actions";
 
 export class BackupAllCommand extends Command {
   static id = "backup-all";
@@ -27,7 +23,7 @@ export class BackupAllCommand extends Command {
 
   public async run(): Promise<void> {
     await this.parse(BackupAllCommand);
-    getRuntimeBridge().backupAll();
+    runBackupAllAction();
   }
 }
 
@@ -50,7 +46,7 @@ export class UpgradeSandboxesCommand extends Command {
     if (flags.check) args.push("--check");
     if (flags.auto) args.push("--auto");
     if (flags.yes) args.push("--yes");
-    await getRuntimeBridge().upgradeSandboxes(args);
+    await runUpgradeSandboxesAction(args);
   }
 }
 
@@ -73,6 +69,6 @@ export class GarbageCollectImagesCommand extends Command {
     if (flags["dry-run"]) args.push("--dry-run");
     if (flags.yes) args.push("--yes");
     if (flags.force) args.push("--force");
-    await getRuntimeBridge().garbageCollectImages(args);
+    await runGarbageCollectImagesAction(args);
   }
 }

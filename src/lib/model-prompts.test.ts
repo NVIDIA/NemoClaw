@@ -32,7 +32,7 @@ describe("model prompt helpers", () => {
   });
 
   it("returns DeepSeek V4 Pro from the default cloud model menu", async () => {
-    const promptFn = promptSequence(["5"]);
+    const promptFn = promptSequence(["6"]);
     const result = await promptCloudModel({
       promptFn,
       writeLine: vi.fn(),

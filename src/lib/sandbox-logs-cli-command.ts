@@ -5,19 +5,17 @@
 
 import { Args, Command, Flags } from "@oclif/core";
 
-type RuntimeBridge = {
-  sandboxLogs: (sandboxName: string, follow: boolean) => void;
-};
+import { showSandboxLogs } from "./sandbox-runtime-actions";
 
-let runtimeBridgeFactory = (): RuntimeBridge => require("../nemoclaw") as RuntimeBridge;
+let runtimeBridgeFactory = () => ({ sandboxLogs: showSandboxLogs });
 
 export function setSandboxLogsRuntimeBridgeFactoryForTest(
-  factory: () => RuntimeBridge,
+  factory: () => { sandboxLogs: (sandboxName: string, follow: boolean) => void },
 ): void {
   runtimeBridgeFactory = factory;
 }
 
-function getRuntimeBridge(): RuntimeBridge {
+function getRuntimeBridge() {
   return runtimeBridgeFactory();
 }
 

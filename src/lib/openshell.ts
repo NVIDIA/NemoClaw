@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  spawn,
   spawnSync,
+  type ChildProcess,
   type SpawnSyncOptions,
   type SpawnSyncOptionsWithStringEncoding,
   type SpawnSyncReturns,
@@ -13,6 +15,8 @@ export type OpenshellSpawnSync = (
   args: readonly string[],
   options: SpawnSyncOptionsWithStringEncoding,
 ) => SpawnSyncReturns<string>;
+
+export type OpenshellSpawn = typeof spawn;
 
 interface OpenshellSpawnOptions {
   cwd?: string;
@@ -29,6 +33,11 @@ export interface RunOpenshellOptions extends OpenshellSpawnOptions {
 }
 
 export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {}
+
+export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
+  killGraceMs?: number;
+  spawnImpl?: OpenshellSpawn;
+}
 
 export interface CaptureOpenshellResult {
   status: number | null;
@@ -78,6 +87,31 @@ function handleSpawnError(
 
 function isIgnoredTimeout(error: Error, opts: OpenshellSpawnOptions): boolean {
   return opts.ignoreError === true && (error as NodeJS.ErrnoException).code === "ETIMEDOUT";
+}
+
+function timeoutError(binary: string, args: string[], timeout: number): NodeJS.ErrnoException {
+  const error = new Error(
+    `spawn ${binary} ${args.join(" ")} timed out after ${timeout} ms`,
+  ) as NodeJS.ErrnoException;
+  error.code = "ETIMEDOUT";
+  return error;
+}
+
+function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (!child.pid) return;
+  try {
+    if (process.platform !== "win32") {
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 export function runOpenshellCommand(
@@ -136,6 +170,88 @@ export function captureOpenshellCommand(
     status: result.status ?? 1,
     output: `${result.stdout || ""}${opts.ignoreError ? "" : result.stderr || ""}`.trim(),
   };
+}
+
+export function captureOpenshellCommandAsync(
+  binary: string,
+  args: string[],
+  opts: CaptureOpenshellAsyncOptions = {},
+): Promise<CaptureOpenshellResult> {
+  const spawnImpl = opts.spawnImpl ?? spawn;
+  return new Promise((resolve) => {
+    const child = spawnImpl(binary, args, {
+      cwd: opts.cwd,
+      env: { ...process.env, ...opts.env },
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    }) as ChildProcess;
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    let timeout: NodeJS.Timeout | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+    let forceTimer: NodeJS.Timeout | undefined;
+    let capturedError: Error | undefined;
+
+    const clearTimers = () => {
+      if (timeout) clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
+      if (forceTimer) clearTimeout(forceTimer);
+    };
+
+    const buildOutput = () => `${stdout}${opts.ignoreError ? "" : stderr}`.trim();
+
+    const settle = (
+      status: number | null,
+      signal: NodeJS.Signals | null,
+      error?: Error,
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      resolve({
+        status: status ?? (timedOut ? null : 1),
+        output: buildOutput(),
+        ...(error ? { error } : {}),
+        signal,
+      });
+    };
+
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      capturedError = error;
+      settle(1, null, error);
+    });
+    child.on("close", (status, signal) => {
+      settle(status, signal, capturedError);
+    });
+
+    if (opts.timeout && opts.timeout > 0) {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        capturedError = timeoutError(binary, args, opts.timeout as number);
+        child.unref();
+        signalProcessTree(child, "SIGTERM");
+        killTimer = setTimeout(() => {
+          signalProcessTree(child, "SIGKILL");
+          forceTimer = setTimeout(() => {
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+            settle(null, "SIGKILL", capturedError);
+          }, opts.killGraceMs ?? 1000);
+        }, opts.killGraceMs ?? 1000);
+      }, opts.timeout);
+    }
+  });
 }
 
 export function getInstalledOpenshellVersion(

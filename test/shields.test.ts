@@ -418,7 +418,12 @@ describe("NC-2227-05: shields.ts locks state directories", () => {
     expect(src).toContain("function applyStateDirLockMode");
     expect(src).toContain("workspace-*");
     expect(fnBody).toContain("applyStateDirLockMode");
+    expect(fnBody).toContain('["chmod", "g-s", target.configDir]');
+    expect(src).toContain('["chmod", "g-s", dirPath]');
+    expect(src).toContain("Best effort; do not skip recursive write stripping.");
+    expect(src).toContain('[ "$clear_setgid" = "1" ] && chmod g-s "$dir"');
     expect(fnBody).toContain("chown");
+    expect(fnBody).toContain("g-s");
     expect(fnBody).toContain("root:root");
   });
 

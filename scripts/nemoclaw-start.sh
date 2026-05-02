@@ -210,7 +210,7 @@ _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /s
 # In root mode the gateway runs as the gateway UID; the file is owned
 # sandbox:sandbox. Without group write, every toggle EACCESs.
 #
-# Make the mutable-default tree group-writable + setgid so both
+# Make the mutable-default tree group-readable/writable + setgid so both
 # `gateway` (now a member of the sandbox group via Dockerfile.base
 # usermod -aG) and `sandbox` can write. Setgid means new files
 # inherit group=sandbox regardless of which UID created them, so the
@@ -219,24 +219,116 @@ _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /s
 # Idempotent. Skips when shields are UP (config dir owned by root) so
 # the lock is not weakened.
 normalize_mutable_config_perms() {
-  # Only effective in root mode. Non-root containers can't chmod files
-  # they don't own; if shields are down they were normalized by an
-  # earlier root-mode startup.
-  [ "$(id -u)" -eq 0 ] || return 0
-
   local config_dir="/sandbox/.openclaw"
   [ -d "$config_dir" ] || return 0
 
   # Detect shields-up. Config dir owned by root means shields are
   # currently locked; normalizing would weaken the contract.
   local config_dir_owner
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
+  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown)"
   if [ "$config_dir_owner" = "root" ]; then
     return 0
   fi
 
-  chmod -R g+w "$config_dir" 2>/dev/null || true
+  chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
   find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
+  chmod 2770 "$config_dir" 2>/dev/null || true
+  chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
+}
+
+openclaw_config_dir_owner() {
+  local config_dir="$1"
+  stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown
+}
+
+prepare_openclaw_config_for_write() {
+  local config_file="$1"
+  local hash_file="$2"
+  local config_dir
+  config_dir="$(dirname "$config_file")"
+
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing config override — config directory or file path is a symlink\n' >&2
+    return 1
+  fi
+
+  _NEMOCLAW_CONFIG_WRITE_MODE="locked"
+  if [ "$(openclaw_config_dir_owner "$config_dir")" != "root" ]; then
+    _NEMOCLAW_CONFIG_WRITE_MODE="mutable"
+    if [ "$(id -u)" -eq 0 ]; then
+      if ! chown root:sandbox "$config_dir"; then
+        printf '[SECURITY] Failed to take ownership of %s for write\n' "$config_dir" >&2
+        return 1
+      fi
+      local f
+      for f in "$config_file" "$hash_file"; do
+        [ -e "$f" ] || continue
+        if ! chown root:sandbox "$f"; then
+          printf '[SECURITY] Failed to take ownership of %s for write\n' "$f" >&2
+          return 1
+        fi
+      done
+    fi
+    if ! chmod 2770 "$config_dir"; then
+      printf '[SECURITY] Failed to relax permissions on %s\n' "$config_dir" >&2
+      return 1
+    fi
+    local f
+    for f in "$config_file" "$hash_file"; do
+      [ -e "$f" ] || continue
+      if ! chmod 660 "$f"; then
+        printf '[SECURITY] Failed to relax permissions on %s\n' "$f" >&2
+        return 1
+      fi
+    done
+    return 0
+  fi
+
+  relax_config_for_write "$config_file" "$hash_file"
+}
+
+restore_openclaw_config_after_write() {
+  local config_file="$1"
+  local hash_file="$2"
+  local config_dir
+  config_dir="$(dirname "$config_file")"
+
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing config override restore — config directory or file path is a symlink\n' >&2
+    return 1
+  fi
+
+  if [ "${_NEMOCLAW_CONFIG_WRITE_MODE:-locked}" = "mutable" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+      if ! chown sandbox:sandbox "$config_dir"; then
+        printf '[SECURITY] Failed to restore ownership of %s\n' "$config_dir" >&2
+        return 1
+      fi
+      local f
+      for f in "$config_file" "$hash_file"; do
+        [ -e "$f" ] || continue
+        if ! chown sandbox:sandbox "$f"; then
+          printf '[SECURITY] Failed to restore ownership of %s\n' "$f" >&2
+          return 1
+        fi
+      done
+    fi
+    if ! chmod 2770 "$config_dir"; then
+      printf '[SECURITY] Failed to restore permissions on %s\n' "$config_dir" >&2
+      return 1
+    fi
+    local f
+    for f in "$config_file" "$hash_file"; do
+      [ -e "$f" ] || continue
+      if ! chmod 660 "$f"; then
+        printf '[SECURITY] Failed to restore permissions on %s\n' "$f" >&2
+        return 1
+      fi
+    done
+    return 0
+  fi
+
+  lock_config_after_write "$config_file" "$hash_file"
 }
 
 # ── Runtime model/provider override ──────────────────────────────
@@ -304,16 +396,15 @@ apply_model_override() {
   local max_tokens="${NEMOCLAW_MAX_TOKENS:-}"
   local reasoning="${NEMOCLAW_REASONING:-}"
 
-  # Validate numeric values
-  if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[0-9]+$'; then
+  # Validate supplemental override values before relaxing or writing config.
+  if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[1-9][0-9]*$'; then
     printf '[SECURITY] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "%s" — skipping override\n' "$context_window" >&2
     return 0
   fi
-  if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[0-9]+$'; then
+  if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[1-9][0-9]*$'; then
     printf '[SECURITY] NEMOCLAW_MAX_TOKENS must be a positive integer, got "%s" — skipping override\n' "$max_tokens" >&2
     return 0
   fi
-  # Validate reasoning is true/false
   if [ -n "$reasoning" ]; then
     case "$reasoning" in
       true | false) ;;
@@ -330,9 +421,10 @@ apply_model_override() {
   [ -n "$max_tokens" ] && printf '[config] Applying max tokens override: %s\n' "$max_tokens" >&2
   [ -n "$reasoning" ] && printf '[config] Applying reasoning override: %s\n' "$reasoning" >&2
 
-  # Relax 444 → 644 so writes succeed after CAP_DAC_OVERRIDE is dropped (#2653).
-  # Re-lock in all exit paths so files are never left at 644 on failure.
-  relax_config_for_write "$config_file" "$hash_file"
+  # Shields-up configs are root-owned and re-locked after writing; mutable
+  # default configs are briefly root-owned so writes still work after
+  # CAP_DAC_OVERRIDE is dropped, then restored to sandbox:sandbox 2770/660.
+  prepare_openclaw_config_for_write "$config_file" "$hash_file"
   local _write_rc=0
 
   NEMOCLAW_CONTEXT_WINDOW="$context_window" \
@@ -383,8 +475,8 @@ PYOVERRIDE
     fi
   fi
 
-  # Re-lock 644 → 444 — always runs, even on write/hash failure (#2653)
-  lock_config_after_write "$config_file" "$hash_file"
+  # Always restore ownership/mode, even on write/hash failure (#2653, #2877).
+  restore_openclaw_config_after_write "$config_file" "$hash_file"
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
@@ -428,9 +520,8 @@ apply_cors_override() {
 
   printf '[config] Adding CORS origin: %s\n' "$cors_origin" >&2
 
-  # Relax 444 → 644 so writes succeed after CAP_DAC_OVERRIDE is dropped (#2653).
-  # Re-lock in all exit paths so files are never left at 644 on failure.
-  relax_config_for_write "$config_file" "$hash_file"
+  # See apply_model_override for the locked-vs-mutable config mode split.
+  prepare_openclaw_config_for_write "$config_file" "$hash_file"
   local _write_rc=0
 
   python3 - "$config_file" "$cors_origin" <<'PYCORS' || _write_rc=$?
@@ -458,8 +549,8 @@ PYCORS
     fi
   fi
 
-  # Re-lock 644 → 444 — always runs, even on write/hash failure (#2653)
-  lock_config_after_write "$config_file" "$hash_file"
+  # Always restore ownership/mode, even on write/hash failure (#2653, #2877).
+  restore_openclaw_config_after_write "$config_file" "$hash_file"
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
@@ -2399,6 +2490,7 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  normalize_mutable_config_perms
   apply_model_override
   apply_cors_override
   export_gateway_token
@@ -2432,10 +2524,11 @@ if [ "$(id -u)" -ne 0 ]; then
         && echo "[setup] fixed ownership on ${openclaw_dir}" >&2 \
         || echo "[setup] could not fix ownership on ${openclaw_dir}; writes may fail" >&2
     fi
-    chmod 700 "$openclaw_dir" 2>/dev/null || true
-    chmod 600 "$openclaw_dir/openclaw.json" "$openclaw_dir/.config-hash" 2>/dev/null || true
+    chmod 2770 "$openclaw_dir" 2>/dev/null || true
+    chmod 660 "$openclaw_dir/openclaw.json" "$openclaw_dir/.config-hash" 2>/dev/null || true
   }
   fix_openclaw_ownership
+  normalize_mutable_config_perms
   write_auth_profile
   harden_auth_profiles
 
