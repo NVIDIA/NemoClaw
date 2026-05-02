@@ -94,22 +94,22 @@ function readRecordedArgs(markerFile: string): string[] {
   return fs.readFileSync(markerFile, "utf8").trim().split(/\s+/);
 }
 
-function writeSandboxRegistry(home: string): void {
+function writeSandboxRegistry(home: string, sandboxName = "alpha"): void {
   const registryDir = path.join(home, ".nemoclaw");
   fs.mkdirSync(registryDir, { recursive: true });
   fs.writeFileSync(
     path.join(registryDir, "sandboxes.json"),
     JSON.stringify({
       sandboxes: {
-        alpha: {
-          name: "alpha",
+        [sandboxName]: {
+          name: sandboxName,
           model: "test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
           policies: [],
         },
       },
-      defaultSandbox: "alpha",
+      defaultSandbox: sandboxName,
     }),
     { mode: 0o600 },
   );
@@ -162,12 +162,12 @@ function createLogsTestSetup(prefix: string, openshellLines: string[] = []) {
   };
 }
 
-function createDoctorTestSetup(prefix: string, openshellLines: string[]) {
+function createDoctorTestSetup(prefix: string, openshellLines: string[], sandboxName = "alpha") {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
   const markerFile = path.join(home, "doctor-calls");
   fs.mkdirSync(localBin, { recursive: true });
-  writeSandboxRegistry(home);
+  writeSandboxRegistry(home, sandboxName);
 
   fs.writeFileSync(
     path.join(localBin, "openshell"),
@@ -200,7 +200,7 @@ function createDoctorTestSetup(prefix: string, openshellLines: string[]) {
     localBin,
     readCalls: () =>
       fs.existsSync(markerFile) ? fs.readFileSync(markerFile, "utf8").trim().split(/\n/) : [],
-    runDoctor: (args = "alpha doctor --json") =>
+    runDoctor: (args = `${sandboxName} doctor --json`) =>
       runWithEnv(
         args,
         {
@@ -915,6 +915,51 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("OpenShell status");
     expect(r.out).toContain("Gateway: other");
     expect(setup.readCalls().some((call) => /^sandbox list(\s|$)/.test(call))).toBe(false);
+  });
+
+  it("doctor treats a live non-cloudflared PID as stale", () => {
+    const sandboxName = `doctorpid-${process.pid}`;
+    const setup = createDoctorTestSetup(
+      "nemoclaw-cli-doctor-wrong-cloudflared-pid-",
+      [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  "sandbox list") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
+        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        "esac",
+      ],
+      sandboxName,
+    );
+    const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
+    fs.rmSync(serviceDir, { recursive: true, force: true });
+    fs.mkdirSync(serviceDir, { recursive: true });
+    const sleeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+      stdio: "ignore",
+    });
+    const sleeperPid = sleeper.pid;
+    if (typeof sleeperPid !== "number") {
+      throw new Error("expected spawned helper process to have a PID");
+    }
+
+    try {
+      fs.writeFileSync(path.join(serviceDir, "cloudflared.pid"), String(sleeperPid));
+      const r = setup.runDoctor(`${sandboxName} doctor --json`);
+
+      const report = JSON.parse(r.out) as {
+        checks: Array<{ label: string; status: string; detail: string }>;
+      };
+      const cloudflared = report.checks.find((check) => check.label === "cloudflared");
+      expect(cloudflared).toEqual(
+        expect.objectContaining({
+          status: "warn",
+          detail: `stale PID ${sleeperPid}`,
+        }),
+      );
+    } finally {
+      sleeper.kill();
+      fs.rmSync(serviceDir, { recursive: true, force: true });
+    }
   });
 
   it("sandbox inspection help keeps public sandbox-scoped usage", () => {

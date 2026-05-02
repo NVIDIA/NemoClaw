@@ -68,6 +68,7 @@ const {
 } = require("./lib/openshell");
 const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
 const { executeDeploy } = require("./lib/deploy");
+const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
 const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
@@ -1595,29 +1596,76 @@ function inferSandboxReadyFromLine(line: string | null): boolean | null {
   return null;
 }
 
+function stoppedCloudflaredCheck(): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "info",
+    detail: "stopped",
+    hint: `start when needed with \`${CLI_NAME} tunnel start\``,
+  };
+}
+
+function staleCloudflaredPidFileCheck(): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "warn",
+    detail: "stale PID file",
+    hint: `run \`${CLI_NAME} tunnel stop\` and start it again if you need a public tunnel`,
+  };
+}
+
+function staleCloudflaredPidCheck(pid: number): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "warn",
+    detail: `stale PID ${pid}`,
+    hint: `run \`${CLI_NAME} tunnel stop\` to clean up the service state`,
+  };
+}
+
+function readCloudflaredPidFile(pidFile: string): string | null {
+  try {
+    return fs.readFileSync(pidFile, "utf-8").trim();
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function isCloudflaredProcess(pid: number): boolean {
+  if (process.platform === "win32") {
+    return false;
+  }
+  try {
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8").includes("cloudflared");
+  } catch {
+    return false;
+  }
+}
+
 function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
   const pidFile = path.join(`/tmp/nemoclaw-services-${sandboxName}`, "cloudflared.pid");
   if (!fs.existsSync(pidFile)) {
-    return {
-      group: "Local services",
-      label: "cloudflared",
-      status: "info",
-      detail: "stopped",
-      hint: `start when needed with \`${CLI_NAME} tunnel start\``,
-    };
+    return stoppedCloudflaredCheck();
   }
-  const pid = Number(fs.readFileSync(pidFile, "utf-8").trim());
+  const rawPid = readCloudflaredPidFile(pidFile);
+  if (rawPid === null) {
+    return stoppedCloudflaredCheck();
+  }
+  const pid = Number(rawPid);
   if (!Number.isFinite(pid) || pid <= 0) {
-    return {
-      group: "Local services",
-      label: "cloudflared",
-      status: "warn",
-      detail: "stale PID file",
-      hint: `run \`${CLI_NAME} tunnel stop\` and start it again if you need a public tunnel`,
-    };
+    return staleCloudflaredPidFileCheck();
   }
   try {
     process.kill(pid, 0);
+    if (!isCloudflaredProcess(pid)) {
+      return staleCloudflaredPidCheck(pid);
+    }
     return {
       group: "Local services",
       label: "cloudflared",
@@ -1625,13 +1673,7 @@ function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
       detail: `running (PID ${pid})`,
     };
   } catch {
-    return {
-      group: "Local services",
-      label: "cloudflared",
-      status: "warn",
-      detail: `stale PID ${pid}`,
-      hint: `run \`${CLI_NAME} tunnel stop\` to clean up the service state`,
-    };
+    return staleCloudflaredPidCheck(pid);
   }
 }
 
