@@ -3,23 +3,29 @@
 
 /* v8 ignore start -- transitional action facade until implementations leave src/nemoclaw.ts. */
 
+import { runDeployAction as executeDeployAction } from "./deploy-action";
+import {
+  runOnboardAction as executeOnboardAction,
+  runSetupAction as executeSetupAction,
+  runSetupSparkAction as executeSetupSparkAction,
+} from "./onboard-action";
 import { getNemoClawRuntimeBridge } from "./nemoclaw-runtime-bridge";
 import { help, version } from "./root-help-action";
 
 export async function runOnboardAction(args: string[] = []): Promise<void> {
-  await getNemoClawRuntimeBridge().onboard(args);
+  await executeOnboardAction(args);
 }
 
 export async function runSetupAction(args: string[] = []): Promise<void> {
-  await getNemoClawRuntimeBridge().setup(args);
+  await executeSetupAction(args);
 }
 
 export async function runSetupSparkAction(args: string[] = []): Promise<void> {
-  await getNemoClawRuntimeBridge().setupSpark(args);
+  await executeSetupSparkAction(args);
 }
 
 export async function runDeployAction(instanceName?: string): Promise<void> {
-  await getNemoClawRuntimeBridge().deploy(instanceName);
+  await executeDeployAction(instanceName);
 }
 
 export function runBackupAllAction(): void {
