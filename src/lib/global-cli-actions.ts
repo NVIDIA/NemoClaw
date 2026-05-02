@@ -5,6 +5,10 @@
 
 import { runDeployAction as executeDeployAction } from "./deploy-action";
 import {
+  backupAll as executeBackupAllAction,
+  garbageCollectImages as executeGarbageCollectImagesAction,
+} from "./maintenance-actions";
+import {
   runOnboardAction as executeOnboardAction,
   runSetupAction as executeSetupAction,
   runSetupSparkAction as executeSetupSparkAction,
@@ -29,7 +33,7 @@ export async function runDeployAction(instanceName?: string): Promise<void> {
 }
 
 export function runBackupAllAction(): void {
-  getNemoClawRuntimeBridge().backupAll();
+  executeBackupAllAction();
 }
 
 export async function runUpgradeSandboxesAction(args: string[] = []): Promise<void> {
@@ -37,7 +41,7 @@ export async function runUpgradeSandboxesAction(args: string[] = []): Promise<vo
 }
 
 export async function runGarbageCollectImagesAction(args: string[] = []): Promise<void> {
-  await getNemoClawRuntimeBridge().garbageCollectImages(args);
+  await executeGarbageCollectImagesAction(args);
 }
 
 export function showRootHelp(): void {

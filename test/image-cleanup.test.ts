@@ -126,10 +126,14 @@ describe("image cleanup: gc command exists (#2086)", () => {
   });
 
   it("garbageCollectImages lists sandbox-from images and cross-references registry", () => {
-    const gcMatch = nemoclawSrc.match(/async function garbageCollectImages[\s\S]*?^}/m);
+    const maintenanceSrc = fs.readFileSync(
+      path.join(ROOT, "src/lib/maintenance-actions.ts"),
+      "utf-8",
+    );
+    const gcMatch = maintenanceSrc.match(/async function garbageCollectImages[\s\S]*?^}/m);
     expect(gcMatch).toBeTruthy();
     if (!gcMatch) {
-      throw new Error("Expected garbageCollectImages() in src/nemoclaw.ts");
+      throw new Error("Expected garbageCollectImages() in src/lib/maintenance-actions.ts");
     }
     const gcBody = gcMatch[0];
 

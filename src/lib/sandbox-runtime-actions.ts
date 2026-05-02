@@ -40,5 +40,8 @@ export async function installSandboxSkill(
 }
 
 export async function runSandboxSnapshot(sandboxName: string, args: string[]): Promise<void> {
-  await getNemoClawRuntimeBridge().sandboxSnapshot(sandboxName, args);
+  const { runSandboxSnapshot: runExtractedSandboxSnapshot } = require("./snapshot-action") as {
+    runSandboxSnapshot: (sandboxName: string, args: string[]) => Promise<void>;
+  };
+  await runExtractedSandboxSnapshot(sandboxName, args);
 }

@@ -24,8 +24,6 @@ export interface NemoClawRuntimeBridge {
     args: string[],
     opts?: { ignoreError?: boolean; timeout?: number },
   ) => { status: number | null; output: string };
-  backupAll: () => void;
-  garbageCollectImages: (args?: string[]) => Promise<void>;
   recoverNamedGatewayRuntime: () => Promise<GatewayRecoveryResult>;
   recoverRegistryEntries: (options?: {
     requestedSandboxName?: string | null;
@@ -52,7 +50,6 @@ export interface NemoClawRuntimeBridge {
   sandboxPolicyRemove: (sandboxName: string, args?: string[]) => Promise<void>;
   sandboxRebuild: (sandboxName: string, args?: string[]) => Promise<void>;
   sandboxSkillInstall: (sandboxName: string, args?: string[]) => Promise<void>;
-  sandboxSnapshot: (sandboxName: string, subArgs: string[]) => Promise<void>;
   sandboxStatus: (sandboxName: string) => Promise<void>;
   upgradeSandboxes: (args?: string[]) => Promise<void>;
 }
