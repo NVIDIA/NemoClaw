@@ -39,9 +39,9 @@ describe("command-registry", () => {
   });
 
   describe("globalCommands()", () => {
-    it("should return exactly 23 entries", () => {
-      // 18 visible + 5 hidden (help, --help, -h, --version, -v)
-      expect(globalCommands()).toHaveLength(23);
+    it("should return exactly 24 entries", () => {
+      // 19 visible + 5 hidden (help, --help, -h, --version, -v)
+      expect(globalCommands()).toHaveLength(24);
     });
 
     it("every entry has scope global", () => {
@@ -142,10 +142,11 @@ describe("command-registry", () => {
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 20 tokens matching the old GLOBAL_COMMANDS", () => {
+    it("returns the exact set of 21 tokens matching GLOBAL_COMMANDS", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "onboard",
+        "update",
         "list",
         "deploy",
         "setup",
@@ -167,6 +168,16 @@ describe("command-registry", () => {
         "-v",
       ]);
       expect(tokens).toEqual(expected);
+    });
+  });
+
+  describe("update command invariants", () => {
+    it("registers nemoclaw update in Getting Started with expected flags", () => {
+      const update = COMMANDS.find((cmd: CommandDef) => cmd.usage === "nemoclaw update");
+      expect(update).toBeDefined();
+      expect(update?.group).toBe("Getting Started");
+      expect(update?.scope).toBe("global");
+      expect(update?.flags).toBe("[--check] [--auto]");
     });
   });
 

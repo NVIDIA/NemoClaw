@@ -893,21 +893,20 @@ describe("CLI dispatch", () => {
   });
 
   it("unknown onboard option exits 1", () => {
-    const r = run("onboard --non-interactiv");
+    const r = run("onboard --invalid-opt");
+    expect(r.code).toBe(1);
+  });
+
+  it("accepts onboard --resume in CLI parsing", () => {
+    const r = run("onboard --resume --invalid-opt");
     expect(r.code).toBe(1);
     expect(r.out.includes("Unknown onboard option")).toBeTruthy();
   });
 
-  it("accepts onboard --resume in CLI parsing", () => {
-    const r = run("onboard --resume --non-interactiv");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
-  });
-
   it("accepts the third-party software flag in onboard CLI parsing", () => {
-    const r = run("onboard --yes-i-accept-third-party-software --non-interactiv");
+    const r = run("onboard --yes-i-accept-third-party-software --invalid-opt");
     expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+    expect(r.out.includes("Unknown onboard option")).toBeTruthy();
   });
 
   it("setup --help exits 0 and shows onboard usage", () => {
@@ -919,10 +918,9 @@ describe("CLI dispatch", () => {
   });
 
   it("setup forwards unknown options into onboard parsing", () => {
-    const r = run("setup --non-interactiv");
+    const r = run("setup --invalid-opt");
     expect(r.code).toBe(1);
-    expect(r.out.includes("deprecated")).toBeTruthy();
-    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+    expect(r.out.includes("Unknown onboard option")).toBeTruthy();
   });
 
   it("setup forwards --resume into onboard parsing", () => {

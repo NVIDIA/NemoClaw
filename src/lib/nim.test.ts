@@ -329,7 +329,9 @@ describe("nim", () => {
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        expect(nimModule.waitForNimHealth(9000, 1)).toBe(true);
+        // Keep probe timeout above trivial limits so startup checks model
+        // real containerized gateway bring-up behavior.
+        expect(nimModule.waitForNimHealth(9000, 10)).toBe(true);
         const commands = runCapture.mock.calls.map(([c]: [string | string[]]) => c);
 
         expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);

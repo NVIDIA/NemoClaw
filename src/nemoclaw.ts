@@ -70,6 +70,7 @@ const {
 const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
 const { executeDeploy } = require("./lib/deploy");
 const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
+const { printUpdateUsage, runUpdateCommand } = require("./lib/update");
 const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
@@ -4827,6 +4828,18 @@ const mainPromise = (async () => {
 
   // Global commands
   if (GLOBAL_COMMANDS.has(cmd)) {
+    if (cmd === "update") {
+      try {
+        await runUpdateCommand(args);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`  ${message}`);
+        printUpdateUsage((line?: string) => console.error(line));
+        process.exit(1);
+      }
+      return;
+    }
+
     await runDispatchResult(resolveGlobalOclifDispatch(cmd, args));
     return;
   }

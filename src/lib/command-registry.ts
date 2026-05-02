@@ -70,7 +70,7 @@ export const GROUP_ORDER: readonly CommandGroup[] = [
 ] as const;
 
 /**
- * All 46 CLI commands. This is the single source of truth.
+ * All 48 CLI commands. This is the single source of truth.
  *
  * The order within each group matches the current help() display order.
  */
@@ -85,6 +85,13 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw onboard --from",
     description: "Use a custom Dockerfile for the sandbox image",
+    group: "Getting Started",
+    scope: "global",
+  },
+  {
+    usage: "nemoclaw update",
+    description: "Update NemoClaw CLI to the latest version",
+    flags: "[--check] [--auto]",
     group: "Getting Started",
     scope: "global",
   },

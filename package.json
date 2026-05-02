@@ -40,6 +40,7 @@
     "@oclif/core": "^4.10.5",
     "js-yaml": "^4.1.1",
     "p-retry": "^4.6.2",
+    "semver": "^7.7.4",
     "yaml": "^2.8.3"
   },
   "bundleDependencies": [
@@ -70,6 +71,7 @@
     "@commitlint/config-conventional": "^20.5.0",
     "@j178/prek": "^0.3.6",
     "@types/node": "^25.5.2",
+    "@types/semver": "^7.7.1",
     "@vitest/coverage-v8": "^4.1.0",
     "ajv": "^8.17.0",
     "execa": "^9.6.1",

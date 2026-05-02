@@ -223,6 +223,39 @@ This variant of `nemoclaw onboard` accepts a `--from <Dockerfile>` argument to b
 $ nemoclaw onboard --from ./Dockerfile.custom
 ```
 
+### `nemoclaw update`
+
+Update the NemoClaw CLI to the latest version from npm.
+The command checks the installed version against the latest published version, compares them using semantic versioning, and installs an update if a newer version is available.
+By default, the installer spawns a detached child process so the active CLI process does not lock itself during installation.
+
+```console
+$ nemoclaw update [--check] [--auto]
+```
+
+#### `--check`
+
+Perform a dry-run check only.
+Shows the installed version, the latest available version, and whether an update is available without installing anything.
+Use this to verify update availability before upgrading in automated workflows.
+
+```console
+$ nemoclaw update --check
+```
+
+#### `--auto`
+
+Run in non-interactive mode.
+After a successful binary update, automatically trigger `nemoclaw upgrade-sandboxes --auto` to synchronize the sandboxes with the new CLI version.
+Before sandbox synchronization, the command verifies Docker reachability and warns (but does not fail) if the installed OpenShell version falls below the blueprint minimum version requirement.
+Credentials are preserved with their original file permissions during and after the update.
+
+```console
+$ nemoclaw update --auto
+```
+
+If you use `--check --auto`, the update verifies the upgrade path without actually installing or running sandbox synchronization.
+
 ### `nemoclaw list`
 
 List all registered sandboxes with their model, provider, and policy presets.
