@@ -1042,6 +1042,30 @@ describe("CLI dispatch", () => {
     expect(config.out).not.toContain("sandbox:config:get");
   });
 
+  it("snapshot list/create help keeps public sandbox-scoped usage", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-help-"));
+    writeSandboxRegistry(home);
+
+    const list = runWithEnv("alpha snapshot list --help", { HOME: home });
+    expect(list.code).toBe(0);
+    expect(list.out).toContain("<name> snapshot list");
+    expect(list.out).not.toContain("sandbox:snapshot:list");
+
+    const create = runWithEnv("alpha snapshot create --help", { HOME: home });
+    expect(create.code).toBe(0);
+    expect(create.out).toContain("<name> snapshot create [--name <name>]");
+    expect(create.out).not.toContain("sandbox:snapshot:create");
+  });
+
+  it("snapshot list dispatches through oclif", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-list-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha snapshot list", { HOME: home });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("No snapshots found for 'alpha'.");
+  });
+
   it("routes logs to OpenClaw and OpenShell log sources", () => {
     const setup = createLogsTestSetup("nemoclaw-cli-logs-routing-");
     const r = setup.runLogs();
