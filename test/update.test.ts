@@ -14,12 +14,14 @@ import {
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(TEST_DIR, "..", "bin", "nemoclaw.js");
+const UPDATE_HELP_ROW_REGEX =
+  /^\s*nemoclaw update\s+Update NemoClaw CLI to the latest version\s+\[--check\]\s+\[--auto\]\s*$/m;
 
 describe("nemoclaw update command", () => {
   describe("command registration", () => {
     it("update command appears in help output", () => {
       const output = execSync(`node "${CLI}" help`, { encoding: "utf-8" });
-      expect(output).toContain("update");
+      expect(output).toMatch(UPDATE_HELP_ROW_REGEX);
     });
 
     it("update is in Getting Started group", () => {
@@ -43,12 +45,12 @@ describe("nemoclaw update command", () => {
 
     it("update command supports --check flag", () => {
       const output = execSync(`node "${CLI}" help`, { encoding: "utf-8" });
-      expect(output).toContain("--check");
+      expect(output).toMatch(UPDATE_HELP_ROW_REGEX);
     });
 
     it("update command supports --auto flag", () => {
       const output = execSync(`node "${CLI}" help`, { encoding: "utf-8" });
-      expect(output).toContain("--auto");
+      expect(output).toMatch(UPDATE_HELP_ROW_REGEX);
     });
   });
 

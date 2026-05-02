@@ -895,6 +895,7 @@ describe("CLI dispatch", () => {
   it("unknown onboard option exits 1", () => {
     const r = run("onboard --invalid-opt");
     expect(r.code).toBe(1);
+    expect(r.out.includes("Unknown onboard option")).toBeTruthy();
   });
 
   it("accepts onboard --resume in CLI parsing", () => {

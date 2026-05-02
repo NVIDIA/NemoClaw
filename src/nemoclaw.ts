@@ -4834,7 +4834,11 @@ const mainPromise = (async () => {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`  ${message}`);
-        printUpdateUsage((line?: string) => console.error(line));
+        printUpdateUsage((line?: string) => {
+          if (line !== undefined) {
+            console.error(line);
+          }
+        });
         process.exit(1);
       }
       return;

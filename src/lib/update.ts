@@ -510,6 +510,12 @@ function resolveUpdateLogFilePath(
   const baseDir = credentialFilePath
     ? path.dirname(credentialFilePath)
     : path.join(resolveHomeDirectory(env), ".nemoclaw");
+  try {
+    fs.mkdirSync(baseDir, { recursive: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to create update log directory '${baseDir}': ${message}`);
+  }
   return path.join(baseDir, "update.log");
 }
 
@@ -574,14 +580,14 @@ export function runDetachedUpdateWorker(
       const currentMode = statSyncImpl(payload.credentialsFilePath).mode & 0o777;
       if (currentMode !== payload.credentialsMode) {
         try {
-          chmodSyncImpl(payload.credentialsFilePath, 0o600);
+          chmodSyncImpl(payload.credentialsFilePath, payload.credentialsMode);
           warnings.push(
-            `Credential permissions changed (${formatMode(currentMode)}). Restored to 0600.`,
+            `Credential permissions changed. Restored to ${formatMode(payload.credentialsMode)}.`,
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           warnings.push(
-            `Credential permissions changed (${formatMode(currentMode)}). Failed to restore: ${message}`,
+            `Credential permissions changed. Failed to restore to ${formatMode(payload.credentialsMode)}: ${message}`,
           );
         }
       }
