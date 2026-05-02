@@ -7,7 +7,6 @@ import { parsePort } from "./ports.js";
 const ENV_KEY = "TEST_PLUGIN_PORT";
 
 function clearEnv(): void {
-  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
   delete process.env[ENV_KEY];
 }
 

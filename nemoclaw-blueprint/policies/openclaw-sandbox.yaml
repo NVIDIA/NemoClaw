@@ -16,12 +16,10 @@
 version: 1
 
 filesystem_policy:
-  # SECURITY: must be false. When true, OpenShell adds WORKDIR (/sandbox) to
-  # read_write automatically, which overrides our read_only entry below because
-  # Landlock grants the union of all matching rules. All needed writable paths
-  # are declared explicitly in read_write.
-  # Ref: https://github.com/NVIDIA/NemoClaw/issues/804
-  include_workdir: false
+  # Home directory writable (matches Hermes). Agents can create dotfiles,
+  # caches, etc. natively. Immutability is opt-in via `shields up` (DAC +
+  # chattr only — Landlock can't be toggled at runtime).
+  include_workdir: true
   read_only:
     - /usr
     - /lib
@@ -30,20 +28,10 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
-    - /sandbox                      # Home directory — read-only to prevent agents
-                                    # from creating arbitrary files or modifying
-                                    # their own runtime environment. Writable state
-                                    # is restricted to /sandbox/.openclaw-data.
-                                    # Ref: https://github.com/NVIDIA/NemoClaw/issues/804
-    - /sandbox/.openclaw            # Immutable gateway config — prevents agent
-                                    # from tampering with auth tokens or CORS.
-                                    # Writable state (agents, plugins) lives in
-                                    # /sandbox/.openclaw-data via symlinks.
-                                    # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
   read_write:
     - /tmp
     - /dev/null
-    - /sandbox/.openclaw-data       # Writable agent/plugin state (symlinked from .openclaw)
+    - /sandbox/.openclaw            # Agent config (lockable via shields up)
     - /sandbox/.nemoclaw            # Plugin state and config (state.ts, config.ts).
                                     # Blueprints are root-owned; sticky bit (1755)
                                     # on parent prevents rename/delete (#1607).
@@ -57,9 +45,8 @@ landlock:
 # Note: tool-level write/edit restrictions for openclaw.json are intentionally
 # NOT declared here. OpenShell's PolicyFile schema does not support a
 # `tool_policy` section (serde deny_unknown_fields — only version, filesystem_policy,
-# landlock, process, network_policies are accepted). Config protection is
-# achieved entirely through filesystem_policy (read_only + /etc/openclaw mount)
-# and the root:root 555 permission lock on /sandbox/.openclaw/.
+# landlock, process, network_policies are accepted). Config protection when
+# shields are up is achieved via DAC (444 root:root) and chattr +i.
 # Ref: https://github.com/NVIDIA/NemoClaw/pull/654#pullrequestreview-…
 
 process:
@@ -139,6 +126,30 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
+
+  # ── Managed inference route ──────────────────────────────────────────
+  # inference.local is the OpenShell gateway's internal virtual hostname;
+  # the gateway proxies it to the configured provider (OpenAI, NVIDIA, etc.).
+  # Every sandbox uses this route regardless of provider, so it belongs in
+  # the base policy rather than an optional preset.
+  # Ref: https://github.com/NVIDIA/NemoClaw/issues/2663
+  managed_inference:
+    name: managed_inference
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/claude }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/python3 }
 
   # NOTE: github.com / api.github.com and the git/gh binaries used to
   # live in this base policy and were therefore granted to every

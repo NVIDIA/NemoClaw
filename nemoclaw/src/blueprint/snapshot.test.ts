@@ -251,27 +251,25 @@ describe("snapshot", () => {
       );
     });
 
-    it("runs best-effort chown after successful copy", async () => {
+    it("repairs legacy symlinks before best-effort chown after successful copy", async () => {
       addDir(`${SNAP}/openclaw`);
       mockExeca
         .mockResolvedValueOnce({ exitCode: 0 }) // cp
+        .mockResolvedValueOnce({ exitCode: 0, stderr: "" }) // legacy symlink repair
         .mockResolvedValueOnce({ exitCode: 0, stderr: "" }); // chown
 
       expect(await restoreIntoSandbox(SNAP, "mybox")).toBe(true);
-      expect(mockExeca).toHaveBeenCalledTimes(2);
+      expect(mockExeca).toHaveBeenCalledTimes(3);
       expect(mockExeca).toHaveBeenNthCalledWith(
         2,
         "openshell",
-        [
-          "sandbox",
-          "exec",
-          "mybox",
-          "--",
-          "chown",
-          "-R",
-          "sandbox:sandbox",
-          "/sandbox/.openclaw-data",
-        ],
+        expect.arrayContaining(["sandbox", "exec", "mybox", "--", "bash", "-lc"]),
+        { reject: false },
+      );
+      expect(mockExeca).toHaveBeenNthCalledWith(
+        3,
+        "openshell",
+        ["sandbox", "exec", "mybox", "--", "chown", "-R", "sandbox:sandbox", "/sandbox/.openclaw"],
         { reject: false },
       );
     });
@@ -280,6 +278,7 @@ describe("snapshot", () => {
       addDir(`${SNAP}/openclaw`);
       mockExeca
         .mockResolvedValueOnce({ exitCode: 0 }) // cp succeeds
+        .mockResolvedValueOnce({ exitCode: 0, stderr: "" }) // legacy symlink repair
         .mockResolvedValueOnce({ exitCode: 1, stderr: "chown: operation not permitted" }); // chown fails
 
       expect(await restoreIntoSandbox(SNAP, "mybox")).toBe(true);

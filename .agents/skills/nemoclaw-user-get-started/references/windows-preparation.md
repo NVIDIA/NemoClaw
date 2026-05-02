@@ -72,17 +72,20 @@ If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is
 
 ## Set Up Local Inference with Ollama (Optional)
 
-If you plan to select Ollama as your inference provider during onboarding, install it inside WSL before running the NemoClaw installer:
+If you plan to select Ollama as your inference provider during onboarding, run one Ollama instance that WSL can reach.
+You can install Ollama inside WSL:
 
 ```console
 $ curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-If Ollama is also running on the Windows side, quit it before running `nemoclaw onboard` (system tray > right-click > Quit).
-The Windows and WSL instances bind to the same port and conflict.
-
-The onboarding process starts Ollama in WSL if it is not already running.
+If Ollama is not already running in WSL, the onboarding process starts it for you.
 You can also start it yourself beforehand with `ollama serve`.
+
+You can also use Ollama for Windows.
+When Ollama runs on the Windows host, NemoClaw detects it from WSL through `host.docker.internal` and pulls missing models through the Ollama HTTP API.
+Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
+Use one instance, or move one of them to a different port before running `nemoclaw onboard`.
 
 ## Next Step
 

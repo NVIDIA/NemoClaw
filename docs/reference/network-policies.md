@@ -157,5 +157,11 @@ $ nemoclaw onboard
 Apply policy updates to a running sandbox without restarting:
 
 ```console
+$ openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
+```
+
+To replace the live policy with a complete raw policy file, use `openshell policy set`:
+
+```console
 $ openshell policy set --policy <policy-file> <sandbox-name>
 ```

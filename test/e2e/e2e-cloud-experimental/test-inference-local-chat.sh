@@ -25,7 +25,7 @@
 set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-experimental}}"
-CLOUD_EXPERIMENTAL_MODEL="${CLOUD_EXPERIMENTAL_MODEL:-${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-${NEMOCLAW_SCENARIO_A_MODEL:-moonshotai/kimi-k2.5}}}"
+CLOUD_EXPERIMENTAL_MODEL="${CLOUD_EXPERIMENTAL_MODEL:-${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-${NEMOCLAW_SCENARIO_A_MODEL:-nvidia/nemotron-3-super-120b-a12b}}}"
 CHAT_USER_MESSAGE="${CHAT_USER_MESSAGE:-Reply with exactly one word: PONG}"
 
 die() {
@@ -54,7 +54,7 @@ import json, sys
 try:
     r = json.load(sys.stdin)
     c = r['choices'][0]['message']
-    # moonshot/kimi (and some gateways) put interim/final text in \"reasoning\" while content is null
+    # Some gateways put interim/final text in \"reasoning\" while content is null
     content = c.get('content') or c.get('reasoning_content') or c.get('reasoning') or ''
     print(content.strip())
 except Exception as e:

@@ -19,7 +19,7 @@ homepage: "https://openclaw.ai"
 install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
-expected_version: "2026.4.9"
+expected_version: "2026.4.24"
 gateway_command: "openclaw gateway run"
 
 # ── Health probe ────────────────────────────────────────────────
@@ -34,9 +34,8 @@ forward_ports:
 
 # ── Configuration ───────────────────────────────────────────────
 config:
-  immutable_dir: /sandbox/.openclaw
-  writable_dir: /sandbox/.openclaw-data
-  config_file: openclaw.json      # relative to immutable_dir
+  dir: /sandbox/.openclaw
+  config_file: openclaw.json
   format: json
 
 # ── State directories ──────────────────────────────────────────

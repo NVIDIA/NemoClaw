@@ -48,6 +48,35 @@ export interface StreamableChildProcess {
   on(event: "close", listener: (code: number | null) => void): this;
 }
 
+export const BUILD_PROGRESS_PATTERNS: readonly RegExp[] = [
+  /^ {2}Building image /,
+  /^ {2}Step \d+\/\d+ : /,
+  /^#\d+ \[/,
+  /^#\d+ (DONE|CACHED)\b/,
+];
+
+const UPLOAD_PROGRESS_PATTERNS: readonly RegExp[] = [
+  /^ {2}Pushing image /,
+  /^\s*\[progress\]/,
+  /^ {2}Image .*available in the gateway/,
+];
+
+const VISIBLE_PROGRESS_PATTERNS: readonly RegExp[] = [
+  ...BUILD_PROGRESS_PATTERNS,
+  /^ {2}Context: /,
+  /^ {2}Gateway: /,
+  /^Successfully built /,
+  /^Successfully tagged /,
+  /^ {2}Built image /,
+  ...UPLOAD_PROGRESS_PATTERNS,
+  /^Created sandbox: /,
+  /^✓ /,
+];
+
+function matchesAny(line: string, patterns: readonly RegExp[]) {
+  return patterns.some((pattern) => pattern.test(line));
+}
+
 export function streamSandboxCreate(
   command: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -124,13 +153,9 @@ export function streamSandboxCreate(
     if (!line) return;
     lines.push(line);
     lastOutputAt = Date.now();
-    if (/^ {2}Building image /.test(line) || /^ {2}Step \d+\/\d+ : /.test(line)) {
+    if (matchesAny(line, BUILD_PROGRESS_PATTERNS)) {
       setPhase("build");
-    } else if (
-      /^ {2}Pushing image /.test(line) ||
-      /^\s*\[progress\]/.test(line) ||
-      /^ {2}Image .*available in the gateway/.test(line)
-    ) {
+    } else if (matchesAny(line, UPLOAD_PROGRESS_PATTERNS)) {
       setPhase("upload");
     } else if (/^Created sandbox: /.test(line)) {
       setPhase("create");
@@ -142,20 +167,7 @@ export function streamSandboxCreate(
   }
 
   function shouldShowLine(line: string) {
-    return (
-      /^ {2}Building image /.test(line) ||
-      /^ {2}Step \d+\/\d+ : /.test(line) ||
-      /^ {2}Context: /.test(line) ||
-      /^ {2}Gateway: /.test(line) ||
-      /^Successfully built /.test(line) ||
-      /^Successfully tagged /.test(line) ||
-      /^ {2}Built image /.test(line) ||
-      /^ {2}Pushing image /.test(line) ||
-      /^\s*\[progress\]/.test(line) ||
-      /^ {2}Image .*available in the gateway/.test(line) ||
-      /^Created sandbox: /.test(line) ||
-      /^✓ /.test(line)
-    );
+    return matchesAny(line, VISIBLE_PROGRESS_PATTERNS);
   }
 
   function onChunk(chunk: Buffer | string) {

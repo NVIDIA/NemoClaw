@@ -353,6 +353,36 @@ describe("Issue #2273: atomic rebuild", () => {
       },
     );
 
+    it.each([["ollama-local"], ["vllm-local"]])(
+      "migrates legacy %s sandbox off OPENAI_API_KEY (GH #2519)",
+      (provider) => {
+        // Pre-fix sandboxes recorded credentialEnv="OPENAI_API_KEY" even
+        // though local inference never actually needed it. After the fix,
+        // the wizard records null. Rebuild must accept the legacy value,
+        // print a one-time migration notice, and proceed even when no
+        // OPENAI_API_KEY exists in env or credentials.json.
+        const f = createFixture({
+          provider,
+          credentialEnv: "OPENAI_API_KEY",
+          // no savedCredential — host has no OPENAI_API_KEY anywhere
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        // Must NOT bail with the usual missing-credential failure
+        expect(output).not.toContain("preflight failed");
+        expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
+        // Must surface the migration notice so testers know the legacy
+        // behaviour was intentionally bypassed
+        expect(output).toContain("GH #2519");
+        expect(output).toContain(provider);
+        // Must continue into the backup step
+        expect(output).toContain("Backing up sandbox state");
+      },
+      60_000,
+    );
+
     it(
       "preflight works for non-NVIDIA providers (OpenAI, Anthropic, etc.)",
       { timeout: 60_000 },

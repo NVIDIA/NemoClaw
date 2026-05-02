@@ -182,6 +182,49 @@ describe("classifySandboxCreateFailure", () => {
     const result = classifySandboxCreateFailure("something else happened");
     expect(result.kind).toBe("unknown");
   });
+
+  it("detects TLS cert error from 'invalid peer certificate: BadSignature'", () => {
+    const result = classifySandboxCreateFailure("invalid peer certificate: BadSignature");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects TLS cert error from 'handshake verification failed'", () => {
+    const result = classifySandboxCreateFailure("handshake verification failed");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects TLS cert error from 'certificate verify failed'", () => {
+    const result = classifySandboxCreateFailure("certificate verify failed");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects TLS cert error from 'SSL certificate problem'", () => {
+    const result = classifySandboxCreateFailure("SSL certificate problem: unable to get local issuer certificate");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects TLS cert error from 'x509: certificate'", () => {
+    const result = classifySandboxCreateFailure("x509: certificate signed by unknown authority");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects TLS cert error from 'unknown authority'", () => {
+    const result = classifySandboxCreateFailure("failed: unknown authority");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("does NOT classify generic TLS transport errors as tls_cert_mismatch", () => {
+    expect(classifySandboxCreateFailure("TLS error: connection refused by proxy").kind).toBe("unknown");
+    expect(classifySandboxCreateFailure("SSL error: unsupported protocol version").kind).toBe("unknown");
+    expect(classifySandboxCreateFailure("TLS error later during notify").kind).toBe("unknown");
+    expect(classifySandboxCreateFailure("ssl error: peer closed connection").kind).toBe("unknown");
+  });
+
+  it("classifies tls_cert_mismatch even when 'Created sandbox:' is also present", () => {
+    const output = "Created sandbox: test-sandbox\nError: handshake verification failed";
+    const result = classifySandboxCreateFailure(output);
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
 });
 
 describe("validateNvidiaApiKeyValue", () => {

@@ -41,7 +41,7 @@ function loadYaml(relPath: string): Record<string, unknown> {
 function getNightlyJobNames(workflow: Record<string, unknown>): string[] {
   const jobs = workflow.jobs as Record<string, unknown> | undefined;
   if (!jobs) return [];
-  const infra = new Set(["notify-on-failure", "report-to-pr"]);
+  const infra = new Set(["notify-on-failure", "report-to-pr", "scorecard"]);
   return Object.keys(jobs).filter((name) => !infra.has(name));
 }
 

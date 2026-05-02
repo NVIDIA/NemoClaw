@@ -102,9 +102,10 @@ export class ConfigPermissionError extends Error {
  * Reject a path if it — or any ancestor up to the user's home — is a symlink.
  * This prevents an attacker from planting e.g. ~/.nemoclaw as a symlink to an
  * attacker-controlled directory, which would cause credentials to be written
- * to the wrong location.
+ * to the wrong location. Throws when a planted symlink is found; returns
+ * normally otherwise.
  */
-function rejectSymlinksOnPath(dirPath: string): void {
+export function rejectSymlinksOnPath(dirPath: string): void {
   const home = process.env.HOME || os.homedir();
   const resolved = path.resolve(dirPath);
   const resolvedHome = path.resolve(home);

@@ -149,29 +149,58 @@ export async function restoreIntoSandbox(
     return false;
   }
 
-  // Files copied via `openshell sandbox cp` land as root:root because
-  // the helper runs as root inside the pod. /sandbox/.openclaw is the
-  // immutable gateway-config layer, but the symlinks under it point at
-  // /sandbox/.openclaw-data (the writable side), so the copied agent
-  // workspace and per-agent runtime dirs end up unwritable by the
-  // sandbox user. That broke writes to models.json, agent state, and
-  // workspace markdown files. Fix it with a best-effort recursive
-  // chown after the cp succeeds. We deliberately keep this best-effort
-  // (don't fail the restore if the chown fails) so a future runtime
-  // that already gets ownership right doesn't trip on a missing
-  // chown binary or a tightened exec policy. See #1229.
-  const chownResult = await execa(
+  const repairLegacyLinks = await execa(
     "openshell",
     [
       "sandbox",
       "exec",
       sandboxName,
       "--",
-      "chown",
-      "-R",
-      "sandbox:sandbox",
-      "/sandbox/.openclaw-data",
+      "bash",
+      "-lc",
+      `set -euo pipefail
+root=/sandbox/.openclaw
+[ -d "$root" ] || exit 0
+find "$root" -type l -print0 | while IFS= read -r -d '' link; do
+  target="$(readlink "$link" 2>/dev/null || true)"
+  case "$target" in
+    *".openclaw-data"*) ;;
+    *) continue ;;
+  esac
+  rel="\${target#*/.openclaw-data/}"
+  if [ "$rel" = "$target" ] || [ -z "$rel" ]; then
+    rel="$(basename "$link")"
+  fi
+  candidate="$root/.openclaw-data/$rel"
+  tmp="$link.materialized"
+  rm -rf "$tmp"
+  if [ -e "$candidate" ]; then
+    cp -a "$candidate" "$tmp"
+  else
+    mkdir -p "$tmp"
+  fi
+  rm -f "$link"
+  mv "$tmp" "$link"
+done`,
     ],
+    { reject: false },
+  );
+  if (repairLegacyLinks.exitCode !== 0) {
+    console.debug(
+      `legacy symlink repair in sandbox ${sandboxName} exited ${String(repairLegacyLinks.exitCode)}: ${repairLegacyLinks.stderr}`,
+    );
+  }
+
+  // Files copied via `openshell sandbox cp` land as root:root because
+  // the helper runs as root inside the pod. Fix ownership with a
+  // best-effort recursive chown on the single config directory so the
+  // sandbox user can write to agent state, workspace, etc. We
+  // deliberately keep this best-effort (don't fail the restore if the
+  // chown fails) so a future runtime that already gets ownership right
+  // doesn't trip on a missing chown binary or a tightened exec policy.
+  const chownResult = await execa(
+    "openshell",
+    ["sandbox", "exec", sandboxName, "--", "chown", "-R", "sandbox:sandbox", "/sandbox/.openclaw"],
     { reject: false },
   );
   if (chownResult.exitCode !== 0) {

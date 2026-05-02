@@ -2,13 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Ephemeral Brev E2E test suite.
+ * Branch Validation E2E — installs NemoClaw FROM SOURCE on a fresh Brev instance.
  *
- * Creates a fresh Brev instance via the launchable bootstrap path, bootstraps it,
- * runs E2E tests remotely, then tears it down.
+ * Answers: "Does this branch work if you install from source on a clean machine?"
+ *
+ * Creates a fresh Brev instance, rsyncs the checked-out branch code, runs
+ * install.sh from source, onboards a sandbox, then executes the selected test
+ * suite against the live environment. Tears down the instance when done.
+ *
+ * NOTE: This does NOT test the community Launchable install path
+ * (launch-plugin.sh). For that, see test-launchable-smoke.sh wired into
+ * nightly-e2e.yaml.
  *
  * Intended to be run from CI via:
- *   npx vitest run --project e2e-brev
+ *   npx vitest run --project e2e-branch-validation
  *
  * Required env vars:
  *   NVIDIA_API_KEY   — passed to VM for inference config during onboarding
@@ -20,7 +27,8 @@
  *
  * Optional env vars:
  *   TEST_SUITE             — which test to run: full (default), deploy-cli, credential-sanitization,
- *                             telegram-injection, messaging-providers, all
+ *                             telegram-injection, messaging-providers,
+ *                             messaging-compatible-endpoint, all
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
@@ -787,5 +795,18 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       expect(output).not.toMatch(/FAIL:/);
     },
     900_000, // 15 min — creates a new sandbox with messaging providers
+  );
+
+  // NOTE: The compatible-endpoint messaging test creates its own sandbox
+  // (e2e-msg-compat) with Telegram attached and a local OpenAI-compatible
+  // mock endpoint. It covers the inference.local path used by Telegram turns.
+  it.runIf(TEST_SUITE === "messaging-compatible-endpoint" || TEST_SUITE === "all")(
+    "messaging compatible endpoint suite passes on remote VM",
+    () => {
+      const output = runRemoteTest("test/e2e/test-messaging-compatible-endpoint.sh");
+      expect(output).toContain("PASS");
+      expect(output).not.toMatch(/FAIL:/);
+    },
+    900_000, // 15 min — creates a new sandbox with Telegram + compatible endpoint
   );
 });

@@ -77,8 +77,25 @@ export interface Session {
   webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
+  // SHA-256 hex digest of every legacy credential value successfully
+  // written to the OpenShell gateway during this onboard session, keyed by
+  // env-name. Persisted across process restarts so a `--resume` run that
+  // skips already-completed upserts still knows the migration completed
+  // earlier and can safely remove ~/.nemoclaw/credentials.json on the
+  // final completeSession. Storing the hash (not just the env-name) lets
+  // us detect when the legacy file value was edited between runs, when
+  // the gateway provider was reset out-of-band, or when an unrelated
+  // session is found on disk — in any of those cases the in-memory
+  // migrated set is NOT seeded from the persisted record, so the cleanup
+  // gate keeps the file until the *current* value is actually re-migrated.
+  migratedLegacyValueHashes: Record<string, string> | null;
+  telegramConfig: TelegramConfig | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
+}
+
+export interface TelegramConfig {
+  requireMention: boolean;
 }
 
 export interface LockInfo {
@@ -107,6 +124,8 @@ export interface SessionUpdates {
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
   messagingChannels?: string[];
+  migratedLegacyValueHashes?: Record<string, string>;
+  telegramConfig?: TelegramConfig | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
@@ -172,6 +191,17 @@ function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
+function readStringRecord(
+  value: SessionJsonValue | undefined,
+): Record<string, string> | null {
+  if (!isObject(value)) return null;
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof k === "string" && typeof v === "string") result[k] = v;
+  }
+  return result;
+}
+
 function isStepStatus(value: string): value is StepStatus {
   return VALID_STEP_STATES.has(value);
 }
@@ -183,6 +213,13 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
 
 function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
   return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
+}
+
+function parseTelegramConfig(value: unknown): TelegramConfig | null {
+  if (!isObject(value)) return null;
+  if (value.requireMention === true) return { requireMention: true };
+  if (value.requireMention === false) return { requireMention: false };
+  return null;
 }
 
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
@@ -261,6 +298,10 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
+    migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
+      ? readStringRecord(overrides.migratedLegacyValueHashes)
+      : null,
+    telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
@@ -272,7 +313,6 @@ export function createSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-// eslint-disable-next-line complexity
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
 
@@ -292,6 +332,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
+    migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
+    telegramConfig: parseTelegramConfig(data.telegramConfig),
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
@@ -597,6 +639,18 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   }
   if (Array.isArray(updates.messagingChannels)) {
     safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
+  }
+  if (isObject(updates.migratedLegacyValueHashes)) {
+    const cleaned: Record<string, string> = {};
+    for (const [k, v] of Object.entries(updates.migratedLegacyValueHashes)) {
+      if (typeof k === "string" && typeof v === "string") cleaned[k] = v;
+    }
+    safe.migratedLegacyValueHashes = cleaned;
+  }
+  if (isObject(updates.telegramConfig) && typeof updates.telegramConfig.requireMention === "boolean") {
+    safe.telegramConfig = { requireMention: updates.telegramConfig.requireMention };
+  } else if (updates.telegramConfig === null) {
+    safe.telegramConfig = null;
   }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {

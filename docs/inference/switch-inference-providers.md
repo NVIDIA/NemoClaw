@@ -12,6 +12,8 @@ content:
   type: how_to
   difficulty: technical_beginner
   audience: ["developer", "engineer"]
+skill:
+  priority: 20
 status: published
 ---
 
@@ -34,6 +36,7 @@ No restart is required.
 
 Switching happens through the OpenShell inference route.
 Use the provider and model that match the upstream you want to use.
+This is one of the cases where a NemoClaw workflow intentionally uses `openshell`; see [CLI Selection Guide](../reference/cli-selection-guide.md) for the general boundary.
 
 ### NVIDIA Endpoints
 
@@ -192,6 +195,7 @@ The output includes the active provider, model, and endpoint.
 - Same-provider model switches take effect immediately via the gateway route alone.
 - Cross-provider switches also require `NEMOCLAW_MODEL_OVERRIDE` (and `NEMOCLAW_INFERENCE_API_OVERRIDE`) plus a sandbox recreate so the entrypoint patches the config at startup.
 - Overrides are applied at container startup. Changing or removing env vars requires a sandbox recreate to take effect.
+- Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 
 ## Related Topics
 

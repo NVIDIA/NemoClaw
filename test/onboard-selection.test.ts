@@ -277,6 +277,112 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
+  it("selects DeepSeek V4 Pro from the NVIDIA Endpoints model list", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-build-deepseek-selection-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "build-deepseek-selection-check.js");
+    const curlArgsLog = path.join(tmpDir, "deepseek-curl-args.log");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+args_log=${JSON.stringify(curlArgsLog)}
+printf '%s\\n' "$*" >> "$args_log"
+body='{"id":"ok"}'
+status="200"
+outfile=""
+streaming=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -N) streaming="1"; shift ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "$streaming" = "1" ]; then
+  body='data: {"id":"chatcmpl-test","choices":[{"delta":{"content":"OK"}}]}'$'\\n\\n''data: [DONE]'$'\\n'
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["1", "5"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.equal(payload.result.model, "deepseek-ai/deepseek-v4-pro");
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.match(payload.messages[1], /Choose model \[1\]/);
+    assert.ok(payload.lines.some((line: string) => line.includes("DeepSeek V4 Pro")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Chat Completions API available")),
+    );
+    const curlInvocations = fs.readFileSync(curlArgsLog, "utf-8");
+    assert.match(curlInvocations, /chat\/completions/);
+    assert.match(curlInvocations, /(^|\s)-N(\s|$)/);
+  });
+
   it("accepts a manually entered NVIDIA Endpoints model after validating it against /models", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
@@ -303,7 +409,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"moonshotai/kimi-k2.5"},{"id":"custom/provider-model"}]}'
+  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"custom/provider-model"}]}'
 fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
@@ -315,7 +421,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "custom/provider-model"];
+const answers = ["1", "6", "custom/provider-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -399,7 +505,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"moonshotai/kimi-k2.5"},{"id":"z-ai/glm-5.1"}]}'
+  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"z-ai/glm-5.1"}]}'
 fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
@@ -411,7 +517,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "bad/model", "z-ai/glm-5.1"];
+const answers = ["1", "6", "bad/model", "z-ai/glm-5.1"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -663,6 +769,21 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    // GH #2519: ollama-local must not capture the host's OPENAI_API_KEY.
+    // credentialEnv should be null so the wizard summary shows
+    // "(not required for ollama-local)" and onboard-session.json does not
+    // record OPENAI_API_KEY (which would later trip the rebuild preflight).
+    assert.equal(payload.result.credentialEnv, null);
+    // credentials.json must not have been written with an OPENAI_API_KEY
+    // entry by the ollama-local path.
+    const credsPath = path.join(tmpDir, ".nemoclaw", "credentials.json");
+    if (fs.existsSync(credsPath)) {
+      const creds = JSON.parse(fs.readFileSync(credsPath, "utf-8"));
+      assert.ok(
+        !Object.prototype.hasOwnProperty.call(creds, "OPENAI_API_KEY"),
+        "ollama-local onboard must not write OPENAI_API_KEY to credentials.json",
+      );
+    }
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Loading Ollama model: nemotron-3-nano:30b"),
@@ -3308,6 +3429,9 @@ runner.runCapture = (command) => {
 runner.run = (command, opts) => {
   runCommands.push(typeof command === "string" ? command : command.join(" "));
 };
+runner.runShell = (command, opts) => {
+  runCommands.push(command);
+};
 registry.updateSandbox = (_name, update) => updates.push(update);
 
 // Force platform to linux for this test
@@ -3363,6 +3487,85 @@ const { setupNim } = require(${onboardPath});
     assert.ok(
       !payload.runCommands.some((cmd: string) => cmd.includes("brew install")),
       "Should NOT use brew on Linux",
+    );
+  });
+
+  it("honours NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for compatible-endpoint during inference setup (#2403)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-compatible-endpoint-timeout-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const stateFile = path.join(tmpDir, "state.json");
+    const scriptPath = path.join(tmpDir, "compatible-timeout-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(stateFile, JSON.stringify({ inferenceSetArgs: null }));
+
+    // Fake openshell: records inference set args, stubs provider/gateway ops
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!${process.execPath}
+const fs = require("fs");
+const args = process.argv.slice(2);
+const stateFile = ${JSON.stringify(stateFile)};
+if (args[0] === "inference" && args[1] === "set") {
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  state.inferenceSetArgs = args.slice(2);
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  process.exit(0);
+}
+// provider get: exit 1 so upsertProvider uses "create"
+if (args[0] === "provider" && args[1] === "get") { process.exit(1); }
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+// Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
+// Handles verifyInferenceRoute's "openshell inference get" call.
+runner.runCapture = (cmd) => {
+  const args = Array.isArray(cmd) ? cmd : [];
+  if (args[1] === "inference" && args[2] === "get") {
+    return "Gateway inference:\n  Provider: compatible-endpoint\n  Model: qwen3.6:35b\n";
+  }
+  return "";
+};
+process.env.COMPATIBLE_API_KEY = "test-key";
+const { setupInference } = require(${onboardPath});
+(async () => {
+  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://lan-server:11434/v1", "COMPATIBLE_API_KEY");
+  process.exit(0);
+})().catch((err) => { console.error(err); process.exit(1); });
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "600",
+        COMPATIBLE_API_KEY: "test-key",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+    assert.ok(state.inferenceSetArgs !== null, "openshell inference set was not called");
+    assert.ok(
+      state.inferenceSetArgs.includes("--timeout"),
+      `Expected --timeout in inference set args, got: ${JSON.stringify(state.inferenceSetArgs)}`,
+    );
+    assert.ok(
+      state.inferenceSetArgs.includes("600"),
+      `Expected 600 in inference set args, got: ${JSON.stringify(state.inferenceSetArgs)}`,
     );
   });
 });

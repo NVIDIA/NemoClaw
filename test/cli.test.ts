@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { execSync, spawnSync } from "node:child_process";
+import { execSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { execTimeout, testTimeout, testTimeoutOptions } from "./helpers/timeouts";
+
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
+const HERMES_CLI = path.join(import.meta.dirname, "..", "bin", "nemohermes.js");
 
 type CliRunResult = {
   code: number;
@@ -59,11 +62,12 @@ function run(args: string): CliRunResult {
 function runWithEnv(
   args: string,
   env: Record<string, string | undefined> = {},
-  timeout: number = Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+  timeout: number = execTimeout(),
 ): CliRunResult {
   try {
     const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",
+      stdio: "pipe",
       timeout,
       env: {
         ...process.env,
@@ -90,7 +94,199 @@ function readRecordedArgs(markerFile: string): string[] {
   return fs.readFileSync(markerFile, "utf8").trim().split(/\s+/);
 }
 
+function writeSandboxRegistry(home: string, sandboxName = "alpha"): void {
+  const registryDir = path.join(home, ".nemoclaw");
+  fs.mkdirSync(registryDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(registryDir, "sandboxes.json"),
+    JSON.stringify({
+      sandboxes: {
+        [sandboxName]: {
+          name: sandboxName,
+          model: "test-model",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+      },
+      defaultSandbox: sandboxName,
+    }),
+    { mode: 0o600 },
+  );
+}
+
+const FAKE_OPENCLAW_LOG_LINE = "openclaw gateway log: policy checker ready";
+const FAKE_OPENSHELL_LOG_LINE = "openshell audit log: DENIED example.com:443";
+
+function createLogsTestSetup(prefix: string, openshellLines: string[] = []) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const localBin = path.join(home, "bin");
+  const markerFile = path.join(home, "logs-calls");
+  fs.mkdirSync(localBin, { recursive: true });
+  writeSandboxRegistry(home);
+  fs.writeFileSync(
+    path.join(localBin, "openshell"),
+    [
+      "#!/usr/bin/env bash",
+      `marker_file=${JSON.stringify(markerFile)}`,
+      'printf \'%s\\n\' "$*" >> "$marker_file"',
+      ...openshellLines,
+      'if [ "$1" = "settings" ]; then',
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "sandbox" ]; then',
+      `  echo ${JSON.stringify(FAKE_OPENCLAW_LOG_LINE)}`,
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "logs" ]; then',
+      `  echo ${JSON.stringify(FAKE_OPENSHELL_LOG_LINE)}`,
+      "  exit 0",
+      "fi",
+      "exit 0",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  return {
+    home,
+    localBin,
+    markerFile,
+    readCalls: () =>
+      fs.existsSync(markerFile) ? fs.readFileSync(markerFile, "utf8").trim().split(/\n/) : [],
+    runLogs: (args = "alpha logs", env: Record<string, string | undefined> = {}) =>
+      runWithEnv(args, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        ...env,
+      }),
+  };
+}
+
+function createDoctorTestSetup(prefix: string, openshellLines: string[], sandboxName = "alpha") {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const localBin = path.join(home, "bin");
+  const markerFile = path.join(home, "doctor-calls");
+  fs.mkdirSync(localBin, { recursive: true });
+  writeSandboxRegistry(home, sandboxName);
+
+  fs.writeFileSync(
+    path.join(localBin, "openshell"),
+    [
+      "#!/usr/bin/env bash",
+      `marker_file=${JSON.stringify(markerFile)}`,
+      'printf \'%s\\n\' "$*" >> "$marker_file"',
+      ...openshellLines,
+      "exit 0",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(localBin, "docker"),
+    [
+      "#!/usr/bin/env bash",
+      'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+      'if [ "$1" = "inspect" ]; then printf "true\\tnone\\topenshell:test\\n"; exit 0; fi',
+      'if [ "$1" = "port" ]; then echo "0.0.0.0:8080"; exit 0; fi',
+      "exit 0",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(path.join(localBin, "curl"), ["#!/usr/bin/env bash", "exit 7"].join("\n"), {
+    mode: 0o755,
+  });
+
+  return {
+    home,
+    localBin,
+    readCalls: () =>
+      fs.existsSync(markerFile) ? fs.readFileSync(markerFile, "utf8").trim().split(/\n/) : [],
+    runDoctor: (args = `${sandboxName} doctor --json`) =>
+      runWithEnv(
+        args,
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        30000,
+      ),
+  };
+}
+
+function createDebugCommandTestEnv(prefix: string): Record<string, string> {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const localBin = path.join(home, "bin");
+  fs.mkdirSync(localBin, { recursive: true });
+  fs.writeFileSync(
+    path.join(localBin, "openshell"),
+    [
+      "#!/bin/sh",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+      "  echo 'NAME'",
+      "  exit 0",
+      "fi",
+      "echo 'openshell ok'",
+      "exit 0",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(path.join(localBin, "docker"), ["#!/bin/sh", "exit 0"].join("\n"), {
+    mode: 0o755,
+  });
+  return {
+    HOME: home,
+    PATH: `${localBin}:${process.env.PATH || ""}`,
+  };
+}
+
 describe("CLI dispatch", () => {
+  it("config get validates flags and values before dispatch", async () => {
+    const sandboxConfigModule = await import("../dist/lib/sandbox-config.js");
+    const { parseConfigGetArgs } = (sandboxConfigModule.default ?? sandboxConfigModule) as {
+      parseConfigGetArgs: (
+        args: string[],
+      ) =>
+        | { ok: true; opts: { key: string | null; format: string } }
+        | { ok: false; errors: string[] };
+    };
+
+    const missingKey = parseConfigGetArgs(["--key"]);
+    expect(missingKey.ok).toBe(false);
+    expect(missingKey).toEqual(
+      expect.objectContaining({
+        errors: expect.arrayContaining([expect.stringContaining("--key requires a value")]),
+      }),
+    );
+
+    const missingFormat = parseConfigGetArgs(["--format"]);
+    expect(missingFormat.ok).toBe(false);
+    expect(missingFormat).toEqual(
+      expect.objectContaining({
+        errors: expect.arrayContaining([expect.stringContaining("--format requires a value")]),
+      }),
+    );
+
+    const badFormat = parseConfigGetArgs(["--format", "xml"]);
+    expect(badFormat.ok).toBe(false);
+    expect(badFormat).toEqual(
+      expect.objectContaining({
+        errors: expect.arrayContaining([expect.stringContaining("Unknown format: xml")]),
+      }),
+    );
+
+    const unknownFlag = parseConfigGetArgs(["--bogus"]);
+    expect(unknownFlag.ok).toBe(false);
+    expect(unknownFlag).toEqual(
+      expect.objectContaining({
+        errors: expect.arrayContaining([expect.stringContaining("Unknown flag: --bogus")]),
+      }),
+    );
+
+    expect(parseConfigGetArgs(["--key", "gateway.auth", "--format", "yaml"])).toEqual({
+      ok: true,
+      opts: { key: "gateway.auth", format: "yaml" },
+    });
+  });
+
   it("help exits 0 and shows sections", () => {
     const r = run("help");
     expect(r.code).toBe(0);
@@ -114,11 +310,11 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("nemoclaw")).toBeTruthy();
   });
 
-  it("bare unknown name surfaces sandbox-not-found (#2164)", { timeout: 35000 }, () => {
+  it("bare unknown name surfaces sandbox-not-found (#2164)", testTimeoutOptions(35_000), () => {
     // Longer timeout: when openshell is installed but the gateway is down,
     // the CLI probes the gateway before reporting "not found" and the
     // default 10s is not enough for the connection to time out.
-    const r = runWithEnv("boguscmd", {}, 30000);
+    const r = runWithEnv("boguscmd", {}, execTimeout(30_000));
     expect(r.code).toBe(1);
     expect(r.out.includes("Sandbox 'boguscmd' does not exist")).toBeTruthy();
   });
@@ -129,6 +325,69 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Unknown command")).toBeTruthy();
   });
 
+  it("suggests list for a mistyped list command", () => {
+    const r = run("liost");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Unknown command: liost");
+    expect(r.out).toContain("Did you mean: nemoclaw list?");
+  });
+
+  it("recovers a live sandbox before suggesting a bare command typo", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-recover-typo-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'printf "%s\\n" "$*" >> "$HOME/openshell-calls.log"',
+        'case "$*" in',
+        '  "status") printf "Status: Connected\\nGateway: nemoclaw\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "sandbox list") echo "liost Ready"; exit 0 ;;',
+        '  "sandbox get liost") printf "Name: liost\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
+        '  "policy get --full liost") exit 1 ;;',
+        '  "inference get") exit 1 ;;',
+        '  "sandbox connect liost") echo "CONNECTED_LIOST"; exit 0 ;;',
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("liost", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_CONNECT_TIMEOUT: "1",
+      NEMOCLAW_NO_CONNECT_HINT: "1",
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("CONNECTED_LIOST");
+    expect(r.out).not.toContain("Unknown command: liost");
+  });
+
+  it("explains sandbox connect command order when the sandbox name is last", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-order-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("hermes connect alpha", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Sandbox 'hermes' does not exist");
+    expect(r.out).toContain("Command order is: nemoclaw <sandbox-name> connect");
+    expect(r.out).toContain("Did you mean: nemoclaw alpha connect?");
+  });
+
   it("list exits 0", () => {
     const r = run("list");
     expect(r.code).toBe(0);
@@ -136,11 +395,46 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("No sandboxes")).toBeTruthy();
   });
 
-  it("start does not prompt for NVIDIA_API_KEY before launching local services", { timeout: 35000 }, () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
+  it("list --help exits 0 and shows list usage", () => {
+    const r = run("list --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("list [--json]");
+    expect(r.out).toContain("List all sandboxes");
+  });
+
+  it("nemohermes list --help uses alias branding", () => {
+    const out = execSync(`node "${HERMES_CLI}" list --help`, {
+      encoding: "utf-8",
+      stdio: "pipe",
+      timeout: execTimeout(),
+      env: {
+        ...process.env,
+        HOME: `/tmp/nemoclaw-cli-test-${Date.now()}`,
+      },
+    });
+    expect(out).toContain("$ nemohermes list [--json]");
+    expect(out).not.toContain("$ nemoclaw list [--json]");
+  });
+
+  it("list --json emits structured empty inventory", () => {
+    const r = run("list --json");
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out)).toEqual({
+      schemaVersion: 1,
+      defaultSandbox: null,
+      recovery: {
+        recoveredFromSession: false,
+        recoveredFromGateway: 0,
+      },
+      lastOnboardedSandbox: null,
+      sandboxes: [],
+    });
+  });
+
+  it("list --json emits structured sandbox details", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-json-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
-    const markerFile = path.join(home, "start-args");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -149,10 +443,11 @@ describe("CLI dispatch", () => {
         sandboxes: {
           alpha: {
             name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+            model: "configured-model",
+            provider: "configured-provider",
+            gpuEnabled: true,
+            policies: ["pypi"],
+            agent: "openclaw",
           },
         },
         defaultSandbox: "alpha",
@@ -160,28 +455,260 @@ describe("CLI dispatch", () => {
       { mode: 0o600 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "openshell"),
       [
-        "#!/bin/sh",
-        `marker_file=${JSON.stringify(markerFile)}`,
-        'printf \'%s\\n\' "$@" > "$marker_file"',
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  exit 0",
+        "fi",
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
     );
+    fs.writeFileSync(
+      path.join(localBin, "ps"),
+      ["#!/bin/sh", "echo '123 ssh openshell-alpha'", "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
 
-    const r = runWithEnv("start", {
+    const r = runWithEnv("list --json", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
-      NVIDIA_API_KEY: "",
-      TELEGRAM_BOT_TOKEN: "",
     });
 
     expect(r.code).toBe(0);
-    expect(r.out).not.toContain("NVIDIA API Key required");
-    // Services module now runs in-process (no bash shelling)
-    expect(r.out).toContain("NemoClaw Services");
+    expect(JSON.parse(r.out)).toEqual({
+      schemaVersion: 1,
+      defaultSandbox: "alpha",
+      recovery: {
+        recoveredFromSession: false,
+        recoveredFromGateway: 0,
+      },
+      lastOnboardedSandbox: null,
+      sandboxes: [
+        {
+          name: "alpha",
+          model: "configured-model",
+          provider: "configured-provider",
+          gpuEnabled: true,
+          policies: ["pypi"],
+          agent: "openclaw",
+          isDefault: true,
+          activeSessionCount: 1,
+          connected: true,
+        },
+      ],
+    });
   });
+
+  it("list forwards oclif parse errors for unknown options", () => {
+    const r = run("list --bogus");
+    expect(r.code).toBe(2);
+    expect(r.out.includes("Nonexistent flag: --bogus")).toBeTruthy();
+    expect(r.out.includes("See more help with --help")).toBeTruthy();
+  });
+
+  it("status --help exits 0 and shows status usage", () => {
+    const r = run("status --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("status");
+    expect(r.out).toContain("Show sandbox list and service status");
+  });
+
+  it("tunnel start --help exits 0 and shows tunnel usage", () => {
+    const r = run("tunnel start --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("tunnel start");
+    expect(r.out).toContain("Start the cloudflared public-URL tunnel");
+  });
+
+  it("deprecated start --help exits 0 and shows alias usage", () => {
+    const r = run("start --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("start");
+    expect(r.out).toContain("Deprecated alias");
+  });
+
+  it("tunnel stop --help exits 0 and shows tunnel usage", () => {
+    const r = run("tunnel stop --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("tunnel stop");
+    expect(r.out).toContain("Stop the cloudflared public-URL tunnel");
+  });
+
+  it("deprecated stop --help exits 0 and shows alias usage", () => {
+    const r = run("stop --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("stop");
+    expect(r.out).toContain("Deprecated alias");
+  });
+
+  it("credentials help exits 0 and shows credential subcommands", () => {
+    const r = run("credentials --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Usage: nemoclaw credentials <subcommand>");
+    expect(r.out).toContain("list");
+    expect(r.out).toContain("reset <PROVIDER> [--yes]");
+  });
+
+  it("credentials list --help exits 0 and shows list usage", () => {
+    const r = run("credentials list --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("credentials list");
+    expect(r.out).toContain("List provider credentials");
+  });
+
+  it("credentials reset without provider keeps provider-specific usage", () => {
+    const r = run("credentials reset --yes");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Usage: nemoclaw credentials reset <PROVIDER> [--yes]");
+    expect(r.out).toContain("PROVIDER is an OpenShell provider name");
+  });
+
+  it("maintenance command help exits 0 and shows migrated usage", () => {
+    const backup = run("backup-all --help");
+    expect(backup.code).toBe(0);
+    expect(backup.out).toContain("backup-all");
+    expect(backup.out).toContain("Back up all sandbox state before upgrade");
+
+    const upgrade = run("upgrade-sandboxes --help");
+    expect(upgrade.code).toBe(0);
+    expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes]");
+    expect(upgrade.out).toContain("Detect and rebuild stale sandboxes");
+
+    const gc = run("gc --help");
+    expect(gc.code).toBe(0);
+    expect(gc.out).toContain("gc [--dry-run] [--yes|--force]");
+    expect(gc.out).toContain("Remove orphaned sandbox Docker images");
+  });
+
+  it("maintenance commands dispatch through oclif", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-maintenance-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      ["#!/bin/sh", "if [ \"$1\" = \"images\" ]; then exit 0; fi", "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const backup = runWithEnv("backup-all", { HOME: home });
+    expect(backup.code).toBe(0);
+    expect(backup.out).toContain("No sandboxes registered. Nothing to back up.");
+
+    const upgrade = runWithEnv("upgrade-sandboxes --check", { HOME: home });
+    expect(upgrade.code).toBe(0);
+    expect(upgrade.out).toContain("No sandboxes found in the registry.");
+
+    const gc = runWithEnv("gc --dry-run", { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` });
+    expect(gc.code).toBe(0);
+    expect(gc.out).toContain("No sandbox images found on the host.");
+  });
+
+  it("shows skill install help when --help follows install", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-skill-help-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha skill install --help", { HOME: home });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Usage: nemoclaw <sandbox> skill install <path>");
+    expect(r.out).toContain("Deploy a skill directory");
+    expect(r.out).not.toContain("sandbox:skill:install");
+    expect(r.out).not.toContain("--help");
+    expect(r.out).not.toContain("No SKILL.md found");
+  });
+
+  it("points plugin-shaped directories away from skill install", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-plugin-hint-"));
+    const pluginDir = path.join(home, "openclaw-plugin");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    writeSandboxRegistry(home);
+    fs.writeFileSync(
+      path.join(pluginDir, "package.json"),
+      JSON.stringify({ name: "demo-plugin", openclaw: { extensions: ["./dist/index.js"] } }),
+    );
+
+    const r = runWithEnv(`alpha skill install ${JSON.stringify(pluginDir)}`, { HOME: home });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("No SKILL.md found in");
+    expect(r.out).toContain("This looks like an OpenClaw plugin");
+    expect(r.out).toContain("nemoclaw onboard --from <Dockerfile>");
+  });
+
+  it("detects openclaw.plugin.json as a plugin marker", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-plugin-marker-"));
+    const pluginDir = path.join(home, "openclaw-plugin");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    writeSandboxRegistry(home);
+    fs.writeFileSync(
+      path.join(pluginDir, "openclaw.plugin.json"),
+      JSON.stringify({ name: "demo" }),
+    );
+
+    const r = runWithEnv(`alpha skill install ${JSON.stringify(pluginDir)}`, { HOME: home });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("No SKILL.md found in");
+    expect(r.out).toContain("This looks like an OpenClaw plugin");
+    expect(r.out).toContain("nemoclaw onboard --from <Dockerfile>");
+  });
+
+  it(
+    "start does not prompt for NVIDIA_API_KEY before launching local services",
+    testTimeoutOptions(35_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const markerFile = path.join(home, "start-args");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "bash"),
+        [
+          "#!/bin/sh",
+          `marker_file=${JSON.stringify(markerFile)}`,
+          'printf \'%s\\n\' "$@" > "$marker_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv(
+        "start",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+          NVIDIA_API_KEY: "",
+          TELEGRAM_BOT_TOKEN: "",
+        },
+        30000,
+      );
+
+      expect(r.code).toBe(0);
+      expect(r.out).not.toContain("NVIDIA API Key required");
+      // Services module now runs in-process (no bash shelling)
+      expect(r.out).toContain("NemoClaw Services");
+    },
+  );
 
   it("onboard --help exits 0 and shows usage", () => {
     const r = run("onboard --help");
@@ -266,8 +793,12 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("--output")).toBeTruthy();
   });
 
-  it("debug --quick exits 0 and produces diagnostic output", { timeout: 15000 }, () => {
-    const r = run("debug --quick");
+  it("debug --quick exits 0 and produces diagnostic output", testTimeoutOptions(30_000), () => {
+    const r = runWithEnv(
+      "debug --quick",
+      createDebugCommandTestEnv("nemoclaw-cli-debug-quick-"),
+      30000,
+    );
     expect(r.code).toBe(0);
     expect(r.out.includes("Collecting diagnostics")).toBeTruthy();
     expect(r.out.includes("System")).toBeTruthy();
@@ -288,8 +819,12 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("nemoclaw debug")).toBeTruthy();
   });
 
-  it("debug --sandbox NAME targets the specified sandbox", { timeout: 15000 }, () => {
-    const r = run("debug --quick --sandbox mybox");
+  it("debug --sandbox NAME targets the specified sandbox", testTimeoutOptions(30_000), () => {
+    const r = runWithEnv(
+      "debug --quick --sandbox mybox",
+      createDebugCommandTestEnv("nemoclaw-cli-debug-sandbox-"),
+      30000,
+    );
     expect(r.code).toBe(0);
     expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
   });
@@ -299,7 +834,7 @@ describe("CLI dispatch", () => {
     expect(r.code).not.toBe(0);
   });
 
-  it("debug warns when default sandbox is stale", { timeout: 15000 }, () => {
+  it("debug warns when default sandbox is stale", testTimeoutOptions(), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-"));
     fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(
@@ -314,7 +849,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("--sandbox NAME");
   });
 
-  it("debug --sandbox skips stale default warning", { timeout: 15000 }, () => {
+  it("debug --sandbox skips stale default warning", testTimeoutOptions(), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-"));
     fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(
@@ -328,65 +863,331 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
   });
 
-  it("routes logs to sandbox exec tailing the gateway log", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    const markerFile = path.join(home, "logs-args");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
-          },
-        },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        `marker_file=${JSON.stringify(markerFile)}`,
-        'printf \'%s \' "$@" > "$marker_file"',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+  it("gateway-token help keeps the public sandbox-scoped usage", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-token-help-"));
+    writeSandboxRegistry(home);
 
-    const r = runWithEnv("alpha logs", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
+    const r = runWithEnv("alpha gateway-token --help", { HOME: home });
 
     expect(r.code).toBe(0);
-    expect(readRecordedArgs(markerFile)).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "tail",
-      "-n",
-      "200",
-      "/tmp/gateway.log",
-    ]);
-    expect(readRecordedArgs(markerFile)).not.toContain("-f");
+    expect(r.out).toContain("Usage: nemoclaw <name> gateway-token [--quiet|-q]");
+    expect(r.out).not.toContain("sandbox:gateway-token");
   });
 
-  it("passes --follow through to tail inside sandbox exec", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-"));
+  it("doctor fails a present sandbox that is not Ready", () => {
+    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-not-ready-", [
+      'case "$*" in',
+      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+      '  "sandbox list") printf "NAME STATUS\\nalpha Creating\\n"; exit 0 ;;',
+      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+      "esac",
+    ]);
+
+    const r = setup.runDoctor();
+
+    expect(r.code).toBe(1);
+    const report = JSON.parse(r.out) as {
+      checks: Array<{ label: string; status: string; detail: string }>;
+    };
+    const liveSandbox = report.checks.find((check) => check.label === "Live sandbox");
+    expect(liveSandbox).toEqual(
+      expect.objectContaining({
+        status: "fail",
+        detail: expect.stringContaining("Creating"),
+      }),
+    );
+  });
+
+  it("doctor does not query sandbox state from a different active gateway", () => {
+    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-wrong-gateway-", [
+      'case "$*" in',
+      '  "status") printf "Server Status\\n\\n  Gateway: other\\n  Status: Connected\\n"; exit 0 ;;',
+      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+      '  "gateway select nemoclaw") exit 1 ;;',
+      '  "gateway start --name nemoclaw --port 8080") exit 1 ;;',
+      '  "sandbox list") echo "queried wrong gateway sandbox list" >> "$marker_file"; exit 0 ;;',
+      "esac",
+    ]);
+
+    const r = setup.runDoctor("alpha doctor");
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("OpenShell status");
+    expect(r.out).toContain("Gateway: other");
+    expect(setup.readCalls().some((call) => /^sandbox list(\s|$)/.test(call))).toBe(false);
+  });
+
+  it("doctor treats a live non-cloudflared PID as stale", () => {
+    const sandboxName = `doctorpid-${process.pid}`;
+    const setup = createDoctorTestSetup(
+      "nemoclaw-cli-doctor-wrong-cloudflared-pid-",
+      [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  "sandbox list") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
+        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        "esac",
+      ],
+      sandboxName,
+    );
+    const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
+    fs.rmSync(serviceDir, { recursive: true, force: true });
+    fs.mkdirSync(serviceDir, { recursive: true });
+    const sleeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+      stdio: "ignore",
+    });
+    const sleeperPid = sleeper.pid;
+    if (typeof sleeperPid !== "number") {
+      throw new Error("expected spawned helper process to have a PID");
+    }
+
+    try {
+      fs.writeFileSync(path.join(serviceDir, "cloudflared.pid"), String(sleeperPid));
+      const r = setup.runDoctor(`${sandboxName} doctor --json`);
+
+      const report = JSON.parse(r.out) as {
+        checks: Array<{ label: string; status: string; detail: string }>;
+      };
+      const cloudflared = report.checks.find((check) => check.label === "cloudflared");
+      expect(cloudflared).toEqual(
+        expect.objectContaining({
+          status: "warn",
+          detail: `stale PID ${sleeperPid}`,
+        }),
+      );
+    } finally {
+      sleeper.kill();
+      fs.rmSync(serviceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("doctor accepts a live cloudflared PID", () => {
+    const sandboxName = `doctorcloudflared-${process.pid}`;
+    const setup = createDoctorTestSetup(
+      "nemoclaw-cli-doctor-cloudflared-pid-",
+      [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  "sandbox list") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
+        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        "esac",
+      ],
+      sandboxName,
+    );
+    const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
+    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-shim-"));
+    const cloudflaredBin = path.join(shimDir, "cloudflared");
+    fs.rmSync(serviceDir, { recursive: true, force: true });
+    fs.mkdirSync(serviceDir, { recursive: true });
+    fs.symlinkSync(process.execPath, cloudflaredBin);
+    const sleeper = spawn(cloudflaredBin, ["-e", "setTimeout(() => {}, 30000)"], {
+      stdio: "ignore",
+    });
+    const sleeperPid = sleeper.pid;
+    if (typeof sleeperPid !== "number") {
+      throw new Error("expected spawned helper process to have a PID");
+    }
+
+    try {
+      fs.writeFileSync(path.join(serviceDir, "cloudflared.pid"), String(sleeperPid));
+      const r = setup.runDoctor(`${sandboxName} doctor --json`);
+
+      const report = JSON.parse(r.out) as {
+        checks: Array<{ label: string; status: string; detail: string }>;
+      };
+      const cloudflared = report.checks.find((check) => check.label === "cloudflared");
+      expect(cloudflared).toEqual(
+        expect.objectContaining({
+          status: "ok",
+          detail: `running (PID ${sleeperPid})`,
+        }),
+      );
+    } finally {
+      sleeper.kill();
+      fs.rmSync(serviceDir, { recursive: true, force: true });
+      fs.rmSync(shimDir, { recursive: true, force: true });
+    }
+  });
+
+  it("sandbox inspection help keeps public sandbox-scoped usage", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inspection-help-"));
+    writeSandboxRegistry(home);
+
+    const status = runWithEnv("alpha status --help", { HOME: home });
+    expect(status.code).toBe(0);
+    expect(status.out).toContain("<name> status");
+    expect(status.out).not.toContain("sandbox:status");
+
+    const logs = runWithEnv("alpha logs --help", { HOME: home });
+    expect(logs.code).toBe(0);
+    expect(logs.out).toContain("<name> logs [--follow]");
+    expect(logs.out).not.toContain("sandbox:logs");
+
+    const policy = runWithEnv("alpha policy-list --help", { HOME: home });
+    expect(policy.code).toBe(0);
+    expect(policy.out).toContain("<name> policy-list");
+    expect(policy.out).not.toContain("sandbox:policy-list");
+
+    const channels = runWithEnv("alpha channels list --help", { HOME: home });
+    expect(channels.code).toBe(0);
+    expect(channels.out).toContain("<name> channels list");
+    expect(channels.out).not.toContain("sandbox:channels:list");
+
+    const config = runWithEnv("alpha config get --help", { HOME: home });
+    expect(config.code).toBe(0);
+    expect(config.out).toContain("<name> config get");
+    expect(config.out).not.toContain("sandbox:config:get");
+  });
+
+  it("snapshot list/create help keeps public sandbox-scoped usage", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-help-"));
+    writeSandboxRegistry(home);
+
+    const list = runWithEnv("alpha snapshot list --help", { HOME: home });
+    expect(list.code).toBe(0);
+    expect(list.out).toContain("<name> snapshot list");
+    expect(list.out).not.toContain("sandbox:snapshot:list");
+
+    const create = runWithEnv("alpha snapshot create --help", { HOME: home });
+    expect(create.code).toBe(0);
+    expect(create.out).toContain("<name> snapshot create [--name <name>]");
+    expect(create.out).not.toContain("sandbox:snapshot:create");
+  });
+
+  it("snapshot list dispatches through oclif", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-list-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha snapshot list", { HOME: home });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("No snapshots found for 'alpha'.");
+  });
+
+  it("routes logs to OpenClaw and OpenShell log sources", () => {
+    const setup = createLogsTestSetup("nemoclaw-cli-logs-routing-");
+    const r = setup.runLogs();
+
+    const calls = setup.readCalls();
+    expect(r.code).toBe(0);
+    expect(calls).toEqual([
+      "settings set alpha --key ocsf_json_enabled --value true",
+      "sandbox exec -n alpha -- tail -n 200 /tmp/gateway.log",
+      "logs alpha -n 200 --source all",
+    ]);
+    expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
+    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+  });
+
+  it("enables OpenShell audit events before reading logs", () => {
+    const setup = createLogsTestSetup("nemoclaw-cli-logs-audit-");
+    const r = setup.runLogs();
+
+    const calls = setup.readCalls();
+    expect(r.code).toBe(0);
+    expect(calls[0]).toBe("settings set alpha --key ocsf_json_enabled --value true");
+    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+  });
+
+  it("warns when OpenShell audit events cannot be enabled", () => {
+    const setup = createLogsTestSetup("nemoclaw-cli-logs-audit-failed-", [
+      'if [ "$1" = "settings" ]; then',
+      "  echo 'settings unavailable' >&2",
+      "  exit 7",
+      "fi",
+    ]);
+
+    const r = setup.runLogs("alpha logs 2>&1");
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("failed to enable OpenShell audit logs for sandbox 'alpha'");
+    expect(r.out).toContain("openshell settings set alpha --key ocsf_json_enabled --value true");
+    expect(r.out).toContain("settings unavailable");
+    expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
+    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+  });
+
+  it("continues log collection when audit enable times out", () => {
+    const setup = createLogsTestSetup("nemoclaw-cli-logs-audit-timeout-", [
+      'if [ "$1" = "settings" ]; then',
+      "  sleep 5",
+      "  exit 0",
+      "fi",
+    ]);
+
+    const r = setup.runLogs("alpha logs 2>&1", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "1500" });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("failed to enable OpenShell audit logs for sandbox 'alpha'");
+    expect(r.out).toContain("ETIMEDOUT");
+    expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
+    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+  });
+
+  it("continues to OpenShell logs when the OpenClaw gateway log probe times out", () => {
+    const setup = createLogsTestSetup("nemoclaw-cli-logs-openclaw-timeout-", [
+      'if [ "$1" = "sandbox" ]; then',
+      "  sleep 2",
+      "  exit 0",
+      "fi",
+    ]);
+
+    const r = setup.runLogs("alpha logs 2>&1", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "500" });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("OpenClaw log source unavailable");
+    expect(r.out).toContain("ETIMEDOUT");
+    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+  });
+
+  it("maps --follow to OpenShell live log streaming", () => {
+    const setup = createLogsTestSetup("nemoclaw-cli-logs-follow-");
+    const r = setup.runLogs("alpha logs --follow");
+
+    const calls = setup.readCalls();
+    expect(r.code).toBe(0);
+    expect(calls).toContain("settings set alpha --key ocsf_json_enabled --value true");
+    expect(calls).toContain("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log");
+    expect(calls).toContain("logs alpha -n 200 --source all --tail");
+    expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
+    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+  });
+
+  it("starts OpenClaw logs before enabling audit logs for logs --follow", () => {
+    const setup = createLogsTestSetup("nemoclaw-cli-logs-follow-audit-slow-", [
+      'if [ "$1" = "settings" ]; then',
+      "  sleep 1",
+      "  exit 0",
+      "fi",
+    ]);
+
+    const start = Date.now();
+    const r = setup.runLogs("alpha logs --follow", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "2000" });
+    const calls = setup.readCalls();
+
+    expect(Date.now() - start).toBeGreaterThanOrEqual(900);
+    expect(r.code).toBe(0);
+    // All three calls must happen: OpenClaw log stream, audit enable, OpenShell log stream.
+    expect(calls).toContain("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log");
+    expect(calls).toContain("settings set alpha --key ocsf_json_enabled --value true");
+    expect(calls).toContain("logs alpha -n 200 --source all --tail");
+    // Audit enable must complete before OpenShell logs start (both are synchronous
+    // relative to each other). We can't assert ordering vs the OpenClaw spawn
+    // because spawn() is async and marker-file write order is racy.
+    const auditIdx = calls.indexOf("settings set alpha --key ocsf_json_enabled --value true");
+    const openshellIdx = calls.indexOf("logs alpha -n 200 --source all --tail");
+    expect(auditIdx).toBeLessThan(openshellIdx);
+    expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
+    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+  });
+
+  it("keeps logs --follow running when one log source exits", testTimeoutOptions(), async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-source-exit-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
-    const markerFile = path.join(home, "logs-follow-args");
+    const markerFile = path.join(home, "logs-follow-source-exit-args");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -410,34 +1211,121 @@ describe("CLI dispatch", () => {
       [
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
-        'if [ "$1" = "--version" ]; then',
-        "  echo 'openshell 0.0.16'",
+        'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "settings" ]; then',
         "  exit 0",
         "fi",
-        'printf \'%s \' "$@" > "$marker_file"',
+        'if [ "$1" = "logs" ]; then',
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ]; then',
+        "  trap 'exit 0' TERM INT",
+        "  while true; do sleep 1; done",
+        "fi",
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha logs --follow", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
+    const child = spawn(process.execPath, [CLI, "alpha", "logs", "--follow"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      env: { ...process.env, HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+      stdio: "ignore",
     });
+    const exitPromise = new Promise<number | null>((resolve) => {
+      child.once("exit", (code) => resolve(code));
+    });
+    const readCalls = () =>
+      fs.existsSync(markerFile) ? fs.readFileSync(markerFile, "utf8").trim().split(/\n/) : [];
 
-    expect(r.code).toBe(0);
-    expect(readRecordedArgs(markerFile)).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "tail",
-      "-n",
-      "200",
-      "-f",
-      "/tmp/gateway.log",
-    ]);
+    try {
+      let calls: string[] = [];
+      const pollTimeoutMs = Math.min(testTimeout(10_000), Math.max(1_000, testTimeout() - 5_000));
+      const deadline = Date.now() + pollTimeoutMs;
+      while (Date.now() < deadline) {
+        calls = readCalls();
+        if (
+          calls.includes("logs alpha -n 200 --source all --tail") &&
+          calls.includes("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log")
+        ) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(child.exitCode).toBeNull();
+      expect(calls).toContain("logs alpha -n 200 --source all --tail");
+      expect(calls).toContain("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log");
+    } finally {
+      if (child.exitCode === null) {
+        child.kill("SIGTERM");
+      }
+      expect(await exitPromise).toBe(143);
+    }
+  });
+
+  it("waits for logs --follow children to stop after SIGTERM", testTimeoutOptions(), async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-sigterm-wait-"));
+    const localBin = path.join(home, "bin");
+    const markerFile = path.join(home, "logs-follow-sigterm-wait-args");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "settings" ]; then',
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "logs" ] || [ "$1" = "sandbox" ]; then',
+        "  trap 'sleep 0.3; exit 0' TERM INT",
+        "  while true; do sleep 1; done",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const child = spawn(process.execPath, [CLI, "alpha", "logs", "--follow"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      env: { ...process.env, HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+      stdio: "ignore",
+    });
+    const exitPromise = new Promise<number | null>((resolve) => {
+      child.once("exit", (code) => resolve(code));
+    });
+    const readCalls = () =>
+      fs.existsSync(markerFile) ? fs.readFileSync(markerFile, "utf8").trim().split(/\n/) : [];
+
+    try {
+      let calls: string[] = [];
+      const pollTimeoutMs = Math.min(testTimeout(10_000), Math.max(1_000, testTimeout() - 5_000));
+      const deadline = Date.now() + pollTimeoutMs;
+      while (Date.now() < deadline) {
+        calls = readCalls();
+        if (
+          calls.includes("logs alpha -n 200 --source all --tail") &&
+          calls.includes("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log")
+        ) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(calls).toContain("logs alpha -n 200 --source all --tail");
+      expect(calls).toContain("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log");
+      child.kill("SIGTERM");
+      const exitedEarly = await Promise.race([
+        exitPromise.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+      ]);
+      expect(exitedEarly).toBe(false);
+      expect(await exitPromise).toBe(143);
+    } finally {
+      if (child.exitCode === null) {
+        child.kill("SIGKILL");
+      }
+    }
   });
 
   it("uses named sandbox exec for bridge status helpers", () => {
@@ -505,7 +1393,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "bash.log");
+    const bashLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -539,7 +1427,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "docker"),
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(bashLog)}`,
@@ -559,7 +1447,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("NAME STATUS");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
-    expect(fs.readFileSync(bashLog, "utf8")).toContain("docker volume ls -q --filter");
+    expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
   });
 
   it("keeps the gateway runtime when other sandboxes still exist", () => {
@@ -567,7 +1455,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "bash.log");
+    const bashLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -609,7 +1497,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "docker"),
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(bashLog)}`,
@@ -629,7 +1517,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     if (fs.existsSync(bashLog)) {
-      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("docker volume ls -q --filter");
+      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
     }
   });
 
@@ -638,7 +1526,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "bash.log");
+    const bashLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -673,7 +1561,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "docker"),
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(bashLog)}`,
@@ -694,7 +1582,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     if (fs.existsSync(bashLog)) {
-      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("docker volume ls -q --filter");
+      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
     }
   });
 
@@ -759,7 +1647,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "bash.log");
+    const bashLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -799,7 +1687,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "docker"),
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(bashLog)}`,
@@ -825,7 +1713,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
-    expect(fs.readFileSync(bashLog, "utf8")).toContain("docker volume ls -q --filter");
+    expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
   });
 
   it("deletes messaging providers when destroying a sandbox", () => {
@@ -833,7 +1721,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "bash.log");
+    const bashLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -867,7 +1755,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(localBin, "bash"),
+      path.join(localBin, "docker"),
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(bashLog)}`,
@@ -929,18 +1817,9 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(0);
-    expect(readRecordedArgs(markerFile)).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "tail",
-      "-n",
-      "200",
-      "/tmp/gateway.log",
-    ]);
-    expect(readRecordedArgs(markerFile)).not.toContain("-f");
+    const recordedArgs = readRecordedArgs(markerFile);
+    expect(recordedArgs).toEqual(["logs", "alpha", "-n", "200", "--source", "all"]);
+    expect(recordedArgs).not.toContain("--tail");
   });
 
   it("connect does not pre-start a duplicate port forward", () => {
@@ -1070,10 +1949,14 @@ describe("CLI dispatch", () => {
       mode: 0o755,
     });
 
-    const r = runWithEnv("alpha connect", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
+    const r = runWithEnv(
+      "alpha connect",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      execTimeout(30_000),
+    );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("Waiting for sandbox 'alpha' to be ready")).toBeTruthy();
@@ -1792,6 +2675,9 @@ describe("CLI dispatch", () => {
         "  echo 'openshell 0.0.16'",
         "  exit 0",
         "fi",
+        'if [ "$1" = "settings" ]; then',
+        "  exit 0",
+        "fi",
         "kill -INT $$",
       ].join("\n"),
       { mode: 0o755 },
@@ -1849,7 +2735,7 @@ describe("CLI dispatch", () => {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+        execTimeout(),
       );
 
       expect(r.code).toBe(0);
@@ -1858,7 +2744,7 @@ describe("CLI dispatch", () => {
       const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
       expect(saved.sandboxes.alpha).toBeTruthy();
     },
-    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+    testTimeout(10_000),
   );
 
   it("recovers status after gateway runtime is reattached", () => {
@@ -2075,7 +2961,7 @@ describe("CLI dispatch", () => {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+        execTimeout(),
       );
 
       expect(r.code).toBe(0);
@@ -2083,7 +2969,7 @@ describe("CLI dispatch", () => {
       expect(r.out.includes("Could not verify sandbox 'alpha'")).toBeTruthy();
       expect(r.out.includes("verify the active gateway")).toBeTruthy();
     },
-    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+    testTimeout(10_000),
   );
 
   it(
@@ -2143,13 +3029,13 @@ describe("CLI dispatch", () => {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+        execTimeout(),
       );
 
       expect(r.code).toBe(0);
       expect(r.out.includes("current gateway/runtime is not reachable")).toBeTruthy();
     },
-    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+    testTimeout(10_000),
   );
 
   it(
@@ -2209,7 +3095,7 @@ describe("CLI dispatch", () => {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+        execTimeout(),
       );
 
       expect(r.code).toBe(0);
@@ -2217,7 +3103,7 @@ describe("CLI dispatch", () => {
         r.out.includes("Verify the active gateway and retry after re-establishing the runtime."),
       ).toBeTruthy();
     },
-    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+    testTimeout(10_000),
   );
 
   it("explains unrecoverable gateway trust rotation after restart", () => {
@@ -2274,7 +3160,7 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+      execTimeout(),
     );
     expect(statusResult.code).toBe(0);
     expect(statusResult.out.includes("gateway trust material rotated after restart")).toBeTruthy();
@@ -2355,7 +3241,7 @@ describe("CLI dispatch", () => {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+        execTimeout(),
       );
       expect(statusResult.code).toBe(0);
       expect(
@@ -2375,7 +3261,7 @@ describe("CLI dispatch", () => {
       ).toBeTruthy();
       expect(connectResult.out.includes("If the gateway never becomes healthy")).toBeTruthy();
     },
-    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+    testTimeout(10_000),
   );
 
   it(
@@ -2436,7 +3322,7 @@ describe("CLI dispatch", () => {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
+        execTimeout(),
       );
       expect(statusResult.code).toBe(0);
       expect(
@@ -2444,7 +3330,7 @@ describe("CLI dispatch", () => {
       ).toBeTruthy();
       expect(statusResult.out.includes("Start the gateway again")).toBeTruthy();
     },
-    Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000),
+    testTimeout(10_000),
   );
 });
 
@@ -2496,11 +3382,11 @@ describe("list shows live gateway inference", () => {
     expect(r.code).toBe(0);
     // Live gateway values render on the default sandbox's main row.
     expect(r.out).toContain(
-      "model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  GPU  policies: pypi, npm",
+      "agent: openclaw  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  GPU  policies: pypi, npm",
     );
     // The stale (stored) row must not appear.
     expect(r.out).not.toContain(
-      "model: configured-model  provider: configured-provider  GPU  policies: pypi, npm",
+      "agent: openclaw  model: configured-model  provider: configured-provider  GPU  policies: pypi, npm",
     );
     // Onboarded values appear in the drift annotation.
     expect(r.out).toContain("(onboarded: model=configured-model, provider=configured-provider)");
@@ -2559,7 +3445,7 @@ describe("list shows live gateway inference", () => {
 
   it(
     "upgrade-sandboxes --check detects a stale sandbox after NemoClaw upgrade (#1904)",
-    { timeout: 15000 },
+    testTimeoutOptions(),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-upgrade-sandboxes-"));
       const localBin = path.join(home, "bin");
@@ -2619,7 +3505,7 @@ describe("list shows live gateway inference", () => {
 
   it(
     "upgrade-sandboxes --check reports all-current when no sandboxes are stale (#1904)",
-    { timeout: 15000 },
+    testTimeoutOptions(),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-upgrade-current-"));
       const localBin = path.join(home, "bin");
@@ -2672,4 +3558,28 @@ describe("list shows live gateway inference", () => {
       expect(r.out).toContain("up to date");
     },
   );
+
+  it("share with no subcommand prints usage help", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha share", { HOME: home });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Usage: nemoclaw <name> share");
+    expect(r.out).toContain("mount");
+    expect(r.out).toContain("unmount");
+    expect(r.out).toContain("status");
+  });
+
+  it("share is recognized as a valid sandbox action (not 'Unknown action')", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-action-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha share mount", { HOME: home });
+
+    // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
+    expect(r.code).not.toBe(0);
+    expect(r.out).not.toContain("Unknown action");
+  });
 });
