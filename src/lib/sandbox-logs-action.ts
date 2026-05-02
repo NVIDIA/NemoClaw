@@ -8,6 +8,8 @@ import os from "node:os";
 
 import { ROOT } from "./runner";
 import { getOpenshellBinary, runOpenshell } from "./openshell-runtime";
+import type { SandboxLogsOptions } from "./sandbox-logs-options";
+import { DEFAULT_SANDBOX_LOG_LINES } from "./sandbox-logs-options";
 
 const DEFAULT_LOGS_PROBE_TIMEOUT_MS = 5000;
 const LOGS_PROBE_TIMEOUT_ENV = "NEMOCLAW_LOGS_PROBE_TIMEOUT_MS";
@@ -53,8 +55,22 @@ function describeLogProbeResult(result: SpawnLikeResult): string {
   return `exit ${result.status ?? "unknown"}`;
 }
 
-function runOpenclawGatewayLogs(sandboxName: string, follow: boolean): SpawnLikeResult {
-  const args = buildSandboxOpenclawGatewayLogsArgs(sandboxName, follow);
+function normalizeSandboxLogsOptions(options: SandboxLogsOptions | boolean): SandboxLogsOptions {
+  if (typeof options === "boolean") {
+    return { follow: options, lines: DEFAULT_SANDBOX_LOG_LINES, since: null };
+  }
+  return {
+    follow: options.follow,
+    lines: options.lines || DEFAULT_SANDBOX_LOG_LINES,
+    since: options.since || null,
+  };
+}
+
+function runOpenclawGatewayLogs(
+  sandboxName: string,
+  options: SandboxLogsOptions,
+): SpawnLikeResult {
+  const args = buildSandboxOpenclawGatewayLogsArgs(sandboxName, options);
   const result = runOpenshell(args, {
     stdio: "inherit",
     ignoreError: true,
@@ -69,9 +85,11 @@ function runOpenclawGatewayLogs(sandboxName: string, follow: boolean): SpawnLike
   return result;
 }
 
-function streamSandboxFollowLogs(sandboxName: string): void {
-  const openclawArgs = buildSandboxOpenclawGatewayLogsArgs(sandboxName, true);
-  const openshellArgs = buildSandboxLogsArgs(sandboxName, true);
+function streamSandboxFollowLogs(sandboxName: string, options: SandboxLogsOptions): void {
+  const openclawArgs = options.since
+    ? null
+    : buildSandboxOpenclawGatewayLogsArgs(sandboxName, options);
+  const openshellArgs = buildSandboxLogsArgs(sandboxName, options);
   const spawnOptions = {
     cwd: ROOT,
     env: process.env,
@@ -162,7 +180,9 @@ function streamSandboxFollowLogs(sandboxName: string): void {
     });
   };
 
-  addSource("OpenClaw log source", openclawArgs);
+  if (openclawArgs) {
+    addSource("OpenClaw log source", openclawArgs);
+  }
   enableSandboxAuditLogs(sandboxName);
   addSource("OpenShell log source", openshellArgs);
   setupComplete = true;
@@ -201,32 +221,41 @@ function buildEnableSandboxAuditLogsArgs(sandboxName: string): string[] {
   return ["settings", "set", sandboxName, "--key", "ocsf_json_enabled", "--value", "true"];
 }
 
-function buildSandboxOpenclawGatewayLogsArgs(sandboxName: string, follow: boolean): string[] {
-  const args = ["sandbox", "exec", "-n", sandboxName, "--", "tail", "-n", "200"];
-  if (follow) {
+function buildSandboxOpenclawGatewayLogsArgs(
+  sandboxName: string,
+  options: SandboxLogsOptions,
+): string[] {
+  const args = ["sandbox", "exec", "-n", sandboxName, "--", "tail", "-n", options.lines];
+  if (options.follow) {
     args.push("-f");
   }
   args.push("/tmp/gateway.log");
   return args;
 }
 
-function buildSandboxLogsArgs(sandboxName: string, follow: boolean): string[] {
-  const args = ["logs", sandboxName, "-n", "200", "--source", "all"];
-  if (follow) {
+function buildSandboxLogsArgs(sandboxName: string, options: SandboxLogsOptions): string[] {
+  const args = ["logs", sandboxName, "-n", options.lines, "--source", "all"];
+  if (options.since) {
+    args.push("--since", options.since);
+  }
+  if (options.follow) {
     args.push("--tail");
   }
   return args;
 }
 
-export function showSandboxLogs(sandboxName: string, follow: boolean) {
-  if (follow) {
-    streamSandboxFollowLogs(sandboxName);
+export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions | boolean) {
+  const logsOptions = normalizeSandboxLogsOptions(options);
+  if (logsOptions.follow) {
+    streamSandboxFollowLogs(sandboxName, logsOptions);
     return;
   }
 
   enableSandboxAuditLogs(sandboxName);
-  runOpenclawGatewayLogs(sandboxName, false);
-  const args = buildSandboxLogsArgs(sandboxName, false);
+  if (!logsOptions.since) {
+    runOpenclawGatewayLogs(sandboxName, logsOptions);
+  }
+  const args = buildSandboxLogsArgs(sandboxName, logsOptions);
   const result = runOpenshell(args, {
     stdio: "inherit",
     ignoreError: true,

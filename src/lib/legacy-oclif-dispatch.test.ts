@@ -20,4 +20,11 @@ describe("resolveSandboxOclifDispatch", () => {
       usage: "status",
     });
   });
+
+  it("keeps sandbox logs help public with supported filters", () => {
+    expect(resolveSandboxOclifDispatch("alpha", "logs", ["--help"])).toEqual({
+      kind: "help",
+      usage: "logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
+    });
+  });
 });

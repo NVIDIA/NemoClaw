@@ -4,6 +4,7 @@
 /* v8 ignore start -- transitional action facade until implementations leave src/nemoclaw.ts. */
 
 import type { SandboxConnectOptions } from "./nemoclaw-runtime-bridge";
+import type { SandboxLogsOptions } from "./sandbox-logs-options";
 import { getNemoClawRuntimeBridge } from "./nemoclaw-runtime-bridge";
 
 export async function connectSandbox(
@@ -17,11 +18,11 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   await getNemoClawRuntimeBridge().sandboxStatus(sandboxName);
 }
 
-export function showSandboxLogs(sandboxName: string, follow: boolean): void {
+export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions): void {
   const { showSandboxLogs: showSandboxLogsAction } = require("./sandbox-logs-action") as {
-    showSandboxLogs: (sandboxName: string, follow: boolean) => void;
+    showSandboxLogs: (sandboxName: string, options: SandboxLogsOptions) => void;
   };
-  showSandboxLogsAction(sandboxName, follow);
+  showSandboxLogsAction(sandboxName, options);
 }
 
 export async function destroySandbox(sandboxName: string, args: string[] = []): Promise<void> {
