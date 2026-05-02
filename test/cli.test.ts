@@ -914,7 +914,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain("OpenShell status");
     expect(r.out).toContain("Gateway: other");
-    expect(setup.readCalls()).not.toContain("sandbox list");
+    expect(setup.readCalls().some((call) => /^sandbox list(\s|$)/.test(call))).toBe(false);
   });
 
   it("sandbox inspection help keeps public sandbox-scoped usage", () => {
