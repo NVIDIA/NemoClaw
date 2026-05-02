@@ -1637,15 +1637,42 @@ function readCloudflaredPidFile(pidFile: string): string | null {
   }
 }
 
-function isCloudflaredProcess(pid: number): boolean {
+function commandLineNamesCloudflared(commandLine: string): boolean {
+  return commandLine
+    .split(/\0|\s+/)
+    .filter(Boolean)
+    .some((token) => path.basename(token) === "cloudflared");
+}
+
+function readProcessCommandLine(pid: number): string | null {
   if (process.platform === "win32") {
-    return false;
+    return null;
   }
   try {
-    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8").includes("cloudflared");
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8");
   } catch {
+    try {
+      return execFileSync(
+        "ps",
+        ["-p", String(pid), "-o", "comm=", "-o", "args="],
+        {
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 1000,
+        },
+      );
+    } catch {
+      return null;
+    }
+  }
+}
+
+function isCloudflaredProcess(pid: number): boolean {
+  const commandLine = readProcessCommandLine(pid);
+  if (commandLine === null) {
     return false;
   }
+  return commandLineNamesCloudflared(commandLine);
 }
 
 function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {

@@ -962,6 +962,55 @@ describe("CLI dispatch", () => {
     }
   });
 
+  it("doctor accepts a live cloudflared PID", () => {
+    const sandboxName = `doctorcloudflared-${process.pid}`;
+    const setup = createDoctorTestSetup(
+      "nemoclaw-cli-doctor-cloudflared-pid-",
+      [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  "sandbox list") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
+        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        "esac",
+      ],
+      sandboxName,
+    );
+    const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
+    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-shim-"));
+    const cloudflaredBin = path.join(shimDir, "cloudflared");
+    fs.rmSync(serviceDir, { recursive: true, force: true });
+    fs.mkdirSync(serviceDir, { recursive: true });
+    fs.symlinkSync(process.execPath, cloudflaredBin);
+    const sleeper = spawn(cloudflaredBin, ["-e", "setTimeout(() => {}, 30000)"], {
+      stdio: "ignore",
+    });
+    const sleeperPid = sleeper.pid;
+    if (typeof sleeperPid !== "number") {
+      throw new Error("expected spawned helper process to have a PID");
+    }
+
+    try {
+      fs.writeFileSync(path.join(serviceDir, "cloudflared.pid"), String(sleeperPid));
+      const r = setup.runDoctor(`${sandboxName} doctor --json`);
+
+      const report = JSON.parse(r.out) as {
+        checks: Array<{ label: string; status: string; detail: string }>;
+      };
+      const cloudflared = report.checks.find((check) => check.label === "cloudflared");
+      expect(cloudflared).toEqual(
+        expect.objectContaining({
+          status: "ok",
+          detail: `running (PID ${sleeperPid})`,
+        }),
+      );
+    } finally {
+      sleeper.kill();
+      fs.rmSync(serviceDir, { recursive: true, force: true });
+      fs.rmSync(shimDir, { recursive: true, force: true });
+    }
+  });
+
   it("sandbox inspection help keeps public sandbox-scoped usage", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inspection-help-"));
     writeSandboxRegistry(home);
