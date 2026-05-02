@@ -31,6 +31,7 @@ import {
 } from "./maintenance-cli-commands";
 import { PolicyAddCommand, PolicyRemoveCommand } from "./policy-mutate-cli-commands";
 import RebuildCliCommand from "./rebuild-cli-command";
+import SandboxConfigSetCommand from "./sandbox-config-set-cli-command";
 import {
   SandboxChannelsListCommand,
   SandboxConfigGetCommand,
@@ -76,6 +77,7 @@ export default {
   "sandbox:channels:start": ChannelsStartCommand,
   "sandbox:channels:stop": ChannelsStopCommand,
   "sandbox:config:get": SandboxConfigGetCommand,
+  "sandbox:config:set": SandboxConfigSetCommand,
   "sandbox:connect": ConnectCliCommand,
   "sandbox:destroy": DestroyCliCommand,
   "sandbox:logs": SandboxLogsCommand,

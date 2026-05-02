@@ -40,7 +40,7 @@ describe("config set CLI dispatch", () => {
       loaded: true,
       exports: new Proxy(
         {
-          ROOT: "/mock/root",
+          ROOT: process.cwd(),
           validateName,
         },
         {
@@ -85,6 +85,7 @@ describe("config set CLI dispatch", () => {
         "inference.endpoints",
         "--value",
         "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
       ]);
 
       let settled = false;
@@ -92,8 +93,14 @@ describe("config set CLI dispatch", () => {
         settled = true;
       });
 
-      await Promise.resolve();
+      await vi.waitFor(() => expect(configSet).toHaveBeenCalledTimes(1));
       expect(configSet).toHaveBeenCalledTimes(1);
+      expect(configSet).toHaveBeenCalledWith("test-sandbox", {
+        key: "inference.endpoints",
+        value: "HTTP://93.184.216.34/v1",
+        restart: false,
+        acceptNewPath: true,
+      });
       expect(settled).toBe(false);
 
       configSetDeferred.resolve();

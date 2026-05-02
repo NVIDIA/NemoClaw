@@ -20,4 +20,28 @@ describe("resolveSandboxOclifDispatch", () => {
       usage: "status",
     });
   });
+
+  it("routes sandbox config set through oclif with security flags intact", () => {
+    expect(
+      resolveSandboxOclifDispatch("alpha", "config", [
+        "set",
+        "--key",
+        "inference.endpoints",
+        "--value",
+        "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
+      ]),
+    ).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:config:set",
+      args: [
+        "alpha",
+        "--key",
+        "inference.endpoints",
+        "--value",
+        "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
+      ],
+    });
+  });
 });

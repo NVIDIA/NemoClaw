@@ -3931,11 +3931,10 @@ async function runDispatchResult(
 
 // ── Dispatch ─────────────────────────────────────────────────────
 
+// eslint-disable-next-line complexity
 async function dispatchCli(argv = process.argv.slice(2)) {
   const [cmd, ...args] = argv;
 
-// eslint-disable-next-line complexity
-const mainPromise = (async () => {
   // No command → help
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     await runOclif("root:help", []);
@@ -4042,6 +4041,10 @@ const mainPromise = (async () => {
 
   console.error(`  Run '${CLI_NAME} help' for usage.`);
   process.exit(1);
-})();
+}
 
-exports.mainPromise = mainPromise;
+if (process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH !== "1") {
+  exports.mainPromise = dispatchCli();
+}
+
+module.exports.dispatchCli = dispatchCli;

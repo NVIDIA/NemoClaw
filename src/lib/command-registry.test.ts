@@ -17,10 +17,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 49 commands", () => {
+    it("should contain exactly 51 commands", () => {
       // 23 global (18 visible + 5 hidden help/version aliases)
-      // 26 sandbox (22 visible + 4 hidden shields/config)
-      expect(COMMANDS).toHaveLength(49);
+      // 28 sandbox (22 visible + 6 hidden shields/config)
+      expect(COMMANDS).toHaveLength(51);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -52,9 +52,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 26 entries", () => {
-      // 22 visible + 4 hidden (shields×3 + config get)
-      expect(sandboxCommands()).toHaveLength(26);
+    it("should return exactly 28 entries", () => {
+      // 22 visible + 6 hidden (shields×3 + config get/set/rotate-token)
+      expect(sandboxCommands()).toHaveLength(28);
     });
 
     it("every entry has scope sandbox", () => {
@@ -67,7 +67,7 @@ describe("command-registry", () => {
   describe("visibleCommands()", () => {
     it("should exclude 9 hidden commands (40 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
-      // 4 hidden sandbox (shields×3, config get)
+      // 6 hidden sandbox (shields×3, config get/set/rotate-token)
       expect(visibleCommands()).toHaveLength(40);
     });
 
