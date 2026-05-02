@@ -74,6 +74,7 @@ describe("Issue #2681 — mutable OpenClaw config permissions", () => {
           [
             "set -euo pipefail",
             'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
+            'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "sandbox\\n"; else command stat "$@"; fi; }',
             normalizeMutableConfigPermsFor(configDir),
             "normalize_mutable_config_perms",
           ].join("\n"),

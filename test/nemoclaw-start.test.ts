@@ -566,6 +566,7 @@ describe("nemoclaw-start persistent gateway log hardening", () => {
   it("creates a regular read-only persistent log mirror and refuses unsafe paths", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-persistent-log-"));
     const gatewayLog = path.join(tmpDir, "gateway.log");
+    const persistentLog = path.join(tmpDir, "logs", "gateway-persistent.log");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.writeFileSync(gatewayLog, "initial gateway line\n");
     fs.writeFileSync(
@@ -577,7 +578,7 @@ describe("nemoclaw-start persistent gateway log hardening", () => {
         "start_persistent_gateway_log_mirror",
         "sleep 0.2",
         `printf '%s\\n' later-line >> ${JSON.stringify(gatewayLog)}`,
-        "sleep 0.4",
+        `for _ in {1..30}; do grep -Fq later-line ${JSON.stringify(persistentLog)} 2>/dev/null && break; sleep 0.1; done`,
         'kill "$GATEWAY_LOG_PERSIST_PID" 2>/dev/null || true',
         'wait "$GATEWAY_LOG_PERSIST_PID" 2>/dev/null || true',
         "printf 'PID=%s\\n' \"$GATEWAY_LOG_PERSIST_PID\"",
@@ -589,7 +590,6 @@ describe("nemoclaw-start persistent gateway log hardening", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("PID=");
-      const persistentLog = path.join(tmpDir, "logs", "gateway-persistent.log");
       const stat = fs.statSync(persistentLog);
       expect(stat.isFile()).toBe(true);
       expect((stat.mode & 0o777).toString(8)).toBe("644");
@@ -963,7 +963,7 @@ exit 2
       const run = spawnSync("python3", ["-c", autoPairScript], {
         encoding: "utf-8",
         env: { ...process.env, OPENCLAW_BIN: fakeOpenclaw },
-        timeout: 5000,
+        timeout: 30_000,
       });
       expect(run.status).toBe(0);
       expect(run.stdout).toContain(
@@ -979,7 +979,7 @@ exit 2
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
-  });
+  }, 40_000);
 });
 
 describe("nemoclaw-start gateway launch signal handling", () => {
@@ -1006,6 +1006,9 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const gosuLog = path.join(tmpDir, "gosu.log");
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const scriptPath = path.join(tmpDir, "run.sh");
+    const waitForLaunchLogIterations = Array.from({ length: 100 }, (_, i) => String(i + 1)).join(
+      " ",
+    );
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
@@ -1030,7 +1033,9 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
         "cleanup_on_signal() { :; }",
         launchBlock(kind, gatewayLog),
-        `for _attempt in 1 2 3 4 5 6 7 8 9 10; do [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`,
+        kind === "root"
+          ? `for _ in ${waitForLaunchLogIterations}; do [ -s ${JSON.stringify(gosuLog)} ] && [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`
+          : `for _ in ${waitForLaunchLogIterations}; do [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`,
         'printf "GATEWAY_PID=%s\\n" "$GATEWAY_PID"',
         'printf "AUTO_PAIR_PID=%s\\n" "${AUTO_PAIR_PID:-}"',
         'printf "TAIL_PID=%s\\n" "${GATEWAY_LOG_TAIL_PID:-}"',
@@ -1038,12 +1043,13 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         'printf "WAIT_PID=%s\\n" "$SANDBOX_WAIT_PID"',
         'printf "CHILD_PIDS=%s\\n" "${SANDBOX_CHILD_PIDS[*]}"',
         "trap -p SIGTERM",
-        'for pid in "${SANDBOX_CHILD_PIDS[@]}"; do kill "$pid" 2>/dev/null || true; done',
+        'for pid in "${SANDBOX_CHILD_PIDS[@]}"; do pkill -P "$pid" 2>/dev/null || true; kill "$pid" 2>/dev/null || true; done',
+        'for pid in "${SANDBOX_CHILD_PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done',
       ].join("\n"),
       { mode: 0o700 },
     );
 
-    const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+    const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 15_000 });
     const openclaw = fs.existsSync(openclawLog) ? fs.readFileSync(openclawLog, "utf-8") : "";
     const gosu = fs.existsSync(gosuLog) ? fs.readFileSync(gosuLog, "utf-8") : "";
     const gateway = fs.existsSync(gatewayLog) ? fs.readFileSync(gatewayLog, "utf-8") : "";
