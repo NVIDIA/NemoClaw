@@ -2514,32 +2514,47 @@ exit 0`,
     fs.writeFileSync(path.join(sourceRoot, "bin", "lib", "usage-notice.js"), "// stub\n");
 
     // Source scripts/install.sh and invoke show_usage_notice in a fresh
-    // session with no controlling TTY (setsid). Without setsid, WSL CI
-    // runners keep /dev/tty openable from the child process even when
-    // stdin is /dev/null — `(: </dev/tty)` succeeds and show_usage_notice
-    // takes its TTY-fallback branch instead of the `else error` we mean to
-    // exercise. setsid creates a new session with no controlling terminal,
-    // making /dev/tty deterministically unopenable across Linux/WSL/macOS.
+    // session with no controlling TTY. On Linux/WSL we wrap the child in
+    // setsid because WSL runners keep /dev/tty openable from the child
+    // process even when stdin is /dev/null — `(: </dev/tty)` succeeds and
+    // show_usage_notice takes its TTY-fallback branch instead of the
+    // `else error` we mean to exercise. setsid creates a new session with
+    // no controlling terminal so /dev/tty becomes unopenable.
+    //
+    // macOS does not ship setsid (it's a util-linux binary). Headless
+    // GitHub-hosted macOS runners have no controlling TTY in the first
+    // place, so plain bash is sufficient there.
+    //
     // 2>/dev/null suppresses any top-level noise the source may emit
     // before main()'s guard.
-    const result = spawnSync(
-      "setsid",
-      [
-        "bash",
-        "-c",
-        `source ${JSON.stringify(INSTALLER_PAYLOAD)} 2>/dev/null; show_usage_notice </dev/null`,
-      ],
-      {
-        cwd: tmp,
-        encoding: "utf-8",
-        env: {
-          HOME: tmp,
-          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-          NEMOCLAW_SOURCE_ROOT: sourceRoot,
-          ...env,
-        },
-      },
-    );
+    //
+    // The env object below is constructed as a fresh literal — process.env
+    // is intentionally NOT merged so ambient runner vars
+    // (NON_INTERACTIVE, ACCEPT_THIRD_PARTY_SOFTWARE) cannot leak into the
+    // child. Callers control the env entirely via the `env` parameter.
+    const useSetsid = process.platform !== "darwin";
+    const bashScript = `source ${JSON.stringify(INSTALLER_PAYLOAD)} 2>/dev/null; show_usage_notice </dev/null`;
+    const result = useSetsid
+      ? spawnSync("setsid", ["bash", "-c", bashScript], {
+          cwd: tmp,
+          encoding: "utf-8",
+          env: {
+            HOME: tmp,
+            PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+            NEMOCLAW_SOURCE_ROOT: sourceRoot,
+            ...env,
+          },
+        })
+      : spawnSync("bash", ["-c", bashScript], {
+          cwd: tmp,
+          encoding: "utf-8",
+          env: {
+            HOME: tmp,
+            PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+            NEMOCLAW_SOURCE_ROOT: sourceRoot,
+            ...env,
+          },
+        });
     const args = fs.existsSync(argLog) ? fs.readFileSync(argLog, "utf-8").trim() : "";
     return { result, args };
   }
@@ -2574,6 +2589,9 @@ exit 0`,
     const output = `${result.stdout}${result.stderr}`;
     expect(output).toMatch(/Interactive third-party software acceptance requires a TTY/);
     expect(output).toMatch(/--yes-i-accept-third-party-software/);
+    // No raw /dev/tty shell noise should leak (e.g. "exec 3</dev/tty")
+    // — the friendly hint is the only TTY-related output we expect.
+    expect(output).not.toMatch(/\/dev\/tty/);
   });
 });
 

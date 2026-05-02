@@ -533,7 +533,7 @@ show_usage_notice() {
     "${notice_cmd[@]}"
   elif [ -t 0 ]; then
     "${notice_cmd[@]}"
-  elif exec 3</dev/tty; then
+  elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching the usage notice to /dev/tty…"
     local status=0
     "${notice_cmd[@]}" <&3 || status=$?
@@ -1581,7 +1581,7 @@ run_onboard() {
     "${_CLI_BIN}" "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
     "${_CLI_BIN}" "${onboard_cmd[@]}"
-  elif exec 3</dev/tty; then
+  elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
     local status=0
     "${_CLI_BIN}" "${onboard_cmd[@]}" <&3 || status=$?
