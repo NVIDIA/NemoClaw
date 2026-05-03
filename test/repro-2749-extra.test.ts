@@ -44,7 +44,7 @@ function listPolicyFiles(): string[] {
 }
 
 describe("Issue #2749 — additional coverage on top of existing tls:terminate guard", () => {
-  it("PARSE SAFETY: every preset and the base policy still parse as YAML after deletions", () => {
+  it("PARSE SAFETY: every policy YAML input still parses after deletions", () => {
     for (const file of listPolicyFiles()) {
       const content = fs.readFileSync(file, "utf-8");
       // js-yaml throws on syntactic damage (dangling list markers, broken
@@ -60,14 +60,17 @@ describe("Issue #2749 — additional coverage on top of existing tls:terminate g
   it("OVER-DELETION GUARD: `tls: skip` entries for WS pass-through are preserved", () => {
     // The PR removes `tls: terminate` (deprecated) but the body explicitly
     // calls out that `tls: skip` for WebSocket pass-through should stay.
-    // Confirm at least one preset still has `tls: skip` so a future
-    // overzealous deletion sweep is caught.
-    let skipCount = 0;
-    for (const file of listPolicyFiles()) {
+    // Confirm at least one built-in preset still has `tls: skip` so a
+    // future overzealous deletion sweep is caught without being masked by
+    // the base policy.
+    let presetSkipCount = 0;
+    for (const file of listPolicyFiles().filter((candidate) =>
+      candidate.includes(`${path.sep}presets${path.sep}`),
+    )) {
       const content = fs.readFileSync(file, "utf-8");
       const matches = content.match(/^\s+tls:\s*skip\b/gm);
-      if (matches) skipCount += matches.length;
+      if (matches) presetSkipCount += matches.length;
     }
-    expect(skipCount).toBeGreaterThan(0);
+    expect(presetSkipCount).toBeGreaterThan(0);
   });
 });
