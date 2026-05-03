@@ -7885,7 +7885,8 @@ function findOpenclawJsonPath(dir: string): string | null {
 
 /**
  * Pull gateway.auth.token from the sandbox image via openshell sandbox download
- * so onboard can print copy-paste Control UI URLs with #token= (same idea as nemoclaw-start.sh).
+ * so onboard can build dashboard access URLs. User-visible output must redact
+ * the token fragment.
  */
 function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
@@ -7988,6 +7989,10 @@ function getDashboardForwardStartCommand(
 function buildAuthenticatedDashboardUrl(baseUrl: string, token: string | null = null): string {
   if (!token) return baseUrl;
   return `${baseUrl}#token=${encodeURIComponent(token)}`;
+}
+
+function dashboardUrlForDisplay(url: string): string {
+  return redact(url.replace(/#token=[^\s'"]*$/i, ""));
 }
 
 function getWslHostAddress(
@@ -8138,14 +8143,16 @@ function printDashboard(
     });
   } else if (token) {
     console.log(
-      `  ${agentProductName()} UI (tokenized URL; treat it like a password; save it now - it will not be printed again)`,
+      `  ${agentProductName()} UI (auth token redacted from displayed URLs)`,
     );
     for (const line of guidanceLines) {
       console.log(`  ${line}`);
     }
     for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${entry.url}`);
+      console.log(`  ${entry.label}: ${dashboardUrlForDisplay(entry.url)}`);
     }
+    console.log(`  Token:       ${cliName()} ${sandboxName} gateway-token --quiet`);
+    console.log(`               append  #token=<token> locally if the browser asks for auth.`);
   } else {
     note("  Could not read gateway token from the sandbox (download failed).");
     console.log(`  ${agentProductName()} UI`);
@@ -8153,14 +8160,12 @@ function printDashboard(
       console.log(`  ${line}`);
     }
     for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${entry.url}`);
+      console.log(`  ${entry.label}: ${dashboardUrlForDisplay(entry.url)}`);
     }
     console.log(
       `  Token:       ${cliName()} ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
     );
-    console.log(
-      `               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`,
-    );
+    console.log(`               append  #token=<token>  to the URL locally if needed.`);
   }
   console.log(`  ${"─".repeat(50)}`);
   console.log("");
