@@ -14,34 +14,40 @@ describe("resolveSandboxOclifDispatch", () => {
     });
   });
 
-  it("keeps sandbox status help public", () => {
-    expect(resolveSandboxOclifDispatch("alpha", "status", ["--help"])).toEqual({
-      kind: "help",
-      usage: "status",
-    });
+ it("keeps sandbox status help public", () => {
+  expect(resolveSandboxOclifDispatch("alpha", "status", ["--help"])).toEqual({
+    kind: "help",
+    usage: "status",
   });
+});
 
-  it("routes sandbox config set through oclif with security flags intact", () => {
-    expect(
-      resolveSandboxOclifDispatch("alpha", "config", [
-        "set",
-        "--key",
-        "inference.endpoints",
-        "--value",
-        "HTTP://93.184.216.34/v1",
-        "--config-accept-new-path",
-      ]),
-    ).toEqual({
-      kind: "oclif",
-      commandId: "sandbox:config:set",
-      args: [
-        "alpha",
-        "--key",
-        "inference.endpoints",
-        "--value",
-        "HTTP://93.184.216.34/v1",
-        "--config-accept-new-path",
-      ],
-    });
+it("routes sandbox config set through oclif with security flags intact", () => {
+  expect(
+    resolveSandboxOclifDispatch("alpha", "config", [
+      "set",
+      "--key",
+      "inference.endpoints",
+      "--value",
+      "HTTP://93.184.216.34/v1",
+      "--config-accept-new-path",
+    ]),
+  ).toEqual({
+    kind: "oclif",
+    commandId: "sandbox:config:set",
+    args: [
+      "alpha",
+      "--key",
+      "inference.endpoints",
+      "--value",
+      "HTTP://93.184.216.34/v1",
+      "--config-accept-new-path",
+    ],
+  });
+});
+
+it("keeps sandbox logs help public with supported filters", () => {
+  expect(resolveSandboxOclifDispatch("alpha", "logs", ["--help"])).toEqual({
+    kind: "help",
+    usage: "logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
   });
 });

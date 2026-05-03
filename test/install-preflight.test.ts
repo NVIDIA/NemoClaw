@@ -110,6 +110,81 @@ echo "unexpected npm invocation: $*" >&2; exit 98`,
   );
 }
 
+function writeFailedOnboardSession(home: string) {
+  fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, ".nemoclaw", "onboard-session.json"),
+    JSON.stringify(
+      {
+        resumable: true,
+        status: "failed",
+        failure: { step: "inference", message: "Ollama proxy unreachable" },
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+function runFailedSessionPromptChoice(answer: string) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-failed-choice-"));
+  const fakeBin = path.join(tmp, "bin");
+  const onboardLog = path.join(tmp, "onboard.log");
+  const promptInput = path.join(tmp, "prompt-input.txt");
+  fs.mkdirSync(fakeBin);
+  writeFailedOnboardSession(tmp);
+  fs.writeFileSync(promptInput, answer);
+  writeNodeStub(fakeBin);
+  writeExecutable(
+    path.join(fakeBin, "nemoclaw"),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
+exit 0
+`,
+  );
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `
+set -euo pipefail
+source "$INSTALLER_UNDER_TEST"
+show_usage_notice() { :; }
+info() { printf 'INFO: %s\\n' "$*" >&2; }
+warn() { printf 'WARN: %s\\n' "$*" >&2; }
+error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
+function [ {
+  if [[ "$#" -eq 3 && "$1" = "-t" && "$2" = "0" && "$3" = "]" ]]; then
+    return 0
+  fi
+  builtin [ "$@"
+}
+run_onboard < "$PROMPT_INPUT_FILE"
+`,
+    ],
+    {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        FRESH: "",
+        HOME: tmp,
+        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_FRESH: "",
+        NEMOCLAW_NON_INTERACTIVE: "",
+        NON_INTERACTIVE: "",
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+        NEMOCLAW_ONBOARD_LOG: onboardLog,
+        PROMPT_INPUT_FILE: promptInput,
+      },
+    },
+  );
+
+  return { result, onboardLog };
+}
+
 // ---------------------------------------------------------------------------
 
 describe("installer runtime preflight", { timeout: 15_000 }, () => {
@@ -634,7 +709,7 @@ fi`,
       /Found an interrupted onboarding session — resuming it\./,
     );
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --resume --non-interactive --yes-i-accept-third-party-software$/m,
+      /^onboard --resume --non-interactive --yes-i-accept-third-party-software --yes$/m,
     );
   });
 
@@ -738,6 +813,21 @@ fi`,
     expect(fs.existsSync(onboardLog)).toBe(false);
   });
 
+  it.each([
+    { answer: "FrEsH\n", expectedArgs: "onboard --fresh", unexpectedFlag: /--resume/ },
+    { answer: "RESUME\n", expectedArgs: "onboard --resume", unexpectedFlag: /--fresh/ },
+    { answer: "\n", expectedArgs: "onboard --resume", unexpectedFlag: /--fresh/ },
+  ])("lowercases failed-session prompt answer $answer before invoking onboard", (testCase) => {
+    const { result, onboardLog } = runFailedSessionPromptChoice(testCase.answer);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Previous onboarding session failed/);
+    const log = fs.readFileSync(onboardLog, "utf-8");
+    expect(log).toMatch(new RegExp(`^${testCase.expectedArgs}$`, "m"));
+    expect(log).not.toMatch(testCase.unexpectedFlag);
+  });
+
   // #2430: --fresh is the escape hatch. Even with a session file on disk
   // (failed or otherwise), the installer should skip the auto-resume check
   // and let the onboard command create a new session.
@@ -831,7 +921,9 @@ fi`,
     // onboard was called with --fresh (forwarded so the CLI clears the
     // existing session file) and without --resume.
     const log = fs.readFileSync(onboardLog, "utf-8");
-    expect(log).toMatch(/^onboard --fresh --non-interactive --yes-i-accept-third-party-software$/m);
+    expect(log).toMatch(
+      /^onboard --fresh --non-interactive --yes-i-accept-third-party-software --yes$/m,
+    );
     expect(log).not.toMatch(/--resume/);
   });
 
@@ -992,7 +1084,7 @@ exit 0
       /Podman may work in some environments, but it is not a supported runtime/,
     );
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --non-interactive --yes-i-accept-third-party-software$/m,
+      /^onboard --non-interactive --yes-i-accept-third-party-software --yes$/m,
     );
   });
 
@@ -1136,7 +1228,7 @@ fi`,
 
     expect(result.status).toBe(0);
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --non-interactive --yes-i-accept-third-party-software$/m,
+      /^onboard --non-interactive --yes-i-accept-third-party-software --yes$/m,
     );
   });
 

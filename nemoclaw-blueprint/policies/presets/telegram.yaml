@@ -12,7 +12,6 @@ network_policies:
       - host: api.telegram.org
         port: 443
         protocol: rest
-        tls: terminate
         enforcement: enforce
         rules:
           - allow: { method: GET, path: "/bot*/**" }

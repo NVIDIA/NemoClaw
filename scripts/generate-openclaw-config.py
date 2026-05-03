@@ -39,7 +39,24 @@ import base64
 import json
 import os
 import re
+import sys
 from urllib.parse import urlparse
+
+
+def _coerce_positive_int(env: dict, name: str, default: int) -> int:
+    raw = env.get(name) or str(default)
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value > 0:
+        return value
+    print(
+        f'[SECURITY] {name} must be a positive integer, got "{raw}" '
+        f"— skipping override, falling back to default ({default})",
+        file=sys.stderr,
+    )
+    return default
 
 
 def is_loopback(hostname: str) -> bool:
@@ -78,8 +95,9 @@ def build_config(env: dict | None = None) -> dict:
     primary_model_ref = env["NEMOCLAW_PRIMARY_MODEL_REF"]
     inference_base_url = env["NEMOCLAW_INFERENCE_BASE_URL"]
     inference_api = env["NEMOCLAW_INFERENCE_API"]
-    context_window = int(env.get("NEMOCLAW_CONTEXT_WINDOW", "131072"))
-    max_tokens = int(env.get("NEMOCLAW_MAX_TOKENS", "4096"))
+    context_window = _coerce_positive_int(env, "NEMOCLAW_CONTEXT_WINDOW", 131072)
+    max_tokens = _coerce_positive_int(env, "NEMOCLAW_MAX_TOKENS", 4096)
+
     reasoning = env.get("NEMOCLAW_REASONING", "false") == "true"
     inference_inputs = [
         v.strip()

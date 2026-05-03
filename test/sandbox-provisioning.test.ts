@@ -42,8 +42,19 @@ function dockerRunCommandBetween(
   if (runIndex === -1 || runIndex > end) {
     throw new Error(`Expected RUN instruction after ${startMarker}`);
   }
-  return dockerfile
-    .slice(runIndex, end)
+  const runLines: string[] = [];
+  for (const line of dockerfile.slice(runIndex, end).split("\n")) {
+    runLines.push(line);
+    if (!line.trimEnd().endsWith("\\")) {
+      break;
+    }
+  }
+  const lastLine = runLines[runLines.length - 1]?.trimEnd() ?? "";
+  if (lastLine.endsWith("\\")) {
+    throw new Error(`Expected complete RUN instruction before ${endMarker}`);
+  }
+  return runLines
+    .join("\n")
     .trim()
     .replace(/^RUN\s+/, "")
     .replace(/\\\n/g, " ");
@@ -131,6 +142,38 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         `chown root:root ${path.join(sandboxRoot, ".bashrc")} ${path.join(sandboxRoot, ".profile")}`,
       );
       expect(rc.calls).not.toContain("sandbox:sandbox");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("provisions system-wide runtime proxy hooks", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-system-proxy-"));
+    const profileHook = path.join(tmp, "profile.d", "nemoclaw-proxy.sh");
+    const bashrc = path.join(tmp, "bash.bashrc");
+    const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
+
+    try {
+      fs.mkdirSync(path.dirname(profileHook), { recursive: true });
+      fs.writeFileSync(bashrc, "# existing bashrc\n");
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# System-wide proxy hooks",
+        "# Install OpenClaw CLI + PyYAML",
+      )
+        .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
+        .replaceAll("/etc/bash.bashrc", bashrc);
+
+      const { result } = runLoggedDockerShell(command, tmp);
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(profileHook, "utf-8").split(runtimeEnvShim).length - 1).toBe(1);
+      expect((fs.statSync(profileHook).mode & 0o777).toString(8)).toBe("444");
+
+      const bashrcContent = fs.readFileSync(bashrc, "utf-8");
+      expect(bashrcContent.split(runtimeEnvShim).length - 1).toBe(1);
+      expect(bashrcContent).toContain("# existing bashrc");
+      expect((fs.statSync(bashrc).mode & 0o777).toString(8)).toBe("444");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

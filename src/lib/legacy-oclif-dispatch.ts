@@ -109,7 +109,12 @@ export function resolveSandboxOclifDispatch(
       if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "status" };
       return { kind: "oclif", commandId: "sandbox:status", args: [sandboxName, ...actionArgs] };
     case "logs":
-      if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "logs [--follow]" };
+      if (hasHelpFlag(actionArgs)) {
+        return {
+          kind: "help",
+          usage: "logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
+        };
+      }
       return { kind: "oclif", commandId: "sandbox:logs", args: [sandboxName, ...actionArgs] };
     case "doctor":
       return { kind: "legacy", target: "doctor" };

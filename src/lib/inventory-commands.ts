@@ -31,7 +31,15 @@ export interface RecoveryResult {
 export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
   getLiveInference: () => GatewayInference | null;
-  loadLastSession: () => { sandboxName?: string | null } | null;
+  /**
+   * Returns the last onboard session's sandbox name and step state. The
+   * step state is needed to filter out phantom names from interrupted
+   * onboards — see #2753.
+   */
+  loadLastSession: () => {
+    sandboxName?: string | null;
+    steps?: { sandbox?: { status?: string } | null } | null;
+  } | null;
   /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
   getActiveSessionCount?: (sandboxName: string) => number | null;
   log?: (message?: string) => void;
@@ -140,6 +148,13 @@ export async function getSandboxInventory(
   const recovery = await deps.recoverRegistryEntries();
   const defaultSandbox = recovery.defaultSandbox || null;
   const lastSession = deps.loadLastSession();
+  // #2753: only surface the last-onboarded name when its sandbox step
+  // actually completed. Otherwise an interrupted onboard would leave the
+  // name in the session and the empty-state hint would resurrect it.
+  const lastOnboardedSandbox =
+    lastSession?.sandboxName && lastSession.steps?.sandbox?.status === "complete"
+      ? lastSession.sandboxName
+      : null;
 
   return {
     schemaVersion: 1,
@@ -148,7 +163,7 @@ export async function getSandboxInventory(
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
-    lastOnboardedSandbox: lastSession?.sandboxName || null,
+    lastOnboardedSandbox,
     sandboxes: recovery.sandboxes.map((sandbox) =>
       buildSandboxInventoryRow(sandbox, defaultSandbox, deps.getActiveSessionCount),
     ),

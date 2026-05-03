@@ -9,13 +9,12 @@ import { parseGatewayInference } from "./inference-config";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
 import { parseSshProcesses, createSystemDeps } from "./sandbox-session-state";
 import { resolveOpenshell } from "./resolve-openshell";
-
-import { getNemoClawRuntimeBridge } from "./nemoclaw-runtime-bridge";
+import { captureOpenshell } from "./openshell-runtime";
+import { recoverRegistryEntries } from "./registry-recovery-action";
 
 export function buildListCommandDeps(): ListSandboxesCommandDeps {
   const opsBinList = resolveOpenshell();
   const sessionDeps = opsBinList ? createSystemDeps(opsBinList) : null;
-  const runtime = getNemoClawRuntimeBridge();
 
   // Cache the SSH process probe once for all sandboxes — avoids spawning ps
   // per sandbox row. The getSshProcesses() call is the expensive part (5s timeout).
@@ -32,10 +31,10 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
   };
 
   return {
-    recoverRegistryEntries: () => runtime.recoverRegistryEntries(),
+    recoverRegistryEntries: () => recoverRegistryEntries(),
     getLiveInference: () =>
       parseGatewayInference(
-        runtime.captureOpenshell(["inference", "get"], {
+        captureOpenshell(["inference", "get"], {
           ignoreError: true,
           timeout: OPENSHELL_PROBE_TIMEOUT_MS,
         }).output,

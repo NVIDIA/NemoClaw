@@ -12,7 +12,10 @@ describe("inventory commands", () => {
     const inventory = await getSandboxInventory({
       recoverRegistryEntries: async () => ({ sandboxes: [], defaultSandbox: null }),
       getLiveInference,
-      loadLastSession: () => ({ sandboxName: "alpha" }),
+      loadLastSession: () => ({
+        sandboxName: "alpha",
+        steps: { sandbox: { status: "complete" } },
+      }),
     });
 
     expect(inventory).toEqual({
@@ -51,7 +54,10 @@ describe("inventory commands", () => {
         recoveredFromGateway: 2,
       }),
       getLiveInference,
-      loadLastSession: () => ({ sandboxName: "alpha" }),
+      loadLastSession: () => ({
+        sandboxName: "alpha",
+        steps: { sandbox: { status: "complete" } },
+      }),
       getActiveSessionCount: (sandboxName) => (sandboxName === "alpha" ? 1 : 0),
     });
 
@@ -85,13 +91,36 @@ describe("inventory commands", () => {
     await listSandboxesCommand({
       recoverRegistryEntries: async () => ({ sandboxes: [], defaultSandbox: null }),
       getLiveInference: () => null,
-      loadLastSession: () => ({ sandboxName: "alpha" }),
+      loadLastSession: () => ({
+        sandboxName: "alpha",
+        steps: { sandbox: { status: "complete" } },
+      }),
       log: (message = "") => lines.push(message),
     });
 
     expect(lines).toContain(
       "  No sandboxes registered locally, but the last onboarded sandbox was 'alpha'.",
     );
+  });
+
+  it("#2753: suppresses last-onboarded hint when sandbox step never completed", async () => {
+    // The session retains a sandbox name from an interrupted onboard
+    // (pre-fix sessions on disk, or any in-progress write between steps).
+    // Surfacing it as the "last onboarded sandbox" would resurrect the
+    // phantom users were complaining about.
+    const lines: string[] = [];
+    await listSandboxesCommand({
+      recoverRegistryEntries: async () => ({ sandboxes: [], defaultSandbox: null }),
+      getLiveInference: () => null,
+      loadLastSession: () => ({
+        sandboxName: "interrupt-test",
+        steps: { sandbox: { status: "in_progress" } },
+      }),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines.some((l) => l.includes("interrupt-test"))).toBe(false);
+    expect(lines).toContain("  No sandboxes registered. Run `nemoclaw onboard` to get started.");
   });
 
   it("prints recovered sandbox inventory details", async () => {

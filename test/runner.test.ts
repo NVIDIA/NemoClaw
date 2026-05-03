@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { runCapture } from "../dist/lib/runner";
+import { redact, runCapture } from "../dist/lib/runner";
 
 const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
 
@@ -374,6 +374,13 @@ describe("redact", () => {
     const { redact } = require(runnerPath);
     const output = redact("https://example.com?Signature=secret123456&AUTH=anothersecret123");
     expect(output).toBe("https://example.com/?Signature=****&AUTH=****");
+  });
+
+  it("masks dashboard URL hash tokens", () => {
+    const token = "a".repeat(64);
+    const output = redact(`http://127.0.0.1:18789/#token=${token}`);
+    expect(output).toBe("http://127.0.0.1:18789/#token=aaaa********************");
+    expect(output).not.toContain(token);
   });
 
   it("leaves non-secret strings untouched", () => {

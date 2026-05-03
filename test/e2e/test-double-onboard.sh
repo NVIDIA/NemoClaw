@@ -486,10 +486,10 @@ status_exit=$?
 status_output="$(cat "$STATUS_LOG")"
 rm -f "$STATUS_LOG"
 
-if [ "$status_exit" -eq 0 ]; then
-  pass "Stale sandbox status exited 0"
+if [ "$status_exit" -eq 1 ]; then
+  pass "Stale sandbox status exited 1"
 else
-  fail "Stale sandbox status exited $status_exit (expected 0)"
+  fail "Stale sandbox status exited $status_exit (expected 1)"
 fi
 
 if grep -q "Removed stale local registry entry" <<<"$status_output"; then
@@ -519,10 +519,10 @@ gateway_status_exit=$?
 gateway_status_output="$(cat "$GATEWAY_LOG")"
 rm -f "$GATEWAY_LOG"
 
-if [ "$gateway_status_exit" -eq 0 ]; then
-  pass "Post-stop status exited 0"
+if [ "$gateway_status_exit" -eq 1 ]; then
+  pass "Post-stop status exited 1"
 else
-  fail "Post-stop status exited $gateway_status_exit (expected 0)"
+  fail "Post-stop status exited $gateway_status_exit (expected 1)"
 fi
 
 if grep -qE \

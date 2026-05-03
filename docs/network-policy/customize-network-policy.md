@@ -124,7 +124,6 @@ This is the non-destructive path and the only flow NemoClaw supports out of the 
            port: 8086
            protocol: rest
            enforcement: enforce
-           tls: terminate
            rules:
              - allow: { method: GET, path: "/**" }
              - allow: { method: POST, path: "/api/v2/write" }
