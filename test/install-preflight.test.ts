@@ -168,8 +168,12 @@ run_onboard < "$PROMPT_INPUT_FILE"
       encoding: "utf-8",
       env: {
         ...process.env,
+        FRESH: "",
         HOME: tmp,
         NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_FRESH: "",
+        NEMOCLAW_NON_INTERACTIVE: "",
+        NON_INTERACTIVE: "",
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
         NEMOCLAW_ONBOARD_LOG: onboardLog,
@@ -812,6 +816,7 @@ fi`,
   it.each([
     { answer: "FrEsH\n", expectedArgs: "onboard --fresh", unexpectedFlag: /--resume/ },
     { answer: "RESUME\n", expectedArgs: "onboard --resume", unexpectedFlag: /--fresh/ },
+    { answer: "\n", expectedArgs: "onboard --resume", unexpectedFlag: /--fresh/ },
   ])("lowercases failed-session prompt answer $answer before invoking onboard", (testCase) => {
     const { result, onboardLog } = runFailedSessionPromptChoice(testCase.answer);
     const output = `${result.stdout}${result.stderr}`;
