@@ -414,11 +414,13 @@ type OnboardOptions = {
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   controlUiPort?: number | null;
+  autoYes?: boolean;
 };
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
 let RECREATE_SANDBOX = false;
+let AUTO_YES = false;
 // Set by onboard() before preflight() when --control-ui-port is specified.
 // null means "use auto-allocation" (skip dashboard port check in preflight).
 let _preflightDashboardPort: number | null = null;
@@ -441,6 +443,10 @@ function isNonInteractive(): boolean {
 
 function isRecreateSandbox(): boolean {
   return RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
+}
+
+function isAutoYes(): boolean {
+  return AUTO_YES || process.env.NEMOCLAW_YES === "1";
 }
 
 function note(message: string): void {
@@ -2356,6 +2362,8 @@ const {
   pullOllamaModel,
   prepareOllamaModel,
 } = require("./onboard-ollama-proxy");
+
+const ollamaModelSize: typeof import("./ollama-model-size") = require("./ollama-model-size");
 
 function getRequestedSandboxNameHint(opts: { sandboxName?: string | null } = {}): string | null {
   const raw =
@@ -5108,6 +5116,34 @@ async function selectAndValidateOllamaModel(
       return { outcome: "back-to-selection" };
     }
     const selectedModel = requireValue(model, "Expected an Ollama model selection");
+    if (!installedModels.includes(selectedModel)) {
+      const lookup = ollamaModelSize.getOllamaModelSize(selectedModel);
+      const sizeLabel = ollamaModelSize.formatModelSize(lookup);
+      if (isAutoYes()) {
+        note(`  Pulling Ollama model '${selectedModel}' (${sizeLabel}).`);
+      } else if (isNonInteractive()) {
+        console.error(
+          `  Ollama model '${selectedModel}' (${sizeLabel}) is not installed and ` +
+            "non-interactive mode cannot prompt for confirmation. " +
+            "Re-run with --yes / -y (or NEMOCLAW_YES=1) to authorise the download.",
+        );
+        process.exit(1);
+      } else {
+        const proceed = await promptYesNoOrDefault(
+          `  Download Ollama model '${selectedModel}' (${sizeLabel})?`,
+          null,
+          false,
+        );
+        if (!proceed) {
+          console.error(
+            `  Skipped pulling Ollama model '${selectedModel}'. Choose another model or re-run with --yes to confirm.`,
+          );
+          console.log("  Choose a different Ollama model or select Other.");
+          console.log("");
+          continue;
+        }
+      }
+    }
     const probe = await prepareOllamaModel(selectedModel, installedModels);
     if (!probe.ok) {
       console.error(`  ${probe.message}`);
@@ -8265,6 +8301,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
+  AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
   _preflightDashboardPort = opts.controlUiPort || null;
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
