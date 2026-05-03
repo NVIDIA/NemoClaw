@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { GatewayInference } from "./inference-config";
 import { CLI_NAME } from "./branding";
+import type { GatewayInference } from "./inference-config";
+import { redactFull } from "./redact";
 
 export interface SandboxEntry {
   name: string;
@@ -30,7 +31,15 @@ export interface RecoveryResult {
 export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
   getLiveInference: () => GatewayInference | null;
-  loadLastSession: () => { sandboxName?: string | null } | null;
+  /**
+   * Returns the last onboard session's sandbox name and step state. The
+   * step state is needed to filter out phantom names from interrupted
+   * onboards — see #2753.
+   */
+  loadLastSession: () => {
+    sandboxName?: string | null;
+    steps?: { sandbox?: { status?: string } | null } | null;
+  } | null;
   /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
   getActiveSessionCount?: (sandboxName: string) => number | null;
   log?: (message?: string) => void;
@@ -69,6 +78,7 @@ export interface ShowStatusCommandDeps {
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox?: string | null };
   getLiveInference: () => GatewayInference | null;
   showServiceStatus: (options: { sandboxName?: string }) => void;
+  getServiceStatuses?: (options: { sandboxName?: string }) => StatusServiceRow[];
   checkMessagingBridgeHealth?: (
     sandboxName: string,
     channels: string[],
@@ -76,6 +86,39 @@ export interface ShowStatusCommandDeps {
   backfillAndFindOverlaps?: () => MessagingOverlap[];
   readGatewayLog?: (sandboxName: string) => string | null;
   log?: (message?: string) => void;
+}
+
+export interface StatusSandboxRow {
+  name: string;
+  model: string | null;
+  provider: string | null;
+  gpuEnabled: boolean;
+  policies: string[];
+  agent: string | null;
+  dashboardPort?: number | null;
+  isDefault: boolean;
+}
+
+export interface StatusServiceRow {
+  name: string;
+  running: boolean;
+  pid: number | null;
+}
+
+export interface StatusReport {
+  schemaVersion: 1;
+  defaultSandbox: string | null;
+  liveInference: {
+    provider: string | null;
+    model: string | null;
+  } | null;
+  sandboxes: StatusSandboxRow[];
+  services: StatusServiceRow[];
+}
+
+function safeStatusString(value: string | null | undefined): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  return redactFull(value);
 }
 
 function buildSandboxInventoryRow(
@@ -105,6 +148,13 @@ export async function getSandboxInventory(
   const recovery = await deps.recoverRegistryEntries();
   const defaultSandbox = recovery.defaultSandbox || null;
   const lastSession = deps.loadLastSession();
+  // #2753: only surface the last-onboarded name when its sandbox step
+  // actually completed. Otherwise an interrupted onboard would leave the
+  // name in the session and the empty-state hint would resurrect it.
+  const lastOnboardedSandbox =
+    lastSession?.sandboxName && lastSession.steps?.sandbox?.status === "complete"
+      ? lastSession.sandboxName
+      : null;
 
   return {
     schemaVersion: 1,
@@ -113,7 +163,7 @@ export async function getSandboxInventory(
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
-    lastOnboardedSandbox: lastSession?.sandboxName || null,
+    lastOnboardedSandbox,
     sandboxes: recovery.sandboxes.map((sandbox) =>
       buildSandboxInventoryRow(sandbox, defaultSandbox, deps.getActiveSessionCount),
     ),
@@ -201,6 +251,67 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
   const inventory = await getSandboxInventory(deps);
   const liveInference = inventory.sandboxes.length > 0 ? deps.getLiveInference() : null;
   renderSandboxInventoryText(inventory, log, liveInference);
+}
+
+function buildStatusSandboxRow(
+  sandbox: SandboxEntry,
+  defaultSandbox: string | null,
+  liveInference: GatewayInference | null,
+): StatusSandboxRow {
+  const isDefault = sandbox.name === defaultSandbox;
+  const liveModel = isDefault ? liveInference?.model : null;
+  const liveProvider = isDefault ? liveInference?.provider : null;
+  const dashboardPort =
+    typeof sandbox.dashboardPort === "number" && Number.isFinite(sandbox.dashboardPort)
+      ? sandbox.dashboardPort
+      : null;
+  return {
+    name: safeStatusString(sandbox.name) || sandbox.name,
+    model: safeStatusString(liveModel || sandbox.model || null),
+    provider: safeStatusString(liveProvider || sandbox.provider || null),
+    gpuEnabled: sandbox.gpuEnabled === true,
+    policies: Array.isArray(sandbox.policies)
+      ? sandbox.policies
+          .filter((policy): policy is string => typeof policy === "string")
+          .map((policy) => safeStatusString(policy) || policy)
+      : [],
+    agent: safeStatusString(sandbox.agent || null),
+    ...(dashboardPort != null ? { dashboardPort } : {}),
+    isDefault,
+  };
+}
+
+function normalizeServiceStatus(service: StatusServiceRow): StatusServiceRow {
+  return {
+    name: safeStatusString(service.name) || service.name,
+    running: service.running === true,
+    pid: service.running && Number.isFinite(service.pid) ? service.pid : null,
+  };
+}
+
+export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
+  const { sandboxes, defaultSandbox } = deps.listSandboxes();
+  const resolvedDefault = defaultSandbox || null;
+  const liveInference = sandboxes.length > 0 ? deps.getLiveInference() : null;
+  const services =
+    deps.getServiceStatuses?.({ sandboxName: resolvedDefault || undefined }).map(
+      normalizeServiceStatus,
+    ) ?? [];
+
+  return {
+    schemaVersion: 1,
+    defaultSandbox: safeStatusString(resolvedDefault),
+    liveInference: liveInference
+      ? {
+          provider: safeStatusString(liveInference.provider),
+          model: safeStatusString(liveInference.model),
+        }
+      : null,
+    sandboxes: sandboxes.map((sandbox) =>
+      buildStatusSandboxRow(sandbox, resolvedDefault, liveInference),
+    ),
+    services,
+  };
 }
 
 /**

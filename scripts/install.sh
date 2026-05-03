@@ -484,7 +484,7 @@ usage() {
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
-  printf "    --yes-i-accept-third-party-software Accept the third-party software notice in non-interactive mode\n"
+  printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
@@ -521,7 +521,11 @@ show_usage_notice() {
     notice_script="${repo_root}/bin/lib/usage-notice.js"
   fi
   local -a notice_cmd=(node "$notice_script")
-  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+  # When --yes-i-accept-third-party-software (or NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)
+  # is set, treat the licence step as accepted regardless of --non-interactive — a
+  # flag whose name is "yes-i-accept" must be sufficient on its own to clear the
+  # notice, even in curl|bash mode where there is no TTY to fall back to. See #2670.
+  if [ "${NON_INTERACTIVE:-}" = "1" ] || [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
     notice_cmd+=(--non-interactive)
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
       notice_cmd+=(--yes-i-accept-third-party-software)
@@ -529,14 +533,14 @@ show_usage_notice() {
     "${notice_cmd[@]}"
   elif [ -t 0 ]; then
     "${notice_cmd[@]}"
-  elif exec 3</dev/tty; then
+  elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching the usage notice to /dev/tty…"
     local status=0
     "${notice_cmd[@]}" <&3 || status=$?
     exec 3<&-
     return "$status"
   else
-    error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
+    error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
   fi
 }
 
@@ -1550,7 +1554,14 @@ run_onboard() {
           if ! IFS= read -r _resume_answer <"$_prompt_stdin"; then
             error "Could not read response from TTY. Re-run with --fresh or run '${_CLI_BIN} onboard --resume'."
           fi
-          case "${_resume_answer,,}" in
+          # Use tr to lowercase the answer rather than the bash 4 case
+          # expansion form (lowercase via the comma-comma operator), which
+          # is unavailable on macOS /bin/bash 3.2 and would print
+          # "bad substitution" on macOS hosts running the curl-piped
+          # installer.
+          local _resume_answer_lc
+          _resume_answer_lc="$(printf '%s' "$_resume_answer" | tr '[:upper:]' '[:lower:]')"
+          case "$_resume_answer_lc" in
             "" | r | resume)
               onboard_cmd+=(--resume)
               break
@@ -1574,10 +1585,14 @@ run_onboard() {
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
       onboard_cmd+=(--yes-i-accept-third-party-software)
     fi
+    # A non-interactive install is by definition unattended consent;
+    # forward --yes so the Ollama size-confirmation gate does not abort
+    # the unattended download (the size is still printed to logs).
+    onboard_cmd+=(--yes)
     "${_CLI_BIN}" "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
     "${_CLI_BIN}" "${onboard_cmd[@]}"
-  elif exec 3</dev/tty; then
+  elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
     local status=0
     "${_CLI_BIN}" "${onboard_cmd[@]}" <&3 || status=$?

@@ -548,7 +548,7 @@ function unloadOllamaModels() {
   }
 }
 
-module.exports = {
+export {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
   isProxyHealthy,

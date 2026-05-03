@@ -12,6 +12,8 @@ content:
   type: how_to
   difficulty: technical_intermediate
   audience: ["developer", "engineer"]
+skill:
+  priority: 30
 status: published
 ---
 
@@ -137,4 +139,4 @@ Use the following resources for more information:
 
 - Refer to [OpenClaw Sub-Agents](https://docs.openclaw.ai/tools/subagents) for `sessions_spawn`, `agents.list`, nesting, tool policy, and auth behavior.
 - Refer to [Switch Inference Providers](switch-inference-providers.md) to change the primary orchestration model instead of adding a sub-agent model.
-- Refer to [Workspace Files](../workspace/workspace-files.md) to understand per-agent workspace directories.
+- Refer to [Workspace Files](../manage-sandboxes/workspace-files.md) to understand per-agent workspace directories.

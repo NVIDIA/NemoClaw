@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+/* v8 ignore start -- command metadata is covered by registry unit tests. */
+
 /**
  * Typed command registry — single source of truth for all CLI commands.
  *
@@ -98,6 +100,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> connect",
     description: "Shell into a running sandbox",
+    flags: "[--probe-only]",
     group: "Sandbox Management",
     scope: "sandbox",
   },
@@ -108,9 +111,16 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "sandbox",
   },
   {
+    usage: "nemoclaw <name> doctor",
+    description: "Run host, gateway, sandbox, and inference health checks",
+    flags: "[--json]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
     usage: "nemoclaw <name> logs",
     description: "Stream sandbox logs",
-    flags: "[--follow]",
+    flags: "[--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
     group: "Sandbox Management",
     scope: "sandbox",
   },
@@ -325,6 +335,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw status",
     description: "Show sandbox list and service status",
+    flags: "[--json]",
     group: "Services",
     scope: "global",
   },
@@ -420,7 +431,6 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "global",
     hidden: true,
   },
-
 ] as const;
 
 /** All global-scope commands. */

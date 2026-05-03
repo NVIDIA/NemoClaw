@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Agent Instructions
 
 ## Project Overview
@@ -106,13 +109,13 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.16+
 - `test/`: **ESM** (`import`/`export`)
-- ESLint config in `eslint.config.mjs`
-- Cyclomatic complexity limit: 20 (ratcheting down to 15)
+- Biome config in `biome.json`
+- Keep function complexity low; existing complexity hotspots are tracked separately
 - Unused vars pattern: prefix with `_`
 
 ### TypeScript
 
-- Plugin code in `nemoclaw/src/` with its own ESLint config
+- Plugin code in `nemoclaw/src/` is linted and formatted by the root Biome config
 - CLI type-checking via `tsconfig.cli.json`
 - Plugin type-checking via `nemoclaw/tsconfig.json`
 
@@ -166,7 +169,7 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 ### Gotchas
 
 - `npm install` at root triggers `prek install` which sets up git hooks. If hooks fail, check that `core.hooksPath` is unset: `git config --unset core.hooksPath`
-- The `nemoclaw/` subdirectory has its own `package.json`, `node_modules/`, and ESLint config — it's a separate npm project
+- The `nemoclaw/` subdirectory has its own `package.json` and `node_modules`, while sharing the root Biome config — it's a separate npm project
 - SPDX headers are auto-inserted by pre-commit hooks; don't worry about adding them manually
 - Coverage thresholds are ratcheted in `ci/coverage-threshold-*.json` — new code should not decrease CLI or plugin coverage
 - The `.claude/skills` symlink points to `.agents/skills` — both paths resolve to the same content

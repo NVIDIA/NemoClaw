@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vites
 import fs from "node:fs";
 import path from "node:path";
 // Import from compiled dist/ so coverage is attributed correctly.
-import { printDashboardUi } from "../../dist/lib/agent-onboard";
+import { printDashboardUi, verifyAgentBinaryAvailable } from "../../dist/lib/agent-onboard";
 import type { AgentDefinition } from "./agent-defs";
 
 function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
@@ -108,18 +108,20 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
     expect(noteSpy).not.toHaveBeenCalled();
   });
 
-  it("prints tokenized URL with save-now warning for UI-kind agents", () => {
-    printDashboardUi("sandbox-y", "tok", uiAgent, {
+  it("redacts tokenized URLs for UI-kind agents and shows the token retrieval command", () => {
+    const token = "a".repeat(64);
+    printDashboardUi("sandbox-y", token, uiAgent, {
       note: noteSpy,
       buildControlUiUrls: buildUrlsLoopback,
     });
 
     const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
-    expect(output).toContain(
-      "Ficticious UI (tokenized URL; treat it like a password; save it now - it will not be printed again)",
-    );
+    expect(output).toContain("Ficticious UI (auth token redacted from displayed URLs)");
     expect(output).toContain("Port 19000 must be forwarded before opening this URL.");
-    expect(output).toContain("http://127.0.0.1:19000/#token=tok");
+    expect(output).toContain("http://127.0.0.1:19000/");
+    expect(output).toContain("Token: nemoclaw sandbox-y gateway-token --quiet");
+    expect(output).not.toContain("http://127.0.0.1:19000/#token=");
+    expect(output).not.toContain(token);
   });
 });
 
@@ -128,10 +130,10 @@ describe("handleAgentSetup guards", () => {
     const source = fs.readFileSync(path.join(import.meta.dirname, "agent-onboard.ts"), "utf-8");
 
     expect(source).toContain("verifyAgentBinaryAvailable");
-    expect(source).toContain(
-      'resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"',
-    );
-    expect(source).toContain('[ "$resolved" = ${shellQuote(binaryPath)} ]');
+    expect(source).toContain("AGENT_BINARY_CHECK_PREFIX");
+    expect(source).toContain("if [ -x ${shellQuote(binaryPath)} ]; then");
+    expect(source).toContain("exit 0");
+    expect(source).toContain(".find((line) => line.startsWith(AGENT_BINARY_CHECK_PREFIX))");
     expect(source).toMatch(
       /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"sh",\s*"-lc",\s*script/,
     );
@@ -149,5 +151,36 @@ describe("handleAgentSetup guards", () => {
     expect(source).toContain("JSON.parse(body)");
     expect(source).toContain('parsed.status === "ok"');
     expect(source).not.toContain('.includes("ok")');
+  });
+
+  it("accepts an executable configured binary path when PATH lookup is empty", () => {
+    let script = "";
+    const result = verifyAgentBinaryAvailable(
+      "alpha",
+      makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
+      (args) => {
+        script = String(args[7] || "");
+        return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok";
+      },
+    );
+
+    expect(result).toEqual({ available: true });
+    expect(script).toContain("if [ -x '/usr/local/bin/hermes' ]; then");
+    expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
+  });
+
+  it("does not reject a configured binary when PATH resolves the symlink target", () => {
+    let script = "";
+    const result = verifyAgentBinaryAvailable(
+      "alpha",
+      makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
+      (args) => {
+        script = String(args[7] || "");
+        return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok";
+      },
+    );
+
+    expect(result).toEqual({ available: true });
+    expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
   });
 });

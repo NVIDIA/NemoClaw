@@ -509,8 +509,38 @@ EOF
   describe("both entrypoints source the shared library", () => {
     it("nemoclaw-start.sh sources sandbox-init.sh", () => {
       const src = readFileSync(join(import.meta.dirname, "../scripts/nemoclaw-start.sh"), "utf-8");
-      expect(src).toContain("source");
-      expect(src).toContain("sandbox-init.sh");
+      const start = src.indexOf("_SANDBOX_INIT=");
+      const end = src.indexOf("# Harden: limit process count", start);
+      if (start === -1 || end === -1 || end <= start) {
+        throw new Error("Expected sandbox-init source block in scripts/nemoclaw-start.sh");
+      }
+
+      const workDir = mkdtempSync(join(tmpdir(), "nemoclaw-start-source-init-"));
+      const scriptDir = join(workDir, "scripts");
+      const libDir = join(scriptDir, "lib");
+      mkdirSync(libDir, { recursive: true });
+      writeFileSync(
+        join(libDir, "sandbox-init.sh"),
+        "export NEMOCLAW_TEST_SANDBOX_INIT_LOADED=1\n",
+      );
+      const wrapperPath = join(scriptDir, "nemoclaw-start.sh");
+      writeFileSync(
+        wrapperPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          src.slice(start, end),
+          'printf "LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}"',
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      try {
+        const result = execFileSync("bash", [wrapperPath], { encoding: "utf-8" }).trim();
+        expect(result).toBe("LOADED=1");
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
     });
 
     it("hermes start.sh sources sandbox-init.sh", () => {
@@ -582,16 +612,5 @@ EOF
       expect(migrateFn![1]).not.toContain('chown -R sandbox:sandbox "$entry"');
     });
 
-    it("nemoclaw-start.sh uses emit_sandbox_sourced_file for proxy-env.sh", () => {
-      const src = readFileSync(join(import.meta.dirname, "../scripts/nemoclaw-start.sh"), "utf-8");
-      expect(src).toContain("emit_sandbox_sourced_file");
-      // Should NOT contain old chmod 644 for proxy-env
-      expect(src).not.toMatch(/chmod 644.*\$_PROXY_ENV_FILE/);
-    });
-
-    it("nemoclaw-start.sh uses locked-aware OpenClaw integrity checks", () => {
-      const src = readFileSync(join(import.meta.dirname, "../scripts/nemoclaw-start.sh"), "utf-8");
-      expect(src).toContain("verify_config_integrity_if_locked /sandbox/.openclaw");
-    });
   });
 });

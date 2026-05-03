@@ -2,16 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import http from "node:http";
 import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 // Import from compiled dist/ so coverage is attributed correctly.
-import {
-  getServiceStatuses,
-  showStatus,
-  stopAll,
-} from "../../dist/lib/services";
+import { getServiceStatuses, showStatus, stopAll } from "../../dist/lib/services";
 
 describe("getServiceStatuses", () => {
   let pidDir: string;
@@ -105,10 +102,7 @@ describe("showStatus", () => {
 
   it("does not show tunnel URL when cloudflared is not running", () => {
     // Write a stale log file but no running process
-    writeFileSync(
-      join(pidDir, "cloudflared.log"),
-      "https://abc-def.trycloudflare.com",
-    );
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://abc-def.trycloudflare.com");
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -122,12 +116,16 @@ describe("showStatus", () => {
 
 describe("stopAll", () => {
   let pidDir: string;
+  let httpGetSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-test-"));
+    const request = { on: vi.fn(() => request) };
+    httpGetSpy = vi.spyOn(http, "get").mockImplementation((() => request) as any);
   });
 
   afterEach(() => {
+    httpGetSpy.mockRestore();
     rmSync(pidDir, { recursive: true, force: true });
   });
 
@@ -154,5 +152,16 @@ describe("stopAll", () => {
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("All services stopped");
     logSpy.mockRestore();
+  });
+
+  it("unloads Ollama models before reporting services stopped", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    stopAll({ pidDir });
+    logSpy.mockRestore();
+
+    expect(httpGetSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ hostname: "localhost", port: 11434, path: "/api/ps" }),
+      expect.any(Function),
+    );
   });
 });

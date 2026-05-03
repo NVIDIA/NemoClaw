@@ -3,7 +3,7 @@
 
 /**
  * Additional coverage on top of the existing
- * "REST policy presets avoid deprecated tls: terminate" guard in
+ * "REST policy YAML avoids deprecated tls: terminate" guard in
  * test/policies.test.ts.
  *
  * Two angles the existing test does not cover:
@@ -15,12 +15,15 @@
  */
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import * as yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const POLICY_DIR = path.join(REPO_ROOT, "nemoclaw-blueprint", "policies");
+const AGENTS_DIR = path.join(REPO_ROOT, "agents");
+const require = createRequire(import.meta.url);
+const yaml = require("js-yaml") as { load(content: string): unknown };
 
 function listPolicyFiles(): string[] {
   const files: string[] = [path.join(POLICY_DIR, "openclaw-sandbox.yaml")];
@@ -28,6 +31,13 @@ function listPolicyFiles(): string[] {
   for (const name of fs.readdirSync(presetsDir)) {
     if (name.endsWith(".yaml") || name.endsWith(".yml")) {
       files.push(path.join(presetsDir, name));
+    }
+  }
+  if (fs.existsSync(AGENTS_DIR)) {
+    for (const entry of fs.readdirSync(AGENTS_DIR, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const agentPolicyFile = path.join(AGENTS_DIR, entry.name, "policy-additions.yaml");
+      if (fs.existsSync(agentPolicyFile)) files.push(agentPolicyFile);
     }
   }
   return files;

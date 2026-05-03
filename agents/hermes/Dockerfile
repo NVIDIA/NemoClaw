@@ -187,7 +187,8 @@ RUN set -eu; \
         "$config_dir/workspace" \
         "$config_dir/profiles" \
         "$config_dir/cache" \
-        "$config_dir/pairing"; \
+        "$config_dir/pairing" \
+        "$config_dir/runtime"; \
     if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
         echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
         exit 1; \
@@ -211,9 +212,28 @@ RUN set -eu; \
     done; \
     rm -rf /root/.cache/pip /sandbox/.cache \
     && chown -R sandbox:sandbox /sandbox/.hermes \
+    && chown gateway:sandbox /sandbox/.hermes/runtime \
     && chmod 750 /sandbox/.hermes \
+    && chmod 770 \
+        /sandbox/.hermes/memories \
+        /sandbox/.hermes/sessions \
+        /sandbox/.hermes/skills \
+        /sandbox/.hermes/plugins \
+        /sandbox/.hermes/cron \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/skins \
+        /sandbox/.hermes/plans \
+        /sandbox/.hermes/workspace \
+        /sandbox/.hermes/profiles \
+        /sandbox/.hermes/cache \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \
-    && chmod 640 /sandbox/.hermes/.env
+    && chmod 640 /sandbox/.hermes/.env \
+    && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
+        rm -f "/sandbox/.hermes/${name}"; \
+        ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
+    done
 
 # Pin config hash at build time for integrity verification at startup.
 RUN mkdir -p /etc/nemoclaw \

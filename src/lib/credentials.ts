@@ -460,7 +460,6 @@ export function promptSecret(question: string): Promise<string> {
 
         if (ch === "\u001b") {
           const rest = text.slice(i);
-          // eslint-disable-next-line no-control-regex
           const match = rest.match(/^\u001b(?:\[[0-9;?]*[~A-Za-z]|\][^\u0007]*\u0007|.)/);
           if (match) {
             i += match[0].length - 1;

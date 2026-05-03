@@ -8,6 +8,8 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
+import { help as renderRootHelp } from "../src/lib/root-help-action";
+
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
@@ -118,16 +120,20 @@ describe("image cleanup: gc command exists (#2086)", () => {
     expect(nemoclawSrc).toContain("globalCommandTokens()");
   });
 
-  it("gc command is dispatched in the CLI switch", () => {
-    expect(nemoclawSrc).toContain('case "gc"');
-    expect(nemoclawSrc).toContain("garbageCollectImages");
+  it("gc command is dispatched through the oclif bridge", () => {
+    expect(nemoclawSrc).toContain("resolveGlobalOclifDispatch");
+    expect(registrySrc).toContain('"nemoclaw gc"');
   });
 
   it("garbageCollectImages lists sandbox-from images and cross-references registry", () => {
-    const gcMatch = nemoclawSrc.match(/async function garbageCollectImages[\s\S]*?^}/m);
+    const maintenanceSrc = fs.readFileSync(
+      path.join(ROOT, "src/lib/maintenance-actions.ts"),
+      "utf-8",
+    );
+    const gcMatch = maintenanceSrc.match(/async function garbageCollectImages[\s\S]*?^}/m);
     expect(gcMatch).toBeTruthy();
     if (!gcMatch) {
-      throw new Error("Expected garbageCollectImages() in src/nemoclaw.ts");
+      throw new Error("Expected garbageCollectImages() in src/lib/maintenance-actions.ts");
     }
     const gcBody = gcMatch[0];
 
@@ -141,8 +147,19 @@ describe("image cleanup: gc command exists (#2086)", () => {
     expect(gcBody).toContain("--yes");
   });
 
-  it("gc appears in help text via registry", () => {
-    expect(registrySrc).toContain('"nemoclaw gc"');
-    expect(nemoclawSrc).toContain("registryCommandsByGroup");
+  it("gc appears in rendered help text", () => {
+    const originalLog = console.log;
+    let renderedHelp = "";
+    console.log = (message?: unknown) => {
+      renderedHelp += `${String(message ?? "")}\n`;
+    };
+    try {
+      renderRootHelp();
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(renderedHelp).toContain("nemoclaw gc");
+    expect(renderedHelp).toContain("Remove orphaned sandbox Docker images");
   });
 });
