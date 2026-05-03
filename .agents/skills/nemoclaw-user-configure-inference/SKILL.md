@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-configure-inference"
-description: "Shows the NemoClaw-specific file paths and update flow for adding an auxiliary OpenClaw sub-agent model. Use when users ask how to add a second model, configure a sub-agent model, use Omni for vision tasks, configure agents.list, or use sessions_spawn in NemoClaw. Trigger keywords - nemoclaw additional model, nemoclaw sub-agent model, openclaw sub-agent, agents.list, sessions_spawn, vlm-demo, switch nemoclaw inference model, change inference runtime, nemoclaw local inference, ollama nemoclaw, vllm nemoclaw, local model server, openai compatible endpoint, nemoclaw inference options, nemoclaw onboarding providers, nemoclaw inference routing."
+description: "Shows the NemoClaw-specific file paths and update flow for adding an auxiliary OpenClaw sub-agent model. Use when users ask how to add a second model, configure a sub-agent model, use Omni for vision tasks, configure agents.list, or use sessions_spawn in NemoClaw. Trigger keywords - nemoclaw additional model, nemoclaw sub-agent model, openclaw sub-agent, agents.list, sessions_spawn, vlm-demo, switch nemoclaw inference model, change inference runtime, nemoclaw tool calling, ollama tool calls, vllm tool-call-parser, raw json in tui, nemoclaw local inference, ollama nemoclaw, vllm nemoclaw, local model server, openai compatible endpoint, nemoclaw inference options, nemoclaw onboarding providers, nemoclaw inference routing."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -120,8 +120,8 @@ Use the [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-dem
 ## References
 
 - **Load [references/switch-inference-providers.md](references/switch-inference-providers.md)** when switching inference providers, changing the model runtime, or reconfiguring inference routing. Changes the active inference model without restarting the sandbox.
+- **[references/tool-calling-reliability.md](references/tool-calling-reliability.md)** — Explains Ollama tool-call leak symptoms, when vLLM with a tool-call parser is recommended, and how to repoint NemoClaw to a parser-aware local endpoint.
 - **Load [references/use-local-inference.md](references/use-local-inference.md)** when setting up Ollama, vLLM, TensorRT-LLM, NIM, or any OpenAI-compatible local model server with NemoClaw. Connects NemoClaw to a local inference server.
-- **Load [references/tool-calling-reliability.md](references/tool-calling-reliability.md)** when a local model shows raw JSON tool-call text in the TUI, when deciding whether Ollama is sufficient for agent tool loops, or when recommending vLLM with `--tool-call-parser`.
 - **Load [references/inference-options.md](references/inference-options.md)** when explaining which providers are available, what the onboard wizard presents, or how inference routing works. Lists all inference providers offered during NemoClaw onboarding.
 
 ## Related Skills

@@ -95,5 +95,5 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 ## Next Steps
 
 - Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill) for Ollama, vLLM, NIM, and compatible-endpoint setup details.
-- Tool-Calling Reliability (use this skill's `tool-calling-reliability.md` reference) for deciding when Ollama is enough and when vLLM with a parser is safer.
+- Tool-Calling Reliability (use the `nemoclaw-user-configure-inference` skill) for deciding when Ollama is enough and when vLLM with a parser is safer.
 - Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for changing the model at runtime without re-onboarding.
