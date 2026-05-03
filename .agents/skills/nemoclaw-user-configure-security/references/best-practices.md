@@ -141,7 +141,7 @@ Endpoint rules restrict allowed HTTP methods and URL paths.
 
 | Aspect | Detail |
 |---|---|
-| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `api.anthropic.com` allows POST only to inference paths). Read-only endpoints such as `docs.openclaw.ai` and `sentry.io` allow GET only. The `npm_registry` baseline entry and the `npm`/`pypi` presets are GET-only (plus HEAD for PyPI). |
+| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `integrate.api.nvidia.com` allows POST only to inference and embedding paths and GET to model listings). Read-only endpoints such as `docs.openclaw.ai` allow GET only. The `npm_registry` baseline entry and the `npm`/`pypi` presets are GET-only (plus HEAD for PyPI). |
 | What you can change | Add methods (PUT, DELETE, PATCH) or restrict paths to specific prefixes. |
 | Risk if relaxed | Allowing all methods on an API endpoint gives the agent write and delete access. For example, allowing DELETE on `api.github.com` lets the agent delete repositories. |
 | Recommendation | Use GET-only rules for endpoints that the agent only reads. Add write methods only for endpoints where the agent must create or modify resources. Restrict paths to specific API routes when possible. |
