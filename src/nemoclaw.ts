@@ -2416,6 +2416,7 @@ async function sandboxRebuild(
   }
   console.log("");
 
+  let rebuildConfirmed = false;
   if (!skipConfirm) {
     if (rebuildActiveSessionCount > 0) {
       const plural = rebuildActiveSessionCount > 1 ? "sessions" : "session";
@@ -2437,6 +2438,7 @@ async function sandboxRebuild(
       console.log("  Cancelled.");
       return;
     }
+    rebuildConfirmed = true;
   }
 
   // Step 0: Preflight — verify recreate preconditions BEFORE destroying
@@ -2669,7 +2671,12 @@ async function sandboxRebuild(
       recreateSandbox: true,
       agent: rebuildAgent,
       fromDockerfile: storedFromDockerfile,
-      autoYes: skipConfirm,
+      // Reaching here means the user already consented to the destructive
+      // rebuild (either via --yes/--force or by answering "y" at the prompt).
+      // Propagate that consent so the size-confirm gate inside the
+      // non-interactive onboard does not abort after the old sandbox has
+      // been deleted (#2639 follow-up).
+      autoYes: skipConfirm || rebuildConfirmed,
     });
     log("onboard() returned successfully");
   } catch (err) {

@@ -104,7 +104,8 @@ $ NEMOCLAW_PROVIDER=ollama \
 If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
 
 `--yes` (or `NEMOCLAW_YES=1`) authorises the Ollama model download without an interactive confirmation prompt.
-Omit it for an interactive `[y/N]` prompt that shows the model size before downloading.
+Under `--non-interactive`, `--yes` (or `NEMOCLAW_YES=1`) is required to authorise the download — onboard exits otherwise, since it cannot prompt.
+Run onboard without `--non-interactive` to get the interactive `[y/N]` prompt that shows the model size before downloading.
 
 | Variable | Purpose |
 |---|---|
