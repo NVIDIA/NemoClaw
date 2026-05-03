@@ -36,6 +36,9 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     userIdHelp: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
     userIdLabel: "Telegram User ID (for DM access)",
     allowIdsMode: "dm",
+    requireMentionEnvKey: "TELEGRAM_REQUIRE_MENTION",
+    requireMentionHelp:
+      "Controls Telegram group-chat behavior only — reply only when @mentioned vs. to all group messages. Direct messages are unaffected by this setting and remain subject to pairing and TELEGRAM_ALLOWED_IDS.",
   },
   discord: {
     envKey: "DISCORD_BOT_TOKEN",

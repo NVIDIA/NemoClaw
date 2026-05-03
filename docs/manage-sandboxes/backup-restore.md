@@ -1,7 +1,7 @@
 ---
 title:
   page: "Backup and Restore Workspace Files"
-  nav: "Backup & Restore"
+  nav: "Backup and Restore"
 description:
   main: "How to back up and restore OpenClaw workspace files before destructive operations."
   agent: "Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds. Use when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds."
@@ -12,6 +12,8 @@ content:
   type: how_to
   difficulty: technical_beginner
   audience: ["developer", "engineer"]
+skill:
+  priority: 20
 status: published
 ---
 

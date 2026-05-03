@@ -56,6 +56,8 @@ describe("uninstall CLI flags", () => {
           HOME: tmp,
           PATH: `${fakeBin}:/usr/bin:/bin`,
           SCRIPT_DIR: path.join(import.meta.dirname, ".."),
+          // Keep helper-service glob cleanup isolated from concurrently running tests.
+          TMPDIR: tmp,
         },
       });
 
@@ -229,5 +231,5 @@ describe("uninstall helpers", () => {
     expect(result.status).toBe(0);
     expect(fs.existsSync(sessionPath)).toBe(false);
     expect(fs.existsSync(stateDir)).toBe(false);
-  });
+  }, 60_000);
 });

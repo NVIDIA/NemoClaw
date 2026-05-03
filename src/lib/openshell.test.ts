@@ -6,6 +6,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import {
+  captureOpenshellCommandAsync,
   captureOpenshellCommand,
   getInstalledOpenshellVersion,
   type OpenshellSpawnSync,
@@ -150,6 +151,26 @@ describe("openshell helpers", () => {
       error: expect.objectContaining({ message: expect.stringContaining("ETIMEDOUT") }),
       signal: "SIGTERM",
     });
+  });
+
+  it("bounds async captures and reports timeout metadata", async () => {
+    const script = [
+      "const { spawn } = require('node:child_process');",
+      "spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });",
+      "setInterval(() => {}, 1000);",
+    ].join("");
+
+    const started = Date.now();
+    const result = await captureOpenshellCommandAsync(process.execPath, ["-e", script], {
+      ignoreError: true,
+      timeout: 50,
+      killGraceMs: 10,
+    });
+
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(result.status).toBeNull();
+    expect(result.error).toEqual(expect.objectContaining({ code: "ETIMEDOUT" }));
+    expect(result.signal).toBeTruthy();
   });
 
   it("uses the injected exit handler on failure", () => {

@@ -477,7 +477,7 @@ Follow these steps to reconnect.
 
 If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
 The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
+Back up your workspace first by following the instructions at [Back Up and Restore](../manage-sandboxes/backup-restore.md).
 :::
 
 ### Sandbox is running an outdated agent version
@@ -597,6 +597,9 @@ $ nemoclaw onboard
 If you previously set `NEMOCLAW_PREFERRED_API=openai-responses` to force the
 Responses API, unset it before re-running onboard.
 
+When you enable Telegram messaging with an OpenAI-compatible endpoint, onboarding also checks `inference.local` from inside the sandbox.
+If that smoke check fails, fix the compatible-endpoint base URL, credentials, model, or network route before testing the Telegram bot again.
+
 Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone — it patches the config
 at container startup but does not update the Dockerfile ARG baked into the
 image.
@@ -693,7 +696,7 @@ Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mod
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
 ```console
-$ openshell term <sandbox-name>
+$ nemoclaw <sandbox-name> connect
 $ tail -f /tmp/gateway.log
 ```
 

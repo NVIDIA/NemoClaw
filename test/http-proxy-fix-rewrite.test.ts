@@ -47,7 +47,6 @@ type RewrittenOptions = http.RequestOptions & {
 function loadWrapper() {
   // Clear cached copies so the IIFE re-runs and reads our test env.
   delete require.cache[FIX_PATH];
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   require(FIX_PATH);
 }
 

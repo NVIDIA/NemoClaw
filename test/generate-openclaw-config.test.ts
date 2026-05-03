@@ -168,16 +168,39 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.agents.defaults.thinkingDefault).toBe("off");
   });
 
+  it("keeps compatible endpoints on the managed inference.local OpenClaw provider", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "deepseek-ai/DeepSeek-V4-Flash",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/deepseek-ai/DeepSeek-V4-Flash",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(JSON.stringify({ supportsStore: false })).toString(
+        "base64",
+      ),
+    });
+
+    expect(Object.keys(config.models.providers)).toEqual(["inference"]);
+    expect(config.models.providers.inference.baseUrl).toBe("https://inference.local/v1");
+    expect(config.models.providers.inference.apiKey).toBe("unused");
+    expect(config.models.providers.inference.models[0]).toMatchObject({
+      id: "deepseek-ai/DeepSeek-V4-Flash",
+      name: "inference/deepseek-ai/DeepSeek-V4-Flash",
+      compat: { supportsStore: false },
+    });
+    expect(config.agents.defaults.model.primary).toBe("inference/deepseek-ai/DeepSeek-V4-Flash");
+    expect(config.models.providers.deepinfra).toBeUndefined();
+  });
+
   it("sets gateway auth token to empty string", () => {
     const config = runConfigScript();
     expect(config.gateway.auth.token).toBe("");
   });
 
-  it("configures acpx codex to use the preinstalled binary", () => {
+  it("disables bundled acpx runtime staging by default", () => {
     const config = runConfigScript();
-    expect(config.plugins.entries.acpx.config.agents.codex.command).toBe(
-      "/usr/local/bin/nemoclaw-codex-acp",
-    );
+    expect(config.plugins.entries.acpx.enabled).toBe(false);
+    expect(config.plugins.entries.acpx.config).toBeUndefined();
   });
 
   it("disables unused bundled provider plugins with staged runtime deps", () => {
@@ -186,13 +209,25 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.plugins.entries["amazon-bedrock-mantle"].enabled).toBe(false);
     expect(config.plugins.entries.anthropic.enabled).toBe(false);
     expect(config.plugins.entries["anthropic-vertex"].enabled).toBe(false);
+    expect(config.plugins.entries.fireworks.enabled).toBe(false);
     expect(config.plugins.entries.google.enabled).toBe(false);
+    expect(config.plugins.entries.kimi.enabled).toBe(false);
+    expect(config.plugins.entries.lmstudio.enabled).toBe(false);
+    expect(config.plugins.entries.ollama.enabled).toBe(false);
+    expect(config.plugins.entries.openai.enabled).toBe(false);
+    expect(config.plugins.entries.xai.enabled).toBe(false);
   });
 
   it("keeps the selected bundled provider plugin available", () => {
     const config = runConfigScript({ NEMOCLAW_PROVIDER_KEY: "anthropic" });
     expect(config.plugins.entries.anthropic).toBeUndefined();
     expect(config.plugins.entries.google.enabled).toBe(false);
+  });
+
+  it("keeps the selected OpenAI bundled provider plugin available", () => {
+    const config = runConfigScript({ NEMOCLAW_PROVIDER_KEY: "openai" });
+    expect(config.plugins.entries.openai).toBeUndefined();
+    expect(config.plugins.entries.xai.enabled).toBe(false);
   });
 
   it("creates file with 0600 permissions", () => {
@@ -277,5 +312,97 @@ describe("generate-openclaw-config.py: empty-string env vars fall back to defaul
       NEMOCLAW_MESSAGING_CHANNELS_B64: channelB64,
     });
     expect(cfg.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
+  });
+
+  it("treats empty NEMOCLAW_CONTEXT_WINDOW as unset and uses the documented default", () => {
+    const cfg = runConfigScript({ NEMOCLAW_CONTEXT_WINDOW: "" });
+    expect(cfg.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
+  });
+
+  it("treats empty NEMOCLAW_MAX_TOKENS as unset and uses the documented default", () => {
+    const cfg = runConfigScript({ NEMOCLAW_MAX_TOKENS: "" });
+    expect(cfg.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
+  });
+});
+
+describe("generate-openclaw-config.py: numeric env var validation", () => {
+  function runCapturingStderr(envOverrides: Record<string, string>): {
+    config: any;
+    stderr: string;
+  } {
+    const env: Record<string, string> = {
+      PATH: process.env.PATH || "/usr/bin:/bin",
+      ...BASE_ENV,
+      ...envOverrides,
+      HOME: tmpDir,
+    };
+    const result = spawnSync("python3", [SCRIPT_PATH], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+      timeout: 10_000,
+    });
+    if (result.status !== 0) {
+      throw new Error(
+        `Script failed (exit ${result.status}):\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+      );
+    }
+    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+    return {
+      config: JSON.parse(fs.readFileSync(configPath, "utf-8")),
+      stderr: result.stderr,
+    };
+  }
+
+  it("skips non-numeric NEMOCLAW_CONTEXT_WINDOW and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_CONTEXT_WINDOW: "notanumber" });
+    expect(config.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
+    expect(stderr).toMatch(
+      /\[SECURITY\] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "notanumber"/,
+    );
+  });
+
+  it("skips non-numeric NEMOCLAW_MAX_TOKENS and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_MAX_TOKENS: "notanumber" });
+    expect(config.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
+    expect(stderr).toMatch(
+      /\[SECURITY\] NEMOCLAW_MAX_TOKENS must be a positive integer, got "notanumber"/,
+    );
+  });
+
+  it("skips zero NEMOCLAW_CONTEXT_WINDOW and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_CONTEXT_WINDOW: "0" });
+    expect(config.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
+    expect(stderr).toMatch(/NEMOCLAW_CONTEXT_WINDOW must be a positive integer/);
+  });
+
+  it("skips zero NEMOCLAW_MAX_TOKENS and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_MAX_TOKENS: "0" });
+    expect(config.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
+    expect(stderr).toMatch(/NEMOCLAW_MAX_TOKENS must be a positive integer/);
+  });
+
+  it("skips negative NEMOCLAW_CONTEXT_WINDOW and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_CONTEXT_WINDOW: "-1" });
+    expect(config.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
+    expect(stderr).toMatch(/NEMOCLAW_CONTEXT_WINDOW must be a positive integer/);
+  });
+
+  it("skips negative NEMOCLAW_MAX_TOKENS and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_MAX_TOKENS: "-1" });
+    expect(config.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
+    expect(stderr).toMatch(/NEMOCLAW_MAX_TOKENS must be a positive integer/);
+  });
+
+  it("skips NEMOCLAW_CONTEXT_WINDOW that exceeds Python's int-string digit limit", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_CONTEXT_WINDOW: "9".repeat(10000) });
+    expect(config.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
+    expect(stderr).toMatch(/NEMOCLAW_CONTEXT_WINDOW must be a positive integer/);
+  });
+
+  it("skips NEMOCLAW_MAX_TOKENS that exceeds Python's int-string digit limit", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_MAX_TOKENS: "9".repeat(10000) });
+    expect(config.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
+    expect(stderr).toMatch(/NEMOCLAW_MAX_TOKENS must be a positive integer/);
   });
 });

@@ -161,6 +161,42 @@ interface ConfigGetOpts {
   format?: string;
 }
 
+type ConfigGetParseResult =
+  | { ok: true; opts: { key: string | null; format: string } }
+  | { ok: false; errors: string[] };
+
+function configGetUsage(cliName: string): string {
+  return `  Usage: ${cliName} <name> config get [--key dotpath] [--format json|yaml]`;
+}
+
+function parseConfigGetArgs(args: string[], cliName = "nemoclaw"): ConfigGetParseResult {
+  const opts = { key: null as string | null, format: "json" };
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (flag === "--key") {
+      if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+        return { ok: false, errors: ["  --key requires a value.", configGetUsage(cliName)] };
+      }
+      opts.key = args[++i];
+    } else if (flag === "--format") {
+      if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+        return {
+          ok: false,
+          errors: ["  --format requires a value (json|yaml).", configGetUsage(cliName)],
+        };
+      }
+      const format = args[++i];
+      if (format !== "json" && format !== "yaml") {
+        return { ok: false, errors: [`  Unknown format: ${format}. Use json or yaml.`] };
+      }
+      opts.format = format;
+    } else {
+      return { ok: false, errors: [`  Unknown flag: ${flag}`, configGetUsage(cliName)] };
+    }
+  }
+  return { ok: true, opts };
+}
+
 function configGet(sandboxName: string, opts: ConfigGetOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
@@ -199,6 +235,7 @@ function configGet(sandboxName: string, opts: ConfigGetOpts = {}): void {
 export {
   DEFAULT_AGENT_CONFIG,
   configGet,
+  parseConfigGetArgs,
   resolveAgentConfig,
   readSandboxConfig,
   extractDotpath,

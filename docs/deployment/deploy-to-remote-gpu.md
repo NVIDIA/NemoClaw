@@ -12,6 +12,8 @@ content:
   type: how_to
   difficulty: intermediate
   audience: ["developer", "engineer"]
+skill:
+  priority: 10
 status: published
 ---
 
@@ -152,6 +154,6 @@ $ nemoclaw deploy <instance-name>
 
 ## Related Topics
 
-- [Set Up Telegram](set-up-telegram-bridge.md) to connect Telegram through OpenShell-managed channel messaging.
+- [Set Up Messaging Channels](../manage-sandboxes/messaging-channels.md) to connect Telegram, Discord, or Slack through OpenShell-managed channel messaging.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) for sandbox monitoring tools.
 - [Commands](../reference/commands.md) for the full `deploy` command reference.

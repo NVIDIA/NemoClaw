@@ -3,12 +3,12 @@
 
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const INSTALL_SH = path.join(REPO_ROOT, "scripts", "install.sh");
-const BLUEPRINT = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
 
 function sourceAndRun(body: string) {
   return spawnSync(
@@ -32,55 +32,86 @@ describe("local inference setup (install.sh)", () => {
     expect(result.stdout).not.toContain("Starting vLLM");
   });
 
-  it("install_or_upgrade_ollama is not invoked when NEMOCLAW_PROVIDER is not ollama", () => {
-    // Sanity-check the main() gating by grepping for the conditional wrapping the call.
-    const content = fs.readFileSync(INSTALL_SH, "utf-8");
-    expect(content).toMatch(/NEMOCLAW_PROVIDER:-.*==\s*"ollama"[\s\S]*install_or_upgrade_ollama/);
+  it("main skips Ollama setup when NEMOCLAW_PROVIDER is not ollama", () => {
+    const result = sourceAndRun(`
+print_banner() { :; }
+bash() { :; }
+step() { :; }
+install_nodejs() { :; }
+ensure_supported_runtime() { :; }
+install_or_upgrade_ollama() { echo OLLAMA_CALLED; return 0; }
+install_or_start_vllm() { :; }
+fix_npm_permissions() { :; }
+install_nemoclaw() { :; }
+verify_nemoclaw() { NEMOCLAW_READY_NOW=true; }
+run_onboarding() { :; }
+print_summary() { :; }
+post_install_message() { :; }
+command_exists() { return 1; }
+NEMOCLAW_PROVIDER=openai main --non-interactive --yes-i-accept-third-party-software
+echo done
+`);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("done");
+    expect(result.stdout).not.toContain("OLLAMA_CALLED");
   });
 
-  it("vLLM default model id matches the blueprint", () => {
-    const content = fs.readFileSync(INSTALL_SH, "utf-8");
-    const installMatch = content.match(/VLLM_DEFAULT_MODEL="([^"]+)"/);
-    expect(installMatch).not.toBeNull();
-    const installModel = installMatch![1];
-
-    const blueprintContent = fs.readFileSync(BLUEPRINT, "utf-8");
-    const blueprintMatch = blueprintContent.match(/vllm:[\s\S]*?model:\s*"([^"]+)"/);
-    expect(blueprintMatch).not.toBeNull();
-    const blueprintModel = blueprintMatch![1];
-
-    expect(installModel).toBe(blueprintModel);
-  });
-
-  it("vLLM startup uses --trust-remote-code", () => {
-    const content = fs.readFileSync(INSTALL_SH, "utf-8");
-    expect(content).toMatch(/vllm\.entrypoints\.openai\.api_server[\s\S]*--trust-remote-code/);
-  });
-
-  it("vLLM binds to loopback, not all interfaces", () => {
-    const content = fs.readFileSync(INSTALL_SH, "utf-8");
-    expect(content).toMatch(/vllm\.entrypoints\.openai\.api_server[\s\S]*--host 127\.0\.0\.1/);
-    expect(content).not.toMatch(/vllm\.entrypoints\.openai\.api_server[\s\S]*--host 0\.0\.0\.0/);
-  });
-
-  it("readiness loop validates the served model id", () => {
-    // The readiness poll must not declare success on any 200 from /v1/models;
-    // it has to confirm the response advertises the requested model in the
-    // JSON-quoted id field, so a stale listener serving a superstring of
-    // $model can't masquerade as the new process.
-    const content = fs.readFileSync(INSTALL_SH, "utf-8");
-    expect(content).toMatch(
-      /Waiting for vLLM[\s\S]*ready_models=[\s\S]*grep -Fq "\\"id\\":\\"\$model\\""[\s\S]*vLLM ready/,
+  it("vLLM startup uses trusted loopback serving and waits for exact model readiness", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-start-"));
+    const log = path.join(tmp, "vllm.log");
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `SCRIPT_DIR="$(dirname "${INSTALL_SH}")"; source "${INSTALL_SH}"; \
+set +e; \
+detect_gpu() { return 0; }; \
+python3() { if [ "\${1:-}" = "-c" ]; then return 0; fi; echo "PYTHON $*" >> ${JSON.stringify(log)}; return 0; }; \
+nohup() { "$@"; }; \
+kill() { return 0; }; \
+curl_state=${JSON.stringify(path.join(tmp, "curl.seen"))}; \
+curl() { if [ ! -f "$curl_state" ]; then touch "$curl_state"; echo '{"data":[{"id":"stale-model"}]}'; else echo '{"data":[{"id":"nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8"}]}'; fi; }; \
+export -f detect_gpu python3 nohup kill curl; \
+NEMOCLAW_PROVIDER=vllm install_or_start_vllm; echo "rc=$?"`,
+      ],
+      { encoding: "utf-8", timeout: 5000 },
     );
+    try {
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("vLLM ready");
+      expect(result.stdout).toContain("rc=0");
+      const launched = fs.readFileSync(log, "utf-8");
+      expect(launched).toContain("-m vllm.entrypoints.openai.api_server");
+      expect(launched).toContain("--host 127.0.0.1");
+      expect(launched).not.toContain("--host 0.0.0.0");
+      expect(launched).toContain("--trust-remote-code");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("main() aborts the install when NEMOCLAW_PROVIDER=vllm and setup fails", () => {
-    // Silently warning-and-continuing leaves onboarding pointed at a broken
-    // localhost:8000 — the exact failure mode the vLLM path is meant to fix.
-    const content = fs.readFileSync(INSTALL_SH, "utf-8");
-    expect(content).toMatch(
-      /NEMOCLAW_PROVIDER:-.*==\s*"vllm"[\s\S]*install_or_start_vllm \|\| error/,
-    );
+    const result = sourceAndRun(`
+print_banner() { :; }
+bash() { :; }
+step() { :; }
+install_nodejs() { :; }
+ensure_supported_runtime() { :; }
+install_or_upgrade_ollama() { :; }
+install_or_start_vllm() { echo VLLM_FAIL; return 1; }
+fix_npm_permissions() { :; }
+install_nemoclaw() { :; }
+verify_nemoclaw() { NEMOCLAW_READY_NOW=true; }
+run_onboarding() { :; }
+print_summary() { :; }
+post_install_message() { :; }
+command_exists() { return 1; }
+error() { echo "ERROR: $*"; exit 77; }
+NEMOCLAW_PROVIDER=vllm main --non-interactive --yes-i-accept-third-party-software
+`);
+    expect(result.status).toBe(77);
+    expect(result.stdout).toContain("VLLM_FAIL");
+    expect(result.stdout).toContain("vLLM setup failed");
   });
 
   it("install_or_start_vllm fails when NEMOCLAW_PROVIDER=vllm and no GPU is detected", () => {

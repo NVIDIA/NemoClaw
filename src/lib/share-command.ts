@@ -52,7 +52,7 @@ export function defaultShareMountDir(sandboxName: string): string {
  * Resolve the fusermount binary for Linux. FUSE 3 ships `fusermount3`;
  * older FUSE 2 ships `fusermount`. Probe both, preferring v3.
  */
-function resolveLinuxUnmount(): string | null {
+export function resolveLinuxUnmount(): string | null {
   for (const cmd of ["fusermount3", "fusermount"]) {
     const probe = spawnSync("sh", ["-c", `command -v ${cmd}`], {
       encoding: "utf-8",

@@ -116,7 +116,6 @@ export function resolveSkillPaths(
 
 // Re-export shellQuote from runner.ts — a repo-wide test enforces
 // a single definition lives in runner.ts.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { shellQuote } = require("./runner");
 export { shellQuote };
 

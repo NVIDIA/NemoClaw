@@ -17,7 +17,6 @@ type ManifestValue = ManifestScalar | ManifestRecord | ManifestValue[];
 type ManifestRecord = { [key: string]: ManifestValue };
 type StringMap = { [key: string]: string };
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const yaml: { load(input: string): unknown } = require("js-yaml");
 
 export interface AgentHealthProbe {

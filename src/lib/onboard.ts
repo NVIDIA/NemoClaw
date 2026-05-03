@@ -22,6 +22,8 @@ function envInt(name: string, fallback: number): number {
 }
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
 const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
+/** Sandbox Ready wait after OpenShell create returns but k3s is still converging. */
+const SANDBOX_READY_TIMEOUT_SECS = envInt("NEMOCLAW_SANDBOX_READY_TIMEOUT", 180);
 
 let onboardBrandingAgent: string | null = null;
 
@@ -105,6 +107,7 @@ const {
 const localInference: typeof import("./local-inference") = require("./local-inference");
 const {
   findReachableOllamaHost,
+  resetOllamaHostCache,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -112,6 +115,8 @@ const {
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
+  getResolvedOllamaHost,
+  OLLAMA_HOST_DOCKER_INTERNAL,
   validateOllamaPortConfiguration,
   validateOllamaModel,
   validateLocalProvider,
@@ -124,8 +129,20 @@ const {
   persistProxyToken,
   startOllamaAuthProxy,
 } = require("./onboard-ollama-proxy");
+const {
+  installOllamaOnWindowsHost,
+  awaitWindowsOllamaReady,
+  setupWindowsOllamaWith0000Binding,
+  switchToWindowsOllamaHost,
+} = require("./onboard-windows-ollama");
 const inferenceConfig: typeof import("./inference-config") = require("./inference-config");
-const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
+const {
+  DEFAULT_CLOUD_MODEL,
+  INFERENCE_ROUTE_URL,
+  MANAGED_PROVIDER_ID,
+  getProviderSelectionConfig,
+  parseGatewayInference,
+} = inferenceConfig;
 
 const onboardProviders = require("./onboard-providers");
 
@@ -397,16 +414,26 @@ type OnboardOptions = {
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   controlUiPort?: number | null;
-  autoYes?: boolean;
 };
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
 let RECREATE_SANDBOX = false;
-let AUTO_YES = false;
 // Set by onboard() before preflight() when --control-ui-port is specified.
 // null means "use auto-allocation" (skip dashboard port check in preflight).
 let _preflightDashboardPort: number | null = null;
+
+// Read TELEGRAM_REQUIRE_MENTION (set either by the interactive mention prompt
+// or by the user's shell) and map it to a boolean, or null when the env var
+// is unset / invalid. Used at build time to bake groupPolicy into
+// openclaw.json and at resume time to detect drift against the recorded
+// session state. See #1737 and the CodeRabbit follow-up on #2417.
+function computeTelegramRequireMention(): boolean | null {
+  const raw = process.env.TELEGRAM_REQUIRE_MENTION;
+  if (raw === "1") return true;
+  if (raw === "0") return false;
+  return null;
+}
 
 function isNonInteractive(): boolean {
   return NON_INTERACTIVE || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
@@ -414,10 +441,6 @@ function isNonInteractive(): boolean {
 
 function isRecreateSandbox(): boolean {
   return RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
-}
-
-function isAutoYes(): boolean {
-  return AUTO_YES || process.env.NEMOCLAW_YES === "1";
 }
 
 function note(message: string): void {
@@ -1091,7 +1114,7 @@ function upsertProvider(
       // openshell receives `--credential <ENV>` and reads the value from the
       // `env` block passed here, falling back to the inherited process.env.
       // Use getCredential() for the env-fallback branch (per the
-      // no-direct-credential-env eslint rule from PR #2306) — it mirrors
+      // direct credential env guard from PR #2306) — it mirrors
       // openshell's resolution order while the staging contract has
       // already populated the same value into process.env.
       const upsertedValue = env[credentialEnv] ?? getCredential(credentialEnv);
@@ -1128,6 +1151,57 @@ type SelectionDrift = {
   existingModel: string | null;
   unknown: boolean;
 };
+
+type InitialSandboxPolicy = {
+  policyPath: string;
+  appliedPresets: string[];
+  cleanup?: () => boolean;
+};
+
+const CREATE_TIME_POLICY_PRESETS_BY_CHANNEL: Record<string, string[]> = {
+  slack: ["slack"],
+};
+
+function prepareInitialSandboxCreatePolicy(
+  basePolicyPath: string,
+  activeMessagingChannels: string[],
+): InitialSandboxPolicy {
+  const createTimePresets = [
+    ...new Set(
+      activeMessagingChannels.flatMap(
+        (channel) => CREATE_TIME_POLICY_PRESETS_BY_CHANNEL[channel] || [],
+      ),
+    ),
+  ];
+
+  if (createTimePresets.length === 0) {
+    return { policyPath: basePolicyPath, appliedPresets: [] };
+  }
+
+  const basePolicy = fs.readFileSync(basePolicyPath, "utf-8");
+  const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets);
+  if (mergedPolicy.missingPresets.length > 0) {
+    throw new Error(
+      `Cannot prepare sandbox create policy; missing policy preset(s): ${mergedPolicy.missingPresets.join(", ")}`,
+    );
+  }
+
+  const policyPath = secureTempFile("nemoclaw-initial-policy", ".yaml");
+  fs.writeFileSync(policyPath, mergedPolicy.policy, { encoding: "utf-8", mode: 0o600 });
+
+  return {
+    policyPath,
+    appliedPresets: mergedPolicy.appliedPresets,
+    cleanup: () => {
+      try {
+        cleanupTempDir(policyPath, "nemoclaw-initial-policy");
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
 
 function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
   const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
@@ -1239,6 +1313,237 @@ function isInferenceRouteReady(provider: string, model: string): boolean {
     runCaptureOpenshell(["inference", "get"], { ignoreError: true }),
   );
   return Boolean(live && live.provider === provider && live.model === model);
+}
+
+function shouldRunCompatibleEndpointSandboxSmoke(
+  provider: string | null | undefined,
+  messagingChannels: string[] | null | undefined,
+  agent: AgentDefinition | null | undefined = null,
+): boolean {
+  const agentName = agent?.name || "openclaw";
+  return (
+    agentName === "openclaw" &&
+    provider === "compatible-endpoint" &&
+    Array.isArray(messagingChannels) &&
+    messagingChannels.length > 0
+  );
+}
+
+function spawnOutputToString(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Buffer.isBuffer(value)) return value.toString("utf-8");
+  if (value == null) return "";
+  return String(value);
+}
+
+function buildCompatibleEndpointSandboxSmokeScript(model: string): string {
+  return `
+set -eu
+MODEL=${shellQuote(model)}
+CONFIG=/sandbox/.openclaw/openclaw.json
+
+python3 - "$CONFIG" "$MODEL" <<'PYCFG'
+import json
+import sys
+
+path = sys.argv[1]
+model = sys.argv[2]
+
+def die(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+except Exception as exc:
+    die("could not read openclaw.json: %s" % exc)
+
+providers = cfg.get("models", {}).get("providers", {})
+if not isinstance(providers, dict):
+    die("openclaw.json models.providers is not an object")
+if "deepinfra" in providers:
+    die("openclaw.json contains a direct deepinfra provider; expected managed inference provider")
+
+provider = providers.get("${MANAGED_PROVIDER_ID}")
+if not isinstance(provider, dict):
+    die("openclaw.json missing models.providers.${MANAGED_PROVIDER_ID}")
+if provider.get("baseUrl") != "${INFERENCE_ROUTE_URL}":
+    die("models.providers.${MANAGED_PROVIDER_ID}.baseUrl is %r; expected ${INFERENCE_ROUTE_URL}" % provider.get("baseUrl"))
+if provider.get("apiKey") != "unused":
+    die("models.providers.${MANAGED_PROVIDER_ID}.apiKey must remain the non-secret placeholder 'unused'")
+
+primary = cfg.get("agents", {}).get("defaults", {}).get("model", {}).get("primary")
+expected_primary = "${MANAGED_PROVIDER_ID}/" + model
+if primary != expected_primary:
+    die("agents.defaults.model.primary is %r; expected %r" % (primary, expected_primary))
+
+print("OPENCLAW_CONFIG_OK")
+PYCFG
+
+payload_file="$(mktemp)"
+response_file="$(mktemp)"
+error_file="$(mktemp)"
+trap 'rm -f "$payload_file" "$response_file" "$error_file"' EXIT
+
+python3 - "$MODEL" >"$payload_file" <<'PYPAYLOAD'
+import json
+import sys
+
+model = sys.argv[1]
+print(json.dumps({
+    "model": model,
+    "messages": [
+        {"role": "user", "content": "Reply with exactly: PONG"}
+    ],
+    "max_tokens": 32,
+}))
+PYPAYLOAD
+
+curl -sS --connect-timeout 10 --max-time 60 \
+    "${INFERENCE_ROUTE_URL}/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "@$payload_file" >"$response_file" 2>"$error_file" || {
+  rc=$?
+  printf 'curl exit %s: ' "$rc" >&2
+  cat "$error_file" >&2
+  exit "$rc"
+}
+
+python3 - "$response_file" <<'PYRESP'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception as exc:
+    body = ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            body = f.read(1000)
+    except Exception:
+        pass
+    print("inference.local returned non-JSON response: %s; body=%s" % (exc, body), file=sys.stderr)
+    sys.exit(1)
+
+content = (
+    data.get("choices", [{}])[0]
+    .get("message", {})
+    .get("content")
+)
+if not isinstance(content, str) or not content.strip():
+    print("inference.local response did not contain choices[0].message.content: %s" % json.dumps(data)[:1000], file=sys.stderr)
+    sys.exit(1)
+
+print("INFERENCE_SMOKE_OK " + content.strip()[:200])
+PYRESP
+`.trim();
+}
+
+function buildCompatibleEndpointSandboxSmokeCommand(model: string): string {
+  const script = buildCompatibleEndpointSandboxSmokeScript(model);
+  const encoded = Buffer.from(script, "utf8").toString("base64");
+  return [
+    'tmp="$(mktemp)"',
+    'trap \'rm -f "$tmp"\' EXIT',
+    `python3 -c 'import base64, pathlib, sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(sys.argv[2]))' "$tmp" ${shellQuote(encoded)}`,
+    'sh "$tmp"',
+  ].join("; ");
+}
+
+function verifyCompatibleEndpointSandboxSmoke(options: {
+  sandboxName: string;
+  provider: string;
+  model: string;
+  endpointUrl?: string | null;
+  credentialEnv?: string | null;
+  messagingChannels?: string[] | null;
+  agent?: AgentDefinition | null;
+}): void {
+  if (
+    !shouldRunCompatibleEndpointSandboxSmoke(
+      options.provider,
+      options.messagingChannels,
+      options.agent,
+    )
+  ) {
+    return;
+  }
+
+  console.log("  Verifying compatible endpoint through the messaging sandbox...");
+
+  const providerResult = runOpenshell(["provider", "get", options.provider], {
+    ignoreError: true,
+    suppressOutput: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const providerDetails = [
+    spawnOutputToString(providerResult.stdout),
+    spawnOutputToString(providerResult.stderr),
+  ]
+    .join("\n")
+    .trim();
+
+  if (providerResult.status !== 0) {
+    console.error(
+      `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
+    );
+    console.error(
+      "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
+    );
+    if (providerDetails) console.error(`  ${compactText(redact(providerDetails)).slice(0, 800)}`);
+    process.exit(providerResult.status || 1);
+  }
+
+  if (
+    options.endpointUrl &&
+    providerDetails &&
+    /OPENAI_BASE_URL|baseUrl|base URL|endpoint/i.test(providerDetails) &&
+    !providerDetails.includes(options.endpointUrl)
+  ) {
+    console.warn(
+      `  ⚠ Gateway provider '${options.provider}' did not report the selected endpoint URL.`,
+    );
+    console.warn("    Continuing to the sandbox-side inference.local smoke check.");
+  }
+  if (
+    options.credentialEnv &&
+    providerDetails &&
+    /credential|api key|secret/i.test(providerDetails) &&
+    !providerDetails.includes(options.credentialEnv)
+  ) {
+    console.warn(
+      `  ⚠ Gateway provider '${options.provider}' did not report ${options.credentialEnv}.`,
+    );
+  }
+
+  const script = buildCompatibleEndpointSandboxSmokeCommand(options.model);
+  const smokeResult = runOpenshell(
+    ["sandbox", "exec", "-n", options.sandboxName, "--", "sh", "-lc", script],
+    {
+      ignoreError: true,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 90_000,
+    },
+  );
+  const smokeOutput = [
+    spawnOutputToString(smokeResult.stdout),
+    spawnOutputToString(smokeResult.stderr),
+  ]
+    .join("\n")
+    .trim();
+
+  if (smokeResult.status !== 0 || !/INFERENCE_SMOKE_OK/.test(smokeOutput)) {
+    console.error("  Compatible endpoint sandbox smoke check failed.");
+    console.error("  Telegram provider startup is not the root cause; inference.local failed.");
+    if (smokeOutput) console.error(`  ${compactText(redact(smokeOutput)).slice(0, 1200)}`);
+    process.exit(smokeResult.status || 1);
+  }
+
+  console.log("  ✓ Compatible endpoint responds through inference.local inside the sandbox");
 }
 
 function sandboxExistsInGateway(sandboxName: string): boolean {
@@ -1379,16 +1684,27 @@ async function confirmRecreateForSelectionDrift(
 }
 
 function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
-  // openclaw.json is immutable (root:root 444, Landlock read-only) — never
-  // write to it at runtime.  Model routing is handled by the host-side
-  // gateway (`openshell inference set` in Step 5), not from inside the
-  // sandbox.  We only write the NemoClaw selection config (~/.nemoclaw/).
+  // Do not rewrite openclaw.json at runtime. Model routing is handled by the
+  // host-side gateway (`openshell inference set` in Step 5), not from inside
+  // the sandbox. We write the NemoClaw selection config and normalize the
+  // mutable-default OpenClaw config permissions after the gateway has had a
+  // chance to perform its own startup initialization.
   return `
 set -euo pipefail
 mkdir -p ~/.nemoclaw
 cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
 ${JSON.stringify(selectionConfig, null, 2)}
 EOF_NEMOCLAW_CFG
+config_dir=/sandbox/.openclaw
+if [ -d "$config_dir" ]; then
+  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
+  if [ "$config_dir_owner" != "root" ]; then
+    chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
+    find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
+    chmod 2770 "$config_dir" 2>/dev/null || true
+    chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
+  fi
+fi
 exit
 `.trim();
 }
@@ -1537,6 +1853,13 @@ function agentSupportsWebSearch(
   agent: AgentDefinition | null | undefined,
   dockerfilePathOverride: string | null = null,
 ): boolean {
+  // Hermes has native web tools, but the NemoClaw onboarding wizard wires the
+  // OpenClaw Brave provider path. Do not offer a Brave prompt for Hermes until
+  // that provider is supported end to end.
+  if (agent?.name === "hermes") {
+    return false;
+  }
+
   const candidates = [
     dockerfilePathOverride,
     agent?.dockerfilePath,
@@ -1715,6 +2038,7 @@ function patchStagedDockerfile(
   messagingAllowedIds: LooseObject = {},
   discordGuilds: LooseObject = {},
   baseImageRef: string | null = null,
+  telegramConfig: LooseObject = {},
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -1854,6 +2178,12 @@ function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_DISCORD_GUILDS_B64=.*$/m,
       `ARG NEMOCLAW_DISCORD_GUILDS_B64=${encodeDockerJsonArg(discordGuilds)}`,
+    );
+  }
+  if (telegramConfig && Object.keys(telegramConfig).length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_TELEGRAM_CONFIG_B64=.*$/m,
+      `ARG NEMOCLAW_TELEGRAM_CONFIG_B64=${encodeDockerJsonArg(telegramConfig)}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);
@@ -2026,48 +2356,6 @@ const {
   pullOllamaModel,
   prepareOllamaModel,
 } = require("./onboard-ollama-proxy");
-
-const ollamaModelSize: typeof import("./ollama-model-size") = require("./ollama-model-size");
-
-type OllamaProbeResult = { ok: true } | { ok: false; message: string };
-
-async function prepareOllamaModelWithSizeConfirm(
-  model: string,
-  installedModels: string[],
-): Promise<OllamaProbeResult> {
-  if (installedModels.includes(model)) {
-    return prepareOllamaModel(model, installedModels);
-  }
-
-  const lookup = ollamaModelSize.getOllamaModelSize(model);
-  const sizeLabel = ollamaModelSize.formatModelSize(lookup);
-
-  if (isAutoYes()) {
-    note(`  Pulling Ollama model '${model}' (${sizeLabel}).`);
-  } else if (isNonInteractive()) {
-    return {
-      ok: false,
-      message:
-        `Ollama model '${model}' (${sizeLabel}) is not installed and ` +
-        "non-interactive mode cannot prompt for confirmation. " +
-        "Re-run with --yes / -y (or NEMOCLAW_YES=1) to authorise the download.",
-    };
-  } else {
-    const proceed = await promptYesNoOrDefault(
-      `  Download Ollama model '${model}' (${sizeLabel})?`,
-      null,
-      false,
-    );
-    if (!proceed) {
-      return {
-        ok: false,
-        message: `Skipped pulling Ollama model '${model}'. Choose another model or re-run with --yes to confirm.`,
-      };
-    }
-  }
-
-  return prepareOllamaModel(model, installedModels);
-}
 
 function getRequestedSandboxNameHint(opts: { sandboxName?: string | null } = {}): string | null {
   const raw =
@@ -2545,7 +2833,6 @@ function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-// eslint-disable-next-line complexity
 async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
 
@@ -3654,7 +3941,6 @@ function formatOnboardConfigSummary({
   ].join("\n");
 }
 
-// eslint-disable-next-line complexity
 async function createSandbox(
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
@@ -4171,26 +4457,6 @@ async function createSandbox(
     "openclaw-sandbox.yaml",
   );
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
-  const createArgs = [
-    "--from",
-    `${buildCtx}/Dockerfile`,
-    "--name",
-    sandboxName,
-    "--policy",
-    basePolicyPath,
-  ];
-  // --gpu is intentionally omitted. See comment in startGateway().
-
-  // Create OpenShell providers for messaging credentials so they flow through
-  // the provider/placeholder system instead of raw env vars. The L7 proxy
-  // rewrites Authorization headers (Bearer/Bot) and URL-path segments
-  // (/bot{TOKEN}/) with real secrets at egress (OpenShell ≥ 0.0.20).
-  const messagingProviders = upsertMessagingProviders(messagingTokenDefs);
-  for (const p of messagingProviders) {
-    createArgs.push("--provider", p);
-  }
-
-  console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   if (webSearchConfig && !getCredential(webSearch.BRAVE_API_KEY_ENV)) {
     console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
     console.error(
@@ -4215,8 +4481,40 @@ async function createSandbox(
           if (envKey === "TELEGRAM_BOT_TOKEN") return ["telegram"];
           return [];
         }),
-    ),
+      ),
   ];
+  const initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
+    basePolicyPath,
+    activeMessagingChannels,
+  );
+  if (initialSandboxPolicy.cleanup) {
+    process.on("exit", initialSandboxPolicy.cleanup);
+  }
+  if (initialSandboxPolicy.appliedPresets.length > 0) {
+    console.log(
+      `  Including policy preset(s) at sandbox boot: ${initialSandboxPolicy.appliedPresets.join(", ")}`,
+    );
+  }
+  const createArgs = [
+    "--from",
+    `${buildCtx}/Dockerfile`,
+    "--name",
+    sandboxName,
+    "--policy",
+    initialSandboxPolicy.policyPath,
+  ];
+  // --gpu is intentionally omitted. See comment in startGateway().
+
+  // Create OpenShell providers for messaging credentials so they flow through
+  // the provider/placeholder system instead of raw env vars. The L7 proxy
+  // rewrites Authorization headers (Bearer/Bot) and URL-path segments
+  // (/bot{TOKEN}/) with real secrets at egress (OpenShell >= 0.0.20).
+  const messagingProviders = upsertMessagingProviders(messagingTokenDefs);
+  for (const p of messagingProviders) {
+    createArgs.push("--provider", p);
+  }
+
+  console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   // Build allowed sender IDs map from env vars set during the messaging prompt.
   // Each channel with a userIdEnvKey in MESSAGING_CHANNELS may have a
   // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
@@ -4264,6 +4562,31 @@ async function createSandbox(
       };
     }
   }
+  // Telegram mention-only mode — parity with Discord's requireMention.
+  // Off by default so existing sandboxes behave the same; opt-in via
+  // TELEGRAM_REQUIRE_MENTION=1 or the interactive prompt. See #1737.
+  const telegramConfig: { requireMention?: boolean } = {};
+  if (enabledTokenEnvKeys.has("TELEGRAM_BOT_TOKEN")) {
+    const telegramRequireMention = computeTelegramRequireMention();
+    if (telegramRequireMention !== null) {
+      telegramConfig.requireMention = telegramRequireMention;
+    }
+  }
+  // Persist the effective Telegram config into the session so a later resume
+  // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and
+  // force a sandbox recreate — otherwise the old groupPolicy would stay baked
+  // in. Mirrors the pattern used for webSearchConfig. See CodeRabbit on #2417.
+  if (typeof telegramConfig.requireMention === "boolean") {
+    onboardSession.updateSession((current) => {
+      current.telegramConfig = { requireMention: telegramConfig.requireMention as boolean };
+      return current;
+    });
+  } else {
+    onboardSession.updateSession((current) => {
+      current.telegramConfig = null;
+      return current;
+    });
+  }
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
   // exactly what we just fetched. This prevents stale :latest tags from
   // silently reusing a cached old image after NemoClaw upgrades (#1904).
@@ -4302,6 +4625,7 @@ async function createSandbox(
     messagingAllowedIds,
     discordGuilds,
     resolved ? resolved.ref : null,
+    telegramConfig,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -4389,6 +4713,10 @@ async function createSandbox(
     },
   });
 
+  if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
+    process.removeListener("exit", initialSandboxPolicy.cleanup);
+  }
+
   // Clean up build context regardless of outcome.
   // Use fs.rmSync instead of run() to avoid spawning a shell process.
   // Only deregister the 'exit' safety net when inline cleanup succeeded;
@@ -4428,13 +4756,14 @@ async function createSandbox(
   // causes "sandbox not found" on every subsequent connect/status call.
   console.log("  Waiting for sandbox to become ready...");
   let ready = false;
-  for (let i = 0; i < 30; i++) {
+  const readyAttempts = Math.max(1, Math.ceil(SANDBOX_READY_TIMEOUT_SECS / 2));
+  for (let i = 0; i < readyAttempts; i++) {
     const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
     if (isSandboxReady(list, sandboxName)) {
       ready = true;
       break;
     }
-    sleep(2);
+    if (i < readyAttempts - 1) sleep(2);
   }
 
   if (!ready) {
@@ -4442,7 +4771,9 @@ async function createSandbox(
     // name doesn't fail on "sandbox already exists".
     const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     console.error("");
-    console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);
+    console.error(
+      `  Sandbox '${sandboxName}' was created but did not become ready within ${SANDBOX_READY_TIMEOUT_SECS}s.`,
+    );
     if (delResult.status === 0) {
       console.error("  The orphaned sandbox has been removed — you can safely retry.");
     } else {
@@ -4618,7 +4949,6 @@ async function createSandbox(
 
 // ── Step 3: Inference selection ──────────────────────────────────
 
-// eslint-disable-next-line complexity
 type ProviderChoice = { key: string; label: string };
 
 function providerNameToOptionKey(
@@ -4750,6 +5080,67 @@ function readRecordedModel(sandboxName: string | null | undefined): string | nul
   return null;
 }
 
+type OllamaModelSelectionOutcome =
+  | { outcome: "selected"; model: string }
+  | { outcome: "back-to-selection" };
+
+// Pick an Ollama model, pull it if missing, and validate it via the local
+// proxy. Shared by the three Ollama provider branches (running, Windows-host
+// install/start, install-locally). Returns "back-to-selection" so the caller
+// can `continue` its labelled outer selectionLoop.
+async function selectAndValidateOllamaModel(
+  gpu: ReturnType<typeof nim.detectGpu>,
+  provider: string,
+  defaults: { requestedModel: string | null; recoveredModel: string | null },
+): Promise<OllamaModelSelectionOutcome> {
+  const { requestedModel, recoveredModel } = defaults;
+  while (true) {
+    const installedModels = getOllamaModelOptions();
+    let model: string;
+    if (isNonInteractive()) {
+      model = requestedModel || recoveredModel || getDefaultOllamaModel(gpu);
+    } else {
+      model = await promptOllamaModel(gpu);
+    }
+    if (model === BACK_TO_SELECTION) {
+      console.log("  Returning to provider selection.");
+      console.log("");
+      return { outcome: "back-to-selection" };
+    }
+    const selectedModel = requireValue(model, "Expected an Ollama model selection");
+    const probe = await prepareOllamaModel(selectedModel, installedModels);
+    if (!probe.ok) {
+      console.error(`  ${probe.message}`);
+      if (isNonInteractive()) process.exit(1);
+      console.log("  Choose a different Ollama model or select Other.");
+      console.log("");
+      continue;
+    }
+    const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
+    if (!validationBaseUrl) {
+      console.error("  Local Ollama validation URL could not be determined.");
+      process.exit(1);
+    }
+    const validation = await validateOpenAiLikeSelection(
+      "Local Ollama",
+      validationBaseUrl,
+      selectedModel,
+      null,
+      "Choose a different Ollama model or select Other.",
+    );
+    if (validation.retry === "selection") return { outcome: "back-to-selection" };
+    if (!validation.ok) continue;
+    // Ollama's /v1/responses endpoint does not produce correctly formatted
+    // tool calls — force chat completions like vLLM/NIM.
+    if (validation.api !== "openai-completions") {
+      console.log(
+        "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
+      );
+    }
+    return { outcome: "selected", model: selectedModel };
+  }
+}
+
 async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
@@ -4775,15 +5166,76 @@ async function setupNim(
   // (#2674).
   const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
   const hasOllama = hostCommandExists("ollama");
-  // findReachableOllamaHost probes 127.0.0.1 first and, on WSL, falls back
-  // to host.docker.internal so a Windows-host Ollama bound to a non-loopback
-  // interface is detected. The result is cached for the rest of the onboard
   // run and consumed by the Ollama lifecycle helpers in local-inference.ts.
-  const ollamaRunning = findReachableOllamaHost() !== null;
+  const ollamaHost = findReachableOllamaHost();
+  const ollamaRunning = ollamaHost !== null;
   const vllmRunning = !!runCapture(
     ["curl", "-sf", ...localProbeCurlArgs, `http://127.0.0.1:${VLLM_PORT}/v1/models`],
     { ignoreError: true },
   );
+  // Probed even when WSL has its own Ollama: users may prefer the Windows
+  // instance for GPU access and a unified model cache.
+  let hasWindowsOllama = false;
+  if (isWsl()) {
+    const winOllamaPath = runCapture(
+      [
+        "powershell.exe",
+        "-Command",
+        "Get-Command ollama.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source",
+      ],
+      { ignoreError: true },
+    ).trim();
+    hasWindowsOllama = winOllamaPath.length > 0;
+  }
+
+  let winOllamaLoopbackOnly = false;
+  if (isWsl() && hasWindowsOllama) {
+    const winPid = runCapture(
+      [
+        "powershell.exe",
+        "-Command",
+        "Get-Process ollama -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id",
+      ],
+      { ignoreError: true },
+    ).trim();
+    if (winPid) {
+      const listenAddrs = runCapture(
+        [
+          "powershell.exe",
+          "-Command",
+          "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalAddress",
+        ],
+        { ignoreError: true },
+      );
+      winOllamaLoopbackOnly =
+        /127\.0\.0\.1/.test(listenAddrs) && !/0\.0\.0\.0|^::\s*$/m.test(listenAddrs);
+    }
+  }
+
+  // Independent of findReachableOllamaHost: when WSL Ollama wins the cache
+  // on 127.0.0.1, Windows-host may also be running on 0.0.0.0 and we want
+  // to offer a "switch" without restarting anything.
+  let windowsOllamaReachable = false;
+  if (isWsl() && ollamaHost !== "host.docker.internal") {
+    windowsOllamaReachable = !!runCapture(
+      ["curl", "-sf", ...localProbeCurlArgs, `http://host.docker.internal:${OLLAMA_PORT}/api/tags`],
+      { ignoreError: true },
+    );
+  }
+
+  // Mirrored mode shares loopback so both probes hit the same instance;
+  // only NAT mode actually has two separate daemons to warn about.
+  if (isWsl() && ollamaHost === "127.0.0.1" && windowsOllamaReachable) {
+    const networkingMode = runCapture(["wslinfo", "--networking-mode"], {
+      ignoreError: true,
+    }).trim();
+    if (networkingMode !== "mirrored") {
+      console.log("");
+      console.log("  ⚠ Ollama is running on both WSL and the Windows host.");
+      console.log("    Stop one to avoid duplicated GPU memory and model caches.");
+      console.log("");
+    }
+  }
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
@@ -4796,11 +5248,23 @@ async function setupNim(
   options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
   options.push({ key: "gemini", label: "Google Gemini" });
   if (hasOllama || ollamaRunning) {
+    let hostDisplay: string;
+    if (ollamaHost === "host.docker.internal") {
+      hostDisplay = `Windows host:${OLLAMA_PORT}`;
+    } else if (isWsl()) {
+      hostDisplay = `WSL:${OLLAMA_PORT}`;
+    } else {
+      hostDisplay = `localhost:${OLLAMA_PORT}`;
+    }
+    // On WSL the Windows-host entry (Use/Restart/Start, or Install) always
+    // carries the suggestion instead, since Windows-host is preferred.
+    const wslOllamaSuggested =
+      ollamaRunning && (ollamaHost === "host.docker.internal" || !isWsl());
     options.push({
       key: "ollama",
       label:
-        `Local Ollama (localhost:${OLLAMA_PORT})${ollamaRunning ? " — running" : ""}` +
-        (ollamaRunning ? " (suggested)" : ""),
+        `Local Ollama (${hostDisplay})${ollamaRunning ? " — running" : ""}` +
+        (wslOllamaSuggested ? " (suggested)" : ""),
     });
   }
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
@@ -4812,13 +5276,39 @@ async function setupNim(
       label: "Local vLLM [experimental] — running",
     });
   }
-  // Without Ollama, offer to install it so users always have a local fallback
-  // (e.g. when the NVIDIA API server is down and cloud keys are unavailable)
-  if (!hasOllama && !ollamaRunning) {
+  // Skipped when Windows-host already won the cache: the running entry
+  // above already covers that case.
+  if (hasWindowsOllama && ollamaHost !== "host.docker.internal") {
+    let windowsOllamaLabel: string;
+    if (windowsOllamaReachable) {
+      windowsOllamaLabel = "Use Ollama on Windows host - running (suggested)";
+    } else if (winOllamaLoopbackOnly) {
+      windowsOllamaLabel = "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
+    } else {
+      windowsOllamaLabel = "Start Ollama on Windows host (suggested)";
+    }
+    options.push({ key: "start-windows-ollama", label: windowsOllamaLabel });
+  }
+  // On WSL, always offer to install Ollama on the Windows host when not
+  // already installed, regardless of WSL Ollama state — users may prefer the
+  // Windows-host instance (GPU access) even with WSL Ollama running.
+  if (isWsl() && !hasWindowsOllama) {
+    options.push({
+      key: "install-windows-ollama",
+      label: "Install Ollama on Windows host (recommended)",
+    });
+  }
+  // Without any Ollama, offer to install one locally as a fallback (e.g. when
+  // the NVIDIA API server is down and cloud keys are unavailable).
+  if (!hasOllama && !ollamaRunning && !hasWindowsOllama) {
     if (process.platform === "darwin") {
       options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
     } else if (process.platform === "linux") {
-      options.push({ key: "install-ollama", label: "Install Ollama (Linux)" });
+      if (isWsl()) {
+        options.push({ key: "install-ollama", label: "Install Ollama (WSL Linux)" });
+      } else {
+        options.push({ key: "install-ollama", label: "Install Ollama (Linux)" });
+      }
     }
   }
 
@@ -4854,6 +5344,24 @@ async function setupNim(
             // Refuse to silently switch providers behind the user's back; if
             // the previously-recorded one is gone, surface the recorded value
             // so the user can fix the dependency or override via env var.
+            // Special case: on WSL, recorded ollama-local was WSL Ollama at
+            // record time. If the only reachable Ollama is now Windows-host
+            // (so the menu's "ollama" key points there), the availability
+            // check below would pass and silently swap the daemon. Detect
+            // and fail-loud with a hint.
+            if (
+              isWsl() &&
+              recordedProvider === "ollama-local" &&
+              ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL
+            ) {
+              console.error(
+                `  Recorded provider '${recordedProvider}' (WSL Ollama) is not available in this environment.`,
+              );
+              console.error(
+                "  Hint: Windows-host Ollama is reachable here; re-run with NEMOCLAW_PROVIDER=ollama to use it explicitly.",
+              );
+              process.exit(1);
+            }
             if (!options.some((o) => o.key === recoveredKey)) {
               console.error(
                 `  Recorded provider '${recordedProvider}' is not available in this environment.`,
@@ -4861,6 +5369,17 @@ async function setupNim(
               console.error(
                 "  Set NEMOCLAW_PROVIDER explicitly, or restore the missing local-inference dependency.",
               );
+              if (recoveredKey === "ollama") {
+                const winHostKey = options.find(
+                  (o) =>
+                    o.key === "start-windows-ollama" || o.key === "install-windows-ollama",
+                )?.key;
+                if (winHostKey) {
+                  console.error(
+                    `  Hint: Windows-host Ollama is available here — re-run with NEMOCLAW_PROVIDER=${winHostKey} to use it.`,
+                  );
+                }
+              }
               process.exit(1);
             }
             providerKey = recoveredKey;
@@ -5005,8 +5524,9 @@ async function setupNim(
           // Check raw process.env first — NEMOCLAW_PROVIDER_KEY is a user-facing
           // override that should take precedence before resolving from credentials.json.
           const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-          // eslint-disable-next-line nemoclaw/no-direct-credential-env -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
-          if (_nvProviderKey && !process.env.NVIDIA_API_KEY) {
+          // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
+          const existingNvidiaKey = normalizeCredentialValue(process.env.NVIDIA_API_KEY ?? "");
+          if (_nvProviderKey && !existingNvidiaKey) {
             process.env.NVIDIA_API_KEY = _nvProviderKey;
           }
           if (isNonInteractive()) {
@@ -5044,9 +5564,12 @@ async function setupNim(
           // isn't already set, use NEMOCLAW_PROVIDER_KEY as the API key for this provider.
           // Check raw process.env — the override must apply before resolving from credentials.json.
           const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-          // eslint-disable-next-line nemoclaw/no-direct-credential-env -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
-          if (_providerKeyHint && credentialEnv && !process.env[credentialEnv]) {
-            process.env[credentialEnv] = _providerKeyHint;
+          if (_providerKeyHint && credentialEnv) {
+            // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
+            const existingCredentialKey = normalizeCredentialValue(process.env[credentialEnv] ?? "");
+            if (!existingCredentialKey) {
+              process.env[credentialEnv] = _providerKeyHint;
+            }
           }
 
           if (isNonInteractive()) {
@@ -5409,59 +5932,90 @@ async function setupNim(
           console.error("  Local Ollama base URL could not be determined.");
           process.exit(1);
         }
-        while (true) {
-          const installedModels = getOllamaModelOptions();
-          if (isNonInteractive()) {
-            model =
-              requestedModel ||
-              (recoveredFromSandbox ? recoveredModel : null) ||
-              getDefaultOllamaModel(gpu);
-          } else {
-            model = await promptOllamaModel(gpu);
-          }
-          if (model === BACK_TO_SELECTION) {
-            console.log("  Returning to provider selection.");
-            console.log("");
-            continue selectionLoop;
-          }
-          const selectedModel = requireValue(model, "Expected an Ollama model selection");
-          const probe = await prepareOllamaModelWithSizeConfirm(selectedModel, installedModels);
-          if (!probe.ok) {
-            console.error(`  ${probe.message}`);
-            if (isNonInteractive()) {
-              process.exit(1);
-            }
-            console.log("  Choose a different Ollama model or select Other.");
-            console.log("");
-            continue;
-          }
-          const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
-          if (!validationBaseUrl) {
-            console.error("  Local Ollama validation URL could not be determined.");
-            process.exit(1);
-          }
-          const validation = await validateOpenAiLikeSelection(
-            "Local Ollama",
-            validationBaseUrl,
-            selectedModel,
-            null,
-            "Choose a different Ollama model or select Other.",
-          );
-          if (validation.retry === "selection") {
-            continue selectionLoop;
-          }
-          if (!validation.ok) {
-            continue;
-          }
-          // Ollama's /v1/responses endpoint does not produce correctly
-          // formatted tool calls — force chat completions like vLLM/NIM.
-          if (validation.api !== "openai-completions") {
-            console.log(
-              "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
-            );
-          }
+        {
+          const result = await selectAndValidateOllamaModel(gpu, provider, {
+            requestedModel,
+            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
+          });
+          if (result.outcome === "back-to-selection") continue selectionLoop;
+          model = result.model;
           preferredInferenceApi = "openai-completions";
-          break;
+        }
+        break;
+      } else if (
+        selected.key === "start-windows-ollama" ||
+        selected.key === "install-windows-ollama"
+      ) {
+        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
+        const isInstall = selected.key === "install-windows-ollama";
+        const isSwitch = !isInstall && windowsOllamaReachable;
+        const isRestart = !isInstall && !isSwitch && winOllamaLoopbackOnly;
+        if (!isSwitch) {
+          printOllamaExposureWarning();
+        }
+        const promptMsg = isInstall
+          ? "  Install and launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
+          : isSwitch
+            ? "  Use Ollama on the Windows host (already running)? [Y/n]: "
+            : isRestart
+              ? "  Stop the running Ollama and restart it with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
+              : "  Launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: ";
+        const proceed = isNonInteractive()
+          ? true
+          : !(await prompt(promptMsg)).trim().toLowerCase().startsWith("n");
+        if (!proceed) {
+          continue selectionLoop;
+        }
+
+        if (isSwitch) {
+          switchToWindowsOllamaHost();
+        } else if (isInstall) {
+          // installOllamaOnWindowsHost pre-sets the env so the auto-spawned
+          // daemon already binds 0.0.0.0; no kill+relaunch needed.
+          const installResult = await installOllamaOnWindowsHost();
+          if (!installResult.ok) {
+            console.error(
+              "  Install did not produce ollama.exe on PATH. Check the installer output above.",
+            );
+            if (isNonInteractive()) process.exit(1);
+            continue selectionLoop;
+          }
+          if (!awaitWindowsOllamaReady()) {
+            console.error("  Timed out waiting for Ollama to start on the Windows host.");
+            if (isNonInteractive()) process.exit(1);
+            continue selectionLoop;
+          }
+          console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
+        } else {
+          if (!setupWindowsOllamaWith0000Binding({ announceStop: isRestart })) {
+            console.error("  Timed out waiting for Ollama to start on the Windows host.");
+            if (isNonInteractive()) process.exit(1);
+            continue selectionLoop;
+          }
+          console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
+        }
+        provider = "ollama-local";
+        credentialEnv = null;
+        endpointUrl = getLocalProviderBaseUrl(provider);
+        if (!endpointUrl) {
+          console.error("  Local Ollama base URL could not be determined.");
+          process.exit(1);
+        }
+
+        {
+          const result = await selectAndValidateOllamaModel(gpu, provider, {
+            requestedModel,
+            recoveredModel: null,
+          });
+          if (result.outcome === "back-to-selection") {
+            // The Windows-host action pinned resolved host to
+            // host.docker.internal. Clear it so a subsequent provider pick
+            // (e.g. plain WSL Ollama) starts from a fresh probe.
+            resetOllamaHostCache();
+            continue selectionLoop;
+          }
+          model = result.model;
+          preferredInferenceApi = "openai-completions";
         }
         break;
       } else if (selected.key === "install-ollama") {
@@ -5473,18 +6027,33 @@ async function setupNim(
           console.log("  Installing Ollama via official installer...");
           runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
         }
-        console.log("  Starting Ollama...");
+        // On WSL the official installer enabled and started ollama.service
+        // with the default 127.0.0.1 binding (which is what we want). Skip
+        // our own `ollama serve` so systemd owns the daemon and journalctl
+        // logs stay intact. On Linux native we still need the manual start
+        // because systemd's default 127.0.0.1 isn't reachable from the
+        // sandbox via host-gateway; we override with OLLAMA_HOST=0.0.0.0.
+        // On macOS, brew install doesn't auto-start.
         // Shell required: backgrounding (&), env var prefix, output redirection.
-        runShell(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-          ignoreError: true,
-        });
-        sleep(2);
-        if (!startOllamaAuthProxy()) {
-          process.exit(1);
+        const installerStartedDaemon = isWsl() && !!findReachableOllamaHost();
+        if (!installerStartedDaemon) {
+          console.log("  Starting Ollama...");
+          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
+          runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          sleep(2);
         }
-        console.log(
-          `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
-        );
+        if (isWsl()) {
+          // WSL2 doesn't need the proxy — Docker reaches the host directly.
+          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
+        } else {
+          printOllamaExposureWarning();
+          if (!startOllamaAuthProxy()) {
+            process.exit(1);
+          }
+          console.log(
+            `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
+          );
+        }
         provider = "ollama-local";
         // See above ollama branch — internal proxy token, no user API key.
         credentialEnv = null;
@@ -5493,59 +6062,14 @@ async function setupNim(
           console.error("  Local Ollama base URL could not be determined.");
           process.exit(1);
         }
-        while (true) {
-          const installedModels = getOllamaModelOptions();
-          if (isNonInteractive()) {
-            model =
-              requestedModel ||
-              (recoveredFromSandbox ? recoveredModel : null) ||
-              getDefaultOllamaModel(gpu);
-          } else {
-            model = await promptOllamaModel(gpu);
-          }
-          if (model === BACK_TO_SELECTION) {
-            console.log("  Returning to provider selection.");
-            console.log("");
-            continue selectionLoop;
-          }
-          const selectedModel = requireValue(model, "Expected an Ollama model selection");
-          const probe = await prepareOllamaModelWithSizeConfirm(selectedModel, installedModels);
-          if (!probe.ok) {
-            console.error(`  ${probe.message}`);
-            if (isNonInteractive()) {
-              process.exit(1);
-            }
-            console.log("  Choose a different Ollama model or select Other.");
-            console.log("");
-            continue;
-          }
-          const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
-          if (!validationBaseUrl) {
-            console.error("  Local Ollama validation URL could not be determined.");
-            process.exit(1);
-          }
-          const validation = await validateOpenAiLikeSelection(
-            "Local Ollama",
-            validationBaseUrl,
-            selectedModel,
-            null,
-            "Choose a different Ollama model or select Other.",
-          );
-          if (validation.retry === "selection") {
-            continue selectionLoop;
-          }
-          if (!validation.ok) {
-            continue;
-          }
-          // Ollama's /v1/responses endpoint does not produce correctly
-          // formatted tool calls — force chat completions like vLLM/NIM.
-          if (validation.api !== "openai-completions") {
-            console.log(
-              "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
-            );
-          }
+        {
+          const result = await selectAndValidateOllamaModel(gpu, provider, {
+            requestedModel,
+            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
+          });
+          if (result.outcome === "back-to-selection") continue selectionLoop;
+          model = result.model;
           preferredInferenceApi = "openai-completions";
-          break;
         }
         break;
       } else if (selected.key === "vllm") {
@@ -5623,7 +6147,6 @@ async function setupNim(
 
 // ── Step 4: Inference provider ───────────────────────────────────
 
-// eslint-disable-next-line complexity
 async function setupInference(
   sandboxName: string | null,
   model: string,
@@ -5882,6 +6405,11 @@ const MESSAGING_CHANNELS = listChannels();
 const TELEGRAM_NETWORK_CURL_CODES = new Set([6, 7, 28, 35, 52, 56]);
 
 async function checkTelegramReachability(token: string) {
+  if (process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY === "1") {
+    note("  [non-interactive] Skipping Telegram reachability probe by request.");
+    return;
+  }
+
   const result = runCurlProbe([
     "-sS",
     "--connect-timeout",
@@ -6136,17 +6664,23 @@ async function setupMessagingChannels(): Promise<string[]> {
         }
       }
     }
-    if (ch.requireMentionEnvKey && ch.serverIdEnvKey && process.env[ch.serverIdEnvKey]) {
-      const existingRequireMention = process.env[ch.requireMentionEnvKey];
+    // Mention-control prompt: fires for any channel that exposes a
+    // requireMention env key. Discord gates the prompt behind a configured
+    // server ID (mention control only makes sense in a guild). Telegram
+    // has no serverIdEnvKey because mention control applies to every group
+    // the bot is added to, so the prompt always fires there. See #1737.
+    const requireMentionKey = ch.requireMentionEnvKey;
+    if (requireMentionKey && (!ch.serverIdEnvKey || Boolean(process.env[ch.serverIdEnvKey]))) {
+      const existingRequireMention = process.env[requireMentionKey];
       if (existingRequireMention === "0" || existingRequireMention === "1") {
         const mode = existingRequireMention === "0" ? "all messages" : "@mentions only";
         console.log(`  ✓ ${ch.name} — reply mode already set: ${mode}`);
       } else {
         console.log(`  ${ch.requireMentionHelp}`);
         const answer = (await prompt("  Reply only when @mentioned? [Y/n]: ")).trim().toLowerCase();
-        process.env[ch.requireMentionEnvKey] = answer === "n" || answer === "no" ? "0" : "1";
+        process.env[requireMentionKey] = answer === "n" || answer === "no" ? "0" : "1";
         const mode =
-          process.env[ch.requireMentionEnvKey] === "0" ? "all messages" : "@mentions only";
+          process.env[requireMentionKey] === "0" ? "all messages" : "@mentions only";
         console.log(`  ✓ ${ch.name} reply mode saved: ${mode}`);
       }
     }
@@ -6259,7 +6793,6 @@ async function setupOpenclaw(sandboxName: string, model: string, provider: strin
 
 // ── Step 7: Policy presets ───────────────────────────────────────
 
-// eslint-disable-next-line complexity
 async function _setupPolicies(
   sandboxName: string,
   options: {
@@ -6883,7 +7416,6 @@ function computeSetupPresetSuggestions(
   return suggestions;
 }
 
-// eslint-disable-next-line complexity
 async function setupPoliciesWithSelection(
   sandboxName: string,
   options: {
@@ -7729,12 +8261,10 @@ function skippedStepMessage(
 
 // ── Main ─────────────────────────────────────────────────────────
 
-// eslint-disable-next-line complexity
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
-  AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
   _preflightDashboardPort = opts.controlUiPort || null;
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
@@ -8228,9 +8758,27 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
+    // Telegram mention-mode is baked into openclaw.json at sandbox build time, so
+    // changes to TELEGRAM_REQUIRE_MENTION only take effect after a rebuild. Treat
+    // a mismatch between the recorded config and the current env value as drift
+    // so the reuse path forces a recreate (mirrors webSearchConfigChanged). See
+    // #1737 and the CodeRabbit review on #2417.
+    //
+    // Compare *effective* modes — null and false both produce groupPolicy: open
+    // at config-generation time (default behavior), so they collapse to the same
+    // bucket here. Without this, a sandbox built before TELEGRAM_REQUIRE_MENTION
+    // existed (recordedTelegramRequireMention === null) would be reused with the
+    // old groupPolicy: open even after the user sets TELEGRAM_REQUIRE_MENTION=1,
+    // and vice versa.
+    const currentTelegramRequireMention = computeTelegramRequireMention();
+    const recordedTelegramRequireMention = session?.telegramConfig?.requireMention ?? null;
+    const effectiveCurrent = currentTelegramRequireMention ?? false;
+    const effectiveRecorded = recordedTelegramRequireMention ?? false;
+    const telegramConfigChanged = effectiveCurrent !== effectiveRecorded;
     const resumeSandbox =
       resume &&
       !webSearchConfigChanged &&
+      !telegramConfigChanged &&
       session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
     if (resumeSandbox) {
@@ -8243,6 +8791,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       if (resume && session?.steps?.sandbox?.status === "complete") {
         if (webSearchConfigChanged) {
           note("  [resume] Web Search configuration changed; recreating sandbox.");
+          if (sandboxName) {
+            registry.removeSandbox(sandboxName);
+          }
+        } else if (telegramConfigChanged) {
+          note("  [resume] TELEGRAM_REQUIRE_MENTION changed; recreating sandbox.");
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
           }
@@ -8356,6 +8909,16 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const recordedMessagingChannels = Array.isArray(latestSession?.messagingChannels)
       ? latestSession.messagingChannels
       : [];
+    const activeMessagingChannels = registry.getSandbox(sandboxName)?.messagingChannels;
+    verifyCompatibleEndpointSandboxSmoke({
+      sandboxName,
+      provider,
+      model,
+      endpointUrl,
+      credentialEnv,
+      messagingChannels: Array.isArray(activeMessagingChannels) ? activeMessagingChannels : [],
+      agent,
+    });
     const resumePolicies =
       resume && sandboxName && arePolicyPresetsApplied(sandboxName, recordedPolicyPresets || []);
     if (resumePolicies) {
@@ -8437,6 +9000,8 @@ module.exports = {
   buildOrphanedSandboxRollbackMessage,
   buildProviderArgs,
   buildGatewayBootstrapSecretsScript,
+  buildCompatibleEndpointSandboxSmokeCommand,
+  buildCompatibleEndpointSandboxSmokeScript,
   buildSandboxConfigSyncScript,
   compactText,
   copyBuildContextDir,
@@ -8492,6 +9057,7 @@ module.exports = {
   startGateway,
   findDashboardForwardOwner,
   startGatewayForRecovery,
+  openshellArgv,
   runCaptureOpenshell,
   agentSupportsWebSearch,
   setupInference,
@@ -8504,6 +9070,7 @@ module.exports = {
   readRecordedNimContainer,
   formatOnboardConfigSummary,
   isInferenceRouteReady,
+  shouldRunCompatibleEndpointSandboxSmoke,
   isNonInteractive,
   isOpenclawReady,
   arePolicyPresetsApplied,
@@ -8535,4 +9102,5 @@ module.exports = {
   getValidationProbeCurlArgs,
   checkTelegramReachability,
   TELEGRAM_NETWORK_CURL_CODES,
+  verifyCompatibleEndpointSandboxSmoke,
 };
