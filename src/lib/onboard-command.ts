@@ -40,7 +40,6 @@ const ONBOARD_BASE_ARGS = [
   "--resume",
   "--fresh",
   "--recreate-sandbox",
-  "--dangerously-skip-permissions",
   "--yes",
   "-y",
 ];
@@ -48,7 +47,7 @@ const ONBOARD_BASE_ARGS = [
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   const name = CLI_NAME;
   return [
-    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
+    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${noticeAcceptFlag}]`,
     "",
     "  --from <Dockerfile> uses the Dockerfile's parent directory as the Docker build context.",
     "  Put files referenced by COPY/ADD next to that Dockerfile, or move the Dockerfile into",

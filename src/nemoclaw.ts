@@ -2669,6 +2669,7 @@ async function sandboxRebuild(
       recreateSandbox: true,
       agent: rebuildAgent,
       fromDockerfile: storedFromDockerfile,
+      autoYes: skipConfirm,
     });
     log("onboard() returned successfully");
   } catch (err) {
