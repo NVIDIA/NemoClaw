@@ -115,7 +115,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         dockerRunCommandBetween(
           dockerfile,
           "# Pre-create shell init files for the sandbox user.",
-          "# Install OpenClaw CLI + PyYAML",
+          "# System-wide proxy hooks.",
         ),
         sandboxRoot,
       );

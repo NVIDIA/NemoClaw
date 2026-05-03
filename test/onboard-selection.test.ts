@@ -3365,8 +3365,16 @@ fi
       { mode: 0o755 },
     );
 
-    // Simulate: no Ollama installed, no Ollama running, no vLLM — only cloud + install-ollama should appear.
-    // User picks install-ollama (option 7). The install command is mocked to succeed.
+    // Simulate: no Ollama installed, no Ollama running, no vLLM — cloud + install-ollama should appear.
+    // On true Linux that's option 7. On WSL the menu also surfaces a Windows-host
+    // install entry first, so install-ollama (labelled "Install Ollama (WSL Linux)")
+    // shifts to option 8. Detect at runtime so the test works in both environments.
+    const isHostWsl =
+      !!process.env.WSL_DISTRO_NAME ||
+      !!process.env.WSL_INTEROP ||
+      /microsoft/i.test(os.release());
+    const installOptionIndex = isHostWsl ? "8" : "7";
+    const expectedInstallLabel = isHostWsl ? "Install Ollama (WSL Linux)" : "Install Ollama (Linux)";
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
@@ -3404,8 +3412,8 @@ const runCommands = [];
 credentials.prompt = async (message) => {
   promptCalls += 1;
   messages.push(message);
-  // Select option 7 (install-ollama) on first prompt, default on model prompt
-  if (promptCalls === 1) return "7";
+  // Select install-ollama on first prompt, default on model prompt.
+  if (promptCalls === 1) return "${installOptionIndex}";
   return "";
 };
 credentials.ensureApiKey = async () => {};
@@ -3470,10 +3478,10 @@ const { setupNim } = require(${onboardPath});
     assert.notEqual(result.stdout.trim(), "", result.stderr);
     const payload = JSON.parse(result.stdout.trim());
 
-    // Should have shown the "Install Ollama (Linux)" option
+    // Should have shown the install-ollama menu option (label varies on WSL).
     assert.ok(
-      payload.lines.some((line: string) => line.includes("Install Ollama (Linux)")),
-      "Should show Install Ollama option on Linux",
+      payload.lines.some((line: string) => line.includes(expectedInstallLabel)),
+      `Should show ${expectedInstallLabel} option`,
     );
 
     // Should have selected ollama-local provider after install

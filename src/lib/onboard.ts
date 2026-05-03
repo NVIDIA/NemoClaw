@@ -107,6 +107,7 @@ const {
 const localInference: typeof import("./local-inference") = require("./local-inference");
 const {
   findReachableOllamaHost,
+  resetOllamaHostCache,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -114,6 +115,8 @@ const {
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
+  getResolvedOllamaHost,
+  OLLAMA_HOST_DOCKER_INTERNAL,
   validateOllamaPortConfiguration,
   validateOllamaModel,
   validateLocalProvider,
@@ -126,6 +129,12 @@ const {
   persistProxyToken,
   startOllamaAuthProxy,
 } = require("./onboard-ollama-proxy");
+const {
+  installOllamaOnWindowsHost,
+  awaitWindowsOllamaReady,
+  setupWindowsOllamaWith0000Binding,
+  switchToWindowsOllamaHost,
+} = require("./onboard-windows-ollama");
 const inferenceConfig: typeof import("./inference-config") = require("./inference-config");
 const {
   DEFAULT_CLOUD_MODEL,
@@ -5004,6 +5013,67 @@ function readRecordedModel(sandboxName: string | null | undefined): string | nul
   return null;
 }
 
+type OllamaModelSelectionOutcome =
+  | { outcome: "selected"; model: string }
+  | { outcome: "back-to-selection" };
+
+// Pick an Ollama model, pull it if missing, and validate it via the local
+// proxy. Shared by the three Ollama provider branches (running, Windows-host
+// install/start, install-locally). Returns "back-to-selection" so the caller
+// can `continue` its labelled outer selectionLoop.
+async function selectAndValidateOllamaModel(
+  gpu: ReturnType<typeof nim.detectGpu>,
+  provider: string,
+  defaults: { requestedModel: string | null; recoveredModel: string | null },
+): Promise<OllamaModelSelectionOutcome> {
+  const { requestedModel, recoveredModel } = defaults;
+  while (true) {
+    const installedModels = getOllamaModelOptions();
+    let model: string;
+    if (isNonInteractive()) {
+      model = requestedModel || recoveredModel || getDefaultOllamaModel(gpu);
+    } else {
+      model = await promptOllamaModel(gpu);
+    }
+    if (model === BACK_TO_SELECTION) {
+      console.log("  Returning to provider selection.");
+      console.log("");
+      return { outcome: "back-to-selection" };
+    }
+    const selectedModel = requireValue(model, "Expected an Ollama model selection");
+    const probe = await prepareOllamaModel(selectedModel, installedModels);
+    if (!probe.ok) {
+      console.error(`  ${probe.message}`);
+      if (isNonInteractive()) process.exit(1);
+      console.log("  Choose a different Ollama model or select Other.");
+      console.log("");
+      continue;
+    }
+    const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
+    if (!validationBaseUrl) {
+      console.error("  Local Ollama validation URL could not be determined.");
+      process.exit(1);
+    }
+    const validation = await validateOpenAiLikeSelection(
+      "Local Ollama",
+      validationBaseUrl,
+      selectedModel,
+      null,
+      "Choose a different Ollama model or select Other.",
+    );
+    if (validation.retry === "selection") return { outcome: "back-to-selection" };
+    if (!validation.ok) continue;
+    // Ollama's /v1/responses endpoint does not produce correctly formatted
+    // tool calls — force chat completions like vLLM/NIM.
+    if (validation.api !== "openai-completions") {
+      console.log(
+        "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
+      );
+    }
+    return { outcome: "selected", model: selectedModel };
+  }
+}
+
 async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
@@ -5029,15 +5099,76 @@ async function setupNim(
   // (#2674).
   const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
   const hasOllama = hostCommandExists("ollama");
-  // findReachableOllamaHost probes 127.0.0.1 first and, on WSL, falls back
-  // to host.docker.internal so a Windows-host Ollama bound to a non-loopback
-  // interface is detected. The result is cached for the rest of the onboard
   // run and consumed by the Ollama lifecycle helpers in local-inference.ts.
-  const ollamaRunning = findReachableOllamaHost() !== null;
+  const ollamaHost = findReachableOllamaHost();
+  const ollamaRunning = ollamaHost !== null;
   const vllmRunning = !!runCapture(
     ["curl", "-sf", ...localProbeCurlArgs, `http://127.0.0.1:${VLLM_PORT}/v1/models`],
     { ignoreError: true },
   );
+  // Probed even when WSL has its own Ollama: users may prefer the Windows
+  // instance for GPU access and a unified model cache.
+  let hasWindowsOllama = false;
+  if (isWsl()) {
+    const winOllamaPath = runCapture(
+      [
+        "powershell.exe",
+        "-Command",
+        "Get-Command ollama.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source",
+      ],
+      { ignoreError: true },
+    ).trim();
+    hasWindowsOllama = winOllamaPath.length > 0;
+  }
+
+  let winOllamaLoopbackOnly = false;
+  if (isWsl() && hasWindowsOllama) {
+    const winPid = runCapture(
+      [
+        "powershell.exe",
+        "-Command",
+        "Get-Process ollama -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id",
+      ],
+      { ignoreError: true },
+    ).trim();
+    if (winPid) {
+      const listenAddrs = runCapture(
+        [
+          "powershell.exe",
+          "-Command",
+          "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalAddress",
+        ],
+        { ignoreError: true },
+      );
+      winOllamaLoopbackOnly =
+        /127\.0\.0\.1/.test(listenAddrs) && !/0\.0\.0\.0|^::\s*$/m.test(listenAddrs);
+    }
+  }
+
+  // Independent of findReachableOllamaHost: when WSL Ollama wins the cache
+  // on 127.0.0.1, Windows-host may also be running on 0.0.0.0 and we want
+  // to offer a "switch" without restarting anything.
+  let windowsOllamaReachable = false;
+  if (isWsl() && ollamaHost !== "host.docker.internal") {
+    windowsOllamaReachable = !!runCapture(
+      ["curl", "-sf", ...localProbeCurlArgs, `http://host.docker.internal:${OLLAMA_PORT}/api/tags`],
+      { ignoreError: true },
+    );
+  }
+
+  // Mirrored mode shares loopback so both probes hit the same instance;
+  // only NAT mode actually has two separate daemons to warn about.
+  if (isWsl() && ollamaHost === "127.0.0.1" && windowsOllamaReachable) {
+    const networkingMode = runCapture(["wslinfo", "--networking-mode"], {
+      ignoreError: true,
+    }).trim();
+    if (networkingMode !== "mirrored") {
+      console.log("");
+      console.log("  ⚠ Ollama is running on both WSL and the Windows host.");
+      console.log("    Stop one to avoid duplicated GPU memory and model caches.");
+      console.log("");
+    }
+  }
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
@@ -5050,11 +5181,23 @@ async function setupNim(
   options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
   options.push({ key: "gemini", label: "Google Gemini" });
   if (hasOllama || ollamaRunning) {
+    let hostDisplay: string;
+    if (ollamaHost === "host.docker.internal") {
+      hostDisplay = `Windows host:${OLLAMA_PORT}`;
+    } else if (isWsl()) {
+      hostDisplay = `WSL:${OLLAMA_PORT}`;
+    } else {
+      hostDisplay = `localhost:${OLLAMA_PORT}`;
+    }
+    // On WSL the Windows-host entry (Use/Restart/Start, or Install) always
+    // carries the suggestion instead, since Windows-host is preferred.
+    const wslOllamaSuggested =
+      ollamaRunning && (ollamaHost === "host.docker.internal" || !isWsl());
     options.push({
       key: "ollama",
       label:
-        `Local Ollama (localhost:${OLLAMA_PORT})${ollamaRunning ? " — running" : ""}` +
-        (ollamaRunning ? " (suggested)" : ""),
+        `Local Ollama (${hostDisplay})${ollamaRunning ? " — running" : ""}` +
+        (wslOllamaSuggested ? " (suggested)" : ""),
     });
   }
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
@@ -5066,13 +5209,39 @@ async function setupNim(
       label: "Local vLLM [experimental] — running",
     });
   }
-  // Without Ollama, offer to install it so users always have a local fallback
-  // (e.g. when the NVIDIA API server is down and cloud keys are unavailable)
-  if (!hasOllama && !ollamaRunning) {
+  // Skipped when Windows-host already won the cache: the running entry
+  // above already covers that case.
+  if (hasWindowsOllama && ollamaHost !== "host.docker.internal") {
+    let windowsOllamaLabel: string;
+    if (windowsOllamaReachable) {
+      windowsOllamaLabel = "Use Ollama on Windows host - running (suggested)";
+    } else if (winOllamaLoopbackOnly) {
+      windowsOllamaLabel = "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
+    } else {
+      windowsOllamaLabel = "Start Ollama on Windows host (suggested)";
+    }
+    options.push({ key: "start-windows-ollama", label: windowsOllamaLabel });
+  }
+  // On WSL, always offer to install Ollama on the Windows host when not
+  // already installed, regardless of WSL Ollama state — users may prefer the
+  // Windows-host instance (GPU access) even with WSL Ollama running.
+  if (isWsl() && !hasWindowsOllama) {
+    options.push({
+      key: "install-windows-ollama",
+      label: "Install Ollama on Windows host (recommended)",
+    });
+  }
+  // Without any Ollama, offer to install one locally as a fallback (e.g. when
+  // the NVIDIA API server is down and cloud keys are unavailable).
+  if (!hasOllama && !ollamaRunning && !hasWindowsOllama) {
     if (process.platform === "darwin") {
       options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
     } else if (process.platform === "linux") {
-      options.push({ key: "install-ollama", label: "Install Ollama (Linux)" });
+      if (isWsl()) {
+        options.push({ key: "install-ollama", label: "Install Ollama (WSL Linux)" });
+      } else {
+        options.push({ key: "install-ollama", label: "Install Ollama (Linux)" });
+      }
     }
   }
 
@@ -5108,6 +5277,24 @@ async function setupNim(
             // Refuse to silently switch providers behind the user's back; if
             // the previously-recorded one is gone, surface the recorded value
             // so the user can fix the dependency or override via env var.
+            // Special case: on WSL, recorded ollama-local was WSL Ollama at
+            // record time. If the only reachable Ollama is now Windows-host
+            // (so the menu's "ollama" key points there), the availability
+            // check below would pass and silently swap the daemon. Detect
+            // and fail-loud with a hint.
+            if (
+              isWsl() &&
+              recordedProvider === "ollama-local" &&
+              ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL
+            ) {
+              console.error(
+                `  Recorded provider '${recordedProvider}' (WSL Ollama) is not available in this environment.`,
+              );
+              console.error(
+                "  Hint: Windows-host Ollama is reachable here; re-run with NEMOCLAW_PROVIDER=ollama to use it explicitly.",
+              );
+              process.exit(1);
+            }
             if (!options.some((o) => o.key === recoveredKey)) {
               console.error(
                 `  Recorded provider '${recordedProvider}' is not available in this environment.`,
@@ -5115,6 +5302,17 @@ async function setupNim(
               console.error(
                 "  Set NEMOCLAW_PROVIDER explicitly, or restore the missing local-inference dependency.",
               );
+              if (recoveredKey === "ollama") {
+                const winHostKey = options.find(
+                  (o) =>
+                    o.key === "start-windows-ollama" || o.key === "install-windows-ollama",
+                )?.key;
+                if (winHostKey) {
+                  console.error(
+                    `  Hint: Windows-host Ollama is available here — re-run with NEMOCLAW_PROVIDER=${winHostKey} to use it.`,
+                  );
+                }
+              }
               process.exit(1);
             }
             providerKey = recoveredKey;
@@ -5667,59 +5865,90 @@ async function setupNim(
           console.error("  Local Ollama base URL could not be determined.");
           process.exit(1);
         }
-        while (true) {
-          const installedModels = getOllamaModelOptions();
-          if (isNonInteractive()) {
-            model =
-              requestedModel ||
-              (recoveredFromSandbox ? recoveredModel : null) ||
-              getDefaultOllamaModel(gpu);
-          } else {
-            model = await promptOllamaModel(gpu);
-          }
-          if (model === BACK_TO_SELECTION) {
-            console.log("  Returning to provider selection.");
-            console.log("");
-            continue selectionLoop;
-          }
-          const selectedModel = requireValue(model, "Expected an Ollama model selection");
-          const probe = await prepareOllamaModel(selectedModel, installedModels);
-          if (!probe.ok) {
-            console.error(`  ${probe.message}`);
-            if (isNonInteractive()) {
-              process.exit(1);
-            }
-            console.log("  Choose a different Ollama model or select Other.");
-            console.log("");
-            continue;
-          }
-          const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
-          if (!validationBaseUrl) {
-            console.error("  Local Ollama validation URL could not be determined.");
-            process.exit(1);
-          }
-          const validation = await validateOpenAiLikeSelection(
-            "Local Ollama",
-            validationBaseUrl,
-            selectedModel,
-            null,
-            "Choose a different Ollama model or select Other.",
-          );
-          if (validation.retry === "selection") {
-            continue selectionLoop;
-          }
-          if (!validation.ok) {
-            continue;
-          }
-          // Ollama's /v1/responses endpoint does not produce correctly
-          // formatted tool calls — force chat completions like vLLM/NIM.
-          if (validation.api !== "openai-completions") {
-            console.log(
-              "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
-            );
-          }
+        {
+          const result = await selectAndValidateOllamaModel(gpu, provider, {
+            requestedModel,
+            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
+          });
+          if (result.outcome === "back-to-selection") continue selectionLoop;
+          model = result.model;
           preferredInferenceApi = "openai-completions";
-          break;
+        }
+        break;
+      } else if (
+        selected.key === "start-windows-ollama" ||
+        selected.key === "install-windows-ollama"
+      ) {
+        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
+        const isInstall = selected.key === "install-windows-ollama";
+        const isSwitch = !isInstall && windowsOllamaReachable;
+        const isRestart = !isInstall && !isSwitch && winOllamaLoopbackOnly;
+        if (!isSwitch) {
+          printOllamaExposureWarning();
+        }
+        const promptMsg = isInstall
+          ? "  Install and launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
+          : isSwitch
+            ? "  Use Ollama on the Windows host (already running)? [Y/n]: "
+            : isRestart
+              ? "  Stop the running Ollama and restart it with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
+              : "  Launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: ";
+        const proceed = isNonInteractive()
+          ? true
+          : !(await prompt(promptMsg)).trim().toLowerCase().startsWith("n");
+        if (!proceed) {
+          continue selectionLoop;
+        }
+
+        if (isSwitch) {
+          switchToWindowsOllamaHost();
+        } else if (isInstall) {
+          // installOllamaOnWindowsHost pre-sets the env so the auto-spawned
+          // daemon already binds 0.0.0.0; no kill+relaunch needed.
+          const installResult = await installOllamaOnWindowsHost();
+          if (!installResult.ok) {
+            console.error(
+              "  Install did not produce ollama.exe on PATH. Check the installer output above.",
+            );
+            if (isNonInteractive()) process.exit(1);
+            continue selectionLoop;
+          }
+          if (!awaitWindowsOllamaReady()) {
+            console.error("  Timed out waiting for Ollama to start on the Windows host.");
+            if (isNonInteractive()) process.exit(1);
+            continue selectionLoop;
+          }
+          console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
+        } else {
+          if (!setupWindowsOllamaWith0000Binding({ announceStop: isRestart })) {
+            console.error("  Timed out waiting for Ollama to start on the Windows host.");
+            if (isNonInteractive()) process.exit(1);
+            continue selectionLoop;
+          }
+          console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
+        }
+        provider = "ollama-local";
+        credentialEnv = null;
+        endpointUrl = getLocalProviderBaseUrl(provider);
+        if (!endpointUrl) {
+          console.error("  Local Ollama base URL could not be determined.");
+          process.exit(1);
+        }
+
+        {
+          const result = await selectAndValidateOllamaModel(gpu, provider, {
+            requestedModel,
+            recoveredModel: null,
+          });
+          if (result.outcome === "back-to-selection") {
+            // The Windows-host action pinned resolved host to
+            // host.docker.internal. Clear it so a subsequent provider pick
+            // (e.g. plain WSL Ollama) starts from a fresh probe.
+            resetOllamaHostCache();
+            continue selectionLoop;
+          }
+          model = result.model;
+          preferredInferenceApi = "openai-completions";
         }
         break;
       } else if (selected.key === "install-ollama") {
@@ -5731,18 +5960,33 @@ async function setupNim(
           console.log("  Installing Ollama via official installer...");
           runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
         }
-        console.log("  Starting Ollama...");
+        // On WSL the official installer enabled and started ollama.service
+        // with the default 127.0.0.1 binding (which is what we want). Skip
+        // our own `ollama serve` so systemd owns the daemon and journalctl
+        // logs stay intact. On Linux native we still need the manual start
+        // because systemd's default 127.0.0.1 isn't reachable from the
+        // sandbox via host-gateway; we override with OLLAMA_HOST=0.0.0.0.
+        // On macOS, brew install doesn't auto-start.
         // Shell required: backgrounding (&), env var prefix, output redirection.
-        runShell(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-          ignoreError: true,
-        });
-        sleep(2);
-        if (!startOllamaAuthProxy()) {
-          process.exit(1);
+        const installerStartedDaemon = isWsl() && !!findReachableOllamaHost();
+        if (!installerStartedDaemon) {
+          console.log("  Starting Ollama...");
+          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
+          runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          sleep(2);
         }
-        console.log(
-          `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
-        );
+        if (isWsl()) {
+          // WSL2 doesn't need the proxy — Docker reaches the host directly.
+          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
+        } else {
+          printOllamaExposureWarning();
+          if (!startOllamaAuthProxy()) {
+            process.exit(1);
+          }
+          console.log(
+            `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
+          );
+        }
         provider = "ollama-local";
         // See above ollama branch — internal proxy token, no user API key.
         credentialEnv = null;
@@ -5751,59 +5995,14 @@ async function setupNim(
           console.error("  Local Ollama base URL could not be determined.");
           process.exit(1);
         }
-        while (true) {
-          const installedModels = getOllamaModelOptions();
-          if (isNonInteractive()) {
-            model =
-              requestedModel ||
-              (recoveredFromSandbox ? recoveredModel : null) ||
-              getDefaultOllamaModel(gpu);
-          } else {
-            model = await promptOllamaModel(gpu);
-          }
-          if (model === BACK_TO_SELECTION) {
-            console.log("  Returning to provider selection.");
-            console.log("");
-            continue selectionLoop;
-          }
-          const selectedModel = requireValue(model, "Expected an Ollama model selection");
-          const probe = await prepareOllamaModel(selectedModel, installedModels);
-          if (!probe.ok) {
-            console.error(`  ${probe.message}`);
-            if (isNonInteractive()) {
-              process.exit(1);
-            }
-            console.log("  Choose a different Ollama model or select Other.");
-            console.log("");
-            continue;
-          }
-          const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
-          if (!validationBaseUrl) {
-            console.error("  Local Ollama validation URL could not be determined.");
-            process.exit(1);
-          }
-          const validation = await validateOpenAiLikeSelection(
-            "Local Ollama",
-            validationBaseUrl,
-            selectedModel,
-            null,
-            "Choose a different Ollama model or select Other.",
-          );
-          if (validation.retry === "selection") {
-            continue selectionLoop;
-          }
-          if (!validation.ok) {
-            continue;
-          }
-          // Ollama's /v1/responses endpoint does not produce correctly
-          // formatted tool calls — force chat completions like vLLM/NIM.
-          if (validation.api !== "openai-completions") {
-            console.log(
-              "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
-            );
-          }
+        {
+          const result = await selectAndValidateOllamaModel(gpu, provider, {
+            requestedModel,
+            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
+          });
+          if (result.outcome === "back-to-selection") continue selectionLoop;
+          model = result.model;
           preferredInferenceApi = "openai-completions";
-          break;
         }
         break;
       } else if (selected.key === "vllm") {

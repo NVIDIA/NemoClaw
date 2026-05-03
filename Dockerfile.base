@@ -140,6 +140,36 @@ RUN printf '%s\n' \
     && chown root:root /sandbox/.bashrc /sandbox/.profile \
     && chmod 444 /sandbox/.bashrc /sandbox/.profile
 
+# System-wide proxy hooks. The per-home rc files above only fire for shells
+# that find `~/.bashrc` / `~/.profile` (sandbox user, HOME=/sandbox). SSH
+# sessions and tools that spawn `bash -ic` / `bash -lc` from a different user
+# or HOME silently miss the proxy env. These two hooks make the same
+# /tmp/nemoclaw-proxy-env.sh source for every bash mode regardless of user:
+#
+#   /etc/profile.d/nemoclaw-proxy.sh — sourced by /etc/profile for any login
+#     shell (bash -l, bash -lc).
+#   /etc/bash.bashrc — sourced by every interactive bash (bash -i, bash -ic).
+#     Prepend before the stock `[ -z "$PS1" ] && return` guard so the source
+#     line still runs in non-TTY contexts where PS1 may be unset when the
+#     file is first read.
+#
+# Both files are root-owned and not writable by the sandbox user.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2704
+# hadolint ignore=SC2028
+RUN printf '%s\n' \
+        '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
+        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        > /etc/profile.d/nemoclaw-proxy.sh \
+    && chmod 444 /etc/profile.d/nemoclaw-proxy.sh \
+    && { printf '%s\n' \
+            '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
+            '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+            ''; \
+         cat /etc/bash.bashrc; \
+       } > /etc/bash.bashrc.new \
+    && mv /etc/bash.bashrc.new /etc/bash.bashrc \
+    && chmod 444 /etc/bash.bashrc
+
 # Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests.
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
 # the base image on push to main, or use workflow_dispatch on base-image.yaml
