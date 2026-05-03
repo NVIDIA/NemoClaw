@@ -282,21 +282,24 @@ You can chat with the agent from the terminal or the browser.
 
 ### Open the OpenClaw UI in a Browser to Chat with the Agent
 
-The onboard wizard starts a background port forward to the sandbox dashboard, then prints a tokenized URL in the install summary.
+The onboard wizard starts a background port forward to the sandbox dashboard, then prints the dashboard URL in the install summary.
 The default host port is `18789`.
 If that port is already taken, NemoClaw uses the next free dashboard port, such as `18790`, and prints that port in the final URL.
+The gateway token is redacted from displayed output; retrieve it explicitly when the browser asks for authentication.
 
 ```text
 ──────────────────────────────────────────────────
-OpenClaw UI (tokenized URL; treat it like a password; save it now - it will not be printed again)
+OpenClaw UI (auth token redacted from displayed URLs)
 Port 18790 must be forwarded before opening these URLs.
-Dashboard: http://127.0.0.1:18790/#token=<auth-token>
+Dashboard: http://127.0.0.1:18790/
+Token:       nemoclaw my-gpt-claw gateway-token --quiet
+             append  #token=<token> locally if the browser asks for auth.
 ──────────────────────────────────────────────────
 ```
 
-Open the printed URL in your browser.
-The `#token=<auth-token>` fragment authenticates the browser to the sandbox gateway, so save the URL securely and treat it like a password.
-NemoClaw prints the token only once.
+Open the dashboard URL in your browser.
+If the browser asks for authentication, run the printed `gateway-token --quiet` command and append `#token=<token>` locally.
+Treat the token like a password.
 
 ### Chat with the Agent from the Terminal
 

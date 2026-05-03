@@ -108,18 +108,20 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
     expect(noteSpy).not.toHaveBeenCalled();
   });
 
-  it("prints tokenized URL with save-now warning for UI-kind agents", () => {
-    printDashboardUi("sandbox-y", "tok", uiAgent, {
+  it("redacts tokenized URLs for UI-kind agents and shows the token retrieval command", () => {
+    const token = "a".repeat(64);
+    printDashboardUi("sandbox-y", token, uiAgent, {
       note: noteSpy,
       buildControlUiUrls: buildUrlsLoopback,
     });
 
     const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
-    expect(output).toContain(
-      "Ficticious UI (tokenized URL; treat it like a password; save it now - it will not be printed again)",
-    );
+    expect(output).toContain("Ficticious UI (auth token redacted from displayed URLs)");
     expect(output).toContain("Port 19000 must be forwarded before opening this URL.");
-    expect(output).toContain("http://127.0.0.1:19000/#token=tok");
+    expect(output).toContain("http://127.0.0.1:19000/");
+    expect(output).toContain("Token: nemoclaw sandbox-y gateway-token --quiet");
+    expect(output).not.toContain("http://127.0.0.1:19000/#token=");
+    expect(output).not.toContain(token);
   });
 });
 
