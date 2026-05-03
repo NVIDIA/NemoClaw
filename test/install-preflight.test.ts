@@ -130,8 +130,10 @@ function runFailedSessionPromptChoice(answer: string) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-failed-choice-"));
   const fakeBin = path.join(tmp, "bin");
   const onboardLog = path.join(tmp, "onboard.log");
+  const promptInput = path.join(tmp, "prompt-input.txt");
   fs.mkdirSync(fakeBin);
   writeFailedOnboardSession(tmp);
+  fs.writeFileSync(promptInput, answer);
   writeNodeStub(fakeBin);
   writeExecutable(
     path.join(fakeBin, "nemoclaw"),
@@ -158,19 +160,20 @@ function [ {
   fi
   builtin [ "$@"
 }
-run_onboard
+run_onboard < "$PROMPT_INPUT_FILE"
 `,
     ],
     {
       cwd: path.join(import.meta.dirname, ".."),
-      input: answer,
       encoding: "utf-8",
       env: {
         ...process.env,
         HOME: tmp,
+        NEMOCLAW_AGENT: "openclaw",
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
         NEMOCLAW_ONBOARD_LOG: onboardLog,
+        PROMPT_INPUT_FILE: promptInput,
       },
     },
   );
