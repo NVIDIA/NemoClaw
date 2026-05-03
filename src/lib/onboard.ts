@@ -8486,20 +8486,18 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         return current;
       });
       session = onboardSession.loadSession();
-      // #2753: a resumed non-interactive onboard whose sandbox step did not
-      // complete has no recorded sandboxName (the onboard fix only persists
-      // it after createSandbox succeeds). Falling through would silently
-      // default to the agent's `my-assistant` instead of the user's original
-      // --name. Require an explicit name so the resume targets the right
-      // sandbox. Fires before preflight/gateway side effects.
+      // #2753: a resumed onboard whose sandbox step did not complete has no
+      // recorded sandboxName (the onboard fix only persists it after
+      // createSandbox succeeds). Falling through would silently default to
+      // the agent's `my-assistant` instead of the user's original --name.
+      // Use `cannotPrompt` so non-TTY runs without explicit --non-interactive
+      // are also caught, and `requestedSandboxName` (already env-var-resolved
+      // and trimmed above, lines 8302-8308) so whitespace-only env values
+      // can't satisfy the guard.
       const sandboxStepCompleted = session?.steps?.sandbox?.status === "complete";
-      if (
-        isNonInteractive() &&
-        !session?.sandboxName &&
-        !requestedSandboxName &&
-        !process.env.NEMOCLAW_SANDBOX_NAME &&
-        !sandboxStepCompleted
-      ) {
+      const recoveredSandboxName =
+        requestedSandboxName || (sandboxStepCompleted ? session?.sandboxName || null : null);
+      if (cannotPrompt && !recoveredSandboxName) {
         console.error(
           "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",
         );
