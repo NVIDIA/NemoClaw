@@ -2376,13 +2376,19 @@ function getResumeSandboxConflict(
   // is impossible). Falling back to the env var here would fire spurious
   // conflicts for interactive resume runs whose shell happens to export
   // NEMOCLAW_SANDBOX_NAME but which never actually consult it.
+  // #2753: only treat session.sandboxName as a conflict source if the
+  // sandbox step actually completed. A pre-fix incomplete session would
+  // otherwise reject a legitimate `--resume --name <new>` that the user
+  // is supplying precisely to recover from the phantom.
   const raw = typeof opts.sandboxName === "string" ? opts.sandboxName.trim().toLowerCase() : "";
   const requestedSandboxName = raw || null;
-  if (!requestedSandboxName || !session?.sandboxName) {
+  const recordedSandboxName =
+    session?.steps?.sandbox?.status === "complete" ? session?.sandboxName ?? null : null;
+  if (!requestedSandboxName || !recordedSandboxName) {
     return null;
   }
-  return requestedSandboxName !== session.sandboxName
-    ? { requestedSandboxName, recordedSandboxName: session.sandboxName }
+  return requestedSandboxName !== recordedSandboxName
+    ? { requestedSandboxName, recordedSandboxName }
     : null;
 }
 
@@ -8644,7 +8650,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSession.markStepComplete("gateway");
     }
 
-    let sandboxName = session?.sandboxName || requestedSandboxName || null;
+    // #2753: prefer requestedSandboxName over an unconfirmed session name.
+    // A pre-fix session may carry sandboxName even though sandbox creation
+    // never completed; users supplying `--name` / NEMOCLAW_SANDBOX_NAME on
+    // the resume run must win, otherwise the stale name silently overrides
+    // their explicit recovery input.
+    const recordedSandboxName =
+      session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
+    let sandboxName = recordedSandboxName || requestedSandboxName || null;
     if (sandboxName && RESERVED_SANDBOX_NAMES.has(sandboxName)) {
       console.error(
         `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
