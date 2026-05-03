@@ -110,6 +110,74 @@ echo "unexpected npm invocation: $*" >&2; exit 98`,
   );
 }
 
+function writeFailedOnboardSession(home: string) {
+  fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, ".nemoclaw", "onboard-session.json"),
+    JSON.stringify(
+      {
+        resumable: true,
+        status: "failed",
+        failure: { step: "inference", message: "Ollama proxy unreachable" },
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+function runFailedSessionPromptChoice(answer: string) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-failed-choice-"));
+  const fakeBin = path.join(tmp, "bin");
+  const onboardLog = path.join(tmp, "onboard.log");
+  fs.mkdirSync(fakeBin);
+  writeFailedOnboardSession(tmp);
+  writeNodeStub(fakeBin);
+  writeExecutable(
+    path.join(fakeBin, "nemoclaw"),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
+exit 0
+`,
+  );
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `
+set -euo pipefail
+source "$INSTALLER_UNDER_TEST"
+show_usage_notice() { :; }
+info() { printf 'INFO: %s\\n' "$*" >&2; }
+warn() { printf 'WARN: %s\\n' "$*" >&2; }
+error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
+function [ {
+  if [[ "$#" -eq 3 && "$1" = "-t" && "$2" = "0" && "$3" = "]" ]]; then
+    return 0
+  fi
+  builtin [ "$@"
+}
+run_onboard
+`,
+    ],
+    {
+      cwd: path.join(import.meta.dirname, ".."),
+      input: answer,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+        NEMOCLAW_ONBOARD_LOG: onboardLog,
+      },
+    },
+  );
+
+  return { result, onboardLog };
+}
+
 // ---------------------------------------------------------------------------
 
 describe("installer runtime preflight", { timeout: 15_000 }, () => {
@@ -736,6 +804,20 @@ fi`,
     expect(`${result.stdout}${result.stderr}`).toMatch(/--fresh/);
     // The installer must have bailed out before invoking nemoclaw onboard.
     expect(fs.existsSync(onboardLog)).toBe(false);
+  });
+
+  it.each([
+    { answer: "FrEsH\n", expectedArgs: "onboard --fresh", unexpectedFlag: /--resume/ },
+    { answer: "RESUME\n", expectedArgs: "onboard --resume", unexpectedFlag: /--fresh/ },
+  ])("lowercases failed-session prompt answer $answer before invoking onboard", (testCase) => {
+    const { result, onboardLog } = runFailedSessionPromptChoice(testCase.answer);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Previous onboarding session failed/);
+    const log = fs.readFileSync(onboardLog, "utf-8");
+    expect(log).toMatch(new RegExp(`^${testCase.expectedArgs}$`, "m"));
+    expect(log).not.toMatch(testCase.unexpectedFlag);
   });
 
   // #2430: --fresh is the escape hatch. Even with a session file on disk
