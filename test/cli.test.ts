@@ -943,6 +943,81 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("nemoclaw onboard")).toBeTruthy();
   });
 
+  it("#2753: refuses non-interactive --resume when sandbox step never completed and no name is provided", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-resume-no-name-"));
+    const localBin = path.join(home, "bin");
+    const nemoclawDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    // Fake openshell so preflight passes and we reach the resume sandbox-name
+    // init where the new guard lives.
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    // Simulates a pre-fix on-disk session that recorded only provider/model
+    // (with #2753's onboard fix, sandboxName is no longer written here either).
+    fs.writeFileSync(
+      path.join(nemoclawDir, "onboard-session.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          sessionId: "session-1",
+          resumable: true,
+          status: "in_progress",
+          mode: "interactive",
+          startedAt: "2026-05-03T00:00:00.000Z",
+          updatedAt: "2026-05-03T00:00:00.000Z",
+          lastStepStarted: "inference",
+          lastCompletedStep: "inference",
+          failure: null,
+          sandboxName: null,
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          nimContainer: null,
+          policyPresets: null,
+          metadata: { gatewayName: "nemoclaw" },
+          steps: {
+            preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+            gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+            provider_selection: {
+              status: "complete",
+              startedAt: null,
+              completedAt: null,
+              error: null,
+            },
+            inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+            sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
+          },
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+
+    const r = runWithEnv(
+      "onboard --resume --non-interactive --yes-i-accept-third-party-software",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_SANDBOX_NAME: "",
+      },
+    );
+
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Cannot resume non-interactive onboard")).toBeTruthy();
+    expect(r.out.includes("--name <sandbox>")).toBeTruthy();
+  });
+
   it("setup-spark --help exits 0 and shows onboard usage", () => {
     const r = run("setup-spark --help");
     expect(r.code).toBe(0);

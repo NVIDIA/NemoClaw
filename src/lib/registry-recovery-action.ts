@@ -78,6 +78,17 @@ function shouldRecoverRegistryEntries(
   };
 }
 
+/**
+ * #2753: a session that records sandboxName but never completed the sandbox
+ * step is a phantom from an interrupted onboard. Going forward, the onboard
+ * fix prevents such writes; this guard catches stale on-disk sessions that
+ * pre-date the fix so `nemoclaw list` does not resurrect them.
+ */
+function isSessionSandboxConfirmed(session: Session | null): boolean {
+  if (!session?.sandboxName) return false;
+  return session.steps?.sandbox?.status === "complete";
+}
+
 function seedRecoveryMetadata(
   current: { sandboxes: SandboxEntry[] },
   session: Session | null,
@@ -88,7 +99,7 @@ function seedRecoveryMetadata(
   );
   let recoveredFromSession = false;
 
-  if (!session?.sandboxName) {
+  if (!isSessionSandboxConfirmed(session) || !session?.sandboxName) {
     return { metadataByName, recoveredFromSession };
   }
 

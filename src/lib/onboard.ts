@@ -8486,6 +8486,28 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         return current;
       });
       session = onboardSession.loadSession();
+      // #2753: a resumed non-interactive onboard whose sandbox step did not
+      // complete has no recorded sandboxName (the onboard fix only persists
+      // it after createSandbox succeeds). Falling through would silently
+      // default to the agent's `my-assistant` instead of the user's original
+      // --name. Require an explicit name so the resume targets the right
+      // sandbox. Fires before preflight/gateway side effects.
+      const sandboxStepCompleted = session?.steps?.sandbox?.status === "complete";
+      if (
+        isNonInteractive() &&
+        !session?.sandboxName &&
+        !requestedSandboxName &&
+        !process.env.NEMOCLAW_SANDBOX_NAME &&
+        !sandboxStepCompleted
+      ) {
+        console.error(
+          "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",
+        );
+        console.error(
+          "  so no sandbox name was recorded. Re-run with --name <sandbox> (or set NEMOCLAW_SANDBOX_NAME).",
+        );
+        process.exit(1);
+      }
     } else {
       // --fresh asks for an explicit fresh start. createSession + saveSession
       // already overwrites any existing file, but clearing first removes the
@@ -8651,7 +8673,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         skippedStepMessage("provider_selection", `${provider} / ${model}`);
         hydrateCredentialEnv(credentialEnv);
       } else {
-        startRecordedStep("provider_selection", { sandboxName });
+        // #2753: do not persist sandboxName to onboard-session.json before
+        // the sandbox actually exists in the gateway (Step 6 markStepComplete
+        // below). A SIGINT between any earlier step and createSandbox would
+        // otherwise leave a phantom that `nemoclaw list` resurrects until
+        // manually destroyed.
+        startRecordedStep("provider_selection");
         const selection = await setupNim(gpu, sandboxName);
         model = selection.model;
         provider = selection.provider;
@@ -8662,7 +8689,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         onboardSession.markStepComplete(
           "provider_selection",
           toSessionUpdates({
-            sandboxName,
             provider,
             model,
             endpointUrl,
@@ -8687,7 +8713,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
         onboardSession.markStepComplete(
           "inference",
-          toSessionUpdates({ sandboxName, provider, model, nimContainer }),
+          toSessionUpdates({ provider, model, nimContainer }),
         );
         break;
       }
@@ -8723,7 +8749,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
       }
 
-      startRecordedStep("inference", { sandboxName, provider, model });
+      startRecordedStep("inference", { provider, model });
       const inferenceResult = await setupInference(
         sandboxName,
         model,
@@ -8741,7 +8767,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       }
       onboardSession.markStepComplete(
         "inference",
-        toSessionUpdates({ sandboxName, provider, model, nimContainer }),
+        toSessionUpdates({ provider, model, nimContainer }),
       );
       break;
     }
@@ -8827,7 +8853,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       } else {
         nextWebSearchConfig = await configureWebSearch(null, agent, webSearchSupportProbePath);
       }
-      startRecordedStep("sandbox", { sandboxName, provider, model });
+      startRecordedStep("sandbox", { provider, model });
       selectedMessagingChannels = await setupMessagingChannels();
       onboardSession.updateSession((current: Session) => {
         current.messagingChannels = selectedMessagingChannels;

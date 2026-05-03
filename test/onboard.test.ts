@@ -2974,7 +2974,43 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*opts\.controlUiPort \|\| null,\s*\);/,
+      // #2753: sandboxName is intentionally absent from the options here so
+      // the session does not record a name before createSandbox completes.
+      /startRecordedStep\("sandbox", \{ provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*opts\.controlUiPort \|\| null,\s*\);/,
+    );
+  });
+
+  it("does not persist sandboxName to onboard-session.json before createSandbox completes (#2753)", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // Steps that run before `openshell sandbox create` succeeds must not
+    // write sandboxName into the session — otherwise a SIGINT in between
+    // leaves a phantom name that `nemoclaw list` resurrects until the user
+    // manually destroys it. sandboxName is only persisted at the sandbox
+    // step's markStepComplete, which runs after createSandbox returns.
+    assert.match(source, /startRecordedStep\("provider_selection"\);/);
+    assert.match(source, /startRecordedStep\("inference", \{ provider, model \}\);/);
+    assert.match(source, /startRecordedStep\("sandbox", \{ provider, model \}\);/);
+    assert.doesNotMatch(
+      source,
+      /startRecordedStep\("(?:provider_selection|inference|sandbox)",\s*\{[^}]*\bsandboxName\b/,
+    );
+    // The first markStepComplete that records sandboxName is the sandbox
+    // step, after createSandbox(). Locked in by checking createSandbox
+    // appears before the first sandboxName-bearing markStepComplete. The
+    // toSessionUpdates({ ... }) options object is matched non-greedily so a
+    // later sandboxName reference from a different call site cannot leak
+    // into the match.
+    const createIdx = source.indexOf("sandboxName = await createSandbox(");
+    const firstSandboxNameMarkComplete = source.search(
+      /onboardSession\.markStepComplete\(\s*"[^"]+",\s*toSessionUpdates\(\{[^}]*\bsandboxName\b/,
+    );
+    assert.ok(
+      createIdx > 0 && firstSandboxNameMarkComplete > createIdx,
+      `createSandbox (${createIdx}) must precede the first sandboxName-bearing markStepComplete (${firstSandboxNameMarkComplete})`,
     );
   });
 
