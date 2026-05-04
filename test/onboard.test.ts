@@ -7050,7 +7050,7 @@ console.log(JSON.stringify({ buildCalls: buildCalls.length, totalCommands: comma
     });
 
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    const output = JSON.parse(result.stdout.trim().split("\n").pop());
+    const output = JSON.parse(result.stdout.trim().split("\n").pop()!);
     assert.equal(output.buildCalls, 0, "docker build should NOT be called when already patched");
   });
 
@@ -7102,7 +7102,7 @@ console.log(JSON.stringify({
     });
 
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    const output = JSON.parse(result.stdout.trim().split("\n").pop());
+    const output = JSON.parse(result.stdout.trim().split("\n").pop()!);
     assert.equal(output.buildCalls, 1, "docker build should be called once");
     assert.ok(output.hasImage, "docker build should reference the correct image tag");
   });
@@ -7165,7 +7165,7 @@ console.log(JSON.stringify({ threw, leakedDirs: newDirs.length }));
     });
 
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    const output = JSON.parse(result.stdout.trim().split("\n").pop());
+    const output = JSON.parse(result.stdout.trim().split("\n").pop()!);
     assert.ok(output.threw, "should have thrown on docker build failure");
     assert.equal(output.leakedDirs, 0, "temp directory should be cleaned up after failure");
   });
