@@ -15,6 +15,7 @@ export default class StatusCommand extends Command {
   static summary = "Show sandbox list and service status";
   static description = "Show registered sandboxes, live inference, services, and messaging health.";
   static usage = ["status [--json]"];
+  static examples = ["<%= config.bin %> status", "<%= config.bin %> status --json"];
   static flags = {
     help: Flags.help({ char: "h" }),
   };

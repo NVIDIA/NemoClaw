@@ -17,6 +17,7 @@ export class BackupAllCommand extends Command {
   static summary = "Back up all sandbox state before upgrade";
   static description = "Back up registered, running sandbox state before upgrading.";
   static usage = ["backup-all"];
+  static examples = ["<%= config.bin %> backup-all"];
   static flags = {
     help: Flags.help({ char: "h" }),
   };
@@ -33,6 +34,10 @@ export class UpgradeSandboxesCommand extends Command {
   static summary = "Detect and rebuild stale sandboxes";
   static description = "Detect stale sandboxes and optionally rebuild them.";
   static usage = ["upgrade-sandboxes [--check] [--auto] [--yes]"];
+  static examples = [
+    "<%= config.bin %> upgrade-sandboxes --check",
+    "<%= config.bin %> upgrade-sandboxes --auto --yes",
+  ];
   static flags = {
     help: Flags.help({ char: "h" }),
     check: Flags.boolean({ description: "Only check whether sandboxes need upgrading" }),
@@ -56,6 +61,7 @@ export class GarbageCollectImagesCommand extends Command {
   static summary = "Remove orphaned sandbox Docker images";
   static description = "Remove sandbox Docker images that are not referenced by registered sandboxes.";
   static usage = ["gc [--dry-run] [--yes|--force]"];
+  static examples = ["<%= config.bin %> gc --dry-run", "<%= config.bin %> gc --yes"];
   static flags = {
     help: Flags.help({ char: "h" }),
     "dry-run": Flags.boolean({ description: "Show images that would be removed without deleting" }),

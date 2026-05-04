@@ -34,6 +34,12 @@ export default class SandboxLogsCommand extends Command {
   static summary = "Stream sandbox logs";
   static description = "Show OpenClaw gateway logs and OpenShell audit logs for a sandbox.";
   static usage = ["<name> logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]"];
+  static examples = [
+    "<%= config.bin %> alpha logs",
+    "<%= config.bin %> alpha logs --tail 100",
+    "<%= config.bin %> alpha logs --since 5m",
+    "<%= config.bin %> alpha logs --follow",
+  ];
   static args = {
     sandboxName: Args.string({
       name: "sandbox",

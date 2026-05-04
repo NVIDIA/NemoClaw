@@ -5,7 +5,7 @@
 
 import { spawnSync } from "node:child_process";
 
-import { Command } from "@oclif/core";
+import { Command, Flags } from "@oclif/core";
 
 import { getVersion } from "./version";
 import { buildVersionedUninstallUrl, runUninstallCommand } from "./uninstall-command";
@@ -16,6 +16,10 @@ export default class UninstallCliCommand extends Command {
   static summary = "Run uninstall.sh";
   static description = "Run the local uninstall.sh script; remote fallback is disabled.";
   static usage = ["uninstall [flags]"];
+  static examples = ["<%= config.bin %> uninstall --yes"];
+  static flags = {
+    help: Flags.help({ char: "h" }),
+  };
 
   public async run(): Promise<void> {
     this.parsed = true;
