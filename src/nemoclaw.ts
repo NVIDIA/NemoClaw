@@ -249,38 +249,6 @@ async function runDispatchResult(
       console.error(`  Unknown action: ${result.action}`);
       console.error(`  Valid actions: ${VALID_SANDBOX_ACTIONS}`);
       process.exit(1);
-    case "legacy": {
-      const sandboxName = opts.sandboxName;
-      const actionArgs = opts.actionArgs ?? [];
-      if (!sandboxName) {
-        throw new Error(`Missing sandbox name for legacy dispatch target ${result.target}`);
-      }
-      switch (result.target) {
-        case "policy-add": {
-          const { addSandboxPolicy } = require("./lib/policy-channel-actions") as {
-            addSandboxPolicy: (sandboxName: string, args?: string[]) => Promise<void>;
-          };
-          await addSandboxPolicy(sandboxName, actionArgs);
-          return;
-        }
-        case "skill": {
-          const { installSandboxSkill } = require("./lib/sandbox-skill-install-action") as {
-            installSandboxSkill: (sandboxName: string, args?: string[]) => Promise<void>;
-          };
-          await installSandboxSkill(sandboxName, actionArgs);
-          return;
-        }
-        case "snapshot": {
-          const { runSandboxSnapshot } = require("./lib/snapshot-action") as {
-            runSandboxSnapshot: (sandboxName: string, args: string[]) => Promise<void>;
-          };
-          await runSandboxSnapshot(sandboxName, actionArgs);
-          return;
-        }
-        default:
-          throw new Error(`Unhandled legacy dispatch target ${result.target}`);
-      }
-    }
   }
 }
 

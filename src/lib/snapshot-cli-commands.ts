@@ -25,6 +25,22 @@ const sandboxNameArg = Args.string({
   required: true,
 });
 
+export class SnapshotCommand extends Command {
+  static id = "sandbox:snapshot";
+  static strict = false;
+  static summary = "Show snapshot usage";
+  static description = "Show snapshot usage or report unknown snapshot subcommands.";
+  static usage = ["<name> snapshot <create|list|restore>"];
+
+  public async run(): Promise<void> {
+    const [sandboxName, ...actionArgs] = this.argv;
+    if (!sandboxName || sandboxName.trim() === "") {
+      this.error("Missing required sandboxName for snapshot.", { exit: 2 });
+    }
+    await getRuntimeBridge().sandboxSnapshot(sandboxName, actionArgs);
+  }
+}
+
 export class SnapshotListCommand extends Command {
   static id = "sandbox:snapshot:list";
   static strict = true;
