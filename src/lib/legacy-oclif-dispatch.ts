@@ -156,6 +156,9 @@ export function resolveSandboxOclifDispatch(
     case "rebuild":
       if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "rebuild [--yes|--force] [--verbose|-v]" };
       return { kind: "oclif", commandId: "sandbox:rebuild", args: [sandboxName, ...actionArgs] };
+    case "recover":
+      if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "recover" };
+      return { kind: "oclif", commandId: "sandbox:recover", args: [sandboxName, ...actionArgs] };
     case "share":
       return { kind: "oclif", commandId: "share", args: [sandboxName, ...actionArgs] };
     case "snapshot": {

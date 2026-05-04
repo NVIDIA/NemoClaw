@@ -53,6 +53,8 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runShell, runCapture, runFile, shellQuote, validateName } =
   runner;
+const nameValidation: typeof import("./name-validation") = require("./name-validation");
+const { NAME_ALLOWED_FORMAT, getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./docker") = require("./docker");
 const {
   dockerContainerInspectFormat,
@@ -268,6 +270,7 @@ const {
   resolveProviderCredential,
   saveCredential,
 } = credentials;
+const { hashCredential }: typeof import("./credential-hash") = require("./credential-hash");
 const registry: typeof import("./registry") = require("./registry");
 const nim: typeof import("./nim") = require("./nim");
 const onboardSession: typeof import("./onboard-session") = require("./onboard-session");
@@ -414,11 +417,13 @@ type OnboardOptions = {
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   controlUiPort?: number | null;
+  autoYes?: boolean;
 };
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
 let RECREATE_SANDBOX = false;
+let AUTO_YES = false;
 // Set by onboard() before preflight() when --control-ui-port is specified.
 // null means "use auto-allocation" (skip dashboard port check in preflight).
 let _preflightDashboardPort: number | null = null;
@@ -441,6 +446,10 @@ function isNonInteractive(): boolean {
 
 function isRecreateSandbox(): boolean {
   return RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
+}
+
+function isAutoYes(): boolean {
+  return AUTO_YES || process.env.NEMOCLAW_YES === "1";
 }
 
 function note(message: string): void {
@@ -1152,6 +1161,57 @@ type SelectionDrift = {
   unknown: boolean;
 };
 
+type InitialSandboxPolicy = {
+  policyPath: string;
+  appliedPresets: string[];
+  cleanup?: () => boolean;
+};
+
+const CREATE_TIME_POLICY_PRESETS_BY_CHANNEL: Record<string, string[]> = {
+  slack: ["slack"],
+};
+
+function prepareInitialSandboxCreatePolicy(
+  basePolicyPath: string,
+  activeMessagingChannels: string[],
+): InitialSandboxPolicy {
+  const createTimePresets = [
+    ...new Set(
+      activeMessagingChannels.flatMap(
+        (channel) => CREATE_TIME_POLICY_PRESETS_BY_CHANNEL[channel] || [],
+      ),
+    ),
+  ];
+
+  if (createTimePresets.length === 0) {
+    return { policyPath: basePolicyPath, appliedPresets: [] };
+  }
+
+  const basePolicy = fs.readFileSync(basePolicyPath, "utf-8");
+  const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets);
+  if (mergedPolicy.missingPresets.length > 0) {
+    throw new Error(
+      `Cannot prepare sandbox create policy; missing policy preset(s): ${mergedPolicy.missingPresets.join(", ")}`,
+    );
+  }
+
+  const policyPath = secureTempFile("nemoclaw-initial-policy", ".yaml");
+  fs.writeFileSync(policyPath, mergedPolicy.policy, { encoding: "utf-8", mode: 0o600 });
+
+  return {
+    policyPath,
+    appliedPresets: mergedPolicy.appliedPresets,
+    cleanup: () => {
+      try {
+        cleanupTempDir(policyPath, "nemoclaw-initial-policy");
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
 function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
   const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
   // upsertMessagingProviders process.exits on failure, so reaching this
@@ -1180,18 +1240,6 @@ function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
 }
 function providerExistsInGateway(name: string) {
   return onboardProviders.providerExistsInGateway(name, runOpenshell);
-}
-
-/**
- * Compute a SHA-256 hash of a credential value for change detection.
- * Stored in the sandbox registry so we can detect rotation on reuse
- * without needing to read the credential back from OpenShell.
- * @param {string} value - Credential value to hash.
- * @returns {string|null} Hex-encoded SHA-256 hash, or null if value is falsy.
- */
-function hashCredential(value: string | null | undefined): string | null {
-  if (!value) return null;
-  return crypto.createHash("sha256").update(String(value).trim()).digest("hex");
 }
 
 /**
@@ -2306,6 +2354,8 @@ const {
   prepareOllamaModel,
 } = require("./onboard-ollama-proxy");
 
+const ollamaModelSize: typeof import("./ollama-model-size") = require("./ollama-model-size");
+
 function getRequestedSandboxNameHint(opts: { sandboxName?: string | null } = {}): string | null {
   const raw =
     typeof opts.sandboxName === "string" && opts.sandboxName.length > 0
@@ -2325,13 +2375,19 @@ function getResumeSandboxConflict(
   // is impossible). Falling back to the env var here would fire spurious
   // conflicts for interactive resume runs whose shell happens to export
   // NEMOCLAW_SANDBOX_NAME but which never actually consult it.
+  // #2753: only treat session.sandboxName as a conflict source if the
+  // sandbox step actually completed. A pre-fix incomplete session would
+  // otherwise reject a legitimate `--resume --name <new>` that the user
+  // is supplying precisely to recover from the phantom.
   const raw = typeof opts.sandboxName === "string" ? opts.sandboxName.trim().toLowerCase() : "";
   const requestedSandboxName = raw || null;
-  if (!requestedSandboxName || !session?.sandboxName) {
+  const recordedSandboxName =
+    session?.steps?.sandbox?.status === "complete" ? session?.sandboxName ?? null : null;
+  if (!requestedSandboxName || !recordedSandboxName) {
     return null;
   }
-  return requestedSandboxName !== session.sandboxName
-    ? { requestedSandboxName, recordedSandboxName: session.sandboxName }
+  return requestedSandboxName !== recordedSandboxName
+    ? { requestedSandboxName, recordedSandboxName }
     : null;
 }
 
@@ -3781,7 +3837,7 @@ async function promptValidatedSandboxName(agent: AgentDefinition | null = null) 
   const defaultSandboxName = getSandboxPromptDefault(agent);
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const nameAnswer = await promptOrDefault(
-      `  Sandbox name (lowercase, starts with letter, hyphens ok) [${defaultSandboxName}]: `,
+      `  Sandbox name (${NAME_ALLOWED_FORMAT}) [${defaultSandboxName}]: `,
       "NEMOCLAW_SANDBOX_NAME",
       defaultSandboxName,
     );
@@ -3806,11 +3862,10 @@ async function promptValidatedSandboxName(agent: AgentDefinition | null = null) 
       console.error(`  ${errorMessage}`);
     }
 
-    if (/^[0-9]/.test(sandboxName)) {
-      console.error("  Names must start with a letter, not a digit.");
-    } else {
-      console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
-      console.error("  must start with a letter, and end with a letter or number.");
+    for (const line of getNameValidationGuidance("sandbox name", sandboxName, {
+      includeAllowedFormat: false,
+    })) {
+      console.error(`  ${line}`);
     }
 
     // Non-interactive runs cannot re-prompt — abort so the caller can fix the
@@ -3960,29 +4015,42 @@ async function createSandbox(
   // skipped the token prompt for. Only channels with a real token will have a
   // provider attached, so the conflict check must filter out the skipped ones
   // (otherwise we warn about phantom channels that will never poll).
-  const conflictCheckChannels: string[] = Array.isArray(enabledChannels)
-    ? enabledChannels.filter((name) => {
+  const conflictCheckChannels = Array.isArray(enabledChannels)
+    ? enabledChannels.flatMap((name) => {
         const def = MESSAGING_CHANNELS.find((c) => c.name === name);
-        return def ? !!getMessagingToken(def.envKey) : false;
+        if (!def || !getMessagingToken(def.envKey)) return [];
+        const tokenEnvKeys = def.appTokenEnvKey ? [def.envKey, def.appTokenEnvKey] : [def.envKey];
+        const credentialHashes: Record<string, string> = {};
+        for (const envKey of tokenEnvKeys) {
+          const hash = hashCredential(getMessagingToken(envKey));
+          if (hash) credentialHashes[envKey] = hash;
+        }
+        if (Object.keys(credentialHashes).length === 0) return [];
+        return [{ channel: name, credentialHashes }];
       })
     : [];
 
   // Messaging channels like Telegram (getUpdates), Discord (gateway), and Slack
-  // (Socket Mode) enforce one consumer per bot token. Two sandboxes sharing
-  // a token silently break both bridges (see #1953). Warn before we commit.
+  // (Socket Mode) enforce one consumer per channel credential. Two sandboxes
+  // sharing a credential silently break both bridges (see #1953). Warn before
+  // we commit.
   if (conflictCheckChannels.length > 0) {
     const { backfillMessagingChannels, findChannelConflicts } = require("./messaging-conflict");
     backfillMessagingChannels(registry, makeConflictProbe());
     const conflicts = findChannelConflicts(sandboxName, conflictCheckChannels, registry);
     if (conflicts.length > 0) {
-      for (const { channel, sandbox } of conflicts) {
+      for (const { channel, sandbox, reason } of conflicts) {
+        const detail =
+          reason === "matching-token"
+            ? `uses the same ${channel} credential`
+            : `already has ${channel} enabled, but its credential hash is unavailable`;
         console.log(
-          `  ⚠ Sandbox '${sandbox}' already has ${channel} enabled. Bot tokens only allow one sandbox to poll — continuing will break both bridges.`,
+          `  ⚠ Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect — continuing may break both bridges.`,
         );
       }
       if (isNonInteractive()) {
         console.error(
-          `  Aborting: resolve the messaging channel conflict above or run \`${cliName()} <sandbox> destroy\` on the other sandbox.`,
+          `  Aborting: resolve the messaging channel conflict above or run \`${cliName()} <sandbox> channels stop <channel>\` / \`${cliName()} <sandbox> channels remove <channel>\` on the other sandbox.`,
         );
         process.exit(1);
       }
@@ -4207,7 +4275,9 @@ async function createSandbox(
       try {
         const backup = sandboxState.backupSandboxState(sandboxName);
         if (backup.success) {
-          note(`  ✓ State backed up (${backup.backedUpDirs.length} directories)`);
+          note(
+            `  ✓ State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
+          );
           pendingStateRestore = backup;
         } else {
           console.error("  State backup failed — aborting rebuild to prevent data loss.");
@@ -4406,26 +4476,6 @@ async function createSandbox(
     "openclaw-sandbox.yaml",
   );
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
-  const createArgs = [
-    "--from",
-    `${buildCtx}/Dockerfile`,
-    "--name",
-    sandboxName,
-    "--policy",
-    basePolicyPath,
-  ];
-  // --gpu is intentionally omitted. See comment in startGateway().
-
-  // Create OpenShell providers for messaging credentials so they flow through
-  // the provider/placeholder system instead of raw env vars. The L7 proxy
-  // rewrites Authorization headers (Bearer/Bot) and URL-path segments
-  // (/bot{TOKEN}/) with real secrets at egress (OpenShell ≥ 0.0.20).
-  const messagingProviders = upsertMessagingProviders(messagingTokenDefs);
-  for (const p of messagingProviders) {
-    createArgs.push("--provider", p);
-  }
-
-  console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   if (webSearchConfig && !getCredential(webSearch.BRAVE_API_KEY_ENV)) {
     console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
     console.error(
@@ -4450,8 +4500,40 @@ async function createSandbox(
           if (envKey === "TELEGRAM_BOT_TOKEN") return ["telegram"];
           return [];
         }),
-    ),
+      ),
   ];
+  const initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
+    basePolicyPath,
+    activeMessagingChannels,
+  );
+  if (initialSandboxPolicy.cleanup) {
+    process.on("exit", initialSandboxPolicy.cleanup);
+  }
+  if (initialSandboxPolicy.appliedPresets.length > 0) {
+    console.log(
+      `  Including policy preset(s) at sandbox boot: ${initialSandboxPolicy.appliedPresets.join(", ")}`,
+    );
+  }
+  const createArgs = [
+    "--from",
+    `${buildCtx}/Dockerfile`,
+    "--name",
+    sandboxName,
+    "--policy",
+    initialSandboxPolicy.policyPath,
+  ];
+  // --gpu is intentionally omitted. See comment in startGateway().
+
+  // Create OpenShell providers for messaging credentials so they flow through
+  // the provider/placeholder system instead of raw env vars. The L7 proxy
+  // rewrites Authorization headers (Bearer/Bot) and URL-path segments
+  // (/bot{TOKEN}/) with real secrets at egress (OpenShell >= 0.0.20).
+  const messagingProviders = upsertMessagingProviders(messagingTokenDefs);
+  for (const p of messagingProviders) {
+    createArgs.push("--provider", p);
+  }
+
+  console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   // Build allowed sender IDs map from env vars set during the messaging prompt.
   // Each channel with a userIdEnvKey in MESSAGING_CHANNELS may have a
   // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
@@ -4650,6 +4732,10 @@ async function createSandbox(
     },
   });
 
+  if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
+    process.removeListener("exit", initialSandboxPolicy.cleanup);
+  }
+
   // Clean up build context regardless of outcome.
   // Use fs.rmSync instead of run() to avoid spawning a shell process.
   // Only deregister the 'exit' safety net when inline cleanup succeeded;
@@ -4814,7 +4900,9 @@ async function createSandbox(
       pendingStateRestore.manifest.backupPath,
     );
     if (restore.success) {
-      note(`  ✓ State restored (${restore.restoredDirs.length} directories)`);
+      note(
+        `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
+      );
     } else {
       console.error(
         `  Warning: partial restore. Manual recovery: ${pendingStateRestore.manifest.backupPath}`,
@@ -5041,6 +5129,34 @@ async function selectAndValidateOllamaModel(
       return { outcome: "back-to-selection" };
     }
     const selectedModel = requireValue(model, "Expected an Ollama model selection");
+    if (!installedModels.includes(selectedModel)) {
+      const lookup = ollamaModelSize.getOllamaModelSize(selectedModel);
+      const sizeLabel = ollamaModelSize.formatModelSize(lookup);
+      if (isAutoYes()) {
+        note(`  Pulling Ollama model '${selectedModel}' (${sizeLabel}).`);
+      } else if (isNonInteractive()) {
+        console.error(
+          `  Ollama model '${selectedModel}' (${sizeLabel}) is not installed and ` +
+            "non-interactive mode cannot prompt for confirmation. " +
+            "Re-run with --yes / -y (or NEMOCLAW_YES=1) to authorise the download.",
+        );
+        process.exit(1);
+      } else {
+        const proceed = await promptYesNoOrDefault(
+          `  Download Ollama model '${selectedModel}' (${sizeLabel})?`,
+          null,
+          false,
+        );
+        if (!proceed) {
+          console.error(
+            `  Skipped pulling Ollama model '${selectedModel}'. Choose another model or re-run with --yes to confirm.`,
+          );
+          console.log("  Choose a different Ollama model or select Other.");
+          console.log("");
+          continue;
+        }
+      }
+    }
     const probe = await prepareOllamaModel(selectedModel, installedModels);
     if (!probe.ok) {
       console.error(`  ${probe.message}`);
@@ -7818,7 +7934,8 @@ function findOpenclawJsonPath(dir: string): string | null {
 
 /**
  * Pull gateway.auth.token from the sandbox image via openshell sandbox download
- * so onboard can print copy-paste Control UI URLs with #token= (same idea as nemoclaw-start.sh).
+ * so onboard can build dashboard access URLs. User-visible output must redact
+ * the token fragment.
  */
 function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
@@ -7921,6 +8038,10 @@ function getDashboardForwardStartCommand(
 function buildAuthenticatedDashboardUrl(baseUrl: string, token: string | null = null): string {
   if (!token) return baseUrl;
   return `${baseUrl}#token=${encodeURIComponent(token)}`;
+}
+
+function dashboardUrlForDisplay(url: string): string {
+  return redact(url.replace(/#token=[^\s'"]*$/i, ""));
 }
 
 function getWslHostAddress(
@@ -8071,14 +8192,16 @@ function printDashboard(
     });
   } else if (token) {
     console.log(
-      `  ${agentProductName()} UI (tokenized URL; treat it like a password; save it now - it will not be printed again)`,
+      `  ${agentProductName()} UI (auth token redacted from displayed URLs)`,
     );
     for (const line of guidanceLines) {
       console.log(`  ${line}`);
     }
     for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${entry.url}`);
+      console.log(`  ${entry.label}: ${dashboardUrlForDisplay(entry.url)}`);
     }
+    console.log(`  Token:       ${cliName()} ${sandboxName} gateway-token --quiet`);
+    console.log(`               append  #token=<token> locally if the browser asks for auth.`);
   } else {
     note("  Could not read gateway token from the sandbox (download failed).");
     console.log(`  ${agentProductName()} UI`);
@@ -8086,14 +8209,12 @@ function printDashboard(
       console.log(`  ${line}`);
     }
     for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${entry.url}`);
+      console.log(`  ${entry.label}: ${dashboardUrlForDisplay(entry.url)}`);
     }
     console.log(
       `  Token:       ${cliName()} ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
     );
-    console.log(
-      `               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`,
-    );
+    console.log(`               append  #token=<token>  to the URL locally if needed.`);
   }
   console.log(`  ${"─".repeat(50)}`);
   console.log("");
@@ -8198,6 +8319,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
+  AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
   _preflightDashboardPort = opts.controlUiPort || null;
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
@@ -8247,6 +8369,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       requestedSandboxName = validated;
     } catch (error) {
       console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+      for (const line of getNameValidationGuidance("sandbox name", requestedSandboxName, {
+        includeAllowedFormat: false,
+      })) {
+        console.error(`  ${line}`);
+      }
       process.exit(1);
     }
   }
@@ -8414,6 +8541,26 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         return current;
       });
       session = onboardSession.loadSession();
+      // #2753: a resumed onboard whose sandbox step did not complete has no
+      // recorded sandboxName (the onboard fix only persists it after
+      // createSandbox succeeds). Falling through would silently default to
+      // the agent's `my-assistant` instead of the user's original --name.
+      // Use `cannotPrompt` so non-TTY runs without explicit --non-interactive
+      // are also caught, and `requestedSandboxName` (already env-var-resolved
+      // and trimmed above, lines 8302-8308) so whitespace-only env values
+      // can't satisfy the guard.
+      const sandboxStepCompleted = session?.steps?.sandbox?.status === "complete";
+      const recoveredSandboxName =
+        requestedSandboxName || (sandboxStepCompleted ? session?.sandboxName || null : null);
+      if (cannotPrompt && !recoveredSandboxName) {
+        console.error(
+          "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",
+        );
+        console.error(
+          "  so no sandbox name was recorded. Re-run with --name <sandbox> (or set NEMOCLAW_SANDBOX_NAME).",
+        );
+        process.exit(1);
+      }
     } else {
       // --fresh asks for an explicit fresh start. createSession + saveSession
       // already overwrites any existing file, but clearing first removes the
@@ -8552,7 +8699,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSession.markStepComplete("gateway");
     }
 
-    let sandboxName = session?.sandboxName || requestedSandboxName || null;
+    // #2753: prefer requestedSandboxName over an unconfirmed session name.
+    // A pre-fix session may carry sandboxName even though sandbox creation
+    // never completed; users supplying `--name` / NEMOCLAW_SANDBOX_NAME on
+    // the resume run must win, otherwise the stale name silently overrides
+    // their explicit recovery input.
+    const recordedSandboxName =
+      session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
+    let sandboxName = recordedSandboxName || requestedSandboxName || null;
     if (sandboxName && RESERVED_SANDBOX_NAMES.has(sandboxName)) {
       console.error(
         `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
@@ -8579,7 +8733,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         skippedStepMessage("provider_selection", `${provider} / ${model}`);
         hydrateCredentialEnv(credentialEnv);
       } else {
-        startRecordedStep("provider_selection", { sandboxName });
+        // #2753: do not persist sandboxName to onboard-session.json before
+        // the sandbox actually exists in the gateway (Step 6 markStepComplete
+        // below). A SIGINT between any earlier step and createSandbox would
+        // otherwise leave a phantom that `nemoclaw list` resurrects until
+        // manually destroyed.
+        startRecordedStep("provider_selection");
         const selection = await setupNim(gpu, sandboxName);
         model = selection.model;
         provider = selection.provider;
@@ -8590,7 +8749,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         onboardSession.markStepComplete(
           "provider_selection",
           toSessionUpdates({
-            sandboxName,
             provider,
             model,
             endpointUrl,
@@ -8615,7 +8773,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
         onboardSession.markStepComplete(
           "inference",
-          toSessionUpdates({ sandboxName, provider, model, nimContainer }),
+          toSessionUpdates({ provider, model, nimContainer }),
         );
         break;
       }
@@ -8651,7 +8809,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
       }
 
-      startRecordedStep("inference", { sandboxName, provider, model });
+      startRecordedStep("inference", { provider, model });
       const inferenceResult = await setupInference(
         sandboxName,
         model,
@@ -8669,7 +8827,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       }
       onboardSession.markStepComplete(
         "inference",
-        toSessionUpdates({ sandboxName, provider, model, nimContainer }),
+        toSessionUpdates({ provider, model, nimContainer }),
       );
       break;
     }
@@ -8755,7 +8913,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       } else {
         nextWebSearchConfig = await configureWebSearch(null, agent, webSearchSupportProbePath);
       }
-      startRecordedStep("sandbox", { sandboxName, provider, model });
+      startRecordedStep("sandbox", { provider, model });
       selectedMessagingChannels = await setupMessagingChannels();
       onboardSession.updateSession((current: Session) => {
         current.messagingChannels = selectedMessagingChannels;

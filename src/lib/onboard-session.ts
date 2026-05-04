@@ -399,6 +399,8 @@ function parseLockFile(contents: string): LockInfo | null {
   }
 }
 
+const MALFORMED_STALE_SECONDS = 30;
+
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -407,6 +409,49 @@ function isProcessAlive(pid: number): boolean {
   } catch (error) {
     return isErrnoException(error) && error.code === "EPERM";
   }
+}
+
+function readProcProcessStartMs(pid: number): number | null {
+  try {
+    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const btimeLine = fs
+      .readFileSync("/proc/stat", "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("btime "));
+    const bootSeconds = btimeLine ? Number(btimeLine.trim().split(/\s+/)[1]) : NaN;
+    const closeParen = statText.lastIndexOf(")");
+    if (!Number.isFinite(bootSeconds) || closeParen < 0) return null;
+
+    const fieldsAfterComm = statText
+      .slice(closeParen + 2)
+      .trim()
+      .split(/\s+/);
+    const startTicks = Number(fieldsAfterComm[19]);
+    if (!Number.isFinite(startTicks)) return null;
+
+    // Linux exposes /proc/<pid>/stat starttime in USER_HZ ticks. 100 is the
+    // stable value on supported NemoClaw Linux hosts.
+    const clockTicksPerSecond = 100;
+    return (bootSeconds + startTicks / clockTicksPerSecond) * 1000;
+  } catch {
+    return null;
+  }
+}
+
+function lockHolderStillMatches(lock: LockInfo): boolean {
+  if (!isProcessAlive(lock.pid)) return false;
+  if (lock.pid === process.pid) return true;
+
+  const lockStartedMs = lock.startedAt ? Date.parse(lock.startedAt) : NaN;
+  if (!Number.isFinite(lockStartedMs)) return true;
+
+  const processStartMs = readProcProcessStartMs(lock.pid);
+  if (processStartMs === null) return true;
+
+  // The original lock holder must have started before it wrote the lock. If
+  // the currently-live PID started after the lock timestamp, the PID was reused
+  // and the lock is stale even though kill(pid, 0) succeeds.
+  return processStartMs <= lockStartedMs + 1000;
 }
 
 // File descriptor we hold across the lifetime of an acquired lock. On
@@ -468,12 +513,25 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         throw readError;
       }
       if (!existing) {
-        // Malformed lock file — leave it on disk (a human or another
-        // process may be mid-write) and retry. Pre-#1281 behavior
-        // preserved: never unlink a malformed lock automatically.
+        // Malformed lock file. If the file is very recent (<30 s), a
+        // concurrent process may be mid-write — leave it and retry.
+        // Otherwise the file is stale debris from a crash between
+        // openSync("wx") and writeSync() — remove it so subsequent
+        // onboard runs are not permanently blocked (#2765).
+        try {
+          const lockStat = fs.statSync(LOCK_FILE);
+          const ageMs = Date.now() - lockStat.mtimeMs;
+          if (ageMs > MALFORMED_STALE_SECONDS * 1000) {
+            unlinkIfInodeMatches(LOCK_FILE, staleInode);
+          }
+        } catch (statErr) {
+          if (!(isErrnoException(statErr) && statErr.code === "ENOENT")) {
+            throw statErr;
+          }
+        }
         continue;
       }
-      if (isProcessAlive(existing.pid)) {
+      if (lockHolderStillMatches(existing)) {
         return {
           acquired: false,
           lockFile: LOCK_FILE,

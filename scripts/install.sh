@@ -1554,7 +1554,14 @@ run_onboard() {
           if ! IFS= read -r _resume_answer <"$_prompt_stdin"; then
             error "Could not read response from TTY. Re-run with --fresh or run '${_CLI_BIN} onboard --resume'."
           fi
-          case "${_resume_answer,,}" in
+          # Use tr to lowercase the answer rather than the bash 4 case
+          # expansion form (lowercase via the comma-comma operator), which
+          # is unavailable on macOS /bin/bash 3.2 and would print
+          # "bad substitution" on macOS hosts running the curl-piped
+          # installer.
+          local _resume_answer_lc
+          _resume_answer_lc="$(printf '%s' "$_resume_answer" | tr '[:upper:]' '[:lower:]')"
+          case "$_resume_answer_lc" in
             "" | r | resume)
               onboard_cmd+=(--resume)
               break
@@ -1578,6 +1585,10 @@ run_onboard() {
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
       onboard_cmd+=(--yes-i-accept-third-party-software)
     fi
+    # A non-interactive install is by definition unattended consent;
+    # forward --yes so the Ollama size-confirmation gate does not abort
+    # the unattended download (the size is still printed to logs).
+    onboard_cmd+=(--yes)
     "${_CLI_BIN}" "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
     "${_CLI_BIN}" "${onboard_cmd[@]}"
