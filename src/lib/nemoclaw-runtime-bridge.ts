@@ -11,7 +11,6 @@ export interface NemoClawRuntimeBridge {
   sandboxConnect: (sandboxName: string, options?: SandboxConnectOptions) => Promise<void>;
   sandboxDestroy: (sandboxName: string, args?: string[]) => Promise<void>;
   sandboxRebuild: (sandboxName: string, args?: string[]) => Promise<void>;
-  sandboxSkillInstall: (sandboxName: string, args?: string[]) => Promise<void>;
   sandboxStatus: (sandboxName: string) => Promise<void>;
   upgradeSandboxes: (args?: string[]) => Promise<void>;
 }
