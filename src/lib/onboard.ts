@@ -1149,7 +1149,7 @@ function upsertProvider(
 type MessagingTokenDef = { name: string; envKey: string; token: string | null };
 
 type EndpointValidationResult =
-  | { ok: true; api: string; retry?: undefined }
+  | { ok: true; api: string | null; retry?: undefined }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
 
 type SelectionDrift = {
@@ -2239,7 +2239,7 @@ async function validateOpenAiLikeSelection(
   } else {
     console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
   }
-  return { ok: true, api: probe.api };
+  return { ok: true, api: probe.api ?? "openai-completions" };
 }
 
 async function validateAnthropicSelectionWithRetryMessage(
@@ -2293,7 +2293,7 @@ async function validateCustomOpenAiLikeSelection(
     } else {
       console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
     }
-    return { ok: true, api: probe.api };
+    return { ok: true, api: probe.api ?? "openai-completions" };
   }
   console.error(`  ${label} endpoint validation failed.`);
   console.error(`  ${probe.message}`);
@@ -5929,9 +5929,10 @@ async function setupNim(
               console.error("  Local NVIDIA NIM base URL could not be determined.");
               process.exit(1);
             }
+            const nimValidationUrl = getLocalProviderValidationBaseUrl(provider) || endpointUrl;
             const validation = await validateOpenAiLikeSelection(
               "Local NVIDIA NIM",
-              endpointUrl,
+              nimValidationUrl,
               requireValue(model, "Expected a Local NVIDIA NIM model after startup"),
               null,
             );
