@@ -32,6 +32,7 @@ import {
 import { PolicyAddCommand, PolicyRemoveCommand } from "./policy-mutate-cli-commands";
 import RebuildCliCommand from "./rebuild-cli-command";
 import RecoverCliCommand from "./recover-cli-command";
+import SandboxDoctorCliCommand from "./sandbox-doctor-cli-command";
 import {
   SandboxChannelsListCommand,
   SandboxConfigGetCommand,
@@ -79,6 +80,7 @@ export default {
   "sandbox:config:get": SandboxConfigGetCommand,
   "sandbox:connect": ConnectCliCommand,
   "sandbox:destroy": DestroyCliCommand,
+  "sandbox:doctor": SandboxDoctorCliCommand,
   "sandbox:logs": SandboxLogsCommand,
   "sandbox:policy-add": PolicyAddCommand,
   "sandbox:policy-list": SandboxPolicyListCommand,

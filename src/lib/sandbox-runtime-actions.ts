@@ -32,7 +32,10 @@ export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions
 }
 
 export async function destroySandbox(sandboxName: string, args: string[] = []): Promise<void> {
-  await getNemoClawRuntimeBridge().sandboxDestroy(sandboxName, args);
+  const { destroySandbox: destroyExtractedSandbox } = require("./sandbox-destroy-action") as {
+    destroySandbox: (sandboxName: string, args?: string[]) => Promise<void>;
+  };
+  await destroyExtractedSandbox(sandboxName, args);
 }
 
 export async function rebuildSandbox(sandboxName: string, args: string[] = []): Promise<void> {
