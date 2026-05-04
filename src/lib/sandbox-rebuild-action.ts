@@ -8,6 +8,10 @@ import { prompt as askPrompt } from "./credentials";
 const { hydrateCredentialEnv } = require("./onboard") as {
   hydrateCredentialEnv: (name: string) => string | null;
 };
+const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("./onboard-providers") as {
+  LOCAL_INFERENCE_PROVIDERS: string[];
+  REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
+};
 import * as nim from "./nim";
 import * as onboardSession from "./onboard-session";
 import type { Session } from "./onboard-session";
@@ -32,6 +36,17 @@ function _rebuildLog(msg: string) {
   console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${msg}${R}`);
 }
 
+function getRebuildCredentialEnvFromRegistry(provider: string | null | undefined): string | null {
+  if (!provider || LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
+    return null;
+  }
+  const remoteConfig =
+    provider === "nvidia-nim"
+      ? REMOTE_PROVIDER_CONFIG.build
+      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
+  return remoteConfig?.credentialEnv || null;
+}
+
 export async function rebuildSandbox(
   sandboxName: string,
   args: string[] = [],
@@ -46,7 +61,7 @@ export async function rebuildSandbox(
   // When called from upgradeSandboxes in a loop, throwOnError prevents
   // process.exit from aborting the entire batch on the first failure.
   const bail = opts.throwOnError
-    ? (msg: string, code = 1) => {
+    ? (msg: string, _code = 1) => {
         throw new Error(msg);
       }
     : (_msg: string, code = 1) => process.exit(code);
@@ -128,15 +143,16 @@ export async function rebuildSandbox(
   let rebuildCredentialEnv: string | null = null;
   if (session && session.sandboxName && session.sandboxName !== sandboxName) {
     // Session belongs to a different sandbox — its credentialEnv may be
-    // wrong (e.g. hermes session while rebuilding openclaw).  Skip the
-    // credential preflight; the agent sync from the registry (#2201)
-    // and onboard itself will handle provider selection.
+    // wrong (e.g. hermes session while rebuilding openclaw). Resolve the
+    // target sandbox provider from the registry instead so destructive
+    // operations still get a credential preflight for the sandbox being rebuilt.
+    rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider);
     log(
-      `Preflight warning: session belongs to '${session.sandboxName}', not '${sandboxName}' — skipping credential preflight`,
+      `Preflight warning: session belongs to '${session.sandboxName}', not '${sandboxName}' — using registry credential env ${rebuildCredentialEnv || "(none)"}`,
     );
     console.log(
       `  ${D}Note: onboard session belongs to '${session.sandboxName}', not '${sandboxName}'. ` +
-        `Skipping credential preflight.${R}`,
+        `Using the '${sandboxName}' registry entry for credential preflight.${R}`,
     );
   } else {
     rebuildCredentialEnv = session?.credentialEnv || null;
@@ -477,8 +493,10 @@ export async function rebuildSandbox(
   }
 
   // Step 6: Post-restore agent-specific migration
-  const agentDef = agent
-    ? require("./agent-defs").loadAgent(agent.name)
+  const rebuiltAgent = agentRuntime.getSessionAgent(sandboxName);
+  const rebuiltAgentName = agentRuntime.getAgentDisplayName(rebuiltAgent);
+  const agentDef = rebuiltAgent
+    ? require("./agent-defs").loadAgent(rebuiltAgent.name)
     : require("./agent-defs").loadAgent("openclaw");
   if (agentDef.name === "openclaw") {
     // openclaw doctor --fix validates and repairs directory structure.
@@ -513,7 +531,7 @@ export async function rebuildSandbox(
   if (restore.success) {
     console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
     if (versionCheck.expectedVersion) {
-      console.log(`    Now running: ${agentName} v${versionCheck.expectedVersion}`);
+      console.log(`    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`);
     }
   } else {
     console.log(
@@ -522,5 +540,3 @@ export async function rebuildSandbox(
     console.log(`    Backup available at: ${backupManifest.backupPath}`);
   }
 }
-
-
