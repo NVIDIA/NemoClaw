@@ -23,6 +23,20 @@ const {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+// Hostnames that only resolve from inside the OpenShell sandbox network.
+// Probing them from the host always fails with curl exit 6 ("Could not
+// resolve host"), so we skip host-side validation for these URLs. See #893.
+const SANDBOX_INTERNAL_HOSTS = ["host.openshell.internal", "host.docker.internal"];
+
+function isSandboxInternalUrl(url) {
+  try {
+    const { hostname } = new URL(String(url));
+    return SANDBOX_INTERNAL_HOSTS.includes(hostname);
+  } catch {
+    return false;
+  }
+}
+
 function parseJsonObject(body) {
   if (!body) return null;
   try {
@@ -247,6 +261,16 @@ function runChatCompletionsProbe({ authHeader, model, url, isWsl: isWslOverride 
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
+  if (isSandboxInternalUrl(endpointUrl)) {
+    const { hostname } = new URL(String(endpointUrl));
+    return {
+      ok: true,
+      api: null,
+      label: null,
+      note: `${hostname} only resolves inside the sandbox — validation skipped. If the endpoint is unreachable at runtime, re-run onboard with a routable URL.`,
+    };
+  }
+
   const useQueryParam = options.authMode === "query-param";
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
@@ -479,6 +503,7 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
 }
 
 module.exports = {
+  isSandboxInternalUrl,
   parseJsonObject,
   hasResponsesToolCall,
   shouldRequireResponsesToolCalling,

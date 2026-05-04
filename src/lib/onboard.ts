@@ -2234,7 +2234,11 @@ async function validateOpenAiLikeSelection(
     }
     return { ok: false, retry };
   }
-  console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
+  if (probe.note) {
+    console.log(`  ℹ ${probe.note}`);
+  } else {
+    console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
+  }
   return { ok: true, api: probe.api };
 }
 
@@ -2284,7 +2288,11 @@ async function validateCustomOpenAiLikeSelection(
     probeStreaming: true,
   });
   if (probe.ok) {
-    console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
+    if (probe.note) {
+      console.log(`  ℹ ${probe.note}`);
+    } else {
+      console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
+    }
     return { ok: true, api: probe.api };
   }
   console.error(`  ${label} endpoint validation failed.`);
