@@ -314,11 +314,11 @@ describe("assessHost", () => {
       readFileImpl: () => '{"default-cgroupns-mode":"private"}',
       commandExistsImpl: (name: string) =>
         name === "docker" || name === "apt-get" || name === "systemctl",
-      runCaptureImpl: (command: string) => {
-        if (command === "command -v apt-get") return "/usr/bin/apt-get";
-        if (command === "command -v systemctl") return "/usr/bin/systemctl";
-        if (command === "systemctl is-active docker") return "active";
-        if (command === "systemctl is-enabled docker") return "enabled";
+      runCaptureImpl: (command: readonly string[]) => {
+        if (command.join(" ") === 'sh -c command -v "$1" -- apt-get') return "/usr/bin/apt-get";
+        if (command.join(" ") === 'sh -c command -v "$1" -- systemctl') return "/usr/bin/systemctl";
+        if (command.join(" ") === "systemctl is-active docker") return "active";
+        if (command.join(" ") === "systemctl is-enabled docker") return "enabled";
         return "";
       },
     });
@@ -731,8 +731,7 @@ describe("probeContainerDns", () => {
     "Address: 104.16.26.35\n" +
     "Address: 104.16.27.35\n";
 
-  const BUSYBOX_FAILURE =
-    ";; connection timed out; no servers could be reached\n";
+  const BUSYBOX_FAILURE = ";; connection timed out; no servers could be reached\n";
 
   it("returns ok when busybox nslookup succeeds", () => {
     const result = probeContainerDns({ outputOverride: BUSYBOX_SUCCESS });
@@ -760,7 +759,7 @@ describe("probeContainerDns", () => {
     const pullError =
       "Unable to find image 'busybox:latest' locally\n" +
       "latest: Pulling from library/busybox\n" +
-      "docker: Error response from daemon: Head \"https://registry-1.docker.io/v2/library/busybox/manifests/latest\": dial tcp: lookup registry-1.docker.io: no such host.\n";
+      'docker: Error response from daemon: Head "https://registry-1.docker.io/v2/library/busybox/manifests/latest": dial tcp: lookup registry-1.docker.io: no such host.\n';
     const result = probeContainerDns({ outputOverride: pullError });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("image_pull_failed");
@@ -807,30 +806,35 @@ describe("probeContainerDns", () => {
   });
 
   it("captures the spawned command for runCapture override", () => {
-    const captured: string[] = [];
+    const captured: string[][] = [];
     const result = probeContainerDns({
       runCaptureImpl: (command) => {
-        captured.push(command);
+        captured.push([...command]);
         return BUSYBOX_SUCCESS;
       },
     });
     expect(result.ok).toBe(true);
     expect(captured).toHaveLength(1);
-    expect(captured[0]).toContain("docker run");
-    expect(captured[0]).toContain("busybox");
-    expect(captured[0]).toContain("registry.npmjs.org");
+    // Probe shells out via `sh -c "<script> 2>&1"` so docker/busybox
+    // stderr lands in stdout where the parser can see it.
+    expect(captured[0].slice(0, 2)).toEqual(["sh", "-c"]);
+    const script = captured[0][2];
+    expect(script).toContain("docker run --rm");
+    expect(script).toContain("busybox:latest");
+    expect(script).toContain("registry.npmjs.org");
+    expect(script).toContain("2>&1");
   });
 
   it("allows the command to be overridden", () => {
-    let seen = "";
+    let seen: readonly string[] = [];
     probeContainerDns({
-      command: "echo OVERRIDDEN",
+      command: ["echo", "OVERRIDDEN"],
       runCaptureImpl: (command) => {
         seen = command;
         return "Name:\tregistry.npmjs.org\nAddress: 1.2.3.4\n";
       },
     });
-    expect(seen).toBe("echo OVERRIDDEN");
+    expect(seen).toEqual(["echo", "OVERRIDDEN"]);
   });
 
   it("treats thrown runCapture errors as error reason", () => {
@@ -868,17 +872,20 @@ describe("probeContainerDns", () => {
     expect(seenOpts?.timeout).toBe(20_000);
   });
 
-  it("emits a plain `docker run ...` command (no shell-specific wrappers)", () => {
-    let captured = "";
+  it("does not depend on a host-side timeout/gtimeout binary", () => {
+    // The probe bounds itself via Node's spawn-level timeout, not a
+    // host `timeout`/`gtimeout` wrapper (the latter is missing on
+    // macOS by default).
+    let captured: readonly string[] = [];
     probeContainerDns({
       runCaptureImpl: (command) => {
         captured = command;
         return BUSYBOX_SUCCESS;
       },
     });
-    expect(captured.startsWith("docker run")).toBe(true);
-    expect(captured.startsWith("timeout ")).toBe(false);
-    expect(captured.startsWith("gtimeout ")).toBe(false);
+    const script = captured[2] ?? "";
+    expect(script).not.toMatch(/^\s*timeout\b/);
+    expect(script).not.toMatch(/^\s*gtimeout\b/);
   });
 });
 
@@ -930,12 +937,12 @@ describe("getDockerBridgeGatewayIp", () => {
   });
 
   it("uses the expected docker network inspect command shape", () => {
-    let captured = "";
+    let captured: readonly string[] = [];
     getDockerBridgeGatewayIp((cmd) => {
       captured = cmd;
       return "172.17.0.1";
     });
-    expect(captured).toContain("docker network inspect bridge");
-    expect(captured).toContain("Gateway");
+    expect(captured.slice(0, 4)).toEqual(["docker", "network", "inspect", "bridge"]);
+    expect(captured).toContain("{{range .IPAM.Config}}{{.Gateway}}{{end}}");
   });
 });

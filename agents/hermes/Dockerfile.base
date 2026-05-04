@@ -4,7 +4,8 @@
 # Hermes sandbox base image — expensive, rarely-changing layers.
 #
 # Contains: node:22-slim (OpenShell needs Node), apt packages, gosu,
-# user/group setup, .hermes directory structure, Hermes CLI, and PyYAML.
+# user/group setup, .hermes directory structure, Hermes CLI, and the
+# dependencies for NemoClaw-supported Hermes integrations.
 #
 # Mirrors the OpenClaw Dockerfile.base structure but installs Hermes
 # (Python-based) instead of OpenClaw (Node-based).
@@ -14,7 +15,7 @@
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. gosu upgrade             — update URL, checksum, and version
 #   4. node:22-slim digest rot  — update-docker-pin.sh updates both
-#   5. New .hermes subdirectory — add mkdir + symlink below
+#   5. New .hermes subdirectory — add mkdir below
 # ────────────────────────────────────────────────────────────────
 
 FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
@@ -22,8 +23,11 @@ FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Hermes version pinned for reproducibility.
-# Calver tag v2026.4.13 = semver 0.9.0.
-ARG HERMES_VERSION=v2026.4.13
+# Calver tag v2026.4.23 = semver 0.11.0.
+ARG HERMES_VERSION=v2026.4.23
+ARG HERMES_TARBALL_SHA256=1ee1be80a2112b7edc581770cee8858e725ba110cc423979cd7102492504bc6b
+ARG HERMES_UV_EXTRAS="messaging web"
+ARG UV_VERSION=0.11.8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.11.2-1+b1 \
@@ -31,10 +35,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv=3.11.2-1+b1 \
         curl=7.88.1-10+deb12u14 \
         git=1:2.39.5-0+deb12u3 \
+    gnupg=2.2.40-1.1+deb12u2 \
         ca-certificates=20230311+deb12u1 \
         iproute2=6.1.0-3 \
         iptables=1.8.9-2 \
         libcap2-bin=1:2.66-4+deb12u2+b2 \
+    procps=2:4.0.2-3 \
+    openssh-sftp-server=1:9.2p1-2+deb12u9 \
         socat=1.7.4.4-2 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -53,48 +60,101 @@ RUN arch="$(dpkg --print-architecture)" \
     && gosu --version
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
-# Same UID/GID layout as OpenClaw — OpenShell expects these names.
-RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
-    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+# gateway is a member of the sandbox group so it can read Hermes config files
+# and write Hermes runtime state while config files remain non-group-writable.
+RUN groupadd -r sandbox \
+    && groupadd -r gateway \
+    && useradd -r -g gateway -G sandbox -d /sandbox -s /usr/sbin/nologin gateway \
+    && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+    && usermod -a -G sandbox root \
     && mkdir -p /sandbox/.nemoclaw \
     && chown -R sandbox:sandbox /sandbox
 
-# Split .hermes into immutable config dir + writable state dir.
-# Same pattern as OpenClaw: Landlock makes /sandbox/.hermes read-only,
-# writable state lives in .hermes-data, reached via symlinks.
-RUN mkdir -p /sandbox/.hermes-data/memories \
-        /sandbox/.hermes-data/sessions \
-        /sandbox/.hermes-data/skills \
-        /sandbox/.hermes-data/plugins \
-        /sandbox/.hermes-data/cron \
-        /sandbox/.hermes-data/logs \
-        /sandbox/.hermes-data/skins \
-        /sandbox/.hermes-data/plans \
-        /sandbox/.hermes-data/workspace \
-        /sandbox/.hermes-data/profiles \
-        /sandbox/.hermes-data/cache \
-        /sandbox/.hermes-data/pairing \
-    && mkdir -p /sandbox/.hermes \
-    && ln -s /sandbox/.hermes-data/memories /sandbox/.hermes/memories \
-    && ln -s /sandbox/.hermes-data/sessions /sandbox/.hermes/sessions \
-    && ln -s /sandbox/.hermes-data/skills /sandbox/.hermes/skills \
-    && ln -s /sandbox/.hermes-data/plugins /sandbox/.hermes/plugins \
-    && ln -s /sandbox/.hermes-data/cron /sandbox/.hermes/cron \
-    && ln -s /sandbox/.hermes-data/logs /sandbox/.hermes/logs \
-    && ln -s /sandbox/.hermes-data/skins /sandbox/.hermes/skins \
-    && ln -s /sandbox/.hermes-data/plans /sandbox/.hermes/plans \
-    && ln -s /sandbox/.hermes-data/workspace /sandbox/.hermes/workspace \
-    && ln -s /sandbox/.hermes-data/profiles /sandbox/.hermes/profiles \
-    && ln -s /sandbox/.hermes-data/cache /sandbox/.hermes/cache \
-    && ln -s /sandbox/.hermes-data/pairing /sandbox/.hermes/pairing \
-    && chown -R sandbox:sandbox /sandbox/.hermes /sandbox/.hermes-data
+# Create .hermes with mutable integration dirs plus a scoped runtime dir.
+# Top-level gateway state names redirect into runtime so the config root can
+# remain non-group-writable without reintroducing the old .hermes-data bridge.
+RUN mkdir -p /sandbox/.hermes/memories \
+        /sandbox/.hermes/sessions \
+        /sandbox/.hermes/skills \
+        /sandbox/.hermes/plugins \
+        /sandbox/.hermes/cron \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/skins \
+        /sandbox/.hermes/plans \
+        /sandbox/.hermes/workspace \
+        /sandbox/.hermes/profiles \
+        /sandbox/.hermes/cache \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/runtime \
+    && chown -R sandbox:sandbox /sandbox/.hermes \
+    && chown gateway:sandbox /sandbox/.hermes/runtime \
+    && chmod 750 /sandbox/.hermes \
+    && chmod 770 \
+        /sandbox/.hermes/memories \
+        /sandbox/.hermes/sessions \
+        /sandbox/.hermes/skills \
+        /sandbox/.hermes/plugins \
+        /sandbox/.hermes/cron \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/skins \
+        /sandbox/.hermes/plans \
+        /sandbox/.hermes/workspace \
+        /sandbox/.hermes/profiles \
+        /sandbox/.hermes/cache \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/runtime \
+    && chmod 2770 /sandbox/.hermes/runtime \
+    && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
+        rm -f "/sandbox/.hermes/${name}"; \
+        ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
+    done
 
-# Install Hermes Agent from GitHub release.
-# Hermes is not on PyPI — official install is via their install script or
-# direct pip install from the release tarball.
-# hadolint ignore=DL3013
-RUN pip3 install --no-cache-dir --break-system-packages \
-        "hermes-agent @ https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_VERSION}.tar.gz" \
-        "pyyaml==6.0.3" \
-        "python-telegram-bot>=21.0" \
-    && hermes --version
+# Pre-create shell init files for the sandbox user.
+# The /sandbox home directory is Landlock read-only at runtime (#804), so these
+# files must exist at build time. The Hermes entrypoint writes proxy vars and
+# HERMES_HOME to /tmp/nemoclaw-proxy-env.sh (root-owned, mode 444); these rc
+# files source it on every interactive `openshell sandbox connect` session.
+# Ref: #2376.
+# hadolint ignore=SC2016,SC2028
+RUN printf '%s\n' \
+        '# Source runtime proxy + HERMES_HOME config (Landlock read-only home, #804)' \
+        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        'export PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"' \
+        > /sandbox/.bashrc \
+    && printf '%s\n' \
+        '# Source runtime proxy + HERMES_HOME config (Landlock read-only home, #804)' \
+        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        'export PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"' \
+        > /sandbox/.profile \
+    && chown root:root /sandbox/.bashrc /sandbox/.profile \
+    && chmod 444 /sandbox/.bashrc /sandbox/.profile
+
+# Install Hermes Agent from the selected GitHub release.
+# The image prebakes only the extras mapped to NemoClaw-supported onboarding
+# integrations: messaging (Telegram, Discord, Slack) and web (API health/UI
+# runtime). New Hermes integrations should be installed by the agent workflow
+# when they are enabled rather than shipped in the base image by default.
+# Root Node dependencies provide Hermes browser tooling such as agent-browser.
+RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
+RUN mkdir -p /opt/hermes \
+    && curl -fsSL "https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_VERSION}.tar.gz" -o /tmp/hermes.tar.gz \
+    && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
+    && sha256sum -c /tmp/hermes.tar.gz.sha256 \
+    && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
+    && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256
+WORKDIR /opt/hermes
+# hadolint ignore=SC2086
+RUN set -eu; \
+    set --; \
+    for extra in ${HERMES_UV_EXTRAS}; do \
+        set -- "$@" --extra "$extra"; \
+    done; \
+    uv sync --frozen --no-dev "$@" --no-cache \
+    && npm ci --prefer-offline --no-audit --no-fund \
+    && rm -rf /tmp/camoufox-* \
+    && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
+    && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
+    && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
+
+ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"
+RUN /usr/local/bin/hermes --version

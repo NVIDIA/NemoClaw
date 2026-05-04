@@ -77,8 +77,25 @@ export interface Session {
   webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
+  // SHA-256 hex digest of every legacy credential value successfully
+  // written to the OpenShell gateway during this onboard session, keyed by
+  // env-name. Persisted across process restarts so a `--resume` run that
+  // skips already-completed upserts still knows the migration completed
+  // earlier and can safely remove ~/.nemoclaw/credentials.json on the
+  // final completeSession. Storing the hash (not just the env-name) lets
+  // us detect when the legacy file value was edited between runs, when
+  // the gateway provider was reset out-of-band, or when an unrelated
+  // session is found on disk — in any of those cases the in-memory
+  // migrated set is NOT seeded from the persisted record, so the cleanup
+  // gate keeps the file until the *current* value is actually re-migrated.
+  migratedLegacyValueHashes: Record<string, string> | null;
+  telegramConfig: TelegramConfig | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
+}
+
+export interface TelegramConfig {
+  requireMention: boolean;
 }
 
 export interface LockInfo {
@@ -107,6 +124,8 @@ export interface SessionUpdates {
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
   messagingChannels?: string[];
+  migratedLegacyValueHashes?: Record<string, string>;
+  telegramConfig?: TelegramConfig | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
@@ -172,6 +191,17 @@ function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
+function readStringRecord(
+  value: SessionJsonValue | undefined,
+): Record<string, string> | null {
+  if (!isObject(value)) return null;
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof k === "string" && typeof v === "string") result[k] = v;
+  }
+  return result;
+}
+
 function isStepStatus(value: string): value is StepStatus {
   return VALID_STEP_STATES.has(value);
 }
@@ -183,6 +213,13 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
 
 function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
   return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
+}
+
+function parseTelegramConfig(value: unknown): TelegramConfig | null {
+  if (!isObject(value)) return null;
+  if (value.requireMention === true) return { requireMention: true };
+  if (value.requireMention === false) return { requireMention: false };
+  return null;
 }
 
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
@@ -261,6 +298,10 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
+    migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
+      ? readStringRecord(overrides.migratedLegacyValueHashes)
+      : null,
+    telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
@@ -272,7 +313,6 @@ export function createSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-// eslint-disable-next-line complexity
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
 
@@ -292,6 +332,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
+    migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
+    telegramConfig: parseTelegramConfig(data.telegramConfig),
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
@@ -357,6 +399,8 @@ function parseLockFile(contents: string): LockInfo | null {
   }
 }
 
+const MALFORMED_STALE_SECONDS = 30;
+
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -365,6 +409,49 @@ function isProcessAlive(pid: number): boolean {
   } catch (error) {
     return isErrnoException(error) && error.code === "EPERM";
   }
+}
+
+function readProcProcessStartMs(pid: number): number | null {
+  try {
+    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const btimeLine = fs
+      .readFileSync("/proc/stat", "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("btime "));
+    const bootSeconds = btimeLine ? Number(btimeLine.trim().split(/\s+/)[1]) : NaN;
+    const closeParen = statText.lastIndexOf(")");
+    if (!Number.isFinite(bootSeconds) || closeParen < 0) return null;
+
+    const fieldsAfterComm = statText
+      .slice(closeParen + 2)
+      .trim()
+      .split(/\s+/);
+    const startTicks = Number(fieldsAfterComm[19]);
+    if (!Number.isFinite(startTicks)) return null;
+
+    // Linux exposes /proc/<pid>/stat starttime in USER_HZ ticks. 100 is the
+    // stable value on supported NemoClaw Linux hosts.
+    const clockTicksPerSecond = 100;
+    return (bootSeconds + startTicks / clockTicksPerSecond) * 1000;
+  } catch {
+    return null;
+  }
+}
+
+function lockHolderStillMatches(lock: LockInfo): boolean {
+  if (!isProcessAlive(lock.pid)) return false;
+  if (lock.pid === process.pid) return true;
+
+  const lockStartedMs = lock.startedAt ? Date.parse(lock.startedAt) : NaN;
+  if (!Number.isFinite(lockStartedMs)) return true;
+
+  const processStartMs = readProcProcessStartMs(lock.pid);
+  if (processStartMs === null) return true;
+
+  // The original lock holder must have started before it wrote the lock. If
+  // the currently-live PID started after the lock timestamp, the PID was reused
+  // and the lock is stale even though kill(pid, 0) succeeds.
+  return processStartMs <= lockStartedMs + 1000;
 }
 
 // File descriptor we hold across the lifetime of an acquired lock. On
@@ -426,12 +513,25 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         throw readError;
       }
       if (!existing) {
-        // Malformed lock file — leave it on disk (a human or another
-        // process may be mid-write) and retry. Pre-#1281 behavior
-        // preserved: never unlink a malformed lock automatically.
+        // Malformed lock file. If the file is very recent (<30 s), a
+        // concurrent process may be mid-write — leave it and retry.
+        // Otherwise the file is stale debris from a crash between
+        // openSync("wx") and writeSync() — remove it so subsequent
+        // onboard runs are not permanently blocked (#2765).
+        try {
+          const lockStat = fs.statSync(LOCK_FILE);
+          const ageMs = Date.now() - lockStat.mtimeMs;
+          if (ageMs > MALFORMED_STALE_SECONDS * 1000) {
+            unlinkIfInodeMatches(LOCK_FILE, staleInode);
+          }
+        } catch (statErr) {
+          if (!(isErrnoException(statErr) && statErr.code === "ENOENT")) {
+            throw statErr;
+          }
+        }
         continue;
       }
-      if (isProcessAlive(existing.pid)) {
+      if (lockHolderStillMatches(existing)) {
         return {
           acquired: false,
           lockFile: LOCK_FILE,
@@ -597,6 +697,18 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   }
   if (Array.isArray(updates.messagingChannels)) {
     safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
+  }
+  if (isObject(updates.migratedLegacyValueHashes)) {
+    const cleaned: Record<string, string> = {};
+    for (const [k, v] of Object.entries(updates.migratedLegacyValueHashes)) {
+      if (typeof k === "string" && typeof v === "string") cleaned[k] = v;
+    }
+    safe.migratedLegacyValueHashes = cleaned;
+  }
+  if (isObject(updates.telegramConfig) && typeof updates.telegramConfig.requireMention === "boolean") {
+    safe.telegramConfig = { requireMention: updates.telegramConfig.requireMention };
+  } else if (updates.telegramConfig === null) {
+    safe.telegramConfig = null;
   }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {

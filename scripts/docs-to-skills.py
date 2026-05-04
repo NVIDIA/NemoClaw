@@ -19,19 +19,21 @@ What it does:
   2. Classifies each page by content type (how_to, concept, reference,
      get_started) using the frontmatter `content.type` field.
   3. Groups pages into skills using one of three strategies:
-       - smart (default): groups by directory; concept and reference pages
-         in the same directory ride along as reference files next to any
-         procedure pages.
+       - smart (default): groups by directory; the procedure page with the
+         lowest frontmatter `skill.priority` becomes the main SKILL.md body,
+         while sibling procedure, concept, and reference pages ride along as
+         reference files.
        - grouped: groups all pages in the same parent directory.
        - individual: each doc page becomes its own skill.
   4. Generates a skill directory per group containing:
        - SKILL.md with frontmatter (name, description), prerequisites,
-         procedural steps, a References section that links to the full
-         concept/reference files, and a Related Skills section. Concept
-         and reference bodies are not inlined, so SKILL.md stays small
-         and nothing is truncated mid-table or mid-code-fence.
-       - references/ with the full concept and reference content for
-         progressive disclosure (loaded by the agent on demand).
+         procedural steps for the primary procedure page, a References
+         section that links to sibling pages, and a Related Skills section.
+         Sibling procedure, concept, and reference bodies are not inlined,
+         so SKILL.md stays small and nothing is truncated mid-table or
+         mid-code-fence.
+       - references/ with the full sibling procedure, concept, and reference
+         content for progressive disclosure (loaded by the agent on demand).
   5. Resolves all relative doc paths to repo-root-relative paths, and
      converts cross-references between docs into skill-to-skill pointers
      so agents can navigate between skills.
@@ -164,6 +166,7 @@ class DocPage:
     keywords: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     audience: list[str] = field(default_factory=list)
+    skill_priority: int = 100
     sections: list[tuple[str, str]] = field(default_factory=list)  # (heading, body)
     category: str = ""  # parent directory name
 
@@ -283,10 +286,31 @@ def parse_doc(path: Path) -> DocPage:
         page.difficulty = content.get("difficulty", "")
         page.audience = content.get("audience", [])
 
+    skill = fm.get("skill", {})
+    if isinstance(skill, dict):
+        page.skill_priority = _parse_skill_priority(skill.get("priority"), path)
+    else:
+        page.skill_priority = _parse_skill_priority(fm.get("skill_priority"), path)
+
     page.category = path.parent.name if path.parent.name != "docs" else "root"
     page.sections = _extract_sections(body)
 
     return page
+
+
+def _parse_skill_priority(value: object, path: Path) -> int:
+    """Parse the frontmatter priority used to choose SKILL.md lead pages."""
+    default = 100
+    if value is None or value == "":
+        return default
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        print(
+            f"  warning: invalid skill.priority for {path}; using default {default}",
+            file=sys.stderr,
+        )
+        return default
 
 
 def _extract_sections(body: str) -> list[tuple[str, str]]:
@@ -1080,6 +1104,39 @@ def markdown_spdx_header() -> str:
     )
 
 
+def partition_skill_pages(
+    pages: list[DocPage],
+) -> tuple[list[DocPage], list[DocPage], list[DocPage], list[DocPage]]:
+    """Split a doc group into inline procedures and deferred references.
+
+    The converter preserves the existing one-skill-per-docs-area grouping, but
+    keeps SKILL.md focused by inlining only one primary procedure. The primary
+    procedure is the page with the lowest frontmatter ``skill.priority``;
+    additional how-to/tutorial pages still contribute triggers through the
+    skill description and are written to references/ for progressive disclosure.
+    """
+    procedures = [
+        p for p in pages if CONTENT_TYPE_ROLE.get(p.content_type) == "procedure"
+    ]
+    # Pages without a recognized content_type default to procedure.
+    procedures.extend([p for p in pages if p.content_type not in CONTENT_TYPE_ROLE])
+
+    context_pages = [
+        p for p in pages if CONTENT_TYPE_ROLE.get(p.content_type) == "context"
+    ]
+    reference_pages = [
+        p for p in pages if CONTENT_TYPE_ROLE.get(p.content_type) == "reference"
+    ]
+
+    if not procedures:
+        return [], [], context_pages, reference_pages
+
+    procedures = sorted(procedures, key=lambda p: (p.skill_priority, str(p.path)))
+    primary = [procedures[0]]
+    deferred = procedures[1:]
+    return primary, deferred, context_pages, reference_pages
+
+
 def generate_skill(
     name: str,
     pages: list[DocPage],
@@ -1100,8 +1157,6 @@ def generate_skill(
 
     Returns a summary dict for reporting.
     """
-    description = build_skill_description(name, pages)
-
     def _clean(text: str, source: DocPage) -> str:
         """Apply directive cleanup and path rewriting for a source page."""
         result = clean_myst_directives(text)
@@ -1115,19 +1170,15 @@ def generate_skill(
             )
         return result
 
-    procedures = [
-        p for p in pages if CONTENT_TYPE_ROLE.get(p.content_type) == "procedure"
-    ]
-    context_pages = [
-        p for p in pages if CONTENT_TYPE_ROLE.get(p.content_type) == "context"
-    ]
-    reference_pages = [
-        p for p in pages if CONTENT_TYPE_ROLE.get(p.content_type) == "reference"
-    ]
-
-    # Pages without a recognized content_type default to procedure
-    untyped = [p for p in pages if p.content_type not in CONTENT_TYPE_ROLE]
-    procedures.extend(untyped)
+    procedures, deferred_procedures, context_pages, reference_pages = (
+        partition_skill_pages(pages)
+    )
+    description_pages = (
+        procedures + deferred_procedures + context_pages + reference_pages
+        if procedures
+        else pages
+    )
+    description = build_skill_description(name, description_pages)
 
     # Build SKILL.md content
     lines: list[str] = []
@@ -1144,8 +1195,9 @@ def generate_skill(
     # Title — prefer the lead page's frontmatter `title.page` (or H1)
     # verbatim so the SKILL.md heading matches the source doc instead of
     # echoing the auto-generated, prefix-laden skill name.
-    if pages and pages[0].title:
-        skill_title = pages[0].title
+    lead_page = procedures[0] if procedures else pages[0] if pages else None
+    if lead_page and lead_page.title:
+        skill_title = lead_page.title
     else:
         skill_title = _brand_case(name.replace("-", " ").title())
     lines.append(f"# {skill_title}")
@@ -1249,7 +1301,7 @@ def generate_skill(
     # trigger from description.agent (the "Use when ..." clause) so the
     # agent can decide on-sight whether to load the file, which is how
     # progressive disclosure is supposed to work.
-    ref_section_pages = context_pages + reference_pages
+    ref_section_pages = deferred_procedures + context_pages + reference_pages
     if ref_section_pages:
         lines.append("")
         lines.append("## References")
@@ -1280,7 +1332,7 @@ def generate_skill(
 
     # --- Build reference files ---
     ref_files: dict[str, str] = {}
-    for rp in reference_pages + context_pages:
+    for rp in deferred_procedures + reference_pages + context_pages:
         ref_name = rp.path.stem + ".md"
         body = normalize_heading_levels(_clean(rp.body, rp))
         ref_files[ref_name] = body
@@ -1339,12 +1391,12 @@ def group_individual(pages: list[DocPage]) -> dict[str, list[DocPage]]:
 
 
 def group_by_content_type(pages: list[DocPage]) -> dict[str, list[DocPage]]:
-    """Group pages by content type, merging concept+how_to for same topic."""
+    """Group pages by directory when an area has procedural content."""
     # First pass: group by directory
     dir_groups = group_by_directory(pages)
 
-    # Second pass: within each directory, merge concept pages as context
-    # for procedure pages in the same directory
+    # Second pass: keep each procedural docs area together. generate_skill()
+    # decides which page to inline and which sibling pages to defer.
     result: dict[str, list[DocPage]] = {}
     for cat, group_pages in dir_groups.items():
         has_procedures = any(
@@ -1426,9 +1478,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             Strategies:
-              grouped     Group docs by parent directory (default)
+              grouped     Group docs by parent directory
               individual  Each doc page becomes its own skill
-              smart       Group by directory, merge concept pages as context
+              smart       Group by directory, inline the lowest-priority procedure,
+                          defer siblings
 
             Examples:
               %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user

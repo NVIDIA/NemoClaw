@@ -244,35 +244,9 @@ describe("base sandbox policy", () => {
     return out;
   }
 
-  it("regression #1437: sentry.io has no POST allow rule (multi-tenant exfiltration vector)", () => {
+  it("regression #1437: base policy does not expose sentry.io by default", () => {
     const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
-    expect(sentryEndpoints.length).toBeGreaterThan(0); // should still appear
-    for (const ep of sentryEndpoints) {
-      const rules = Array.isArray(ep.rules) ? ep.rules : [];
-      const hasPost = rules.some(
-        (r) =>
-          r &&
-          r.allow &&
-          typeof r.allow.method === "string" &&
-          r.allow.method.toUpperCase() === "POST",
-      );
-      expect(hasPost).toBe(false);
-    }
-  });
-
-  it("regression #1437: sentry.io retains GET (harmless, no body for exfil)", () => {
-    const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
-    for (const ep of sentryEndpoints) {
-      const rules = Array.isArray(ep.rules) ? ep.rules : [];
-      const hasGet = rules.some(
-        (r) =>
-          r &&
-          r.allow &&
-          typeof r.allow.method === "string" &&
-          r.allow.method.toUpperCase() === "GET",
-      );
-      expect(hasGet).toBe(true);
-    }
+    expect(sentryEndpoints).toEqual([]);
   });
 
   it("regression #1583: base policy does not silently grant GitHub access", () => {
@@ -291,6 +265,47 @@ describe("base sandbox policy", () => {
     // regression can't be smuggled in under a renamed key.
     const githubHosts = findEndpoints((h) => h === "github.com" || h === "api.github.com");
     expect(githubHosts).toEqual([]);
+  });
+
+  it("regression #2663: managed_inference policy allows inference.local:443 GET and POST", () => {
+    // inference.local is the OpenShell gateway's managed inference virtual
+    // hostname — the gateway proxies it to the configured provider (OpenAI,
+    // NVIDIA, etc.). Every sandbox uses this route regardless of provider.
+    // Without this entry the OpenShell proxy blocks url-fetch calls to
+    // https://inference.local/v1/... with "Blocked hostname or
+    // private/internal/special-use IP address", breaking all inference.
+    const np = policy.network_policies ?? {};
+    expect(np.managed_inference).toBeDefined();
+    const endpoints = np.managed_inference?.endpoints ?? [];
+    const inferenceEp = endpoints.find((ep) => ep.host === "inference.local");
+    expect(inferenceEp).toBeDefined();
+    expect(inferenceEp?.port).toBe(443);
+    const rules = inferenceEp?.rules ?? [];
+    const hasGet = rules.some(
+      (r) => r.allow?.method?.toUpperCase() === "GET" && r.allow?.path === "/**",
+    );
+    const hasPost = rules.some(
+      (r) => r.allow?.method?.toUpperCase() === "POST" && r.allow?.path === "/**",
+    );
+    expect(hasGet).toBe(true);
+    expect(hasPost).toBe(true);
+  });
+
+  it("regression #2663: managed_inference allows openclaw and tool binaries", () => {
+    const np = policy.network_policies ?? {};
+    const binaries = (np.managed_inference?.binaries ?? []).map((b) => b.path).sort();
+    expect(binaries).toEqual([
+      "/usr/bin/curl",
+      "/usr/bin/node",
+      "/usr/bin/python3",
+      "/usr/local/bin/node",
+      "/usr/local/bin/openclaw",
+    ]);
+  });
+
+  it("does not reference the absent Claude CLI binary", () => {
+    const serialized = JSON.stringify(policy.network_policies ?? {});
+    expect(serialized).not.toContain("/usr/local/bin/claude");
   });
 
   it("regression #1458: baseline npm_registry must not include npm or node binaries", () => {

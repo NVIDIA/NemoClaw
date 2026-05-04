@@ -17,7 +17,6 @@ type ManifestValue = ManifestScalar | ManifestRecord | ManifestValue[];
 type ManifestRecord = { [key: string]: ManifestValue };
 type StringMap = { [key: string]: string };
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const yaml: { load(input: string): unknown } = require("js-yaml");
 
 export interface AgentHealthProbe {
@@ -27,11 +26,17 @@ export interface AgentHealthProbe {
 }
 
 export interface AgentConfigPaths {
-  immutableDir: string;
-  writableDir: string;
+  dir: string;
   configFile: string;
   envFile: string | null;
   format: string;
+}
+
+export type AgentStateFileStrategy = "copy" | "sqlite_backup";
+
+export interface AgentStateFile {
+  path: string;
+  strategy: AgentStateFileStrategy;
 }
 
 export type AgentDashboardKind = "ui" | "api";
@@ -64,6 +69,7 @@ export interface AgentDefinition {
   health_probe?: AgentHealthProbe;
   config?: ManifestRecord;
   state_dirs?: string[];
+  state_files?: AgentStateFile[];
   messaging_platforms?: { supported?: string[] };
   _legacy_paths?: StringMap;
   agentDir: string;
@@ -74,6 +80,7 @@ export interface AgentDefinition {
   readonly dashboard: AgentDashboard;
   readonly configPaths: AgentConfigPaths;
   readonly stateDirs: string[];
+  readonly stateFiles: AgentStateFile[];
   readonly versionCommand: string;
   readonly expectedVersion: string | null;
   readonly hasDevicePairing: boolean;
@@ -139,6 +146,36 @@ function readStringArray(record: ManifestRecord, key: string): string[] | undefi
   const value = record[key];
   if (!Array.isArray(value)) return undefined;
   return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function readStateFiles(record: ManifestRecord): AgentStateFile[] | undefined {
+  const value = record.state_files;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error("Agent manifest field 'state_files' must be an array");
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry === "string") {
+      return { path: entry, strategy: "copy" };
+    }
+    if (!isManifestRecord(entry)) {
+      throw new Error(
+        `Agent manifest field 'state_files[${String(index)}]' must be a string or object`,
+      );
+    }
+    const statePath = readString(entry, "path");
+    if (!statePath) {
+      throw new Error(`Agent manifest field 'state_files[${String(index)}].path' is required`);
+    }
+    const rawStrategy = readString(entry, "strategy") ?? "copy";
+    if (rawStrategy !== "copy" && rawStrategy !== "sqlite_backup") {
+      throw new Error(
+        `Agent manifest field 'state_files[${String(index)}].strategy' must be copy or sqlite_backup`,
+      );
+    }
+    return { path: statePath, strategy: rawStrategy };
+  });
 }
 
 function isValidPort(value: unknown): value is number {
@@ -262,6 +299,7 @@ export function loadAgent(name: string): AgentDefinition {
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
   const stateDirs = readStringArray(raw, "state_dirs");
+  const stateFiles = readStateFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
@@ -281,6 +319,7 @@ export function loadAgent(name: string): AgentDefinition {
     health_probe: healthProbe,
     config,
     state_dirs: stateDirs,
+    state_files: stateFiles,
     messaging_platforms: messagingPlatforms,
     _legacy_paths: legacyPathConfig,
     agentDir,
@@ -320,8 +359,7 @@ export function loadAgent(name: string): AgentDefinition {
 
     get configPaths(): AgentConfigPaths {
       return {
-        immutableDir: readString(config ?? {}, "immutable_dir") ?? "/sandbox/.openclaw",
-        writableDir: readString(config ?? {}, "writable_dir") ?? "/sandbox/.openclaw-data",
+        dir: readString(config ?? {}, "dir") ?? "/sandbox/.openclaw",
         configFile: readString(config ?? {}, "config_file") ?? "openclaw.json",
         envFile: readString(config ?? {}, "env_file") ?? null,
         format: readString(config ?? {}, "format") ?? "json",
@@ -330,6 +368,10 @@ export function loadAgent(name: string): AgentDefinition {
 
     get stateDirs(): string[] {
       return stateDirs ?? [];
+    },
+
+    get stateFiles(): AgentStateFile[] {
+      return stateFiles ?? [];
     },
 
     get versionCommand(): string {

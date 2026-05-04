@@ -136,6 +136,8 @@ describe("isSensitiveFile", () => {
   it("detects auth-profiles.json", () => {
     expect(isSensitiveFile("auth-profiles.json")).toBe(true);
     expect(isSensitiveFile("Auth-Profiles.json")).toBe(true);
+    expect(isSensitiveFile("auth.json")).toBe(true);
+    expect(isSensitiveFile("AUTH.JSON")).toBe(true);
   });
 
   it("does not flag normal files", () => {

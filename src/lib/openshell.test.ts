@@ -6,6 +6,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import {
+  captureOpenshellCommandAsync,
   captureOpenshellCommand,
   getInstalledOpenshellVersion,
   type OpenshellSpawnSync,
@@ -37,6 +38,10 @@ function makeSpawnResult(spec: SpawnResultSpec): SpawnSyncReturns<string> {
 
 function stubSpawnSync(spec: SpawnResultSpec): OpenshellSpawnSync {
   return () => makeSpawnResult(spec);
+}
+
+function timeoutError(): Error {
+  return Object.assign(new Error("spawnSync openshell ETIMEDOUT"), { code: "ETIMEDOUT" });
 }
 
 function exitWithCode(code: number): never {
@@ -92,6 +97,80 @@ describe("openshell helpers", () => {
       }),
     });
     expect(result.status).toBe(0);
+  });
+
+  it("passes timeout options through to OpenShell spawn calls", () => {
+    const timeouts: Array<number | undefined> = [];
+    const spawnSyncImpl: OpenshellSpawnSync = (_command, _args, options) => {
+      timeouts.push(options.timeout);
+      return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
+    };
+
+    runOpenshellCommand("openshell", ["status"], { timeout: 4321, spawnSyncImpl });
+    captureOpenshellCommand("openshell", ["status"], { timeout: 9876, spawnSyncImpl });
+
+    expect(timeouts).toEqual([4321, 9876]);
+  });
+
+  it("returns ignored run timeouts so callers can fall back", () => {
+    const result = runOpenshellCommand("openshell", ["status"], {
+      ignoreError: true,
+      timeout: 1,
+      spawnSyncImpl: stubSpawnSync({
+        status: null,
+        stdout: "",
+        stderr: "",
+        error: timeoutError(),
+        signal: "SIGTERM",
+      }),
+      exit: exitWithCode,
+    });
+
+    expect(result.status).toBeNull();
+    expect(result.signal).toBe("SIGTERM");
+    expect(result.error?.message).toContain("ETIMEDOUT");
+  });
+
+  it("returns ignored capture timeouts with timeout metadata", () => {
+    const result = captureOpenshellCommand("openshell", ["sandbox", "list"], {
+      ignoreError: true,
+      timeout: 1,
+      spawnSyncImpl: stubSpawnSync({
+        status: null,
+        stdout: "partial\n",
+        stderr: "timeout detail\n",
+        error: timeoutError(),
+        signal: "SIGTERM",
+      }),
+      exit: exitWithCode,
+    });
+
+    expect(result).toEqual({
+      status: null,
+      output: "partial",
+      error: expect.objectContaining({ message: expect.stringContaining("ETIMEDOUT") }),
+      signal: "SIGTERM",
+    });
+  });
+
+  it("bounds async captures and reports timeout metadata", async () => {
+    const script = [
+      "const { spawn } = require('node:child_process');",
+      "spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });",
+      "setInterval(() => {}, 1000);",
+    ].join("");
+
+    const started = Date.now();
+    const result = await captureOpenshellCommandAsync(process.execPath, ["-e", script], {
+      ignoreError: true,
+      timeout: 50,
+      killGraceMs: 10,
+    });
+
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(result.status).toBeNull();
+    expect(result.error).toEqual(expect.objectContaining({ code: "ETIMEDOUT" }));
+    expect(result.signal).toBeTruthy();
   });
 
   it("uses the injected exit handler on failure", () => {

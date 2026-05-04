@@ -40,6 +40,10 @@ export const GATEWAY_PORT = parsePort("NEMOCLAW_GATEWAY_PORT", 8080);
 const SANDBOX_DASHBOARD_PORT = 18789;
 /** Dashboard UI port (default SANDBOX_DASHBOARD_PORT, override via NEMOCLAW_DASHBOARD_PORT). This is the host-side port. */
 export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", SANDBOX_DASHBOARD_PORT);
+/** Start of the auto-allocation range for dashboard ports (inclusive). */
+export const DASHBOARD_PORT_RANGE_START = SANDBOX_DASHBOARD_PORT;
+/** End of the auto-allocation range for dashboard ports (inclusive). */
+export const DASHBOARD_PORT_RANGE_END = 18799;
 /** vLLM / NIM inference port (default 8000, override via NEMOCLAW_VLLM_PORT). */
 export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
 /** Ollama inference port (default 11434, override via NEMOCLAW_OLLAMA_PORT). */

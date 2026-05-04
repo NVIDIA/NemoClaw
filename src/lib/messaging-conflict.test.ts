@@ -30,14 +30,53 @@ function makeRegistry(sandboxes: SandboxEntry[]) {
 }
 
 describe("findChannelConflicts", () => {
-  it("returns conflicts when another sandbox already has the channel", () => {
+  it("returns unknown conflicts when another sandbox has the channel without hashes", () => {
     const registry = makeRegistry([
       { name: "alice", messagingChannels: ["telegram"] },
       { name: "bob", messagingChannels: [] },
     ]);
     expect(findChannelConflicts("bob", ["telegram"], registry)).toEqual([
-      { channel: "telegram", sandbox: "alice" },
+      { channel: "telegram", sandbox: "alice", reason: "unknown-token" },
     ]);
+  });
+
+  it("returns conflicts only when the same channel credential hash matches", () => {
+    const registry = makeRegistry([
+      {
+        name: "alice",
+        messagingChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
+      {
+        name: "carol",
+        messagingChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-c" },
+      },
+    ]);
+    expect(
+      findChannelConflicts(
+        "bob",
+        [{ channel: "telegram", credentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" } }],
+        registry,
+      ),
+    ).toEqual([{ channel: "telegram", sandbox: "alice", reason: "matching-token" }]);
+  });
+
+  it("allows multiple telegram sandboxes with distinct token hashes", () => {
+    const registry = makeRegistry([
+      {
+        name: "alice",
+        messagingChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
+    ]);
+    expect(
+      findChannelConflicts(
+        "bob",
+        [{ channel: "telegram", credentialHashes: { TELEGRAM_BOT_TOKEN: "hash-b" } }],
+        registry,
+      ),
+    ).toEqual([]);
   });
 
   it("excludes the current sandbox from its own conflicts", () => {
@@ -64,20 +103,54 @@ describe("findAllOverlaps", () => {
       { name: "carol", messagingChannels: ["discord"] },
     ]);
     expect(findAllOverlaps(registry)).toEqual([
-      { channel: "telegram", sandboxes: ["alice", "bob"] },
+      { channel: "telegram", sandboxes: ["alice", "bob"], reason: "unknown-token" },
     ]);
   });
 
-  it("reports all pairs when three sandboxes share a channel", () => {
+  it("reports all unknown pairs when three sandboxes share a channel without hashes", () => {
     const registry = makeRegistry([
       { name: "a", messagingChannels: ["telegram"] },
       { name: "b", messagingChannels: ["telegram"] },
       { name: "c", messagingChannels: ["telegram"] },
     ]);
     expect(findAllOverlaps(registry)).toEqual([
-      { channel: "telegram", sandboxes: ["a", "b"] },
-      { channel: "telegram", sandboxes: ["a", "c"] },
-      { channel: "telegram", sandboxes: ["b", "c"] },
+      { channel: "telegram", sandboxes: ["a", "b"], reason: "unknown-token" },
+      { channel: "telegram", sandboxes: ["a", "c"], reason: "unknown-token" },
+      { channel: "telegram", sandboxes: ["b", "c"], reason: "unknown-token" },
+    ]);
+  });
+
+  it("does not report overlaps when same-channel credential hashes differ", () => {
+    const registry = makeRegistry([
+      {
+        name: "alice",
+        messagingChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
+      {
+        name: "bob",
+        messagingChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-b" },
+      },
+    ]);
+    expect(findAllOverlaps(registry)).toEqual([]);
+  });
+
+  it("reports matching-token overlaps when same-channel credential hashes match", () => {
+    const registry = makeRegistry([
+      {
+        name: "alice",
+        messagingChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
+      {
+        name: "bob",
+        messagingChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
+    ]);
+    expect(findAllOverlaps(registry)).toEqual([
+      { channel: "telegram", sandboxes: ["alice", "bob"], reason: "matching-token" },
     ]);
   });
 

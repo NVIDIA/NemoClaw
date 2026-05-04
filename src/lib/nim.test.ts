@@ -50,6 +50,17 @@ function hasCurlTimeoutArgs(cmd: string | string[]): boolean {
   return cmd[0] === "curl" && cmd[connectTimeout + 1] === "5" && cmd[maxTime + 1] === "5";
 }
 
+function timeoutForCommand(
+  runCapture: Mock,
+  predicate: (cmd: string | string[]) => boolean,
+): number | undefined {
+  const call = runCapture.mock.calls.find((mockCall) => {
+    const cmd = mockCall[0] as string | string[];
+    return predicate(cmd);
+  });
+  return (call?.[1] as { timeout?: number } | undefined)?.timeout;
+}
+
 describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
@@ -107,6 +118,120 @@ describe("nim", () => {
       if (gpu && gpu.type === "apple") {
         expect(gpu.nimCapable).toBe(false);
         expect(gpu.name).toBeTruthy();
+      }
+    });
+
+    it("populates name and memory from primary nvidia-smi path", () => {
+      // Primary path returns name+memory.total in a single CSV line per GPU.
+      // Regression guard for #2669: the GB300 preflight line was missing the
+      // GPU model because only memory.total was being queried.
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA GB300, 284208\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA GB300",
+          count: 1,
+          totalMemoryMB: 284208,
+          perGpuMB: 284208,
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("aggregates totalMemoryMB across multiple GPUs from primary path", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA H100 80GB HBM3, 81920\nNVIDIA H100 80GB HBM3, 81920\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA H100 80GB HBM3",
+          count: 2,
+          totalMemoryMB: 163840,
+          perGpuMB: 81920,
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("preserves commas inside the GPU model name (last-comma split)", () => {
+      // The CSV split must use the LAST comma, not the first, so that GPU
+      // models whose names contain a comma round-trip intact. The split was
+      // designed for this; the test guards against future "split on first
+      // comma" regressions.
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA RTX A,B, 81920\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA RTX A,B",
+          count: 1,
+          totalMemoryMB: 81920,
+          perGpuMB: 81920,
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("drops name on mixed-model multi-GPU hosts so we don't attribute one model to the others", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA H100 80GB HBM3, 81920\nNVIDIA A100-SXM4-80GB, 81920\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        const result = nimModule.detectGpu();
+        expect(result).toMatchObject({
+          type: "nvidia",
+          count: 2,
+          totalMemoryMB: 163840,
+        });
+        // Mixed-model hosts must not pin a single name; the preflight line
+        // would otherwise read "2x NVIDIA H100" on a host that's actually
+        // half H100 and half A100.
+        expect(result?.name).toBeUndefined();
+      } finally {
+        restore();
       }
     });
 
@@ -239,6 +364,18 @@ describe("nim", () => {
           true,
         );
         expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);
+        expect(
+          timeoutForCommand(
+            runCapture,
+            (c) => Array.isArray(c) && c[0] === "docker" && c.includes("inspect"),
+          ),
+        ).toBe(5000);
+        expect(
+          timeoutForCommand(
+            runCapture,
+            (c) => Array.isArray(c) && c[0] === "curl" && c.includes("http://127.0.0.1:9000/v1/models"),
+          ),
+        ).toBe(6000);
       } finally {
         restore();
       }
@@ -261,6 +398,18 @@ describe("nim", () => {
 
           expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
           expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(true);
+          expect(
+            timeoutForCommand(
+              runCapture,
+              (c) => Array.isArray(c) && c[0] === "docker" && c.includes("inspect"),
+            ),
+          ).toBe(5000);
+          expect(
+            timeoutForCommand(
+              runCapture,
+              (c) => Array.isArray(c) && c[0] === "docker" && c.includes("port"),
+            ),
+          ).toBe(5000);
         } finally {
           restore();
         }
@@ -296,10 +445,34 @@ describe("nim", () => {
       try {
         const st = nimModule.nimStatusByName("foo");
         expect(st).toMatchObject({ running: false, healthy: false, container: "foo", state: "exited" });
+        expect(
+          timeoutForCommand(
+            runCapture,
+            (c) => Array.isArray(c) && c[0] === "docker" && c.includes("inspect"),
+          ),
+        ).toBe(5000);
         expect(runCapture.mock.calls).toHaveLength(1);
       } finally {
         restore();
       }
+    });
+  });
+
+  describe("shouldShowNimLine", () => {
+    it("hides the line for cloud-only sandboxes (no container, nothing running)", () => {
+      expect(nim.shouldShowNimLine(null, false)).toBe(false);
+      expect(nim.shouldShowNimLine(undefined, false)).toBe(false);
+      expect(nim.shouldShowNimLine("", false)).toBe(false);
+    });
+
+    it("shows the line when the sandbox is bound to a NIM container", () => {
+      expect(nim.shouldShowNimLine("nim-foo", false)).toBe(true);
+      expect(nim.shouldShowNimLine("nim-foo", true)).toBe(true);
+    });
+
+    it("still surfaces an orphan NIM container even when none is registered", () => {
+      expect(nim.shouldShowNimLine(null, true)).toBe(true);
+      expect(nim.shouldShowNimLine(undefined, true)).toBe(true);
     });
   });
 

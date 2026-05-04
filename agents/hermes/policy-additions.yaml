@@ -3,7 +3,7 @@
 #
 # Sandbox policy for the Hermes Agent.
 # Based on the OpenClaw policy with agent-specific adjustments:
-#   - .hermes / .hermes-data instead of .openclaw / .openclaw-data
+#   - .hermes instead of .openclaw (single config/state directory)
 #   - Nous Research phone-home endpoints instead of OpenClaw/ClawHub
 #   - PyPI instead of npm registry
 #   - /usr/local/bin/hermes and python3 binary restrictions
@@ -17,17 +17,17 @@ filesystem_policy:
   read_only:
     - /usr
     - /lib
+    - /opt/hermes
     - /proc
     - /dev/urandom
     - /app
     - /etc
     - /var/log
-    - /sandbox/.hermes              # Immutable config (Landlock enforced)
   read_write:
     - /sandbox
     - /tmp
     - /dev/null
-    - /sandbox/.hermes-data         # Writable agent state (symlinked from .hermes)
+    - /sandbox/.hermes              # Agent config (lockable via shields up)
 
 landlock:
   compatibility: best_effort
@@ -37,37 +37,6 @@ process:
   run_as_group: sandbox
 
 network_policies:
-  claude_code:
-    name: claude_code
-    endpoints:
-      - host: api.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/v1/messages" }
-          - allow: { method: POST, path: "/v1/messages/batches" }
-          - allow: { method: GET, path: "/v1/messages/batches/**" }
-          - allow: { method: POST, path: "/v1/complete" }
-      - host: statsig.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/**" }
-      - host: sentry.io
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/api/*/envelope/**" }
-          - allow: { method: POST, path: "/api/*/store/**" }
-    binaries:
-      - { path: /usr/local/bin/claude }
-
   nvidia:
     name: nvidia
     endpoints:
@@ -75,7 +44,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
           - allow: { method: POST, path: "/v1/completions" }
@@ -86,7 +54,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
           - allow: { method: POST, path: "/v1/completions" }
@@ -94,7 +61,6 @@ network_policies:
           - allow: { method: GET, path: "/v1/models" }
           - allow: { method: GET, path: "/v1/models/**" }
     binaries:
-      - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3.11 }
 
@@ -119,7 +85,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -127,7 +92,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -135,7 +99,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -151,14 +114,12 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
       - host: files.pythonhosted.org
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
@@ -173,7 +134,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
@@ -189,7 +149,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -200,7 +159,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:

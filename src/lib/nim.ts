@@ -3,16 +3,24 @@
 //
 // NIM container management — pull, start, stop, health-check NIM images.
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { run, runCapture } = require("./runner");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { runCapture } = require("./runner");
+const {
+  dockerContainerInspectFormat,
+  dockerForceRm,
+  dockerLoginPasswordStdin,
+  dockerPort,
+  dockerPull,
+  dockerRm,
+  dockerRunDetached,
+  dockerStop,
+} = require("./docker");
 const { sleepSeconds } = require("./wait");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const nimImages = require("../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "./ports";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier"];
+const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
 
 export interface NimModel {
   name: string;
@@ -61,24 +69,43 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
 }
 
 export function detectGpu(): GpuDetection | null {
-  // Try NVIDIA first — query VRAM
+  // Try NVIDIA first — query name and VRAM in a single call so the preflight
+  // line can show the GPU model alongside the memory size.
   try {
     const output = runCapture(
-      ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+      ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
       { ignoreError: true },
     );
     if (output) {
-      const lines = output.split("\n").filter((l: string) => l.trim());
-      const perGpuMB = lines
-        .map((l: string) => parseInt(l.trim(), 10))
-        .filter((n: number) => !isNaN(n));
-      if (perGpuMB.length > 0) {
-        const totalMemoryMB = perGpuMB.reduce((a: number, b: number) => a + b, 0);
+      type ParsedGpu = { name: string; memoryMB: number };
+      const parsed: ParsedGpu[] = [];
+      for (const raw of output.split("\n")) {
+        const line = raw.trim();
+        if (!line) continue;
+        // Split on the LAST comma — GPU names can contain commas in rare cases.
+        const idx = line.lastIndexOf(",");
+        if (idx === -1) continue;
+        const name = line.slice(0, idx).trim();
+        const memoryMB = parseInt(line.slice(idx + 1).trim(), 10);
+        if (isNaN(memoryMB)) continue;
+        parsed.push({ name, memoryMB });
+      }
+      if (parsed.length > 0) {
+        const totalMemoryMB = parsed.reduce(
+          (sum: number, p: ParsedGpu) => sum + p.memoryMB,
+          0,
+        );
+        const firstName = parsed[0].name;
+        // Only surface a single name when every GPU reports the same model;
+        // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
+        const allSameName =
+          !!firstName && parsed.every((p: ParsedGpu) => p.name === firstName);
         return {
           type: "nvidia",
-          count: perGpuMB.length,
+          ...(allSameName ? { name: firstName } : {}),
+          count: parsed.length,
           totalMemoryMB,
-          perGpuMB: perGpuMB[0],
+          perGpuMB: parsed[0].memoryMB,
           nimCapable: canRunNimWithMemory(totalMemoryMB),
         };
       }
@@ -203,12 +230,7 @@ export function isNgcLoggedIn(): boolean {
 
 // NGC expects literal "$oauthtoken" as the username for API key authentication.
 export function dockerLoginNgc(apiKey: string): boolean {
-  const { spawnSync } = require("child_process");
-  const result = spawnSync("docker", ["login", "nvcr.io", "-u", "$oauthtoken", "--password-stdin"], {
-    input: apiKey,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const result = dockerLoginPasswordStdin("nvcr.io", "$oauthtoken", apiKey);
   if (result.error) {
     console.error(`  Docker error: ${result.error.message}`);
     return false;
@@ -226,7 +248,7 @@ export function pullNimImage(model: string): string {
     process.exit(1);
   }
   console.log(`  Pulling NIM image: ${image}`);
-  run(["docker", "pull", image]);
+  dockerPull(image);
   return image;
 }
 
@@ -242,14 +264,18 @@ export function startNimContainerByName(name: string, model: string, port = VLLM
     process.exit(1);
   }
 
-  run(["docker", "rm", "-f", name], { ignoreError: true });
+  dockerForceRm(name, { ignoreError: true });
 
   console.log(`  Starting NIM container: ${name}`);
-  run([
-    "docker", "run", "-d", "--gpus", "all",
-    "-p", `${Number(port)}:8000`,
-    "--name", name,
-    "--shm-size", "16g",
+  dockerRunDetached([
+    "--gpus",
+    "all",
+    "-p",
+    `${Number(port)}:8000`,
+    "--name",
+    name,
+    "--shm-size",
+    "16g",
     image,
   ]);
   return name;
@@ -302,8 +328,8 @@ export function stopNimContainerByName(
 ): void {
   if (!silent) console.log(`  Stopping NIM container: ${name}`);
   const stdio = silent ? ["ignore", "ignore", "ignore"] : undefined;
-  run(["docker", "stop", name], { ignoreError: true, ...(stdio && { stdio }) });
-  run(["docker", "rm", name], { ignoreError: true, ...(stdio && { stdio }) });
+  dockerStop(name, { ignoreError: true, ...(stdio && { stdio }) });
+  dockerRm(name, { ignoreError: true, ...(stdio && { stdio }) });
 }
 
 export function nimStatus(sandboxName: string, port?: number): NimStatus {
@@ -313,18 +339,19 @@ export function nimStatus(sandboxName: string, port?: number): NimStatus {
 
 export function nimStatusByName(name: string, port?: number): NimStatus {
   try {
-    const state = runCapture(
-      ["docker", "inspect", "--format", "{{.State.Status}}", name],
-      { ignoreError: true },
-    );
+    const state = dockerContainerInspectFormat("{{.State.Status}}", name, {
+      ignoreError: true,
+      timeout: NIM_STATUS_PROBE_TIMEOUT_MS,
+    });
     if (!state) return { running: false, container: name };
 
     let healthy = false;
     if (state === "running") {
       let resolvedHostPort = port != null ? Number(port) : 0;
       if (!resolvedHostPort) {
-        const mapping = runCapture(["docker", "port", name, "8000"], {
+        const mapping = dockerPort(name, "8000", {
           ignoreError: true,
+          timeout: NIM_STATUS_PROBE_TIMEOUT_MS,
         });
         const m = mapping && mapping.match(/:(\d+)\s*$/);
         resolvedHostPort = m ? Number(m[1]) : VLLM_PORT;
@@ -339,7 +366,7 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
           "5",
           `http://127.0.0.1:${resolvedHostPort}/v1/models`,
         ],
-        { ignoreError: true },
+        { ignoreError: true, timeout: NIM_STATUS_PROBE_TIMEOUT_MS + 1000 },
       );
       healthy = !!health;
     }
@@ -347,4 +374,15 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
   } catch {
     return { running: false, container: name };
   }
+}
+
+// Cloud-only providers leave nimContainer unset; printing "NIM: not running"
+// for those sandboxes implies a fault when NIM is simply not part of the
+// deployment. Still surface the line if a container is unexpectedly alive,
+// so an orphan NIM is not silently hidden.
+export function shouldShowNimLine(
+  nimContainer: string | null | undefined,
+  nimRunning: boolean,
+): boolean {
+  return Boolean(nimContainer) || nimRunning;
 }

@@ -1,4 +1,4 @@
-.PHONY: check lint format lint-ts format-ts check-installer-hash docs docs-strict docs-live docs-clean
+.PHONY: check lint format format-biome lint-ts format-ts check-installer-hash docs docs-strict docs-live docs-clean
 
 check:
 	npx prek run --all-files
@@ -10,10 +10,10 @@ lint: check
 lint-ts:
 	cd nemoclaw && npm run check
 
-format: format-ts format-cli
+format: format-biome
 
-format-cli:
-	npx prettier --write 'bin/**/*.js' 'test/**/*.js'
+format-biome:
+	npx biome format --write .
 
 format-ts:
 	cd nemoclaw && npm run lint:fix && npm run format

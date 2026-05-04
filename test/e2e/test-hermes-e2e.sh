@@ -53,6 +53,42 @@ section() {
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
+dump_hermes_diagnostics() {
+  info "--- Hermes sandbox diagnostics ---"
+  if ! command -v openshell >/dev/null 2>&1; then
+    info "openshell is not available for sandbox diagnostics"
+    return
+  fi
+
+  local sandboxes diag_output diag_script
+  sandboxes=$(openshell sandbox list 2>&1 || true)
+  info "openshell sandbox list:"
+  echo "$sandboxes" | tail -20 | while IFS= read -r line; do
+    info "  $line"
+  done
+
+  if ! grep -Fq -- "$SANDBOX_NAME" <<<"$sandboxes"; then
+    info "sandbox '${SANDBOX_NAME}' is not visible to openshell"
+    return
+  fi
+
+  diag_script='set +e'
+  diag_script+='; echo "== identity =="; id 2>&1 || true'
+  diag_script+='; echo "== listening sockets =="; ss -tlnp 2>&1 || ss -tln 2>&1 || true'
+  diag_script+='; echo "== log and state paths =="; ls -ld /tmp /sandbox/.hermes /sandbox/.hermes/logs 2>&1 || true; ls -l /tmp/nemoclaw-start.log /tmp/gateway.log 2>&1 || true'
+  diag_script+='; echo "== hermes-related processes =="'
+  # shellcheck disable=SC2016  # script is intentionally evaluated inside the sandbox
+  diag_script+='; for p in /proc/[0-9]*; do cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true); case "$cmd" in *hermes*|*socat*|*nemoclaw-decode-proxy*) echo "$(basename "$p") $cmd" ;; esac; done'
+  diag_script+='; echo "== /tmp/nemoclaw-start.log tail =="; tail -n 80 /tmp/nemoclaw-start.log 2>&1 || true'
+  diag_script+='; echo "== /tmp/gateway.log tail =="; tail -n 120 /tmp/gateway.log 2>&1 || true'
+  diag_output=$(openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$diag_script" 2>&1 || true)
+
+  echo "$diag_output" | while IFS= read -r line; do
+    info "  $line"
+  done
+  info "--- End Hermes sandbox diagnostics ---"
+}
+
 # Parse chat completion response — handles both content and reasoning_content
 # (nemotron-3-super is a reasoning model that may put output in reasoning_content)
 parse_chat_content() {
@@ -196,6 +232,7 @@ if [ $install_exit -eq 0 ]; then
   pass "install.sh completed (exit 0)"
 else
   fail "install.sh failed (exit $install_exit)"
+  dump_hermes_diagnostics
   exit 1
 fi
 
@@ -358,7 +395,7 @@ else
   fail "Hermes config.yaml not found at /sandbox/.hermes/config.yaml"
 fi
 
-# 4d: Verify immutable config directory (Landlock read-only)
+# 4d: Verify config directory is writable (mutable default)
 writable_check=$($TIMEOUT_CMD ssh -F "$ssh_config" \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null \
@@ -368,10 +405,10 @@ writable_check=$($TIMEOUT_CMD ssh -F "$ssh_config" \
   "touch /sandbox/.hermes/test-write 2>&1 && echo WRITABLE && rm -f /sandbox/.hermes/test-write || echo READ_ONLY" \
   2>&1) || true
 
-if echo "$writable_check" | grep -q "READ_ONLY"; then
-  pass "Hermes config directory is read-only (immutable)"
-elif echo "$writable_check" | grep -q "WRITABLE"; then
-  fail "Hermes config directory is writable — should be immutable"
+if echo "$writable_check" | grep -q "WRITABLE"; then
+  pass "Hermes config directory is writable (mutable default)"
+elif echo "$writable_check" | grep -q "READ_ONLY"; then
+  fail "Hermes config directory is read-only — should be writable by default"
 else
   skip "Could not determine config directory mutability: ${writable_check:0:100}"
 fi
@@ -383,13 +420,13 @@ data_dir_check=$($TIMEOUT_CMD ssh -F "$ssh_config" \
   -o ConnectTimeout=10 \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}" \
-  "test -d /sandbox/.hermes-data && echo EXISTS || echo MISSING" \
+  "test -d /sandbox/.hermes && echo EXISTS || echo MISSING" \
   2>&1) || true
 
 if echo "$data_dir_check" | grep -q "EXISTS"; then
-  pass "Hermes writable data directory exists at /sandbox/.hermes-data"
+  pass "Hermes config/state directory exists at /sandbox/.hermes"
 else
-  fail "Hermes writable data directory not found at /sandbox/.hermes-data"
+  fail "Hermes config/state directory not found at /sandbox/.hermes"
 fi
 
 rm -f "$ssh_config"

@@ -25,12 +25,12 @@ export interface SandboxEntry {
   customPolicies?: CustomPolicyEntry[];
   policyTier?: string | null;
   agent?: string | null;
-  dangerouslySkipPermissions?: boolean;
   agentVersion?: string | null;
   imageTag?: string | null;
   providerCredentialHashes?: Record<string, string>;
   messagingChannels?: string[];
   disabledChannels?: string[];
+  dashboardPort?: number | null;
 }
 
 export interface SandboxRegistry {
@@ -192,7 +192,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
       agent: entry.agent || null,
-      dangerouslySkipPermissions: entry.dangerouslySkipPermissions === true ? true : undefined,
       agentVersion: entry.agentVersion || null,
       imageTag: entry.imageTag || null,
       providerCredentialHashes: entry.providerCredentialHashes || undefined,
@@ -201,6 +200,7 @@ export function registerSandbox(entry: SandboxEntry): void {
         Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
           ? [...entry.disabledChannels]
           : undefined,
+      dashboardPort: entry.dashboardPort ?? undefined,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;

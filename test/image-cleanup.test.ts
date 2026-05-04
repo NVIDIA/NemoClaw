@@ -8,58 +8,66 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  getSandboxDeleteOutcome,
+  removeSandboxImage,
+  removeSandboxRegistryEntry,
+} from "../src/lib/sandbox-destroy-action";
+import { help as renderRootHelp } from "../src/lib/root-help-action";
+
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
-  const nemoclawSrc = fs.readFileSync(path.join(ROOT, "src/nemoclaw.ts"), "utf-8");
+  it("removes sandbox images before deleting the registry entry", () => {
+    const calls: string[] = [];
 
-  it("removeSandboxImage() helper exists and calls docker rmi", () => {
-    expect(nemoclawSrc).toContain("function removeSandboxImage(");
-    expect(nemoclawSrc).toMatch(/docker.*rmi/);
+    const removed = removeSandboxRegistryEntry("alpha", {
+      removeImage: (sandboxName) => calls.push(`image:${sandboxName}`),
+      removeSandbox: (sandboxName) => {
+        calls.push(`registry:${sandboxName}`);
+        return true;
+      },
+    });
+
+    expect(removed).toBe(true);
+    expect(calls).toEqual(["image:alpha", "registry:alpha"]);
   });
 
-  it("sandboxDestroy calls removeSandboxImage before registry.removeSandbox", () => {
-    // Extract the sandboxDestroy function body
-    const destroyMatch = nemoclawSrc.match(/async function sandboxDestroy[\s\S]*?^}/m);
-    expect(destroyMatch).toBeTruthy();
-    if (!destroyMatch) {
-      throw new Error("Expected sandboxDestroy() in src/nemoclaw.ts");
-    }
-    const destroyBody = destroyMatch[0];
+  it("removeSandboxImage calls docker rmi for recorded image tags", () => {
+    const removedTags: string[] = [];
 
-    // removeSandboxImage must appear before registry.removeSandbox
-    const removeImageIdx = destroyBody.indexOf("removeSandboxImage(");
-    const removeRegistryIdx = destroyBody.indexOf("registry.removeSandbox(");
-    expect(removeImageIdx).toBeGreaterThan(-1);
-    expect(removeRegistryIdx).toBeGreaterThan(-1);
-    expect(removeImageIdx).toBeLessThan(removeRegistryIdx);
-  });
+    removeSandboxImage("alpha", {
+      getSandbox: () => ({ name: "alpha", imageTag: "openshell/sandbox-from:123" }) as any,
+      dockerRmi: (tag) => {
+        removedTags.push(tag);
+        return { status: 0 } as any;
+      },
+    });
 
-  it("sandboxRebuild calls removeSandboxImage before registry.removeSandbox", () => {
-    const rebuildMatch = nemoclawSrc.match(
-      /async function sandboxRebuild[\s\S]*?^\s*console\.log\(`\s*\$\{G\}.*Sandbox.*rebuilt/m,
-    );
-    expect(rebuildMatch).toBeTruthy();
-    if (!rebuildMatch) {
-      throw new Error("Expected sandboxRebuild() in src/nemoclaw.ts");
-    }
-    const rebuildBody = rebuildMatch[0];
-
-    const removeImageIdx = rebuildBody.indexOf("removeSandboxImage(");
-    const removeRegistryIdx = rebuildBody.indexOf("registry.removeSandbox(");
-    expect(removeImageIdx).toBeGreaterThan(-1);
-    expect(removeRegistryIdx).toBeGreaterThan(-1);
-    expect(removeImageIdx).toBeLessThan(removeRegistryIdx);
+    expect(removedTags).toEqual(["openshell/sandbox-from:123"]);
   });
 
   it("removeSandboxImage gracefully handles missing imageTag", () => {
-    // The function should check for imageTag before attempting removal
-    const fnMatch = nemoclawSrc.match(/function removeSandboxImage[\s\S]*?^}/m);
-    expect(fnMatch).toBeTruthy();
-    if (!fnMatch) {
-      throw new Error("Expected removeSandboxImage() in src/nemoclaw.ts");
-    }
-    expect(fnMatch[0]).toContain("imageTag");
+    const removedTags: string[] = [];
+
+    removeSandboxImage("alpha", {
+      getSandbox: () => ({ name: "alpha", imageTag: null }) as any,
+      dockerRmi: (tag) => {
+        removedTags.push(tag);
+        return { status: 0 } as any;
+      },
+    });
+
+    expect(removedTags).toEqual([]);
+  });
+
+  it("treats missing sandbox delete results as already gone", () => {
+    expect(
+      getSandboxDeleteOutcome({ status: 1, stderr: "Error: sandbox alpha not found" }),
+    ).toEqual({
+      output: "Error: sandbox alpha not found",
+      alreadyGone: true,
+    });
   });
 });
 
@@ -71,14 +79,20 @@ describe("image cleanup: onboard records imageTag in registry (#2086)", () => {
     expect(onboardSrc).toContain("const buildId = String(Date.now())");
   });
 
-  it("registerSandbox includes imageTag with buildId", () => {
-    expect(onboardSrc).toMatch(/imageTag:\s*`openshell\/sandbox-from:\$\{buildId\}`/);
+  it("registerSandbox uses resolvedImageTag parsed from build output", () => {
+    expect(onboardSrc).toContain("resolvedImageTag");
+    expect(onboardSrc).toMatch(/sandbox-from:\\d\+/);
+    expect(onboardSrc).toMatch(/imageTag:\s*resolvedImageTag/);
+    expect(onboardSrc).toMatch(/buildId/);
+    expect(onboardSrc).toMatch(/console\.warn/);
   });
 
   it("onboard recreate path cleans up old image", () => {
     // When recreating, the old image should be removed
-    expect(onboardSrc).toMatch(/previousEntry\?\.imageTag/);
-    expect(onboardSrc).toMatch(/docker.*rmi.*previousEntry\.imageTag/);
+    const match = onboardSrc.match(/if \(previousEntry\?\.imageTag\)[\s\S]*?^\s*}/m);
+    expect(match).toBeTruthy();
+    if (!match) throw new Error("Expected previousEntry image cleanup block in src/lib/onboard.ts");
+    expect(match[0]).toMatch(/dockerRmi\(|docker.*\.rmi\(/);
   });
 });
 
@@ -110,16 +124,20 @@ describe("image cleanup: gc command exists (#2086)", () => {
     expect(nemoclawSrc).toContain("globalCommandTokens()");
   });
 
-  it("gc command is dispatched in the CLI switch", () => {
-    expect(nemoclawSrc).toContain('case "gc"');
-    expect(nemoclawSrc).toContain("garbageCollectImages");
+  it("gc command is dispatched through the oclif bridge", () => {
+    expect(nemoclawSrc).toContain("resolveGlobalOclifDispatch");
+    expect(registrySrc).toContain('"nemoclaw gc"');
   });
 
   it("garbageCollectImages lists sandbox-from images and cross-references registry", () => {
-    const gcMatch = nemoclawSrc.match(/async function garbageCollectImages[\s\S]*?^}/m);
+    const maintenanceSrc = fs.readFileSync(
+      path.join(ROOT, "src/lib/maintenance-actions.ts"),
+      "utf-8",
+    );
+    const gcMatch = maintenanceSrc.match(/async function garbageCollectImages[\s\S]*?^}/m);
     expect(gcMatch).toBeTruthy();
     if (!gcMatch) {
-      throw new Error("Expected garbageCollectImages() in src/nemoclaw.ts");
+      throw new Error("Expected garbageCollectImages() in src/lib/maintenance-actions.ts");
     }
     const gcBody = gcMatch[0];
 
@@ -133,8 +151,19 @@ describe("image cleanup: gc command exists (#2086)", () => {
     expect(gcBody).toContain("--yes");
   });
 
-  it("gc appears in help text via registry", () => {
-    expect(registrySrc).toContain('"nemoclaw gc"');
-    expect(nemoclawSrc).toContain("registryCommandsByGroup");
+  it("gc appears in rendered help text", () => {
+    const originalLog = console.log;
+    let renderedHelp = "";
+    console.log = (message?: unknown) => {
+      renderedHelp += `${String(message ?? "")}\n`;
+    };
+    try {
+      renderRootHelp();
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(renderedHelp).toContain("nemoclaw gc");
+    expect(renderedHelp).toContain("Remove orphaned sandbox Docker images");
   });
 });

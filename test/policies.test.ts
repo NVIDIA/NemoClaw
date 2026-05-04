@@ -5,12 +5,17 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
+import type { Interface as ReadlineInterface } from "node:readline";
 import { describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import policies from "../dist/lib/policies";
+import { execTimeout } from "./helpers/timeouts";
 
+const requireForTest = createRequire(import.meta.url);
+const readline = requireForTest("node:readline") as typeof import("node:readline");
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "nemoclaw.js"));
+const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials.js"));
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policies.js"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "registry.js"));
@@ -69,8 +74,7 @@ policies.applyPreset = (sandboxName, presetName) => {
   calls.push({ type: "apply", sandboxName, presetName });
 };
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
-require(${CLI_PATH});
-setImmediate(() => {
+Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
   process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
 });
 `;
@@ -108,7 +112,7 @@ selectFromList(items, options)
   return spawnSync(process.execPath, ["-e", script], {
     cwd: REPO_ROOT,
     encoding: "utf-8",
-    timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 5000),
+    timeout: execTimeout(5_000),
     input,
     env: {
       ...process.env,
@@ -135,7 +139,7 @@ describe("policies", () => {
     it("returns expected preset names", () => {
       const names = policies
         .listPresets()
-        .map((p) => p.name)
+        .map((p: { name: string }) => p.name)
         .sort();
       const expected = [
         "brave",
@@ -186,12 +190,13 @@ describe("policies", () => {
       expect(content).toContain("port: 8000");
     });
 
-    it("local-inference preset includes openclaw, claude, and common tool binaries", () => {
+    it("local-inference preset includes openclaw and common tool binaries", () => {
       const content = requirePresetContent(policies.loadPreset("local-inference"));
       expect(content).toContain("/usr/local/bin/openclaw");
-      expect(content).toContain("/usr/local/bin/claude");
+      expect(content).not.toContain("/usr/local/bin/claude");
       // node, curl, and python3 are needed for direct inference access (#2199)
       expect(content).toContain("/usr/local/bin/node");
+      expect(content).toContain("/usr/bin/node");
       expect(content).toContain("/usr/bin/curl");
       expect(content).toContain("/usr/bin/python3");
     });
@@ -609,6 +614,28 @@ describe("policies", () => {
     });
   });
 
+  describe("mergePresetNamesIntoPolicy", () => {
+    it("merges built-in named presets into policy content", () => {
+      const current =
+        "version: 1\n\n" +
+        "network_policies:\n" +
+        "  existing:\n" +
+        "    name: existing\n" +
+        "    endpoints:\n" +
+        "      - host: api.example.com\n" +
+        "        port: 443\n" +
+        "        access: full\n";
+
+      const result = policies.mergePresetNamesIntoPolicy(current, ["slack"]);
+
+      expect(result.appliedPresets).toEqual(["slack"]);
+      expect(result.missingPresets).toEqual([]);
+      expect(result.policy).toContain("existing");
+      expect(result.policy).toContain("slack:");
+      expect(result.policy).toContain("wss-primary.slack.com");
+    });
+  });
+
   describe("preset YAML schema", () => {
     it("no preset has rules at NetworkPolicyRuleDef level", () => {
       // rules must be inside endpoints, not as sibling of endpoints/binaries
@@ -675,12 +702,36 @@ describe("policies", () => {
       }
     });
 
-    it("telegram REST preset uses tls: terminate for L7 proxy", () => {
+    it("REST policy YAML avoids deprecated tls: terminate", () => {
+      const agentsDir = path.join(REPO_ROOT, "agents");
+      const agentPolicyFiles = fs.existsSync(agentsDir)
+        ? fs
+            .readdirSync(agentsDir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => path.join(agentsDir, entry.name, "policy-additions.yaml"))
+            .filter((file) => fs.existsSync(file))
+        : [];
+      const policyFiles = [
+        path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
+        ...policies.listPresets().map((preset) =>
+          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets", preset.file),
+        ),
+        ...agentPolicyFiles,
+      ];
+
+      for (const file of policyFiles) {
+        const content = fs.readFileSync(file, "utf8");
+        expect(content).not.toContain("tls: terminate");
+      }
+    });
+
+    it("telegram REST preset relies on automatic TLS handling", () => {
       const content = requirePresetContent(policies.loadPreset("telegram"));
       expect(content).toBeTruthy();
       expect(content).toMatch(
-        /host:\s*api\.telegram\.org[\s\S]*?protocol:\s*rest[\s\S]*?tls:\s*terminate/,
+        /host:\s*api\.telegram\.org[\s\S]*?protocol:\s*rest[\s\S]*?enforcement:\s*enforce/,
       );
+      expect(content).not.toMatch(/host:\s*api\.telegram\.org[\s\S]*?tls:/);
     });
 
     it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {
@@ -864,7 +915,7 @@ selectForRemoval(items, options)
       return spawnSync(process.execPath, ["-e", script], {
         cwd: REPO_ROOT,
         encoding: "utf-8",
-        timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 5000),
+        timeout: execTimeout(5_000),
         input,
         env: {
           ...process.env,
@@ -1028,8 +1079,7 @@ policies.removePreset = (sandboxName, presetName) => {
   return true;
 };
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-remove", ...${JSON.stringify(extraArgs)}];
-require(${CLI_PATH});
-setImmediate(() => {
+Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
   process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
 });
 `;
@@ -1167,8 +1217,7 @@ registry.getCustomPolicies = () => [
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
 credentials.prompt = async () => "y";
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-remove", ${JSON.stringify(presetName)}, ...${JSON.stringify(extraArgs)}];
-require(${CLI_PATH});
-setImmediate(() => {
+Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
   process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
 });
 `;
@@ -1361,8 +1410,7 @@ credentials.prompt = async (message) => {
 registry.getSandbox = (name) => (name === "test-sandbox" ? { name } : null);
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
-require(${CLI_PATH});
-setImmediate(() => {
+Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
   process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
 });
 `;
@@ -1474,6 +1522,21 @@ setImmediate(() => {
       expect(result.stderr).toMatch(/Aborting --from-dir/);
     });
 
+    it("--from-dir skips hidden dotfile yaml presets", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-hidden-"));
+      fs.writeFileSync(path.join(dir, ".bad.yaml"), "preset:\n  name: bad\nnetwork_policies: {}\n");
+      fs.writeFileSync(
+        path.join(dir, "real.yaml"),
+        "preset:\n  name: real\nnetwork_policies: {}\n",
+      );
+      const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      const loads = calls.filter((c) => c.type === "load").map((c) => c.path);
+      expect(loads.length).toBe(1);
+      expect(loads[0]).toMatch(/real\.yaml$/);
+    });
+
     it("errors when --from-dir points at a non-directory", () => {
       const result = runPolicyAddExternal(["--from-dir", "/does/not/exist"]);
       expect(result.status).not.toBe(0);
@@ -1495,6 +1558,73 @@ setImmediate(() => {
       const loads = calls.filter((c) => c.type === "load").map((c) => c.path);
       expect(loads.length).toBe(1);
       expect(loads[0]).toMatch(/real\.yaml$/);
+    });
+  });
+
+  describe("interactive prompt cleanup", () => {
+    async function runPromptLifecycle(
+      functionName: "selectFromList" | "selectForRemoval",
+      input: string,
+    ) {
+      const counts = { ref: 0, pause: 0, unref: 0 };
+      const stdin = process.stdin as typeof process.stdin & {
+        ref: () => typeof process.stdin;
+        pause: () => typeof process.stdin;
+        unref: () => typeof process.stdin;
+      };
+      const original = {
+        ref: stdin.ref,
+        pause: stdin.pause,
+        unref: stdin.unref,
+      };
+      const createInterface = vi.spyOn(readline, "createInterface").mockReturnValue({
+        question: (_question: string, callback: (answer: string) => void) => callback(input),
+        close: vi.fn(),
+      } as unknown as ReadlineInterface);
+      stdin.ref = () => {
+        counts.ref += 1;
+        return process.stdin;
+      };
+      stdin.pause = () => {
+        counts.pause += 1;
+        return process.stdin;
+      };
+      stdin.unref = () => {
+        counts.unref += 1;
+        return process.stdin;
+      };
+      const items = [
+        { name: "alpha", description: "first", file: "/tmp/alpha.yaml" },
+        { name: "beta", description: "second", file: "/tmp/beta.yaml" },
+      ];
+      const options =
+        functionName === "selectForRemoval" ? { applied: ["alpha"] } : { applied: [] };
+
+      try {
+        const selected = await policies[functionName](items, options);
+        return { selected, counts };
+      } finally {
+        stdin.ref = original.ref;
+        stdin.pause = original.pause;
+        stdin.unref = original.unref;
+        createInterface.mockRestore();
+      }
+    }
+
+    it("releases and re-refs stdin around policy-add preset prompts", async () => {
+      const result = await runPromptLifecycle("selectFromList", "1\n");
+      expect(result.selected).toBe("alpha");
+      expect(result.counts.ref).toBeGreaterThanOrEqual(1);
+      expect(result.counts.pause).toBeGreaterThanOrEqual(1);
+      expect(result.counts.unref).toBeGreaterThanOrEqual(1);
+    });
+
+    it("releases and re-refs stdin around policy-remove preset prompts", async () => {
+      const result = await runPromptLifecycle("selectForRemoval", "1\n");
+      expect(result.selected).toBe("alpha");
+      expect(result.counts.ref).toBeGreaterThanOrEqual(1);
+      expect(result.counts.pause).toBeGreaterThanOrEqual(1);
+      expect(result.counts.unref).toBeGreaterThanOrEqual(1);
     });
   });
 });

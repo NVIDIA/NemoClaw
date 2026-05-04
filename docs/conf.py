@@ -48,6 +48,11 @@ redirects = {
     # tutorials/dgx-spark pages were removed; DGX Spark content now lives
     # in the NVIDIA Spark playbook (https://build.nvidia.com/spark/nemoclaw).
     "get-started/windows-setup": "windows-preparation.html",
+    # Manage Sandboxes reorganization (May 2026): operational pages moved
+    # from deployment/ and workspace/ into manage-sandboxes/.
+    "deployment/set-up-telegram-bridge": "../manage-sandboxes/messaging-channels.html",
+    "workspace/workspace-files": "../manage-sandboxes/workspace-files.html",
+    "workspace/backup-restore": "../manage-sandboxes/backup-restore.html",
 }
 
 autodoc_default_options = {

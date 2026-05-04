@@ -40,7 +40,7 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-rebuild}"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 TIMEOUT="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-1200}"
-MARKER_FILE="/sandbox/.openclaw-data/workspace/rebuild-marker.txt"
+MARKER_FILE="/sandbox/.openclaw/workspace/rebuild-marker.txt"
 MARKER_CONTENT="REBUILD_E2E_$(date +%s)"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
 
@@ -102,7 +102,7 @@ fi
 info "Step 3: Writing marker files into sandbox workspace..."
 
 openshell sandbox exec --name "$SANDBOX_NAME" -- \
-  sh -c "mkdir -p /sandbox/.openclaw-data/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
+  sh -c "mkdir -p /sandbox/.openclaw/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
   || fail "Failed to write marker file"
 
 # Verify the marker file was written
