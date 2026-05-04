@@ -54,9 +54,12 @@ COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
 
-# Preinstall Hermes TUI dependencies before the sandbox becomes read-only.
+# Preinstall Hermes TUI dependencies, build the project, and prune dev-deps 
+# before the sandbox becomes read-only. Chained in one layer to prevent image bloat.
 RUN cd /opt/hermes/ui-tui \
-    && npm ci --omit=dev --ignore-scripts \
+    && npm ci --ignore-scripts \
+    && npm run build \
+    && npm prune --omit=dev \
     && npm cache clean --force
 
 # Build args for config that varies per deployment.

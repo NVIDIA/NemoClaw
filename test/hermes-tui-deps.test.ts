@@ -40,20 +40,26 @@ function findRunBlock(src: string, predicate: (block: string) => boolean): RunBl
   return null;
 }
 
-describe("Hermes Dockerfile TUI dependencies", () => {
-  it("preinstalls TUI npm deps before dropping privileges", () => {
+describe("Hermes Dockerfile TUI Build Chain", () => {
+  it("implements the secure build-and-prune sequence before privilege drop", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
     const lines = src.split("\n");
-    const tuiBlock = findRunBlock(src, (block) => block.includes("cd /opt/hermes/ui-tui"));
 
-    expect(tuiBlock).not.toBeNull();
-    if (!tuiBlock) return;
+    // 1. Verify the full chained sequence exists
+    // We use a regex that allows for variable whitespace, newlines, and backslashes
+    const buildChainRegex = /npm ci --ignore-scripts\s*\\?\s*&&\s*npm run build\s*\\?\s*&&\s*npm prune --omit=dev\s*\\?\s*&&\s*npm cache clean --force/s;
+    expect(src).toMatch(buildChainRegex);
 
-    expect(tuiBlock.block).toContain("npm ci --omit=dev --ignore-scripts");
-    expect(tuiBlock.block).toContain("npm cache clean --force");
-
+    // 2. Verify the sequence occurs BEFORE the privilege drop to 'sandbox' user
+    const tuiBlockIndex = src.search(/npm ci --ignore-scripts/);
     const userSandboxIndex = lines.findIndex((line) => /^\s*USER\s+sandbox\b/.test(line));
-    expect(userSandboxIndex).toBeGreaterThan(-1);
-    expect(tuiBlock.start).toBeLessThan(userSandboxIndex);
+    
+    // Calculate absolute line position for the USER sandbox command
+    let userSandboxLinePos = 0;
+    for (let i = 0; i < userSandboxIndex; i++) {
+      userSandboxLinePos += lines[i].length + 1;
+    }
+
+    expect(tuiBlockIndex).toBeLessThan(userSandboxLinePos);
   });
 });
