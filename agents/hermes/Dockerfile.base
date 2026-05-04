@@ -131,6 +131,7 @@ RUN printf '%s\n' \
 # integrations: messaging (Telegram, Discord, Slack) and web (API health/UI
 # runtime). New Hermes integrations should be installed by the agent workflow
 # when they are enabled rather than shipped in the base image by default.
+# Root Node dependencies provide Hermes browser tooling such as agent-browser.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 RUN mkdir -p /opt/hermes \
     && curl -fsSL "https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_VERSION}.tar.gz" -o /tmp/hermes.tar.gz \
@@ -146,6 +147,8 @@ RUN set -eu; \
         set -- "$@" --extra "$extra"; \
     done; \
     uv sync --frozen --no-dev "$@" --no-cache \
+    && npm ci --prefer-offline --no-audit --no-fund \
+    && rm -rf /tmp/camoufox-* \
     && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
