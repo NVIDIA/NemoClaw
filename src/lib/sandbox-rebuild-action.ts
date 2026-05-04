@@ -95,6 +95,7 @@ export async function rebuildSandbox(
   }
   console.log("");
 
+  let rebuildConfirmed = false;
   if (!skipConfirm) {
     if (rebuildActiveSessionCount > 0) {
       const plural = rebuildActiveSessionCount > 1 ? "sessions" : "session";
@@ -116,6 +117,7 @@ export async function rebuildSandbox(
       console.log("  Cancelled.");
       return;
     }
+    rebuildConfirmed = true;
   }
 
   // Step 0: Preflight — verify recreate preconditions BEFORE destroying
@@ -209,7 +211,7 @@ export async function rebuildSandbox(
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
   const backup = sandboxState.backupSandboxState(sandboxName);
   log(
-    `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}, failed=${backup.failedDirs.join(",")}`,
+    `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
   if (!backup.success) {
     console.error("  Failed to back up sandbox state.");
@@ -218,6 +220,9 @@ export async function rebuildSandbox(
     }
     if (backup.failedDirs.length > 0) {
       console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
+    }
+    if (backup.failedFiles.length > 0) {
+      console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     }
     console.error("  Aborting rebuild to prevent data loss.");
     bail("Failed to back up sandbox state.");
@@ -230,7 +235,9 @@ export async function rebuildSandbox(
     bail("Failed to record backup metadata.");
     return;
   }
-  console.log(`  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories)`);
+  console.log(
+    `  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
+  );
   console.log(`    Backup: ${backupManifest.backupPath}`);
 
   // Step 3: Delete sandbox without tearing down gateway or session.
@@ -354,6 +361,12 @@ export async function rebuildSandbox(
       recreateSandbox: true,
       agent: rebuildAgent,
       fromDockerfile: storedFromDockerfile,
+      // Reaching here means the user already consented to the destructive
+      // rebuild (either via --yes/--force or by answering "y" at the prompt).
+      // Propagate that consent so the size-confirm gate inside the
+      // non-interactive onboard does not abort after the old sandbox has
+      // been deleted (#2639 follow-up).
+      autoYes: skipConfirm || rebuildConfirmed,
     });
     log("onboard() returned successfully");
   } catch (err) {
@@ -413,14 +426,19 @@ export async function rebuildSandbox(
   log(`Restoring from: ${backupManifest.backupPath} into sandbox: ${sandboxName}`);
   const restore = sandboxState.restoreSandboxState(sandboxName, backupManifest.backupPath);
   log(
-    `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}, failed=${restore.failedDirs.join(",")}`,
+    `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}`,
   );
   if (!restore.success) {
     console.error(`  Partial restore: ${restore.restoredDirs.join(", ") || "none"}`);
     console.error(`  Failed: ${restore.failedDirs.join(", ")}`);
+    if (restore.failedFiles.length > 0) {
+      console.error(`  Failed files: ${restore.failedFiles.join(", ")}`);
+    }
     console.error(`  Manual restore available from: ${backupManifest.backupPath}`);
   } else {
-    console.log(`  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories)`);
+    console.log(
+      `  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
+    );
   }
 
   // Step 5.5: Restore policy presets (#1952)
@@ -504,3 +522,5 @@ export async function rebuildSandbox(
     console.log(`    Backup available at: ${backupManifest.backupPath}`);
   }
 }
+
+

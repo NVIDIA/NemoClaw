@@ -105,6 +105,12 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "sandbox",
   },
   {
+    usage: "nemoclaw <name> recover",
+    description: "Restart the sandbox gateway and dashboard port-forward",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
     usage: "nemoclaw <name> status",
     description: "Sandbox health + NIM status",
     group: "Sandbox Management",
@@ -120,7 +126,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> logs",
     description: "Stream sandbox logs",
-    flags: "[--follow]",
+    flags: "[--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
     group: "Sandbox Management",
     scope: "sandbox",
   },
