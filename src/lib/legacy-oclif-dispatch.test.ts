@@ -21,6 +21,14 @@ describe("resolveSandboxOclifDispatch", () => {
     });
   });
 
+  it("routes sandbox doctor through oclif", () => {
+    expect(resolveSandboxOclifDispatch("alpha", "doctor", ["--json"])).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:doctor",
+      args: ["alpha", "--json"],
+    });
+  });
+
   it("keeps sandbox logs help public with supported filters", () => {
     expect(resolveSandboxOclifDispatch("alpha", "logs", ["--help"])).toEqual({
       kind: "help",

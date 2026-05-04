@@ -3,15 +3,8 @@
 
 /* v8 ignore start -- transitional bridge until command actions are extracted from src/nemoclaw.ts. */
 
-export interface SandboxConnectOptions {
-  probeOnly?: boolean;
-}
-
 export interface NemoClawRuntimeBridge {
-  sandboxConnect: (sandboxName: string, options?: SandboxConnectOptions) => Promise<void>;
-  sandboxDestroy: (sandboxName: string, args?: string[]) => Promise<void>;
   sandboxRebuild: (sandboxName: string, args?: string[]) => Promise<void>;
-  sandboxStatus: (sandboxName: string) => Promise<void>;
   upgradeSandboxes: (args?: string[]) => Promise<void>;
 }
 
