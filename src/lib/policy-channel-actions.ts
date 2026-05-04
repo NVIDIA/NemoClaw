@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
+import { hashCredential } from "./credential-hash";
 import { getCredential, prompt as askPrompt } from "./credentials";
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 const { isNonInteractive } = require("./onboard") as { isNonInteractive: () => boolean };
@@ -310,9 +311,16 @@ async function applyChannelAddToGatewayAndRegistry(
     const enabled = new Set(entry.messagingChannels || []);
     enabled.add(channelName);
     const disabled = (entry.disabledChannels || []).filter((c: string) => c !== channelName);
+    const providerCredentialHashes = { ...(entry.providerCredentialHashes || {}) };
+    for (const [envKey, token] of Object.entries(acquired)) {
+      const hash = hashCredential(token);
+      if (hash) providerCredentialHashes[envKey] = hash;
+    }
     registry.updateSandbox(sandboxName, {
       messagingChannels: Array.from(enabled).sort(),
       disabledChannels: disabled,
+      providerCredentialHashes:
+        Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
     });
   }
 }
@@ -366,7 +374,15 @@ async function applyChannelRemoveToGatewayAndRegistry(
   const entry = registry.getSandbox(sandboxName);
   if (entry) {
     const enabled = (entry.messagingChannels || []).filter((c: string) => c !== channelName);
-    registry.updateSandbox(sandboxName, { messagingChannels: enabled });
+    const providerCredentialHashes = { ...(entry.providerCredentialHashes || {}) };
+    for (const envKey of channelTokenKeys) {
+      delete providerCredentialHashes[envKey];
+    }
+    registry.updateSandbox(sandboxName, {
+      messagingChannels: enabled,
+      providerCredentialHashes:
+        Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
+    });
   }
 }
 

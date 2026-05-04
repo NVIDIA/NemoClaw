@@ -3,13 +3,12 @@
 
 /* v8 ignore start -- exercised through CLI subprocess connect/status/rebuild tests. */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { DASHBOARD_PORT } from "./ports";
-import { ROOT, shellQuote } from "./runner";
 import {
   captureOpenshell,
   captureOpenshellForStatus,
@@ -18,6 +17,8 @@ import {
   runOpenshell,
 } from "./openshell-runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
+import { ROOT, shellQuote } from "./runner";
+import { parseForwardList } from "./sandbox-session-state";
 import { G, R } from "./terminal-style";
 import { sleepSeconds } from "./wait";
 
@@ -73,6 +74,8 @@ export function executeSandboxCommand(
       stdout: (result.stdout || "").trim(),
       stderr: (result.stderr || "").trim(),
     };
+  } catch {
+    return null;
   } finally {
     try {
       fs.unlinkSync(tmpFile);
@@ -88,10 +91,10 @@ export function executeSandboxExecCommand(
   timeout = 15000,
 ): SandboxCommandResult | null {
   const markedCommand = `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
+  const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
+  const effectiveTimeout =
+    Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
   try {
-    const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
-    const effectiveTimeout =
-      Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
     const result = spawnSync(
       getOpenshellBinary(),
       ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
@@ -234,20 +237,55 @@ function waitForRecoveredSandboxGateway(sandboxName: string): boolean {
 /**
  * Re-establish the dashboard port forward to the sandbox.
  * Uses the agent's forward port when a non-OpenClaw agent is active.
+ * Returns true when `forward start` succeeded and a follow-up probe
+ * confirms the new entry is running, false otherwise.
  */
-function ensureSandboxPortForward(sandboxName: string): void {
+function ensureSandboxPortForward(sandboxName: string): boolean {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const port = agent ? String(agent.forwardPort) : DASHBOARD_FORWARD_PORT;
   runOpenshell(["forward", "stop", port], { ignoreError: true });
-  runOpenshell(["forward", "start", "--background", port, sandboxName], {
+  const startResult = runOpenshell(["forward", "start", "--background", port, sandboxName], {
     ignoreError: true,
   });
+  if (startResult.status !== 0) return false;
+  return isSandboxForwardHealthy(sandboxName) === true;
+}
+
+/**
+ * Probe `openshell forward list` for the sandbox's dashboard forward.
+ * Returns true when an entry exists for the expected sandbox+port pair
+ * with STATUS=running, false when the entry is missing or non-running,
+ * and null when openshell is unreachable.
+ *
+ * The in-sandbox gateway and the host-side forward are independent
+ * dimensions: the forward can die (host SSH session dropped, list shows
+ * STATUS=dead) while the gateway keeps listening on 127.0.0.1:<port>.
+ */
+function isSandboxForwardHealthy(sandboxName: string): boolean | null {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const port = agent ? String(agent.forwardPort) : DASHBOARD_FORWARD_PORT;
+  const result = captureOpenshell(["forward", "list"], {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (!result || isCommandTimeout(result) || result.status !== 0) return null;
+  const entries = parseForwardList(result.output) as Array<{
+    sandboxName: string;
+    port: string;
+    status: string;
+  }>;
+  const match = entries.find((entry) => entry.port === port);
+  if (!match) return false;
+  if (match.sandboxName !== sandboxName) return false;
+  return match.status === "running";
 }
 
 /**
  * Detect and recover from a sandbox that survived a gateway restart but
- * whose OpenClaw processes are not running. Returns an object describing
- * the outcome: { checked, wasRunning, recovered }.
+ * whose OpenClaw processes are not running. Also re-establishes the
+ * host-side dashboard port-forward when it has gone dead independently
+ * of the gateway. Returns an object describing the outcome:
+ * `{ checked, wasRunning, recovered, forwardRecovered }`.
  */
 export function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -255,14 +293,37 @@ export function checkAndRecoverSandboxProcesses(
 ) {
   const running = isSandboxGatewayRunning(sandboxName);
   if (running === null) {
-    return { checked: false, wasRunning: null, recovered: false };
+    return { checked: false, wasRunning: null, recovered: false, forwardRecovered: false };
   }
+  const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   if (running) {
-    return { checked: true, wasRunning: true, recovered: false };
+    // Gateway is alive but the host-side forward can still be dead or
+    // owned by another sandbox. Probe and re-establish only when
+    // necessary so the live-and-healthy path stays a no-op.
+    const forwardHealthy = isSandboxForwardHealthy(sandboxName);
+    if (forwardHealthy === false) {
+      if (!quiet) {
+        console.log("");
+        console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
+        console.log("  Re-establishing...");
+      }
+      const forwardRecovered = ensureSandboxPortForward(sandboxName);
+      if (!quiet) {
+        if (forwardRecovered) {
+          console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+        } else {
+          console.error("  Failed to re-establish the dashboard port forward.");
+          console.error(
+            `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
+          );
+        }
+      }
+      return { checked: true, wasRunning: true, recovered: false, forwardRecovered };
+    }
+    return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
   }
 
   // Gateway not running — attempt recovery
-  const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   if (!quiet) {
     console.log("");
     console.log(
@@ -280,16 +341,25 @@ export function checkAndRecoverSandboxProcesses(
         console.error("  Gateway process started but is not responding.");
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
       }
-      return { checked: true, wasRunning: false, recovered: false };
+      return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
-    ensureSandboxPortForward(sandboxName);
+    const forwardRecovered = ensureSandboxPortForward(sandboxName);
     if (!quiet) {
       console.log(
         `  ${G}✓${R} ${agentRuntime.getAgentDisplayName(recoveryAgent)} gateway restarted inside sandbox.`,
       );
-      console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+      if (forwardRecovered) {
+        console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+      } else {
+        console.error("  Failed to re-establish the dashboard port forward.");
+        console.error(
+          `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
+        );
+      }
     }
-  } else if (!quiet) {
+    return { checked: true, wasRunning: false, recovered, forwardRecovered };
+  }
+  if (!quiet) {
     console.error(
       `  Could not restart ${agentRuntime.getAgentDisplayName(recoveryAgent)} gateway automatically.`,
     );
@@ -297,5 +367,5 @@ export function checkAndRecoverSandboxProcesses(
     console.error(`    ${agentRuntime.getGatewayCommand(recoveryAgent)}`);
   }
 
-  return { checked: true, wasRunning: false, recovered };
+  return { checked: true, wasRunning: false, recovered, forwardRecovered: false };
 }

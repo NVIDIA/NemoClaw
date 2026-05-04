@@ -42,11 +42,12 @@ export function backupAll(): void {
     const result = sandboxState.backupSandboxState(sb.name);
     if (result.success) {
       console.log(
-        `  ${G}✓${R} ${sb.name}: ${result.backedUpDirs.length} dirs → ${result.manifest?.backupPath || "unknown"}`,
+        `  ${G}✓${R} ${sb.name}: ${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`,
       );
       backed++;
     } else {
-      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${result.failedDirs.join(", ")})`);
+      const failedItems = [...result.failedDirs, ...result.failedFiles];
+      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems.join(", ")})`);
       failed++;
     }
   }

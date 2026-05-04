@@ -82,6 +82,12 @@ export function resetOllamaHostCache(): void {
   _resolvedOllamaHost = null;
 }
 
+// Explicitly pin the resolved host without probing. Used after a deliberate
+// switch (e.g., user picked the Windows-host launch flow).
+export function setResolvedOllamaHost(host: string): void {
+  _resolvedOllamaHost = host;
+}
+
 export interface GpuInfo {
   totalMemoryMB: number;
 }
@@ -443,6 +449,13 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
     return tagsParsed;
   }
 
+  // The `ollama list` CLI fallback talks to the local daemon. Skip it when
+  // the resolved host is not loopback (e.g. host.docker.internal pointing
+  // at the Windows-host daemon) — otherwise we would surface WSL models
+  // and skip pulling them on the Windows host, then fail validation.
+  if (host !== OLLAMA_LOCALHOST) {
+    return [];
+  }
   const listOutput = capture(["ollama", "list"], { ignoreError: true });
   return parseOllamaList(listOutput);
 }
@@ -470,9 +483,10 @@ export function getDefaultOllamaModel(
 export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string[] {
   const payload = JSON.stringify({
     model,
-    prompt: "hello",
+    prompt: "Hello, reply in less than 5 words",
     stream: false,
     keep_alive: keepAlive,
+    options: { num_predict: 16 },
   });
   const host = getResolvedOllamaHost();
   // backgrounding (nohup ... &) and output redirection require a shell wrapper.
@@ -493,9 +507,10 @@ export function getOllamaProbeCommand(
 ): string[] {
   const payload = JSON.stringify({
     model,
-    prompt: "hello",
+    prompt: "Hello, reply in less than 5 words",
     stream: false,
     keep_alive: keepAlive,
+    options: { num_predict: 16 },
   });
   const host = getResolvedOllamaHost();
   return [
@@ -516,7 +531,8 @@ export function validateOllamaModel(
   runCaptureImpl?: RunCaptureFn,
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
-  const output = capture(getOllamaProbeCommand(model), { ignoreError: true });
+  const probeCmd = getOllamaProbeCommand(model);
+  const output = capture(probeCmd, { ignoreError: true });
   if (!output) {
     return {
       ok: false,

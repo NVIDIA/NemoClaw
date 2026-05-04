@@ -505,6 +505,7 @@ if [ "$(id -u)" -ne 0 ]; then
 
   # Start decode proxy and Hermes gateway
   start_decode_proxy
+  umask 0007
   HERMES_HOME="${HERMES_DIR}" \
     HTTPS_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}" \
     HTTP_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}" \
@@ -555,7 +556,7 @@ HERMES_HOME="${HERMES_DIR}" \
   HTTP_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}" \
   https_proxy="http://127.0.0.1:${DECODE_PROXY_PORT}" \
   http_proxy="http://127.0.0.1:${DECODE_PROXY_PORT}" \
-  nohup gosu gateway sh -c 'exec "$@" >/tmp/gateway.log 2>&1' sh "$HERMES" gateway run &
+  nohup gosu gateway sh -c 'umask 0007; exec "$@" >/tmp/gateway.log 2>&1' sh "$HERMES" gateway run &
 GATEWAY_PID=$!
 echo "[gateway] hermes gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 start_gateway_log_stream

@@ -110,6 +110,81 @@ echo "unexpected npm invocation: $*" >&2; exit 98`,
   );
 }
 
+function writeFailedOnboardSession(home: string) {
+  fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, ".nemoclaw", "onboard-session.json"),
+    JSON.stringify(
+      {
+        resumable: true,
+        status: "failed",
+        failure: { step: "inference", message: "Ollama proxy unreachable" },
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+function runFailedSessionPromptChoice(answer: string) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-failed-choice-"));
+  const fakeBin = path.join(tmp, "bin");
+  const onboardLog = path.join(tmp, "onboard.log");
+  const promptInput = path.join(tmp, "prompt-input.txt");
+  fs.mkdirSync(fakeBin);
+  writeFailedOnboardSession(tmp);
+  fs.writeFileSync(promptInput, answer);
+  writeNodeStub(fakeBin);
+  writeExecutable(
+    path.join(fakeBin, "nemoclaw"),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
+exit 0
+`,
+  );
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `
+set -euo pipefail
+source "$INSTALLER_UNDER_TEST"
+show_usage_notice() { :; }
+info() { printf 'INFO: %s\\n' "$*" >&2; }
+warn() { printf 'WARN: %s\\n' "$*" >&2; }
+error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
+function [ {
+  if [[ "$#" -eq 3 && "$1" = "-t" && "$2" = "0" && "$3" = "]" ]]; then
+    return 0
+  fi
+  builtin [ "$@"
+}
+run_onboard < "$PROMPT_INPUT_FILE"
+`,
+    ],
+    {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        FRESH: "",
+        HOME: tmp,
+        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_FRESH: "",
+        NEMOCLAW_NON_INTERACTIVE: "",
+        NON_INTERACTIVE: "",
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+        NEMOCLAW_ONBOARD_LOG: onboardLog,
+        PROMPT_INPUT_FILE: promptInput,
+      },
+    },
+  );
+
+  return { result, onboardLog };
+}
+
 // ---------------------------------------------------------------------------
 
 describe("installer runtime preflight", { timeout: 15_000 }, () => {
@@ -157,6 +232,9 @@ exit 1
         ...process.env,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        // Bypass the #2671 fail-fast license gate — this test exercises the
+        // Node-version-detection / nvm-upgrade path, not the license path.
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       },
     });
 
@@ -634,7 +712,7 @@ fi`,
       /Found an interrupted onboarding session — resuming it\./,
     );
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --resume --non-interactive --yes-i-accept-third-party-software$/m,
+      /^onboard --resume --non-interactive --yes-i-accept-third-party-software --yes$/m,
     );
   });
 
@@ -738,6 +816,21 @@ fi`,
     expect(fs.existsSync(onboardLog)).toBe(false);
   });
 
+  it.each([
+    { answer: "FrEsH\n", expectedArgs: "onboard --fresh", unexpectedFlag: /--resume/ },
+    { answer: "RESUME\n", expectedArgs: "onboard --resume", unexpectedFlag: /--fresh/ },
+    { answer: "\n", expectedArgs: "onboard --resume", unexpectedFlag: /--fresh/ },
+  ])("lowercases failed-session prompt answer $answer before invoking onboard", (testCase) => {
+    const { result, onboardLog } = runFailedSessionPromptChoice(testCase.answer);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Previous onboarding session failed/);
+    const log = fs.readFileSync(onboardLog, "utf-8");
+    expect(log).toMatch(new RegExp(`^${testCase.expectedArgs}$`, "m"));
+    expect(log).not.toMatch(testCase.unexpectedFlag);
+  });
+
   // #2430: --fresh is the escape hatch. Even with a session file on disk
   // (failed or otherwise), the installer should skip the auto-resume check
   // and let the onboard command create a new session.
@@ -831,7 +924,9 @@ fi`,
     // onboard was called with --fresh (forwarded so the CLI clears the
     // existing session file) and without --resume.
     const log = fs.readFileSync(onboardLog, "utf-8");
-    expect(log).toMatch(/^onboard --fresh --non-interactive --yes-i-accept-third-party-software$/m);
+    expect(log).toMatch(
+      /^onboard --fresh --non-interactive --yes-i-accept-third-party-software --yes$/m,
+    );
     expect(log).not.toMatch(/--resume/);
   });
 
@@ -992,7 +1087,7 @@ exit 0
       /Podman may work in some environments, but it is not a supported runtime/,
     );
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --non-interactive --yes-i-accept-third-party-software$/m,
+      /^onboard --non-interactive --yes-i-accept-third-party-software --yes$/m,
     );
   });
 
@@ -1136,7 +1231,7 @@ fi`,
 
     expect(result.status).toBe(0);
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --non-interactive --yes-i-accept-third-party-software$/m,
+      /^onboard --non-interactive --yes-i-accept-third-party-software --yes$/m,
     );
   });
 
@@ -2903,5 +2998,99 @@ exit 0`,
 
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/Cannot find module .*usage-notice\.js/);
+  });
+});
+
+describe("installer atomicity (#2671)", () => {
+  /**
+   * Run scripts/install.sh main() with stubbed phase-1 and phase-2 binaries
+   * that record invocation to a marker file. Tests assert whether install
+   * reaches phase 1/2 or short-circuits at the fail-fast license gate.
+   */
+  function runInstaller(env: Record<string, string | undefined>, options: { stdinIsTty?: boolean } = {}) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-2671-"));
+    const fakeBin = path.join(tmp, "bin");
+    const phaseLog = path.join(tmp, "phases.log");
+    fs.mkdirSync(fakeBin);
+
+    // Stub node + npm — both record their own invocation so we can detect
+    // whether phase 1 (install_nodejs) or phase 2 (install_nemoclaw) ran.
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+echo "node $*" >> ${JSON.stringify(phaseLog)}
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
+if [ -n "\${1:-}" ] && [ -f "$1" ]; then exit 0; fi
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+echo "npm $*" >> ${JSON.stringify(phaseLog)}
+if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "${path.join(tmp, "prefix")}"; exit 0; fi
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+echo "docker $*" >> ${JSON.stringify(phaseLog)}
+exit 0`,
+    );
+
+    // Run main() directly via the bash entrypoint check. We force stdin to
+    // /dev/null when stdinIsTty is false (default — simulates curl|bash).
+    const result = spawnSync(
+      "bash",
+      [INSTALLER_PAYLOAD],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        // input: "" makes spawnSync attach a non-TTY stdin pipe — equivalent
+        // to curl|bash for the purposes of [ -t 0 ] and /dev/tty in CI.
+        input: options.stdinIsTty ? undefined : "",
+        env: {
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          ...env,
+        },
+      },
+    );
+    const phases = fs.existsSync(phaseLog) ? fs.readFileSync(phaseLog, "utf-8") : "";
+    return { result, phases, tmp };
+  }
+
+  it("#2671: curl|bash with no flags exits 1 BEFORE phase 1 (atomic — no Node/CLI install)", () => {
+    const { result, phases } = runInstaller({});
+    expect(result.status).not.toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(output).toMatch(/--yes-i-accept-third-party-software/);
+    // Phase 1 (Node.js install) and phase 2 (CLI install) must NOT have run —
+    // the whole point of the fix is that a license-fail leaves no half-install behind.
+    expect(output).not.toMatch(/\[1\/3\] Node\.js/);
+    expect(output).not.toMatch(/\[2\/3\] NemoClaw CLI/);
+    // Stub binaries record every invocation; if phase 1 or 2 ran, node and/or
+    // npm would have been called. The fail-fast check runs before either.
+    expect(phases).toBe("");
+  });
+
+  it("--yes-i-accept-third-party-software alone is sufficient to clear the fail-fast gate", () => {
+    // The flag implies non-interactive intent (set by main() before the
+    // preflight check), so it must clear the gate AND let the install
+    // progress past preflight into phase 1 — assert phases is non-empty
+    // so the test doesn't false-pass if the install bailed for some other
+    // reason while the TTY error happened to be absent from output.
+    const { result, phases } = runInstaller({ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(phases).not.toBe("");
+  });
+
+  it("--non-interactive alone is sufficient to clear the fail-fast gate", () => {
+    const { result, phases } = runInstaller({ NEMOCLAW_NON_INTERACTIVE: "1" });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(phases).not.toBe("");
   });
 });
