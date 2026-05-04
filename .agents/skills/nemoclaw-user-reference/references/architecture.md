@@ -140,12 +140,16 @@ For the DGX Spark-specific variant of this topology (cgroup v2, aarch64, unified
 
 The plugin is a thin TypeScript package that registers an inference provider and the `/nemoclaw` slash command.
 It runs in-process with the OpenClaw gateway inside the sandbox.
+It also registers runtime hooks that keep the agent aware of its environment.
+Before an agent turn starts, the plugin prepends a short context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
+When the policy or phase changes during a session, the plugin sends a smaller update block instead of repeating the full context.
 
 ```text
 nemoclaw/
 ├── src/
 │   ├── index.ts                    Plugin entry: registers all commands
 │   ├── cli.ts                      Commander.js subcommand wiring
+│   ├── runtime-context.ts          Sandbox and policy context injection
 │   ├── commands/
 │   │   ├── launch.ts               Fresh install into OpenShell
 │   │   ├── connect.ts              Interactive shell into sandbox
@@ -211,6 +215,7 @@ container image. Inside the sandbox:
 - Inference calls are routed through OpenShell to the configured provider.
 - Network egress is restricted by the baseline policy in `openclaw-sandbox.yaml`.
 - Filesystem access is confined to `/sandbox` and `/tmp` for read-write access, with system paths read-only.
+- The NemoClaw plugin injects sandbox and policy context into agent turns so the agent can report policy blocks accurately.
 
 ## Inference Routing
 
@@ -223,13 +228,18 @@ Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build
 
 Refer to Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 
+## Provider Credential Storage
+
+Provider credentials live in the OpenShell gateway store, not on the host filesystem.
+NemoClaw never writes them to host disk; the OpenShell L7 proxy injects values at egress.
+See Credential Storage (use the `nemoclaw-user-configure-security` skill) for the inspection, rotation, and migration flow.
+
 ## Host-Side State and Config
 
-NemoClaw keeps its operator-facing state on the host rather than inside the sandbox.
+NemoClaw keeps non-secret operator-facing state on the host rather than inside the sandbox.
 
 | Path | Purpose |
 |---|---|
-| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding. Stored as plaintext JSON protected by local filesystem permissions; see Credential Storage (use the `nemoclaw-user-configure-security` skill). |
 | `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection. |
 | `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
 

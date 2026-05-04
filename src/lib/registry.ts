@@ -25,7 +25,6 @@ export interface SandboxEntry {
   customPolicies?: CustomPolicyEntry[];
   policyTier?: string | null;
   agent?: string | null;
-  dangerouslySkipPermissions?: boolean;
   agentVersion?: string | null;
   imageTag?: string | null;
   providerCredentialHashes?: Record<string, string>;
@@ -193,7 +192,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
       agent: entry.agent || null,
-      dangerouslySkipPermissions: entry.dangerouslySkipPermissions === true ? true : undefined,
       agentVersion: entry.agentVersion || null,
       imageTag: entry.imageTag || null,
       providerCredentialHashes: entry.providerCredentialHashes || undefined,

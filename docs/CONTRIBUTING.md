@@ -39,12 +39,15 @@ The current generated skills and their source pages are:
 | Skill | Source docs |
 |---|---|
 | `nemoclaw-user-overview` | `docs/about/overview.md`, `docs/about/ecosystem.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
-| `nemoclaw-user-get-started` | `docs/get-started/quickstart.md` |
-| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md` |
-| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
+| `nemoclaw-user-agent-skills` | `docs/resources/agent-skills.md` |
+| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/install-openclaw-plugins.md`, `docs/deployment/sandbox-hardening.md` |
+| `nemoclaw-user-get-started` | `docs/get-started/prerequisites.md`, `docs/get-started/quickstart.md`, `docs/get-started/quickstart-hermes.md`, `docs/get-started/windows-preparation.md` |
+| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md`, `docs/inference/set-up-sub-agent.md` |
+| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.md`, `docs/manage-sandboxes/messaging-channels.md`, `docs/manage-sandboxes/workspace-files.md`, `docs/manage-sandboxes/backup-restore.md` |
 | `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |
-| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/set-up-telegram-bridge.md` |
-| `nemoclaw-user-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
+| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
+| `nemoclaw-user-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/cli-selection-guide.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
+| `nemoclaw-user-configure-security` | `docs/security/best-practices.md`, `docs/security/credential-storage.md`, `docs/security/openclaw-controls.md` |
 
 ### Regenerating skills after doc changes
 
@@ -79,9 +82,8 @@ Other useful flags:
 ### How the Script Works
 
 The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `smart` strategy by default.
-Procedure pages (`how_to`, `get_started`) become the main body of the skill.
-Concept pages become a `## Context` section.
-Reference pages go into a `references/` subdirectory for progressive disclosure, keeping the `SKILL.md` concise (under 500 lines).
+Within each group, the procedure page (`how_to`, `get_started`, or `tutorial`) with the lowest `skill.priority` becomes the main body of the skill.
+Sibling procedure pages, concept pages, and reference pages go into a `references/` subdirectory for progressive disclosure, keeping `SKILL.md` concise while preserving access to the full docs.
 
 Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
 MyST/Sphinx directives are converted to standard markdown.
@@ -136,9 +138,15 @@ content:
   type: concept | how_to | get_started | tutorial | reference
   difficulty: technical_beginner | technical_intermediate | technical_advanced
   audience: ["developer", "engineer"]
+skill:
+  priority: 100
 status: published
 ---
 ```
+
+Use `skill.priority` to choose the lead procedure page when multiple how-to pages generate the same skill.
+Lower numbers win.
+For example, set the OpenClaw quickstart to `10` and the Hermes quickstart to `20` so `nemoclaw-user-get-started/SKILL.md` leads with the OpenClaw procedure and folds Hermes into `references/`.
 
 ### Page Structure
 

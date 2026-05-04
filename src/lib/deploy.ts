@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { NAME_ALLOWED_FORMAT, getNameValidationGuidance } from "./name-validation";
 import { sleepSeconds } from "./wait";
 
 type ExecLikeValue =
@@ -34,6 +35,8 @@ export interface DeployCredentials {
   COMPATIBLE_API_KEY?: string | null;
   COMPATIBLE_ANTHROPIC_API_KEY?: string | null;
   GITHUB_TOKEN?: string | null;
+  HF_TOKEN?: string | null;
+  HUGGING_FACE_HUB_TOKEN?: string | null;
   TELEGRAM_BOT_TOKEN?: string | null;
   ALLOWED_CHAT_IDS?: string | null;
   DISCORD_BOT_TOKEN?: string | null;
@@ -224,6 +227,29 @@ function fail(
   return exit(1);
 }
 
+function validateDeploySandboxName(
+  rawSandboxName: string,
+  opts: Pick<DeployExecutionOptions, "validateName" | "error" | "exit">,
+): string {
+  try {
+    return opts.validateName(rawSandboxName, "sandbox name");
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    return fail(
+      [
+        `  ${message}`,
+        ...getNameValidationGuidance("sandbox name", rawSandboxName, {
+          includeAllowedFormat: false,
+        }).map((line) => `  ${line}`),
+        "  Brev deploy is non-interactive and cannot prompt for a corrected sandbox name.",
+        "  Set NEMOCLAW_SANDBOX_NAME to a valid sandbox name and retry.",
+      ],
+      opts.error,
+      opts.exit,
+    );
+  }
+}
+
 export async function executeDeploy(opts: DeployExecutionOptions): Promise<void> {
   const {
     instanceName,
@@ -257,6 +283,9 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
         "    nemoclaw deploy my-gpu-box",
         "    nemoclaw deploy nemoclaw-prod",
         "    nemoclaw deploy nemoclaw-test",
+        "",
+        "  Sandbox name comes from NEMOCLAW_SANDBOX_NAME (default: my-assistant).",
+        `  Allowed sandbox name format: ${NAME_ALLOWED_FORMAT}.`,
       ],
       error,
       exit,
@@ -274,7 +303,11 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
   const skipStartServices = ["1", "true"].includes(
     String(env.NEMOCLAW_DEPLOY_NO_START_SERVICES || "").toLowerCase(),
   );
-  const sandboxName = validateName(env.NEMOCLAW_SANDBOX_NAME || "my-assistant", "sandbox name");
+  const sandboxName = validateDeploySandboxName(env.NEMOCLAW_SANDBOX_NAME || "my-assistant", {
+    validateName,
+    error,
+    exit,
+  });
   const credentials: DeployCredentials = {
     NVIDIA_API_KEY: getCredential("NVIDIA_API_KEY"),
     OPENAI_API_KEY: getCredential("OPENAI_API_KEY"),
@@ -283,6 +316,8 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     COMPATIBLE_API_KEY: getCredential("COMPATIBLE_API_KEY"),
     COMPATIBLE_ANTHROPIC_API_KEY: getCredential("COMPATIBLE_ANTHROPIC_API_KEY"),
     GITHUB_TOKEN: getCredential("GITHUB_TOKEN"),
+    HF_TOKEN: getCredential("HF_TOKEN"),
+    HUGGING_FACE_HUB_TOKEN: getCredential("HUGGING_FACE_HUB_TOKEN"),
     TELEGRAM_BOT_TOKEN: getCredential("TELEGRAM_BOT_TOKEN"),
     ALLOWED_CHAT_IDS: getCredential("ALLOWED_CHAT_IDS"),
     DISCORD_BOT_TOKEN: getCredential("DISCORD_BOT_TOKEN"),

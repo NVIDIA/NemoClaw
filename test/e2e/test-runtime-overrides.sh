@@ -36,13 +36,22 @@ info() { echo -e "${YELLOW}TEST${NC}: $1"; }
 PASSED=0
 FAILED=0
 
+# ── Log file for CI artifact collection ──────────────────────────
+# Create a timestamped log file whose name matches the CI artifact glob
+# test-runtime-overrides-*.log so Docker stderr is captured automatically.
+LOG_DIR="${REPO_DIR}"
+LOG_FILE="${LOG_DIR}/test-runtime-overrides-$(date +%Y%m%dT%H%M%S).log"
+: >"$LOG_FILE"
+info "Logging Docker stderr to: $LOG_FILE"
+
 # Helper: run entrypoint with env vars, then read a config field via jq.
 # The entrypoint patches config and starts the gateway — we only need the
 # config patch, so we override CMD to just cat the config and exit.
+# Docker stderr is captured to the log file for CI artifact visibility.
 run_override() {
   local env_args=("$@")
   docker run --rm "${env_args[@]}" "$IMAGE" \
-    bash -c 'cat /sandbox/.openclaw/openclaw.json' 2>/dev/null
+    bash -c 'cat /sandbox/.openclaw/openclaw.json; printf "\n"' 2>>"$LOG_FILE"
 }
 
 # Helper: run entrypoint with env vars and capture stderr for validation messages.
@@ -53,6 +62,8 @@ run_override_stderr() {
   docker run --rm "${env_args[@]}" "$IMAGE" \
     bash -c 'true' >/dev/null 2>"$tmpfile" || true
   cat "$tmpfile"
+  # Also append to the main log file for CI artifact capture
+  cat "$tmpfile" >>"$LOG_FILE"
   rm -f "$tmpfile"
 }
 
@@ -71,7 +82,12 @@ fi
 # ── Capture baseline config ──────────────────────────────────────
 
 info "Capturing baseline config (no overrides)"
-BASELINE=$(run_override)
+if ! BASELINE=$(run_override); then
+  fail "baseline container failed before config capture"
+  info "Docker stderr tail:"
+  tail -80 "$LOG_FILE" || true
+  exit 1
+fi
 BASELINE_MODEL=$(echo "$BASELINE" | jq -r '.agents.defaults.model.primary')
 BASELINE_CTX=$(echo "$BASELINE" | jq -r '.models.providers | to_entries[0].value.models[0].contextWindow')
 BASELINE_MAX=$(echo "$BASELINE" | jq -r '.models.providers | to_entries[0].value.models[0].maxTokens')
@@ -83,7 +99,7 @@ info "Baseline: model=$BASELINE_MODEL ctx=$BASELINE_CTX max=$BASELINE_MAX reason
 # ── Test 1: No-op baseline ───────────────────────────────────────
 
 info "1. No overrides — config matches build-time defaults"
-HASH_CHECK=$(docker run --rm "$IMAGE" bash -c 'cd /sandbox/.openclaw && sha256sum -c .config-hash --status && echo OK || echo FAIL' 2>/dev/null)
+HASH_CHECK=$(docker run --rm "$IMAGE" bash -c 'cd /sandbox/.openclaw && sha256sum -c .config-hash --status && echo OK || echo FAIL' 2>>"$LOG_FILE")
 if [ "$HASH_CHECK" = "OK" ]; then
   pass "baseline config hash valid"
 else
@@ -104,7 +120,7 @@ fi
 
 # Verify hash was recomputed
 HASH_CHECK=$(docker run --rm -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" "$IMAGE" \
-  bash -c 'cd /sandbox/.openclaw && sha256sum -c .config-hash --status && echo OK || echo FAIL' 2>/dev/null)
+  bash -c 'cd /sandbox/.openclaw && sha256sum -c .config-hash --status && echo OK || echo FAIL' 2>>"$LOG_FILE")
 if [ "$HASH_CHECK" = "OK" ]; then
   pass "config hash valid after model override"
 else
@@ -112,9 +128,11 @@ else
 fi
 
 # ── Test 3: Context window override ──────────────────────────────
+# NEMOCLAW_CONTEXT_WINDOW only takes effect alongside a model override
+# (standalone values are baked at build time). Ref: #2653 Phase 2.
 
-info "3. NEMOCLAW_CONTEXT_WINDOW patches contextWindow"
-CFG=$(run_override -e "NEMOCLAW_CONTEXT_WINDOW=32768")
+info "3. NEMOCLAW_CONTEXT_WINDOW patches contextWindow (with model override)"
+CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" -e "NEMOCLAW_CONTEXT_WINDOW=32768")
 ACTUAL=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].contextWindow')
 if [ "$ACTUAL" = "32768" ]; then
   pass "contextWindow overridden to 32768"
@@ -124,8 +142,8 @@ fi
 
 # ── Test 4: Max tokens override ──────────────────────────────────
 
-info "4. NEMOCLAW_MAX_TOKENS patches maxTokens"
-CFG=$(run_override -e "NEMOCLAW_MAX_TOKENS=16384")
+info "4. NEMOCLAW_MAX_TOKENS patches maxTokens (with model override)"
+CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" -e "NEMOCLAW_MAX_TOKENS=16384")
 ACTUAL=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].maxTokens')
 if [ "$ACTUAL" = "16384" ]; then
   pass "maxTokens overridden to 16384"
@@ -135,8 +153,8 @@ fi
 
 # ── Test 5: Reasoning override ───────────────────────────────────
 
-info "5. NEMOCLAW_REASONING=true patches reasoning"
-CFG=$(run_override -e "NEMOCLAW_REASONING=true")
+info "5. NEMOCLAW_REASONING=true patches reasoning (with model override)"
+CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" -e "NEMOCLAW_REASONING=true")
 ACTUAL=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].reasoning')
 if [ "$ACTUAL" = "true" ]; then
   pass "reasoning overridden to true"
@@ -154,7 +172,8 @@ NEW_LEN=$(echo "$CFG" | jq '.gateway.controlUi.allowedOrigins | length')
 if [ "$HAS_ORIGIN" = "true" ] && [ "$NEW_LEN" -gt "$BASELINE_ORIGINS" ]; then
   pass "CORS origin added: $CORS"
 else
-  fail "CORS origin not found in allowedOrigins"
+  ORIGINS=$(echo "$CFG" | jq -c '.gateway.controlUi.allowedOrigins // []' 2>/dev/null || printf '%s' "$CFG")
+  fail "CORS origin not found in allowedOrigins: ${ORIGINS}"
 fi
 
 # ── Test 7: Combined overrides ───────────────────────────────────
@@ -190,7 +209,7 @@ else
 fi
 
 info "9. NEMOCLAW_CONTEXT_WINDOW with non-integer is rejected"
-STDERR=$(run_override_stderr -e "NEMOCLAW_CONTEXT_WINDOW=notanumber")
+STDERR=$(run_override_stderr -e "NEMOCLAW_MODEL_OVERRIDE=test" -e "NEMOCLAW_CONTEXT_WINDOW=notanumber")
 if echo "$STDERR" | grep -q "must be a positive integer"; then
   pass "non-integer context window rejected"
 else
@@ -198,7 +217,7 @@ else
 fi
 
 info "10. NEMOCLAW_MAX_TOKENS with non-integer is rejected"
-STDERR=$(run_override_stderr -e "NEMOCLAW_MAX_TOKENS=abc")
+STDERR=$(run_override_stderr -e "NEMOCLAW_MODEL_OVERRIDE=test" -e "NEMOCLAW_MAX_TOKENS=abc")
 if echo "$STDERR" | grep -q "must be a positive integer"; then
   pass "non-integer max tokens rejected"
 else
@@ -206,7 +225,7 @@ else
 fi
 
 info "11. NEMOCLAW_REASONING with invalid value is rejected"
-STDERR=$(run_override_stderr -e "NEMOCLAW_REASONING=maybe")
+STDERR=$(run_override_stderr -e "NEMOCLAW_MODEL_OVERRIDE=test" -e "NEMOCLAW_REASONING=maybe")
 if echo "$STDERR" | grep -q 'must be "true" or "false"'; then
   pass "invalid reasoning value rejected"
 else
@@ -232,12 +251,13 @@ fi
 # ── Test 14: Original config unchanged after rejected override ───
 
 info "14. Config unchanged after rejected override"
-CFG=$(run_override -e "NEMOCLAW_CONTEXT_WINDOW=notanumber")
+CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=test" -e "NEMOCLAW_CONTEXT_WINDOW=notanumber")
 ACTUAL_CTX=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].contextWindow')
-if [ "$ACTUAL_CTX" = "$BASELINE_CTX" ]; then
+ACTUAL_MODEL=$(echo "$CFG" | jq -r '.agents.defaults.model.primary')
+if [ "$ACTUAL_CTX" = "$BASELINE_CTX" ] && [ "$ACTUAL_MODEL" = "$BASELINE_MODEL" ]; then
   pass "config unchanged after rejected override"
 else
-  fail "config was modified despite rejected override: ctx=$ACTUAL_CTX (expected $BASELINE_CTX)"
+  fail "config was modified despite rejected override: model=$ACTUAL_MODEL ctx=$ACTUAL_CTX (expected model=$BASELINE_MODEL ctx=$BASELINE_CTX)"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────

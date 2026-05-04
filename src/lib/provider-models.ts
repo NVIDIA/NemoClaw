@@ -6,7 +6,6 @@ import { getCurlTimingArgs, runCurlProbe } from "./http-probe";
 import type { ModelCatalogFetchResult, ModelValidationResult } from "./onboard-types";
 
 // credentials.ts still uses CommonJS-style exports.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { normalizeCredentialValue } = require("./credentials");
 
 export const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
@@ -195,7 +194,7 @@ export function validateAnthropicModel(
   options: ProviderModelOptions = {},
 ): ModelValidationResult {
   const normalizedEndpointUrl = String(endpointUrl).replace(/\/+$/, "");
-  const available = fetchAnthropicModels(endpointUrl, apiKey, options);
+  const available = fetchAnthropicModels(normalizedEndpointUrl, apiKey, options);
   if (!available.ok) {
     if (available.httpStatus === 404 || available.httpStatus === 405) {
       return { ok: true, validated: false };
@@ -226,7 +225,7 @@ export function validateOpenAiLikeModel(
   options: ProviderModelOptions = {},
 ): ModelValidationResult {
   const normalizedEndpointUrl = String(endpointUrl).replace(/\/+$/, "");
-  const available = fetchOpenAiLikeModels(endpointUrl, apiKey, options);
+  const available = fetchOpenAiLikeModels(normalizedEndpointUrl, apiKey, options);
   if (!available.ok) {
     if (available.httpStatus === 404 || available.httpStatus === 405) {
       return { ok: true, validated: false };

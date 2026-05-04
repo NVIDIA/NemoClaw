@@ -17,7 +17,6 @@ import path from "node:path";
 import { DASHBOARD_PORT } from "./ports";
 
 // runner.ts still uses CommonJS-style exports — use require here.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { runCapture } = require("./runner");
 
 type RunCaptureFn = typeof import("./runner").runCapture;

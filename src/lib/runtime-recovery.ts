@@ -8,7 +8,6 @@
 
 import { loadSession } from "./onboard-session";
 
-// eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 function stripAnsi(text: string | null | undefined): string {

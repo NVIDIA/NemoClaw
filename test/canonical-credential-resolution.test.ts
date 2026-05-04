@@ -117,6 +117,21 @@ describe("resolveProviderCredential — canonical credential resolution (#2306)"
     expect(result).toBe("from-env");
   });
 
+  it("stages legacy credentials through the resolver without deleting the legacy file", async () => {
+    const tmpDir = createFixtureHome("NVIDIA_API_KEY", "nvapi-staged-only");
+    const legacyFile = path.join(tmpDir, ".nemoclaw", "credentials.json");
+    delete process.env["NVIDIA_API_KEY"];
+
+    const credentials = await importCredentialsModule(tmpDir);
+    const result = credentials.resolveProviderCredential("NVIDIA_API_KEY");
+
+    expect(result).toBe("nvapi-staged-only");
+    expect(process.env["NVIDIA_API_KEY"]).toBe("nvapi-staged-only");
+    // Generic lookup cannot prove every legacy value reached the gateway.
+    // Only onboard's verified migration gate may remove this plaintext file.
+    expect(fs.existsSync(legacyFile)).toBe(true);
+  });
+
   it("returns null when credential exists nowhere", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2306-missing-"));
     tmpFixtures.push(tmpDir);
@@ -130,14 +145,21 @@ describe("resolveProviderCredential — canonical credential resolution (#2306)"
   });
 
   it("normalizes whitespace and carriage returns", async () => {
-    const tmpDir = createFixtureHome("TEST_WHITESPACE_KEY", "  nvapi-key \r\n");
+    // Uses an allowlisted env-key (`NVIDIA_API_KEY`) so the value can
+    // actually be staged from the legacy file. The post-#2554 staging
+    // helper rejects entries that aren't in `KNOWN_CREDENTIAL_ENV_KEYS`,
+    // which is the security guard that prevents a tampered
+    // credentials.json from injecting unrelated env vars (e.g. `PATH`,
+    // `NODE_OPTIONS`); the original test fixture used a fake
+    // `TEST_WHITESPACE_KEY` that is correctly filtered out.
+    const tmpDir = createFixtureHome("NVIDIA_API_KEY", "  nvapi-whitespace-test \r\n");
 
     const credentials = await importCredentialsModule(tmpDir);
-    delete process.env["TEST_WHITESPACE_KEY"];
-    const result = credentials.resolveProviderCredential("TEST_WHITESPACE_KEY");
+    delete process.env["NVIDIA_API_KEY"];
+    const result = credentials.resolveProviderCredential("NVIDIA_API_KEY");
 
-    expect(result).toBe("nvapi-key");
-    expect(process.env["TEST_WHITESPACE_KEY"]).toBe("nvapi-key");
+    expect(result).toBe("nvapi-whitespace-test");
+    expect(process.env["NVIDIA_API_KEY"]).toBe("nvapi-whitespace-test");
   });
 
   it("does not pollute process.env on null resolve", async () => {

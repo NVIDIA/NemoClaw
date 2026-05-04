@@ -53,8 +53,8 @@ Files are per-agent — changes in `workspace-main/AGENTS.md` are not visible to
 `workspace-support/`.
 
 Persistence and snapshots are handled automatically for per-agent workspaces:
-the sandbox entrypoint provisions each `workspace-<name>/` as a symlink into the
-writable `.openclaw-data/` tree so state survives sandbox restart, and
+the sandbox entrypoint provisions each `workspace-<name>/` directly under the
+writable `.openclaw/` tree so state survives sandbox restart, and
 `nemoclaw <name> snapshot create` discovers every `workspace-<name>/` directory
 and includes it in the snapshot bundle alongside the default `workspace/`.
 
@@ -91,5 +91,6 @@ You can edit them in two ways:
 
 ## Next Steps
 
+- Set Up Task-Specific Sub-Agents (use the `nemoclaw-user-configure-inference` skill)
 - Backup and Restore workspace files (use the `nemoclaw-user-workspace` skill)
 - Commands reference (use the `nemoclaw-user-reference` skill)

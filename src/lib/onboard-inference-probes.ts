@@ -14,7 +14,12 @@ const {
   shouldForceCompletionsApi,
 } = require("./validation");
 
-const { getCurlTimingArgs, runCurlProbe, runStreamingEventProbe } = httpProbe;
+const {
+  getCurlTimingArgs,
+  runCurlProbe,
+  runChatCompletionsStreamingProbe,
+  runStreamingEventProbe,
+} = httpProbe;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -73,18 +78,70 @@ function getValidationProbeCurlArgs(opts) {
   return ["--connect-timeout", "10", "--max-time", "15"];
 }
 
+function getDeepSeekV4ProValidationProbeCurlArgs(opts) {
+  if (isWsl(opts)) {
+    return ["--connect-timeout", "30", "--max-time", "150"];
+  }
+  return ["--connect-timeout", "20", "--max-time", "120"];
+}
+
+function getCurlMaxTimeSeconds(args) {
+  const maxTimeIndex = args.indexOf("--max-time");
+  if (maxTimeIndex === -1) return 30;
+  const value = Number(args[maxTimeIndex + 1]);
+  return Number.isFinite(value) && value > 0 ? value : 30;
+}
+
+function getProbeProcessTimeoutMs(args) {
+  return (getCurlMaxTimeSeconds(args) + 5) * 1000;
+}
+
+const RETRIABLE_HTTP_PROBE_STATUSES = new Set([429]);
+const HTTP_PROBE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
+
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function shouldRetryHttpProbe(result) {
+  return (
+    result &&
+    !result.ok &&
+    result.curlStatus === 0 &&
+    RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus)
+  );
+}
+
+function isCurlTimeout(result) {
+  return result && !result.ok && result.curlStatus === 28;
+}
+
+function executeProbeWithHttpRetry(probe) {
+  let result = probe.execute();
+  for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
+    if (!shouldRetryHttpProbe(result)) break;
+    console.log(
+      `  ${probe.name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
+    );
+    sleepSync(delayMs);
+    result = probe.execute();
+  }
+  return result;
+}
+
 // ── Responses API probe ──────────────────────────────────────────
 
 function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
   const useQueryParam = options.authMode === "query-param";
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authHeader = !useQueryParam && normalizedKey
-    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
-    : [];
-  const url = useQueryParam && normalizedKey
-    ? `${baseUrl}/responses?key=${encodeURIComponent(normalizedKey)}`
-    : `${baseUrl}/responses`;
+  const authHeader =
+    !useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : [];
+  const url =
+    useQueryParam && normalizedKey
+      ? `${baseUrl}/responses?key=${encodeURIComponent(normalizedKey)}`
+      : `${baseUrl}/responses`;
   const result = runCurlProbe([
     "-sS",
     ...getValidationProbeCurlArgs(),
@@ -132,23 +189,81 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
 }
 
 // ── OpenAI-like probe ────────────────────────────────────────────
-// eslint-disable-next-line complexity
+function isDeepSeekV4ProModel(model) {
+  return String(model || "").toLowerCase() === "deepseek-ai/deepseek-v4-pro";
+}
+
+function getChatCompletionsProbePayload(model) {
+  const payload = {
+    model,
+    messages: [{ role: "user", content: "Reply with exactly: OK" }],
+  };
+
+  if (isDeepSeekV4ProModel(model)) {
+    return {
+      ...payload,
+      temperature: 1,
+      top_p: 0.95,
+      max_tokens: 8192,
+      chat_template_kwargs: { thinking: false },
+      stream: true,
+    };
+  }
+
+  return payload;
+}
+
+function getChatCompletionsProbeCurlArgs({ authHeader, model, url, isWsl: isWslOverride }) {
+  const platformOptions =
+    typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : undefined;
+  const timingArgs = isDeepSeekV4ProModel(model)
+    ? getDeepSeekV4ProValidationProbeCurlArgs(platformOptions)
+    : getValidationProbeCurlArgs(platformOptions);
+  return [
+    "-sS",
+    ...timingArgs,
+    "-H",
+    "Content-Type: application/json",
+    ...authHeader,
+    "-d",
+    JSON.stringify(getChatCompletionsProbePayload(model)),
+    url,
+  ];
+}
+
+function runChatCompletionsProbe({ authHeader, model, url, isWsl: isWslOverride }) {
+  const args = getChatCompletionsProbeCurlArgs({
+    authHeader,
+    model,
+    url,
+    isWsl: isWslOverride,
+  });
+  if (isDeepSeekV4ProModel(model)) {
+    return runChatCompletionsStreamingProbe(args, {
+      timeoutMs: getProbeProcessTimeoutMs(args),
+    });
+  }
+  return runCurlProbe(args);
+}
+
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   const useQueryParam = options.authMode === "query-param";
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authHeader = !useQueryParam && normalizedKey
-    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
-    : [];
+  const authHeader =
+    !useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : [];
   const appendKey = (urlPath) =>
-    useQueryParam && normalizedKey ? `${baseUrl}${urlPath}?key=${encodeURIComponent(normalizedKey)}` : `${baseUrl}${urlPath}`;
+    useQueryParam && normalizedKey
+      ? `${baseUrl}${urlPath}?key=${encodeURIComponent(normalizedKey)}`
+      : `${baseUrl}${urlPath}`;
 
   const responsesProbe =
     options.requireResponsesToolCalling === true
       ? {
           name: "Responses API with tool calling",
           api: "openai-responses",
-          execute: () => probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
+          execute: () =>
+            probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
         }
       : {
           name: "Responses API",
@@ -173,19 +288,12 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     name: "Chat Completions API",
     api: "openai-completions",
     execute: () =>
-      runCurlProbe([
-        "-sS",
-        ...getValidationProbeCurlArgs(),
-        "-H",
-        "Content-Type: application/json",
-        ...authHeader,
-        "-d",
-        JSON.stringify({
-          model,
-          messages: [{ role: "user", content: "Reply with exactly: OK" }],
-        }),
-        appendKey("/chat/completions"),
-      ]),
+      runChatCompletionsProbe({
+        authHeader,
+        model,
+        url: appendKey("/chat/completions"),
+        isWsl: options.isWsl,
+      }),
   };
 
   // NVIDIA Build does not expose /v1/responses; probing it always returns
@@ -197,7 +305,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
 
   const failures = [];
   for (const probe of probes) {
-    const result = probe.execute();
+    const result = executeProbeWithHttpRetry(probe);
     if (result.ok) {
       // Streaming event validation — catch backends like SGLang that return
       // valid non-streaming responses but emit incomplete SSE events in
@@ -251,6 +359,22 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       }
       return { ok: true, api: probe.api, label: probe.name };
     }
+    if (
+      probe.api === "openai-completions" &&
+      isDeepSeekV4ProModel(model) &&
+      isCurlTimeout(result)
+    ) {
+      const warning =
+        "DeepSeek V4 Pro validation timed out before the stream returned data; continuing with NVIDIA Endpoints because this model can take longer than the onboarding probe budget to emit its first token.";
+      console.log(`  ⚠ ${warning}`);
+      return {
+        ok: true,
+        api: probe.api,
+        label: probe.name,
+        warning,
+        validated: false,
+      };
+    }
     // Preserve the raw response body alongside the summarized message so the
     // NVCF "Function not found for account" detector below can fall back to
     // the raw body if summarizeProbeError ever stops surfacing the marker
@@ -272,9 +396,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   if (failures.length > 0 && isTimeoutOrConnFailure(failures[0].curlStatus)) {
     retriedAfterTimeout = true;
     const baseArgs = getValidationProbeCurlArgs();
-    const doubledArgs = baseArgs.map((arg) =>
-      /^\d+$/.test(arg) ? String(Number(arg) * 2) : arg,
-    );
+    const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
     const retryResult = runCurlProbe([
       "-sS",
       ...doubledArgs,
@@ -282,10 +404,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       "Content-Type: application/json",
       ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
       "-d",
-      JSON.stringify({
-        model,
-        messages: [{ role: "user", content: "Reply with exactly: OK" }],
-      }),
+      JSON.stringify(getChatCompletionsProbePayload(model)),
       `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
     ]);
     if (retryResult.ok) {
@@ -365,6 +484,9 @@ module.exports = {
   shouldRequireResponsesToolCalling,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
+  getDeepSeekV4ProValidationProbeCurlArgs,
+  getChatCompletionsProbePayload,
+  getChatCompletionsProbeCurlArgs,
   probeResponsesToolCalling,
   probeOpenAiLikeEndpoint,
   probeAnthropicEndpoint,
