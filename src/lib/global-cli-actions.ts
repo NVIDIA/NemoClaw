@@ -39,7 +39,10 @@ export function runBackupAllAction(): void {
 }
 
 export async function runUpgradeSandboxesAction(args: string[] = []): Promise<void> {
-  await getNemoClawRuntimeBridge().upgradeSandboxes(args);
+  const { upgradeSandboxes } = require("./upgrade-sandboxes-action") as {
+    upgradeSandboxes: (args?: string[]) => Promise<void>;
+  };
+  await upgradeSandboxes(args);
 }
 
 export async function runGarbageCollectImagesAction(args: string[] = []): Promise<void> {

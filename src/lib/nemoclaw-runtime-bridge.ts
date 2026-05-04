@@ -3,10 +3,7 @@
 
 /* v8 ignore start -- transitional bridge until command actions are extracted from src/nemoclaw.ts. */
 
-export interface NemoClawRuntimeBridge {
-  sandboxRebuild: (sandboxName: string, args?: string[]) => Promise<void>;
-  upgradeSandboxes: (args?: string[]) => Promise<void>;
-}
+export interface NemoClawRuntimeBridge {}
 
 let runtimeFactory = (): NemoClawRuntimeBridge => {
   const runtimeModule = require("../nemoclaw") as {
