@@ -72,7 +72,7 @@ Availability is not limited to these entries, but untested configurations may ha
 | macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
 | DGX Spark | Docker | Tested | Use the standard installer and `nemoclaw onboard`. For an end-to-end walkthrough with local Ollama inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
 | Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
-| Jetson (Orin Nano, Orin NX, AGX Orin, Xavier) | Docker | Tested | Run `sudo nemoclaw setup-jetson` before onboarding. See [commands reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html#nemoclaw-setup-jetson). |
+| Jetson (Orin Nano, Orin NX, AGX Orin, Xavier) | Docker | Tested with limitations | Run `sudo nemoclaw setup-jetson` before onboarding. See [commands reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html#nemoclaw-setup-jetson). |
 <!-- platform-matrix:end -->
 
 For platform-specific pre-setup (for example, Windows WSL 2), see [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html).
