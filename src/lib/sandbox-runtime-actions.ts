@@ -37,7 +37,10 @@ export async function installSandboxSkill(
   sandboxName: string,
   args: string[] = [],
 ): Promise<void> {
-  await getNemoClawRuntimeBridge().sandboxSkillInstall(sandboxName, args);
+  const { installSandboxSkill: installExtractedSandboxSkill } = require("./sandbox-skill-install-action") as {
+    installSandboxSkill: (sandboxName: string, args?: string[]) => Promise<void>;
+  };
+  await installExtractedSandboxSkill(sandboxName, args);
 }
 
 export async function runSandboxSnapshot(sandboxName: string, args: string[]): Promise<void> {

@@ -36,7 +36,7 @@ const {
   dockerRmi,
 } = require("./lib/docker");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
-const { pruneKnownHostsEntries, hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
+const { hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
 const { ensureOllamaAuthProxy } = require("./lib/onboard-ollama-proxy");
 const { prompt: askPrompt } = require("./lib/credentials");
 const registry = require("./lib/registry");
@@ -57,7 +57,6 @@ const {
   captureOpenshellForStatus,
   getInstalledOpenshellVersionOrNull,
   getOpenshellBinary,
-  getStatusProbeTimeoutMs,
   isCommandTimeout,
   runOpenshell,
 } = require("./lib/openshell-runtime");
@@ -66,13 +65,19 @@ const {
   recoverNamedGatewayRuntime,
 } = require("./lib/gateway-runtime-action");
 const { recoverRegistryEntries } = require("./lib/registry-recovery-action");
+const {
+  ensureLiveSandboxOrExit,
+  getReconciledSandboxGatewayState,
+  getSandboxGatewayStateForStatus,
+  printGatewayLifecycleHint,
+  printWrongGatewayActiveGuidance,
+} = require("./lib/sandbox-gateway-state-action");
 const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
 const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
 const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
 const { parseRestoreArgs } = sandboxState;
-const skillInstall = require("./lib/skill-install");
 const { sleepSeconds } = require("./lib/wait");
 const { parseSandboxPhase } = require("./lib/gateway-state");
 const {
@@ -86,10 +91,7 @@ const {
   globalCommandTokens,
   sandboxActionTokens,
 } = require("./lib/command-registry");
-import {
-  OPENSHELL_OPERATION_TIMEOUT_MS,
-  OPENSHELL_PROBE_TIMEOUT_MS,
-} from "./lib/openshell-timeouts";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./lib/openshell-timeouts";
 import {
   resolveGlobalOclifDispatch,
   resolveSandboxOclifDispatch,
@@ -525,426 +527,9 @@ exports.runtimeBridge = {
   sandboxConnect,
   sandboxDestroy,
   sandboxRebuild,
-  sandboxSkillInstall,
   sandboxStatus,
   upgradeSandboxes,
 };
-exports.ensureLiveSandboxOrExit = ensureLiveSandboxOrExit;
-exports.G = G;
-exports.R = R;
-
-function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutput: string): string {
-  const rawLines = String(output).split("\n");
-  const cleanLines = stripAnsi(String(output)).split("\n");
-  const policyLineIdx = cleanLines.findIndex((l: string) => l.trim() === "Policy:");
-  if (policyLineIdx === -1) return output;
-
-  // Keep everything before Policy (Sandbox info with colors),
-  // plus the original colored "Policy:" header line.
-  const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
-  // Extract YAML content from policy get --full (skip metadata header before "---").
-  // Use a regex to handle varying line endings (\n, \r\n) and optional trailing whitespace.
-  const delimIdx = livePolicyOutput.search(/^---\s*$/m);
-  const yamlPart =
-    delimIdx !== -1
-      ? livePolicyOutput.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
-      : livePolicyOutput;
-  // Guard: only replace if the extracted content looks like policy YAML
-  // (starts with a YAML key like "version:" or "network_policies:").
-  // Avoids replacing with warnings or status text from unexpected output.
-  const trimmedYaml = yamlPart.trim();
-  const looksLikeError = /^(error|failed|invalid|warning|status)\b/i.test(trimmedYaml);
-  if (!trimmedYaml || looksLikeError || !/^[a-z_][a-z0-9_]*\s*:/m.test(trimmedYaml)) {
-    return output;
-  }
-
-  // Add 2-space indent to match the original sandbox get output format.
-  const indented = trimmedYaml
-    .split("\n")
-    .map((l: string) => (l ? "  " + l : l))
-    .join("\n");
-  return before + "\n\n" + indented + "\n";
-}
-
-/** Query sandbox presence and return its output with the live enforced policy. */
-function getSandboxGatewayState(sandboxName: string) {
-  const result = captureOpenshell(["sandbox", "get", sandboxName], {
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  let output = result.output;
-  if (result.status === 0) {
-    // `openshell sandbox get` returns the immutable baseline policy from sandbox
-    // creation, which does not include network_policies added later via
-    // `openshell policy set`. Replace the Policy section with the live policy
-    // from `policy get --full`, preserving the colored "Policy:" header and
-    // Sandbox info above it. (#1132)
-    const livePolicy = captureOpenshell(["policy", "get", "--full", sandboxName], {
-      ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
-    if (livePolicy.status === 0 && livePolicy.output.trim()) {
-      output = mergeLivePolicyIntoSandboxOutput(output, livePolicy.output);
-    }
-    return { state: "present", output };
-  }
-  if (/\bNotFound\b|\bNot Found\b|sandbox not found/i.test(output)) {
-    return { state: "missing", output };
-  }
-  if (
-    /transport error|Connection refused|handshake verification failed|Missing gateway auth token|device identity required/i.test(
-      output,
-    )
-  ) {
-    return { state: "gateway_error", output };
-  }
-  return { state: "unknown_error", output };
-}
-
-async function getSandboxGatewayStateForStatus(sandboxName: string) {
-  const timeoutMs = getStatusProbeTimeoutMs();
-  const result = await captureOpenshellForStatus(["sandbox", "get", sandboxName], {
-    timeout: timeoutMs,
-  });
-  let output = result.output;
-  if (isCommandTimeout(result)) {
-    return {
-      state: "status_probe_timeout",
-      output: `  Live sandbox status probe timed out after ${Math.ceil(timeoutMs / 1000)}s. Local registry data is shown above.`,
-    };
-  }
-  if (result.status === 0) {
-    const livePolicy = await captureOpenshellForStatus(["policy", "get", "--full", sandboxName], {
-      ignoreError: true,
-      timeout: timeoutMs,
-    });
-    if (!isCommandTimeout(livePolicy) && livePolicy.status === 0 && livePolicy.output.trim()) {
-      output = mergeLivePolicyIntoSandboxOutput(output, livePolicy.output);
-    }
-    return { state: "present", output };
-  }
-  if (/\bNotFound\b|\bNot Found\b|sandbox not found/i.test(output)) {
-    return { state: "missing", output };
-  }
-  if (
-    /transport error|Connection refused|handshake verification failed|Missing gateway auth token|device identity required/i.test(
-      output,
-    )
-  ) {
-    return { state: "gateway_error", output };
-  }
-  return { state: "unknown_error", output };
-}
-
-type SandboxGatewayStateLookup = (
-  sandboxName: string,
-) =>
-  | ReturnType<typeof getSandboxGatewayState>
-  | ReturnType<typeof getSandboxGatewayStateForStatus>;
-
-/**
- * Reconcile a NotFound sandbox lookup against the named NemoClaw gateway state.
- * When the active OpenShell gateway has drifted off nemoclaw, a NotFound is
- * ambiguous: the sandbox may actually be registered against the nemoclaw
- * gateway but invisible because some other gateway is currently active. This
- * helper self-heals by attempting `openshell gateway select nemoclaw` and
- * re-queries, or returns a `wrong_gateway_active` state so callers can surface
- * actionable guidance instead of destroying the registry entry.
- */
-function reconcileMissingAgainstNamedGateway(
-  sandboxName: string,
-  missingLookup: ReturnType<typeof getSandboxGatewayState>,
-) {
-  const lifecycle = getNamedGatewayLifecycleState();
-  if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", "nemoclaw"], {
-      ignoreError: true,
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    });
-    const retry = getSandboxGatewayState(sandboxName);
-    if (retry.state === "present") {
-      return { ...retry, recoveredGateway: true, recoveryVia: "select" };
-    }
-    if (retry.state === "missing") {
-      const after = getNamedGatewayLifecycleState();
-      if (after.state === "healthy_named") {
-        return retry;
-      }
-    }
-    return {
-      state: "wrong_gateway_active",
-      activeGateway: lifecycle.activeGateway,
-      output: lifecycle.status,
-    };
-  }
-  if (lifecycle.state === "missing_named") {
-    return { state: "gateway_missing_after_restart", output: lifecycle.status };
-  }
-  if (lifecycle.state === "named_unreachable" || lifecycle.state === "named_unhealthy") {
-    return { state: "gateway_unreachable_after_restart", output: lifecycle.status };
-  }
-  return missingLookup;
-}
-
-/**
- * Print actionable guidance when the nemoclaw gateway exists but another
- * OpenShell gateway is currently active. Emphasizes that the sandbox has NOT
- * been removed and how to switch gateways before retrying. (#2276)
- */
-function printWrongGatewayActiveGuidance(
-  sandboxName: string,
-  activeGateway: string | null | undefined,
-  writer: (message: string) => void = console.error,
-) {
-  const other = activeGateway && activeGateway !== "nemoclaw" ? activeGateway : "another gateway";
-  writer(
-    `  Sandbox '${sandboxName}' is registered against the ${CLI_DISPLAY_NAME} gateway, but the currently active OpenShell gateway is '${other}'. Your sandbox has NOT been removed.`,
-  );
-  writer("  Switch gateways and retry:");
-  writer("      openshell gateway select nemoclaw");
-  writer(`  Then re-run: ${CLI_NAME} ${sandboxName} connect`);
-}
-
-/** Print troubleshooting hints based on gateway lifecycle state in the output. */
-function printGatewayLifecycleHint(output = "", sandboxName = "", writer = console.error) {
-  const cleanOutput = stripAnsi(output);
-  if (/No gateway configured/i.test(cleanOutput)) {
-    writer(
-      `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
-    );
-    writer(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before expecting existing sandboxes to reconnect.",
-    );
-    writer(
-      "  If the gateway has to be rebuilt from scratch, recreate the affected sandbox afterward.",
-    );
-    return;
-  }
-  if (
-    /Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
-    /Gateway:\s+nemoclaw/i.test(cleanOutput)
-  ) {
-    writer(
-      "  The selected NemoClaw gateway exists in metadata, but its API is refusing connections after restart.",
-    );
-    writer("  This usually means the gateway runtime did not come back cleanly after the restart.");
-    writer(
-      "  Retry `openshell gateway start --name nemoclaw`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.",
-    );
-    return;
-  }
-  if (/handshake verification failed/i.test(cleanOutput)) {
-    writer("  This looks like gateway identity drift after restart.");
-    writer(
-      "  Existing sandboxes may still be recorded locally, but the current gateway no longer trusts their prior connection state.",
-    );
-    writer(
-      `  Try re-establishing the ${CLI_DISPLAY_NAME} gateway/runtime first. If the sandbox is still unreachable, recreate just that sandbox with \`${CLI_NAME} onboard\`.`,
-    );
-    return;
-  }
-  if (/Connection refused|transport error/i.test(cleanOutput)) {
-    writer(
-      `  The sandbox '${sandboxName}' may still exist, but the current gateway/runtime is not reachable.`,
-    );
-    writer("  Check `openshell status`, verify the active gateway, and retry.");
-    return;
-  }
-  if (/Missing gateway auth token|device identity required/i.test(cleanOutput)) {
-    writer(
-      "  The gateway is reachable, but the current auth or device identity state is not usable.",
-    );
-    writer("  Verify the active gateway and retry after re-establishing the runtime.");
-  }
-}
-
-async function getReconciledSandboxGatewayState(
-  sandboxName: string,
-  opts: { getState?: SandboxGatewayStateLookup } = {},
-) {
-  const getState = opts.getState ?? getSandboxGatewayState;
-  let lookup = await getState(sandboxName);
-  if (lookup.state === "present") {
-    return lookup;
-  }
-  if (lookup.state === "missing") {
-    return reconcileMissingAgainstNamedGateway(sandboxName, lookup);
-  }
-
-  if (lookup.state === "gateway_error") {
-    const recovery = await recoverNamedGatewayRuntime();
-    if (recovery.recovered) {
-      const retried = await getState(sandboxName);
-      if (retried.state === "present" || retried.state === "missing") {
-        return { ...retried, recoveredGateway: true, recoveryVia: recovery.via || null };
-      }
-      if (/handshake verification failed/i.test(retried.output)) {
-        return {
-          state: "identity_drift",
-          output: retried.output,
-          recoveredGateway: true,
-          recoveryVia: recovery.via || null,
-        };
-      }
-      return { ...retried, recoveredGateway: true, recoveryVia: recovery.via || null };
-    }
-    const latestLifecycle = getNamedGatewayLifecycleState();
-    const latestStatus = stripAnsi(latestLifecycle.status || "");
-    if (/No gateway configured/i.test(latestStatus)) {
-      return {
-        state: "gateway_missing_after_restart",
-        output: latestLifecycle.status || lookup.output,
-      };
-    }
-    if (
-      /Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) &&
-      /Gateway:\s+nemoclaw/i.test(latestStatus)
-    ) {
-      return {
-        state: "gateway_unreachable_after_restart",
-        output: latestLifecycle.status || lookup.output,
-      };
-    }
-    if (
-      recovery.after?.state === "named_unreachable" ||
-      recovery.before?.state === "named_unreachable"
-    ) {
-      return {
-        state: "gateway_unreachable_after_restart",
-        output: recovery.after?.status || recovery.before?.status || lookup.output,
-      };
-    }
-    return { ...lookup, gatewayRecoveryFailed: true };
-  }
-
-  return lookup;
-}
-
-async function ensureLiveSandboxOrExit(
-  sandboxName: string,
-  { allowNonReadyPhase = false }: { allowNonReadyPhase?: boolean } = {},
-) {
-  const lookup = await getReconciledSandboxGatewayState(sandboxName);
-  if (lookup.state === "present") {
-    const phase = parseSandboxPhase(lookup.output || "");
-    if (!allowNonReadyPhase && phase && phase !== "Ready") {
-      console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
-      console.error(
-        "  This usually happens when a process crash inside the sandbox prevented clean startup.",
-      );
-      console.error("");
-      console.error(
-        `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
-      );
-      process.exit(1);
-    }
-    return lookup;
-  }
-  if (lookup.state === "missing") {
-    // Belt-and-suspenders: only destroy registry state if the nemoclaw gateway
-    // is demonstrably the healthy active gateway. The reconciler should have
-    // already routed drift cases to `wrong_gateway_active`, but this guards
-    // against future regressions.
-    const guard = getNamedGatewayLifecycleState();
-    if (guard.state !== "healthy_named") {
-      if (guard.state === "connected_other") {
-        printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.error);
-      } else {
-        printGatewayLifecycleHint(guard.status || "", sandboxName, console.error);
-      }
-      process.exit(1);
-    }
-    registry.removeSandbox(sandboxName);
-    const session = onboardSession.loadSession();
-    if (session && session.sandboxName === sandboxName) {
-      onboardSession.updateSession((s: Session) => {
-        s.sandboxName = null;
-        return s;
-      });
-    }
-    console.error(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
-    console.error("  Removed stale local registry entry.");
-    console.error(
-      `  Run \`${CLI_NAME} list\` to confirm the remaining sandboxes, or \`${CLI_NAME} onboard\` to create a new one.`,
-    );
-    process.exit(1);
-  }
-  if (lookup.state === "wrong_gateway_active") {
-    const activeGateway =
-      "activeGateway" in lookup && typeof lookup.activeGateway === "string"
-        ? lookup.activeGateway
-        : undefined;
-    printWrongGatewayActiveGuidance(sandboxName, activeGateway, console.error);
-    process.exit(1);
-  }
-  if (lookup.state === "identity_drift") {
-    // Gateway SSH keys rotated after restart — clear stale known_hosts and retry.
-    console.error("  Gateway SSH identity changed after restart — clearing stale host keys...");
-    const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
-    if (fs.existsSync(knownHostsPath)) {
-      try {
-        const kh = fs.readFileSync(knownHostsPath, "utf8");
-        const cleaned = pruneKnownHostsEntries(kh);
-        if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
-      } catch {
-        /* best-effort cleanup */
-      }
-    }
-    const retry = await getReconciledSandboxGatewayState(sandboxName);
-    if (retry.state === "present") {
-      console.error("  ✓ Reconnected after clearing stale SSH host keys.");
-      return retry;
-    }
-    // Retry failed — fall through to error
-    console.error(
-      `  Could not reconnect to sandbox '${sandboxName}' after clearing stale host keys.`,
-    );
-    if (retry.output) {
-      console.error(retry.output);
-    }
-    console.error(
-      `  Recreate this sandbox with \`${CLI_NAME} onboard\` once the gateway runtime is stable.`,
-    );
-    process.exit(1);
-  }
-  if (lookup.state === "gateway_unreachable_after_restart") {
-    console.error(
-      `  Sandbox '${sandboxName}' may still exist, but the selected ${CLI_DISPLAY_NAME} gateway is still refusing connections after restart.`,
-    );
-    if (lookup.output) {
-      console.error(lookup.output);
-    }
-    console.error(
-      "  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.",
-    );
-    console.error(
-      "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
-    );
-    process.exit(1);
-  }
-  if (lookup.state === "gateway_missing_after_restart") {
-    console.error(
-      `  Sandbox '${sandboxName}' may still exist locally, but the ${CLI_DISPLAY_NAME} gateway is no longer configured after restart/rebuild.`,
-    );
-    if (lookup.output) {
-      console.error(lookup.output);
-    }
-    console.error(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.",
-    );
-    console.error(
-      "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",
-    );
-    process.exit(1);
-  }
-  console.error(`  Unable to verify sandbox '${sandboxName}' against the live OpenShell gateway.`);
-  if (lookup.output) {
-    console.error(lookup.output);
-  }
-  printGatewayLifecycleHint(lookup.output, sandboxName);
-  console.error("  Check `openshell status` and the active gateway, then retry.");
-  process.exit(1);
-}
-
 /** Print user-facing guidance when OpenShell is too old to support `openshell logs`. */
 function printOldLogsCompatibilityGuidance(installedVersion = null) {
   const versionText = installedVersion ? ` (${installedVersion})` : "";
@@ -2072,211 +1657,6 @@ async function sandboxStatus(sandboxName: string) {
   console.log("");
 }
 
-function printSkillInstallUsage(): void {
-  console.log("");
-  console.log(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
-  console.log("");
-  console.log("  Deploy a skill directory to a running sandbox.");
-  console.log(
-    "  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
-  );
-  console.log(
-    "  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
-  );
-  console.log("");
-}
-
-function looksLikeOpenClawPlugin(candidatePath: string): boolean {
-  const dir =
-    fs.existsSync(candidatePath) && fs.statSync(candidatePath).isDirectory()
-      ? candidatePath
-      : path.dirname(candidatePath);
-  if (!fs.existsSync(dir)) return false;
-  if (fs.existsSync(path.join(dir, "openclaw.plugin.json"))) return true;
-
-  const packageJsonPath = path.join(dir, "package.json");
-  if (!fs.existsSync(packageJsonPath)) return false;
-  try {
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
-    const openclawBlock = packageJson?.openclaw;
-    return Boolean(
-      packageJson?.["openclaw.plugin"] === true ||
-      openclawBlock === true ||
-      (typeof openclawBlock === "object" &&
-        openclawBlock !== null &&
-        (openclawBlock.plugin === true ||
-          typeof openclawBlock.entry === "string" ||
-          typeof openclawBlock.main === "string" ||
-          (Array.isArray(openclawBlock.extensions) && openclawBlock.extensions.length > 0))),
-    );
-  } catch {
-    return false;
-  }
-}
-
-function printPluginInstallHint(): void {
-  console.error("  This looks like an OpenClaw plugin, not a SKILL.md agent skill.");
-  console.error("  `skill install` only accepts skill directories or direct SKILL.md paths.");
-  console.error(
-    "  To use an OpenClaw plugin today, bake it into a custom sandbox image with `nemoclaw onboard --from <Dockerfile>`.",
-  );
-}
-
-/**
- * Install or update a local skill directory into a live sandbox and perform
- * any agent-specific post-install refresh needed for the new content to load.
- */
-async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Promise<void> {
-  const sub = args[0];
-  if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
-    printSkillInstallUsage();
-    return;
-  }
-
-  if (sub !== "install") {
-    console.error(`  Unknown skill subcommand: ${sub}`);
-    console.error("  Valid subcommands: install");
-    process.exit(1);
-  }
-
-  const skillPath = args[1];
-  const extraArgs = args.slice(2);
-  if (skillPath === "--help" || skillPath === "-h" || skillPath === "help") {
-    printSkillInstallUsage();
-    return;
-  }
-  if (extraArgs.length > 0) {
-    console.error(`  Unknown argument(s) for skill install: ${extraArgs.join(", ")}`);
-    console.error(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
-    process.exit(1);
-  }
-  if (!skillPath) {
-    console.error(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
-    console.error("  <path> must be a directory containing a SKILL.md file.");
-    process.exit(1);
-  }
-
-  const resolvedPath = path.resolve(skillPath);
-
-  // Accept a directory containing SKILL.md, or a direct path to SKILL.md.
-  let skillDir: string;
-  let skillMdPath: string;
-  if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
-    skillDir = resolvedPath;
-    skillMdPath = path.join(resolvedPath, "SKILL.md");
-  } else if (fs.existsSync(resolvedPath) && resolvedPath.endsWith("SKILL.md")) {
-    skillDir = path.dirname(resolvedPath);
-    skillMdPath = resolvedPath;
-  } else {
-    console.error(`  No SKILL.md found at '${resolvedPath}'.`);
-    console.error("  <path> must be a skill directory or a direct path to SKILL.md.");
-    if (looksLikeOpenClawPlugin(resolvedPath)) {
-      printPluginInstallHint();
-    }
-    process.exit(1);
-  }
-
-  if (!fs.existsSync(skillMdPath)) {
-    console.error(`  No SKILL.md found in '${skillDir}'.`);
-    console.error("  The skill directory must contain a SKILL.md file.");
-    if (looksLikeOpenClawPlugin(skillDir)) {
-      printPluginInstallHint();
-    }
-    process.exit(1);
-  }
-
-  // 1. Validate frontmatter
-  let frontmatter;
-  try {
-    const content = fs.readFileSync(skillMdPath, "utf-8");
-    frontmatter = skillInstall.parseFrontmatter(content);
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error(`  ${errorMessage}`);
-    process.exit(1);
-  }
-
-  const collected = skillInstall.collectFiles(skillDir);
-  if (collected.unsafePaths.length > 0) {
-    console.error(`  Skill directory contains files with unsafe characters:`);
-    for (const p of collected.unsafePaths) console.error(`    ${p}`);
-    console.error("  File names must match [A-Za-z0-9._-/]. Rename or remove them.");
-    process.exit(1);
-  }
-  if (collected.skippedDotfiles.length > 0) {
-    console.log(
-      `  ${D}Skipping ${collected.skippedDotfiles.length} hidden path(s): ${collected.skippedDotfiles.join(", ")}${R}`,
-    );
-  }
-  const fileLabel = collected.files.length === 1 ? "1 file" : `${collected.files.length} files`;
-  console.log(`  ${G}✓${R} Validated SKILL.md (name: ${frontmatter.name}, ${fileLabel})`);
-
-  // 2. Ensure sandbox is live
-  await ensureLiveSandboxOrExit(sandboxName);
-
-  // 3. Resolve agent and paths
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const paths = skillInstall.resolveSkillPaths(agent, frontmatter.name);
-
-  // 4. Get SSH config
-  const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
-    ignoreError: true,
-  });
-  if (sshConfigResult.status !== 0) {
-    console.error("  Failed to obtain SSH configuration for the sandbox.");
-    process.exit(1);
-  }
-
-  const tmpSshConfig = path.join(
-    os.tmpdir(),
-    `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`,
-  );
-  fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
-
-  try {
-    const ctx = { configFile: tmpSshConfig, sandboxName };
-
-    // 5. Check if skill already exists (update vs fresh install)
-    const isUpdate = skillInstall.checkExisting(ctx, paths);
-
-    // 6. Upload skill directory
-    const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
-    if (failed.length > 0) {
-      console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
-      process.exit(1);
-    }
-    console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
-
-    // 7. Post-install (OpenClaw mirror + refresh, or restart hint).
-    //    OpenClaw caches skill content per session, so always refresh the
-    //    session index after an install/update to avoid stale SKILL.md data.
-    const post = skillInstall.postInstall(ctx, paths, skillDir);
-    for (const msg of post.messages) {
-      if (msg.startsWith("Warning:")) {
-        console.error(`  ${YW}${msg}${R}`);
-      } else {
-        console.log(`  ${D}${msg}${R}`);
-      }
-    }
-
-    // 8. Verify
-    const verified = skillInstall.verifyInstall(ctx, paths);
-    if (verified) {
-      const verb = isUpdate ? "updated" : "installed";
-      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
-    } else {
-      console.error(`  Skill uploaded but verification failed at ${paths.uploadDir}/SKILL.md`);
-      process.exit(1);
-    }
-  } finally {
-    try {
-      fs.unlinkSync(tmpSshConfig);
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
 function cleanupSandboxServices(
   sandboxName: string,
   { stopHostServices = false }: { stopHostServices?: boolean } = {},
@@ -3151,9 +2531,13 @@ async function runDispatchResult(
           await addSandboxPolicy(sandboxName, actionArgs);
           return;
         }
-        case "skill":
-          await sandboxSkillInstall(sandboxName, actionArgs);
+        case "skill": {
+          const { installSandboxSkill } = require("./lib/sandbox-skill-install-action") as {
+            installSandboxSkill: (sandboxName: string, args?: string[]) => Promise<void>;
+          };
+          await installSandboxSkill(sandboxName, actionArgs);
           return;
+        }
         case "snapshot": {
           const { runSandboxSnapshot } = require("./lib/snapshot-action") as {
             runSandboxSnapshot: (sandboxName: string, args: string[]) => Promise<void>;
