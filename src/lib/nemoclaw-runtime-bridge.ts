@@ -3,8 +3,6 @@
 
 /* v8 ignore start -- transitional bridge until command actions are extracted from src/nemoclaw.ts. */
 
-import type { SandboxLogsOptions } from "./sandbox-logs-options";
-
 export interface SandboxConnectOptions {
   probeOnly?: boolean;
 }
@@ -12,7 +10,6 @@ export interface SandboxConnectOptions {
 export interface NemoClawRuntimeBridge {
   sandboxConnect: (sandboxName: string, options?: SandboxConnectOptions) => Promise<void>;
   sandboxDestroy: (sandboxName: string, args?: string[]) => Promise<void>;
-  sandboxLogs: (sandboxName: string, options: SandboxLogsOptions) => void;
   sandboxRebuild: (sandboxName: string, args?: string[]) => Promise<void>;
   sandboxSkillInstall: (sandboxName: string, args?: string[]) => Promise<void>;
   sandboxStatus: (sandboxName: string) => Promise<void>;

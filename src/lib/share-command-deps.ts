@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
 import { CLI_NAME } from "./branding";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
+import { G, R } from "./terminal-style";
 
 export interface ShareCommandDeps {
   /** Run `openshell sandbox ssh-config <name>` and return output. */
-  getSshConfig: (sandboxName: string) => { status: number; output: string };
+  getSshConfig: (sandboxName: string) => { status: number | null; output: string };
   /** Ensure the sandbox is live, exit process if not. */
   ensureLive: (sandboxName: string) => Promise<void>;
   /** NVIDIA-green ANSI code (empty string if color disabled). */
@@ -17,32 +18,28 @@ export interface ShareCommandDeps {
   cliName: string;
 }
 
-interface ShareRuntimeBridge {
-  captureOpenshell: (
-    args: string[],
-    opts?: { ignoreError?: boolean; timeout?: number },
-  ) => { status: number; output: string };
-  ensureLiveSandboxOrExit: (sandboxName: string) => Promise<void>;
-  G: string;
-  R: string;
-}
-
-function getRuntimeBridge(): ShareRuntimeBridge {
-  return require("../nemoclaw") as ShareRuntimeBridge;
-}
-
 export function buildShareCommandDeps(): ShareCommandDeps {
-  const runtime = getRuntimeBridge();
+  const { captureOpenshell } = require("./openshell-runtime") as {
+    captureOpenshell: (
+      args: string[],
+      opts?: { ignoreError?: boolean; timeout?: number },
+    ) => { status: number | null; output: string };
+  };
+  const { ensureLiveSandboxOrExit } = require("./sandbox-gateway-state-action") as {
+    ensureLiveSandboxOrExit: (sandboxName: string) => Promise<unknown>;
+  };
 
   return {
     getSshConfig: (sandboxName: string) =>
-      runtime.captureOpenshell(["sandbox", "ssh-config", sandboxName], {
+      captureOpenshell(["sandbox", "ssh-config", sandboxName], {
         ignoreError: true,
         timeout: OPENSHELL_PROBE_TIMEOUT_MS,
       }),
-    ensureLive: (sandboxName: string) => runtime.ensureLiveSandboxOrExit(sandboxName),
-    colorGreen: runtime.G,
-    colorReset: runtime.R,
+    ensureLive: async (sandboxName: string) => {
+      await ensureLiveSandboxOrExit(sandboxName);
+    },
+    colorGreen: G,
+    colorReset: R,
     cliName: CLI_NAME,
   };
 }
