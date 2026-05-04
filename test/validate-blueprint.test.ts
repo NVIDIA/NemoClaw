@@ -244,35 +244,9 @@ describe("base sandbox policy", () => {
     return out;
   }
 
-  it("regression #1437: sentry.io has no POST allow rule (multi-tenant exfiltration vector)", () => {
+  it("regression #1437: base policy does not expose sentry.io by default", () => {
     const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
-    expect(sentryEndpoints.length).toBeGreaterThan(0); // should still appear
-    for (const ep of sentryEndpoints) {
-      const rules = Array.isArray(ep.rules) ? ep.rules : [];
-      const hasPost = rules.some(
-        (r) =>
-          r &&
-          r.allow &&
-          typeof r.allow.method === "string" &&
-          r.allow.method.toUpperCase() === "POST",
-      );
-      expect(hasPost).toBe(false);
-    }
-  });
-
-  it("regression #1437: sentry.io retains GET (harmless, no body for exfil)", () => {
-    const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
-    for (const ep of sentryEndpoints) {
-      const rules = Array.isArray(ep.rules) ? ep.rules : [];
-      const hasGet = rules.some(
-        (r) =>
-          r &&
-          r.allow &&
-          typeof r.allow.method === "string" &&
-          r.allow.method.toUpperCase() === "GET",
-      );
-      expect(hasGet).toBe(true);
-    }
+    expect(sentryEndpoints).toEqual([]);
   });
 
   it("regression #1583: base policy does not silently grant GitHub access", () => {
@@ -317,17 +291,21 @@ describe("base sandbox policy", () => {
     expect(hasPost).toBe(true);
   });
 
-  it("regression #2663: managed_inference allows openclaw, claude, and tool binaries", () => {
+  it("regression #2663: managed_inference allows openclaw and tool binaries", () => {
     const np = policy.network_policies ?? {};
     const binaries = (np.managed_inference?.binaries ?? []).map((b) => b.path).sort();
     expect(binaries).toEqual([
       "/usr/bin/curl",
       "/usr/bin/node",
       "/usr/bin/python3",
-      "/usr/local/bin/claude",
       "/usr/local/bin/node",
       "/usr/local/bin/openclaw",
     ]);
+  });
+
+  it("does not reference the absent Claude CLI binary", () => {
+    const serialized = JSON.stringify(policy.network_policies ?? {});
+    expect(serialized).not.toContain("/usr/local/bin/claude");
   });
 
   it("regression #1458: baseline npm_registry must not include npm or node binaries", () => {

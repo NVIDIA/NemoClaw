@@ -84,6 +84,11 @@ describe("credential rotation detection", () => {
       expect(hashCredential(undefined)).toBeNull();
     });
 
+    it("returns null for whitespace-only values", () => {
+      expect(hashCredential("   ")).toBeNull();
+      expect(hashCredential("\r\n\t")).toBeNull();
+    });
+
     it("returns a 64-char hex SHA-256 hash for valid input", () => {
       const hash = hashCredential("my-secret-token");
       expect(hash).toMatch(/^[0-9a-f]{64}$/);

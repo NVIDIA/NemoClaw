@@ -10,6 +10,7 @@ import {
   isBrevInstanceFailed,
   isBrevInstanceReady,
 } from "../../dist/lib/deploy";
+import { validateName } from "../../dist/lib/runner";
 
 describe("inferDeployProvider", () => {
   it("prefers an explicit provider override", () => {
@@ -222,6 +223,32 @@ describe("executeDeploy", () => {
     expect(errorText).toContain("Try: brev reset target");
     expect(errorText).toContain("failed-id");
     expect(fixture.calls.some((call) => call.file === "ssh-keyscan")).toBe(false);
+  });
+
+  it("rejects invalid NEMOCLAW_SANDBOX_NAME before Brev provisioning", async () => {
+    const fixture = makeDeployOptions({
+      env: {
+        NEMOCLAW_SANDBOX_NAME: "bad name",
+        NEMOCLAW_PROVIDER: "build",
+        NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
+      },
+      validateName,
+    });
+
+    await expect(executeDeploy(fixture.options)).rejects.toThrow("exit:1");
+
+    const errorText = fixture.errors.join("\n");
+    expect(errorText).toContain("Invalid sandbox name: 'bad name'");
+    expect(errorText).toContain("Sandbox names cannot contain spaces.");
+    expect(errorText).toContain(
+      "Allowed format: lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",
+    );
+    expect(errorText).toContain(
+      "Brev deploy is non-interactive and cannot prompt for a corrected sandbox name.",
+    );
+    expect(errorText).toContain("Set NEMOCLAW_SANDBOX_NAME to a valid sandbox name and retry.");
+    expect(fixture.calls).toEqual([]);
+    expect(fixture.interactive).toEqual([]);
   });
 });
 

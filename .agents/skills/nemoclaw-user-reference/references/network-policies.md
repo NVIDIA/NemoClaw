@@ -33,14 +33,9 @@ The following endpoint groups are allowed by default:
   - Binaries
   - Rules
 
-* - `claude_code`
-  - `api.anthropic.com:443`, `statsig.anthropic.com:443`, `sentry.io:443`
-  - `/usr/local/bin/claude`
-  - POST to inference paths on `api.anthropic.com`, POST on `statsig.anthropic.com`, GET only on `sentry.io`
-
 * - `nvidia`
   - `integrate.api.nvidia.com:443`, `inference-api.nvidia.com:443`
-  - `/usr/local/bin/claude`, `/usr/local/bin/openclaw`
+  - `/usr/local/bin/openclaw`
   - POST to inference and embedding paths, GET to model listings
 
 * - `clawhub`

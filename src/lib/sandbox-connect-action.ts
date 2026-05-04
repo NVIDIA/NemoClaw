@@ -102,7 +102,13 @@ function runSandboxConnectProbe(sandboxName: string): void {
     process.exit(1);
   }
   if (processCheck.wasRunning) {
-    console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    if (processCheck.forwardRecovered) {
+      console.log(
+        `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
+      );
+    } else {
+      console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    }
     return;
   }
   if (processCheck.recovered) {

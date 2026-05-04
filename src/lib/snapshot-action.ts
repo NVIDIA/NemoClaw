@@ -232,8 +232,9 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
         const entry = sandboxState.findBackup(sandboxName, manifest.timestamp).match ?? manifest;
         const v = formatSnapshotVersion(entry);
         const nameSuffix = entry.name ? ` name=${entry.name}` : "";
+        const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
         console.log(
-          `  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${result.backedUpDirs.length} directories)`,
+          `  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`,
         );
         console.log(`    ${manifest.backupPath}`);
       } else {
@@ -243,6 +244,9 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
           console.error("  Snapshot failed.");
           if (result.failedDirs.length > 0) {
             console.error(`  Failed directories: ${result.failedDirs.join(", ")}`);
+          }
+          if (result.failedFiles.length > 0) {
+            console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
           }
         }
         process.exit(1);
@@ -338,7 +342,9 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
       }
       const result = sandboxState.restoreSandboxState(targetSandbox, backupPath);
       if (result.success) {
-        console.log(`  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories`);
+        console.log(
+          `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
+        );
       } else {
         console.error(`  Restore failed.`);
         if (result.restoredDirs.length > 0) {
@@ -346,6 +352,9 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
         }
         if (result.failedDirs.length > 0) {
           console.error(`  Failed: ${result.failedDirs.join(", ")}`);
+        }
+        if (result.failedFiles.length > 0) {
+          console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
         }
         process.exit(1);
       }
