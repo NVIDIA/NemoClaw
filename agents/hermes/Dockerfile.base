@@ -35,10 +35,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv=3.11.2-1+b1 \
         curl=7.88.1-10+deb12u14 \
         git=1:2.39.5-0+deb12u3 \
+    gnupg=2.2.40-1.1+deb12u2 \
         ca-certificates=20230311+deb12u1 \
         iproute2=6.1.0-3 \
         iptables=1.8.9-2 \
         libcap2-bin=1:2.66-4+deb12u2+b2 \
+    procps=2:4.0.2-3 \
+    openssh-sftp-server=1:9.2p1-2+deb12u9 \
         socat=1.7.4.4-2 \
     && rm -rf /var/lib/apt/lists/*
 
