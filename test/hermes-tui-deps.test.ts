@@ -51,7 +51,6 @@ describe("Hermes Dockerfile TUI Build Chain", () => {
     expect(src).toMatch(buildChainRegex);
 
     // 2. Verify the sequence occurs BEFORE the privilege drop to 'sandbox' user
-    const tuiBlockIndex = src.search(/npm ci --ignore-scripts/);
     const userSandboxIndex = lines.findIndex((line) => /^\s*USER\s+sandbox\b/.test(line));
     
     // Calculate absolute line position for the USER sandbox command
@@ -59,7 +58,12 @@ describe("Hermes Dockerfile TUI Build Chain", () => {
     for (let i = 0; i < userSandboxIndex; i++) {
       userSandboxLinePos += lines[i].length + 1;
     }
-
+    // Find the LAST occurrence of 'npm ci --ignore-scripts' before the USER sandbox line
+    const matches = Array.from(src.matchAll(/npm ci --ignore-scripts/g));
+    const validMatches = matches.filter(m => m.index < userSandboxLinePos);
+    
+    expect(validMatches.length).toBeGreaterThan(0);
+    const tuiBlockIndex = validMatches[validMatches.length - 1].index;
     expect(tuiBlockIndex).toBeLessThan(userSandboxLinePos);
   });
 });
