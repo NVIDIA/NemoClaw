@@ -70,7 +70,7 @@ export const GROUP_ORDER: readonly CommandGroup[] = [
 ] as const;
 
 /**
- * All 46 CLI commands. This is the single source of truth.
+ * All CLI commands. This is the single source of truth.
  *
  * The order within each group matches the current help() display order.
  */
@@ -101,6 +101,12 @@ export const COMMANDS: readonly CommandDef[] = [
     usage: "nemoclaw <name> connect",
     description: "Shell into a running sandbox",
     flags: "[--probe-only]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> recover",
+    description: "Restart the sandbox gateway and dashboard port-forward",
     group: "Sandbox Management",
     scope: "sandbox",
   },
