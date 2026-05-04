@@ -4,7 +4,6 @@
 const { execFileSync, spawn, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
-const os = require("os");
 const { DASHBOARD_PORT, GATEWAY_PORT, OLLAMA_PORT } = require("./lib/ports");
 
 // ---------------------------------------------------------------------------
@@ -21,7 +20,7 @@ const R = _useColor ? "\x1b[0m" : "";
 const _RD = _useColor ? "\x1b[1;31m" : "";
 const YW = _useColor ? "\x1b[1;33m" : "";
 
-const { ROOT, run, runInteractive, shellQuote, validateName } = require("./lib/runner");
+const { ROOT, run, runInteractive, validateName } = require("./lib/runner");
 
 // ---------------------------------------------------------------------------
 // Agent branding — derived from NEMOCLAW_AGENT when an alias launcher sets it;
@@ -37,7 +36,6 @@ const {
 } = require("./lib/docker");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
 const { hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
-const { ensureOllamaAuthProxy } = require("./lib/onboard-ollama-proxy");
 const { prompt: askPrompt } = require("./lib/credentials");
 const registry = require("./lib/registry");
 import type { SandboxEntry } from "./lib/registry";
@@ -56,7 +54,6 @@ const {
   captureOpenshell,
   captureOpenshellForStatus,
   getInstalledOpenshellVersionOrNull,
-  getOpenshellBinary,
   isCommandTimeout,
   runOpenshell,
 } = require("./lib/openshell-runtime");
@@ -72,13 +69,21 @@ const {
   printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
 } = require("./lib/sandbox-gateway-state-action");
+const {
+  isSandboxConnectFlag,
+  parseSandboxConnectArgs,
+  printSandboxConnectHelp,
+} = require("./lib/sandbox-connect-action");
+const {
+  executeSandboxCommand,
+  isSandboxGatewayRunningForStatus,
+} = require("./lib/sandbox-process-recovery-action");
 const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
 const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
 const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
 const { parseRestoreArgs } = sandboxState;
-const { sleepSeconds } = require("./lib/wait");
 const { parseSandboxPhase } = require("./lib/gateway-state");
 const {
   getActiveSandboxSessions,
@@ -110,14 +115,6 @@ type SpawnLikeResult = {
   error?: Error;
   signal?: NodeJS.Signals | null;
 };
-
-type SandboxCommandResult = {
-  status: number;
-  stdout: string;
-  stderr: string;
-};
-
-const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
 
 type RecoveredSandboxMetadata = Partial<
   Pick<SandboxEntry, "model" | "provider" | "gpuEnabled" | "policies" | "nimContainer" | "agent">
@@ -183,348 +180,7 @@ function getSandboxDeleteOutcome(deleteResult: SpawnLikeResult) {
   };
 }
 
-// ── Sandbox process health (OpenClaw gateway inside the sandbox) ─────────
-
-/**
- * Run a command inside the sandbox via SSH and return { status, stdout, stderr }.
- * Returns null if SSH config cannot be obtained.
- */
-function executeSandboxCommand(sandboxName: string, command: string): SandboxCommandResult | null {
-  const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (sshConfigResult.status !== 0) return null;
-  if (!sshConfigResult.output.trim()) return null;
-
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-ssh-${process.pid}-${Date.now()}.conf`);
-  fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
-  try {
-    const result = spawnSync(
-      "ssh",
-      [
-        "-F",
-        tmpFile,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=5",
-        "-o",
-        "LogLevel=ERROR",
-        `openshell-${sandboxName}`,
-        command,
-      ],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-    );
-    return {
-      status: result.status ?? 1,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
-    };
-  } catch {
-    return null;
-  } finally {
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-function executeSandboxExecCommand(
-  sandboxName: string,
-  command: string,
-  timeout = 15000,
-): SandboxCommandResult | null {
-  const markedCommand = `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
-  const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
-  const effectiveTimeout =
-    Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
-  try {
-    const result = spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
-      {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: effectiveTimeout,
-      },
-    );
-    if (result.error) return null;
-    const stdout = (result.stdout || "").trim();
-    const stdoutLines = stdout.split(/\r?\n/);
-    const markerIndex = stdoutLines.indexOf(SANDBOX_EXEC_STARTED_MARKER);
-    if (markerIndex === -1) return null;
-    const commandStdoutLines = stdoutLines.slice(markerIndex + 1);
-    return {
-      status: result.status ?? 1,
-      stdout: commandStdoutLines.join("\n").trim(),
-      stderr: (result.stderr || "").trim(),
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function executeSandboxExecCommandForStatus(
-  sandboxName: string,
-  command: string,
-): Promise<SandboxCommandResult | null> {
-  const markedCommand = `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
-  const result = await captureOpenshellForStatus(
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
-    { ignoreError: true },
-  );
-  if (isCommandTimeout(result) || result.error) return null;
-  const stdout = (result.output || "").trim();
-  const stdoutLines = stdout.split(/\r?\n/);
-  const markerIndex = stdoutLines.indexOf(SANDBOX_EXEC_STARTED_MARKER);
-  if (markerIndex === -1) return null;
-  const commandStdoutLines = stdoutLines.slice(markerIndex + 1);
-  return {
-    status: result.status ?? 1,
-    stdout: commandStdoutLines.join("\n").trim(),
-    stderr: "",
-  };
-}
-
-function parseSandboxGatewayProbe(result: SandboxCommandResult | null): boolean | null {
-  if (!result) return null;
-  if (result.stdout === "RUNNING") return true;
-  if (result.stdout === "STOPPED") return false;
-  return null;
-}
-
-/**
- * Check whether the OpenClaw gateway process is running inside the sandbox.
- * Uses the gateway's HTTP endpoint (dashboard port) as the source of truth,
- * since the gateway runs as a separate user and pgrep may not see it.
- * Returns true (running), false (stopped), or null (cannot determine).
- */
-function isSandboxGatewayRunning(sandboxName: string): boolean | null {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const probeUrl = agentRuntime.getHealthProbeUrl(agent);
-  const command = `curl -sf --max-time 3 ${shellQuote(probeUrl)} > /dev/null 2>&1 && echo RUNNING || echo STOPPED`;
-  const execProbe = parseSandboxGatewayProbe(executeSandboxExecCommand(sandboxName, command));
-  if (execProbe !== null) return execProbe;
-  return parseSandboxGatewayProbe(executeSandboxCommand(sandboxName, command));
-}
-
-async function isSandboxGatewayRunningForStatus(sandboxName: string): Promise<boolean | null> {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const probeUrl = agentRuntime.getHealthProbeUrl(agent);
-  const command = `curl -sf --max-time 3 ${shellQuote(probeUrl)} > /dev/null 2>&1 && echo RUNNING || echo STOPPED`;
-  return parseSandboxGatewayProbe(await executeSandboxExecCommandForStatus(sandboxName, command));
-}
-
-/**
- * Restart the gateway process inside the sandbox after a pod restart.
- * Cleans stale lock/temp files, sources proxy config, and launches the gateway
- * in the background. Returns true on success.
- */
-function recoverSandboxProcesses(sandboxName: string): boolean {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const agentScript = agentRuntime.buildRecoveryScript(agent, agent?.forwardPort ?? DASHBOARD_PORT);
-  const hasRecoveryMarker = (result: SandboxCommandResult | null) =>
-    !!(
-      result &&
-      (result.stdout.includes("GATEWAY_PID=") || result.stdout.includes("ALREADY_RUNNING"))
-    );
-  const recoveredSsh = (result: SandboxCommandResult | null) =>
-    !!(result && result.status === 0 && hasRecoveryMarker(result));
-
-  if (agentScript) {
-    // Non-OpenClaw manifests do not yet declare a runtime user for root
-    // sandbox exec. Recover them over SSH so the launch inherits the sandbox
-    // login user instead of creating root-owned agent state under /sandbox.
-    return recoveredSsh(executeSandboxCommand(sandboxName, agentScript));
-  }
-
-  const script = agentRuntime.buildOpenClawRecoveryScript(DASHBOARD_PORT);
-  const execResult = executeSandboxExecCommand(sandboxName, script, 30000);
-  if (hasRecoveryMarker(execResult)) return true;
-  if (execResult !== null) return false;
-  return recoveredSsh(executeSandboxCommand(sandboxName, script));
-}
-
-function readNonNegativeNumberEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw.trim() === "") return fallback;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-function waitForRecoveredSandboxGateway(sandboxName: string): boolean {
-  const timeoutSeconds = readNonNegativeNumberEnv(
-    "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
-    30,
-  );
-  const intervalSeconds = readNonNegativeNumberEnv(
-    "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
-    3,
-  );
-  const attempts =
-    intervalSeconds > 0
-      ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
-      : Math.max(1, Math.floor(timeoutSeconds) + 1);
-
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (isSandboxGatewayRunning(sandboxName) === true) {
-      return true;
-    }
-    if (attempt < attempts - 1) {
-      sleepSeconds(intervalSeconds);
-    }
-  }
-  return false;
-}
-
-/**
- * Re-establish the dashboard port forward to the sandbox.
- * Uses the agent's forward port when a non-OpenClaw agent is active.
- * Returns true when `forward start` succeeded and a follow-up probe
- * confirms the new entry is running, false otherwise.
- */
-function ensureSandboxPortForward(sandboxName: string): boolean {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const port = agent ? String(agent.forwardPort) : DASHBOARD_FORWARD_PORT;
-  runOpenshell(["forward", "stop", port], { ignoreError: true });
-  const startResult = runOpenshell(
-    ["forward", "start", "--background", port, sandboxName],
-    { ignoreError: true },
-  );
-  if (startResult.status !== 0) return false;
-  return isSandboxForwardHealthy(sandboxName) === true;
-}
-
-/**
- * Probe `openshell forward list` for the sandbox's dashboard forward.
- * Returns true when an entry exists for the expected sandbox+port pair
- * with STATUS=running, false when the entry is missing or non-running,
- * and null when openshell is unreachable.
- *
- * The in-sandbox gateway and the host-side forward are independent
- * dimensions: the forward can die (host SSH session dropped, list shows
- * STATUS=dead) while the gateway keeps listening on 127.0.0.1:<port>.
- */
-function isSandboxForwardHealthy(sandboxName: string): boolean | null {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const port = agent ? String(agent.forwardPort) : DASHBOARD_FORWARD_PORT;
-  const result = captureOpenshell(["forward", "list"], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (!result || isCommandTimeout(result) || result.status !== 0) return null;
-  const entries = parseForwardList(result.output) as Array<{
-    sandboxName: string;
-    port: string;
-    status: string;
-  }>;
-  const match = entries.find((entry) => entry.port === port);
-  if (!match) return false;
-  if (match.sandboxName !== sandboxName) return false;
-  return match.status === "running";
-}
-
-/**
- * Detect and recover from a sandbox that survived a gateway restart but
- * whose OpenClaw processes are not running. Also re-establishes the
- * host-side dashboard port-forward when it has gone dead independently
- * of the gateway. Returns an object describing the outcome:
- * `{ checked, wasRunning, recovered, forwardRecovered }`.
- */
-function checkAndRecoverSandboxProcesses(
-  sandboxName: string,
-  { quiet = false }: { quiet?: boolean } = {},
-) {
-  const running = isSandboxGatewayRunning(sandboxName);
-  if (running === null) {
-    return { checked: false, wasRunning: null, recovered: false, forwardRecovered: false };
-  }
-  const _recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
-  if (running) {
-    // Gateway is alive but the host-side forward can still be dead or
-    // owned by another sandbox. Probe and re-establish only when
-    // necessary so the live-and-healthy path stays a no-op.
-    const forwardHealthy = isSandboxForwardHealthy(sandboxName);
-    if (forwardHealthy === false) {
-      if (!quiet) {
-        console.log("");
-        console.log(
-          `  Dashboard port forward to '${sandboxName}' is missing or dead.`,
-        );
-        console.log("  Re-establishing...");
-      }
-      const forwardRecovered = ensureSandboxPortForward(sandboxName);
-      if (!quiet) {
-        if (forwardRecovered) {
-          console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
-        } else {
-          console.error("  Failed to re-establish the dashboard port forward.");
-          console.error(
-            `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
-          );
-        }
-      }
-      return { checked: true, wasRunning: true, recovered: false, forwardRecovered };
-    }
-    return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
-  }
-
-  // Gateway not running — attempt recovery
-  if (!quiet) {
-    console.log("");
-    console.log(
-      `  ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway is not running inside the sandbox (sandbox likely restarted).`,
-    );
-    console.log("  Recovering...");
-  }
-
-  const recovered = recoverSandboxProcesses(sandboxName);
-  if (recovered) {
-    // Wait for gateway to bind its HTTP port before declaring success. The
-    // recovered process can be alive before the OpenAI-compatible API is ready.
-    if (!waitForRecoveredSandboxGateway(sandboxName)) {
-      if (!quiet) {
-        console.error("  Gateway process started but is not responding.");
-        console.error("  Check /tmp/gateway.log inside the sandbox for details.");
-      }
-      return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
-    }
-    const forwardRecovered = ensureSandboxPortForward(sandboxName);
-    if (!quiet) {
-      console.log(
-        `  ${G}✓${R} ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway restarted inside sandbox.`,
-      );
-      if (forwardRecovered) {
-        console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
-      } else {
-        console.error("  Failed to re-establish the dashboard port forward.");
-        console.error(
-          `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
-        );
-      }
-    }
-    return { checked: true, wasRunning: false, recovered, forwardRecovered };
-  }
-  if (!quiet) {
-    console.error(
-      `  Could not restart ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway automatically.`,
-    );
-    console.error("  Connect to the sandbox and run manually:");
-    console.error(`    ${agentRuntime.getGatewayCommand(_recoveryAgent)}`);
-  }
-
-  return { checked: true, wasRunning: false, recovered, forwardRecovered: false };
-}
-
 exports.runtimeBridge = {
-  sandboxConnect,
   sandboxDestroy,
   sandboxRebuild,
   sandboxStatus,
@@ -544,19 +200,6 @@ function printOldLogsCompatibilityGuidance(installedVersion = null) {
   );
 }
 
-function exitWithSpawnResult(result: SpawnLikeResult & { signal?: NodeJS.Signals | null }) {
-  if (result.status !== null) {
-    process.exit(result.status);
-  }
-
-  if (result.signal) {
-    const signalNumber = os.constants.signals[result.signal];
-    process.exit(signalNumber ? 128 + signalNumber : 1);
-  }
-
-  process.exit(1);
-}
-
 // ── Commands ─────────────────────────────────────────────────────
 
 async function runOclif(commandId: string, args: string[] = []): Promise<void> {
@@ -569,278 +212,6 @@ async function runOclif(commandId: string, args: string[] = []): Promise<void> {
 
 function printSandboxActionUsage(action: string): void {
   console.log(`  Usage: ${CLI_NAME} <name> ${action}`);
-}
-
-// ── Sandbox-scoped actions ───────────────────────────────────────
-
-type SandboxConnectOptions = {
-  probeOnly?: boolean;
-};
-
-const SANDBOX_CONNECT_FLAGS = new Set(["--dangerously-skip-permissions", "--probe-only", "--help", "-h"]);
-
-function isSandboxConnectFlag(arg: string | undefined): boolean {
-  return typeof arg === "string" && SANDBOX_CONNECT_FLAGS.has(arg);
-}
-
-function printSandboxConnectHelp(sandboxName = "<name>") {
-  console.log("");
-  console.log(`  Usage: ${CLI_NAME} ${sandboxName} connect [--probe-only]`);
-  console.log("");
-  console.log("  Options:");
-  console.log(
-    "    --probe-only                    Run recovery checks and exit without opening SSH",
-  );
-  console.log("    -h, --help                      Show this help");
-  console.log("");
-}
-
-function parseSandboxConnectArgs(sandboxName: string, actionArgs: string[]): SandboxConnectOptions {
-  const options: SandboxConnectOptions = {};
-  for (const arg of actionArgs) {
-    if (!isSandboxConnectFlag(arg)) {
-      console.error(`  Unknown flag for connect: ${arg}`);
-      printSandboxConnectHelp(sandboxName);
-      process.exit(1);
-    }
-    switch (arg) {
-      case "--dangerously-skip-permissions":
-        console.error("  --dangerously-skip-permissions was removed; use shields commands instead.");
-        printSandboxConnectHelp(sandboxName);
-        process.exit(1);
-      case "--probe-only":
-        options.probeOnly = true;
-        break;
-      case "--help":
-      case "-h":
-        printSandboxConnectHelp(sandboxName);
-        process.exit(0);
-        break;
-    }
-  }
-  return options;
-}
-
-function runSandboxConnectProbe(sandboxName: string): void {
-  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const agentName = agentRuntime.getAgentDisplayName(agent);
-  if (!processCheck.checked) {
-    console.error(
-      `  Probe failed: could not inspect the ${agentName} gateway inside sandbox '${sandboxName}'.`,
-    );
-    process.exit(1);
-  }
-  if (processCheck.wasRunning) {
-    if (processCheck.forwardRecovered) {
-      console.log(
-        `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
-      );
-    } else {
-      console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
-    }
-    return;
-  }
-  if (processCheck.recovered) {
-    console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
-    return;
-  }
-  console.error(
-    `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
-  );
-  console.error("  Check /tmp/gateway.log inside the sandbox for details.");
-  process.exit(1);
-}
-
-async function sandboxConnect(
-  sandboxName: string,
-  { probeOnly = false }: SandboxConnectOptions = {},
-) {
-  const { isSandboxReady, parseSandboxStatus } = require("./lib/onboard");
-  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
-
-  if (probeOnly) {
-    return runSandboxConnectProbe(sandboxName);
-  }
-
-  // Version staleness check — warn but don't block
-  try {
-    const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
-    if (versionCheck.isStale) {
-      for (const line of sandboxVersion.formatStalenessWarning(sandboxName, versionCheck)) {
-        console.error(line);
-      }
-    }
-  } catch {
-    /* non-fatal — don't block connect on version check failure */
-  }
-
-  // Active session hint — inform if already connected in another terminal
-  try {
-    const opsBinConnect = resolveOpenshell();
-    if (opsBinConnect) {
-      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinConnect));
-      if (sessionResult.detected && sessionResult.sessions.length > 0) {
-        const count = sessionResult.sessions.length;
-        console.log(
-          `  ${D}Note: ${count} existing SSH session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
-        );
-      }
-    }
-  } catch {
-    /* non-fatal — don't block connect on session detection failure */
-  }
-
-  checkAndRecoverSandboxProcesses(sandboxName);
-  // Ensure Ollama auth proxy is running (recovers from host reboots)
-  ensureOllamaAuthProxy();
-
-  // ── Inference route swap (#1248) ──────────────────────────────────
-  // When the user has multiple sandboxes with different providers, the
-  // cluster-wide inference.local route may still point at the *other*
-  // provider. Re-set it to match this sandbox's persisted config.
-  let sb;
-  try {
-    sb = registry.getSandbox(sandboxName);
-    if (sb && sb.provider && sb.model) {
-      const live = parseGatewayInference(
-        captureOpenshell(["inference", "get"], {
-          ignoreError: true,
-          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-        }).output,
-      );
-      if (!live || live.provider !== sb.provider || live.model !== sb.model) {
-        console.log(
-          `  Switching inference route to ${sb.provider}/${sb.model} for sandbox '${sandboxName}'`,
-        );
-        const swapResult = runOpenshell(
-          ["inference", "set", "--provider", sb.provider, "--model", sb.model, "--no-verify"],
-          { ignoreError: true },
-        );
-        if (swapResult.status !== 0) {
-          console.error(
-            `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
-          );
-        }
-      }
-    }
-  } catch {
-    /* non-fatal — don't block connect on inference route swap failure */
-  }
-
-  const rawTimeout = process.env.NEMOCLAW_CONNECT_TIMEOUT;
-  let timeout = 120;
-  if (rawTimeout !== undefined) {
-    const parsed = parseInt(rawTimeout, 10);
-    if (Number.isNaN(parsed) || parsed <= 0) {
-      console.warn(
-        `  Warning: invalid NEMOCLAW_CONNECT_TIMEOUT="${rawTimeout}", using default 120s`,
-      );
-    } else {
-      timeout = parsed;
-    }
-  }
-  const interval = 3;
-  const startedAt = Date.now();
-  const deadline = startedAt + timeout * 1000;
-  const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
-  const remainingMs = () => Math.max(1, deadline - Date.now());
-  const runSandboxList = () =>
-    captureOpenshell(["sandbox", "list"], {
-      ignoreError: true,
-      timeout: remainingMs(),
-    }).output;
-
-  const list = runSandboxList();
-  if (!isSandboxReady(list, sandboxName)) {
-    const status = parseSandboxStatus(list, sandboxName);
-    const TERMINAL = new Set([
-      "Failed",
-      "Error",
-      "CrashLoopBackOff",
-      "ImagePullBackOff",
-      "Unknown",
-      "Evicted",
-    ]);
-    if (status && TERMINAL.has(status)) {
-      console.error("");
-      console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
-      console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
-      console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
-      process.exit(1);
-    }
-
-    console.log(`  Waiting for sandbox '${sandboxName}' to be ready...`);
-    let ready = false;
-    let everSeen = status !== null;
-    while (Date.now() < deadline) {
-      const sleepFor = Math.min(interval, remainingMs() / 1000);
-      if (sleepFor <= 0) break;
-      spawnSync("sleep", [String(sleepFor)]);
-      const poll = runSandboxList();
-      const elapsed = elapsedSec();
-      if (isSandboxReady(poll, sandboxName)) {
-        ready = true;
-        break;
-      }
-      const cur = parseSandboxStatus(poll, sandboxName) || "unknown";
-      if (cur !== "unknown") everSeen = true;
-      if (TERMINAL.has(cur)) {
-        console.error("");
-        console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
-        console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
-        console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
-        process.exit(1);
-      }
-      if (!everSeen && elapsed >= 30) {
-        console.error("");
-        console.error(`  Sandbox '${sandboxName}' not found after ${elapsed}s.`);
-        console.error(`  Check: openshell sandbox list`);
-        process.exit(1);
-      }
-      process.stdout.write(`\r    Status: ${cur.padEnd(20)} (${elapsed}s elapsed)`);
-    }
-
-    if (!ready) {
-      console.error("");
-      console.error(`  Timed out after ${timeout}s waiting for sandbox '${sandboxName}'.`);
-      console.error(`  Check: openshell sandbox list`);
-      console.error(
-        `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=300 ${CLI_NAME} ${sandboxName} connect`,
-      );
-      process.exit(1);
-    }
-    console.log(`\r    Status: ${"Ready".padEnd(20)} (${elapsedSec()}s elapsed)`);
-    console.log("  Sandbox is ready. Connecting...");
-  }
-
-  // Print a one-shot hint before dropping the user into the sandbox
-  // shell so a fresh user knows the first thing to type. Without this,
-  // `nemoclaw <name> connect` lands on a bare bash prompt and users
-  // ask "now what?" — see #465. Suppress the hint when stdout isn't a
-  // TTY so scripted callers don't get noise in their pipelines.
-  if (
-    process.stdout.isTTY &&
-    !["1", "true"].includes(String(process.env.NEMOCLAW_NO_CONNECT_HINT || ""))
-  ) {
-    console.log("");
-    const agentName = sb?.agent || "openclaw";
-    const agentCmd = agentName === "openclaw" ? "openclaw tui" : agentName;
-    console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
-    console.log(
-      `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,
-    );
-    console.log(
-      `  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`,
-    );
-    console.log("");
-  }
-  const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
-    stdio: "inherit",
-    cwd: ROOT,
-    env: process.env,
-  });
-  exitWithSpawnResult(result);
 }
 
 function captureHostCommand(

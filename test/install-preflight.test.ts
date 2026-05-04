@@ -232,6 +232,9 @@ exit 1
         ...process.env,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        // Bypass the #2671 fail-fast license gate — this test exercises the
+        // Node-version-detection / nvm-upgrade path, not the license path.
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       },
     });
 
@@ -2995,5 +2998,99 @@ exit 0`,
 
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/Cannot find module .*usage-notice\.js/);
+  });
+});
+
+describe("installer atomicity (#2671)", () => {
+  /**
+   * Run scripts/install.sh main() with stubbed phase-1 and phase-2 binaries
+   * that record invocation to a marker file. Tests assert whether install
+   * reaches phase 1/2 or short-circuits at the fail-fast license gate.
+   */
+  function runInstaller(env: Record<string, string | undefined>, options: { stdinIsTty?: boolean } = {}) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-2671-"));
+    const fakeBin = path.join(tmp, "bin");
+    const phaseLog = path.join(tmp, "phases.log");
+    fs.mkdirSync(fakeBin);
+
+    // Stub node + npm — both record their own invocation so we can detect
+    // whether phase 1 (install_nodejs) or phase 2 (install_nemoclaw) ran.
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+echo "node $*" >> ${JSON.stringify(phaseLog)}
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
+if [ -n "\${1:-}" ] && [ -f "$1" ]; then exit 0; fi
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+echo "npm $*" >> ${JSON.stringify(phaseLog)}
+if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "${path.join(tmp, "prefix")}"; exit 0; fi
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+echo "docker $*" >> ${JSON.stringify(phaseLog)}
+exit 0`,
+    );
+
+    // Run main() directly via the bash entrypoint check. We force stdin to
+    // /dev/null when stdinIsTty is false (default — simulates curl|bash).
+    const result = spawnSync(
+      "bash",
+      [INSTALLER_PAYLOAD],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        // input: "" makes spawnSync attach a non-TTY stdin pipe — equivalent
+        // to curl|bash for the purposes of [ -t 0 ] and /dev/tty in CI.
+        input: options.stdinIsTty ? undefined : "",
+        env: {
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          ...env,
+        },
+      },
+    );
+    const phases = fs.existsSync(phaseLog) ? fs.readFileSync(phaseLog, "utf-8") : "";
+    return { result, phases, tmp };
+  }
+
+  it("#2671: curl|bash with no flags exits 1 BEFORE phase 1 (atomic — no Node/CLI install)", () => {
+    const { result, phases } = runInstaller({});
+    expect(result.status).not.toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(output).toMatch(/--yes-i-accept-third-party-software/);
+    // Phase 1 (Node.js install) and phase 2 (CLI install) must NOT have run —
+    // the whole point of the fix is that a license-fail leaves no half-install behind.
+    expect(output).not.toMatch(/\[1\/3\] Node\.js/);
+    expect(output).not.toMatch(/\[2\/3\] NemoClaw CLI/);
+    // Stub binaries record every invocation; if phase 1 or 2 ran, node and/or
+    // npm would have been called. The fail-fast check runs before either.
+    expect(phases).toBe("");
+  });
+
+  it("--yes-i-accept-third-party-software alone is sufficient to clear the fail-fast gate", () => {
+    // The flag implies non-interactive intent (set by main() before the
+    // preflight check), so it must clear the gate AND let the install
+    // progress past preflight into phase 1 — assert phases is non-empty
+    // so the test doesn't false-pass if the install bailed for some other
+    // reason while the TTY error happened to be absent from output.
+    const { result, phases } = runInstaller({ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(phases).not.toBe("");
+  });
+
+  it("--non-interactive alone is sufficient to clear the fail-fast gate", () => {
+    const { result, phases } = runInstaller({ NEMOCLAW_NON_INTERACTIVE: "1" });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(phases).not.toBe("");
   });
 });

@@ -1596,8 +1596,36 @@ main() {
   NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
+
+  # If the user explicitly accepted the third-party-software notice, treat
+  # that as non-interactive intent for the rest of the run too — show_usage_notice
+  # is only one of several phase-3 steps that need a TTY or --non-interactive
+  # (run_onboard has the same gate). Without this, ACCEPT_THIRD_PARTY_SOFTWARE=1
+  # alone clears the preflight below but the install can still partial-fail at
+  # run_onboard with the same TTY error, leaving phases 1/2 on disk anyway.
+  if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ] && [ "${NON_INTERACTIVE:-}" != "1" ]; then
+    NON_INTERACTIVE=1
+  fi
+
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
+
+  # Fail-fast license-acceptance check (#2671). If we already know phase 3
+  # (show_usage_notice + run_onboard) will hit the "requires a TTY" branch,
+  # surface that error NOW — before phases 1/2 install Node.js and put the
+  # nemoclaw CLI on PATH. Otherwise the user is left in a partial install
+  # that they have to manually `rm -rf` before retry, while their license
+  # has not actually been accepted.
+  #
+  # Skipped (and the install proceeds) when any of:
+  #  - NON_INTERACTIVE=1 (also implied by ACCEPT_THIRD_PARTY_SOFTWARE=1 above)
+  #  - stdin is a TTY — license helper prompts the user directly
+  #  - /dev/tty is openable — show_usage_notice falls back to /dev/tty input
+  if [ "${NON_INTERACTIVE:-}" != "1" ] \
+    && [ ! -t 0 ] \
+    && ! (: </dev/tty) 2>/dev/null; then
+    error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
+  fi
 
   _INSTALL_START=$SECONDS
   print_banner
