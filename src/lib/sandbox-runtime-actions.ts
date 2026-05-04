@@ -18,7 +18,10 @@ export async function connectSandbox(
 }
 
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
-  await getNemoClawRuntimeBridge().sandboxStatus(sandboxName);
+  const { showSandboxStatus: showExtractedSandboxStatus } = require("./sandbox-status-action") as {
+    showSandboxStatus: (sandboxName: string) => Promise<void>;
+  };
+  await showExtractedSandboxStatus(sandboxName);
 }
 
 export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions): void {

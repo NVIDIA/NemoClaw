@@ -52,23 +52,13 @@ const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
 const { stripAnsi } = require("./lib/openshell");
 const {
   captureOpenshell,
-  captureOpenshellForStatus,
   getInstalledOpenshellVersionOrNull,
-  isCommandTimeout,
   runOpenshell,
 } = require("./lib/openshell-runtime");
 const {
-  getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } = require("./lib/gateway-runtime-action");
 const { recoverRegistryEntries } = require("./lib/registry-recovery-action");
-const {
-  ensureLiveSandboxOrExit,
-  getReconciledSandboxGatewayState,
-  getSandboxGatewayStateForStatus,
-  printGatewayLifecycleHint,
-  printWrongGatewayActiveGuidance,
-} = require("./lib/sandbox-gateway-state-action");
 const {
   isSandboxConnectFlag,
   parseSandboxConnectArgs,
@@ -76,7 +66,6 @@ const {
 } = require("./lib/sandbox-connect-action");
 const {
   executeSandboxCommand,
-  isSandboxGatewayRunningForStatus,
 } = require("./lib/sandbox-process-recovery-action");
 const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
 const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
@@ -84,7 +73,6 @@ const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
 const { parseRestoreArgs } = sandboxState;
-const { parseSandboxPhase } = require("./lib/gateway-state");
 const {
   getActiveSandboxSessions,
   createSystemDeps: createSessionDeps,
@@ -183,7 +171,6 @@ function getSandboxDeleteOutcome(deleteResult: SpawnLikeResult) {
 exports.runtimeBridge = {
   sandboxDestroy,
   sandboxRebuild,
-  sandboxStatus,
   upgradeSandboxes,
 };
 /** Print user-facing guidance when OpenShell is too old to support `openshell logs`. */
@@ -798,234 +785,6 @@ async function sandboxDoctor(sandboxName: string, args: string[] = []): Promise<
 
   const exitCode = renderDoctorReport(sandboxName, checks, asJson);
   if (exitCode !== 0) process.exit(exitCode);
-}
-
-// eslint-disable-next-line complexity
-async function sandboxStatus(sandboxName: string) {
-  const sb = registry.getSandbox(sandboxName);
-  const lookup = await getReconciledSandboxGatewayState(sandboxName, {
-    getState: getSandboxGatewayStateForStatus,
-  });
-  const liveResult =
-    lookup.state === "present"
-      ? await captureOpenshellForStatus(["inference", "get"], {
-          ignoreError: true,
-        })
-      : null;
-  const live =
-    liveResult && !isCommandTimeout(liveResult)
-      ? parseGatewayInference(liveResult.output)
-      : null;
-  const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
-  const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  const inferenceHealth =
-    lookup.state === "present" && typeof currentProvider === "string"
-      ? probeProviderHealth(currentProvider)
-      : null;
-  if (sb) {
-    console.log("");
-    console.log(`  Sandbox: ${sb.name}`);
-    console.log(`    Model:    ${currentModel}`);
-    console.log(`    Provider: ${currentProvider}`);
-    if (inferenceHealth) {
-      if (!inferenceHealth.probed) {
-        console.log(`    Inference: ${D}not probed${R} (${inferenceHealth.detail})`);
-      } else if (inferenceHealth.ok) {
-        console.log(`    Inference: ${G}healthy${R} (${inferenceHealth.endpoint})`);
-      } else {
-        console.log(`    Inference: ${_RD}unreachable${R} (${inferenceHealth.endpoint})`);
-        console.log(`      ${inferenceHealth.detail}`);
-      }
-    }
-    if (lookup.state !== "present") {
-      console.log("    Inference: not verified (gateway/sandbox state not verified)");
-    }
-    console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
-    console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
-
-    // Active session indicator
-    try {
-      const opsBinStatus = resolveOpenshell();
-      if (opsBinStatus) {
-        const sessionResult = getActiveSandboxSessions(
-          sandboxName,
-          createSessionDeps(opsBinStatus),
-        );
-        if (sessionResult.detected) {
-          const count = sessionResult.sessions.length;
-          console.log(
-            `    Connected: ${count > 0 ? `${G}yes${R} (${count} session${count > 1 ? "s" : ""})` : "no"}`,
-          );
-        }
-      }
-    } catch {
-      /* non-fatal */
-    }
-
-    if (shields.isShieldsDown(sandboxName)) {
-      console.log(`    Permissions: shields down (check \`shields status\` for details)`);
-    }
-
-    // Agent version check
-    try {
-      const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, { skipProbe: true });
-      const agent = agentRuntime.getSessionAgent(sandboxName);
-      const agentName = agentRuntime.getAgentDisplayName(agent);
-      if (versionCheck.sandboxVersion) {
-        console.log(`    Agent:    ${agentName} v${versionCheck.sandboxVersion}`);
-      }
-      if (versionCheck.isStale) {
-        console.log(`    ${YW}Update:   v${versionCheck.expectedVersion} available${R}`);
-        console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` to upgrade`);
-      }
-    } catch {
-      /* non-fatal */
-    }
-  }
-
-  if (lookup.state === "present") {
-    console.log("");
-    if ("recoveredGateway" in lookup && lookup.recoveredGateway) {
-      console.log(
-        `  Recovered ${CLI_DISPLAY_NAME} gateway runtime via ${("recoveryVia" in lookup ? lookup.recoveryVia : null) || "gateway reattach"}.`,
-      );
-      console.log("");
-    }
-    console.log(lookup.output);
-    const phase = parseSandboxPhase(lookup.output || "");
-    if (phase && phase !== "Ready") {
-      console.log("");
-      console.log(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
-      console.log(
-        "  This usually happens when a process crash inside the sandbox prevented clean startup.",
-      );
-      console.log("");
-      console.log(
-        `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
-      );
-    }
-  } else if (lookup.state === "wrong_gateway_active") {
-    const activeGateway =
-      "activeGateway" in lookup && typeof lookup.activeGateway === "string"
-        ? lookup.activeGateway
-        : undefined;
-    console.log("");
-    printWrongGatewayActiveGuidance(sandboxName, activeGateway, console.log);
-    process.exit(1);
-  } else if (lookup.state === "missing") {
-    // Belt-and-suspenders: only destroy registry state if the nemoclaw gateway
-    // is demonstrably the healthy active gateway. Guards against regressions
-    // in the reconciler.
-    const guard = getNamedGatewayLifecycleState();
-    if (guard.state !== "healthy_named") {
-      console.log("");
-      if (guard.state === "connected_other") {
-        printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.log);
-      } else {
-        printGatewayLifecycleHint(guard.status || "", sandboxName, console.log);
-      }
-    } else {
-      registry.removeSandbox(sandboxName);
-      const session = onboardSession.loadSession();
-      if (session && session.sandboxName === sandboxName) {
-        onboardSession.updateSession((s: Session) => {
-          s.sandboxName = null;
-          return s;
-        });
-      }
-      console.log("");
-      console.log(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
-      console.log("  Removed stale local registry entry.");
-    }
-    process.exit(1);
-  } else if (lookup.state === "identity_drift") {
-    console.log("");
-    console.log(
-      `  Sandbox '${sandboxName}' is recorded locally, but the gateway trust material rotated after restart.`,
-    );
-    if (lookup.output) {
-      console.log(lookup.output);
-    }
-    console.log(
-      "  Existing sandbox connections cannot be reattached safely after this gateway identity change.",
-    );
-    console.log(
-      `  Recreate this sandbox with \`${CLI_NAME} onboard\` once the gateway runtime is stable.`,
-    );
-    process.exit(1);
-  } else if (lookup.state === "gateway_unreachable_after_restart") {
-    console.log("");
-    console.log(
-      `  Sandbox '${sandboxName}' may still exist, but the selected ${CLI_DISPLAY_NAME} gateway is still refusing connections after restart.`,
-    );
-    if (lookup.output) {
-      console.log(lookup.output);
-    }
-    console.log(
-      "  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.",
-    );
-    console.log(
-      "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
-    );
-    process.exit(1);
-  } else if (lookup.state === "gateway_missing_after_restart") {
-    console.log("");
-    console.log(
-      `  Sandbox '${sandboxName}' may still exist locally, but the ${CLI_DISPLAY_NAME} gateway is no longer configured after restart/rebuild.`,
-    );
-    if (lookup.output) {
-      console.log(lookup.output);
-    }
-    console.log(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.",
-    );
-    console.log(
-      "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",
-    );
-    process.exit(1);
-  } else {
-    console.log("");
-    console.log(`  Could not verify sandbox '${sandboxName}' against the live OpenShell gateway.`);
-    if (lookup.output) {
-      console.log(lookup.output);
-    }
-    printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
-    process.exit(1);
-  }
-
-  // OpenClaw process health inside the sandbox
-  if (lookup.state === "present") {
-    const running = await isSandboxGatewayRunningForStatus(sandboxName);
-    if (running !== null) {
-      const _sa = agentRuntime.getSessionAgent(sandboxName);
-      const _saName = agentRuntime.getAgentDisplayName(_sa);
-      if (running) {
-        console.log(`    ${_saName}: ${G}running${R}`);
-      } else {
-        console.log(`    ${_saName}: ${_RD}not running${R}`);
-        console.log("");
-        console.log(`  The sandbox is alive but the ${_saName} gateway process is not running.`);
-        console.log("  This typically happens after a gateway restart (e.g., laptop close/open).");
-        console.log("");
-        console.log("  To recover, run:");
-        console.log(`    ${D}${CLI_NAME} ${sandboxName} connect${R}  (auto-recovers on connect)`);
-        console.log("  Or manually inside the sandbox:");
-        console.log(`    ${D}${agentRuntime.getGatewayCommand(_sa)}${R}`);
-      }
-    }
-  }
-
-  const nimStat =
-    sb && sb.nimContainer ? nim.nimStatusByName(sb.nimContainer) : nim.nimStatus(sandboxName);
-  if (nim.shouldShowNimLine(sb && sb.nimContainer, nimStat.running)) {
-    console.log(
-      `    NIM:      ${nimStat.running ? `running (${nimStat.container})` : "not running"}`,
-    );
-    if (nimStat.running) {
-      console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
-    }
-  }
-  console.log("");
 }
 
 function cleanupSandboxServices(
