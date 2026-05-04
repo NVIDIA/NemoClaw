@@ -976,100 +976,6 @@ detect_gpu() {
 }
 
 # ---------------------------------------------------------------------------
-# 3. vLLM (Brev GPU deploys, restored from removed brev-setup.sh — #996)
-# ---------------------------------------------------------------------------
-# Default model id mirrors the vllm profile in nemoclaw-blueprint/blueprint.yaml.
-# Update both together; install.sh queries the blueprint at runtime when present.
-VLLM_DEFAULT_MODEL="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8"
-VLLM_PORT=8000
-VLLM_READY_TIMEOUT_SECS=240
-
-resolve_vllm_model() {
-  local blueprint="${SCRIPT_DIR}/../nemoclaw-blueprint/blueprint.yaml"
-  if [ -r "$blueprint" ]; then
-    awk '/^      vllm:/{f=1; next} f && /model:/{ gsub(/.*model: *"|".*/, ""); print; exit }' \
-      "$blueprint" 2>/dev/null
-  fi
-}
-
-install_or_start_vllm() {
-  if [[ "${NEMOCLAW_PROVIDER:-}" != "vllm" ]]; then
-    return 0
-  fi
-  if ! detect_gpu; then
-    warn "NEMOCLAW_PROVIDER=vllm but no GPU detected — vLLM cannot start."
-    warn "Install on a host with an NVIDIA GPU, or unset NEMOCLAW_PROVIDER for a cloud provider."
-    return 1
-  fi
-
-  local model
-  model="$(resolve_vllm_model)"
-  [ -n "$model" ] || model="$VLLM_DEFAULT_MODEL"
-
-  if ! python3 -c "import vllm" 2>/dev/null; then
-    info "Installing vLLM…"
-    if ! command_exists pip3; then
-      sudo apt-get install -y -qq python3-pip >/dev/null 2>&1 || true
-    fi
-    pip3 install --break-system-packages vllm 2>/dev/null || pip3 install vllm
-    if ! python3 -c "import vllm" 2>/dev/null; then
-      warn "vLLM installation failed — cannot start local inference."
-      return 1
-    fi
-  else
-    info "vLLM already installed"
-  fi
-
-  # Check if vLLM is already running with the expected model. A stale
-  # instance serving a different model (e.g., the old NIM catalog name)
-  # must not be reused — otherwise the corrected HF repo id never gets applied.
-  local running_models
-  running_models="$(curl -fsS "http://localhost:${VLLM_PORT}/v1/models" 2>/dev/null || true)"
-  # Match the JSON-quoted id field ("id":"$model") rather than the raw
-  # model string. Anchoring on the surrounding quotes prevents a stale
-  # listener serving a superstring (e.g. "${model}-quantized") from
-  # falsely registering as the expected instance.
-  if [ -n "$running_models" ] && echo "$running_models" | grep -Fq "\"id\":\"$model\""; then
-    info "vLLM already running on :${VLLM_PORT} with model ${model}"
-    return 0
-  fi
-
-  info "Starting vLLM with model ${model} on :${VLLM_PORT}…"
-  nohup python3 -m vllm.entrypoints.openai.api_server \
-    --model "$model" \
-    --port "$VLLM_PORT" \
-    --host 127.0.0.1 \
-    --trust-remote-code \
-    >/tmp/vllm-server.log 2>&1 &
-  local vllm_pid=$!
-
-  info "Waiting for vLLM (model load can take several minutes)…"
-  local elapsed=0
-  local ready_models
-  while [ "$elapsed" -lt "$VLLM_READY_TIMEOUT_SECS" ]; do
-    # Validate that the listener is serving $model — a stale vLLM still
-    # bound to :8000 will answer 200 with a different model id and would
-    # otherwise let us declare readiness against the wrong process.
-    ready_models="$(curl -fsS "http://localhost:${VLLM_PORT}/v1/models" 2>/dev/null || true)"
-    if [ -n "$ready_models" ] && echo "$ready_models" | grep -Fq "\"id\":\"$model\""; then
-      info "vLLM ready (PID $vllm_pid)"
-      return 0
-    fi
-    if ! kill -0 "$vllm_pid" 2>/dev/null; then
-      warn "vLLM exited early. See /tmp/vllm-server.log"
-      return 1
-    fi
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-  # Reap the orphan so a re-run isn't blocked by a process still bound to
-  # :8000 (kill -0 above only fires when the process is already dead).
-  kill "$vllm_pid" 2>/dev/null || true
-  warn "vLLM did not become ready within ${VLLM_READY_TIMEOUT_SECS}s. See /tmp/vllm-server.log"
-  return 1
-}
-
-# ---------------------------------------------------------------------------
 # Fix npm permissions for global installs (Linux only).
 # If the npm global prefix points to a system directory (e.g. /usr or
 # /usr/local) the user likely lacks write permissions and npm link will fail
@@ -1636,18 +1542,9 @@ main() {
   ensure_supported_runtime
 
   step 2 "${_CLI_DISPLAY} CLI"
-  # Ollama install/upgrade and model pulls are owned by `nemoclaw onboard`
-  # (its `install-ollama` branch runs the official installer when the user
-  # picks it). install.sh stays focused on dependency setup.
-  # Fail fast when vLLM was explicitly requested — silently continuing leaves
-  # onboarding pointed at an unavailable localhost:8000, which is the failure
-  # mode this PR exists to fix. For other providers, install_or_start_vllm
-  # short-circuits with rc=0 so this branch is effectively a no-op.
-  if [[ "${NEMOCLAW_PROVIDER:-}" == "vllm" ]]; then
-    install_or_start_vllm || error "vLLM setup failed — aborting (NEMOCLAW_PROVIDER=vllm)."
-  else
-    install_or_start_vllm
-  fi
+  # Ollama and vLLM install/upgrade and model pulls are owned by
+  # `nemoclaw onboard` (the install-ollama / install-vllm branches).
+  # install.sh stays focused on dependency setup.
   fix_npm_permissions
   install_nemoclaw
   verify_nemoclaw
