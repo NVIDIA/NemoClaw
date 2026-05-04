@@ -293,6 +293,8 @@ const agentOnboard = require("./agent-onboard");
 const agentDefs = require("./agent-defs");
 
 const gatewayState: typeof import("./gateway-state") = require("./gateway-state");
+const gatewayMode: typeof import("./openshell-gateway-mode") =
+  require("./openshell-gateway-mode");
 const sandboxState: typeof import("./sandbox-state") = require("./sandbox-state");
 const validation: typeof import("./validation") = require("./validation");
 const urlUtils: typeof import("./url-utils") = require("./url-utils");
@@ -353,7 +355,7 @@ const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
-const GATEWAY_NAME = "nemoclaw";
+const GATEWAY_NAME = gatewayMode.getManagedGatewayName();
 const GATEWAY_BOOTSTRAP_SECRET_NAMES = [
   "openshell-server-tls",
   "openshell-server-client-ca",
@@ -361,6 +363,14 @@ const GATEWAY_BOOTSTRAP_SECRET_NAMES = [
   "openshell-ssh-handshake",
 ];
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
+
+function isPackagedGatewayMode(): boolean {
+  return gatewayMode.isPackagedGatewayMode();
+}
+
+function usesDockerManagedGateway(): boolean {
+  return gatewayMode.usesDockerManagedGateway();
+}
 
 /**
  * Probe whether the gateway Docker container is actually running.
@@ -2561,6 +2571,9 @@ function sleep(seconds: number): void {
 }
 
 function destroyGateway() {
+  if (isPackagedGatewayMode()) {
+    return;
+  }
   const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
     ignoreError: true,
   });
@@ -2653,6 +2666,9 @@ function captureProcessArgs(pid: number): string {
 }
 
 function getGatewayLocalEndpoint(): string {
+  if (isPackagedGatewayMode()) {
+    return gatewayMode.getPackagedGatewayEndpoint();
+  }
   return `https://127.0.0.1:${GATEWAY_PORT}`;
 }
 
@@ -2777,12 +2793,12 @@ function attachGatewayMetadataIfNeeded({
   // runCaptureOpenshell may return stale-but-present gateway metadata. When
   // hasStaleGateway(gwInfo) is truthy we skip runOpenshell unless a repair
   // flow explicitly forces a refresh after recreating bootstrap secrets.
-  if (!forceRefresh && hasStaleGateway(gwInfo)) return true;
+  if (!forceRefresh && hasStaleGateway(gwInfo, GATEWAY_NAME)) return true;
 
-  const addResult = runOpenshell(
-    ["gateway", "add", "--local", "--name", GATEWAY_NAME, getGatewayLocalEndpoint()],
-    { ignoreError: true, suppressOutput: true },
-  );
+  const addArgs = isPackagedGatewayMode()
+    ? ["gateway", "add", getGatewayLocalEndpoint(), "--local", "--name", GATEWAY_NAME]
+    : ["gateway", "add", "--local", "--name", GATEWAY_NAME, getGatewayLocalEndpoint()];
+  const addResult = runOpenshell(addArgs, { ignoreError: true, suppressOutput: true });
   if (addResult.status === 0) {
     console.log("  ✓ Gateway metadata reattached");
     return true;
@@ -3149,11 +3165,17 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
     ignoreError: true,
   });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  let gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
+  const dockerManagedGateway = usesDockerManagedGateway();
+  let gatewayReuseState = getGatewayReuseState(
+    gatewayStatus,
+    gwInfo,
+    activeGatewayInfo,
+    GATEWAY_NAME,
+  );
 
   // Verify the gateway container is actually running — openshell CLI metadata
   // can be stale after a manual `docker rm`. See #2020.
-  if (gatewayReuseState === "healthy") {
+  if (dockerManagedGateway && gatewayReuseState === "healthy") {
     const containerState = verifyGatewayContainerRunning();
     if (containerState === "missing") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
@@ -3181,7 +3203,10 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
     }
   }
 
-  if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
+  if (
+    dockerManagedGateway &&
+    (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed")
+  ) {
     console.log(`  Cleaning up previous ${cliDisplayName()} session...`);
     runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
     const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
@@ -3198,7 +3223,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
   // Clean up orphaned Docker containers from interrupted onboard (e.g. Ctrl+C
   // during gateway start). The container may still be running even though
   // OpenShell has no metadata for it (gatewayReuseState === "missing").
-  if (gatewayReuseState === "missing") {
+  if (dockerManagedGateway && gatewayReuseState === "missing") {
     const containerName = `openshell-cluster-${GATEWAY_NAME}`;
     const inspectResult = dockerInspect(
       ["--type", "container", "--format", "{{.State.Status}}", containerName],
@@ -3236,8 +3261,14 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
   // When auto-allocation is possible (no explicit port), skip the dashboard
   // port check entirely — ensureDashboardForward will find a free port.
   const dashboardPortToCheck = _preflightDashboardPort ?? null;
+  if (!dockerManagedGateway) {
+    console.log(
+      `  ✓ OpenShell packaged gateway mode: ${GATEWAY_NAME} (${getGatewayLocalEndpoint()})`,
+    );
+  }
+
   const requiredPorts = [
-    { port: GATEWAY_PORT, label: "OpenShell gateway" },
+    ...(dockerManagedGateway ? [{ port: GATEWAY_PORT, label: "OpenShell gateway" }] : []),
     ...(dashboardPortToCheck !== null
       ? [{ port: dashboardPortToCheck, label: `${cliDisplayName()} dashboard` }]
       : []),
@@ -3375,19 +3406,79 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
+function printPackagedGatewayRecovery(endpoint = getGatewayLocalEndpoint()): void {
+  console.error(`  OpenShell packaged gateway is not reachable at ${endpoint}.`);
+  console.error("");
+  console.error("  Start the user service and register it with OpenShell:");
+  console.error("    systemctl --user enable openshell-gateway");
+  console.error("    systemctl --user restart openshell-gateway");
+  console.error(`    openshell gateway add ${endpoint} --local --name ${GATEWAY_NAME}`);
+  console.error(`    openshell gateway select ${GATEWAY_NAME}`);
+}
+
+function ensurePackagedGatewaySelected({
+  exitOnFailure = true,
+}: { exitOnFailure?: boolean } = {}): boolean {
+  const endpoint = getGatewayLocalEndpoint();
+  let namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
+    ignoreError: true,
+  });
+
+  if (!hasStaleGateway(namedInfo, GATEWAY_NAME)) {
+    const addResult = runOpenshell(
+      ["gateway", "add", endpoint, "--local", "--name", GATEWAY_NAME],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+      },
+    );
+    if (addResult.status !== 0 && exitOnFailure) {
+      printPackagedGatewayRecovery(endpoint);
+      process.exit(1);
+    }
+    namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
+      ignoreError: true,
+    });
+  }
+
+  runOpenshell(["gateway", "select", GATEWAY_NAME], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  const status = runCaptureOpenshell(["status"], { ignoreError: true });
+  const activeInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+
+  if (isGatewayHealthy(status, namedInfo, activeInfo, GATEWAY_NAME)) {
+    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    console.log(`  ✓ OpenShell packaged gateway selected: ${GATEWAY_NAME}`);
+    return true;
+  }
+
+  if (exitOnFailure) {
+    printPackagedGatewayRecovery(endpoint);
+    process.exit(1);
+  }
+  return false;
+}
+
 /** Start the OpenShell gateway with retry logic and post-start health polling. */
 async function startGatewayWithOptions(
   _gpu: ReturnType<typeof nim.detectGpu>,
   { exitOnFailure = true }: { exitOnFailure?: boolean } = {},
 ) {
-  step(2, 8, "Starting OpenShell gateway");
+  step(2, 8, isPackagedGatewayMode() ? "Selecting OpenShell packaged gateway" : "Starting OpenShell gateway");
+
+  if (isPackagedGatewayMode()) {
+    ensurePackagedGatewaySelected({ exitOnFailure });
+    return;
+  }
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
     ignoreError: true,
   });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  if (isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)) {
+  if (isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo, GATEWAY_NAME)) {
     console.log("  ✓ Reusing existing gateway");
     runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
@@ -3398,7 +3489,7 @@ async function startGatewayWithOptions(
   // e.g. after a Docker/Colima restart), skip the destroy — `gateway start`
   // can recover the container without wiping metadata and mTLS certs.
   // The retry loop below will destroy only if start genuinely fails.
-  if (hasStaleGateway(gwInfo)) {
+  if (hasStaleGateway(gwInfo, GATEWAY_NAME)) {
     console.log("  Stale gateway detected — attempting restart without destroy...");
   }
 
@@ -3487,7 +3578,7 @@ async function startGatewayWithOptions(
             ignoreError: true,
           });
           const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-          if (isGatewayHealthy(status, namedInfo, currentInfo)) {
+          if (isGatewayHealthy(status, namedInfo, currentInfo, GATEWAY_NAME)) {
             return; // success
           }
           if (i < healthPollCount - 1) sleep(healthPollInterval);
@@ -3534,7 +3625,7 @@ async function startGatewayWithOptions(
         // doctor logs unavailable — fall through to manual instructions
       }
       console.error("  Troubleshooting:");
-      console.error("    openshell doctor logs --name nemoclaw");
+      console.error(`    openshell doctor logs --name ${GATEWAY_NAME}`);
       console.error("    openshell doctor check");
       process.exit(1);
     }
@@ -3565,6 +3656,9 @@ async function startGatewayForRecovery(_gpu: ReturnType<typeof nim.detectGpu>): 
 }
 
 function getGatewayStartEnv(): Record<string, string> {
+  if (isPackagedGatewayMode()) {
+    return {};
+  }
   const gatewayEnv: Record<string, string> = {};
   const openshellVersion = getInstalledOpenshellVersion();
   const stableGatewayImage = openshellVersion
@@ -3670,9 +3764,13 @@ function applyOverlayfsAutoFix(upstreamImage: string): string | null {
 }
 
 async function recoverGatewayRuntime() {
+  if (isPackagedGatewayMode()) {
+    return ensurePackagedGatewaySelected({ exitOnFailure: false });
+  }
+
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   let status = runCaptureOpenshell(["status"], { ignoreError: true });
-  if (status.includes("Connected") && isSelectedGateway(status)) {
+  if (status.includes("Connected") && isSelectedGateway(status, GATEWAY_NAME)) {
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
     return true;
   }
@@ -3714,7 +3812,7 @@ async function recoverGatewayRuntime() {
       attachGatewayMetadataIfNeeded();
     }
     status = runCaptureOpenshell(["status"], { ignoreError: true });
-    if (status.includes("Connected") && isSelectedGateway(status)) {
+    if (status.includes("Connected") && isSelectedGateway(status, GATEWAY_NAME)) {
       process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
       const runtime = getContainerRuntime();
       if (shouldPatchCoredns(runtime)) {
@@ -4910,12 +5008,14 @@ async function createSandbox(
     }
   }
 
-  // DNS proxy — run a forwarder in the sandbox pod so the isolated
-  // sandbox namespace can resolve hostnames (fixes #626).
-  console.log("  Setting up sandbox DNS proxy...");
-  runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
-    ignoreError: true,
-  });
+  // DNS proxy — run a forwarder in the Docker-managed sandbox pod so the
+  // isolated namespace can resolve hostnames (fixes #626).
+  if (usesDockerManagedGateway()) {
+    console.log("  Setting up sandbox DNS proxy...");
+    runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
+      ignoreError: true,
+    });
+  }
 
   // Check that messaging providers exist in the gateway (sandbox attachment
   // cannot be verified via CLI yet — only gateway-level existence is checked).
@@ -8668,11 +8768,17 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       ignoreError: true,
     });
     const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    let gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
+    const dockerManagedGateway = usesDockerManagedGateway();
+    let gatewayReuseState = getGatewayReuseState(
+      gatewayStatus,
+      gatewayInfo,
+      activeGatewayInfo,
+      GATEWAY_NAME,
+    );
 
     // Verify the gateway container is actually running — openshell CLI metadata
     // can be stale after a manual `docker rm`. See #2020.
-    if (gatewayReuseState === "healthy") {
+    if (dockerManagedGateway && gatewayReuseState === "healthy") {
       const containerState = verifyGatewayContainerRunning();
       if (containerState === "missing") {
         console.log("  Gateway metadata is stale (container not running). Cleaning up...");
@@ -8701,6 +8807,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
+    if (canReuseHealthyGateway) {
+      process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    }
     const resumeGateway =
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
     if (resumeGateway) {

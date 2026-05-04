@@ -55,9 +55,8 @@ const {
   getInstalledOpenshellVersionOrNull,
   runOpenshell,
 } = require("./lib/openshell-runtime");
-const {
-  recoverNamedGatewayRuntime,
-} = require("./lib/gateway-runtime-action");
+const { recoverNamedGatewayRuntime } = require("./lib/gateway-runtime-action");
+const gatewayMode = require("./lib/openshell-gateway-mode");
 const { recoverRegistryEntries } = require("./lib/registry-recovery-action");
 const {
   isSandboxConnectFlag,
@@ -110,7 +109,7 @@ type RecoveredSandboxMetadata = Partial<
   policyPresets?: string[] | null;
 };
 
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
+const NEMOCLAW_GATEWAY_NAME = gatewayMode.getManagedGatewayName();
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 const DEFAULT_LOGS_PROBE_TIMEOUT_MS = 5000;
 const LOGS_PROBE_TIMEOUT_ENV = "NEMOCLAW_LOGS_PROBE_TIMEOUT_MS";
@@ -120,6 +119,9 @@ function cleanupGatewayAfterLastSandbox() {
     ignoreError: true,
     stdio: ["ignore", "ignore", "ignore"],
   });
+  if (!gatewayMode.usesDockerManagedGateway()) {
+    return;
+  }
   runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], { ignoreError: true });
   dockerRemoveVolumesByPrefix(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, {
     ignoreError: true,

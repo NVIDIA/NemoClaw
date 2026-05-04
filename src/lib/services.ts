@@ -17,6 +17,7 @@ import { join } from "node:path";
 
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME } from "./branding";
 import { dockerSpawnSync } from "./docker";
+import { getManagedGatewayName } from "./openshell-gateway-mode";
 import { DASHBOARD_PORT } from "./ports";
 import { resolveOpenshell } from "./resolve-openshell";
 import { buildSubprocessEnv } from "./subprocess-env";
@@ -283,7 +284,7 @@ export function stopSandboxChannels(sandboxName: string): void {
   reportStopResult(fallbackResult);
 }
 
-const GATEWAY_CLUSTER_CONTAINER = "openshell-cluster-nemoclaw";
+const GATEWAY_CLUSTER_CONTAINER = `openshell-cluster-${getManagedGatewayName()}`;
 
 const GATEWAY_STOP_SCRIPT = String.raw`
 set -eu

@@ -24,6 +24,8 @@ const {
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("./duration");
 const { appendAuditEntry } = require("./shields-audit");
 const { resolveAgentConfig } = require("./sandbox-config");
+const gatewayMode: typeof import("./openshell-gateway-mode") =
+  require("./openshell-gateway-mode");
 
 const STATE_DIR = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state");
 
@@ -36,7 +38,7 @@ const STATE_DIR = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state");
 // We reach kubectl via the K3s container: docker exec <k3s> kubectl exec ...
 // ---------------------------------------------------------------------------
 
-const K3S_CONTAINER = "openshell-cluster-nemoclaw";
+const K3S_CONTAINER = `openshell-cluster-${gatewayMode.getManagedGatewayName()}`;
 
 function kubectlExecArgv(sandboxName: string, cmd: string[]): string[] {
   return [

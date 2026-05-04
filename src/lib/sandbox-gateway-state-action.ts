@@ -17,6 +17,7 @@ const { pruneKnownHostsEntries } = require("./onboard") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
 import * as onboardSession from "./onboard-session";
+import { getManagedGatewayName, isPackagedGatewayMode } from "./openshell-gateway-mode";
 import type { Session } from "./onboard-session";
 import { stripAnsi } from "./openshell";
 import {
@@ -44,6 +45,15 @@ type SandboxGatewayState = {
 type SandboxGatewayStateLookup = (
   sandboxName: string,
 ) => SandboxGatewayState | Promise<SandboxGatewayState>;
+
+const GATEWAY_NAME = getManagedGatewayName();
+
+function gatewayStartHint(): string {
+  if (isPackagedGatewayMode()) {
+    return `systemctl --user restart openshell-gateway && openshell gateway select ${GATEWAY_NAME}`;
+  }
+  return `openshell gateway start --name ${GATEWAY_NAME}`;
+}
 
 export function mergeLivePolicyIntoSandboxOutput(
   output: string,
@@ -141,10 +151,10 @@ export async function getSandboxGatewayStateForStatus(
 
 /**
  * Reconcile a NotFound sandbox lookup against the named NemoClaw gateway state.
- * When the active OpenShell gateway has drifted off nemoclaw, a NotFound is
- * ambiguous: the sandbox may actually be registered against the nemoclaw
+ * When the active OpenShell gateway has drifted off the managed gateway, a NotFound is
+ * ambiguous: the sandbox may actually be registered against the managed
  * gateway but invisible because some other gateway is currently active. This
- * helper self-heals by attempting `openshell gateway select nemoclaw` and
+ * helper self-heals by attempting `openshell gateway select <managed>` and
  * re-queries, or returns a `wrong_gateway_active` state so callers can surface
  * actionable guidance instead of destroying the registry entry.
  */
@@ -154,7 +164,7 @@ export function reconcileMissingAgainstNamedGateway(
 ): SandboxGatewayState {
   const lifecycle = getNamedGatewayLifecycleState();
   if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", "nemoclaw"], {
+    runOpenshell(["gateway", "select", GATEWAY_NAME], {
       ignoreError: true,
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
@@ -184,7 +194,7 @@ export function reconcileMissingAgainstNamedGateway(
 }
 
 /**
- * Print actionable guidance when the nemoclaw gateway exists but another
+ * Print actionable guidance when the managed gateway exists but another
  * OpenShell gateway is currently active. Emphasizes that the sandbox has NOT
  * been removed and how to switch gateways before retrying. (#2276)
  */
@@ -193,12 +203,12 @@ export function printWrongGatewayActiveGuidance(
   activeGateway: string | null | undefined,
   writer: (message: string) => void = console.error,
 ): void {
-  const other = activeGateway && activeGateway !== "nemoclaw" ? activeGateway : "another gateway";
+  const other = activeGateway && activeGateway !== GATEWAY_NAME ? activeGateway : "another gateway";
   writer(
     `  Sandbox '${sandboxName}' is registered against the ${CLI_DISPLAY_NAME} gateway, but the currently active OpenShell gateway is '${other}'. Your sandbox has NOT been removed.`,
   );
   writer("  Switch gateways and retry:");
-  writer("      openshell gateway select nemoclaw");
+  writer(`      openshell gateway select ${GATEWAY_NAME}`);
   writer(`  Then re-run: ${CLI_NAME} ${sandboxName} connect`);
 }
 
@@ -214,7 +224,7 @@ export function printGatewayLifecycleHint(
       `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
     );
     writer(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before expecting existing sandboxes to reconnect.",
+      `  Start the gateway again with \`${gatewayStartHint()}\` before expecting existing sandboxes to reconnect.`,
     );
     writer(
       "  If the gateway has to be rebuilt from scratch, recreate the affected sandbox afterward.",
@@ -223,14 +233,14 @@ export function printGatewayLifecycleHint(
   }
   if (
     /Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
-    /Gateway:\s+nemoclaw/i.test(cleanOutput)
+    cleanOutput.includes(`Gateway: ${GATEWAY_NAME}`)
   ) {
     writer(
-      "  The selected NemoClaw gateway exists in metadata, but its API is refusing connections after restart.",
+      `  The selected ${CLI_DISPLAY_NAME} gateway exists in metadata, but its API is refusing connections after restart.`,
     );
     writer("  This usually means the gateway runtime did not come back cleanly after the restart.");
     writer(
-      "  Retry `openshell gateway start --name nemoclaw`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.",
+      `  Retry \`${gatewayStartHint()}\`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.`,
     );
     return;
   }
@@ -299,7 +309,7 @@ export async function getReconciledSandboxGatewayState(
     }
     if (
       /Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) &&
-      /Gateway:\s+nemoclaw/i.test(latestStatus)
+      latestStatus.includes(`Gateway: ${GATEWAY_NAME}`)
     ) {
       return {
         state: "gateway_unreachable_after_restart",
@@ -406,7 +416,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      "  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.",
+      `  Retry \`${gatewayStartHint()}\` and verify \`openshell status\` is healthy before reconnecting.`,
     );
     console.error(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -421,7 +431,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.",
+      `  Start the gateway again with \`${gatewayStartHint()}\` before retrying.`,
     );
     console.error(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",

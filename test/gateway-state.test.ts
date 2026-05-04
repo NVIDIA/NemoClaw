@@ -79,6 +79,12 @@ describe("hasStaleGateway", () => {
     const other = GW_INFO_NAMED.replace("nemoclaw", "other-gw");
     expect(hasStaleGateway(other)).toBe(false);
   });
+
+  it("supports a caller-supplied gateway name", () => {
+    const local = GW_INFO_NAMED.replaceAll("nemoclaw", "local");
+    expect(hasStaleGateway(local, "local")).toBe(true);
+    expect(hasStaleGateway(local)).toBe(false);
+  });
 });
 
 describe("hasActiveGatewayInfo", () => {
@@ -182,6 +188,20 @@ describe("isGatewayHealthy", () => {
     // be treated as empty after stripping, triggering the ARM64 fallback.
     const ansiOnly = "\x1b[0m\x1b[32m";
     expect(isGatewayHealthy(ansiOnly, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(true);
+  });
+
+  it("classifies the packaged local gateway as healthy when requested", () => {
+    const status = STATUS_CONNECTED.replaceAll("nemoclaw", "local").replace(
+      "https://127.0.0.1:8080/",
+      "http://127.0.0.1:17670/",
+    );
+    const info = GW_INFO_NAMED.replaceAll("nemoclaw", "local").replace(
+      "https://127.0.0.1:8080/",
+      "http://127.0.0.1:17670/",
+    );
+    expect(isGatewayHealthy(status, info, info, "local")).toBe(true);
+    expect(getGatewayReuseState(status, info, info, "local")).toBe("healthy");
+    expect(getGatewayReuseState(status, info, info)).toBe("foreign-active");
   });
 });
 

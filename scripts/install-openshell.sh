@@ -39,9 +39,39 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 MIN_VERSION="0.0.32"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.36"
-# Pin fresh installs to this version instead of pulling "latest".
-PIN_VERSION="$MAX_VERSION"
+MAX_VERSION="0.0.37"
+# Pin fresh stable installs to the last validated tagged release. The dev/deb
+# path below intentionally uses OpenShell's rolling dev release instead.
+PIN_VERSION="${NEMOCLAW_OPENSHELL_PIN_VERSION:-0.0.36}"
+DEV_INSTALLER_URL="https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install-dev.sh"
+
+lower() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+CHANNEL="$(lower "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}")"
+GATEWAY_MODE="$(lower "${NEMOCLAW_OPENSHELL_GATEWAY_MODE:-docker}")"
+USE_DEV_INSTALLER="0"
+case "$CHANNEL" in
+  dev | main | deb) USE_DEV_INSTALLER="1" ;;
+esac
+case "$GATEWAY_MODE" in
+  packaged | deb | dev) USE_DEV_INSTALLER="1" ;;
+esac
+
+if [ "$USE_DEV_INSTALLER" = "1" ]; then
+  [ "$OS" = "Linux" ] || fail "OpenShell dev/deb installer is Linux-only. Unset NEMOCLAW_OPENSHELL_CHANNEL or NEMOCLAW_OPENSHELL_GATEWAY_MODE for stable tarball installs."
+  command -v dpkg >/dev/null 2>&1 || fail "OpenShell dev/deb installer requires dpkg."
+
+  info "Installing OpenShell dev Debian package via install-dev.sh..."
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+  curl -fsSL "$DEV_INSTALLER_URL" -o "$tmpdir/install-dev.sh"
+  head -n 1 "$tmpdir/install-dev.sh" | grep -Eq '^#!(/usr/bin/env )?(ba)?sh$|^#!/bin/(ba)?sh$' \
+    || fail "Downloaded OpenShell dev installer did not look like a shell script."
+  sh "$tmpdir/install-dev.sh"
+  exit 0
+fi
 
 version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)

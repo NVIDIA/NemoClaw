@@ -10,6 +10,7 @@ import { parseGatewayInference } from "./inference-config";
 import { probeProviderHealth } from "./inference-health";
 import * as nim from "./nim";
 import * as onboardSession from "./onboard-session";
+import { getManagedGatewayName, isPackagedGatewayMode } from "./openshell-gateway-mode";
 import type { Session } from "./onboard-session";
 import { captureOpenshellForStatus, isCommandTimeout } from "./openshell-runtime";
 import * as registry from "./registry";
@@ -30,6 +31,15 @@ import * as shields from "./shields";
 import { D, G, R, RD, YW } from "./terminal-style";
 
 const agentRuntime = require("../../bin/lib/agent-runtime");
+
+const GATEWAY_NAME = getManagedGatewayName();
+
+function gatewayStartHint(): string {
+  if (isPackagedGatewayMode()) {
+    return `systemctl --user restart openshell-gateway && openshell gateway select ${GATEWAY_NAME}`;
+  }
+  return `openshell gateway start --name ${GATEWAY_NAME}`;
+}
 
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
@@ -191,7 +201,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log(lookup.output);
     }
     console.log(
-      "  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.",
+      `  Retry \`${gatewayStartHint()}\` and verify \`openshell status\` is healthy before reconnecting.`,
     );
     console.log(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -206,7 +216,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log(lookup.output);
     }
     console.log(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.",
+      `  Start the gateway again with \`${gatewayStartHint()}\` before retrying.`,
     );
     console.log(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",

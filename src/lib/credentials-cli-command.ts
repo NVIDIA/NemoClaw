@@ -8,6 +8,7 @@ import { Args, Command, Flags } from "@oclif/core";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
 import { prompt as askPrompt } from "./credentials";
 import { recoverNamedGatewayRuntime, runOpenshellProviderCommand } from "./global-cli-actions";
+import { getManagedGatewayName, isPackagedGatewayMode } from "./openshell-gateway-mode";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "./openshell-timeouts";
 
 // Suffixes that mark per-sandbox messaging integrations in the gateway's
@@ -18,6 +19,15 @@ const BRIDGE_PROVIDER_SUFFIXES: readonly string[] = [
   "-slack-bridge",
   "-slack-app",
 ];
+
+const GATEWAY_NAME = getManagedGatewayName();
+
+function gatewayStartHint(): string {
+  if (isPackagedGatewayMode()) {
+    return `systemctl --user restart openshell-gateway && openshell gateway select ${GATEWAY_NAME}`;
+  }
+  return `openshell gateway start --name ${GATEWAY_NAME}`;
+}
 
 function isBridgeProviderName(name: string): boolean {
   return BRIDGE_PROVIDER_SUFFIXES.some((suffix) => name.endsWith(suffix));
@@ -45,7 +55,7 @@ async function recoverGatewayOrExit(kind: "query" | "reach"): Promise<void> {
   } else {
     console.error(`  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Is it running?`);
   }
-  console.error(`  Run 'openshell gateway start --name nemoclaw' or '${CLI_NAME} onboard' first.`);
+  console.error(`  Run '${gatewayStartHint()}' or '${CLI_NAME} onboard' first.`);
   process.exit(1);
 }
 
@@ -87,7 +97,7 @@ export class CredentialsListCommand extends Command {
     });
     if (result.status !== 0) {
       console.error("  Could not query OpenShell gateway. Is it running?");
-      console.error(`  Run 'openshell gateway start --name nemoclaw' or '${CLI_NAME} onboard' first.`);
+      console.error(`  Run '${gatewayStartHint()}' or '${CLI_NAME} onboard' first.`);
       process.exit(1);
     }
 

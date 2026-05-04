@@ -11,6 +11,7 @@ import { dockerCapture, dockerInspect } from "./docker";
 import { parseLiveSandboxNames } from "./runtime-recovery";
 import { ROOT, run, shellQuote, validateName } from "./runner";
 import { captureOpenshell, getOpenshellBinary } from "./openshell-runtime";
+import { getManagedGatewayName, usesDockerManagedGateway } from "./openshell-gateway-mode";
 import * as policies from "./policies";
 import * as registry from "./registry";
 import type { SandboxEntry } from "./registry";
@@ -26,7 +27,7 @@ const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
 
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
+const NEMOCLAW_GATEWAY_NAME = getManagedGatewayName();
 
 function parseSnapshotCreateFlags(flags: string[]) {
   const opts: { name: string | null } = { name: null };
@@ -175,7 +176,7 @@ async function autoCreateSandboxFromSource(
 
   // Set up DNS proxy in the new pod (same step onboard runs after sandbox create).
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
-  if (fs.existsSync(dnsScript)) {
+  if (usesDockerManagedGateway() && fs.existsSync(dnsScript)) {
     run(["bash", dnsScript, NEMOCLAW_GATEWAY_NAME, dstName], { ignoreError: true });
   }
 
@@ -199,6 +200,9 @@ async function autoCreateSandboxFromSource(
 // `openshell sandbox list` reads a local registry and exits 0 even when the
 // gateway is stopped (#2673), so we probe the container directly instead.
 function probeGatewayRunning(): boolean {
+  if (!usesDockerManagedGateway()) {
+    return true;
+  }
   const container = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
   const result = dockerInspect(
     ["--type", "container", "--format", "{{.State.Running}}", container],

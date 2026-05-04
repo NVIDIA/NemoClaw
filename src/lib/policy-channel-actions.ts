@@ -10,6 +10,7 @@ import { CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
 import { hashCredential } from "./credential-hash";
 import { getCredential, prompt as askPrompt } from "./credentials";
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
+import { getManagedGatewayName, isPackagedGatewayMode } from "./openshell-gateway-mode";
 const { isNonInteractive } = require("./onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("./onboard-providers");
 import * as policies from "./policies";
@@ -32,6 +33,15 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
 const YW = useColor ? "\x1b[1;33m" : "";
+
+const GATEWAY_NAME = getManagedGatewayName();
+
+function gatewayStartHint(): string {
+  if (isPackagedGatewayMode()) {
+    return `systemctl --user restart openshell-gateway && openshell gateway select ${GATEWAY_NAME}`;
+  }
+  return `openshell gateway start --name ${GATEWAY_NAME}`;
+}
 
 /**
  * Handle `nemoclaw <sandbox> policy-add [flags]`. Supports three mutually
@@ -291,7 +301,7 @@ async function applyChannelAddToGatewayAndRegistry(
       `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
     );
     console.error("  in env for this run only — re-run after starting the gateway, or run");
-    console.error("  'openshell gateway start --name nemoclaw' manually.");
+    console.error(`  '${gatewayStartHint()}' manually.`);
     process.exit(1);
   }
   const tokenDefs = Object.entries(acquired).map(([envKey, token]) => ({
@@ -338,7 +348,7 @@ async function applyChannelRemoveToGatewayAndRegistry(
       `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway to delete the bridge.`,
     );
     console.error(
-      "  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.",
+      `  Re-run after starting the gateway, or run '${gatewayStartHint()}'.`,
     );
     process.exit(1);
   }
