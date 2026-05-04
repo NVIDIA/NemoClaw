@@ -283,6 +283,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> config get",
     description: "Get sandbox configuration",
+    flags: "[--key <dotpath>] [--format json|yaml]",
     group: "Sandbox Management",
     scope: "sandbox",
     hidden: true,

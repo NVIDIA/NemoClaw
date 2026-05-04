@@ -29,6 +29,13 @@ describe("resolveSandboxOclifDispatch", () => {
     });
   });
 
+  it("keeps sandbox doctor help public", () => {
+    expect(resolveSandboxOclifDispatch("alpha", "doctor", ["--help"])).toEqual({
+      kind: "help",
+      usage: "doctor [--json]",
+    });
+  });
+
   it("keeps sandbox logs help public with supported filters", () => {
     expect(resolveSandboxOclifDispatch("alpha", "logs", ["--help"])).toEqual({
       kind: "help",

@@ -92,6 +92,42 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
 
+function writeOpenClawRegistry(sandboxName: string): void {
+  fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
+  fs.writeFileSync(
+    path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
+    JSON.stringify({
+      defaultSandbox: sandboxName,
+      sandboxes: {
+        [sandboxName]: {
+          name: sandboxName,
+          model: "m",
+          provider: "p",
+          gpuEnabled: false,
+          policies: [],
+          agent: null,
+        },
+      },
+    }),
+  );
+}
+
+function writeFakeOpenshell(binDir: string): string {
+  const openshell = path.join(binDir, "openshell");
+  writeExecutable(
+    openshell,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "sandbox" && args[1] === "ssh-config") {
+  process.stdout.write("Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+  );
+  return openshell;
+}
+
 describe("validateSnapshotName", () => {
   it("accepts normal names", () => {
     expect(sandboxState.validateSnapshotName("before-upgrade")).toBeNull();
@@ -192,6 +228,45 @@ describe("listBackups computes virtual versions", () => {
     );
 
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+  });
+
+  it("ignores rebuild manifests with unsafe backed-up directory paths", () => {
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      stateDirs: ["workspace"],
+      backedUpDirs: ["../outside"],
+    });
+
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+  });
+
+  it("ignores rebuild manifests whose backed-up dirs are not declared state dirs", () => {
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      stateDirs: ["workspace"],
+      backedUpDirs: ["workspace", "agents"],
+    });
+
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+  });
+
+  it("does not restore backed-up directory entries that are plain files", () => {
+    const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      stateDirs: ["workspace"],
+      backedUpDirs: ["workspace"],
+    });
+    fs.writeFileSync(path.join(String(manifest.backupPath), "workspace"), "not a directory");
+
+    const restore = sandboxState.restoreSandboxState(
+      "test-sandbox",
+      String(manifest.backupPath),
+    );
+
+    expect(restore).toEqual({
+      success: true,
+      restoredDirs: [],
+      failedDirs: [],
+      restoredFiles: [],
+      failedFiles: [],
+    });
   });
 });
 
@@ -344,6 +419,224 @@ describe("parseRestoreArgs", () => {
       targetSandbox: "src",
       selector: "v1",
     });
+  });
+});
+
+describe("sandbox directory backup semantics", () => {
+  it("treats empty state directories as backed up when tar exits cleanly", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-empty-dirs-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["agents", "extensions", "workspace", "skills", "hooks", "cron"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const dirName of existingDirs) {
+        fs.mkdirSync(path.join(openclawDir, dirName), { recursive: true });
+      }
+      fs.writeFileSync(path.join(openclawDir, "workspace", "marker.txt"), "marker\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  if (r.stderr) fs.writeSync(2, r.stderr);
+  process.exit(r.status || 0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(true);
+      expect(backup.failedDirs).toEqual([]);
+      expect(backup.backedUpDirs).toEqual(existingDirs);
+      expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes tar-failed directories from the restorable manifest", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-partial-tar-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const sshLog = path.join(fixture, "ssh-log.jsonl");
+      const existingDirs = ["agents", "workspace", "extensions"];
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "agents", "main", "sessions"), { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "extensions"), { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "workspace"), { recursive: true });
+      fs.writeFileSync(path.join(openclawDir, "workspace", "marker.txt"), "marker\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify({ cmd }) + "\\n");
+function readStdin() {
+  for (;;) {
+    const buf = Buffer.alloc(65536);
+    const n = fs.readSync(0, buf, 0, buf.length, null);
+    if (n === 0) break;
+  }
+}
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  process.stderr.write("tar: agents/main/sessions/sessions.json: Cannot open: Permission denied\\n");
+  process.stderr.write("tar: Exiting with failure status due to previous errors\\n");
+  process.exit(2);
+}
+if (cmd.includes("rm -rf") || cmd.includes("tar --no-same-owner")) {
+  readStdin();
+  process.exit(0);
+}
+if (cmd.includes("chown") || cmd.includes("[ -r ")) {
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(false);
+      expect(backup.failedDirs).toEqual(["agents"]);
+      expect(backup.backedUpDirs).toEqual(["workspace", "extensions"]);
+      expect(backup.manifest?.backedUpDirs).toEqual(["workspace", "extensions"]);
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, "agents"))).toBe(true);
+
+      const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+      expect(restore.success).toBe(true);
+      expect(restore.restoredDirs).toEqual(["workspace", "extensions"]);
+
+      const loggedCommands = fs
+        .readFileSync(sshLog, "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line).cmd as string);
+      const cleanupCommand = loggedCommands.find((cmd) => cmd.includes("rm -rf"));
+      expect(cleanupCommand).toContain("/sandbox/.openclaw/workspace");
+      expect(cleanupCommand).toContain("/sandbox/.openclaw/extensions");
+      expect(cleanupCommand).not.toContain("/sandbox/.openclaw/agents");
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("marks non-attributed directories failed when they are missing from partial extraction", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-missing-partial-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["agents", "workspace", "extensions"];
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "agents"), { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "workspace"), { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "extensions"), { recursive: true });
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, "extensions"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  process.stderr.write("tar: agents/sessions.json: Cannot open: Permission denied\\n");
+  process.stderr.write("tar: Exiting with failure status due to previous errors\\n");
+  process.exit(2);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(false);
+      expect(backup.backedUpDirs).toEqual(["extensions"]);
+      expect(backup.failedDirs).toEqual(["agents", "workspace"]);
+      expect(backup.manifest?.backedUpDirs).toEqual(["extensions"]);
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, "workspace"))).toBe(false);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
   });
 });
 

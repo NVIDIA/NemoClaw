@@ -111,6 +111,7 @@ export function resolveSandboxOclifDispatch(
       }
       return { kind: "oclif", commandId: "sandbox:logs", args: [sandboxName, ...actionArgs] };
     case "doctor":
+      if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "doctor [--json]" };
       return { kind: "oclif", commandId: "sandbox:doctor", args: [sandboxName, ...actionArgs] };
     case "policy-add":
       if (hasHelpFlag(actionArgs)) {

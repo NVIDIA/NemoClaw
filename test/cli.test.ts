@@ -1350,6 +1350,11 @@ describe("CLI dispatch", () => {
     expect(status.out).toContain("<name> status");
     expect(status.out).not.toContain("sandbox:status");
 
+    const doctor = runWithEnv("alpha doctor --help", { HOME: home });
+    expect(doctor.code).toBe(0);
+    expect(doctor.out).toContain("<name> doctor [--json]");
+    expect(doctor.out).not.toContain("sandbox:doctor");
+
     const logs = runWithEnv("alpha logs --help", { HOME: home });
     expect(logs.code).toBe(0);
     expect(logs.out).toContain("<name> logs");
@@ -1390,6 +1395,7 @@ describe("CLI dispatch", () => {
     const config = runWithEnv("alpha config get --help", { HOME: home });
     expect(config.code).toBe(0);
     expect(config.out).toContain("<name> config get");
+    expect(config.out).toContain("--format json|yaml");
     expect(config.out).not.toContain("sandbox:config:get");
   });
 
@@ -1430,6 +1436,21 @@ describe("CLI dispatch", () => {
     const start = runWithEnv("alpha channels start telegram --dry-run", { HOME: home });
     expect(start.code).toBe(0);
     expect(start.out).toContain("Channel 'telegram' is already enabled for 'alpha'. Nothing to do.");
+  });
+
+  it("diagnostic commands reject invalid parser-owned flags before dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-diagnostics-invalid-flags-"));
+    writeSandboxRegistry(home);
+
+    const badConfigFormat = runWithEnv("alpha config get --format xml 2>&1", { HOME: home });
+    expect(badConfigFormat.code).not.toBe(0);
+    expect(badConfigFormat.out).toContain("--format");
+    expect(badConfigFormat.out).toContain("json");
+    expect(badConfigFormat.out).toContain("yaml");
+
+    const badDoctorFlag = runWithEnv("alpha doctor --bogus 2>&1", { HOME: home });
+    expect(badDoctorFlag.code).not.toBe(0);
+    expect(badDoctorFlag.out).toContain("Nonexistent flag: --bogus");
   });
 
   it("shields help keeps public sandbox-scoped usage", () => {
