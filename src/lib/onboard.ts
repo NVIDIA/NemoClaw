@@ -7513,6 +7513,7 @@ async function setupPoliciesWithSelection(
   if (isNonInteractive()) {
     const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
     chosen = suggestions;
+    let isAuthoritative = false;
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
       note("  [non-interactive] Skipping policy presets.");
@@ -7525,6 +7526,7 @@ async function setupPoliciesWithSelection(
         console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
         process.exit(1);
       }
+      isAuthoritative = true;
     } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
       const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
       if (envPresets.length > 0) chosen = envPresets;
@@ -7549,6 +7551,28 @@ async function setupPoliciesWithSelection(
     if (invalidPresets.length > 0) {
       console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
       process.exit(1);
+    }
+
+    // Suggested mode is additive: presets the user added beyond the tier
+    // defaults (typically via `nemoclaw <name> policy-add`, including custom
+    // presets loaded with `--from-file`/`--from-dir`) must survive a
+    // re-onboard. `applied` comes from the registry and is the source of
+    // truth for what is currently on the sandbox, so trust it directly
+    // instead of intersecting with the built-in list. Custom mode remains
+    // authoritative — the operator-supplied list is exactly what the
+    // sandbox ends up with, and deselected presets are removed.
+    if (!isAuthoritative) {
+      const chosenSet = new Set(chosen);
+      const preserved: string[] = [];
+      for (const name of applied) {
+        if (chosenSet.has(name)) continue;
+        chosen.push(name);
+        chosenSet.add(name);
+        preserved.push(name);
+      }
+      if (preserved.length > 0) {
+        note(`  [non-interactive] Preserving previously-applied presets: ${preserved.join(", ")}`);
+      }
     }
 
     if (onSelection) onSelection(chosen);
