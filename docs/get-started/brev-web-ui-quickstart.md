@@ -32,8 +32,8 @@ If you prefer the CLI-based remote deployment, see [Deploy to a Remote GPU Insta
 
 ## Prerequisites
 
-- A free Brev account at [brev.nvidia.com](https://brev.nvidia.com)
-- A free NVIDIA API key from [build.nvidia.com](https://build.nvidia.com)
+- An NVIDIA Brev account at [brev.nvidia.com](https://brev.nvidia.com)
+- An NVIDIA API key from [build.nvidia.com](https://build.nvidia.com)
 
 No local software installation is needed.
 
