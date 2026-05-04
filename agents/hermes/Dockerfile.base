@@ -100,6 +100,7 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/cache \
         /sandbox/.hermes/pairing \
         /sandbox/.hermes/runtime \
+    && chmod 2770 /sandbox/.hermes/runtime \
     && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \

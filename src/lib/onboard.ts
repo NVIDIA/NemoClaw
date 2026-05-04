@@ -53,6 +53,8 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runShell, runCapture, runFile, shellQuote, validateName } =
   runner;
+const nameValidation: typeof import("./name-validation") = require("./name-validation");
+const { NAME_ALLOWED_FORMAT, getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./docker") = require("./docker");
 const {
   dockerContainerInspectFormat,
@@ -268,6 +270,7 @@ const {
   resolveProviderCredential,
   saveCredential,
 } = credentials;
+const { hashCredential }: typeof import("./credential-hash") = require("./credential-hash");
 const registry: typeof import("./registry") = require("./registry");
 const nim: typeof import("./nim") = require("./nim");
 const onboardSession: typeof import("./onboard-session") = require("./onboard-session");
@@ -1237,18 +1240,6 @@ function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
 }
 function providerExistsInGateway(name: string) {
   return onboardProviders.providerExistsInGateway(name, runOpenshell);
-}
-
-/**
- * Compute a SHA-256 hash of a credential value for change detection.
- * Stored in the sandbox registry so we can detect rotation on reuse
- * without needing to read the credential back from OpenShell.
- * @param {string} value - Credential value to hash.
- * @returns {string|null} Hex-encoded SHA-256 hash, or null if value is falsy.
- */
-function hashCredential(value: string | null | undefined): string | null {
-  if (!value) return null;
-  return crypto.createHash("sha256").update(String(value).trim()).digest("hex");
 }
 
 /**
@@ -3846,7 +3837,7 @@ async function promptValidatedSandboxName(agent: AgentDefinition | null = null) 
   const defaultSandboxName = getSandboxPromptDefault(agent);
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const nameAnswer = await promptOrDefault(
-      `  Sandbox name (lowercase, starts with letter, hyphens ok) [${defaultSandboxName}]: `,
+      `  Sandbox name (${NAME_ALLOWED_FORMAT}) [${defaultSandboxName}]: `,
       "NEMOCLAW_SANDBOX_NAME",
       defaultSandboxName,
     );
@@ -3871,11 +3862,10 @@ async function promptValidatedSandboxName(agent: AgentDefinition | null = null) 
       console.error(`  ${errorMessage}`);
     }
 
-    if (/^[0-9]/.test(sandboxName)) {
-      console.error("  Names must start with a letter, not a digit.");
-    } else {
-      console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
-      console.error("  must start with a letter, and end with a letter or number.");
+    for (const line of getNameValidationGuidance("sandbox name", sandboxName, {
+      includeAllowedFormat: false,
+    })) {
+      console.error(`  ${line}`);
     }
 
     // Non-interactive runs cannot re-prompt — abort so the caller can fix the
@@ -4025,29 +4015,42 @@ async function createSandbox(
   // skipped the token prompt for. Only channels with a real token will have a
   // provider attached, so the conflict check must filter out the skipped ones
   // (otherwise we warn about phantom channels that will never poll).
-  const conflictCheckChannels: string[] = Array.isArray(enabledChannels)
-    ? enabledChannels.filter((name) => {
+  const conflictCheckChannels = Array.isArray(enabledChannels)
+    ? enabledChannels.flatMap((name) => {
         const def = MESSAGING_CHANNELS.find((c) => c.name === name);
-        return def ? !!getMessagingToken(def.envKey) : false;
+        if (!def || !getMessagingToken(def.envKey)) return [];
+        const tokenEnvKeys = def.appTokenEnvKey ? [def.envKey, def.appTokenEnvKey] : [def.envKey];
+        const credentialHashes: Record<string, string> = {};
+        for (const envKey of tokenEnvKeys) {
+          const hash = hashCredential(getMessagingToken(envKey));
+          if (hash) credentialHashes[envKey] = hash;
+        }
+        if (Object.keys(credentialHashes).length === 0) return [];
+        return [{ channel: name, credentialHashes }];
       })
     : [];
 
   // Messaging channels like Telegram (getUpdates), Discord (gateway), and Slack
-  // (Socket Mode) enforce one consumer per bot token. Two sandboxes sharing
-  // a token silently break both bridges (see #1953). Warn before we commit.
+  // (Socket Mode) enforce one consumer per channel credential. Two sandboxes
+  // sharing a credential silently break both bridges (see #1953). Warn before
+  // we commit.
   if (conflictCheckChannels.length > 0) {
     const { backfillMessagingChannels, findChannelConflicts } = require("./messaging-conflict");
     backfillMessagingChannels(registry, makeConflictProbe());
     const conflicts = findChannelConflicts(sandboxName, conflictCheckChannels, registry);
     if (conflicts.length > 0) {
-      for (const { channel, sandbox } of conflicts) {
+      for (const { channel, sandbox, reason } of conflicts) {
+        const detail =
+          reason === "matching-token"
+            ? `uses the same ${channel} credential`
+            : `already has ${channel} enabled, but its credential hash is unavailable`;
         console.log(
-          `  ⚠ Sandbox '${sandbox}' already has ${channel} enabled. Bot tokens only allow one sandbox to poll — continuing will break both bridges.`,
+          `  ⚠ Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect — continuing may break both bridges.`,
         );
       }
       if (isNonInteractive()) {
         console.error(
-          `  Aborting: resolve the messaging channel conflict above or run \`${cliName()} <sandbox> destroy\` on the other sandbox.`,
+          `  Aborting: resolve the messaging channel conflict above or run \`${cliName()} <sandbox> channels stop <channel>\` / \`${cliName()} <sandbox> channels remove <channel>\` on the other sandbox.`,
         );
         process.exit(1);
       }
@@ -4272,7 +4275,9 @@ async function createSandbox(
       try {
         const backup = sandboxState.backupSandboxState(sandboxName);
         if (backup.success) {
-          note(`  ✓ State backed up (${backup.backedUpDirs.length} directories)`);
+          note(
+            `  ✓ State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
+          );
           pendingStateRestore = backup;
         } else {
           console.error("  State backup failed — aborting rebuild to prevent data loss.");
@@ -4895,7 +4900,9 @@ async function createSandbox(
       pendingStateRestore.manifest.backupPath,
     );
     if (restore.success) {
-      note(`  ✓ State restored (${restore.restoredDirs.length} directories)`);
+      note(
+        `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
+      );
     } else {
       console.error(
         `  Warning: partial restore. Manual recovery: ${pendingStateRestore.manifest.backupPath}`,
@@ -8362,6 +8369,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       requestedSandboxName = validated;
     } catch (error) {
       console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+      for (const line of getNameValidationGuidance("sandbox name", requestedSandboxName, {
+        includeAllowedFormat: false,
+      })) {
+        console.error(`  ${line}`);
+      }
       process.exit(1);
     }
   }

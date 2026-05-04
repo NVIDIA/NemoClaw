@@ -228,6 +228,7 @@ RUN set -eu; \
         /sandbox/.hermes/cache \
         /sandbox/.hermes/pairing \
         /sandbox/.hermes/runtime \
+    && chmod 2770 /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \
     && chmod 640 /sandbox/.hermes/.env \
     && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \

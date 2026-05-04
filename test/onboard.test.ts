@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../dist/lib/agent-defs.js";
 import { loadAgent } from "../dist/lib/agent-defs.js";
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard-contract.js";
+import { NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context.js";
 
 type ShimScalar = string | number | boolean | null | undefined;
@@ -6676,6 +6677,18 @@ const { createSandbox } = require(${onboardPath});
     // Non-interactive still exits within this function
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);
+    assert.match(fnBody, /getNameValidationGuidance\("sandbox name", sandboxName,/);
+  });
+
+  it("shows the full allowed sandbox name format before prompting", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    expect(NAME_ALLOWED_FORMAT).toBe(
+      "lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number",
+    );
+    assert.match(source, /Sandbox name \(\$\{NAME_ALLOWED_FORMAT\}\)/);
   });
 
   it("guards against reusing the same sandbox name for a different agent", () => {

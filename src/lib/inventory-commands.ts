@@ -11,6 +11,7 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[] | null;
+  providerCredentialHashes?: Record<string, string> | null;
   messagingChannels?: string[] | null;
   agent?: string | null;
   dashboardPort?: number | null;
@@ -72,6 +73,7 @@ export interface SandboxInventoryResult {
 export interface MessagingOverlap {
   channel: string;
   sandboxes: [string, string];
+  reason?: "matching-token" | "unknown-token";
 }
 
 export interface ShowStatusCommandDeps {
@@ -351,13 +353,17 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     const overlaps = deps.backfillAndFindOverlaps();
     if (overlaps.length > 0) {
       log("");
-      for (const { channel, sandboxes: pair } of overlaps) {
+      for (const { channel, sandboxes: pair, reason } of overlaps) {
+        const detail =
+          reason === "matching-token"
+            ? `share the same ${channel} credential`
+            : `may share a ${channel} credential; stored credential hashes are incomplete`;
         log(
-          `  ⚠ ${channel} is enabled on both '${pair[0]}' and '${pair[1]}'. Bot tokens only allow one sandbox to poll — both bridges will fail.`,
+          `  ⚠ '${pair[0]}' and '${pair[1]}' ${detail}. Only one bridge can poll/connect per credential.`,
         );
       }
       log(
-        `    Run \`${CLI_NAME} <sandbox> destroy\` on whichever sandbox should stop polling, or rerun onboarding with the channel disabled.`,
+        `    Run \`${CLI_NAME} <sandbox> channels stop <channel>\` to pause one bridge, or \`${CLI_NAME} <sandbox> channels remove <channel>\` to remove stale bridge metadata.`,
       );
     }
   }
