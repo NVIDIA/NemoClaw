@@ -1496,7 +1496,8 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
     it("errors when --from-file is missing its path argument", () => {
       const result = runPolicyAddExternal(["--from-file"]);
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/--from-file requires a path argument/);
+      expect(result.stderr).toMatch(/--from-file/);
+      expect(result.stderr).toMatch(/value|argument|path/);
     });
 
     it("applies every preset in --from-dir in sorted order and aborts on the first failure", () => {

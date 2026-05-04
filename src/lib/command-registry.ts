@@ -234,24 +234,28 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> channels add",
     description: "Save credentials and rebuild",
+    flags: "<channel> [--dry-run]",
     group: "Messaging Channels",
     scope: "sandbox",
   },
   {
     usage: "nemoclaw <name> channels remove",
     description: "Clear credentials and rebuild",
+    flags: "<channel> [--dry-run]",
     group: "Messaging Channels",
     scope: "sandbox",
   },
   {
     usage: "nemoclaw <name> channels stop",
     description: "Disable channel (keeps credentials)",
+    flags: "<channel> [--dry-run]",
     group: "Messaging Channels",
     scope: "sandbox",
   },
   {
     usage: "nemoclaw <name> channels start",
     description: "Re-enable a previously stopped channel",
+    flags: "<channel> [--dry-run]",
     group: "Messaging Channels",
     scope: "sandbox",
   },
