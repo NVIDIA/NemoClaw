@@ -5,40 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-type RunBlock = { start: number; block: string };
-
 const DOCKERFILE = path.join(import.meta.dirname, "..", "agents", "hermes", "Dockerfile");
-
-function findRunBlock(src: string, predicate: (block: string) => boolean): RunBlock | null {
-  const lines = src.split("\n");
-  let current: string[] = [];
-  let start = -1;
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (start === -1) {
-      if (/^\s*RUN\b/.test(line)) {
-        start = i;
-        current = [line];
-        if (!/\\\s*$/.test(line)) {
-          const block = current.join("\n");
-          if (predicate(block)) return { start, block };
-          start = -1;
-        }
-      }
-      continue;
-    }
-
-    current.push(line);
-    if (!/\\\s*$/.test(line)) {
-      const block = current.join("\n");
-      if (predicate(block)) return { start, block };
-      start = -1;
-    }
-  }
-
-  return null;
-}
 
 describe("Hermes Dockerfile TUI Build Chain", () => {
   it("implements the secure build-and-prune sequence before privilege drop", () => {
