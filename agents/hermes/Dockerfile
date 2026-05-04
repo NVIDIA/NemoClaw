@@ -54,6 +54,9 @@ COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
 
+# Hermes CLI checks HERMES_TUI_DIR first for a prebuilt TUI entrypoint.
+ENV HERMES_TUI_DIR=/opt/hermes/ui-tui/
+
 # Preinstall Hermes TUI dependencies, build the project, and prune dev-deps 
 # before the sandbox becomes read-only. Chained in one layer to prevent image bloat.
 RUN if [ -d /opt/hermes/ui-tui ]; then \
@@ -61,6 +64,8 @@ RUN if [ -d /opt/hermes/ui-tui ]; then \
     && npm ci --ignore-scripts \
     && npm run build \
     && npm prune --omit=dev \
+    && npm install --package-lock-only --ignore-scripts \
+    && if [ -f package-lock.json ] && [ -f node_modules/.package-lock.json ]; then touch -r package-lock.json node_modules/.package-lock.json; fi \
     && npm cache clean --force; \
     fi
 
@@ -241,6 +246,9 @@ RUN set -eu; \
     && chmod 2770 /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \
     && chmod 640 /sandbox/.hermes/.env \
+    && mkdir -p /sandbox/.hermes-data \
+    && chown sandbox:sandbox /sandbox/.hermes-data \
+    && chmod 770 /sandbox/.hermes-data \
     && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
