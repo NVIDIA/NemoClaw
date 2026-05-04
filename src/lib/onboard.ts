@@ -5452,6 +5452,8 @@ async function setupNim(
           // fall back to the existing ollama option silently
           if (providerKey === "install-ollama") {
             selected = options.find((o) => o.key === "ollama");
+          } else if (providerKey === "ollama") {
+            selected = options.find((o) => o.key === "install-ollama");
           }
           if (!selected) {
             console.error(
