@@ -254,10 +254,10 @@ async function runDispatchResult(
 
 // ── Dispatch ─────────────────────────────────────────────────────
 
-const [cmd, ...args] = process.argv.slice(2);
-
 // eslint-disable-next-line complexity
-const mainPromise = (async () => {
+async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const [cmd, ...args] = argv;
+
   // No command → help
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     await runOclif("root:help", []);
@@ -364,6 +364,9 @@ const mainPromise = (async () => {
 
   console.error(`  Run '${CLI_NAME} help' for usage.`);
   process.exit(1);
-})();
+}
 
-exports.mainPromise = mainPromise;
+exports.main = main;
+// Compatibility for tests that require the CLI module and await completion.
+// Prefer calling main(argv) directly in new in-process harnesses.
+exports.mainPromise = main();
