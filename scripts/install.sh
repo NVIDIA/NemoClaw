@@ -961,91 +961,18 @@ install_nodejs() {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Ollama
+# 2. Ollama — handled entirely by `nemoclaw onboard` (binary install, model
+# pulls, daemon binding). install.sh used to bootstrap Ollama here, but that
+# duplicated onboard's own install-ollama branch and pulled a hardcoded
+# nemotron model regardless of NEMOCLAW_MODEL. Removed in favour of letting
+# onboard own the policy.
 # ---------------------------------------------------------------------------
-OLLAMA_MIN_VERSION="0.18.0"
-# IMPORTANT: update OLLAMA_INSTALL_SHA256 when changing OLLAMA_MIN_VERSION
-# Pattern: pin hash and verify, same as NVM_SHA256 above (line ~656).
-OLLAMA_INSTALL_SHA256="25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f"
-
-get_ollama_version() {
-  # `ollama --version` outputs something like "ollama version 0.18.0"
-  ollama --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
-}
-
 detect_gpu() {
-  # Returns 0 if a GPU is detected
+  # Returns 0 if a GPU is detected. Used by the vLLM bootstrap below.
   if command_exists nvidia-smi; then
     nvidia-smi &>/dev/null && return 0
   fi
   return 1
-}
-
-get_vram_mb() {
-  # Returns total VRAM in MiB (NVIDIA only). Falls back to 0.
-  if command_exists nvidia-smi; then
-    nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null \
-      | awk '{s += $1} END {print s+0}'
-    return
-  fi
-  # macOS — report unified memory as VRAM
-  if [[ "$(uname -s)" == "Darwin" ]] && command_exists sysctl; then
-    local bytes
-    bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
-    echo $((bytes / 1024 / 1024))
-    return
-  fi
-  echo 0
-}
-
-install_or_upgrade_ollama() {
-  if detect_gpu && command_exists ollama; then
-    local current
-    current=$(get_ollama_version)
-    if [[ -n "$current" ]] && version_gte "$current" "$OLLAMA_MIN_VERSION"; then
-      info "Ollama v${current} meets minimum requirement (>= v${OLLAMA_MIN_VERSION})"
-    else
-      info "Ollama v${current:-unknown} is below v${OLLAMA_MIN_VERSION} — upgrading…"
-      (
-        tmpdir="$(mktemp -d)"
-        trap 'rm -rf "$tmpdir"' EXIT
-        curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
-        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama" "$OLLAMA_INSTALL_SHA256"
-        sh "$tmpdir/install_ollama.sh"
-      )
-      info "Ollama upgraded to $(get_ollama_version)"
-    fi
-  else
-    # No ollama — only install if a GPU is present
-    if detect_gpu; then
-      info "GPU detected — installing Ollama…"
-      (
-        tmpdir="$(mktemp -d)"
-        trap 'rm -rf "$tmpdir"' EXIT
-        curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
-        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama" "$OLLAMA_INSTALL_SHA256"
-        sh "$tmpdir/install_ollama.sh"
-      )
-      info "Ollama installed: v$(get_ollama_version)"
-    else
-      warn "No GPU detected — skipping Ollama installation."
-      return
-    fi
-  fi
-
-  # Pull the appropriate model based on VRAM
-  local vram_mb
-  vram_mb=$(get_vram_mb)
-  local vram_gb=$((vram_mb / 1024))
-  info "Detected ${vram_gb} GB VRAM"
-
-  if ((vram_gb >= 120)); then
-    info "Pulling nemotron-3-super:120b…"
-    ollama pull nemotron-3-super:120b
-  else
-    info "Pulling nemotron-3-nano:30b…"
-    ollama pull nemotron-3-nano:30b
-  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1681,12 +1608,9 @@ main() {
   ensure_supported_runtime
 
   step 2 "${_CLI_DISPLAY} CLI"
-  # Local inference setup is opt-in via NEMOCLAW_PROVIDER. Both functions
-  # short-circuit when the env var doesn't match, so the regular cloud-only
-  # install path runs unchanged.
-  if [[ "${NEMOCLAW_PROVIDER:-}" == "ollama" ]]; then
-    install_or_upgrade_ollama
-  fi
+  # Ollama install/upgrade and model pulls are owned by `nemoclaw onboard`
+  # (its `install-ollama` branch runs the official installer when the user
+  # picks it). install.sh stays focused on dependency setup.
   # Fail fast when vLLM was explicitly requested — silently continuing leaves
   # onboarding pointed at an unavailable localhost:8000, which is the failure
   # mode this PR exists to fix. For other providers, install_or_start_vllm
