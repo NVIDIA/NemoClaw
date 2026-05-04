@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -115,9 +114,9 @@ const GENERIC_LINUX_PROFILE: VllmProfile = {
   readyMarker: SPARK_PROFILE.readyMarker,
 };
 
-const PROFILES: VllmProfile[] = [SPARK_PROFILE, GENERIC_LINUX_PROFILE];
+export const PROFILES: VllmProfile[] = [SPARK_PROFILE, GENERIC_LINUX_PROFILE];
 
-function detectVllmProfile(
+export function detectVllmProfile(
   gpu: { spark?: boolean; type?: string } | null | undefined,
 ): VllmProfile | null {
   if (gpu?.spark) return SPARK_PROFILE;
@@ -141,10 +140,16 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
 
 function pullImage(profile: VllmProfile): { ok: boolean; reason?: string } {
   emit(`Pulling vLLM image: ${profile.image}`);
-  // `timeout` GNU util enforces the deadline; fall back to no-timeout on hosts
-  // that lack it (rare; macOS is the only common one and we won't run there).
-  const cmd = `timeout ${String(profile.pullTimeoutSec)} docker pull ${profile.image}`;
-  const result = runShell(cmd, { ignoreError: true, suppressOutput: true });
+  // GNU `timeout` enforces the pull deadline. macOS BSD coreutils omits it;
+  // fall back to a plain `docker pull` there.
+  const hasTimeout = !!runCapture(["sh", "-c", "command -v timeout"], {
+    ignoreError: true,
+  }).trim();
+  const prefix = hasTimeout ? `timeout ${String(profile.pullTimeoutSec)} ` : "";
+  const result = runShell(`${prefix}docker pull ${profile.image}`, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
   if (result.status !== 0) {
     return { ok: false, reason: `docker pull failed (exit ${String(result.status)})` };
   }
@@ -266,9 +271,14 @@ function streamLogsUntilReady(
       resolve(result);
     }
 
+    let buffer = "";
     function onLine(raw: Buffer): void {
-      const lines = raw.toString().split(/\r?\n/);
-      for (const line of lines) {
+      buffer += raw.toString();
+      const segments = buffer.split(/\r?\n/);
+      // Last segment may be a partial line; hold it for the next chunk so a
+      // marker split across `data` events isn't dropped.
+      buffer = segments.pop() ?? "";
+      for (const line of segments) {
         if (!line) continue;
         for (const fatal of profile.fatalMarkers) {
           if (fatal.match.test(line)) {
@@ -328,7 +338,7 @@ interface InstallVllmOptions {
 
 // Public entry point. Returns ok=false on any prereq, pull, run, or load
 // failure, plus when the user declines the confirmation prompt.
-async function installVllm(
+export async function installVllm(
   profile: VllmProfile,
   opts: InstallVllmOptions,
 ): Promise<{ ok: boolean }> {
@@ -395,9 +405,3 @@ async function installVllm(
   console.log(`  ✓ vLLM ready on localhost:${String(VLLM_PORT)}`);
   return { ok: true };
 }
-
-module.exports = {
-  detectVllmProfile,
-  installVllm,
-  PROFILES,
-};

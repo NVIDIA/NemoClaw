@@ -5332,8 +5332,11 @@ async function setupNim(
   // vLLM: profiles in onboard-vllm.ts surface as menu entries only when
   // the user explicitly opts in via NEMOCLAW_PROVIDER, or when
   // NEMOCLAW_EXPERIMENTAL=1 is set.
-  const userChoseVllm =
-    requestedProvider === "vllm" || requestedProvider === "install-vllm";
+  // Read NEMOCLAW_PROVIDER directly so interactive runs with an explicit
+  // env-var opt-in surface the menu entry too — requestedProvider is null
+  // outside non-interactive mode.
+  const explicitProvider = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
+  const userChoseVllm = explicitProvider === "vllm" || explicitProvider === "install-vllm";
   if (vllmProfile && (userChoseVllm || EXPERIMENTAL)) {
     if (vllmRunning) {
       options.push({
