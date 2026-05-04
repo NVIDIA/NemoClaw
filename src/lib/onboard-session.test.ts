@@ -300,6 +300,50 @@ describe("onboard session", () => {
     expect(written.pid).toBe(process.pid);
   });
 
+  it("replaces a stale onboard lock when the recorded PID was reused by another process", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    const reusedPid = 424242;
+    fs.writeFileSync(
+      session.LOCK_FILE,
+      JSON.stringify({
+        pid: reusedPid,
+        startedAt: "1970-01-01T00:20:00.000Z",
+        command: "nemoclaw onboard",
+      }),
+      { mode: 0o600 },
+    );
+
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+    const originalReadFileSync = fs.readFileSync;
+    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((file, options) => {
+      const fileName = String(file);
+      if (fileName === `/proc/${reusedPid}/stat`) {
+        const fieldsAfterComm = Array.from({ length: 50 }, (_, index) => {
+          if (index === 0) return "S";
+          if (index === 19) return "23000";
+          return "0";
+        }).join(" ");
+        return `${reusedPid} (node) ${fieldsAfterComm}`;
+      }
+      if (fileName === "/proc/stat") {
+        return "cpu  1 2 3 4\nbtime 1000\n";
+      }
+      return originalReadFileSync(file, options);
+    }) as typeof fs.readFileSync);
+
+    try {
+      const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
+      expect(acquired.acquired).toBe(true);
+
+      const written = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"));
+      expect(written.pid).toBe(process.pid);
+    } finally {
+      readSpy.mockRestore();
+      killSpy.mockRestore();
+      session.releaseOnboardLock();
+    }
+  });
+
   it("regression #1281: stale-cleanup race does not unlink a fresh lock claimed by another process", () => {
     // Reproduces the race: the lock file we read as 'stale' gets replaced
     // with a fresh claim from a faster concurrent process between our
@@ -380,14 +424,69 @@ describe("onboard session", () => {
     }
   });
 
-  it("treats unreadable or transient lock contents as a retry, not a stale lock", () => {
+  it("treats recent malformed lock as transient and does not remove it", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    // Write a malformed lock with the current timestamp (< 30 s old).
     fs.writeFileSync(session.LOCK_FILE, "{not-json", { mode: 0o600 });
 
     const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
     expect(acquired.acquired).toBe(false);
     expect(acquired.stale).toBe(true);
+    // Recent malformed lock is preserved because another process may be mid-write.
     expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+  });
+
+  it("removes a stale malformed lock file older than 30 seconds (#2765)", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    fs.writeFileSync(session.LOCK_FILE, "{not-json", { mode: 0o600 });
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(session.LOCK_FILE, past, past);
+
+    const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
+    expect(acquired.acquired).toBe(true);
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+    const written = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"));
+    expect(written.pid).toBe(process.pid);
+    session.releaseOnboardLock();
+  });
+
+  it("does not remove a fresh lock that replaces stale malformed lock debris during cleanup", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    fs.writeFileSync(session.LOCK_FILE, "{not-json", { mode: 0o600 });
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(session.LOCK_FILE, past, past);
+
+    let statCallCount = 0;
+    const originalStatSync = fs.statSync;
+    const statSpy = vi.spyOn(fs, "statSync").mockImplementation((...args) => {
+      if (args[0] === session.LOCK_FILE) {
+        statCallCount += 1;
+        if (statCallCount === 3) {
+          const tmpClaim = session.LOCK_FILE + ".race-tmp";
+          fs.writeFileSync(
+            tmpClaim,
+            JSON.stringify({
+              pid: process.pid,
+              startedAt: new Date().toISOString(),
+              command: "nemoclaw onboard (fresh malformed-cleanup race claimant)",
+            }),
+            { mode: 0o600 },
+          );
+          fs.renameSync(tmpClaim, session.LOCK_FILE);
+        }
+      }
+      return originalStatSync(...args);
+    });
+
+    try {
+      const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
+      expect(acquired.acquired).toBe(false);
+      expect(acquired.holderPid).toBe(process.pid);
+      const onDisk = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"));
+      expect(onDisk.command).toContain("fresh malformed-cleanup race claimant");
+    } finally {
+      statSpy.mockRestore();
+    }
   });
 
   it("ignores malformed lock files when releasing the onboard lock", () => {

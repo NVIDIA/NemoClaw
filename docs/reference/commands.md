@@ -269,6 +269,19 @@ You no longer need to re-run `nemoclaw onboard` after a reboot in this case.
 $ nemoclaw my-assistant connect
 ```
 
+### `nemoclaw <name> recover`
+
+Restart the in-sandbox gateway and re-establish the host-side dashboard port-forward without opening an SSH session.
+Use this after a sandbox pod restart, a sandbox crash, or whenever `nemoclaw <name> status` reports the gateway is not running but the sandbox is alive.
+
+`recover` runs the same recovery the `connect` command performs as a side effect, but without dropping into a shell, so it is safe to call from scripts and automation.
+It is idempotent.
+If the gateway is already running, the command exits zero with a probe message and makes no changes.
+
+```console
+$ nemoclaw my-assistant recover
+```
+
 ### `nemoclaw <name> status`
 
 Show sandbox status, health, and inference configuration.
