@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -6,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 
 const SETUP_DNS_PROXY = path.join(import.meta.dirname, "..", "scripts", "setup-dns-proxy.sh");
 const RUNTIME_SH = path.join(import.meta.dirname, "..", "scripts", "lib", "runtime.sh");
@@ -20,7 +20,7 @@ describe("setup-dns-proxy.sh", () => {
 
   it("sources runtime.sh successfully", () => {
     const result = spawnSync("bash", ["-c", `source "${RUNTIME_SH}"; echo ok`], {
-      encoding: /** @type {const} */ ("utf-8"),
+      encoding: /** @type {const} */ "utf-8",
       env: { ...process.env },
     });
     expect(result.status).toBe(0);
@@ -29,98 +29,78 @@ describe("setup-dns-proxy.sh", () => {
 
   it("exits with usage when no sandbox name provided", () => {
     const result = spawnSync("bash", [SETUP_DNS_PROXY, "nemoclaw"], {
-      encoding: /** @type {const} */ ("utf-8"),
+      encoding: /** @type {const} */ "utf-8",
       env: { ...process.env },
     });
     expect(result.status).not.toBe(0);
     expect(result.stderr + result.stdout).toMatch(/Usage:/i);
   });
 
-  it("discovers CoreDNS service IP and veth gateway dynamically", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    expect(content).toContain("VETH_GW");
-    expect(content).toContain("10.200.0.1");
-  });
+  it("configures DNS proxy through kubectl and verifies sandbox DNS end to end", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dns-proxy-"));
+    const fakeBin = path.join(tmp, "bin");
+    const dockerLog = path.join(tmp, "docker.log");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(dockerLog)}
+if [ "\${1:-}" = "ps" ]; then
+  echo "openshell-cluster-nemoclaw"
+  exit 0
+fi
+if [ "\${1:-}" != "exec" ]; then
+  exit 1
+fi
+shift # cluster name
+shift # kubectl
+cmd="$*"
+case "$cmd" in
+  *"get endpoints kube-dns"*) echo "10.43.0.10"; exit 0 ;;
+  *"get pods -n openshell -o name"*) echo "pod/box[1]-abc"; exit 0 ;;
+  *"ip addr show"*) echo "10.200.0.1"; exit 0 ;;
+  *"cat /tmp/dns-proxy.pid"*) echo "12345"; exit 0 ;;
+  *"cat /tmp/dns-proxy.log"*) echo "dns-proxy: 10.200.0.1:53 -> 10.43.0.10:53 pid=12345"; exit 0 ;;
+  *"python3 -c"*) echo "ok"; exit 0 ;;
+  *"ls /run/netns/"*) echo "sandbox-ns"; exit 0 ;;
+  *"test -x"*) [[ "$cmd" == *"/usr/sbin/iptables"* ]] && exit 0 || exit 1 ;;
+  *"cat /etc/resolv.conf"*) echo "nameserver 10.200.0.1"; exit 0 ;;
+  *"getent hosts github.com"*) echo "140.82.112.4 github.com"; exit 0 ;;
+esac
+exit 0
+`,
+      { mode: 0o755 },
+    );
 
-  it("adds iptables rule to allow UDP DNS from sandbox", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    expect(content).toContain("iptables");
-    expect(content).toContain("-p udp");
-    expect(content).toContain("--dport 53");
-    expect(content).toContain("ACCEPT");
-  });
+    try {
+      const result = spawnSync("bash", [SETUP_DNS_PROXY, "nemoclaw", "box[1]"], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          DOCKER_HOST: "unix:///tmp/fake-docker.sock",
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+        timeout: 15000,
+      });
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(0);
+      expect(output).toContain("Setting up DNS proxy in pod 'box[1]-abc'");
+      expect(output).toContain("DNS verification: 4 passed, 0 failed");
 
-  it("deploys a Python DNS forwarder to the pod", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    expect(content).toContain("dns-proxy.py");
-    expect(content).toContain("socket.SOCK_DGRAM");
-    expect(content).toContain("kctl exec");
-  });
-
-  it("uses kubectl exec (not nsenter) to launch the forwarder", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    expect(content).toContain("kctl exec");
-    expect(content).toContain("nohup python3");
-    const codeLines = content.split("\n").filter((l) => !l.trimStart().startsWith("#"));
-    expect(codeLines.join("\n")).not.toContain("nsenter");
-  });
-
-  it("uses grep -F for fixed-string sandbox name matching", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    expect(content).toContain("grep -F");
-  });
-
-  it("discovers CoreDNS pod IP via kube-dns endpoints", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    expect(content).toContain("get endpoints kube-dns");
-    expect(content).toContain("kube-system");
-  });
-
-  it("verifies the forwarder started after launch", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    expect(content).toContain("dns-proxy.pid");
-    expect(content).toContain("dns-proxy.log");
-  });
-
-  it("performs runtime verification of resolv.conf, iptables, and DNS resolution", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    expect(content).toContain("cat /etc/resolv.conf");
-    expect(content).toContain("-C OUTPUT");
-    expect(content).toContain("getent hosts");
-    expect(content).toContain("VERIFY_PASS");
-    expect(content).toContain("VERIFY_FAIL");
-  });
-
-  it("probes well-known paths when iptables is not on PATH (#557)", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    // Must check /sbin/iptables and /usr/sbin/iptables as fallback paths
-    expect(content).toContain("/sbin/iptables");
-    expect(content).toContain("/usr/sbin/iptables");
-    expect(content).toContain("IPTABLES_BIN");
-  });
-
-  it("uses discovered iptables binary for both rule insertion and verification", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    // The discovered IPTABLES_BIN should be used in the -C check and -I insert
-    expect(content).toContain('"$IPTABLES_BIN" -C OUTPUT');
-    expect(content).toContain('"$IPTABLES_BIN" -I OUTPUT');
-    // Verification step should also use the discovered binary
-    expect(content).toContain("IPTABLES_CHECK");
-  });
-
-  it("warns when iptables is not found at any path", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    expect(content).toContain("iptables not found in pod");
-    expect(content).toContain("Cannot add UDP DNS exception");
-  });
-
-  it("backs up resolv.conf before rewriting and restores on iptables failure", () => {
-    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    // Backup: save original resolv.conf once before any rewrite
-    expect(content).toContain("resolv.conf.orig");
-    expect(content).toContain("cp /etc/resolv.conf /tmp/resolv.conf.orig");
-    // Restore: copy backup back when iptables is not found
-    expect(content).toContain("cp /tmp/resolv.conf.orig /etc/resolv.conf");
+      const calls = fs.readFileSync(dockerLog, "utf-8");
+      expect(calls).toContain("get endpoints kube-dns");
+      expect(calls).toContain("kube-system");
+      expect(calls).toContain("nohup python3 -u /tmp/dns-proxy.py");
+      expect(calls).toContain("10.43.0.10");
+      expect(calls).toContain("10.200.0.1");
+      expect(calls).toContain("/usr/sbin/iptables");
+      expect(calls).toContain("--dport 53");
+      expect(calls).toContain("cp /etc/resolv.conf /tmp/resolv.conf.orig");
+      expect(calls).not.toContain("nsenter");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 
@@ -131,20 +111,89 @@ describe("fix-coredns.sh", () => {
     expect(stat.mode & 0o100).toBeTruthy();
   });
 
-  it("supports multiple container runtimes (not Colima-only)", () => {
-    const content = fs.readFileSync(FIX_COREDNS, "utf-8");
-    expect(content).toContain("DOCKER_HOST");
-    expect(content).toContain("find_podman_socket");
+  it("patches CoreDNS on a Podman-style Docker host using a resolved upstream", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fix-coredns-"));
+    const fakeBin = path.join(tmp, "bin");
+    const dockerLog = path.join(tmp, "docker.log");
+    const corefileLog = path.join(tmp, "corefile.log");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(dockerLog)}
+if [ "\${1:-}" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi
+if [ "\${1:-}" = "exec" ] && [ "\${3:-}" = "cat" ]; then echo "nameserver 9.9.9.9"; exit 0; fi
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(fakeBin, "jq"),
+      `#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--arg" ] && [ "\${2:-}" = "corefile" ]; then
+    printf '%s\n' "$3" > ${JSON.stringify(corefileLog)}
+    shift 3
+  else
+    shift
+  fi
+done
+printf '{"data":{"Corefile":"fake"}}\n'
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync("bash", [FIX_COREDNS, "nemoclaw"], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock",
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+      });
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(0);
+      expect(output).toContain("Patching CoreDNS to forward to 9.9.9.9");
+      expect(output).toContain("Done. DNS should resolve");
+      expect(fs.readFileSync(corefileLog, "utf-8")).toContain("forward . 9.9.9.9");
+      const calls = fs.readFileSync(dockerLog, "utf-8");
+      expect(calls).toContain("kubectl patch configmap coredns");
+      expect(calls).toContain("rollout restart deploy/coredns");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
-  it("delegates DNS resolution to resolve_coredns_upstream", () => {
-    const content = fs.readFileSync(FIX_COREDNS, "utf-8");
-    expect(content).toContain("resolve_coredns_upstream");
-  });
+  it("rejects invalid resolved upstream values before patching CoreDNS", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fix-coredns-bad-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi
+if [ "\${1:-}" = "exec" ] && [ "\${3:-}" = "cat" ]; then echo "nameserver bad;rm"; exit 0; fi
+exit 0
+`,
+      { mode: 0o755 },
+    );
 
-  it("validates UPSTREAM_DNS before use", () => {
-    const content = fs.readFileSync(FIX_COREDNS, "utf-8");
-    expect(content).toContain("UPSTREAM_DNS");
-    expect(content).toContain("invalid characters");
+    try {
+      const result = spawnSync("bash", [FIX_COREDNS, "nemoclaw"], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock",
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+      });
+      expect(result.status).not.toBe(0);
+      expect(`${result.stdout}${result.stderr}`).toContain("contains invalid characters");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

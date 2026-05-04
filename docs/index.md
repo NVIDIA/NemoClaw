@@ -182,6 +182,16 @@ Install the CLI, configure inference, and launch your first sandboxed agent.
 {bdg-secondary}`Tutorial`
 :::
 
+:::{grid-item-card} NemoClaw Quickstart for Hermes
+:link: get-started/quickstart-hermes
+:link-type: doc
+
+Launch Hermes in an OpenShell sandbox with the `nemohermes` alias.
+
++++
+{bdg-secondary}`Tutorial`
+:::
+
 :::{grid-item-card} Commands
 :link: reference/commands
 :link-type: doc
@@ -233,7 +243,7 @@ Egress control, operator approval flow, and policy configuration.
 :::
 
 :::{grid-item-card} Workspace Files
-:link: workspace/workspace-files
+:link: manage-sandboxes/workspace-files
 :link-type: doc
 
 Understand `SOUL.md`, `USER.md`, and other workspace files, plus backup and restore.
@@ -287,7 +297,7 @@ This software automatically retrieves, accesses or interacts with external mater
 :hidden:
 
 Overview <about/overview>
-How It Works <about/how-it-works>
+Architecture Overview <about/how-it-works>
 Ecosystem <about/ecosystem>
 Release Notes <about/release-notes>
 ```
@@ -296,8 +306,9 @@ Release Notes <about/release-notes>
 :caption: Get Started
 :hidden:
 
-Quickstart <get-started/quickstart>
-Windows Prerequisites <get-started/windows-setup>
+Prerequisites <get-started/prerequisites>
+Quickstart with OpenClaw <get-started/quickstart>
+Quickstart with Hermes <get-started/quickstart-hermes>
 ```
 
 ```{toctree}
@@ -307,6 +318,17 @@ Windows Prerequisites <get-started/windows-setup>
 Inference Options <inference/inference-options>
 Use Local Inference <inference/use-local-inference>
 Switch Inference Providers <inference/switch-inference-providers>
+Set Up Task-Specific Sub-Agents <inference/set-up-sub-agent>
+```
+
+```{toctree}
+:caption: Manage Sandboxes
+:hidden:
+
+Manage Sandbox Lifecycle <manage-sandboxes/lifecycle>
+Set Up Messaging Channels <manage-sandboxes/messaging-channels>
+Workspace Files <manage-sandboxes/workspace-files>
+Backup and Restore <manage-sandboxes/backup-restore>
 ```
 
 ```{toctree}
@@ -315,6 +337,22 @@ Switch Inference Providers <inference/switch-inference-providers>
 
 Approve or Deny Network Requests <network-policy/approve-network-requests>
 Customize the Network Policy <network-policy/customize-network-policy>
+```
+
+```{toctree}
+:caption: Deployment
+:hidden:
+
+Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
+Install OpenClaw Plugins <deployment/install-openclaw-plugins>
+Sandbox Hardening <deployment/sandbox-hardening>
+```
+
+```{toctree}
+:caption: Monitoring
+:hidden:
+
+Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
 ```
 
 ```{toctree}
@@ -327,35 +365,12 @@ OpenClaw Controls <security/openclaw-controls>
 ```
 
 ```{toctree}
-:caption: Deployment
-:hidden:
-
-Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
-Set Up Telegram <deployment/set-up-telegram-bridge>
-Sandbox Hardening <deployment/sandbox-hardening>
-```
-
-```{toctree}
-:caption: Workspace
-:hidden:
-
-Workspace Files <workspace/workspace-files>
-Backup & Restore <workspace/backup-restore>
-```
-
-```{toctree}
-:caption: Monitoring
-:hidden:
-
-Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
-```
-
-```{toctree}
 :caption: Reference
 :hidden:
 
 Architecture <reference/architecture>
-Commands <reference/commands>
+CLI Commands Reference <reference/commands>
+CLI Selection Guide <reference/cli-selection-guide>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
 ```

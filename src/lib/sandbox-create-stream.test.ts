@@ -5,13 +5,17 @@ import { EventEmitter } from "node:events";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { streamSandboxCreate } from "./sandbox-create-stream";
+import {
+  type StreamableChildProcess,
+  type StreamableReadable,
+  streamSandboxCreate,
+} from "./sandbox-create-stream";
 
-class FakeReadable extends EventEmitter {
-  destroy() {}
+class FakeReadable extends EventEmitter implements StreamableReadable {
+  destroy(): void {}
 }
 
-class FakeChild extends EventEmitter {
+class FakeChild extends EventEmitter implements StreamableChildProcess {
   stdout = new FakeReadable();
   stderr = new FakeReadable();
   kill = vi.fn();
@@ -28,7 +32,7 @@ describe("sandbox-create-stream", () => {
     const logLine = vi.fn();
     const promise = streamSandboxCreate("echo create", process.env, {
       logLine,
-      spawnImpl: () => child as never,
+      spawnImpl: () => child,
     });
 
     expect(logLine).toHaveBeenCalledWith("  Building sandbox image...");
@@ -41,14 +45,16 @@ describe("sandbox-create-stream", () => {
     const logLine = vi.fn();
     const promise = streamSandboxCreate("echo create", process.env, {
       logLine,
-      spawnImpl: () => child as never,
+      spawnImpl: () => child,
       heartbeatIntervalMs: 1_000,
       silentPhaseMs: 10_000,
     });
 
     child.stdout.emit(
       "data",
-      Buffer.from("  Building image sandbox\n  Pushing image layers\nCreated sandbox: demo\n✓ Ready\n"),
+      Buffer.from(
+        "  Building image sandbox\n  Pushing image layers\nCreated sandbox: demo\n✓ Ready\n",
+      ),
     );
     child.emit("close", 0);
 
@@ -62,13 +68,39 @@ describe("sandbox-create-stream", () => {
     expect(logLine).toHaveBeenCalledWith("Created sandbox: demo");
   });
 
+  it("streams BuildKit progress lines as build output", async () => {
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      logLine,
+      spawnImpl: () => child as never,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+    });
+
+    child.stdout.emit(
+      "data",
+      Buffer.from("#1 [internal] load build definition from Dockerfile\n#2 CACHED\n#3 DONE 0.1s\n"),
+    );
+    child.emit("close", 0);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      sawProgress: true,
+      output: expect.stringContaining("#1 [internal] load build definition from Dockerfile"),
+    });
+    expect(logLine).toHaveBeenCalledWith("#1 [internal] load build definition from Dockerfile");
+    expect(logLine).toHaveBeenCalledWith("#2 CACHED");
+    expect(logLine).toHaveBeenCalledWith("#3 DONE 0.1s");
+  });
+
   it("forces success when the sandbox becomes ready before the stream exits", async () => {
     vi.useFakeTimers();
 
     const child = new FakeChild();
     let checks = 0;
     const promise = streamSandboxCreate("echo create", process.env, {
-      spawnImpl: () => child as never,
+      spawnImpl: () => child,
       readyCheck: () => {
         checks += 1;
         return checks >= 2;
@@ -95,7 +127,7 @@ describe("sandbox-create-stream", () => {
   it("flushes the final partial line before resolving", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", process.env, {
-      spawnImpl: () => child as never,
+      spawnImpl: () => child,
       logLine: vi.fn(),
     });
 
@@ -113,7 +145,7 @@ describe("sandbox-create-stream", () => {
     const child = new FakeChild();
     const logLine = vi.fn();
     const promise = streamSandboxCreate("echo create", process.env, {
-      spawnImpl: () => child as never,
+      spawnImpl: () => child,
       readyCheck: () => true, // sandbox is already Ready
       pollIntervalMs: 60_000, // large interval so the poll doesn't fire first
       heartbeatIntervalMs: 1_000,
@@ -135,7 +167,7 @@ describe("sandbox-create-stream", () => {
   it("returns non-zero when readyCheck is false at close time", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", process.env, {
-      spawnImpl: () => child as never,
+      spawnImpl: () => child,
       readyCheck: () => false, // sandbox is NOT ready
       pollIntervalMs: 60_000,
       heartbeatIntervalMs: 1_000,
@@ -156,7 +188,7 @@ describe("sandbox-create-stream", () => {
   it("reports spawn errors cleanly", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", process.env, {
-      spawnImpl: () => child as never,
+      spawnImpl: () => child,
       logLine: vi.fn(),
     });
 

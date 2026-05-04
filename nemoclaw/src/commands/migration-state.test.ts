@@ -905,12 +905,56 @@ describe("commands/migration-state", () => {
         stateDir: "/home/user/.openclaw",
         configPath: null,
         hasExternalConfig: false,
-        externalRoots: [],
-        warnings: [],
+        externalRoots: [
+          {
+            id: "workspace-root",
+            kind: "workspace",
+            label: "Workspace",
+            sourcePath: "/host/workspace",
+            snapshotRelativePath: "external/workspace",
+            sandboxPath: "/sandbox/workspace",
+            symlinkPaths: ["/sandbox/.openclaw/workspace-link"],
+            bindings: [{ configPath: "workspace.path" }],
+          },
+        ],
+        warnings: ["workspace root was remapped"],
       };
       addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
       const loaded = loadSnapshotManifest("/snapshots/snap1");
       expect(loaded).toEqual(manifest);
+    });
+
+    it("rejects a snapshot manifest whose JSON root is not an object", () => {
+      addFile("/snapshots/snap1/snapshot.json", JSON.stringify(["not", "an", "object"]));
+      expect(() => loadSnapshotManifest("/snapshots/snap1")).toThrow(/Invalid snapshot manifest/);
+    });
+
+    it("rejects malformed externalRoots and warnings entries", () => {
+      addFile(
+        "/snapshots/snap1/snapshot.json",
+        JSON.stringify({
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [
+            {
+              id: "workspace-root",
+              kind: "workspace",
+              label: "Workspace",
+              sourcePath: "/host/workspace",
+              snapshotRelativePath: "external/workspace",
+              sandboxPath: "/sandbox/workspace",
+              symlinkPaths: ["/sandbox/.openclaw/workspace-link"],
+              bindings: [1],
+            },
+          ],
+          warnings: [null],
+        }),
+      );
+      expect(() => loadSnapshotManifest("/snapshots/snap1")).toThrow(/Invalid snapshot manifest/);
     });
   });
 
@@ -1446,16 +1490,17 @@ describe("commands/migration-state", () => {
       }
     };
 
-    it.each(["__proto__", "constructor", "prototype"])(
-      "rejects unsafe path segment: %s",
-      (segment) => {
-        const doc: Record<string, unknown> = {};
-        expect(() => {
-          setConfigValue(doc, `${segment}.polluted`, "true");
-        }).toThrow(/Unsafe config path segment/);
-        expectPrototypeClean();
-      },
-    );
+    it.each([
+      "__proto__",
+      "constructor",
+      "prototype",
+    ])("rejects unsafe path segment: %s", (segment) => {
+      const doc: Record<string, unknown> = {};
+      expect(() => {
+        setConfigValue(doc, `${segment}.polluted`, "true");
+      }).toThrow(/Unsafe config path segment/);
+      expectPrototypeClean();
+    });
 
     it("rejects __proto__ in nested position", () => {
       const doc: Record<string, unknown> = {};
@@ -1465,16 +1510,16 @@ describe("commands/migration-state", () => {
       expectPrototypeClean();
     });
 
-    it.each(["foo.prototype.bar", "foo.constructor.bar"])(
-      "rejects unsafe segment in nested path: %s",
-      (configPath) => {
-        const doc: Record<string, unknown> = {};
-        expect(() => {
-          setConfigValue(doc, configPath, "true");
-        }).toThrow(/Unsafe config path segment/);
-        expectPrototypeClean();
-      },
-    );
+    it.each([
+      "foo.prototype.bar",
+      "foo.constructor.bar",
+    ])("rejects unsafe segment in nested path: %s", (configPath) => {
+      const doc: Record<string, unknown> = {};
+      expect(() => {
+        setConfigValue(doc, configPath, "true");
+      }).toThrow(/Unsafe config path segment/);
+      expectPrototypeClean();
+    });
 
     it("allows legitimate dotted paths", () => {
       const doc: Record<string, unknown> = {};

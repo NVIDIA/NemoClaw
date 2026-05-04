@@ -22,7 +22,10 @@ export function stripEndpointSuffix(pathname = "", suffixes: string[] = []): str
 
 export type EndpointFlavor = "anthropic" | "openai";
 
-export function normalizeProviderBaseUrl(value: unknown, flavor: EndpointFlavor): string {
+export function normalizeProviderBaseUrl(
+  value: string | URL | null | undefined,
+  flavor: EndpointFlavor,
+): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
 

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -218,6 +217,52 @@ describe("registry", () => {
       disabledChannels: registry.getDisabledChannels("s1"),
     });
     expect(registry.getDisabledChannels("s1")).toEqual(["telegram"]);
+  });
+
+  it("addCustomPolicy persists name, content, and sourcePath", () => {
+    registry.registerSandbox({ name: "cp1" });
+    const added = registry.addCustomPolicy("cp1", {
+      name: "my-api",
+      content: "preset:\n  name: my-api\nnetwork_policies: {}\n",
+      sourcePath: "/tmp/my-api.yaml",
+    });
+    expect(added).toBe(true);
+    const list = registry.getCustomPolicies("cp1");
+    expect(list.length).toBe(1);
+    expect(list[0].name).toBe("my-api");
+    expect(list[0].content).toMatch(/name: my-api/);
+    expect(list[0].sourcePath).toBe("/tmp/my-api.yaml");
+    expect(typeof list[0].appliedAt).toBe("string");
+  });
+
+  it("addCustomPolicy replaces an existing entry with the same name", () => {
+    registry.registerSandbox({ name: "cp2" });
+    registry.addCustomPolicy("cp2", { name: "dup", content: "v1" });
+    registry.addCustomPolicy("cp2", { name: "dup", content: "v2" });
+    const list = registry.getCustomPolicies("cp2");
+    expect(list.length).toBe(1);
+    expect(list[0].content).toBe("v2");
+  });
+
+  it("removeCustomPolicyByName removes an entry and returns true", () => {
+    registry.registerSandbox({ name: "cp3" });
+    registry.addCustomPolicy("cp3", { name: "a", content: "x" });
+    registry.addCustomPolicy("cp3", { name: "b", content: "y" });
+    expect(registry.removeCustomPolicyByName("cp3", "a")).toBe(true);
+    const list = registry.getCustomPolicies("cp3");
+    expect(list.length).toBe(1);
+    expect(list[0].name).toBe("b");
+  });
+
+  it("removeCustomPolicyByName returns false when the entry is missing", () => {
+    registry.registerSandbox({ name: "cp4" });
+    expect(registry.removeCustomPolicyByName("cp4", "nope")).toBe(false);
+  });
+
+  it("getCustomPolicies returns [] for unknown or fresh sandboxes", () => {
+    expect(registry.getCustomPolicies("nonexistent")).toEqual([]);
+    registry.registerSandbox({ name: "cp5" });
+    expect(registry.getCustomPolicies("cp5")).toEqual([]);
   });
 });
 

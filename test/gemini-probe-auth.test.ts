@@ -1,10 +1,25 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
 
-import { getProbeAuthMode } from "../dist/lib/onboard";
+type OnboardProbeInternals = {
+  getProbeAuthMode: (provider: string) => "query-param" | undefined;
+};
+
+function isOnboardProbeInternals(value: object | null): value is OnboardProbeInternals {
+  return value !== null && typeof Reflect.get(value, "getProbeAuthMode") === "function";
+}
+
+const loadedOnboardProbeInternals = require("../dist/lib/onboard");
+const onboardProbeInternals =
+  typeof loadedOnboardProbeInternals === "object" && loadedOnboardProbeInternals !== null
+    ? loadedOnboardProbeInternals
+    : null;
+if (!isOnboardProbeInternals(onboardProbeInternals)) {
+  throw new Error("Expected onboard probe internals to expose getProbeAuthMode");
+}
+const { getProbeAuthMode } = onboardProbeInternals;
 
 // The onboarder's Gemini validation probes target the OpenAI-compat
 // endpoint at https://generativelanguage.googleapis.com/v1beta/openai/.

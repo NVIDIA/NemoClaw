@@ -1,28 +1,20 @@
 ---
 name: "nemoclaw-user-get-started"
-description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. Trigger keywords - nemoclaw quickstart, install nemoclaw openclaw sandbox, nemoclaw windows wsl2 setup, nemoclaw install windows docker desktop."
+description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. Trigger keywords - nemoclaw quickstart, install nemoclaw openclaw sandbox, nemohermes quickstart, hermes agent nemoclaw, run hermes openshell sandbox, nemoclaw prerequisites, nemoclaw supported platforms, nemoclaw hardware software, nemoclaw windows wsl2 setup, nemoclaw install windows docker desktop."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw Quickstart: Install, Launch, and Run Your First Agent
+# NemoClaw Quickstart with OpenClaw
 
 ## Gotchas
 
-- **OpenShell lifecycle.** For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
 - Ollama binds to `0.0.0.0` so the sandbox can reach it through Docker.
 
-## Prerequisites
-
-Before getting started, check the prerequisites to ensure you have the necessary software and hardware to run NemoClaw.
-
-> **Alpha software:** NemoClaw is in alpha, available as an early preview since March 16, 2026.
-> APIs, configuration schemas, and runtime behavior are subject to breaking changes between releases.
-> Do not use this software in production environments.
-> File issues and feedback through the GitHub repository as the project continues to stabilize.
-
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
+
+> **Note:** Make sure you have completed reviewing the Prerequisites (use the `nemoclaw-user-get-started` skill) before following this guide.
 
 ## Step 1: Install NemoClaw and Onboard OpenClaw Agent
 
@@ -44,8 +36,9 @@ If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.
 
 ### Respond to the Onboard Wizard
 
-After the installer launches `nemoclaw onboard`, the wizard walks you through a sandbox name, an inference provider, and a network policy preset.
+After the installer launches `nemoclaw onboard`, the wizard runs preflight checks, starts or reuses the OpenShell gateway, and asks for an inference provider, sandbox name, optional web search, optional messaging channels, and network policy presets.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+If existing sandbox sessions are running, the installer warns before onboarding because the setup can rebuild or upgrade sandboxes after the new sandbox launches.
 
 The inference provider prompt presents a numbered list.
 
@@ -56,12 +49,13 @@ The inference provider prompt presents a numbered list.
   4) Anthropic
   5) Other Anthropic-compatible endpoint
   6) Google Gemini
-  7) Local Ollama        (only shown when Ollama is detected on the host)
+  7) Local Ollama (localhost:11434)
   Choose [1]:
 ```
 
 Pick the option that matches where you want inference traffic to go, then expand the matching helper below for the follow-up prompts and the API key environment variable to set.
 For the full list of providers and validation behavior, refer to Inference Options (use the `nemoclaw-user-configure-inference` skill).
+Local Ollama appears only when NemoClaw detects Ollama on the host.
 
 > **Tip:** Export the API key before launching the installer so the wizard does not have to ask for it.
 > For example, run `export NVIDIA_API_KEY=<your-key>` before `curl ... | bash`.
@@ -78,7 +72,7 @@ Respond to the wizard as follows.
 
 1. At the `Choose [1]:` prompt, press Enter (or type `1`) to select **NVIDIA Endpoints**.
 2. At the `NVIDIA_API_KEY:` prompt, paste your key if it is not already exported.
-3. At the `Choose model [1]:` prompt, pick a curated model from the list (for example, **Nemotron 3 Super 120B**, **Kimi K2.5**, **GLM-5**, **MiniMax M2.5**, or **GPT-OSS 120B**), or pick **Other...** to enter any model ID from the [NVIDIA Endpoints catalog](https://build.nvidia.com).
+3. At the `Choose model [1]:` prompt, pick a curated model from the list (for example, **Nemotron 3 Super 120B**, **GLM-5.1**, **MiniMax M2.5**, or **GPT-OSS 120B**), or pick **Other...** to enter any model ID from the [NVIDIA Endpoints catalog](https://build.nvidia.com).
 
 NemoClaw validates the model against the catalog API before creating the sandbox.
 
@@ -111,9 +105,12 @@ Respond to the wizard as follows.
 1. At the `Choose [1]:` prompt, type `3` to select **Other OpenAI-compatible endpoint**.
 2. At the `OpenAI-compatible base URL` prompt, enter the provider's base URL. Find the exact value in your provider's API documentation. NemoClaw appends `/v1` automatically, so leave that suffix off.
 3. At the `COMPATIBLE_API_KEY:` prompt, paste your key if it is not already exported.
-4. At the `Other OpenAI-compatible endpoint model []:` prompt, enter the model ID exactly as it appears in your provider's model catalog (for example, `openai/gpt-5.4` on OpenRouter).
+4. At the `Other OpenAI-compatible endpoint model []:` prompt, enter the model ID exactly as it appears in your provider's model catalog.
 
-NemoClaw sends a real inference request to validate the endpoint and model. NemoClaw forces the chat completions API for compatible endpoints because many backends advertise `/v1/responses` but mishandle the `developer` role used by the Responses API.
+For example, when you use NVIDIA's OpenAI-compatible inference endpoint, enter `https://inference-api.nvidia.com` as the base URL and the model ID your endpoint exposes, such as `openai/openai/gpt-5.5`.
+
+NemoClaw sends a real inference request to validate the endpoint and model.
+If the endpoint does not return the streaming events OpenClaw needs from the Responses API, NemoClaw falls back to the chat completions API and configures OpenClaw to use `openai-completions`.
 
 > **Tip:** NVIDIA Nemotron models expose OpenAI-compatible APIs, so this option is the right choice for any Nemotron deployment that does not live on `build.nvidia.com`. Common examples include a self-hosted NIM container, an enterprise NVIDIA AI Enterprise gateway, or a vLLM/SGLang server running Nemotron weights. Point the base URL at your endpoint and enter the Nemotron model ID exactly as your server reports it.
 :::
@@ -189,18 +186,63 @@ These options appear when `NEMOCLAW_EXPERIMENTAL=1` is set and the prerequisites
 For setup, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
 :::
 
+### Review the Configuration Before the Sandbox Build
+
+After you enter the sandbox name, the wizard prints a review summary and asks for final confirmation before registering the provider, prompting for optional integrations, and building the sandbox image.
+For example, if you picked an OpenAI-compatible endpoint, the summary looks like the following:
+
+```text
+  ──────────────────────────────────────────────────
+  Review configuration
+  ──────────────────────────────────────────────────
+  Provider:      compatible-endpoint
+  Model:         openai/openai/gpt-5.5
+  API key:       COMPATIBLE_API_KEY (staged for OpenShell gateway registration)
+  Web search:    disabled
+  Messaging:     none
+  Sandbox name:  my-gpt-claw
+  Note:          Sandbox build takes ~6 minutes on this host.
+  ──────────────────────────────────────────────────
+  Web search and messaging channels will be prompted next.
+  Apply this configuration? [Y/n]:
+```
+
+The default is `Y`, so you can press Enter once to continue. Answer `n` to abort cleanly, fix the entries, and re-run `nemoclaw onboard`.
+
+Non-interactive runs (`NEMOCLAW_NON_INTERACTIVE=1`) print the summary for log clarity but skip the prompt.
+
+### Configure Web Search and Messaging
+
+After you confirm the summary, NemoClaw registers the selected provider with the OpenShell gateway and sets the `inference.local` route.
+The wizard then asks whether to enable Brave Web Search.
+If you enable it, enter a Brave Search API key when prompted.
+
+The wizard also offers messaging channels such as Telegram, Discord, and Slack.
+Press a channel number to toggle it, then press Enter to continue.
+If you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
+For example, Slack bot tokens must start with `xoxb-`.
+
+### Choose Network Policy Presets
+
+After the sandbox image builds and OpenClaw starts inside the sandbox, NemoClaw asks which network policy tier to apply.
+The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search.
+Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
+
+The preset selector lets you include more destinations, such as GitHub, Jira, Slack, Telegram, or local inference.
+Press `r` to toggle a selected preset between read-only and read-write when the preset supports both modes.
+
 When the install completes, a summary confirms the running environment.
-The `Model` and provider line reflects whichever inference option you picked in the wizard.
-The example below shows the result if you accept the NVIDIA Endpoints default.
+The `Model` and provider line reflects the inference option you picked during onboarding.
+The example below shows the result if you picked an OpenAI-compatible endpoint during onboarding.
 
 ```text
 ──────────────────────────────────────────────────
-Sandbox      my-assistant (Landlock + seccomp + netns)
-Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
+Sandbox      my-gpt-claw (Landlock + seccomp + netns)
+Model        openai/openai/gpt-5.5 (Other OpenAI-compatible endpoint)
 ──────────────────────────────────────────────────
-Run:         nemoclaw my-assistant connect
-Status:      nemoclaw my-assistant status
-Logs:        nemoclaw my-assistant logs --follow
+Run:         nemoclaw my-gpt-claw connect
+Status:      nemoclaw my-gpt-claw status
+Logs:        nemoclaw my-gpt-claw logs --follow
 ──────────────────────────────────────────────────
 
 [INFO]  === Installation complete ===
@@ -210,39 +252,57 @@ If you picked a different option, the `Model` line shows that provider's model a
 
 ## Step 2: Open the OpenClaw UI in a Browser
 
-The onboard wizard automatically starts an SSH port forward from your host's `127.0.0.1:18789` to the sandbox dashboard, then prints a tokenized URL in the install summary.
+The onboard wizard starts a background port forward to the sandbox dashboard, then prints a tokenized URL in the install summary.
+The default host port is `18789`.
+If that port is already taken, NemoClaw uses the next free dashboard port, such as `18790`, and prints that port in the final URL.
 
 ```text
 ──────────────────────────────────────────────────
 OpenClaw UI (tokenized URL; treat it like a password; save it now - it will not be printed again)
-Port 18789 must be forwarded before opening these URLs.
-Dashboard: http://127.0.0.1:18789/#token=<auth-token>
+Port 18790 must be forwarded before opening these URLs.
+Dashboard: http://127.0.0.1:18790/#token=<auth-token>
 ──────────────────────────────────────────────────
 ```
 
-Open that URL in your browser. The `#token=<auth-token>` fragment authenticates the browser to the sandbox gateway, so save the URL securely and treat it like a password. NemoClaw prints the token only once.
+Open the printed URL in your browser.
+The `#token=<auth-token>` fragment authenticates the browser to the sandbox gateway, so save the URL securely and treat it like a password.
+NemoClaw prints the token only once.
 
 ### Restart the Port Forward
 
-If the forward stopped (for example, after a reboot) or you opened a new terminal and the URL no longer responds, restart it manually.
+If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart it manually with the port from the install summary.
 
-```bash
-openshell forward start --background 18789 my-assistant
+```console
+$ openshell forward start --background <dashboard-port> my-gpt-claw
 ```
 
 To list active forwards across all sandboxes, run the following command.
 
-```bash
-openshell forward list
+```console
+$ openshell forward list
 ```
 
 ### Run Multiple Sandboxes
 
-Each sandbox needs its own dashboard port, since `openshell forward` refuses to bind a port that another sandbox is already using. Override the port with `NEMOCLAW_DASHBOARD_PORT` at onboard time.
+Each sandbox needs its own dashboard port, since `openshell forward` refuses to bind a port that another sandbox is already using.
+When the default port is already held by another sandbox, `nemoclaw onboard` scans ports `18789` through `18799` and uses the next free port.
 
-```bash
-nemoclaw onboard                                     # first sandbox uses 18789
-NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard       # second sandbox uses 19000
+```console
+$ nemoclaw onboard                                      # first sandbox uses 18789
+$ nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
+```
+
+To choose a specific port, pass `--control-ui-port`:
+
+```console
+$ nemoclaw onboard --control-ui-port 19000
+```
+
+You can also set `CHAT_UI_URL` or `NEMOCLAW_DASHBOARD_PORT` before onboarding:
+
+```console
+$ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
+$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 ```
 
 For full details on port conflicts and overrides, refer to Port already in use (use the `nemoclaw-user-reference` skill).
@@ -287,15 +347,15 @@ Refer to Switch inference providers (use the `nemoclaw-user-configure-inference`
 
 ### Reset a Stored Credential
 
-If an API key was entered incorrectly during onboarding, clear the stored value and re-enter it on the next onboard run:
+If a provider credential was entered incorrectly during onboarding, clear the gateway-registered value and re-enter it on the next onboard run:
 
 ```console
-$ nemoclaw credentials list           # see which keys are stored
-$ nemoclaw credentials reset <KEY>    # clear a single key, for example NVIDIA_API_KEY
-$ nemoclaw onboard                    # re-run to re-enter the cleared key
+$ nemoclaw credentials list                # see which providers are registered
+$ nemoclaw credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
+$ nemoclaw onboard                         # re-run to re-enter the cleared provider
 ```
 
-The credentials command is documented in full at `nemoclaw credentials reset <KEY>` (use the `nemoclaw-user-reference` skill).
+The credentials command is documented in full at `nemoclaw credentials reset <PROVIDER>` (use the `nemoclaw-user-reference` skill).
 
 ### Rebuild a Sandbox While Preserving Workspace State
 
@@ -317,12 +377,63 @@ $ nemoclaw <sandbox-name> policy-add
 
 Refer to `nemoclaw <name> policy-add` (use the `nemoclaw-user-reference` skill) for usage details and flags.
 
-## Step 5: Uninstall
+## Step 5: Update to the Latest Version
 
-To remove NemoClaw and all resources created during setup, run the uninstall script:
+When a new NemoClaw release becomes available, update the `nemoclaw` CLI on your host and check existing sandboxes for stale agent/runtime versions.
+
+### Update the NemoClaw CLI
+
+Re-run the installer.
+Before it onboards anything, the installer calls `nemoclaw backup-all` (use the `nemoclaw-user-reference` skill) automatically, storing a snapshot of each running sandbox in `~/.nemoclaw/rebuild-backups/` as a safety net.
+
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+### Upgrade sandboxes with stale agent and runtime versions
+
+The installer checks registered sandboxes after onboarding succeeds and runs `nemoclaw upgrade-sandboxes --auto` for stale running sandboxes. Use `upgrade-sandboxes` directly to verify the result, rebuild when you skipped the installer or onboarding step, or handle sandboxes that were stopped or could not be version-checked. The upgrade flow is non-destructive by default because NemoClaw preserves manifest-defined workspace state, but a manual snapshot before any major upgrade gives you a state restore point.
+
+**Safe upgrade flow:**
+
+```console
+$ nemoclaw <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash          # updates CLI; auto-upgrades stale running sandboxes
+$ nemoclaw upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
+$ nemoclaw upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
+```
+
+For scripted manual rebuilds, use `nemoclaw upgrade-sandboxes --auto` to skip the confirmation prompt.
+
+If the upgraded sandbox needs its workspace state reverted, restore the pre-upgrade snapshot into the running sandbox. This restores saved state directories only; it does not downgrade the sandbox image or agent/runtime:
+
+```console
+$ nemoclaw <sandbox-name> snapshot restore pre-upgrade
+```
+
+#### What changes during a rebuild
+
+Each rebuild destroys the existing container and creates a new one. NemoClaw protects your data through the same backup-and-restore flow as `nemoclaw <name> rebuild` (use the `nemoclaw-user-reference` skill):
+
+- NemoClaw preserves manifest-defined workspace state. Before deleting the old container, NemoClaw snapshots the state directories defined in the agent manifest (typically `/sandbox/.openclaw/workspace/`) and restores them into the new container. Stored credentials (`~/.nemoclaw/credentials.json`) and registered policy presets live on the host and are re-applied to the new sandbox automatically.
+- NemoClaw does not preserve runtime changes outside the workspace state directories. This includes packages installed inside the running container with `apt` or `pip`, files in non-workspace paths, and in-memory or process state. If you have customized the running container at runtime, capture that as `Dockerfile` changes (for `nemoclaw onboard --from`) or a manual `openshell sandbox download` before the rebuild starts.
+
+Aborts before the destroy step are non-destructive. The flow refuses to proceed past preflight if a credential is missing (see below) or past backup if the snapshot fails (with `"Aborting rebuild to prevent data loss"`), so a botched run leaves the original sandbox intact and ready to retry.
+
+See Backup and Restore (use the `nemoclaw-user-workspace` skill) for the full list of state-preservation guarantees, snapshot retention, and instructions for manual backups when the auto-flow is not enough.
+
+:::{note} If the rebuild aborts with `Missing credential: <KEY>`
+The rebuild preflight reads the provider credential recorded by your last `nemoclaw onboard` session. If you have switched providers since onboarding (for example, from a remote API to a local Ollama setup) the preflight may still reference the old key and fail before any destroy step runs.
+
+To recover, re-run `nemoclaw onboard` and select your current provider. This refreshes the session metadata. Your existing container keeps serving traffic until the new image is ready.
+:::
+
+## Step 6: Uninstall
+
+To remove NemoClaw and all resources created during setup, run the CLI's built-in uninstall command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
+nemoclaw uninstall
 ```
 
 | Flag               | Effect                                              |
@@ -331,9 +442,21 @@ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uni
 | `--keep-openshell` | Leave the `openshell` binary installed.              |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
+`nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
+
+If the `nemoclaw` CLI is missing or broken, fall back to the hosted script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
+```
+
+For a full comparison of the two forms — what they fetch, what they trust, and when to prefer each — see `nemoclaw uninstall` vs. the hosted `uninstall.sh` (use the `nemoclaw-user-reference` skill).
+
 ## References
 
-- **Load [references/windows-setup.md](references/windows-setup.md)** when installing NemoClaw on Windows, enabling WSL 2, configuring Docker Desktop for Windows, or troubleshooting a Windows-specific install error. Includes Windows-only prerequisites that must be completed before the Quickstart.
+- **Load [references/quickstart-hermes.md](references/quickstart-hermes.md)** when users ask for Hermes setup, NemoHermes onboarding, or running Hermes inside OpenShell. Installs NemoClaw, selects the Hermes agent, and launches a sandboxed Hermes API endpoint.
+- **Load [references/prerequisites.md](references/prerequisites.md)** when verifying prerequisites before installation. Lists the hardware, software, and container runtime requirements for running NemoClaw.
+- **Load [references/windows-preparation.md](references/windows-preparation.md)** when preparing a Windows machine for NemoClaw, enabling WSL 2, configuring Docker Desktop for Windows, or troubleshooting a Windows-specific install error. Covers Windows-only preparation steps required before the Quickstart.
 
 ## Related Skills
 

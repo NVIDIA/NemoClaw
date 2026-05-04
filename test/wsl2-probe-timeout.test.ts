@@ -1,12 +1,36 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
+import { createRequire } from "node:module";
 
-import { getValidationProbeCurlArgs } from "../dist/lib/onboard";
+const require = createRequire(import.meta.url);
+
+type OnboardValidationInternals = {
+  getValidationProbeCurlArgs: (opts?: { isWsl?: boolean }) => string[];
+};
+
+type OnboardValidationCandidate = {
+  getValidationProbeCurlArgs?: unknown;
+  default?: unknown;
+} | null;
+
+function isOnboardValidationInternals(
+  value: OnboardValidationCandidate,
+): value is OnboardValidationInternals {
+  return value !== null && typeof value.getValidationProbeCurlArgs === "function";
+}
+
+const loadedOnboardValidationModule = await import("../dist/lib/onboard.js");
+const onboardValidationInternals = isOnboardValidationInternals(loadedOnboardValidationModule)
+  ? loadedOnboardValidationModule
+  : isOnboardValidationInternals(loadedOnboardValidationModule.default)
+    ? loadedOnboardValidationModule.default
+    : null;
+if (!isOnboardValidationInternals(onboardValidationInternals)) {
+  throw new Error("Expected onboard validation internals to expose getValidationProbeCurlArgs");
+}
+const { getValidationProbeCurlArgs } = onboardValidationInternals;
 
 describe("WSL2 inference verification timeouts (issue #987)", () => {
   describe("getValidationProbeCurlArgs", () => {
@@ -39,43 +63,175 @@ describe("WSL2 inference verification timeouts (issue #987)", () => {
   });
 
   describe("retry logic in probeOpenAiLikeEndpoint", () => {
-    // The retry logic is embedded in probeOpenAiLikeEndpoint which is not
-    // exported. Verify the retry triggers on the correct curl exit codes by
-    // scanning the compiled source for the guard condition.
-    const onboardSrc = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "dist", "lib", "onboard.js"),
-      "utf-8",
-    );
+    function runProbeWithCurlStatuses(statuses: number[]) {
+      const httpProbePath = require.resolve("../dist/lib/http-probe.js");
+      const platformPath = require.resolve("../dist/lib/platform.js");
+      const probesPath = require.resolve("../dist/lib/onboard-inference-probes.js");
+      const httpProbe = require(httpProbePath);
+      const platform = require(platformPath);
+      const originalRunCurlProbe = httpProbe.runCurlProbe;
+      const originalIsWsl = platform.isWsl;
+      const calls: string[][] = [];
+      let index = 0;
+      platform.isWsl = () => false;
+      httpProbe.runCurlProbe = (args: string[]) => {
+        calls.push(args);
+        const status = statuses[index++] ?? 0;
+        if (status === 0) {
+          return {
+            ok: true,
+            curlStatus: 0,
+            httpStatus: 200,
+            body: "{}",
+            stderr: "",
+            message: "ok",
+          };
+        }
+        return {
+          ok: false,
+          curlStatus: status,
+          httpStatus: 0,
+          body: "",
+          stderr: `curl exited ${status}`,
+          message: `curl ${status}`,
+        };
+      };
+      delete require.cache[probesPath];
+      try {
+        const { probeOpenAiLikeEndpoint } = require(probesPath) as {
+          probeOpenAiLikeEndpoint: (
+            endpointUrl: string,
+            model: string,
+            apiKey: string,
+            options?: Record<string, unknown>,
+          ) => { ok: boolean };
+        };
+        const result = probeOpenAiLikeEndpoint("http://localhost:8000", "test-model", "key", {
+          skipResponsesProbe: false,
+        });
+        return { result, calls };
+      } finally {
+        httpProbe.runCurlProbe = originalRunCurlProbe;
+        platform.isWsl = originalIsWsl;
+        delete require.cache[probesPath];
+      }
+    }
 
     it("retries on curl exit code 28 (timeout)", () => {
-      // The guard function must treat exit code 28 as retriable.
-      expect(onboardSrc).toMatch(/=== 28/);
+      const { result, calls } = runProbeWithCurlStatuses([28, 28, 0]);
+      expect(result.ok).toBe(true);
+      expect(calls.length).toBe(3);
+      expect(calls[2]).toEqual(
+        expect.arrayContaining(["--connect-timeout", "20", "--max-time", "30"]),
+      );
     });
 
     it("retries on curl exit codes 6 and 7 (connection failure)", () => {
-      expect(onboardSrc).toMatch(/=== 6/);
-      expect(onboardSrc).toMatch(/=== 7/);
+      for (const status of [6, 7]) {
+        const { result, calls } = runProbeWithCurlStatuses([status, status, 0]);
+        expect(result.ok).toBe(true);
+        expect(calls.length).toBe(3);
+      }
     });
 
     it("does not retry on curl exit code 0 (success) or 22 (HTTP error)", () => {
-      // The isTimeoutOrConnFailure guard only matches 6, 7, and 28.
-      // A successful probe (exit 0) returns early before reaching the retry
-      // block, and HTTP errors (exit 22) are not in the retry set.
-      // Verify the retry guard is exactly these three codes.
-      const guardMatch = onboardSrc.match(
-        /isTimeoutOrConnFailure\s*=\s*\(cs\)\s*=>\s*cs\s*===\s*28\s*\|\|\s*cs\s*===\s*6\s*\|\|\s*cs\s*===\s*7/,
-      );
-      expect(guardMatch).not.toBeNull();
+      expect(runProbeWithCurlStatuses([0]).calls.length).toBe(1);
+      const httpError = runProbeWithCurlStatuses([22, 22]);
+      expect(httpError.result.ok).toBe(false);
+      expect(httpError.calls.length).toBe(2);
+    });
+
+    type ProbeResultFixture = {
+      ok: boolean;
+      curlStatus: number;
+      httpStatus: number;
+      body: string;
+      stderr: string;
+      message: string;
+    };
+
+    function runProbeWithResults(results: ProbeResultFixture[], opts: { isWsl?: boolean } = {}) {
+      const httpProbePath = require.resolve("../dist/lib/http-probe.js");
+      const platformPath = require.resolve("../dist/lib/platform.js");
+      const probesPath = require.resolve("../dist/lib/onboard-inference-probes.js");
+      const httpProbe = require(httpProbePath);
+      const platform = require(platformPath);
+      const originalRunCurlProbe = httpProbe.runCurlProbe;
+      const originalIsWsl = platform.isWsl;
+      const atomics = globalThis as typeof globalThis & {
+        Atomics: { wait: (...args: never[]) => "ok" | "not-equal" | "timed-out" };
+      };
+      const originalWait = atomics.Atomics.wait;
+      const calls: string[][] = [];
+      let index = 0;
+      httpProbe.runCurlProbe = (args: string[]) => {
+        calls.push(args);
+        return results[index++] ?? results[results.length - 1];
+      };
+      platform.isWsl = () => opts.isWsl === true;
+      atomics.Atomics.wait = () => "ok";
+      delete require.cache[probesPath];
+      try {
+        const { probeOpenAiLikeEndpoint } = require(probesPath) as {
+          probeOpenAiLikeEndpoint: (
+            endpointUrl: string,
+            model: string,
+            apiKey: string,
+            options?: Record<string, unknown>,
+          ) => { ok: boolean; message?: string };
+        };
+        const result = probeOpenAiLikeEndpoint("http://localhost:8000", "test-model", "key");
+        return { result, calls };
+      } finally {
+        httpProbe.runCurlProbe = originalRunCurlProbe;
+        platform.isWsl = originalIsWsl;
+        atomics.Atomics.wait = originalWait;
+        delete require.cache[probesPath];
+      }
+    }
+
+    it("retries HTTP 429 validation throttling from successful curl invocations", () => {
+      const throttled = {
+        ok: false,
+        curlStatus: 0,
+        httpStatus: 429,
+        body: "",
+        stderr: "",
+        message: "HTTP 429",
+      };
+      const success = {
+        ok: true,
+        curlStatus: 0,
+        httpStatus: 200,
+        body: "{}",
+        stderr: "",
+        message: "ok",
+      };
+      const { result, calls } = runProbeWithResults([throttled, success]);
+      expect(result.ok).toBe(true);
+      expect(calls.length).toBe(2);
     });
 
     it("doubles timeout values for the retry attempt", () => {
-      // The retry maps numeric args through a doubling transform.
-      expect(onboardSrc).toMatch(/String\(Number\(arg\) \* 2\)/);
+      const { calls } = runProbeWithCurlStatuses([28, 28, 0]);
+      expect(calls[2]).toEqual(
+        expect.arrayContaining(["--connect-timeout", "20", "--max-time", "30"]),
+      );
     });
 
     it("appends WSL2 hint when retry fails on WSL2", () => {
-      expect(onboardSrc).toMatch(/WSL2 detected/);
-      expect(onboardSrc).toMatch(/--skip-verify/);
+      const failure = {
+        ok: false,
+        curlStatus: 28,
+        httpStatus: 0,
+        body: "",
+        stderr: "curl timed out",
+        message: "timeout",
+      };
+      const { result } = runProbeWithResults([failure, failure, failure], { isWsl: true });
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain("WSL2 detected");
+      expect(result.message).toContain("--skip-verify");
     });
   });
 });

@@ -33,7 +33,7 @@
       "status": "tested",
       "prd_priority": "P1",
       "ci_tested": true,
-      "notes": "Use the standard installer and `nemoclaw onboard`."
+      "notes": "Use the standard installer and `nemoclaw onboard`. For an end-to-end walkthrough with local Ollama inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw)."
     },
     {
       "name": "Windows WSL2",
@@ -50,7 +50,7 @@
       "status": "tested",
       "prd_priority": "P1",
       "ci_tested": false,
-      "notes": "Run `sudo nemoclaw setup-jetson` before onboarding. See [commands reference](../reference/commands.md#nemoclaw-setup-jetson)."
+      "notes": "Run `sudo nemoclaw setup-jetson` before onboarding. See [commands reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html#nemoclaw-setup-jetson)."
     },
     {
       "name": "DGX Station",

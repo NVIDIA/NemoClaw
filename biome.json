@@ -1,0 +1,152 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "biome.json",
+      "commitlint.config.js",
+      "package.json",
+      "package-lock.json",
+      "nemoclaw/package.json",
+      "nemoclaw/package-lock.json",
+      "src/**/*.ts",
+      "bin/**/*.js",
+      "scripts/**/*.js",
+      "scripts/**/*.ts",
+      "test/**/*.js",
+      "docs/_ext/**/*.js",
+      "nemoclaw/src/**/*.ts",
+      "!dist",
+      "!nemoclaw/dist",
+      "!node_modules",
+      "!nemoclaw/node_modules",
+      "!docs/_build"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "javascript": {
+    "globals": [
+      "Buffer",
+      "CustomEvent",
+      "DOMParser",
+      "DocumentLoader",
+      "Element",
+      "Event",
+      "HTMLElement",
+      "MutationObserver",
+      "SearchEngine",
+      "SearchPageManager",
+      "URL",
+      "URLSearchParams",
+      "Utils",
+      "__dirname",
+      "__filename",
+      "clearInterval",
+      "clearTimeout",
+      "console",
+      "document",
+      "exports",
+      "fetch",
+      "lunr",
+      "module",
+      "process",
+      "require",
+      "setInterval",
+      "setTimeout",
+      "window"
+    ],
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  },
+  "json": {
+    "formatter": {
+      "trailingCommas": "none"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "correctness": {
+        "noUndeclaredVariables": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "bin/**/*.js",
+        "commitlint.config.js",
+        "scripts/**/*.js",
+        "test/**/*.js",
+        "docs/_ext/**/*.js"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedVariables": "error"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/**/*.ts"],
+      "formatter": {
+        "enabled": false
+      }
+    },
+    {
+      "includes": ["docs/_ext/**/*.js"],
+      "formatter": {
+        "enabled": false
+      },
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedVariables": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["nemoclaw/src/**/*.ts"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "useOptionalChain": "error"
+          },
+          "correctness": {
+            "noUnusedVariables": "error"
+          },
+          "nursery": {
+            "noFloatingPromises": "error",
+            "useExhaustiveSwitchCases": "error",
+            "useNullishCoalescing": "error"
+          },
+          "style": {
+            "noCommonJs": "error",
+            "useExportType": "error",
+            "useImportType": "error"
+          },
+          "suspicious": {
+            "noExplicitAny": "error"
+          }
+        }
+      }
+    }
+  ]
+}

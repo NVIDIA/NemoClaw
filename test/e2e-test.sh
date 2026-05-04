@@ -413,6 +413,23 @@ else
   fail "State management broken"
 fi
 
+# -------------------------------------------------------
+info "11. Verify procps debug tools are present (#2343)"
+# -------------------------------------------------------
+for cmd in ps top free uptime vmstat; do
+  if command -v "$cmd" >/dev/null 2>&1; then
+    pass "$cmd is available at $(command -v "$cmd")"
+  else
+    fail "$cmd not found — procps package missing from sandbox image"
+  fi
+done
+# Smoke-test: ps must actually execute, not just resolve
+if ps --version >/dev/null 2>&1; then
+  pass "ps executes successfully"
+else
+  fail "ps found but failed to execute"
+fi
+
 echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  ALL E2E TESTS PASSED${NC}"

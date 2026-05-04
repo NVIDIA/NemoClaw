@@ -1,157 +1,132 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# NemoClaw setup for NVIDIA Jetson devices (Orin Nano, Orin NX, AGX Orin, Thor).
-#
-# Jetson devices use unified memory and a Tegra kernel that lacks nf_tables
-# chain modules (nft_chain_filter, nft_chain_nat, etc.). The OpenShell gateway
-# runs k3s inside a Docker container, and k3s's network policy controller
-# uses iptables in nf_tables mode by default, which panics on Tegra kernels.
-#
-# This script prepares the Jetson host so that `nemoclaw onboard` succeeds:
-#   1. Verifies Jetson platform
-#   2. Ensures NVIDIA Container Runtime is configured for Docker
-#   3. Loads required kernel modules (br_netfilter, xt_comment)
-#   4. Configures Docker daemon with default-runtime=nvidia
-#
-# The iptables-legacy patch for the gateway container image is handled
-# automatically by `nemoclaw onboard` when it detects a Jetson GPU.
-#
-# Usage:
-#   sudo nemoclaw setup-jetson
-#   # or directly:
-#   sudo bash scripts/setup-jetson.sh
 
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-MIN_NODE_VERSION="22.16.0"
+SUDO=()
+((EUID != 0)) && SUDO=(sudo)
 
-info() { echo -e "${GREEN}>>>${NC} $1"; }
-warn() { echo -e "${YELLOW}>>>${NC} $1"; }
-fail() {
-  echo -e "${RED}>>>${NC} $1"
+info() {
+  printf "[INFO]  %s\n" "$*"
+}
+
+error() {
+  printf "[ERROR] %s\n" "$*" >&2
   exit 1
 }
 
-version_gte() {
-  # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)
-  local IFS=.
-  local -a a b
-  read -r -a a <<<"$1"
-  read -r -a b <<<"$2"
-  for i in 0 1 2; do
-    local ai=${a[$i]:-0} bi=${b[$i]:-0}
-    if ((ai > bi)); then return 0; fi
-    if ((ai < bi)); then return 1; fi
-  done
-  return 0
+# Returns 0 only when both the live kernel state AND our persistent
+# drop-ins are in place:
+#   - runtime: bridge-nf-call-iptables sysctl reads back as 1
+#   - persistence: /etc/modules-load.d/nemoclaw.conf contains `br_netfilter`
+#     and /etc/sysctl.d/99-nemoclaw.conf contains the sysctl=1 line
+# Skipping on runtime-only state is wrong: if someone transiently ran
+# `modprobe br_netfilter` + `sysctl -w ...=1` without persisting, the
+# fix would evaporate after the next reboot. Requiring persistence too
+# makes the skip branch safe and lets `apply_br_netfilter_setup` (which
+# is idempotent) re-write the drop-ins whenever they're missing.
+bridge_netfilter_ready() {
+  [[ -f /proc/sys/net/bridge/bridge-nf-call-iptables ]] \
+    && [[ "$(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null)" == "1" ]] \
+    && [[ -f /etc/modules-load.d/nemoclaw.conf ]] \
+    && grep -qx 'br_netfilter' /etc/modules-load.d/nemoclaw.conf 2>/dev/null \
+    && [[ -f /etc/sysctl.d/99-nemoclaw.conf ]] \
+    && grep -qx 'net.bridge.bridge-nf-call-iptables=1' /etc/sysctl.d/99-nemoclaw.conf 2>/dev/null
 }
 
-# ── Pre-flight checks ─────────────────────────────────────────────
-#
-# When invoked by install.sh (unconditionally), exit 0 on non-Jetson
-# platforms so the installer proceeds. When invoked directly via
-# `nemoclaw setup-jetson`, the CLI wrapper provides user feedback.
+# Load br_netfilter and flip bridge-nf-call-iptables, then persist both
+# across reboots. Required for k3s (running inside the OpenShell gateway
+# container) to NAT pod → ClusterIP traffic; without this the kube-proxy
+# iptables rules are written but never matched for bridged pod traffic,
+# so sandbox pods cannot reach CoreDNS. Idempotent — safe to re-run
+# whenever bridge_netfilter_ready returns false, including the "runtime
+# is live but drop-ins missing" case (e.g. someone ran modprobe + sysctl
+# manually without persisting).
+apply_br_netfilter_setup() {
+  "${SUDO[@]}" modprobe br_netfilter
+  "${SUDO[@]}" sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null
 
-if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "aarch64" ]; then
-  # Not a Jetson-capable platform — skip silently.
-  exit 0
-fi
+  # Persist across reboots
+  echo "br_netfilter" | "${SUDO[@]}" tee /etc/modules-load.d/nemoclaw.conf >/dev/null
+  echo "net.bridge.bridge-nf-call-iptables=1" | "${SUDO[@]}" tee /etc/sysctl.d/99-nemoclaw.conf >/dev/null
+}
 
-if [ "$(id -u)" -ne 0 ]; then
-  fail "Must run as root: sudo nemoclaw setup-jetson"
-fi
+get_jetpack_version() {
+  local release_line release revision l4t_version
 
-# Verify Jetson platform
-JETSON_MODEL=""
-if [ -f /proc/device-tree/model ]; then
-  JETSON_MODEL=$(tr -d '\0' </proc/device-tree/model)
-fi
+  release_line="$(head -n1 /etc/nv_tegra_release 2>/dev/null || true)"
+  [[ -n "$release_line" ]] || return 0
 
-if ! echo "$JETSON_MODEL" | grep -qi "jetson"; then
-  # Also check nvidia-smi for Orin GPU name
-  GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader,nounits 2>/dev/null || echo "")
-  if ! echo "$GPU_NAME" | grep -qiE "orin|thor"; then
-    fail "This does not appear to be a Jetson device. Use 'nemoclaw onboard' directly."
-  fi
-  # Exclude discrete GPUs that happen to contain matching strings
-  if echo "$GPU_NAME" | grep -qiE "geforce|rtx|quadro"; then
-    fail "Discrete GPU detected ('$GPU_NAME'). This script is for Jetson only."
-  fi
-  JETSON_MODEL="${GPU_NAME}"
-fi
+  release="$(printf '%s\n' "$release_line" | sed -n 's/^# R\([0-9][0-9]*\) (release).*/\1/p')"
+  revision="$(printf '%s\n' "$release_line" | sed -n 's/^.*REVISION: \([0-9][0-9]*\)\..*$/\1/p')"
+  l4t_version="${release}.${revision}"
 
-info "Detected Jetson platform: ${JETSON_MODEL}"
-
-# Detect the real user (not root) for docker group add
-REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo "")}"
-
-command -v docker >/dev/null || fail "Docker not found. Install docker.io: sudo apt-get install -y docker.io"
-command -v python3 >/dev/null || fail "python3 not found. Install with: sudo apt-get install -y python3-minimal"
-command -v node >/dev/null || fail "Node.js not found. NemoClaw requires Node.js >= ${MIN_NODE_VERSION}. Install Node.js before running 'nemoclaw onboard'."
-
-NODE_VERSION_RAW="$(node --version 2>/dev/null || true)"
-NODE_VERSION="${NODE_VERSION_RAW#v}"
-if ! echo "$NODE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-  fail "Could not parse Node.js version from '${NODE_VERSION_RAW}'. NemoClaw requires Node.js >= ${MIN_NODE_VERSION}."
-fi
-if ! version_gte "$NODE_VERSION" "$MIN_NODE_VERSION"; then
-  fail "Node.js ${NODE_VERSION_RAW} is too old. NemoClaw requires Node.js >= ${MIN_NODE_VERSION}."
-fi
-info "Node.js ${NODE_VERSION_RAW} OK"
-
-# ── 1. Docker group ───────────────────────────────────────────────
-
-if [ -n "$REAL_USER" ]; then
-  if id -nG "$REAL_USER" | grep -qw docker; then
-    info "User '$REAL_USER' already in docker group"
-  else
-    info "Adding '$REAL_USER' to docker group..."
-    usermod -aG docker "$REAL_USER"
-    info "Added. Group will take effect on next login (or use 'newgrp docker')."
-  fi
-fi
-
-# ── 2. NVIDIA Container Runtime ──────────────────────────────────
-#
-# Jetson JetPack pre-installs nvidia-container-runtime but Docker may
-# not be configured to use it as the default runtime.
-
-DAEMON_JSON="/etc/docker/daemon.json"
-NEEDS_RESTART=false
-
-configure_nvidia_runtime() {
-  if ! command -v nvidia-container-runtime >/dev/null 2>&1; then
-    warn "nvidia-container-runtime not found. GPU passthrough may not work."
-    warn "Install with: sudo apt-get install -y nvidia-container-toolkit"
-    return
+  if [[ -z "$release" ]]; then
+    info "Jetson detected but could not parse L4T release — skipping host setup" >&2
+    return 0
   fi
 
-  if [ -f "$DAEMON_JSON" ]; then
-    # Check if nvidia runtime is already configured
-    if python3 -c "
-import json, sys
-try:
-    d = json.load(open('$DAEMON_JSON'))
-    runtimes = d.get('runtimes', {}) if isinstance(d, dict) else {}
-    if 'nvidia' in runtimes and d.get('default-runtime') == 'nvidia':
-        sys.exit(0)
-    sys.exit(1)
-except (IOError, ValueError, KeyError, AttributeError):
-    sys.exit(1)
-" 2>/dev/null; then
-      info "NVIDIA runtime already configured in Docker daemon"
+  if ((release >= 39)); then
+    # JP7 R39 does not need iptables / daemon.json changes, but k3s inside
+    # the OpenShell gateway container still needs br_netfilter +
+    # bridge-nf-call-iptables=1 for ClusterIP service routing. Some R39
+    # kernel images ship with it already in place, so check first and only
+    # apply when missing — avoids planting NemoClaw-owned drop-ins in
+    # /etc/modules-load.d and /etc/sysctl.d on systems that don't need
+    # them. See #2418.
+    if bridge_netfilter_ready; then
+      info "Jetson detected (L4T $l4t_version) — br_netfilter already configured; no host setup needed" >&2
     else
-      info "Patching Docker daemon config for NVIDIA runtime..."
-      # Repair malformed JSON (e.g. missing-comma from prior sed-based patching),
-      # remove legacy iptables/bridge keys, and write atomically with preserved
-      # permissions. See: https://github.com/NVIDIA/NemoClaw/issues/1875
-      python3 - "$DAEMON_JSON" <<'PYEOF'
+      info "Jetson detected (L4T $l4t_version) — loading br_netfilter (required by k3s inside the OpenShell gateway; see #2418)" >&2
+      if ((EUID != 0)); then
+        "${SUDO[@]}" true >/dev/null \
+          || error "Sudo is required to load br_netfilter and write /etc/modules-load.d and /etc/sysctl.d drop-ins."
+      fi
+      apply_br_netfilter_setup
+      # Read the value back from /proc (not just "we set it to 1") so the
+      # log is actual evidence that the apply path landed — useful when a
+      # user is validating the fix on their own Jetson and needs to confirm
+      # from log output alone that the runtime state is correct.
+      local v4
+      v4="$(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null || echo '?')"
+      info "br_netfilter runtime: bridge-nf-call-iptables=$v4 — sandbox → ClusterIP routing (CoreDNS, services) is unblocked; no docker or k3s restart needed" >&2
+      info "Reboot persistence: /etc/modules-load.d/nemoclaw.conf, /etc/sysctl.d/99-nemoclaw.conf" >&2
+    fi
+    return 0
+  fi
+
+  case "$l4t_version" in
+    36.*)
+      printf "%s" "jp6"
+      ;;
+    38.*)
+      printf "%s" "jp7-r38"
+      ;;
+    *)
+      info "Jetson detected (L4T $l4t_version) but version is not recognized — skipping host setup" >&2
+      ;;
+  esac
+}
+
+configure_jetson_host() {
+  local jetpack_version="$1"
+
+  if ((EUID != 0)); then
+    info "Jetson host configuration requires sudo. You may be prompted for your password."
+    "${SUDO[@]}" true >/dev/null || error "Sudo is required to apply Jetson host configuration."
+  fi
+
+  case "$jetpack_version" in
+    jp6)
+      "${SUDO[@]}" update-alternatives --set iptables /usr/sbin/iptables-legacy
+      # Patch /etc/docker/daemon.json using Python to avoid generating invalid JSON.
+      # The previous sed approach stripped the trailing comma from
+      # "default-runtime": "nvidia", which produced malformed JSON when
+      # "runtimes" was the next key. See: https://github.com/NVIDIA/NemoClaw/issues/1875
+      "${SUDO[@]}" python3 --version >/dev/null 2>&1 \
+        || error "python3 is required to patch /etc/docker/daemon.json but was not found on PATH"
+      "${SUDO[@]}" python3 - /etc/docker/daemon.json <<'PYEOF'
 import json, os, re, sys, tempfile
 path = sys.argv[1]
 try:
@@ -200,84 +175,29 @@ except Exception:
     os.unlink(tmp)
     raise
 PYEOF
-      # Now add nvidia runtime config via python3 (safe JSON merge)
-      python3 -c "
-import json
-with open('$DAEMON_JSON') as f:
-    d = json.load(f)
-d.setdefault('runtimes', {})['nvidia'] = {'path': 'nvidia-container-runtime', 'runtimeArgs': []}
-d['default-runtime'] = 'nvidia'
-with open('$DAEMON_JSON', 'w') as f:
-    json.dump(d, f, indent=4)
-    f.write('\n')
-"
-      NEEDS_RESTART=true
-    fi
-  else
-    info "Creating Docker daemon config with NVIDIA runtime..."
-    mkdir -p "$(dirname "$DAEMON_JSON")"
-    cat >"$DAEMON_JSON" <<'DAEMONJSON'
-{
-    "runtimes": {
-        "nvidia": {
-            "path": "nvidia-container-runtime",
-            "runtimeArgs": []
-        }
-    },
-    "default-runtime": "nvidia"
-}
-DAEMONJSON
-    NEEDS_RESTART=true
+      ;;
+    jp7-r38)
+      # JP7 R38 does not need iptables or Docker daemon.json changes.
+      ;;
+    *)
+      error "Unsupported Jetson version: $jetpack_version"
+      ;;
+  esac
+
+  apply_br_netfilter_setup
+
+  if [[ "$jetpack_version" == "jp6" ]]; then
+    "${SUDO[@]}" systemctl restart docker
   fi
 }
 
-configure_nvidia_runtime
+main() {
+  local jetpack_version
+  jetpack_version="$(get_jetpack_version)"
+  [[ -n "$jetpack_version" ]] || exit 0
 
-# ── 3. Kernel modules ────────────────────────────────────────────
+  info "Jetson detected ($jetpack_version) — applying required host configuration"
+  configure_jetson_host "$jetpack_version"
+}
 
-info "Loading required kernel modules..."
-modprobe br_netfilter 2>/dev/null || warn "Could not load br_netfilter"
-modprobe xt_comment 2>/dev/null || warn "Could not load xt_comment"
-
-# Persist across reboots
-MODULES_FILE="/etc/modules-load.d/nemoclaw-jetson.conf"
-if [ ! -f "$MODULES_FILE" ]; then
-  info "Persisting kernel modules for boot..."
-  cat >"$MODULES_FILE" <<'MODULES'
-# NemoClaw: required for k3s networking inside Docker
-br_netfilter
-xt_comment
-MODULES
-fi
-
-# ── 4. Restart Docker if needed ──────────────────────────────────
-
-if [ "$NEEDS_RESTART" = true ]; then
-  info "Restarting Docker daemon..."
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl restart docker
-  else
-    service docker restart 2>/dev/null || dockerd &
-  fi
-  for i in $(seq 1 15); do
-    if docker info >/dev/null 2>&1; then
-      break
-    fi
-    [ "$i" -eq 15 ] && fail "Docker didn't come back after restart. Check 'systemctl status docker'."
-    sleep 2
-  done
-  info "Docker restarted with NVIDIA runtime"
-fi
-
-# ── Done ─────────────────────────────────────────────────────────
-
-echo ""
-info "Jetson setup complete."
-info ""
-info "Device: ${JETSON_MODEL}"
-info ""
-info "Next step: run 'nemoclaw onboard' to set up your sandbox."
-info "  nemoclaw onboard"
-info ""
-info "The onboard wizard will automatically patch the gateway image"
-info "for Jetson iptables compatibility."
+main "$@"

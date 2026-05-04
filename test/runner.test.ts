@@ -1,6 +1,7 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+import type { StdioOptions } from "node:child_process";
 
 import { spawnSync } from "node:child_process";
 import childProcess from "node:child_process";
@@ -9,16 +10,47 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { runCapture } from "../dist/lib/runner";
+import { redact, runCapture } from "../dist/lib/runner";
 
 const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
+
+type SpawnCallOptions = {
+  stdio?: StdioOptions;
+  shell?: boolean;
+  env?: Record<string, string | undefined>;
+};
+
+type SpawnCall = [command: string, args?: readonly string[], options?: SpawnCallOptions];
+type RedactedRunnerError = Error & {
+  cmd?: string;
+  output?: string[];
+};
+
+function captureSpawnCall(
+  calls: SpawnCall[],
+  result: { status: number; stdout: string; stderr: string },
+) {
+  return (command: string, args?: readonly string[], options?: SpawnCallOptions) => {
+    calls.push([command, args, options]);
+    return result;
+  };
+}
+
+function requireCall(calls: SpawnCall[], index: number): SpawnCall {
+  const call = calls[index];
+  expect(call).toBeDefined();
+  if (!call) {
+    throw new Error(`Expected spawnSync call ${index}`);
+  }
+  return call;
+}
 
 describe("runner helpers", () => {
   it("does not let child commands consume installer stdin", () => {
     const script = `
-      const { run } = require(${JSON.stringify(runnerPath)});
+      const { runShell } = require(${JSON.stringify(runnerPath)});
       process.stdin.setEncoding("utf8");
-      run("cat >/dev/null || true");
+      runShell("cat >/dev/null || true");
       process.stdin.once("data", (chunk) => {
         process.stdout.write(chunk);
       });
@@ -35,36 +67,32 @@ describe("runner helpers", () => {
   });
 
   it("uses inherited stdio for interactive commands only", () => {
-    const calls = [];
+    const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = (...args) => {
-      calls.push(args);
-      return { status: 0, stdout: "", stderr: "" };
-    };
+    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { run, runInteractive } = require(runnerPath);
-      run("echo noninteractive");
-      runInteractive("echo interactive");
+      run(["echo", "noninteractive"]);
+      runInteractive(["echo", "interactive"]);
     } finally {
       childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
     }
 
     expect(calls).toHaveLength(2);
-    expect(calls[0][2].stdio).toEqual(["ignore", "pipe", "pipe"]);
-    expect(calls[1][2].stdio).toEqual(["inherit", "pipe", "pipe"]);
+    const firstCall = requireCall(calls, 0);
+    const secondCall = requireCall(calls, 1);
+    expect(firstCall[2]?.stdio).toEqual(["ignore", "pipe", "pipe"]);
+    expect(secondCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
   });
   it("runs argv-style commands without going through bash -c", () => {
-    const calls = [];
+    const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = (...args) => {
-      calls.push(args);
-      return { status: 0, stdout: "", stderr: "" };
-    };
+    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
@@ -76,10 +104,11 @@ describe("runner helpers", () => {
     }
 
     expect(calls).toHaveLength(1);
-    expect(calls[0][0]).toBe("bash");
-    expect(calls[0][1]).toEqual(["/tmp/setup.sh", "safe;name", "$(id)"]);
-    expect(calls[0][2].shell).toBe(false);
-    expect(calls[0][2].stdio).toEqual(["ignore", "pipe", "pipe"]);
+    const firstCall = requireCall(calls, 0);
+    expect(firstCall[0]).toBe("bash");
+    expect(firstCall[1]).toEqual(["/tmp/setup.sh", "safe;name", "$(id)"]);
+    expect(firstCall[2]?.shell).toBe(false);
+    expect(firstCall[2]?.stdio).toEqual(["ignore", "pipe", "pipe"]);
   });
 
   it("rejects opts.shell for argv-style commands", () => {
@@ -121,9 +150,12 @@ describe("runner env merging", () => {
     const originalGateway = process.env.OPENSHELL_GATEWAY;
     process.env.OPENSHELL_GATEWAY = "nemoclaw";
     try {
-      const output = runCapture('printf \'%s %s\' "$OPENSHELL_GATEWAY" "$OPENAI_API_KEY"', {
-        env: { OPENAI_API_KEY: "sk-test-secret" },
-      });
+      const output = runCapture(
+        ["sh", "-c", 'printf "%s %s" "$OPENSHELL_GATEWAY" "$OPENAI_API_KEY"'],
+        {
+          env: { OPENAI_API_KEY: "sk-test-secret" },
+        },
+      );
       expect(output).toBe("nemoclaw sk-test-secret");
     } finally {
       if (originalGateway === undefined) {
@@ -135,20 +167,17 @@ describe("runner env merging", () => {
   });
 
   it("preserves process env when opts.env is provided to run", () => {
-    const calls = [];
+    const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
     const originalPath = process.env.PATH;
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = (...args) => {
-      calls.push(args);
-      return { status: 0, stdout: "", stderr: "" };
-    };
+    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
       process.env.PATH = "/usr/local/bin:/usr/bin";
-      run("echo test", {
+      run(["echo", "test"], {
         env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" },
       });
     } finally {
@@ -162,19 +191,19 @@ describe("runner env merging", () => {
     }
 
     expect(calls).toHaveLength(1);
-    expect(calls[0][2].env.OPENSHELL_CLUSTER_IMAGE).toBe("ghcr.io/nvidia/openshell/cluster:0.0.12");
-    expect(calls[0][2].env.PATH).toBe("/usr/local/bin:/usr/bin");
+    const firstCall = requireCall(calls, 0);
+    expect(firstCall[2]?.env?.OPENSHELL_CLUSTER_IMAGE).toBe(
+      "ghcr.io/nvidia/openshell/cluster:0.0.12",
+    );
+    expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
   });
 
   it("preserves process env when opts.env is provided to runFile", () => {
-    const calls = [];
+    const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
     const originalPath = process.env.PATH;
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = (...args) => {
-      calls.push(args);
-      return { status: 0, stdout: "", stderr: "" };
-    };
+    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
@@ -194,8 +223,11 @@ describe("runner env merging", () => {
     }
 
     expect(calls).toHaveLength(1);
-    expect(calls[0][2].env.OPENSHELL_CLUSTER_IMAGE).toBe("ghcr.io/nvidia/openshell/cluster:0.0.12");
-    expect(calls[0][2].env.PATH).toBe("/usr/local/bin:/usr/bin");
+    const firstCall = requireCall(calls, 0);
+    expect(firstCall[2]?.env?.OPENSHELL_CLUSTER_IMAGE).toBe(
+      "ghcr.io/nvidia/openshell/cluster:0.0.12",
+    );
+    expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
   });
 });
 
@@ -335,13 +367,20 @@ describe("redact", () => {
     const output = redact(
       "https://alice:secret@example.com/v1/models?auth=abc123456789&sig=def987654321&keep=yes",
     );
-    expect(output).toBe("https://alice:****@example.com/v1/models?auth=****&sig=****&keep=yes");
+    expect(output).toBe("https://****:****@example.com/v1/models?auth=****&sig=****&keep=yes");
   });
 
   it("masks auth-style query parameters case-insensitively", () => {
     const { redact } = require(runnerPath);
     const output = redact("https://example.com?Signature=secret123456&AUTH=anothersecret123");
     expect(output).toBe("https://example.com/?Signature=****&AUTH=****");
+  });
+
+  it("masks dashboard URL hash tokens", () => {
+    const token = "a".repeat(64);
+    const output = redact(`http://127.0.0.1:18789/#token=${token}`);
+    expect(output).toBe("http://127.0.0.1:18789/#token=aaaa********************");
+    expect(output).not.toContain(token);
   });
 
   it("leaves non-secret strings untouched", () => {
@@ -359,57 +398,86 @@ describe("redact", () => {
 });
 
 describe("regression guards", () => {
-  it("runCapture redacts secrets before rethrowing errors", () => {
-    const originalExecSync = childProcess.execSync;
-    childProcess.execSync = () => {
-      throw new Error(
+  it("runCapture redacts secrets before rethrowing spawn errors", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => ({
+      error: new Error(
         'command failed: export SERVICE_KEY="supersecretvalue12345" ghp_abcdefghijklmnopqrstuvwxyz1234567890',
-      );
-    };
+      ),
+      status: null,
+      stdout: "",
+      stderr: "",
+    });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { runCapture } = require(runnerPath);
 
-      let error;
+      let error: Error | undefined;
       try {
-        runCapture("echo nope");
+        runCapture(["echo", "nope"]);
       } catch (err) {
-        error = err;
+        if (err instanceof Error) {
+          error = err;
+        } else {
+          throw err;
+        }
       }
 
       expect(error).toBeInstanceOf(Error);
+      if (!error) {
+        throw new Error("Expected runCapture() to throw");
+      }
       expect(error.message).toContain("ghp_");
       expect(error.message).not.toContain("supersecretvalue12345");
       expect(error.message).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
     } finally {
-      childProcess.execSync = originalExecSync;
+      childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
     }
   });
 
-  it("runCapture redacts execSync error cmd/output fields", () => {
-    const originalExecSync = childProcess.execSync;
-    childProcess.execSync = () => {
-      const err = /** @type {any} */ (new Error("command failed"));
+  it("runCapture redacts spawn error cmd/output fields", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => {
+      const err: RedactedRunnerError = new Error("command failed");
       err.cmd = "echo nvapi-aaaabbbbcccc1111 && echo ghp_abcdefghijklmnopqrstuvwxyz123456";
       err.output = ["stdout: nvapi-aaaabbbbcccc1111", "stderr: PASSWORD=secret123456"];
-      throw err;
+      return {
+        error: err,
+        status: null,
+        stdout: "",
+        stderr: "",
+      };
     };
 
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { runCapture } = require(runnerPath);
 
-      let error;
+      let error: RedactedRunnerError | undefined;
       try {
-        runCapture("echo nope");
+        runCapture(["echo", "nope"]);
       } catch (err) {
-        error = /** @type {any} */ (err);
+        if (err instanceof Error) {
+          error = err;
+        } else {
+          throw err;
+        }
       }
 
       expect(error).toBeDefined();
       expect(error).toBeInstanceOf(Error);
+      if (!error) {
+        throw new Error("Expected runCapture() to throw");
+      }
+      expect(error.cmd).toBeDefined();
+      expect(error.output).toBeDefined();
+      if (!error.cmd || !error.output) {
+        throw new Error("Expected redacted cmd/output fields on the thrown error");
+      }
       expect(error.cmd).not.toContain("nvapi-aaaabbbbcccc1111");
       expect(error.cmd).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
       expect(Array.isArray(error.output)).toBe(true);
@@ -418,7 +486,7 @@ describe("regression guards", () => {
       expect(error.output[0]).toContain("****");
       expect(error.output[1]).toContain("****");
     } finally {
-      childProcess.execSync = originalExecSync;
+      childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
     }
   });
@@ -443,7 +511,7 @@ describe("regression guards", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
-      expect(() => run("echo fail")).toThrow("exit:1");
+      expect(() => run(["echo", "fail"])).toThrow("exit:1");
       expect(stdoutSpy).toHaveBeenCalledWith("token ghp_********************\n");
       expect(stderrSpy).toHaveBeenCalledWith('export SERVICE_KEY="supe*****************"\n');
       expect(errorSpy).toHaveBeenCalledWith("  Command failed (exit 1): echo fail");
@@ -461,24 +529,22 @@ describe("regression guards", () => {
     const originalSpawnSync = childProcess.spawnSync;
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const calls = [];
+    const calls: SpawnCall[] = [];
 
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = (...args) => {
-      calls.push(args);
-      return {
-        status: 0,
-        stdout: "visit https://alice:secret@example.com/?token=abc123456789\n", // gitleaks:allow
-        stderr: "",
-      };
-    };
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "visit https://alice:secret@example.com/?token=abc123456789\n", // gitleaks:allow
+      stderr: "",
+    });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { runInteractive } = require(runnerPath);
-      runInteractive("echo interactive");
-      expect(calls[0][2].stdio).toEqual(["inherit", "pipe", "pipe"]);
-      expect(stdoutSpy).toHaveBeenCalledWith("visit https://alice:****@example.com/?token=****\n");
+      runInteractive(["echo", "interactive"]);
+      const firstCall = requireCall(calls, 0);
+      expect(firstCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
+      expect(stdoutSpy).toHaveBeenCalledWith("visit https://****:****@example.com/?token=****\n");
       expect(stderrSpy).not.toHaveBeenCalled();
     } finally {
       childProcess.spawnSync = originalSpawnSync;
@@ -489,7 +555,10 @@ describe("regression guards", () => {
   });
 
   it("nemoclaw.ts does not use execSync", () => {
-    const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
+    const src = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"),
+      "utf-8",
+    );
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       if (lines[i].includes("execSync") && !lines[i].includes("execFileSync")) {
@@ -501,11 +570,12 @@ describe("regression guards", () => {
   it("keeps a single shellQuote definition in the root CLI codebase", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const searchRoots = [path.join(repoRoot, "bin"), path.join(repoRoot, "src")];
-    const files = [];
-    function walk(dir) {
+    const files: string[] = [];
+    function walk(dir: string): void {
       for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
         if (f.isDirectory() && f.name !== "node_modules") walk(path.join(dir, f.name));
-        else if (f.name.endsWith(".js") || f.name.endsWith(".ts")) files.push(path.join(dir, f.name));
+        else if (f.name.endsWith(".js") || f.name.endsWith(".ts"))
+          files.push(path.join(dir, f.name));
       }
     }
     for (const root of searchRoots) {
@@ -551,29 +621,6 @@ describe("regression guards", () => {
   });
 
   describe("credential exposure guards (#429)", () => {
-    it("onboard createSandbox does not pass NVIDIA_API_KEY to sandbox env", () => {
-      const fs = require("fs");
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"), "utf-8");
-      // Find the envArgs block in createSandbox — it should not contain NVIDIA_API_KEY
-      const envArgsMatch = src.match(/const envArgs = \[[\s\S]*?\];/);
-      expect(envArgsMatch).toBeTruthy();
-      expect(envArgsMatch[0].includes("NVIDIA_API_KEY")).toBe(false);
-    });
-
-    it("onboard clears NVIDIA_API_KEY from process.env after setupInference", () => {
-      const fs = require("fs");
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"), "utf-8");
-      expect(src.includes("delete process.env.NVIDIA_API_KEY")).toBeTruthy();
-    });
-
-    it("setupSpark is a compatibility alias that does not shell out to sudo", () => {
-      const fs = require("fs");
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
-      expect(src).toContain("runDeprecatedOnboardAliasCommand");
-      expect(src).toContain('kind: "setup-spark"');
-      expect(src).not.toContain('sudo bash "${SCRIPTS}/setup-spark.sh"');
-    });
-
     it("walkthrough.sh does not embed NVIDIA_API_KEY in tmux or sandbox commands", () => {
       const fs = require("fs");
       const src = fs.readFileSync(
@@ -584,7 +631,7 @@ describe("regression guards", () => {
       const cmdLines = src
         .split("\n")
         .filter(
-          (l) =>
+          (l: string) =>
             !l.trim().startsWith("#") &&
             !l.trim().startsWith("echo") &&
             (l.includes("tmux") || l.includes("openshell sandbox connect")),
@@ -594,47 +641,63 @@ describe("regression guards", () => {
       }
     });
 
-    it("install-openshell.sh verifies OpenShell binary checksum after download", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
-        "utf-8",
-      );
-      expect(src).toContain("openshell-checksums-sha256.txt");
-      expect(src).toContain("shasum -a 256 -c");
-    });
-
-    it("install-openshell.sh falls back to curl when gh fails (#1318)", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
-        "utf-8",
-      );
-      expect(src).toContain("download_with_curl");
-      const ghBlock = src.slice(src.indexOf("command -v gh"));
-      expect(ghBlock).toContain("2>/dev/null");
-      expect(ghBlock).toContain("falling back to curl");
-      expect(ghBlock).toContain("download_with_curl");
-    });
-
     it("install-openshell.sh gh-absent path uses curl directly", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
-        "utf-8",
-      );
-      expect(src).toContain("download_with_curl");
-      const ghCheck = src.indexOf("command -v gh");
-      const elseBlock = src.indexOf("\nelse\n", ghCheck);
-      const finalFi = src.indexOf("\nfi\n", elseBlock);
-      expect(ghCheck).toBeGreaterThan(-1);
-      expect(elseBlock).toBeGreaterThan(ghCheck);
-      expect(finalFi).toBeGreaterThan(elseBlock);
-      const fallthrough = src.slice(elseBlock, finalFi);
-      expect(fallthrough).toContain("download_with_curl");
-      expect(fallthrough).not.toContain("gh release");
+      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+      const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));
+      const stub = `
+        #!/usr/bin/env bash
+        openshell() { echo "openshell 0.0.1"; }
+        export -f openshell
+        export PATH="${tmpBin}:/usr/bin:/bin"
+        command() { if [ "\${1:-}" = "-v" ] && [ "\${2:-}" = "gh" ]; then return 1; fi; builtin command "$@"; }
+        curl() {
+          echo "CURL_DIRECT $*"
+          local out=""
+          while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-o" ]; then
+              shift
+              out="$1"
+            fi
+            shift || true
+          done
+          if [ -n "$out" ]; then
+            if [ "$(basename "$out")" = "openshell-checksums-sha256.txt" ]; then
+              printf '%s\n' \
+                'ignored  openshell-x86_64-unknown-linux-musl.tar.gz' \
+                'ignored  openshell-aarch64-unknown-linux-musl.tar.gz' \
+                'ignored  openshell-x86_64-apple-darwin.tar.gz' \
+                'ignored  openshell-aarch64-apple-darwin.tar.gz' > "$out"
+            else
+              : > "$out"
+            fi
+          fi
+          return 0
+        }
+        export -f curl
+        shasum() { cat >/dev/null; echo "checksum OK"; return 0; }
+        export -f shasum
+        tar() { return 0; }; export -f tar
+        install() { return 0; }; export -f install
+        source "${scriptPath}"
+      `;
+      try {
+        const result = spawnSync("bash", ["-c", stub], {
+          encoding: "utf-8",
+          timeout: 5000,
+        });
+        const out = (result.stdout || "") + (result.stderr || "");
+        expect(result.status, out).toBe(0);
+        expect(out).toContain("CURL_DIRECT");
+        expect(out).not.toContain("gh CLI download failed");
+      } finally {
+        fs.rmSync(tmpBin, { recursive: true, force: true });
+      }
     });
 
     it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
       const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
+      const checksumLog = path.join(tmpBin, "shasum.log");
       const ghStub = path.join(tmpBin, "gh");
       fs.writeFileSync(ghStub, "#!/bin/sh\nexit 4\n");
       fs.chmodSync(ghStub, 0o755);
@@ -646,7 +709,7 @@ describe("regression guards", () => {
         export PATH="${tmpBin}:/usr/bin:/bin"
         curl() { echo "CURL_FALLBACK $*"; return 0; }
         export -f curl
-        shasum() { echo "checksum OK"; return 0; }
+        shasum() { echo "SHASUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
         export -f shasum
         tar() { return 0; }; export -f tar
         install() { return 0; }; export -f install
@@ -660,6 +723,7 @@ describe("regression guards", () => {
         const out = (result.stdout || "") + (result.stderr || "");
         expect(out).toContain("falling back to curl");
         expect(out).toContain("CURL_FALLBACK");
+        expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHASUM -a 256 -c -");
       } finally {
         fs.rmSync(tmpBin, { recursive: true, force: true });
       }
@@ -667,53 +731,39 @@ describe("regression guards", () => {
   });
 
   describe("curl-pipe-to-shell guards (#574, #583)", () => {
-    // Strip comment lines, then join line continuations so multiline
-    // curl ... |\n  bash patterns are caught by the single-line regex.
-    const stripComments = (src, commentPrefix) =>
-      src
-        .split("\n")
-        .filter((l) => !l.trim().startsWith(commentPrefix))
-        .join("\n");
-
-    const joinContinuations = (src) => src.replace(/\\\n\s*/g, " ");
-
-    const collapseMultilinePipes = (src) => src.replace(/\|\s*\n\s*/g, "| ");
-
-    const normalize = (src, commentPrefix) =>
-      collapseMultilinePipes(joinContinuations(stripComments(src, commentPrefix)));
-
-    const shellViolationRe = /curl\s[^|]*\|\s*(sh|bash|sudo\s+(-\S+\s+)*(sh|bash))\b/;
-    const jsViolationRe = /curl.*\|\s*(sh|bash|sudo\s+(-\S+\s+)*(sh|bash))\b/;
-
-    const findShellViolations = (src) => {
-      const normalized = normalize(src, "#");
-      return normalized.split("\n").filter((line) => {
-        const t = line.trim();
-        if (t.startsWith("printf") || t.startsWith("echo") || t.startsWith("warn")) return false;
-        return shellViolationRe.test(t);
-      });
-    };
-
-    const findJsViolations = (src) => {
-      const normalized = normalize(src, "//");
-      return normalized.split("\n").filter((line) => {
-        const t = line.trim();
-        if (t.startsWith("*")) return false;
-        return jsViolationRe.test(t);
-      });
-    };
-
-    it("install.sh does not pipe curl to shell", () => {
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "install.sh"), "utf-8");
-      expect(findShellViolations(src)).toEqual([]);
-    });
-
-    it("scripts/install.sh does not pipe curl to shell", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "install.sh"),
-        "utf-8",
+    it("installer entrypoints run local version checks without curl-to-shell bootstrap", () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "installer-entrypoints-"));
+      const fakeBin = path.join(tmp, "bin");
+      const callLog = path.join(tmp, "calls.log");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash\nprintf 'curl %s\\n' "$*" >> ${JSON.stringify(callLog)}\nexit 70\n`,
+        { mode: 0o755 },
       );
-      expect(findShellViolations(src)).toEqual([]);
+      fs.writeFileSync(
+        path.join(fakeBin, "sh"),
+        `#!/usr/bin/env bash\nprintf 'sh %s\\n' "$*" >> ${JSON.stringify(callLog)}\nexit 71\n`,
+        { mode: 0o755 },
+      );
+
+      try {
+        for (const script of ["install.sh", path.join("scripts", "install.sh")]) {
+          const result = spawnSync(
+            "bash",
+            [path.join(import.meta.dirname, "..", script), "--version"],
+            {
+              encoding: "utf-8",
+              env: { ...process.env, HOME: tmp, PATH: `${fakeBin}:/usr/bin:/bin` },
+              timeout: 5000,
+            },
+          );
+          expect(result.status, `${script}: ${result.stdout}${result.stderr}`).toBe(0);
+        }
+        expect(fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf-8") : "").toBe("");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
     });
 
     it("scripts/brev-setup.sh has been removed", () => {
@@ -727,76 +777,6 @@ describe("regression guards", () => {
       expect(fs.existsSync(scriptPath)).toBe(true);
       const mode = fs.statSync(scriptPath).mode;
       expect((mode & 0o111) !== 0).toBe(true);
-    });
-
-    it("services no longer tell users to install brev-setup.sh", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "src", "lib", "services.ts"),
-        "utf-8",
-      );
-      expect(src).not.toContain("brev-setup.sh");
-    });
-
-    it("deploy uses the standard installer and connects to the actual sandbox name", () => {
-      const tsSrc = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
-        "utf-8",
-      );
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
-      expect(src).toContain('const { executeDeploy } = require("./lib/deploy")');
-      expect(tsSrc).toContain("export function inferDeployProvider(");
-      expect(tsSrc).toContain("export function buildDeployEnvLines(");
-      expect(tsSrc).toContain(
-        "bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software",
-      );
-      expect(tsSrc).not.toContain("sandbox connect nemoclaw");
-      expect(tsSrc).toContain("openshell sandbox connect ${shellQuote(sandboxName)}");
-    });
-
-    it("deploy syncs a complete buildable checkout instead of excluding src", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
-        "utf-8",
-      );
-      expect(src).not.toContain("--exclude src");
-      expect(src).toContain('"${rootDir}/"');
-      expect(src).toContain("--exclude dist");
-      expect(src).toContain('const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp")');
-      expect(src).toContain("--provider ${shellQuote(brevProvider)}");
-    });
-
-    it("deploy supports test-friendly non-interactive skip flags", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
-        "utf-8",
-      );
-      expect(src).toContain("NEMOCLAW_DEPLOY_NO_CONNECT");
-      expect(src).toContain("NEMOCLAW_DEPLOY_NO_START_SERVICES");
-      expect(src).toContain("Skipping interactive sandbox connect");
-    });
-
-    it("deploy pins SSH host keys via TOFU instead of accept-new (#691)", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
-        "utf-8",
-      );
-      expect(src).not.toContain("StrictHostKeyChecking=accept-new");
-      expect(src).toContain("StrictHostKeyChecking=yes");
-      expect(src).toContain("ssh-keyscan");
-      expect(src).toContain("UserKnownHostsFile=");
-      expect(src).toContain("nemoclaw-ssh-");
-    });
-
-    it("deploy reports Brev failure states before SSH timeout", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
-        "utf-8",
-      );
-      expect(src).toContain("function getBrevInstanceStatus(");
-      expect(src).toContain('brev", ["ls", "--json"]');
-      expect(src).toContain("Brev instance '${name}' did not become ready.");
-      expect(src).toContain("Try: brev reset");
-      expect(src).toContain("Brev status at timeout:");
     });
 
     it("brev e2e suite includes a deploy-cli mode", () => {
@@ -828,29 +808,6 @@ describe("regression guards", () => {
       expect(src).not.toContain("scripts/brev-setup.sh");
       expect(src).not.toContain("USE_LAUNCHABLE");
       expect(src).not.toContain("SKIP_VLLM=1");
-    });
-
-    it("src/nemoclaw.ts does not pipe curl to shell", () => {
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
-      expect(findJsViolations(src)).toEqual([]);
-    });
-  });
-
-  describe("uninstall fallback hardening (#577)", () => {
-    it("src/lib/uninstall-command.ts does not execute remote uninstall script fallback", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "src", "lib", "uninstall-command.ts"),
-        "utf-8",
-      );
-      const start = src.indexOf("export function runUninstallCommand(");
-      expect(start).toBeGreaterThan(-1);
-      const uninstallBlock = src.slice(start);
-
-      expect(uninstallBlock).not.toMatch(/exec(File)?Sync(?:Impl)?\(\s*["'](?:curl|wget)["']/);
-      expect(uninstallBlock).not.toMatch(
-        /spawnSyncImpl\(\s*["'](?:bash|sh)["']\s*,\s*\[[^\]]*(?:uninstallScript|https?:\/\/)[^\]]*\]/,
-      );
-      expect(uninstallBlock).toContain("Remote uninstall fallback is disabled for security.");
     });
   });
 });

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -36,6 +35,22 @@ function getOctalPerms(filePath: string): string {
  * Run a bash snippet that sources sandbox-init.sh and executes the given body.
  * Returns { stdout, stderr } as trimmed strings.
  */
+type ExecFailureShape = { stdout?: string | Buffer; stderr?: string | Buffer };
+
+function readExecFileSyncOutput(error: ExecFailureShape | null, key: "stdout" | "stderr"): string {
+  if (error === null) {
+    return "";
+  }
+  const value = Reflect.get(error, key);
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (Buffer.isBuffer(value)) {
+    return value.toString().trim();
+  }
+  return "";
+}
+
 function runWithLib(
   body: string,
   opts: { env?: Record<string, string>; expectFail?: boolean } = {},
@@ -55,11 +70,12 @@ function runWithLib(
       stdio: ["pipe", "pipe", "pipe"],
     });
     return { stdout: result.trim(), stderr: "" };
-  } catch (e: any) {
+  } catch (e) {
     if (opts.expectFail) {
+      const errorObject: ExecFailureShape | null = typeof e === "object" && e !== null ? e : null;
       return {
-        stdout: (e.stdout || "").toString().trim(),
-        stderr: (e.stderr || "").toString().trim(),
+        stdout: readExecFileSyncOutput(errorObject, "stdout"),
+        stderr: readExecFileSyncOutput(errorObject, "stderr"),
       };
     }
     throw e;
@@ -179,11 +195,7 @@ EOF
   describe("validate_tmp_permissions", () => {
     let workDir: string;
     let tmpBackups: Record<string, string>;
-    const TMP_ARTIFACTS = [
-      "/tmp/nemoclaw-proxy-env.sh",
-      "/tmp/gateway.log",
-      "/tmp/auto-pair.log",
-    ];
+    const TMP_ARTIFACTS = ["/tmp/nemoclaw-proxy-env.sh", "/tmp/gateway.log", "/tmp/auto-pair.log"];
 
     beforeEach(() => {
       workDir = mkdtempSync(join(tmpdir(), "sandbox-init-validate-"));
@@ -209,10 +221,9 @@ EOF
       writeFileSync(testFile, "# bad permissions");
       chmodSync(testFile, 0o644); // writable — should fail
 
-      const { stderr } = runWithLib(
-        `validate_tmp_permissions ${JSON.stringify(testFile)}`,
-        { expectFail: true },
-      );
+      const { stderr } = runWithLib(`validate_tmp_permissions ${JSON.stringify(testFile)}`, {
+        expectFail: true,
+      });
       expect(stderr).toContain("unsafe permissions");
     });
 
@@ -240,10 +251,9 @@ EOF
     });
 
     it("fails when hash file is missing", () => {
-      const { stderr } = runWithLib(
-        `verify_config_integrity ${JSON.stringify(workDir)}`,
-        { expectFail: true },
-      );
+      const { stderr } = runWithLib(`verify_config_integrity ${JSON.stringify(workDir)}`, {
+        expectFail: true,
+      });
       expect(stderr).toContain("Config hash file missing");
     });
 
@@ -272,11 +282,47 @@ EOF
       // Tamper with config
       writeFileSync(configFile, '{"test": false, "injected": "malicious"}');
 
-      const { stderr } = runWithLib(
-        `verify_config_integrity ${JSON.stringify(workDir)}`,
-        { expectFail: true },
-      );
+      const { stderr } = runWithLib(`verify_config_integrity ${JSON.stringify(workDir)}`, {
+        expectFail: true,
+      });
       expect(stderr).toContain("integrity check FAILED");
+    });
+
+    it("locked-aware verifier skips mutable-default hash files", () => {
+      const configFile = join(workDir, "config.json");
+      writeFileSync(configFile, '{"test": true}');
+      execFileSync("bash", [
+        "-c",
+        `cd ${JSON.stringify(workDir)} && sha256sum config.json > .config-hash`,
+      ]);
+      writeFileSync(configFile, '{"test": false, "mutable": true}');
+
+      const { stdout } = runWithLib(`
+        verify_config_integrity_if_locked ${JSON.stringify(workDir)} 2>&1
+        echo "MUTABLE_OK"
+      `);
+      expect(stdout).toContain("Config integrity check skipped for mutable default");
+    });
+
+    it("locked-aware verifier fails closed when a locked config is missing its hash", () => {
+      const fakeBin = join(workDir, "bin");
+      mkdirSync(fakeBin);
+      writeFileSync(
+        join(fakeBin, "stat"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "${2:-}" = "%u" ]; then echo 0; exit 0; fi',
+          'if [ "${2:-}" = "%a" ] || [ "${2:-}" = "%Lp" ]; then echo 755; exit 0; fi',
+          "exit 1",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      const { stderr } = runWithLib(`verify_config_integrity_if_locked ${JSON.stringify(workDir)}`, {
+        env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
+        expectFail: true,
+      });
+      expect(stderr).toContain("Locked config is missing hash file");
     });
   });
 
@@ -317,6 +363,17 @@ EOF
     it("is a no-op when files do not exist", () => {
       // Should not throw
       runWithLib(`lock_rc_files ${JSON.stringify(workDir)}`);
+    });
+
+    it("refuses to chmod symlinked rc files", () => {
+      const target = join(workDir, "target");
+      writeFileSync(target, "# target", { mode: 0o600 });
+      symlinkSync(target, join(workDir, ".bashrc"));
+
+      const { stdout } = runWithLib(`lock_rc_files ${JSON.stringify(workDir)} 2>&1`);
+
+      expect(stdout).toContain("Refusing to lock symlinked rc file");
+      expect(getOctalPerms(target)).toBe("600");
     });
   });
 
@@ -451,36 +508,69 @@ EOF
 
   describe("both entrypoints source the shared library", () => {
     it("nemoclaw-start.sh sources sandbox-init.sh", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../scripts/nemoclaw-start.sh"),
-        "utf-8",
+      const src = readFileSync(join(import.meta.dirname, "../scripts/nemoclaw-start.sh"), "utf-8");
+      const start = src.indexOf("_SANDBOX_INIT=");
+      const end = src.indexOf("# Harden: limit process count", start);
+      if (start === -1 || end === -1 || end <= start) {
+        throw new Error("Expected sandbox-init source block in scripts/nemoclaw-start.sh");
+      }
+
+      const workDir = mkdtempSync(join(tmpdir(), "nemoclaw-start-source-init-"));
+      const scriptDir = join(workDir, "scripts");
+      const libDir = join(scriptDir, "lib");
+      mkdirSync(libDir, { recursive: true });
+      writeFileSync(
+        join(libDir, "sandbox-init.sh"),
+        "export NEMOCLAW_TEST_SANDBOX_INIT_LOADED=1\n",
       );
-      expect(src).toContain("source");
-      expect(src).toContain("sandbox-init.sh");
+      const wrapperPath = join(scriptDir, "nemoclaw-start.sh");
+      writeFileSync(
+        wrapperPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          src.slice(start, end),
+          'printf "LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}"',
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      try {
+        const result = execFileSync("bash", [wrapperPath], { encoding: "utf-8" }).trim();
+        expect(result).toBe("LOADED=1");
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
     });
 
     it("hermes start.sh sources sandbox-init.sh", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../agents/hermes/start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain("source");
       expect(src).toContain("sandbox-init.sh");
     });
 
     it("hermes start.sh calls lock_rc_files (vulnerability fix)", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../agents/hermes/start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain("lock_rc_files");
     });
 
+    it("hermes start.sh rewrites configure guard rc blocks through the symlink-safe helper", () => {
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
+      const helperFn = src.match(/rewrite_rc_marker_block\(\) \{([\s\S]*?)^}/m);
+      const guardFn = src.match(/install_configure_guard\(\) \{([\s\S]*?)^# configure_messaging_channels/m);
+      expect(helperFn).toBeTruthy();
+      expect(guardFn).toBeTruthy();
+      expect(helperFn![1]).toContain('[ -L "$rc_file" ]');
+      expect(helperFn![1]).toContain('mktemp "${dir}/.${base}.tmp.XXXXXX"');
+      expect(helperFn![1]).toContain('mv -f "$tmp" "$rc_file"');
+      expect(src).toContain("rewrite_rc_marker_block_or_fail_in_root");
+      expect(guardFn![1]).toContain("rewrite_rc_marker_block_or_fail_in_root");
+      expect(guardFn![1]).not.toContain('cat "$tmp" >"$rc_file"');
+      expect(guardFn![1]).not.toContain('>>"$rc_file"');
+    });
+
     it("hermes start.sh uses emit_sandbox_sourced_file for proxy config", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../agents/hermes/start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain("emit_sandbox_sourced_file");
       // Should NOT contain the old inline _write_proxy_snippet pattern
       expect(src).not.toContain("_write_proxy_snippet");
@@ -488,29 +578,39 @@ EOF
     });
 
     it("hermes start.sh calls validate_tmp_permissions", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../agents/hermes/start.sh"),
-        "utf-8",
-      );
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain("validate_tmp_permissions");
     });
 
-    it("nemoclaw-start.sh uses emit_sandbox_sourced_file for proxy-env.sh", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../scripts/nemoclaw-start.sh"),
-        "utf-8",
-      );
-      expect(src).toContain("emit_sandbox_sourced_file");
-      // Should NOT contain old chmod 644 for proxy-env
-      expect(src).not.toMatch(/chmod 644.*\$_PROXY_ENV_FILE/);
+    it("hermes start.sh checks immutable bits before legacy migration mutates files", () => {
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
+      const fn = src.match(/migrate_legacy_layout\(\) \{([\s\S]*?)^}/m);
+      expect(fn).toBeTruthy();
+      expect(src).toContain("path_has_immutable_bit");
+      expect(src).toContain("ensure_mutable_for_migration");
+      expect(fn![1]).toContain('[ -L "$config_dir" ]');
+      for (const target of ["$sentinel", "$config_dir", "$data_dir", "$entry", "$target"]) {
+        expect(fn![1]).toContain(`ensure_mutable_for_migration "${target}"`);
+      }
+      expect(fn![1]).toContain('elif [ -d "$target" ] && [ -d "$entry" ]; then');
     });
 
-    it("nemoclaw-start.sh uses parameterized verify_config_integrity", () => {
-      const src = readFileSync(
-        join(import.meta.dirname, "../scripts/nemoclaw-start.sh"),
-        "utf-8",
-      );
-      expect(src).toContain("verify_config_integrity /sandbox/.openclaw");
+    it("hermes start.sh validates hidden legacy symlinks and avoids recursive chown following", () => {
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
+      const existsFn = src.match(/legacy_symlinks_exist\(\) \{([\s\S]*?)^}/m);
+      const assertFn = src.match(/assert_no_legacy_layout\(\) \{([\s\S]*?)^}/m);
+      const migrateFn = src.match(/migrate_legacy_layout\(\) \{([\s\S]*?)^}/m);
+      expect(existsFn).toBeTruthy();
+      expect(assertFn).toBeTruthy();
+      expect(migrateFn).toBeTruthy();
+      for (const fn of [existsFn![1], assertFn![1]]) {
+        expect(fn).toContain('"$config_dir"/.[!.]*');
+        expect(fn).toContain('"$config_dir"/..?*');
+      }
+      expect(src).toContain("chown_tree_no_symlink_follow");
+      expect(migrateFn![1]).toContain("chown_tree_no_symlink_follow sandbox:sandbox");
+      expect(migrateFn![1]).not.toContain('chown -R sandbox:sandbox "$entry"');
     });
+
   });
 });

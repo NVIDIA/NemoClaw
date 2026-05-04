@@ -65,16 +65,91 @@ graph LR
     GW -.->|"Enforced by<br/>gateway"| INTERNET
 ```
 
+## Deployment Topology
+
+The logical diagram above shows how components relate.
+This section shows what actually runs where on the host.
+NemoClaw uses a Docker daemon.
+The OpenShell gateway runs as a container that embeds a k3s cluster.
+The sandbox runs as a Kubernetes pod inside that embedded cluster.
+
+```mermaid
+graph TB
+    classDef host fill:#fff,stroke:#76b900,stroke-width:2px,color:#1a1a1a,font-weight:bold
+    classDef cli fill:#76b900,stroke:#5a8f00,color:#fff,stroke-width:2px,font-weight:bold
+    classDef docker fill:#2496ed,stroke:#1577c2,color:#fff,stroke-width:2px,font-weight:bold
+    classDef gateway fill:#1a1a1a,stroke:#1a1a1a,color:#fff,stroke-width:2px,font-weight:bold
+    classDef k3s fill:#ffc61c,stroke:#c89a00,color:#1a1a1a,stroke-width:2px,font-weight:bold
+    classDef pod fill:#444,stroke:#76b900,color:#fff,stroke-width:2px
+    classDef external fill:#f5f5f5,stroke:#e0e0e0,color:#1a1a1a,stroke-width:1px
+
+    subgraph HOST["Host machine · Linux / macOS / WSL2 / DGX Spark"]
+        direction TB
+        CLI["nemoclaw CLI<br/><small>bin/nemoclaw.js → dist/<br/>onboard · connect · status · logs</small>"]:::cli
+
+        subgraph DOCKER["Docker daemon"]
+            direction TB
+
+            subgraph GWCON["OpenShell gateway container"]
+                direction TB
+                PROXY["OpenShell L7 proxy<br/><small>rewrites Authorization headers<br/>and URL-path segments at egress<br/>(credential injection)</small>"]:::gateway
+
+                subgraph K3S["Embedded k3s cluster"]
+                    direction TB
+
+                    subgraph POD["Sandbox pod 🔒<br/><small>Landlock + seccomp + netns</small>"]
+                        direction TB
+                        AGENT["OpenClaw agent<br/>+ NemoClaw plugin"]:::pod
+                    end
+                end
+            end
+        end
+    end
+
+    INFER["Inference provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM</small>"]:::external
+
+    CLI -->|"openshell CLI<br/>(orchestrates)"| GWCON
+    AGENT -->|"inference requests<br/><small>placeholder credentials</small>"| PROXY
+    PROXY -->|"egress with real credentials<br/>injected at the L7 proxy"| INFER
+
+    class HOST host
+    class DOCKER docker
+    class GWCON gateway
+    class K3S k3s
+    class POD pod
+```
+
+Layering from top to bottom:
+
+| Layer | Runs as | Role |
+|---|---|---|
+| Host CLI | Host process (`nemoclaw` on Node.js) | Orchestrates OpenShell via `openshell` CLI calls. |
+| Docker daemon | Host service | Runs the OpenShell gateway container. |
+| Gateway container | Docker container | Hosts the credential store, the L7 proxy, and the embedded k3s control plane. |
+| k3s | Process tree inside the gateway container | Kubernetes control plane that schedules the sandbox pod. |
+| Sandbox pod | Pod in the embedded k3s cluster | Runs the OpenClaw agent and the NemoClaw plugin under Landlock + seccomp + netns. |
+| OpenShell L7 proxy | Process in the gateway container | Intercepts agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
+
+NemoClaw never gives the sandbox a raw provider key.
+At onboard time it registers credentials with OpenShell's provider/placeholder system, and the L7 proxy substitutes the real value into outbound requests at egress.
+The CLI helper `isInferenceRouteReady` (in `src/lib/onboard.ts`) is a host-side readiness check used by the resume flow to decide whether the active route already covers the chosen provider and model — it is not a runtime component.
+
+For the DGX Spark-specific variant of this topology (cgroup v2, aarch64, unified memory), refer to the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw).
+
 ## NemoClaw Plugin
 
 The plugin is a thin TypeScript package that registers an inference provider and the `/nemoclaw` slash command.
 It runs in-process with the OpenClaw gateway inside the sandbox.
+It also registers runtime hooks that keep the agent aware of its environment.
+Before an agent turn starts, the plugin prepends a short context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
+When the policy or phase changes during a session, the plugin sends a smaller update block instead of repeating the full context.
 
 ```text
 nemoclaw/
 ├── src/
 │   ├── index.ts                    Plugin entry: registers all commands
 │   ├── cli.ts                      Commander.js subcommand wiring
+│   ├── runtime-context.ts          Sandbox and policy context injection
 │   ├── commands/
 │   │   ├── launch.ts               Fresh install into OpenShell
 │   │   ├── connect.ts              Interactive shell into sandbox
@@ -140,6 +215,7 @@ container image. Inside the sandbox:
 - Inference calls are routed through OpenShell to the configured provider.
 - Network egress is restricted by the baseline policy in `openclaw-sandbox.yaml`.
 - Filesystem access is confined to `/sandbox` and `/tmp` for read-write access, with system paths read-only.
+- The NemoClaw plugin injects sandbox and policy context into agent turns so the agent can report policy blocks accurately.
 
 ## Inference Routing
 
@@ -152,13 +228,18 @@ Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build
 
 Refer to Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 
+## Provider Credential Storage
+
+Provider credentials live in the OpenShell gateway store, not on the host filesystem.
+NemoClaw never writes them to host disk; the OpenShell L7 proxy injects values at egress.
+See Credential Storage (use the `nemoclaw-user-configure-security` skill) for the inspection, rotation, and migration flow.
+
 ## Host-Side State and Config
 
-NemoClaw keeps its operator-facing state on the host rather than inside the sandbox.
+NemoClaw keeps non-secret operator-facing state on the host rather than inside the sandbox.
 
 | Path | Purpose |
 |---|---|
-| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding. Stored as plaintext JSON protected by local filesystem permissions; see Credential Storage (use the `nemoclaw-user-configure-security` skill). |
 | `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection. |
 | `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
 
