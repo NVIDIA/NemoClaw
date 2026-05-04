@@ -43,27 +43,21 @@ function findRunBlock(src: string, predicate: (block: string) => boolean): RunBl
 describe("Hermes Dockerfile TUI Build Chain", () => {
   it("implements the secure build-and-prune sequence before privilege drop", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    const lines = src.split("\n");
 
-    // 1. Verify the full chained sequence exists
-    // We use a regex that allows for variable whitespace, newlines, and backslashes
+    // 1. Define strict block boundaries
+    const tuiStartIndex = src.indexOf("/opt/hermes/ui-tui");
+    const userSandboxLinePos = src.indexOf("USER sandbox");
+
+    // 2. Assert bounds exist and are correctly ordered
+    expect(tuiStartIndex).toBeGreaterThan(-1);
+    expect(userSandboxLinePos).toBeGreaterThan(-1);
+    expect(userSandboxLinePos).toBeGreaterThan(tuiStartIndex);
+
+    // 3. Isolate the TUI build phase
+    const tuiBlock = src.substring(tuiStartIndex, userSandboxLinePos);
+
+    // 4. Assert the chained build-and-prune sequence exists strictly inside this block
     const buildChainRegex = /npm ci --ignore-scripts\s*\\?\s*&&\s*npm run build\s*\\?\s*&&\s*npm prune --omit=dev\s*\\?\s*&&\s*npm cache clean --force/s;
-    expect(src).toMatch(buildChainRegex);
-
-    // 2. Verify the sequence occurs BEFORE the privilege drop to 'sandbox' user
-    const userSandboxIndex = lines.findIndex((line) => /^\s*USER\s+sandbox\b/.test(line));
-    
-    // Calculate absolute line position for the USER sandbox command
-    let userSandboxLinePos = 0;
-    for (let i = 0; i < userSandboxIndex; i++) {
-      userSandboxLinePos += lines[i].length + 1;
-    }
-    // Find the LAST occurrence of 'npm ci --ignore-scripts' before the USER sandbox line
-    const matches = Array.from(src.matchAll(/npm ci --ignore-scripts/g));
-    const validMatches = matches.filter(m => m.index < userSandboxLinePos);
-    
-    expect(validMatches.length).toBeGreaterThan(0);
-    const tuiBlockIndex = validMatches[validMatches.length - 1].index;
-    expect(tuiBlockIndex).toBeLessThan(userSandboxLinePos);
+    expect(tuiBlock).toMatch(buildChainRegex);
   });
 });
