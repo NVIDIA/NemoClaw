@@ -380,7 +380,9 @@ describe("inventory commands", () => {
     const lines: string[] = [];
     const backfillAndFindOverlaps = vi
       .fn()
-      .mockReturnValue([{ channel: "telegram", sandboxes: ["alice", "bob"] }]);
+      .mockReturnValue([
+        { channel: "telegram", sandboxes: ["alice", "bob"], reason: "matching-token" },
+      ]);
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
@@ -396,9 +398,39 @@ describe("inventory commands", () => {
     });
 
     expect(backfillAndFindOverlaps).toHaveBeenCalled();
-    expect(lines.some((l) => l.includes("telegram is enabled on both 'alice' and 'bob'"))).toBe(
-      true,
-    );
+    expect(
+      lines.some((l) =>
+        l.includes("'alice' and 'bob' share the same telegram credential"),
+      ),
+    ).toBe(true);
+  });
+
+  it("defaults missing overlap reason to the conservative warning", () => {
+    const lines: string[] = [];
+    const backfillAndFindOverlaps = vi
+      .fn()
+      .mockReturnValue([{ channel: "telegram", sandboxes: ["alice", "bob"] }]);
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "alice", model: "m", messagingChannels: ["telegram"] },
+          { name: "bob", model: "m", messagingChannels: ["telegram"] },
+        ],
+        defaultSandbox: "alice",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      backfillAndFindOverlaps,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(
+      lines.some((l) =>
+        l.includes(
+          "'alice' and 'bob' may share a telegram credential; stored credential hashes are incomplete",
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("surfaces Hermes gateway log when messaging is degraded", () => {

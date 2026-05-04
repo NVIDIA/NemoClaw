@@ -78,6 +78,7 @@ const { parseSandboxPhase } = require("./lib/gateway-state");
 const {
   getActiveSandboxSessions,
   createSystemDeps: createSessionDeps,
+  parseForwardList,
 } = require("./lib/sandbox-session-state");
 
 const {
@@ -384,20 +385,56 @@ function waitForRecoveredSandboxGateway(sandboxName: string): boolean {
 /**
  * Re-establish the dashboard port forward to the sandbox.
  * Uses the agent's forward port when a non-OpenClaw agent is active.
+ * Returns true when `forward start` succeeded and a follow-up probe
+ * confirms the new entry is running, false otherwise.
  */
-function ensureSandboxPortForward(sandboxName: string): void {
+function ensureSandboxPortForward(sandboxName: string): boolean {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const port = agent ? String(agent.forwardPort) : DASHBOARD_FORWARD_PORT;
   runOpenshell(["forward", "stop", port], { ignoreError: true });
-  runOpenshell(["forward", "start", "--background", port, sandboxName], {
+  const startResult = runOpenshell(
+    ["forward", "start", "--background", port, sandboxName],
+    { ignoreError: true },
+  );
+  if (startResult.status !== 0) return false;
+  return isSandboxForwardHealthy(sandboxName) === true;
+}
+
+/**
+ * Probe `openshell forward list` for the sandbox's dashboard forward.
+ * Returns true when an entry exists for the expected sandbox+port pair
+ * with STATUS=running, false when the entry is missing or non-running,
+ * and null when openshell is unreachable.
+ *
+ * The in-sandbox gateway and the host-side forward are independent
+ * dimensions: the forward can die (host SSH session dropped, list shows
+ * STATUS=dead) while the gateway keeps listening on 127.0.0.1:<port>.
+ */
+function isSandboxForwardHealthy(sandboxName: string): boolean | null {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const port = agent ? String(agent.forwardPort) : DASHBOARD_FORWARD_PORT;
+  const result = captureOpenshell(["forward", "list"], {
     ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
+  if (!result || isCommandTimeout(result) || result.status !== 0) return null;
+  const entries = parseForwardList(result.output) as Array<{
+    sandboxName: string;
+    port: string;
+    status: string;
+  }>;
+  const match = entries.find((entry) => entry.port === port);
+  if (!match) return false;
+  if (match.sandboxName !== sandboxName) return false;
+  return match.status === "running";
 }
 
 /**
  * Detect and recover from a sandbox that survived a gateway restart but
- * whose OpenClaw processes are not running. Returns an object describing
- * the outcome: { checked, wasRunning, recovered }.
+ * whose OpenClaw processes are not running. Also re-establishes the
+ * host-side dashboard port-forward when it has gone dead independently
+ * of the gateway. Returns an object describing the outcome:
+ * `{ checked, wasRunning, recovered, forwardRecovered }`.
  */
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -405,14 +442,39 @@ function checkAndRecoverSandboxProcesses(
 ) {
   const running = isSandboxGatewayRunning(sandboxName);
   if (running === null) {
-    return { checked: false, wasRunning: null, recovered: false };
+    return { checked: false, wasRunning: null, recovered: false, forwardRecovered: false };
   }
+  const _recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   if (running) {
-    return { checked: true, wasRunning: true, recovered: false };
+    // Gateway is alive but the host-side forward can still be dead or
+    // owned by another sandbox. Probe and re-establish only when
+    // necessary so the live-and-healthy path stays a no-op.
+    const forwardHealthy = isSandboxForwardHealthy(sandboxName);
+    if (forwardHealthy === false) {
+      if (!quiet) {
+        console.log("");
+        console.log(
+          `  Dashboard port forward to '${sandboxName}' is missing or dead.`,
+        );
+        console.log("  Re-establishing...");
+      }
+      const forwardRecovered = ensureSandboxPortForward(sandboxName);
+      if (!quiet) {
+        if (forwardRecovered) {
+          console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+        } else {
+          console.error("  Failed to re-establish the dashboard port forward.");
+          console.error(
+            `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
+          );
+        }
+      }
+      return { checked: true, wasRunning: true, recovered: false, forwardRecovered };
+    }
+    return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
   }
 
   // Gateway not running — attempt recovery
-  const _recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   if (!quiet) {
     console.log("");
     console.log(
@@ -430,16 +492,25 @@ function checkAndRecoverSandboxProcesses(
         console.error("  Gateway process started but is not responding.");
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
       }
-      return { checked: true, wasRunning: false, recovered: false };
+      return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
-    ensureSandboxPortForward(sandboxName);
+    const forwardRecovered = ensureSandboxPortForward(sandboxName);
     if (!quiet) {
       console.log(
         `  ${G}✓${R} ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway restarted inside sandbox.`,
       );
-      console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+      if (forwardRecovered) {
+        console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+      } else {
+        console.error("  Failed to re-establish the dashboard port forward.");
+        console.error(
+          `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
+        );
+      }
     }
-  } else if (!quiet) {
+    return { checked: true, wasRunning: false, recovered, forwardRecovered };
+  }
+  if (!quiet) {
     console.error(
       `  Could not restart ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway automatically.`,
     );
@@ -447,7 +518,7 @@ function checkAndRecoverSandboxProcesses(
     console.error(`    ${agentRuntime.getGatewayCommand(_recoveryAgent)}`);
   }
 
-  return { checked: true, wasRunning: false, recovered };
+  return { checked: true, wasRunning: false, recovered, forwardRecovered: false };
 }
 
 exports.runtimeBridge = {
@@ -976,7 +1047,13 @@ function runSandboxConnectProbe(sandboxName: string): void {
     process.exit(1);
   }
   if (processCheck.wasRunning) {
-    console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    if (processCheck.forwardRecovered) {
+      console.log(
+        `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
+      );
+    } else {
+      console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    }
     return;
   }
   if (processCheck.recovered) {
@@ -2532,7 +2609,7 @@ async function sandboxRebuild(
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
   const backup = sandboxState.backupSandboxState(sandboxName);
   log(
-    `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}, failed=${backup.failedDirs.join(",")}`,
+    `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
   if (!backup.success) {
     console.error("  Failed to back up sandbox state.");
@@ -2542,11 +2619,16 @@ async function sandboxRebuild(
     if (backup.failedDirs.length > 0) {
       console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
     }
+    if (backup.failedFiles.length > 0) {
+      console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
+    }
     console.error("  Aborting rebuild to prevent data loss.");
     bail("Failed to back up sandbox state.");
     return;
   }
-  console.log(`  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories)`);
+  console.log(
+    `  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
+  );
   console.log(`    Backup: ${backup.manifest.backupPath}`);
 
   // Step 3: Delete sandbox without tearing down gateway or session.
@@ -2736,14 +2818,19 @@ async function sandboxRebuild(
   log(`Restoring from: ${backup.manifest.backupPath} into sandbox: ${sandboxName}`);
   const restore = sandboxState.restoreSandboxState(sandboxName, backup.manifest.backupPath);
   log(
-    `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}, failed=${restore.failedDirs.join(",")}`,
+    `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}`,
   );
   if (!restore.success) {
     console.error(`  Partial restore: ${restore.restoredDirs.join(", ") || "none"}`);
     console.error(`  Failed: ${restore.failedDirs.join(", ")}`);
+    if (restore.failedFiles.length > 0) {
+      console.error(`  Failed files: ${restore.failedFiles.join(", ")}`);
+    }
     console.error(`  Manual restore available from: ${backup.manifest.backupPath}`);
   } else {
-    console.log(`  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories)`);
+    console.log(
+      `  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
+    );
   }
 
   // Step 5.5: Restore policy presets (#1952)
@@ -2995,7 +3082,7 @@ function printConnectOrderHint(candidate: string | null): void {
 }
 
 const VALID_SANDBOX_ACTIONS =
-  "connect, status, doctor, logs, policy-add, policy-remove, policy-list, skill, snapshot, share, rebuild, shields, config, channels, gateway-token, destroy";
+  "connect, status, doctor, logs, policy-add, policy-remove, policy-list, skill, snapshot, share, rebuild, recover, shields, config, channels, gateway-token, destroy";
 
 function printDispatchUsageError(
   result: Extract<DispatchResult, { kind: "usageError" }>,

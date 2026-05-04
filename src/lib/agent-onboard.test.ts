@@ -22,6 +22,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       format: "yaml",
     },
     stateDirs: [],
+    stateFiles: [],
     versionCommand: "agent --version",
     expectedVersion: null,
     hasDevicePairing: false,
