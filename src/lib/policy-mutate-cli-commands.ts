@@ -76,6 +76,20 @@ export class PolicyAddCommand extends Command {
   }
 }
 
+export class PolicyAddRawCommand extends Command {
+  static id = "sandbox:policy-add:raw";
+  static strict = false;
+  static hidden = true;
+
+  public async run(): Promise<void> {
+    const [sandboxName, ...actionArgs] = this.argv;
+    if (!sandboxName || sandboxName.trim() === "") {
+      this.error("Missing required sandboxName for policy-add.", { exit: 2 });
+    }
+    await getRuntimeBridge().sandboxPolicyAdd(sandboxName, actionArgs);
+  }
+}
+
 export class PolicyRemoveCommand extends Command {
   static id = "sandbox:policy-remove";
   static strict = true;

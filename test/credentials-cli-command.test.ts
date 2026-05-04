@@ -7,10 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const RUNTIME_PATH = require.resolve(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const COMMANDS_PATH = path.join(REPO_ROOT, "dist", "lib", "credentials-cli-command.js");
-
-type RequireCacheEntry = NonNullable<(typeof require.cache)[string]>;
+const GLOBAL_ACTIONS_PATH = path.join(REPO_ROOT, "dist", "lib", "global-cli-actions.js");
 type CredentialsCommandModule = typeof import("../dist/lib/credentials-cli-command.js");
 type SpawnLikeResult = { status: number | null; stdout?: string; stderr?: string };
 type RuntimeRecovery = {
@@ -53,13 +51,10 @@ function installRuntimeBridge(bridge: Partial<RuntimeBridge> = {}): OpenshellCal
     },
     ...bridge,
   };
-  const cacheEntry = {
-    id: RUNTIME_PATH,
-    filename: RUNTIME_PATH,
-    loaded: true,
-    exports: runtime,
-  } as RequireCacheEntry;
-  require.cache[RUNTIME_PATH] = cacheEntry;
+  const globalActions = require(GLOBAL_ACTIONS_PATH) as {
+    setGlobalCliActionRuntimeHooksForTest: (hooks: RuntimeBridge) => void;
+  };
+  globalActions.setGlobalCliActionRuntimeHooksForTest(runtime);
   return calls;
 }
 
@@ -129,7 +124,7 @@ async function expectProcessExit(
 
 afterEach(() => {
   delete require.cache[COMMANDS_PATH];
-  delete require.cache[RUNTIME_PATH];
+  delete require.cache[GLOBAL_ACTIONS_PATH];
 });
 
 describe("credentials oclif commands", () => {

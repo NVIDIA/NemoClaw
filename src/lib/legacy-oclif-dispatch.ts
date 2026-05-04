@@ -19,11 +19,6 @@ export type UsageErrorDispatch = {
   lines: string[];
 };
 
-export type LegacyDispatch = {
-  kind: "legacy";
-  target: "policy-add" | "skill" | "snapshot";
-};
-
 export type UnknownSubcommandDispatch = {
   kind: "unknownSubcommand";
   command: "credentials" | "channels";
@@ -39,7 +34,6 @@ export type DispatchResult =
   | OclifDispatch
   | HelpDispatch
   | UsageErrorDispatch
-  | LegacyDispatch
   | UnknownSubcommandDispatch
   | UnknownActionDispatch;
 
@@ -117,6 +111,7 @@ export function resolveSandboxOclifDispatch(
       }
       return { kind: "oclif", commandId: "sandbox:logs", args: [sandboxName, ...actionArgs] };
     case "doctor":
+      if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "doctor [--json]" };
       return { kind: "oclif", commandId: "sandbox:doctor", args: [sandboxName, ...actionArgs] };
     case "policy-add":
       if (hasHelpFlag(actionArgs)) {
@@ -126,7 +121,7 @@ export function resolveSandboxOclifDispatch(
         };
       }
       if (hasMissingFlagValue(actionArgs, "--from-file") || hasMissingFlagValue(actionArgs, "--from-dir")) {
-        return { kind: "legacy", target: "policy-add" };
+        return { kind: "oclif", commandId: "sandbox:policy-add:raw", args: [sandboxName, ...actionArgs] };
       }
       return { kind: "oclif", commandId: "sandbox:policy-add", args: [sandboxName, ...actionArgs] };
     case "policy-remove":
@@ -145,13 +140,13 @@ export function resolveSandboxOclifDispatch(
       const skillSub = actionArgs[0];
       const skillArgs = actionArgs.slice(1);
       if (!skillSub || skillSub === "help" || skillSub === "--help" || skillSub === "-h") {
-        return { kind: "legacy", target: "skill" };
+        return { kind: "oclif", commandId: "sandbox:skill", args: [sandboxName, ...actionArgs] };
       }
       if (skillSub === "install") {
-        if (hasHelpFlag(skillArgs)) return { kind: "legacy", target: "skill" };
+        if (hasHelpFlag(skillArgs)) return { kind: "oclif", commandId: "sandbox:skill", args: [sandboxName, ...actionArgs] };
         return { kind: "oclif", commandId: "sandbox:skill:install", args: [sandboxName, ...skillArgs] };
       }
-      return { kind: "legacy", target: "skill" };
+      return { kind: "oclif", commandId: "sandbox:skill", args: [sandboxName, ...actionArgs] };
     }
     case "rebuild":
       if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "rebuild [--yes|--force] [--verbose|-v]" };
@@ -176,7 +171,7 @@ export function resolveSandboxOclifDispatch(
         if (hasHelpFlag(snapshotArgs)) return { kind: "help", usage: "snapshot restore [selector] [--to <dst>]" };
         return { kind: "oclif", commandId: "sandbox:snapshot:restore", args: [sandboxName, ...snapshotArgs] };
       }
-      return { kind: "legacy", target: "snapshot" };
+      return { kind: "oclif", commandId: "sandbox:snapshot", args: [sandboxName, ...actionArgs] };
     }
     case "shields": {
       const shieldsSub = actionArgs[0];

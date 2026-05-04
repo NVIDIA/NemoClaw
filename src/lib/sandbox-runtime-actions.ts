@@ -5,7 +5,6 @@
 
 import type { SandboxConnectOptions } from "./sandbox-connect-action";
 import type { SandboxLogsOptions } from "./sandbox-logs-options";
-import { getNemoClawRuntimeBridge } from "./nemoclaw-runtime-bridge";
 
 export async function connectSandbox(
   sandboxName: string,
@@ -39,7 +38,10 @@ export async function destroySandbox(sandboxName: string, args: string[] = []): 
 }
 
 export async function rebuildSandbox(sandboxName: string, args: string[] = []): Promise<void> {
-  await getNemoClawRuntimeBridge().sandboxRebuild(sandboxName, args);
+  const { rebuildSandbox: rebuildExtractedSandbox } = require("./sandbox-rebuild-action") as {
+    rebuildSandbox: (sandboxName: string, args?: string[]) => Promise<void>;
+  };
+  await rebuildExtractedSandbox(sandboxName, args);
 }
 
 export async function installSandboxSkill(

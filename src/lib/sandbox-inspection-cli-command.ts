@@ -22,6 +22,7 @@ export class SandboxStatusCommand extends Command {
   static summary = "Sandbox health and NIM status";
   static description = "Show sandbox health, OpenShell gateway state, and local NIM status.";
   static usage = ["<name> status"];
+  static examples = ["<%= config.bin %> alpha status"];
   static args = {
     sandboxName: sandboxNameArg,
   };
@@ -41,6 +42,7 @@ export class SandboxPolicyListCommand extends Command {
   static summary = "List policy presets";
   static description = "List built-in and custom policy presets and show which are applied.";
   static usage = ["<name> policy-list"];
+  static examples = ["<%= config.bin %> alpha policy-list"];
   static args = {
     sandboxName: sandboxNameArg,
   };
@@ -60,6 +62,7 @@ export class SandboxChannelsListCommand extends Command {
   static summary = "List supported messaging channels";
   static description = "List supported messaging channels for a sandbox.";
   static usage = ["<name> channels list"];
+  static examples = ["<%= config.bin %> alpha channels list"];
   static args = {
     sandboxName: sandboxNameArg,
   };
@@ -79,21 +82,24 @@ export class SandboxConfigGetCommand extends Command {
   static summary = "Get sandbox configuration";
   static description = "Read sanitized sandbox agent configuration.";
   static usage = ["<name> config get [--key dotpath] [--format json|yaml]"];
+  static examples = [
+    "<%= config.bin %> alpha config get",
+    "<%= config.bin %> alpha config get --key model --format yaml",
+  ];
   static args = {
     sandboxName: sandboxNameArg,
   };
   static flags = {
     help: Flags.help({ char: "h" }),
     key: Flags.string({ description: "Dotpath to read from the sanitized config" }),
-    format: Flags.string({ description: "Output format (json or yaml)" }),
+    format: Flags.string({
+      description: "Output format",
+      options: ["json", "yaml"],
+    }),
   };
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxConfigGetCommand);
-    if (flags.format && flags.format !== "json" && flags.format !== "yaml") {
-      console.error(`  Unknown format: ${flags.format}. Use json or yaml.`);
-      process.exit(1);
-    }
     sandboxConfig.configGet(args.sandboxName, {
       key: flags.key ?? null,
       format: flags.format ?? "json",

@@ -17,6 +17,10 @@ export default class GatewayTokenCliCommand extends Command {
   static summary = "Print the OpenClaw gateway auth token to stdout";
   static description = "Print the OpenClaw gateway auth token for a running sandbox to stdout.";
   static usage = ["<name> gateway-token [--quiet|-q]"];
+  static examples = [
+    "<%= config.bin %> alpha gateway-token",
+    "<%= config.bin %> alpha gateway-token --quiet",
+  ];
   static args = {
     sandboxName: Args.string({
       name: "sandbox",
