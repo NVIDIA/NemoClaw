@@ -260,9 +260,15 @@ function streamLogsUntilReady(
     let resolved = false;
     const start = Date.now();
 
+    let tick: ReturnType<typeof setInterval> | null = null;
+
     function done(result: { ok: boolean; reason?: string }): void {
       if (resolved) return;
       resolved = true;
+      if (tick) {
+        clearInterval(tick);
+        tick = null;
+      }
       try {
         proc.kill();
       } catch {
@@ -271,42 +277,45 @@ function streamLogsUntilReady(
       resolve(result);
     }
 
-    let buffer = "";
-    function onLine(raw: Buffer): void {
-      buffer += raw.toString();
-      const segments = buffer.split(/\r?\n/);
-      // Last segment may be a partial line; hold it for the next chunk so a
-      // marker split across `data` events isn't dropped.
-      buffer = segments.pop() ?? "";
-      for (const line of segments) {
-        if (!line) continue;
-        for (const fatal of profile.fatalMarkers) {
-          if (fatal.match.test(line)) {
-            emit(`ERROR: ${fatal.reason}`);
-            done({ ok: false, reason: fatal.reason });
-            return;
-          }
-        }
-        for (const m of profile.progressMarkers) {
-          if (m.match.test(line)) {
-            emit(m.emit);
-            break;
-          }
-        }
-        if (profile.readyMarker.test(line)) {
-          emit(`vLLM is serving on :${String(VLLM_PORT)}`);
-          done({ ok: true });
+    function processLine(line: string): void {
+      if (!line || resolved) return;
+      for (const fatal of profile.fatalMarkers) {
+        if (fatal.match.test(line)) {
+          emit(`ERROR: ${fatal.reason}`);
+          done({ ok: false, reason: fatal.reason });
           return;
         }
       }
+      for (const m of profile.progressMarkers) {
+        if (m.match.test(line)) {
+          emit(m.emit);
+          break;
+        }
+      }
+      if (profile.readyMarker.test(line)) {
+        emit(`vLLM is serving on :${String(VLLM_PORT)}`);
+        done({ ok: true });
+      }
     }
 
-    proc.stdout.on("data", onLine);
-    proc.stderr.on("data", onLine);
+    function consumeChunk(buffer: string, raw: Buffer): string {
+      const segments = (buffer + raw.toString()).split(/\r?\n/);
+      const nextBuffer = segments.pop() ?? "";
+      for (const line of segments) processLine(line);
+      return nextBuffer;
+    }
 
-    const tick = setInterval(() => {
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+    proc.stdout.on("data", (raw: Buffer) => {
+      stdoutBuffer = consumeChunk(stdoutBuffer, raw);
+    });
+    proc.stderr.on("data", (raw: Buffer) => {
+      stderrBuffer = consumeChunk(stderrBuffer, raw);
+    });
+
+    tick = setInterval(() => {
       if ((Date.now() - start) / 1000 > profile.loadTimeoutSec) {
-        clearInterval(tick);
         done({
           ok: false,
           reason: `model load exceeded ${String(profile.loadTimeoutSec)}s`,
@@ -314,8 +323,14 @@ function streamLogsUntilReady(
       }
     }, 5000);
 
-    proc.on("exit", (code: number | null) => {
-      clearInterval(tick);
+    proc.on("error", (err: Error) => {
+      done({ ok: false, reason: `docker logs spawn error: ${err.message}` });
+    });
+
+    proc.on("close", (code: number | null) => {
+      if (resolved) return;
+      processLine(stdoutBuffer);
+      processLine(stderrBuffer);
       if (resolved) return;
       done({ ok: false, reason: `docker logs exited with code ${String(code)}` });
     });
