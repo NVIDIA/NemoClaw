@@ -483,6 +483,11 @@ check_openclaw_agent_turn() {
     return
   fi
 
+  # Snapshot hop-header log count before the agent turn so C9 can prove a
+  # *new* line was written by this request and not reused from the C5 curl hit.
+  local hop_count_before
+  hop_count_before=$(grep -c "proxy_hop_headers=" "$COMPAT_MOCK_LOG" 2>/dev/null) || hop_count_before=0
+
   # 2>/dev/null drops openclaw progress/log lines so stdout is JSON-only.
   raw=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no \
@@ -524,12 +529,15 @@ print('\n'.join(parts))
   # C9: Verify http-proxy-fix.js stripped proxy hop headers — they must not
   # reach the upstream mock. The mock logs "proxy_hop_headers=none" when
   # clean, or "proxy_hop_headers=<header,...>" when the strip failed.
-  local last_hop_line leaked
-  last_hop_line=$(grep "proxy_hop_headers=" "$COMPAT_MOCK_LOG" 2>/dev/null | tail -1) || true
-  if [ -z "$last_hop_line" ]; then
-    info "C9: Mock did not log proxy_hop_headers — agent turn may not have hit /v1/chat/completions"
+  # Read only lines appended after the SSH command so C5's earlier
+  # /v1/chat/completions entry cannot satisfy this check.
+  local new_hop_line leaked
+  new_hop_line=$(grep "proxy_hop_headers=" "$COMPAT_MOCK_LOG" 2>/dev/null \
+    | tail -n +"$((hop_count_before + 1))" | head -1) || true
+  if [ -z "$new_hop_line" ]; then
+    fail "C9: Mock logged no proxy_hop_headers line for the agent turn — agent did not reach /v1/chat/completions"
   else
-    leaked=$(printf '%s' "$last_hop_line" | sed 's/.*proxy_hop_headers=//')
+    leaked=$(printf '%s' "$new_hop_line" | sed 's/.*proxy_hop_headers=//')
     if [ "$leaked" = "none" ]; then
       pass "C9: No proxy hop headers leaked to the compatible endpoint upstream (http-proxy-fix.js strip verified)"
     else
