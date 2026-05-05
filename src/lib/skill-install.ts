@@ -147,7 +147,7 @@ export interface SshResult {
 
 /**
  * Run a command on the sandbox via SSH with optional stdin content.
- * Uses the same SSH flags as executeSandboxCommand in nemoclaw.ts.
+ * Uses the same SSH flags as executeSandboxCommand in sandbox-process-recovery-action.ts.
  */
 export function sshExec(
   ctx: SshContext,

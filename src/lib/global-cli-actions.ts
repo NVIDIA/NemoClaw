@@ -14,9 +14,23 @@ import {
   runSetupSparkAction as executeSetupSparkAction,
 } from "./onboard-action";
 import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "./gateway-runtime-action";
-import { getNemoClawRuntimeBridge } from "./nemoclaw-runtime-bridge";
 import { runOpenshell } from "./openshell-runtime";
 import { help, version } from "./root-help-action";
+
+type GatewayRecovery = { recovered: boolean };
+
+type GlobalCliActionRuntimeHooks = {
+  recoverNamedGatewayRuntime?: () => Promise<GatewayRecovery>;
+  runOpenshell?: typeof runOpenshell;
+};
+
+let runtimeHooks: GlobalCliActionRuntimeHooks = {};
+
+export function setGlobalCliActionRuntimeHooksForTest(
+  hooks: GlobalCliActionRuntimeHooks,
+): void {
+  runtimeHooks = hooks;
+}
 
 export async function runOnboardAction(args: string[] = []): Promise<void> {
   await executeOnboardAction(args);
@@ -39,7 +53,10 @@ export function runBackupAllAction(): void {
 }
 
 export async function runUpgradeSandboxesAction(args: string[] = []): Promise<void> {
-  await getNemoClawRuntimeBridge().upgradeSandboxes(args);
+  const { upgradeSandboxes } = require("./upgrade-sandboxes-action") as {
+    upgradeSandboxes: (args?: string[]) => Promise<void>;
+  };
+  await upgradeSandboxes(args);
 }
 
 export async function runGarbageCollectImagesAction(args: string[] = []): Promise<void> {
@@ -54,12 +71,9 @@ export function showVersion(): void {
   version();
 }
 
-export async function recoverNamedGatewayRuntime(): Promise<{ recovered: boolean }> {
-  const runtime = getNemoClawRuntimeBridge() as {
-    recoverNamedGatewayRuntime?: () => Promise<{ recovered: boolean }>;
-  };
-  if (typeof runtime.recoverNamedGatewayRuntime === "function") {
-    return runtime.recoverNamedGatewayRuntime();
+export async function recoverNamedGatewayRuntime(): Promise<GatewayRecovery> {
+  if (typeof runtimeHooks.recoverNamedGatewayRuntime === "function") {
+    return runtimeHooks.recoverNamedGatewayRuntime();
   }
   return recoverNamedGatewayRuntimeAction();
 }
@@ -73,11 +87,8 @@ export function runOpenshellProviderCommand(
     timeout?: number;
   },
 ) {
-  const runtime = getNemoClawRuntimeBridge() as {
-    runOpenshell?: typeof runOpenshell;
-  };
-  if (typeof runtime.runOpenshell === "function") {
-    return runtime.runOpenshell(args, opts);
+  if (typeof runtimeHooks.runOpenshell === "function") {
+    return runtimeHooks.runOpenshell(args, opts);
   }
   return runOpenshell(args, opts);
 }

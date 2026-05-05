@@ -52,6 +52,8 @@ export interface RebuildManifest {
   agentVersion: string | null;
   expectedVersion: string | null;
   stateDirs: string[];
+  /** Directories verified as safe to restore. Absent on older manifests. */
+  backedUpDirs?: string[];
   stateFiles?: StateFileSpec[];
   /** Single config/state directory */
   dir: string;
@@ -142,26 +144,26 @@ function isStateFileSpec(value: unknown): value is StateFileSpec {
 }
 
 function isInstanceBackup(value: unknown): value is InstanceBackup {
+  if (!isRecord(value) || !isStateDirArray(value.stateDirs)) return false;
   return (
-    isRecord(value) &&
     typeof value.instanceId === "string" &&
     typeof value.agentType === "string" &&
     typeof value.dataDir === "string" &&
-    isStringArray(value.stateDirs) &&
-    isStringArray(value.backedUpDirs)
+    isBackedUpDirArray(value.backedUpDirs, value.stateDirs)
   );
 }
 
 function isRebuildManifest(value: unknown): value is RebuildManifest {
+  if (!isRecord(value) || !isStateDirArray(value.stateDirs)) return false;
   return (
-    isRecord(value) &&
     typeof value.version === "number" &&
     typeof value.sandboxName === "string" &&
     typeof value.timestamp === "string" &&
     typeof value.agentType === "string" &&
     (value.agentVersion === null || typeof value.agentVersion === "string") &&
     (value.expectedVersion === null || typeof value.expectedVersion === "string") &&
-    isStringArray(value.stateDirs) &&
+    (value.backedUpDirs === undefined ||
+      isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
     (typeof value.dir === "string" || typeof value.writableDir === "string") &&
     typeof value.backupPath === "string" &&
     (value.stateFiles === undefined ||
@@ -581,6 +583,35 @@ function normalizeStateFilePath(filePath: string): string | null {
   return normalized;
 }
 
+function isSafeStateDirPath(dirPath: string): boolean {
+  if (!dirPath || dirPath.includes("\0") || path.isAbsolute(dirPath)) return false;
+  const normalized = path.posix.normalize(dirPath.replace(/\\/g, "/"));
+  return normalized === dirPath && normalized !== "." && normalized !== ".." && !normalized.startsWith("../");
+}
+
+function isStateDirArray(value: unknown): value is string[] {
+  return isStringArray(value) && value.every(isSafeStateDirPath);
+}
+
+function isBackedUpDirArray(value: unknown, stateDirs: string[]): value is string[] {
+  const stateDirSet = new Set(stateDirs);
+  return isStringArray(value) && value.every((dirName) => isSafeStateDirPath(dirName) && stateDirSet.has(dirName));
+}
+
+function existingBackupDirs(backupPath: string, dirNames: string[]): string[] {
+  const existing: string[] = [];
+  for (const dirName of dirNames) {
+    try {
+      if (lstatSync(path.join(backupPath, dirName)).isDirectory()) {
+        existing.push(dirName);
+      }
+    } catch {
+      /* missing, broken, or inaccessible backup entry */
+    }
+  }
+  return existing;
+}
+
 function normalizeStateFileSpec(spec: AgentStateFile | StateFileSpec): StateFileSpec | null {
   const normalized = normalizeStateFilePath(spec.path);
   if (!normalized) return null;
@@ -604,6 +635,27 @@ function normalizeStateFileSpecs(specs: readonly (AgentStateFile | StateFileSpec
 
 function stateFileRemotePath(dir: string, filePath: string): string {
   return `${dir.replace(/\/+$/, "")}/${filePath}`;
+}
+
+function failedDirsFromTarStderr(stderr: string, existingDirs: string[]): Set<string> {
+  const failed = new Set<string>();
+  const dirs = [...existingDirs].sort((a, b) => b.length - a.length);
+  for (const rawLine of stderr.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("tar: ")) continue;
+    const message = line.slice("tar: ".length);
+    for (const dirName of dirs) {
+      if (
+        message === dirName ||
+        message.startsWith(`${dirName}:`) ||
+        message.startsWith(`${dirName}/`)
+      ) {
+        failed.add(dirName);
+        break;
+      }
+    }
+  }
+  return failed;
 }
 
 const SQLITE_BACKUP_PY = [
@@ -985,11 +1037,57 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           `SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`,
         );
 
-        if (result.status === 0 && result.stdout && result.stdout.length > 0) {
+        // GNU tar exit codes: 0 = success, 1 = files changed during archive,
+        // 2 = errors (e.g. permission denied) but archive still written to stdout.
+        // Accept exit 0, 1, or 2 when stdout has data — extract what tar produced
+        // and determine per-dir success from tar's reported read errors.
+        const tarExitedWithData =
+          result.stdout && result.stdout.length > 0 && (result.status === 0 || result.status === 1 || result.status === 2);
+
+        if (result.status !== 0 && result.stdout && result.stdout.length > 0) {
+          _log(
+            `tar exited ${result.status} but produced ${result.stdout.length} bytes — attempting partial extraction`,
+          );
+        }
+
+        if (tarExitedWithData) {
           // SECURITY: Validate tar entries, extract safely, audit symlinks
           const extractResult = safeTarExtract(result.stdout, backupPath);
           if (extractResult.success) {
-            backedUpDirs.push(...existingDirs);
+            const extractedDirs = new Set(existingBackupDirs(backupPath, existingDirs));
+            if (result.status === 0) {
+              for (const d of existingDirs) {
+                if (extractedDirs.has(d)) {
+                  backedUpDirs.push(d);
+                } else {
+                  _log(`Dir ${d} missing from clean tar extraction — marking failed`);
+                  failedDirs.push(d);
+                }
+              }
+            } else {
+              const tarFailedDirs = failedDirsFromTarStderr(
+                result.stderr?.toString() || "",
+                existingDirs,
+              );
+              if (tarFailedDirs.size === 0) {
+                _log(
+                  `tar exited ${result.status} without attributable failed dirs — marking all dirs failed`,
+                );
+                failedDirs.push(...existingDirs);
+              } else {
+                for (const d of existingDirs) {
+                  if (tarFailedDirs.has(d)) {
+                    _log(`Dir ${d} had tar read errors — marking failed`);
+                    failedDirs.push(d);
+                  } else if (!extractedDirs.has(d)) {
+                    _log(`Dir ${d} missing from partial tar extraction — marking failed`);
+                    failedDirs.push(d);
+                  } else {
+                    backedUpDirs.push(d);
+                  }
+                }
+              }
+            }
           } else {
             _log(`SECURITY: tar extraction blocked: ${extractResult.error}`);
             failedDirs.push(...existingDirs);
@@ -1033,6 +1131,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       `Manifest stateDirs extended with multi-agent workspaces: [${discoveredWorkspaces.join(",")}]`,
     );
   }
+  manifest.backedUpDirs = backedUpDirs;
 
   writeManifest(backupPath, manifest);
   manifest.backupPath = backupPath;
@@ -1082,8 +1181,11 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
   const restoredFiles: string[] = [];
   const failedFiles: string[] = [];
 
-  // Find which backed-up directories actually exist locally
-  const localDirs = manifest.stateDirs.filter((d) => existsSync(path.join(backupPath, d)));
+  // Find which verified backed-up directories actually exist locally.
+  // Older manifests do not have backedUpDirs, so keep restoring stateDirs for
+  // backward compatibility.
+  const restorableStateDirs = manifest.backedUpDirs ?? manifest.stateDirs;
+  const localDirs = existingBackupDirs(backupPath, restorableStateDirs);
   const stateFiles = normalizeStateFileSpecs(manifest.stateFiles ?? []);
   const localFiles = stateFiles.filter((f) => existsSync(path.join(backupPath, f.path)));
   _log(

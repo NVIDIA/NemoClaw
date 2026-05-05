@@ -748,12 +748,12 @@ describe("CLI dispatch", () => {
 
     const upgrade = run("upgrade-sandboxes --help");
     expect(upgrade.code).toBe(0);
-    expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes]");
+    expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes|-y]");
     expect(upgrade.out).toContain("Detect and rebuild stale sandboxes");
 
     const gc = run("gc --help");
     expect(gc.code).toBe(0);
-    expect(gc.out).toContain("gc [--dry-run] [--yes|--force]");
+    expect(gc.out).toContain("gc [--dry-run] [--yes|-y|--force]");
     expect(gc.out).toContain("Remove orphaned sandbox Docker images");
   });
 
@@ -792,6 +792,16 @@ describe("CLI dispatch", () => {
     expect(r.out).not.toContain("sandbox:skill:install");
     expect(r.out).not.toContain("--help");
     expect(r.out).not.toContain("No SKILL.md found");
+  });
+
+  it("requires a skill install path before action dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-skill-missing-path-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha skill install 2>&1", { HOME: home });
+
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("path");
   });
 
   it("points plugin-shaped directories away from skill install", () => {
@@ -1138,8 +1148,8 @@ describe("CLI dispatch", () => {
 
   it("debug exits 1 on unknown option", () => {
     const r = run("debug --quik");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown option")).toBeTruthy();
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Nonexistent flag: --quik");
   });
 
   it("help mentions debug command", () => {
@@ -1162,6 +1172,7 @@ describe("CLI dispatch", () => {
   it("debug --sandbox without a name exits 1", () => {
     const r = run("debug --sandbox");
     expect(r.code).not.toBe(0);
+    expect(r.out).toContain("--sandbox");
   });
 
   it("debug warns when default sandbox is stale", testTimeoutOptions(), () => {
@@ -1350,6 +1361,11 @@ describe("CLI dispatch", () => {
     expect(status.out).toContain("<name> status");
     expect(status.out).not.toContain("sandbox:status");
 
+    const doctor = runWithEnv("alpha doctor --help", { HOME: home });
+    expect(doctor.code).toBe(0);
+    expect(doctor.out).toContain("<name> doctor [--json]");
+    expect(doctor.out).not.toContain("sandbox:doctor");
+
     const logs = runWithEnv("alpha logs --help", { HOME: home });
     expect(logs.code).toBe(0);
     expect(logs.out).toContain("<name> logs");
@@ -1360,12 +1376,12 @@ describe("CLI dispatch", () => {
 
     const destroy = runWithEnv("alpha destroy --help", { HOME: home });
     expect(destroy.code).toBe(0);
-    expect(destroy.out).toContain("<name> destroy [--yes|--force]");
+    expect(destroy.out).toContain("<name> destroy [--yes|-y|--force]");
     expect(destroy.out).not.toContain("sandbox:destroy");
 
     const rebuild = runWithEnv("alpha rebuild --help", { HOME: home });
     expect(rebuild.code).toBe(0);
-    expect(rebuild.out).toContain("<name> rebuild [--yes|--force] [--verbose|-v]");
+    expect(rebuild.out).toContain("<name> rebuild [--yes|-y|--force] [--verbose|-v]");
     expect(rebuild.out).not.toContain("sandbox:rebuild");
 
     for (const action of ["policy-add", "policy-remove", "policy-list"]) {
@@ -1390,6 +1406,7 @@ describe("CLI dispatch", () => {
     const config = runWithEnv("alpha config get --help", { HOME: home });
     expect(config.code).toBe(0);
     expect(config.out).toContain("<name> config get");
+    expect(config.out).toContain("--format json|yaml");
     expect(config.out).not.toContain("sandbox:config:get");
   });
 
@@ -1432,6 +1449,34 @@ describe("CLI dispatch", () => {
     expect(start.out).toContain("Channel 'telegram' is already enabled for 'alpha'. Nothing to do.");
   });
 
+  it("policy and channel mutations reject missing parser-owned values before dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-mutation-missing-values-"));
+    writeSandboxRegistry(home);
+
+    const missingPolicyFile = runWithEnv("alpha policy-add --from-file 2>&1", { HOME: home });
+    expect(missingPolicyFile.code).not.toBe(0);
+    expect(missingPolicyFile.out).toContain("--from-file");
+
+    const missingChannel = runWithEnv("alpha channels add 2>&1", { HOME: home });
+    expect(missingChannel.code).not.toBe(0);
+    expect(missingChannel.out).toContain("channel");
+  });
+
+  it("diagnostic commands reject invalid parser-owned flags before dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-diagnostics-invalid-flags-"));
+    writeSandboxRegistry(home);
+
+    const badConfigFormat = runWithEnv("alpha config get --format xml 2>&1", { HOME: home });
+    expect(badConfigFormat.code).not.toBe(0);
+    expect(badConfigFormat.out).toContain("--format");
+    expect(badConfigFormat.out).toContain("json");
+    expect(badConfigFormat.out).toContain("yaml");
+
+    const badDoctorFlag = runWithEnv("alpha doctor --bogus 2>&1", { HOME: home });
+    expect(badDoctorFlag.code).not.toBe(0);
+    expect(badDoctorFlag.out).toContain("Nonexistent flag: --bogus");
+  });
+
   it("shields help keeps public sandbox-scoped usage", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-shields-help-"));
     writeSandboxRegistry(home);
@@ -1456,6 +1501,12 @@ describe("CLI dispatch", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-help-"));
     writeSandboxRegistry(home);
 
+    const parent = runWithEnv("alpha snapshot --help", { HOME: home });
+    expect(parent.code).toBe(0);
+    expect(parent.out).toContain("nemoclaw alpha snapshot create");
+    expect(parent.out).toContain("nemoclaw alpha snapshot list");
+    expect(parent.out).not.toContain("sandbox:snapshot");
+
     const list = runWithEnv("alpha snapshot list --help", { HOME: home });
     expect(list.code).toBe(0);
     expect(list.out).toContain("<name> snapshot list");
@@ -1479,6 +1530,15 @@ describe("CLI dispatch", () => {
     const r = runWithEnv("alpha snapshot list", { HOME: home });
     expect(r.code).toBe(0);
     expect(r.out).toContain("No snapshots found for 'alpha'.");
+  });
+
+  it("unknown snapshot subcommands fail before action dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-unknown-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha snapshot bogus 2>&1", { HOME: home });
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Unexpected argument: bogus");
   });
 
   it("routes logs to OpenClaw and OpenShell log sources", () => {
@@ -1954,7 +2014,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha destroy --yes", {
+    const r = runWithEnv("alpha destroy -y", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -4885,6 +4945,27 @@ describe("list shows live gateway inference", () => {
     expect(r.out).toContain("status");
   });
 
+  it("share help keeps public sandbox-scoped usage", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-help-"));
+    writeSandboxRegistry(home);
+
+    const parent = runWithEnv("alpha share --help", { HOME: home });
+    expect(parent.code).toBe(0);
+    expect(parent.out).toContain("Usage: nemoclaw <name> share <mount|unmount|status>");
+    expect(parent.out).not.toContain("sandbox:share");
+
+    for (const [subcommand, usage] of [
+      ["mount", "share mount [sandbox-path] [local-mount-point]"],
+      ["unmount", "share unmount [local-mount-point]"],
+      ["status", "share status [local-mount-point]"],
+    ]) {
+      const result = runWithEnv(`alpha share ${subcommand} --help`, { HOME: home });
+      expect(result.code).toBe(0);
+      expect(result.out).toContain(`Usage: nemoclaw <name> ${usage}`);
+      expect(result.out).not.toContain("sandbox:share");
+    }
+  });
+
   it("share is recognized as a valid sandbox action (not 'Unknown action')", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-action-"));
     writeSandboxRegistry(home);
@@ -4894,5 +4975,15 @@ describe("list shows live gateway inference", () => {
     // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
     expect(r.code).not.toBe(0);
     expect(r.out).not.toContain("Unknown action");
+  });
+
+  it("unknown share subcommands fail before action dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-unknown-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha share bogus 2>&1", { HOME: home });
+
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Unexpected argument: bogus");
   });
 });

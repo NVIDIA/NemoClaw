@@ -16,6 +16,7 @@ export default class ListCommand extends Command {
   static description =
     "List all registered sandboxes with their model, provider, and policy presets.";
   static usage = ["list [--json]"];
+  static examples = ["<%= config.bin %> list", "<%= config.bin %> list --json"];
   static flags = {
     help: Flags.help({ char: "h" }),
   };

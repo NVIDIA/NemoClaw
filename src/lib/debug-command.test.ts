@@ -3,7 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { parseDebugArgs, printDebugHelp, runDebugCommand } from "../../dist/lib/debug-command";
+import {
+  parseDebugArgs,
+  printDebugHelp,
+  runDebugCommand,
+  runDebugCommandWithOptions,
+} from "../../dist/lib/debug-command";
 
 function exitWithCode(code: number): never {
   throw new Error(`exit:${code}`);
@@ -38,6 +43,22 @@ describe("debug command", () => {
       exit: exitWithCode,
     });
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "beta" });
+  });
+
+  it("runs parsed debug options and falls back to the default sandbox", () => {
+    const runDebug = vi.fn();
+    runDebugCommandWithOptions({ quick: true, output: "/tmp/out.tgz" }, {
+      getDefaultSandbox: () => "alpha",
+      runDebug,
+      log: () => {},
+      error: () => {},
+      exit: exitWithCode,
+    });
+    expect(runDebug).toHaveBeenCalledWith({
+      quick: true,
+      output: "/tmp/out.tgz",
+      sandboxName: "alpha",
+    });
   });
 
   it("--sandbox overrides the default sandbox", () => {
