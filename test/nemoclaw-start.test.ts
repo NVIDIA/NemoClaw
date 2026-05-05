@@ -1758,90 +1758,126 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
   });
 });
 
-describe("write_auth_profile provider key resolution (#1332)", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+describe("write_auth_profile (#1332)", () => {
+  // Invokes write_auth_profile from the production start script in an isolated
+  // HOME, then asserts on the resulting auth-profiles.json — observable
+  // behavior, not source-text shape.
+  const wrapper = [
+    "set -euo pipefail",
+    `eval "$(sed -n '/^write_auth_profile() {$/,/^}$/p' "$1")"`,
+    "write_auth_profile",
+  ].join("\n");
 
-  it("reads provider key from NEMOCLAW_PROVIDER_KEY env var", () => {
-    const fn = src.match(/write_auth_profile\(\) \{([\s\S]*?)^}/m);
-    expect(fn).toBeTruthy();
-    expect(fn[1]).toContain('NEMOCLAW_PROVIDER_KEY:-inference');
+  function runWriteAuthProfile(env: Record<string, string>): {
+    home: string;
+    authPath: string;
+    status: number;
+    stderr: string;
+  } {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-test-"));
+    const result = spawnSync("bash", ["-s", "--", START_SCRIPT], {
+      input: wrapper,
+      env: { PATH: process.env.PATH, HOME: home, ...env },
+      encoding: "utf-8",
+    });
+    return {
+      home,
+      authPath: path.join(home, ".openclaw", "agents", "main", "agent", "auth-profiles.json"),
+      status: result.status ?? -1,
+      stderr: result.stderr ?? "",
+    };
+  }
+
+  it("writes profile under the provider key from NEMOCLAW_PROVIDER_KEY", () => {
+    const { home, authPath, status, stderr } = runWriteAuthProfile({
+      NVIDIA_API_KEY: "secret",
+      NEMOCLAW_PROVIDER_KEY: "openai",
+    });
+    try {
+      expect(status, stderr).toBe(0);
+      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+      expect(profile).toEqual({
+        "openai:manual": {
+          type: "api_key",
+          provider: "openai",
+          keyRef: { source: "env", id: "NVIDIA_API_KEY" },
+          profileId: "openai:manual",
+        },
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("falls back to 'inference' when NEMOCLAW_PROVIDER_KEY is unset", () => {
-    const fn = src.match(/write_auth_profile\(\) \{([\s\S]*?)^}/m);
-    expect(fn).toBeTruthy();
-    // The default value in the parameter expansion must be 'inference'
-    expect(fn[1]).toMatch(/\$\{NEMOCLAW_PROVIDER_KEY:-inference\}/);
+    const { home, authPath, status, stderr } = runWriteAuthProfile({
+      NVIDIA_API_KEY: "secret",
+    });
+    try {
+      expect(status, stderr).toBe(0);
+      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+      expect(profile).toHaveProperty("inference:manual");
+      expect(profile["inference:manual"].provider).toBe("inference");
+      expect(profile).not.toHaveProperty("nvidia:manual");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
-  it("does not hardcode 'nvidia' as the provider key", () => {
-    const fn = src.match(/write_auth_profile\(\) \{([\s\S]*?)^}/m);
-    expect(fn).toBeTruthy();
-    // Must not contain the old hardcoded 'nvidia' provider
-    expect(fn[1]).not.toContain("'nvidia'");
-    expect(fn[1]).not.toContain('"nvidia"');
-    expect(fn[1]).not.toContain("nvidia:manual");
+  it("does not use 'nvidia' as the default provider key", () => {
+    const { home, authPath, status } = runWriteAuthProfile({
+      NVIDIA_API_KEY: "secret",
+    });
+    try {
+      expect(status).toBe(0);
+      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+      for (const key of Object.keys(profile)) {
+        expect(key).not.toMatch(/^nvidia:/);
+      }
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
-  it("passes provider_key as a CLI argument to python3 (no shell interpolation)", () => {
-    const fn = src.match(/write_auth_profile\(\) \{([\s\S]*?)^}/m);
-    expect(fn).toBeTruthy();
-    // Must pass as positional arg, not interpolated into the heredoc
-    expect(fn[1]).toContain('python3 - "$provider_key"');
-    expect(fn[1]).toContain("sys.argv[1]");
+  it("treats provider_key as a literal (no shell command substitution)", () => {
+    // If the provider_key were interpolated into the heredoc instead of
+    // passed as argv, $(...) inside the value would execute and replace it.
+    const { home, authPath, status, stderr } = runWriteAuthProfile({
+      NVIDIA_API_KEY: "secret",
+      NEMOCLAW_PROVIDER_KEY: "$(echo pwned)",
+    });
+    try {
+      expect(status, stderr).toBe(0);
+      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+      expect(profile).toHaveProperty("$(echo pwned):manual");
+      expect(profile["$(echo pwned):manual"].provider).toBe("$(echo pwned)");
+      expect(profile).not.toHaveProperty("pwned:manual");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("is a no-op when NVIDIA_API_KEY is unset", () => {
-    const fn = src.match(/write_auth_profile\(\) \{([\s\S]*?)^}/m);
-    expect(fn).toBeTruthy();
-    expect(fn[1]).toMatch(/\[ -z "\$\{NVIDIA_API_KEY:-\}" \]/);
-    expect(fn[1]).toContain("return");
-  });
-});
-
-describe("write_auth_profile functional: resolution path and fallback (#1332)", () => {
-  const { execSync } = require("node:child_process");
-  const os = require("node:os");
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-test-"));
-  const authDir = path.join(tmpDir, ".openclaw", "agents", "main", "agent");
-
-  // Extract the Python snippet from write_auth_profile for isolated testing
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const pyMatch = src.match(/write_auth_profile\(\)[\s\S]*?python3 - "\$provider_key" <<'PYAUTH'\n([\s\S]*?)\nPYAUTH/);
-  const pyScript = pyMatch ? pyMatch[1] : "";
-
-  it("resolution: uses NEMOCLAW_PROVIDER_KEY value as provider in auth profile", () => {
-    expect(pyScript).toBeTruthy();
-    execSync(`python3 - "openai" <<'EOF'\n${pyScript}\nEOF`, {
-      env: { ...process.env, HOME: tmpDir },
-      encoding: "utf-8",
-    });
-    const authPath = path.join(authDir, "auth-profiles.json");
-    expect(fs.existsSync(authPath)).toBe(true);
-    const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
-    expect(profile).toHaveProperty("openai:manual");
-    expect(profile["openai:manual"].provider).toBe("openai");
-    expect(profile["openai:manual"].profileId).toBe("openai:manual");
-  });
-
-  it("fallback: defaults to 'inference' when env var is unset (shell passes default)", () => {
-    // Clean up from previous test
-    if (fs.existsSync(path.join(authDir, "auth-profiles.json"))) {
-      fs.rmSync(path.join(authDir, "auth-profiles.json"), { force: true });
+    const { home, authPath, status } = runWriteAuthProfile({});
+    try {
+      expect(status).toBe(0);
+      expect(fs.existsSync(authPath)).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
     }
-
-    execSync(`python3 - "inference" <<'EOF'\n${pyScript}\nEOF`, {
-      env: { ...process.env, HOME: tmpDir },
-      encoding: "utf-8",
-    });
-    const authPath = path.join(authDir, "auth-profiles.json");
-    expect(fs.existsSync(authPath)).toBe(true);
-    const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
-    expect(profile).toHaveProperty("inference:manual");
-    expect(profile["inference:manual"].provider).toBe("inference");
-    expect(profile["inference:manual"].profileId).toBe("inference:manual");
   });
 
-  // Cleanup
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  it("writes the auth profile with 0600 permissions", () => {
+    const { home, authPath, status } = runWriteAuthProfile({
+      NVIDIA_API_KEY: "secret",
+      NEMOCLAW_PROVIDER_KEY: "openai",
+    });
+    try {
+      expect(status).toBe(0);
+      const mode = fs.statSync(authPath).mode & 0o777;
+      expect(mode).toBe(0o600);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
