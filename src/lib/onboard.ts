@@ -306,26 +306,26 @@ const sandboxCreateStream: typeof import("./sandbox-create-stream") = require(".
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const webSearch: typeof import("./web-search") = require("./web-search");
 
-import { listChannels } from "./sandbox-channels";
 import type { AgentDefinition } from "./agent-defs";
+import type { CurlProbeResult } from "./http-probe";
 import type { GatewayInference, ProviderSelectionConfig } from "./inference-config";
 import type { GpuInfo, ValidationResult } from "./local-inference";
-import type { ContainerRuntime } from "./platform";
-import type { SandboxEntry } from "./registry";
 import type { Session, SessionUpdates } from "./onboard-session";
-import type { CurlProbeResult } from "./http-probe";
-import type { ProbeRecovery } from "./validation-recovery";
-import type { SandboxCreateFailure, ValidationClassification } from "./validation";
-import type { TierDefinition, TierPreset } from "./tiers";
-import type { StreamSandboxCreateResult } from "./sandbox-create-stream";
-import type { WebSearchConfig } from "./web-search";
 import type {
   ModelCatalogFetchResult,
   ModelValidationResult,
   ProbeResult,
   ValidationFailureLike,
 } from "./onboard-types";
+import type { ContainerRuntime } from "./platform";
+import type { SandboxEntry } from "./registry";
+import { listChannels } from "./sandbox-channels";
+import type { StreamSandboxCreateResult } from "./sandbox-create-stream";
 import type { BackupResult } from "./sandbox-state";
+import type { TierDefinition, TierPreset } from "./tiers";
+import type { SandboxCreateFailure, ValidationClassification } from "./validation";
+import type { ProbeRecovery } from "./validation-recovery";
+import type { WebSearchConfig } from "./web-search";
 
 /**
  * Create a temp file inside a directory with a cryptographically random name.
@@ -403,9 +403,9 @@ const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 // Re-export shared JSON types under the names used throughout this module.
 // See src/lib/json-types.ts for the canonical definitions.
 import type {
+  JsonObject as LooseObject,
   JsonScalar as LooseScalar,
   JsonValue as LooseValue,
-  JsonObject as LooseObject,
 } from "./json-types";
 
 type OnboardOptions = {
@@ -4625,7 +4625,6 @@ async function createSandbox(
   for (const ch of MESSAGING_CHANNELS) {
     if (
       enabledTokenEnvKeys.has(ch.envKey) &&
-      ch.allowIdsMode === "dm" &&
       ch.userIdEnvKey &&
       process.env[ch.userIdEnvKey]
     ) {
