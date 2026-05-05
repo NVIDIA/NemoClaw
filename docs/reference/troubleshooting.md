@@ -304,7 +304,7 @@ The `install-openshell.sh` script also enforces this constraint and pins fresh i
 
 ### Invalid sandbox name
 
-Sandbox names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
+Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Uppercase letters are automatically lowercased.
 
 Names that collide with global CLI commands are also rejected.

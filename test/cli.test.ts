@@ -1490,6 +1490,12 @@ describe("CLI dispatch", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-help-"));
     writeSandboxRegistry(home);
 
+    const parent = runWithEnv("alpha snapshot --help", { HOME: home });
+    expect(parent.code).toBe(0);
+    expect(parent.out).toContain("nemoclaw alpha snapshot create");
+    expect(parent.out).toContain("nemoclaw alpha snapshot list");
+    expect(parent.out).not.toContain("sandbox:snapshot");
+
     const list = runWithEnv("alpha snapshot list --help", { HOME: home });
     expect(list.code).toBe(0);
     expect(list.out).toContain("<name> snapshot list");
@@ -1513,6 +1519,15 @@ describe("CLI dispatch", () => {
     const r = runWithEnv("alpha snapshot list", { HOME: home });
     expect(r.code).toBe(0);
     expect(r.out).toContain("No snapshots found for 'alpha'.");
+  });
+
+  it("unknown snapshot subcommands fail before action dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-unknown-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha snapshot bogus 2>&1", { HOME: home });
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Unexpected argument: bogus");
   });
 
   it("routes logs to OpenClaw and OpenShell log sources", () => {

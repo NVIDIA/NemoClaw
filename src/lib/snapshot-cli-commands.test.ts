@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   setSnapshotRuntimeBridgeFactoryForTest,
+  SnapshotCommand,
   SnapshotCreateCommand,
   SnapshotListCommand,
   SnapshotRestoreCommand,
@@ -13,6 +14,24 @@ import {
 const rootDir = process.cwd();
 
 describe("snapshot oclif commands", () => {
+  it("shows parent snapshot usage through the action", async () => {
+    const sandboxSnapshot = vi.fn().mockResolvedValue(undefined);
+    setSnapshotRuntimeBridgeFactoryForTest(() => ({ sandboxSnapshot }));
+
+    await SnapshotCommand.run(["alpha"], rootDir);
+
+    expect(sandboxSnapshot).toHaveBeenCalledWith("alpha", []);
+  });
+
+  it("rejects unknown parent snapshot args before dispatch", async () => {
+    const sandboxSnapshot = vi.fn().mockResolvedValue(undefined);
+    setSnapshotRuntimeBridgeFactoryForTest(() => ({ sandboxSnapshot }));
+
+    await expect(SnapshotCommand.run(["alpha", "bogus"], rootDir)).rejects.toThrow(/bogus/);
+
+    expect(sandboxSnapshot).not.toHaveBeenCalled();
+  });
+
   it("runs snapshot list through the legacy snapshot implementation", async () => {
     const sandboxSnapshot = vi.fn().mockResolvedValue(undefined);
     setSnapshotRuntimeBridgeFactoryForTest(() => ({ sandboxSnapshot }));

@@ -151,6 +151,9 @@ export function resolveSandboxOclifDispatch(
     case "snapshot": {
       const snapshotSub = actionArgs[0];
       const snapshotArgs = actionArgs.slice(1);
+      if (!snapshotSub || snapshotSub === "--help" || snapshotSub === "-h") {
+        return { kind: "oclif", commandId: "sandbox:snapshot", args: [sandboxName] };
+      }
       if (snapshotSub === "list") {
         if (hasHelpFlag(snapshotArgs)) return { kind: "help", usage: "snapshot list" };
         return { kind: "oclif", commandId: "sandbox:snapshot:list", args: [sandboxName, ...snapshotArgs] };
