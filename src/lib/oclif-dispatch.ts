@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- table-driven dispatch covered through CLI integration tests. */
-
 export type OclifDispatch = {
   kind: "oclif";
   commandId: string;
