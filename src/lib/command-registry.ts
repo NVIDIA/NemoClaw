@@ -70,7 +70,7 @@ export const GROUP_ORDER: readonly CommandGroup[] = [
 ] as const;
 
 /**
- * All 46 CLI commands. This is the single source of truth.
+ * All CLI commands. This is the single source of truth.
  *
  * The order within each group matches the current help() display order.
  */
@@ -105,6 +105,13 @@ export const COMMANDS: readonly CommandDef[] = [
     commandId: "sandbox:connect",
     description: "Shell into a running sandbox",
     flags: "[--probe-only]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
+    usage: "nemoclaw <name> recover",
+    commandId: "sandbox:recover",
+    description: "Restart the sandbox gateway and dashboard port-forward",
     group: "Sandbox Management",
     scope: "sandbox",
   },
@@ -305,12 +312,28 @@ export const COMMANDS: readonly CommandDef[] = [
     hidden: true,
   },
 
-  // ── Hidden: config subcommands (undocumented) ──
+  // ── Hidden: config subcommands (advanced / security-sensitive) ──
   {
     usage: "nemoclaw <name> config get",
     commandId: "sandbox:config:get",
     description: "Get sandbox configuration",
     flags: "[--key <dotpath>] [--format json|yaml]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+    hidden: true,
+  },
+  {
+    usage: "nemoclaw <name> config set",
+    commandId: "sandbox:config:set",
+    description: "Set sandbox configuration with SSRF validation",
+    group: "Sandbox Management",
+    scope: "sandbox",
+    hidden: true,
+  },
+  {
+    usage: "nemoclaw <name> config rotate-token",
+    commandId: "sandbox:config:set",
+    description: "Rotate sandbox provider credentials",
     group: "Sandbox Management",
     scope: "sandbox",
     hidden: true,
@@ -422,7 +445,7 @@ export const COMMANDS: readonly CommandDef[] = [
     usage: "nemoclaw upgrade-sandboxes",
     commandId: "upgrade-sandboxes",
     description: "Detect and rebuild stale sandboxes",
-    flags: "(--check, --auto)",
+    flags: "(--check, --auto, --yes|-y)",
     group: "Upgrade",
     scope: "global",
   },
@@ -432,7 +455,7 @@ export const COMMANDS: readonly CommandDef[] = [
     usage: "nemoclaw gc",
     commandId: "gc",
     description: "Remove orphaned sandbox Docker images",
-    flags: "(--yes|--force, --dry-run)",
+    flags: "(--yes|-y|--force, --dry-run)",
     group: "Cleanup",
     scope: "global",
   },

@@ -105,6 +105,9 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.gateway.controlUi.allowedOrigins).toContain(
       "https://nemoclaw0-xxx.brevlab.com:18789",
     );
+    expect(config.gateway.controlUi.allowedOrigins).toContain(
+      "https://nemoclaw0-xxx.brevlab.com",
+    );
   });
 
   it("includes only loopback origin for loopback URL", () => {
@@ -112,11 +115,78 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18789"]);
   });
 
+  it("includes portless origin for reverse-proxy access (Fixes #3000)", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "https://nemoclaw0-abc123.brevlab.com:18789",
+    });
+    const origins = config.gateway.controlUi.allowedOrigins;
+    expect(origins).toContain("https://nemoclaw0-abc123.brevlab.com:18789");
+    expect(origins).toContain("https://nemoclaw0-abc123.brevlab.com");
+  });
+
+  it("preserves brackets in portless origin for public IPv6 addresses", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "https://[2606:4700::1]:18789",
+    });
+    const origins = config.gateway.controlUi.allowedOrigins;
+    expect(origins).toContain("https://[2606:4700::1]:18789");
+    expect(origins).toContain("https://[2606:4700::1]");
+  });
+
+  it("does not add portless origin for IPv6 loopback", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "http://[::1]:18789",
+    });
+    const origins = config.gateway.controlUi.allowedOrigins;
+    expect(origins).toContain("http://[::1]:18789");
+    expect(origins).not.toContain("http://[::1]");
+  });
+
+  it("does not crash on malformed port in CHAT_UI_URL", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "https://example.com:abc",
+    });
+    const origins = config.gateway.controlUi.allowedOrigins;
+    expect(origins).toContain("http://127.0.0.1:18789");
+    expect(origins).not.toContain("https://example.com");
+  });
+
   it("parses messaging channels from base64", () => {
     const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.channels).toBeDefined();
     expect(config.channels.telegram).toBeDefined();
+  });
+
+  it("emits groups with requireMention when TELEGRAM_REQUIRE_MENTION is true (#3022)", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const telegramConfig = Buffer.from(JSON.stringify({ requireMention: true })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_TELEGRAM_CONFIG_B64: telegramConfig,
+    });
+    expect(config.channels.telegram.accounts.default.groupPolicy).toBe("open");
+    expect(config.channels.telegram.groups).toEqual({ "*": { requireMention: true } });
+  });
+
+  it("keeps groupPolicy open with no groups stanza when requireMention is false (#3022)", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const telegramConfig = Buffer.from(JSON.stringify({ requireMention: false })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_TELEGRAM_CONFIG_B64: telegramConfig,
+    });
+    expect(config.channels.telegram.accounts.default.groupPolicy).toBe("open");
+    expect(config.channels.telegram.groups).toBeUndefined();
+  });
+
+  it("defaults Telegram groupPolicy to 'open' with no groups stanza when telegramConfig is empty (#3022)", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+    });
+    expect(config.channels.telegram.accounts.default.groupPolicy).toBe("open");
+    expect(config.channels.telegram.groups).toBeUndefined();
   });
 
   it("emits canonical openshell:resolve:env: placeholders for non-Slack channels", () => {
@@ -312,5 +382,97 @@ describe("generate-openclaw-config.py: empty-string env vars fall back to defaul
       NEMOCLAW_MESSAGING_CHANNELS_B64: channelB64,
     });
     expect(cfg.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
+  });
+
+  it("treats empty NEMOCLAW_CONTEXT_WINDOW as unset and uses the documented default", () => {
+    const cfg = runConfigScript({ NEMOCLAW_CONTEXT_WINDOW: "" });
+    expect(cfg.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
+  });
+
+  it("treats empty NEMOCLAW_MAX_TOKENS as unset and uses the documented default", () => {
+    const cfg = runConfigScript({ NEMOCLAW_MAX_TOKENS: "" });
+    expect(cfg.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
+  });
+});
+
+describe("generate-openclaw-config.py: numeric env var validation", () => {
+  function runCapturingStderr(envOverrides: Record<string, string>): {
+    config: any;
+    stderr: string;
+  } {
+    const env: Record<string, string> = {
+      PATH: process.env.PATH || "/usr/bin:/bin",
+      ...BASE_ENV,
+      ...envOverrides,
+      HOME: tmpDir,
+    };
+    const result = spawnSync("python3", [SCRIPT_PATH], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+      timeout: 10_000,
+    });
+    if (result.status !== 0) {
+      throw new Error(
+        `Script failed (exit ${result.status}):\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+      );
+    }
+    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+    return {
+      config: JSON.parse(fs.readFileSync(configPath, "utf-8")),
+      stderr: result.stderr,
+    };
+  }
+
+  it("skips non-numeric NEMOCLAW_CONTEXT_WINDOW and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_CONTEXT_WINDOW: "notanumber" });
+    expect(config.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
+    expect(stderr).toMatch(
+      /\[SECURITY\] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "notanumber"/,
+    );
+  });
+
+  it("skips non-numeric NEMOCLAW_MAX_TOKENS and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_MAX_TOKENS: "notanumber" });
+    expect(config.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
+    expect(stderr).toMatch(
+      /\[SECURITY\] NEMOCLAW_MAX_TOKENS must be a positive integer, got "notanumber"/,
+    );
+  });
+
+  it("skips zero NEMOCLAW_CONTEXT_WINDOW and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_CONTEXT_WINDOW: "0" });
+    expect(config.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
+    expect(stderr).toMatch(/NEMOCLAW_CONTEXT_WINDOW must be a positive integer/);
+  });
+
+  it("skips zero NEMOCLAW_MAX_TOKENS and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_MAX_TOKENS: "0" });
+    expect(config.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
+    expect(stderr).toMatch(/NEMOCLAW_MAX_TOKENS must be a positive integer/);
+  });
+
+  it("skips negative NEMOCLAW_CONTEXT_WINDOW and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_CONTEXT_WINDOW: "-1" });
+    expect(config.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
+    expect(stderr).toMatch(/NEMOCLAW_CONTEXT_WINDOW must be a positive integer/);
+  });
+
+  it("skips negative NEMOCLAW_MAX_TOKENS and falls back to the default", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_MAX_TOKENS: "-1" });
+    expect(config.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
+    expect(stderr).toMatch(/NEMOCLAW_MAX_TOKENS must be a positive integer/);
+  });
+
+  it("skips NEMOCLAW_CONTEXT_WINDOW that exceeds Python's int-string digit limit", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_CONTEXT_WINDOW: "9".repeat(10000) });
+    expect(config.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
+    expect(stderr).toMatch(/NEMOCLAW_CONTEXT_WINDOW must be a positive integer/);
+  });
+
+  it("skips NEMOCLAW_MAX_TOKENS that exceeds Python's int-string digit limit", () => {
+    const { config, stderr } = runCapturingStderr({ NEMOCLAW_MAX_TOKENS: "9".repeat(10000) });
+    expect(config.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
+    expect(stderr).toMatch(/NEMOCLAW_MAX_TOKENS must be a positive integer/);
   });
 });

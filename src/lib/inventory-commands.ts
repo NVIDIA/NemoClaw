@@ -11,6 +11,7 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[] | null;
+  providerCredentialHashes?: Record<string, string> | null;
   messagingChannels?: string[] | null;
   agent?: string | null;
   dashboardPort?: number | null;
@@ -31,7 +32,15 @@ export interface RecoveryResult {
 export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
   getLiveInference: () => GatewayInference | null;
-  loadLastSession: () => { sandboxName?: string | null } | null;
+  /**
+   * Returns the last onboard session's sandbox name and step state. The
+   * step state is needed to filter out phantom names from interrupted
+   * onboards — see #2753.
+   */
+  loadLastSession: () => {
+    sandboxName?: string | null;
+    steps?: { sandbox?: { status?: string } | null } | null;
+  } | null;
   /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
   getActiveSessionCount?: (sandboxName: string) => number | null;
   log?: (message?: string) => void;
@@ -64,6 +73,7 @@ export interface SandboxInventoryResult {
 export interface MessagingOverlap {
   channel: string;
   sandboxes: [string, string];
+  reason?: "matching-token" | "unknown-token";
 }
 
 export interface ShowStatusCommandDeps {
@@ -140,6 +150,13 @@ export async function getSandboxInventory(
   const recovery = await deps.recoverRegistryEntries();
   const defaultSandbox = recovery.defaultSandbox || null;
   const lastSession = deps.loadLastSession();
+  // #2753: only surface the last-onboarded name when its sandbox step
+  // actually completed. Otherwise an interrupted onboard would leave the
+  // name in the session and the empty-state hint would resurrect it.
+  const lastOnboardedSandbox =
+    lastSession?.sandboxName && lastSession.steps?.sandbox?.status === "complete"
+      ? lastSession.sandboxName
+      : null;
 
   return {
     schemaVersion: 1,
@@ -148,7 +165,7 @@ export async function getSandboxInventory(
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
-    lastOnboardedSandbox: lastSession?.sandboxName || null,
+    lastOnboardedSandbox,
     sandboxes: recovery.sandboxes.map((sandbox) =>
       buildSandboxInventoryRow(sandbox, defaultSandbox, deps.getActiveSessionCount),
     ),
@@ -336,13 +353,17 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     const overlaps = deps.backfillAndFindOverlaps();
     if (overlaps.length > 0) {
       log("");
-      for (const { channel, sandboxes: pair } of overlaps) {
+      for (const { channel, sandboxes: pair, reason } of overlaps) {
+        const detail =
+          reason === "matching-token"
+            ? `share the same ${channel} credential`
+            : `may share a ${channel} credential; stored credential hashes are incomplete`;
         log(
-          `  ⚠ ${channel} is enabled on both '${pair[0]}' and '${pair[1]}'. Bot tokens only allow one sandbox to poll — both bridges will fail.`,
+          `  ⚠ '${pair[0]}' and '${pair[1]}' ${detail}. Only one bridge can poll/connect per credential.`,
         );
       }
       log(
-        `    Run \`${CLI_NAME} <sandbox> destroy\` on whichever sandbox should stop polling, or rerun onboarding with the channel disabled.`,
+        `    Run \`${CLI_NAME} <sandbox> channels stop <channel>\` to pause one bridge, or \`${CLI_NAME} <sandbox> channels remove <channel>\` to remove stale bridge metadata.`,
       );
     }
   }

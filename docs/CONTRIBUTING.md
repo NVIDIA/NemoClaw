@@ -106,6 +106,19 @@ To serve the docs locally and automatically rebuild on changes, run:
 make docs-live
 ```
 
+## Doc-Only PR Verification
+
+Doc-only pull requests do not need the full test suite by default.
+Before opening a doc-only PR, run:
+
+```bash
+npx prek run --all-files
+make docs
+```
+
+Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
+Run the full tests only when the change also touches code, generated behavior, or runtime behavior.
+
 ## Writing Conventions
 
 ### Format

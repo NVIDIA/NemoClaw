@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+const { execFileSync, spawn, spawnSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+const { DASHBOARD_PORT, GATEWAY_PORT, OLLAMA_PORT } = require("./lib/ports");
+
 // ---------------------------------------------------------------------------
 // Color / style — respects NO_COLOR and non-TTY environments.
 // Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
@@ -15,24 +20,64 @@ const R = _useColor ? "\x1b[0m" : "";
 const _RD = _useColor ? "\x1b[1;31m" : "";
 const YW = _useColor ? "\x1b[1;33m" : "";
 
-const { ROOT, validateName } = require("./lib/runner");
+const { ROOT, run, runInteractive, validateName } = require("./lib/runner");
 
 // ---------------------------------------------------------------------------
 // Agent branding — derived from NEMOCLAW_AGENT when an alias launcher sets it;
 // otherwise the branding module falls back to the OpenClaw defaults.
 // ---------------------------------------------------------------------------
-const { CLI_NAME } = require("./lib/branding");
+const { CLI_NAME, CLI_DISPLAY_NAME } = require("./lib/branding");
+
+const {
+  dockerCapture,
+  dockerInspect,
+  dockerRemoveVolumesByPrefix,
+  dockerRmi,
+} = require("./lib/docker");
+const { resolveOpenshell } = require("./lib/resolve-openshell");
+const { hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
 const registry = require("./lib/registry");
+import type { SandboxEntry } from "./lib/registry";
 const nim = require("./lib/nim");
 const shields = require("./lib/shields");
+const { parseGatewayInference } = require("./lib/inference-config");
+const policies = require("./lib/policies");
+const { probeProviderHealth } = require("./lib/inference-health");
+const { buildStatusCommandDeps } = require("./lib/status-command-deps");
 const { help, version } = require("./lib/root-help-action");
+const onboardSession = require("./lib/onboard-session");
+import type { Session } from "./lib/onboard-session";
+const { stripAnsi } = require("./lib/openshell");
+const {
+  getInstalledOpenshellVersionOrNull,
+  runOpenshell,
+} = require("./lib/openshell-runtime");
+const {
+  recoverNamedGatewayRuntime,
+} = require("./lib/gateway-runtime-action");
 const { recoverRegistryEntries } = require("./lib/registry-recovery-action");
 const {
   isSandboxConnectFlag,
   parseSandboxConnectArgs,
   printSandboxConnectHelp,
 } = require("./lib/sandbox-connect-action");
+const {
+  executeSandboxCommand,
+} = require("./lib/sandbox-process-recovery-action");
+const {
+  getSandboxDeleteOutcome,
+} = require("./lib/sandbox-destroy-action");
 const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
+const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
+const agentRuntime = require("../bin/lib/agent-runtime");
+const sandboxState = require("./lib/sandbox-state");
+const { parseRestoreArgs } = sandboxState;
+const {
+  getActiveSandboxSessions,
+  createSystemDeps: createSessionDeps,
+  parseForwardList,
+} = require("./lib/sandbox-session-state");
+
 const {
   canonicalUsageList,
   globalCommandTokens,
@@ -50,6 +95,40 @@ import {
 // ── Global commands (derived from command registry) ──────────────
 
 const GLOBAL_COMMANDS = globalCommandTokens();
+
+type SpawnLikeResult = {
+  status: number | null;
+  stdout?: string;
+  stderr?: string;
+  output?: string;
+  error?: Error;
+  signal?: NodeJS.Signals | null;
+};
+
+type RecoveredSandboxMetadata = Partial<
+  Pick<SandboxEntry, "model" | "provider" | "gpuEnabled" | "policies" | "nimContainer" | "agent">
+> & {
+  policyPresets?: string[] | null;
+};
+
+const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
+const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
+const DEFAULT_LOGS_PROBE_TIMEOUT_MS = 5000;
+const LOGS_PROBE_TIMEOUT_ENV = "NEMOCLAW_LOGS_PROBE_TIMEOUT_MS";
+
+/** Print user-facing guidance when OpenShell is too old to support `openshell logs`. */
+function printOldLogsCompatibilityGuidance(installedVersion = null) {
+  const versionText = installedVersion ? ` (${installedVersion})` : "";
+  console.error(
+    `  Installed OpenShell${versionText} is too old or incompatible with \`${CLI_NAME} logs\`.`,
+  );
+  console.error(
+    `  ${CLI_DISPLAY_NAME} expects \`openshell logs <name>\` and live streaming via \`--tail\`.`,
+  );
+  console.error(
+    `  Upgrade OpenShell by rerunning \`${CLI_NAME} onboard\`, or reinstall the OpenShell CLI and try again.`,
+  );
+}
 
 // ── Commands ─────────────────────────────────────────────────────
 
@@ -90,7 +169,7 @@ function printConnectOrderHint(candidate: string | null): void {
 }
 
 const VALID_SANDBOX_ACTIONS =
-  "connect, status, doctor, logs, policy-add, policy-remove, policy-list, skill, snapshot, share, rebuild, shields, config, channels, gateway-token, destroy";
+  "connect, status, doctor, logs, policy-add, policy-remove, policy-list, skill, snapshot, share, rebuild, recover, shields, config, channels, gateway-token, destroy";
 
 function printDispatchUsageError(
   result: Extract<DispatchResult, { kind: "usageError" }>,
@@ -259,6 +338,8 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
 }
 
 exports.main = main;
+module.exports.dispatchCli = main;
 // Compatibility for tests that require the CLI module and await completion.
 // Prefer calling main(argv) directly in new in-process harnesses.
-exports.mainPromise = main();
+exports.mainPromise =
+  process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH === "1" ? Promise.resolve() : main();
