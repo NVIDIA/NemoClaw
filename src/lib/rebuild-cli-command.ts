@@ -1,13 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- thin oclif adapter covered through CLI integration tests. */
+import { Args, Flags } from "@oclif/core";
 
-import { Args, Command, Flags } from "@oclif/core";
-
+import { NemoClawCommand } from "./nemoclaw-oclif-command";
 import { rebuildSandbox } from "./sandbox-runtime-actions";
 
-export default class RebuildCliCommand extends Command {
+export default class RebuildCliCommand extends NemoClawCommand {
   static id = "sandbox:rebuild";
   static strict = true;
   static summary = "Upgrade sandbox to current agent version";
@@ -21,7 +20,6 @@ export default class RebuildCliCommand extends Command {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
     yes: Flags.boolean({ char: "y", description: "Skip the confirmation prompt" }),
     force: Flags.boolean({ description: "Skip the confirmation prompt" }),
     verbose: Flags.boolean({ char: "v", description: "Show verbose rebuild diagnostics" }),
@@ -29,10 +27,10 @@ export default class RebuildCliCommand extends Command {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(RebuildCliCommand);
-    const legacyArgs: string[] = [];
-    if (flags.yes) legacyArgs.push("--yes");
-    if (flags.force) legacyArgs.push("--force");
-    if (flags.verbose) legacyArgs.push("--verbose");
-    await rebuildSandbox(args.sandboxName, legacyArgs);
+    await rebuildSandbox(args.sandboxName, {
+      force: flags.force === true,
+      verbose: flags.verbose === true,
+      yes: flags.yes === true,
+    });
   }
 }

@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- thin oclif adapters covered through CLI integration tests. */
-
 import { Args, Command, Flags } from "@oclif/core";
 
+import { shieldsTimeoutDurationFlag } from "./duration-flags";
 import * as shields from "./shields";
 
 const sandboxNameArg = Args.string({
@@ -23,7 +22,7 @@ export class ShieldsDownCommand extends Command {
   static args = { sandboxName: sandboxNameArg };
   static flags = {
     help: Flags.help({ char: "h" }),
-    timeout: Flags.string({ description: "Duration before shields are restored" }),
+    timeout: shieldsTimeoutDurationFlag({ description: "Duration before shields are restored" }),
     reason: Flags.string({ description: "Reason for lowering shields" }),
     policy: Flags.string({ description: "Policy to apply while shields are down" }),
   };

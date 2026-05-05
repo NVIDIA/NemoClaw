@@ -13,6 +13,7 @@ import {
   removeSandboxImage,
   removeSandboxRegistryEntry,
 } from "../src/lib/sandbox-destroy-action";
+import { normalizeGarbageCollectImagesOptions } from "../src/lib/lifecycle-options";
 import { help as renderRootHelp } from "../src/lib/root-help-action";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -129,26 +130,16 @@ describe("image cleanup: gc command exists (#2086)", () => {
     expect(registrySrc).toContain('"nemoclaw gc"');
   });
 
-  it("garbageCollectImages lists sandbox-from images and cross-references registry", () => {
-    const maintenanceSrc = fs.readFileSync(
-      path.join(ROOT, "src/lib/maintenance-actions.ts"),
-      "utf-8",
-    );
-    const gcMatch = maintenanceSrc.match(/async function garbageCollectImages[\s\S]*?^}/m);
-    expect(gcMatch).toBeTruthy();
-    if (!gcMatch) {
-      throw new Error("Expected garbageCollectImages() in src/lib/maintenance-actions.ts");
-    }
-    const gcBody = gcMatch[0];
-
-    // Must query docker for sandbox-from images
-    expect(gcBody).toContain("openshell/sandbox-from");
-    // Must consult the registry for in-use tags
-    expect(gcBody).toContain("registry.listSandboxes");
-    // Must support --dry-run
-    expect(gcBody).toContain("dry-run");
-    // Must support --yes
-    expect(gcBody).toContain("--yes");
+  it("gc option normalization supports dry-run and confirmation aliases", () => {
+    expect(normalizeGarbageCollectImagesOptions(["--dry-run", "--yes"])).toEqual({
+      dryRun: true,
+      force: false,
+      yes: true,
+    });
+    expect(normalizeGarbageCollectImagesOptions({ dryRun: true, force: true })).toEqual({
+      dryRun: true,
+      force: true,
+    });
   });
 
   it("gc appears in rendered help text", () => {

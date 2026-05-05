@@ -5,6 +5,10 @@
 
 import { CLI_NAME } from "./branding";
 import { prompt as askPrompt } from "./credentials";
+import {
+  normalizeRebuildSandboxOptions,
+  type RebuildSandboxOptions,
+} from "./lifecycle-options";
 const { hydrateCredentialEnv } = require("./onboard") as {
   hydrateCredentialEnv: (name: string) => string | null;
 };
@@ -49,15 +53,13 @@ function getRebuildCredentialEnvFromRegistry(provider: string | null | undefined
 
 export async function rebuildSandbox(
   sandboxName: string,
-  args: string[] = [],
+  options: string[] | RebuildSandboxOptions = {},
   opts: { throwOnError?: boolean } = {},
 ): Promise<void> {
-  const verbose =
-    args.includes("--verbose") ||
-    args.includes("-v") ||
-    process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
+  const normalized = normalizeRebuildSandboxOptions(options);
+  const verbose = normalized.verbose === true || process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
   const log: (msg: string) => void = verbose ? _rebuildLog : () => {};
-  const skipConfirm = args.includes("--yes") || args.includes("--force");
+  const skipConfirm = normalized.yes === true || normalized.force === true;
   // When called from upgradeSandboxes in a loop, throwOnError prevents
   // process.exit from aborting the entire batch on the first failure.
   const bail = opts.throwOnError

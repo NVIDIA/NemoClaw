@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- thin oclif wrapper covered through CLI integration tests. */
-
 import { Args, Command, Flags } from "@oclif/core";
 
+import { logsSinceDurationFlag } from "./duration-flags";
 import type { SandboxLogsOptions } from "./sandbox-logs-options";
 import { DEFAULT_SANDBOX_LOG_LINES } from "./sandbox-logs-options";
 import { showSandboxLogs } from "./sandbox-runtime-actions";
@@ -13,7 +12,6 @@ type SandboxLogsRuntimeBridge = {
   sandboxLogs: (sandboxName: string, options: SandboxLogsOptions) => void;
 };
 
-const LOGS_SINCE_DURATION_RE = /^[1-9]\d*(?:ms|s|m|h|d)$/i;
 const DEFAULT_SANDBOX_LOG_LINE_COUNT = Number(DEFAULT_SANDBOX_LOG_LINES);
 
 let runtimeBridgeFactory = (): SandboxLogsRuntimeBridge => ({ sandboxLogs: showSandboxLogs });
@@ -56,28 +54,17 @@ export default class SandboxLogsCommand extends Command {
       description: "Number of log lines to return",
       min: 1,
     }),
-    since: Flags.string({
+    since: logsSinceDurationFlag({
       description: "Only show logs from this duration ago, such as 5m, 1h, or 30s",
     }),
   };
-
-  private normalizeSinceDuration(since: string | undefined): string | null {
-    if (since === undefined) {
-      return null;
-    }
-    const trimmed = since.trim();
-    if (!LOGS_SINCE_DURATION_RE.test(trimmed)) {
-      this.error("--since requires a positive duration like 5m, 1h, or 30s", { exit: 2 });
-    }
-    return trimmed;
-  }
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxLogsCommand);
     getRuntimeBridge().sandboxLogs(args.sandboxName, {
       follow: flags.follow === true,
       lines: String(flags.tail),
-      since: this.normalizeSinceDuration(flags.since),
+      since: flags.since ?? null,
     });
   }
 }

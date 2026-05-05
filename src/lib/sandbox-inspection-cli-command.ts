@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- thin oclif adapters covered through CLI integration tests. */
-
 import { Args, Command, Flags } from "@oclif/core";
 
 import { CLI_NAME } from "./branding";
@@ -37,7 +35,7 @@ export class SandboxStatusCommand extends Command {
 }
 
 export class SandboxPolicyListCommand extends Command {
-  static id = "sandbox:policy-list";
+  static id = "sandbox:policy:list";
   static strict = true;
   static summary = "List policy presets";
   static description = "List built-in and custom policy presets and show which are applied.";

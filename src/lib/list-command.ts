@@ -1,14 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- thin oclif adapter covered through CLI integration tests. */
-
-import { Command, Flags } from "@oclif/core";
-
 import { getSandboxInventory, renderSandboxInventoryText } from "./inventory-commands";
+import { NemoClawCommand } from "./nemoclaw-oclif-command";
 import { buildListCommandDeps } from "./list-command-deps";
 
-export default class ListCommand extends Command {
+export default class ListCommand extends NemoClawCommand {
   static id = "list";
   static strict = true;
   static enableJsonFlag = true;
@@ -17,13 +14,7 @@ export default class ListCommand extends Command {
     "List all registered sandboxes with their model, provider, and policy presets.";
   static usage = ["list [--json]"];
   static examples = ["<%= config.bin %> list", "<%= config.bin %> list --json"];
-  static flags = {
-    help: Flags.help({ char: "h" }),
-  };
-
-  protected logJson(json: unknown): void {
-    console.log(JSON.stringify(json, null, 2));
-  }
+  static flags = {};
 
   public async run(): Promise<unknown> {
     await this.parse(ListCommand);
