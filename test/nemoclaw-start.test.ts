@@ -560,6 +560,29 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
+
+  // #2592 reported the guard did not fire for `openclaw channels add telegram`
+  // and `openclaw channels remove telegram` from inside the sandbox. The
+  // existing test above only exercises `add slack`. Lock in coverage for every
+  // (channel × op) combo so the guard cannot regress for any one of them
+  // while passing for another.
+  it("#2592: blocks every (channel × op) mutating combo and surfaces the host-side hint", () => {
+    const setup = writeProxyEnvWithGuard();
+    try {
+      const channels = ["slack", "telegram", "discord"];
+      const ops = ["add", "remove"];
+      for (const op of ops) {
+        for (const channel of channels) {
+          const result = runGuardedOpenclaw(setup, ["channels", op, channel]);
+          expect(result.status, `channels ${op} ${channel} should be blocked`).toBe(1);
+          expect(result.stderr).toContain(`openclaw channels ${op}`);
+          expect(result.stderr).toContain(`nemoclaw <sandbox> channels ${op}`);
+        }
+      }
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("nemoclaw-start persistent gateway log hardening", () => {

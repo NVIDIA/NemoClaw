@@ -12,13 +12,14 @@ export default class DestroyCliCommand extends Command {
   static strict = true;
   static summary = "Stop NIM and delete sandbox";
   static description = "Destroy a sandbox and remove its local registry entry.";
-  static usage = ["<name> destroy [--yes|--force]"];
+  static usage = ["<name> destroy [--yes|-y|--force]"];
+  static examples = ["<%= config.bin %> alpha destroy", "<%= config.bin %> alpha destroy --yes"];
   static args = {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
   };
   static flags = {
     help: Flags.help({ char: "h" }),
-    yes: Flags.boolean({ description: "Skip the confirmation prompt" }),
+    yes: Flags.boolean({ char: "y", description: "Skip the confirmation prompt" }),
     force: Flags.boolean({ description: "Skip the confirmation prompt" }),
   };
 

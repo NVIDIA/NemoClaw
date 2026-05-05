@@ -56,6 +56,11 @@ type OnboardTestInternals = {
     portToStop: string,
   ) => string | null;
   formatOnboardConfigSummary: ShimFn<string>;
+  formatSandboxBuildEstimateNote: (host: {
+    isContainerRuntimeUnderProvisioned: boolean;
+    dockerCpus?: number;
+    dockerMemTotalBytes?: number;
+  }) => string | null;
   getDashboardAccessInfo: ShimFn<DashboardAccess[]>;
   getDashboardForwardStartCommand: ShimFn<string>;
   getNavigationChoice: (value?: string | null) => string | null;
@@ -140,6 +145,7 @@ function isOnboardTestInternals(
     typeof value.normalizeSandboxAgentName === "function" &&
     typeof value.agentSupportsWebSearch === "function" &&
     typeof value.configureWebSearch === "function" &&
+    typeof value.formatSandboxBuildEstimateNote === "function" &&
     typeof value.shouldRunCompatibleEndpointSandboxSmoke === "function" &&
     typeof value.writeSandboxConfigSyncFile === "function"
   );
@@ -203,6 +209,7 @@ const {
   writeSandboxConfigSyncFile,
   findDashboardForwardOwner,
   formatOnboardConfigSummary,
+  formatSandboxBuildEstimateNote,
 } = onboardTestInternals;
 
 describe("onboard helpers", () => {
@@ -806,6 +813,24 @@ describe("onboard helpers", () => {
         message: "HTTP 405: unsupported model",
       }),
     ).toEqual({ kind: "model", retry: "model" });
+  });
+
+  it("classifies TLS certificate errors as transport", () => {
+    expect(
+      classifyValidationFailure({
+        message: "transport error: invalid peer certificate: UnknownIssuer",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+    expect(
+      classifyValidationFailure({
+        message: "SSL certificate problem: unable to get local issuer certificate",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+    expect(
+      classifyValidationFailure({
+        message: "TLS handshake failure",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
   });
 
   it("detects tool-calling responses payloads conservatively", () => {
@@ -7047,7 +7072,7 @@ const { createSandbox } = require(${onboardPath});
       webSearchConfig: { fetchEnabled: true },
       enabledChannels: ["telegram", "slack"],
       sandboxName: "my-assistant",
-      notes: ["Sandbox build takes ~6 minutes on this host."],
+      notes: ["Sandbox build typically takes 5–15 minutes on this host."],
     });
 
     assert.ok(summary.includes("Review configuration"), "summary has review heading");
@@ -7061,7 +7086,7 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");
     assert.ok(summary.includes("my-assistant"), "summary shows sandbox name");
     assert.ok(
-      summary.includes("Note:          Sandbox build takes ~6 minutes on this host."),
+      summary.includes("Note:          Sandbox build typically takes 5–15 minutes on this host."),
       "summary renders notes under sandbox name",
     );
 
@@ -7104,5 +7129,32 @@ const { createSandbox } = require(${onboardPath});
     });
     assert.ok(!orphanSummary.includes("undefined"), "null fields never render as 'undefined'");
     assert.ok(orphanSummary.includes("(unset)"), "null fields fall back to '(unset)'");
+  });
+
+  it("formatSandboxBuildEstimateNote warns when runtime is under-provisioned (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote({
+      isContainerRuntimeUnderProvisioned: true,
+      dockerCpus: 2,
+      dockerMemTotalBytes: 2 * 1024 ** 3,
+    });
+    assert.ok(note != null && note.length > 0, "returns a note");
+    assert.match(note as string, /under-provisioned/i, "note flags under-provisioned host");
+  });
+
+  it("formatSandboxBuildEstimateNote returns a tighter range on a generous host (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote({
+      isContainerRuntimeUnderProvisioned: false,
+      dockerCpus: 12,
+      dockerMemTotalBytes: 32 * 1024 ** 3,
+    });
+    assert.ok(note != null, "returns a note");
+    assert.match(note ?? "", /\b3[–-]\d+\s+minutes\b/, "tight range starts at 3 minutes");
+  });
+
+  it("formatSandboxBuildEstimateNote returns null when no runtime resource signal is available (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote({
+      isContainerRuntimeUnderProvisioned: false,
+    });
+    assert.strictEqual(note, null);
   });
 });

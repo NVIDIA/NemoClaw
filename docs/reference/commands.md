@@ -133,6 +133,9 @@ or:
 $ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
 ```
 
+For scripted installer runs, set `NEMOCLAW_NON_INTERACTIVE=1` and `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before invoking `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`.
+If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
+
 To enable Brave Search in non-interactive mode, set:
 
 ```console
@@ -145,7 +148,7 @@ If Brave Search key validation fails in non-interactive mode, onboarding prints 
 After fixing the key, re-enable web search with `nemoclaw config web-search`.
 
 The wizard prompts for a sandbox name.
-Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
+Names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Uppercase letters are automatically lowercased.
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 Use `--agent <name>` to target a specific installed agent profile during onboarding.
@@ -217,7 +220,8 @@ If a `--resume` is attempted with a different `--from` path than the original se
 #### `--name <sandbox>`
 
 Set the sandbox name without going through the interactive prompt.
-The same RFC 1123 and reserved-name rules that the wizard enforces apply here too — names that match a NemoClaw CLI command (`status`, `list`, `debug`, etc.) are rejected up front.
+The same name format and reserved-name rules that the wizard enforces apply here too. Names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+Names that match a NemoClaw CLI command (`status`, `list`, `debug`, etc.) are rejected up front.
 
 ```console
 $ nemoclaw onboard --non-interactive --name my-build --from path/to/Dockerfile
@@ -257,6 +261,8 @@ Prefer provisioning the remote host separately, then running the standard NemoCl
 
 Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
 This command remains as a compatibility wrapper for the older Brev-specific bootstrap flow.
+The Brev instance name is the positional argument.
+The sandbox name comes from `NEMOCLAW_SANDBOX_NAME` and defaults to `my-assistant`; invalid sandbox names fail before Brev provisioning starts.
 
 ```console
 $ nemoclaw deploy <instance-name>
@@ -306,11 +312,13 @@ The command probes every inference provider and reports one of three states on t
 | `healthy` | The provider endpoint returned a reachable response. |
 | `unreachable` | The probe failed. The output includes the endpoint URL and a remediation hint. |
 | `not probed` | The endpoint URL is not known (for example, `compatible-*` providers). |
+| `not verified` | NemoClaw could not verify the sandbox or gateway state, so it skips inference probing. |
 
 Local providers (Ollama, vLLM) probe the host-side health endpoint.
 Remote providers (NVIDIA Endpoints, OpenAI, Anthropic, Gemini) use a lightweight reachability check; any HTTP response, including `401` or `403`, counts as reachable.
 No API keys are sent.
 For cloud-only providers, the output omits the NIM status line unless a NIM container is registered or an unexpected NIM container is running.
+If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
 
 A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.
@@ -342,11 +350,13 @@ $ nemoclaw my-assistant doctor [--json]
 
 View sandbox logs.
 Use `--follow` to stream output in real time.
+Use `--tail <lines>` or `-n <lines>` to limit the number of returned lines.
+Use `--since <duration>` to show recent logs only, such as `5m`, `1h`, or `30s`.
 The command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream.
 If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source.
 
 ```console
-$ nemoclaw my-assistant logs [--follow]
+$ nemoclaw my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]
 ```
 
 ### `nemoclaw <name> gateway-token`
@@ -584,6 +594,7 @@ If another terminal has an active SSH session to the sandbox, `rebuild` prints a
 Pass `--yes` or `--force` to skip the prompt in scripted workflows.
 
 The sandbox must be running for the backup step to succeed.
+If any manifest-defined state path cannot be archived, `rebuild` reports the failed paths and exits before destroying the original sandbox.
 After restore, the command runs `openclaw doctor --fix` for cross-version structure repair.
 
 ### `nemoclaw upgrade-sandboxes`
@@ -779,9 +790,11 @@ This command remains as a compatibility alias to `nemoclaw tunnel stop`.
 ### `nemoclaw status`
 
 Show the sandbox list and the status of host auxiliary services (for example cloudflared).
+Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and messaging health.
 
 ```console
 $ nemoclaw status
+$ nemoclaw status --json
 ```
 
 ### `nemoclaw setup`

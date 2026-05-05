@@ -33,7 +33,7 @@ export class UpgradeSandboxesCommand extends Command {
   static strict = true;
   static summary = "Detect and rebuild stale sandboxes";
   static description = "Detect stale sandboxes and optionally rebuild them.";
-  static usage = ["upgrade-sandboxes [--check] [--auto] [--yes]"];
+  static usage = ["upgrade-sandboxes [--check] [--auto] [--yes|-y]"];
   static examples = [
     "<%= config.bin %> upgrade-sandboxes --check",
     "<%= config.bin %> upgrade-sandboxes --auto --yes",
@@ -42,7 +42,7 @@ export class UpgradeSandboxesCommand extends Command {
     help: Flags.help({ char: "h" }),
     check: Flags.boolean({ description: "Only check whether sandboxes need upgrading" }),
     auto: Flags.boolean({ description: "Automatically rebuild running stale sandboxes" }),
-    yes: Flags.boolean({ description: "Skip confirmation prompts" }),
+    yes: Flags.boolean({ char: "y", description: "Skip confirmation prompts" }),
   };
 
   public async run(): Promise<void> {
@@ -60,12 +60,12 @@ export class GarbageCollectImagesCommand extends Command {
   static strict = true;
   static summary = "Remove orphaned sandbox Docker images";
   static description = "Remove sandbox Docker images that are not referenced by registered sandboxes.";
-  static usage = ["gc [--dry-run] [--yes|--force]"];
+  static usage = ["gc [--dry-run] [--yes|-y|--force]"];
   static examples = ["<%= config.bin %> gc --dry-run", "<%= config.bin %> gc --yes"];
   static flags = {
     help: Flags.help({ char: "h" }),
     "dry-run": Flags.boolean({ description: "Show images that would be removed without deleting" }),
-    yes: Flags.boolean({ description: "Skip the confirmation prompt" }),
+    yes: Flags.boolean({ char: "y", description: "Skip the confirmation prompt" }),
     force: Flags.boolean({ description: "Skip the confirmation prompt" }),
   };
 

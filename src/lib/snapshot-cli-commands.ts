@@ -27,17 +27,22 @@ const sandboxNameArg = Args.string({
 
 export class SnapshotCommand extends Command {
   static id = "sandbox:snapshot";
-  static strict = false;
+  static strict = true;
   static summary = "Show snapshot usage";
-  static description = "Show snapshot usage or report unknown snapshot subcommands.";
+  static description = "Show snapshot usage for create, list, and restore subcommands.";
   static usage = ["<name> snapshot <create|list|restore>"];
+  static examples = [
+    "<%= config.bin %> alpha snapshot create",
+    "<%= config.bin %> alpha snapshot list",
+    "<%= config.bin %> alpha snapshot restore",
+  ];
+  static args = {
+    sandboxName: sandboxNameArg,
+  };
 
   public async run(): Promise<void> {
-    const [sandboxName, ...actionArgs] = this.argv;
-    if (!sandboxName || sandboxName.trim() === "") {
-      this.error("Missing required sandboxName for snapshot.", { exit: 2 });
-    }
-    await getRuntimeBridge().sandboxSnapshot(sandboxName, actionArgs);
+    const { args } = await this.parse(SnapshotCommand);
+    await getRuntimeBridge().sandboxSnapshot(args.sandboxName, []);
   }
 }
 
@@ -47,6 +52,7 @@ export class SnapshotListCommand extends Command {
   static summary = "List available snapshots";
   static description = "List available snapshots for a sandbox.";
   static usage = ["<name> snapshot list"];
+  static examples = ["<%= config.bin %> alpha snapshot list"];
   static args = {
     sandboxName: sandboxNameArg,
   };
@@ -66,6 +72,11 @@ export class SnapshotRestoreCommand extends Command {
   static summary = "Restore state from a snapshot";
   static description = "Restore sandbox workspace state from a snapshot.";
   static usage = ["<name> snapshot restore [selector] [--to <dst>]"];
+  static examples = [
+    "<%= config.bin %> alpha snapshot restore",
+    "<%= config.bin %> alpha snapshot restore v2",
+    "<%= config.bin %> alpha snapshot restore before-upgrade --to beta",
+  ];
   static args = {
     sandboxName: sandboxNameArg,
     selector: Args.string({
@@ -94,6 +105,10 @@ export class SnapshotCreateCommand extends Command {
   static summary = "Create a snapshot of sandbox state";
   static description = "Create an auto-versioned snapshot of sandbox workspace state.";
   static usage = ["<name> snapshot create [--name <label>]"];
+  static examples = [
+    "<%= config.bin %> alpha snapshot create",
+    "<%= config.bin %> alpha snapshot create --name before-upgrade",
+  ];
   static args = {
     sandboxName: sandboxNameArg,
   };

@@ -3038,16 +3038,19 @@ echo "docker $*" >> ${JSON.stringify(phaseLog)}
 exit 0`,
     );
 
-    // Run main() directly via the bash entrypoint check. We force stdin to
-    // /dev/null when stdinIsTty is false (default — simulates curl|bash).
+    // Run main() directly via the bash entrypoint check. We force stdin to a
+    // non-TTY pipe when stdinIsTty is false (default — simulates curl|bash).
+    // On Linux/WSL, spawnSync children can still inherit a controlling terminal
+    // even with pipe stdin, which leaves /dev/tty openable and correctly lets
+    // the installer prompt instead of fail fast. Use setsid to exercise the
+    // headless curl-pipe path where both stdin and /dev/tty are unavailable.
+    const useSetsid = !options.stdinIsTty && process.platform !== "darwin";
     const result = spawnSync(
-      "bash",
-      [INSTALLER_PAYLOAD],
+      useSetsid ? "setsid" : "bash",
+      useSetsid ? ["bash", INSTALLER_PAYLOAD] : [INSTALLER_PAYLOAD],
       {
         cwd: tmp,
         encoding: "utf-8",
-        // input: "" makes spawnSync attach a non-TTY stdin pipe — equivalent
-        // to curl|bash for the purposes of [ -t 0 ] and /dev/tty in CI.
         input: options.stdinIsTty ? undefined : "",
         env: {
           HOME: tmp,

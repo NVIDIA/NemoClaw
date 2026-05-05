@@ -38,7 +38,7 @@ function getRuntimeBridge(): ChannelsRuntimeBridge {
 }
 
 const sandboxNameArg = Args.string({ name: "sandbox", description: "Sandbox name", required: true });
-const channelArg = Args.string({ name: "channel", description: "Messaging channel", required: false });
+const channelArg = Args.string({ name: "channel", description: "Messaging channel", required: true });
 
 function buildArgs(channel: string | undefined, flags: { "dry-run"?: boolean }): string[] {
   const args: string[] = [];
@@ -62,6 +62,7 @@ export class ChannelsAddCommand extends Command {
   static summary = "Save messaging channel credentials and rebuild";
   static description = "Store credentials for a messaging channel and queue a sandbox rebuild.";
   static usage = ["<name> channels add <channel> [--dry-run]"];
+  static examples = ["<%= config.bin %> alpha channels add telegram"];
   static args = channelMutationArgs;
   static flags = channelMutationFlags;
 
@@ -77,6 +78,7 @@ export class ChannelsRemoveCommand extends Command {
   static summary = "Clear messaging channel credentials and rebuild";
   static description = "Remove credentials for a messaging channel and queue a sandbox rebuild.";
   static usage = ["<name> channels remove <channel> [--dry-run]"];
+  static examples = ["<%= config.bin %> alpha channels remove slack --dry-run"];
   static args = channelMutationArgs;
   static flags = channelMutationFlags;
 
@@ -92,6 +94,7 @@ export class ChannelsStopCommand extends Command {
   static summary = "Disable channel without wiping credentials";
   static description = "Disable a messaging channel while keeping credentials in the gateway.";
   static usage = ["<name> channels stop <channel> [--dry-run]"];
+  static examples = ["<%= config.bin %> alpha channels stop discord"];
   static args = channelMutationArgs;
   static flags = channelMutationFlags;
 
@@ -107,6 +110,7 @@ export class ChannelsStartCommand extends Command {
   static summary = "Re-enable a stopped messaging channel";
   static description = "Re-enable a previously stopped messaging channel.";
   static usage = ["<name> channels start <channel> [--dry-run]"];
+  static examples = ["<%= config.bin %> alpha channels start discord"];
   static args = channelMutationArgs;
   static flags = channelMutationFlags;
 

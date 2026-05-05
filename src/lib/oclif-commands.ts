@@ -29,13 +29,10 @@ import {
   GarbageCollectImagesCommand,
   UpgradeSandboxesCommand,
 } from "./maintenance-cli-commands";
-import {
-  PolicyAddCommand,
-  PolicyAddRawCommand,
-  PolicyRemoveCommand,
-} from "./policy-mutate-cli-commands";
+import { PolicyAddCommand, PolicyRemoveCommand } from "./policy-mutate-cli-commands";
 import RebuildCliCommand from "./rebuild-cli-command";
 import RecoverCliCommand from "./recover-cli-command";
+import SandboxConfigSetCommand from "./sandbox-config-set-cli-command";
 import SandboxDoctorCliCommand from "./sandbox-doctor-cli-command";
 import {
   SandboxChannelsListCommand,
@@ -49,7 +46,11 @@ import {
   ShieldsStatusCommand,
   ShieldsUpCommand,
 } from "./shields-cli-commands";
-import ShareCommand from "./share-command";
+import ShareCommand, {
+  ShareMountCommand,
+  ShareStatusCommand,
+  ShareUnmountCommand,
+} from "./share-command";
 import SkillInstallCliCommand, { SkillCliCommand } from "./skill-install-cli-command";
 import {
   SnapshotCommand,
@@ -83,16 +84,20 @@ export default {
   "sandbox:channels:start": ChannelsStartCommand,
   "sandbox:channels:stop": ChannelsStopCommand,
   "sandbox:config:get": SandboxConfigGetCommand,
+  "sandbox:config:set": SandboxConfigSetCommand,
   "sandbox:connect": ConnectCliCommand,
   "sandbox:destroy": DestroyCliCommand,
   "sandbox:doctor": SandboxDoctorCliCommand,
   "sandbox:logs": SandboxLogsCommand,
   "sandbox:policy-add": PolicyAddCommand,
-  "sandbox:policy-add:raw": PolicyAddRawCommand,
   "sandbox:policy-list": SandboxPolicyListCommand,
   "sandbox:policy-remove": PolicyRemoveCommand,
   "sandbox:rebuild": RebuildCliCommand,
   "sandbox:recover": RecoverCliCommand,
+  "sandbox:share": ShareCommand,
+  "sandbox:share:mount": ShareMountCommand,
+  "sandbox:share:status": ShareStatusCommand,
+  "sandbox:share:unmount": ShareUnmountCommand,
   "sandbox:shields:down": ShieldsDownCommand,
   "sandbox:shields:status": ShieldsStatusCommand,
   "sandbox:shields:up": ShieldsUpCommand,
@@ -105,7 +110,6 @@ export default {
   "sandbox:status": SandboxStatusCommand,
   setup: SetupCliCommand,
   "setup-spark": SetupSparkCliCommand,
-  share: ShareCommand,
   status: StatusCommand,
   start: DeprecatedStartCommand,
   stop: DeprecatedStopCommand,

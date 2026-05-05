@@ -105,11 +105,50 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.gateway.controlUi.allowedOrigins).toContain(
       "https://nemoclaw0-xxx.brevlab.com:18789",
     );
+    expect(config.gateway.controlUi.allowedOrigins).toContain(
+      "https://nemoclaw0-xxx.brevlab.com",
+    );
   });
 
   it("includes only loopback origin for loopback URL", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
     expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18789"]);
+  });
+
+  it("includes portless origin for reverse-proxy access (Fixes #3000)", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "https://nemoclaw0-abc123.brevlab.com:18789",
+    });
+    const origins = config.gateway.controlUi.allowedOrigins;
+    expect(origins).toContain("https://nemoclaw0-abc123.brevlab.com:18789");
+    expect(origins).toContain("https://nemoclaw0-abc123.brevlab.com");
+  });
+
+  it("preserves brackets in portless origin for public IPv6 addresses", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "https://[2606:4700::1]:18789",
+    });
+    const origins = config.gateway.controlUi.allowedOrigins;
+    expect(origins).toContain("https://[2606:4700::1]:18789");
+    expect(origins).toContain("https://[2606:4700::1]");
+  });
+
+  it("does not add portless origin for IPv6 loopback", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "http://[::1]:18789",
+    });
+    const origins = config.gateway.controlUi.allowedOrigins;
+    expect(origins).toContain("http://[::1]:18789");
+    expect(origins).not.toContain("http://[::1]");
+  });
+
+  it("does not crash on malformed port in CHAT_UI_URL", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "https://example.com:abc",
+    });
+    const origins = config.gateway.controlUi.allowedOrigins;
+    expect(origins).toContain("http://127.0.0.1:18789");
+    expect(origins).not.toContain("https://example.com");
   });
 
   it("parses messaging channels from base64", () => {

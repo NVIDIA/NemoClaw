@@ -41,11 +41,6 @@ function hasHelpFlag(args: readonly string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
 
-function hasMissingFlagValue(args: readonly string[], flagName: string): boolean {
-  const index = args.indexOf(flagName);
-  return index !== -1 && (!args[index + 1] || args[index + 1].startsWith("--"));
-}
-
 export function resolveGlobalOclifDispatch(cmd: string, args: string[]): DispatchResult {
   switch (cmd) {
     case "onboard":
@@ -111,6 +106,7 @@ export function resolveSandboxOclifDispatch(
       }
       return { kind: "oclif", commandId: "sandbox:logs", args: [sandboxName, ...actionArgs] };
     case "doctor":
+      if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "doctor [--json]" };
       return { kind: "oclif", commandId: "sandbox:doctor", args: [sandboxName, ...actionArgs] };
     case "policy-add":
       if (hasHelpFlag(actionArgs)) {
@@ -118,9 +114,6 @@ export function resolveSandboxOclifDispatch(
           kind: "help",
           usage: "policy-add [preset] [--yes|-y] [--dry-run] [--from-file <path>] [--from-dir <path>]",
         };
-      }
-      if (hasMissingFlagValue(actionArgs, "--from-file") || hasMissingFlagValue(actionArgs, "--from-dir")) {
-        return { kind: "oclif", commandId: "sandbox:policy-add:raw", args: [sandboxName, ...actionArgs] };
       }
       return { kind: "oclif", commandId: "sandbox:policy-add", args: [sandboxName, ...actionArgs] };
     case "policy-remove":
@@ -130,7 +123,7 @@ export function resolveSandboxOclifDispatch(
       if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "policy-list" };
       return { kind: "oclif", commandId: "sandbox:policy-list", args: [sandboxName, ...actionArgs] };
     case "destroy":
-      if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "destroy [--yes|--force]" };
+      if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "destroy [--yes|-y|--force]" };
       return { kind: "oclif", commandId: "sandbox:destroy", args: [sandboxName, ...actionArgs] };
     case "gateway-token":
       if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "gateway-token [--quiet|-q]" };
@@ -148,16 +141,46 @@ export function resolveSandboxOclifDispatch(
       return { kind: "oclif", commandId: "sandbox:skill", args: [sandboxName, ...actionArgs] };
     }
     case "rebuild":
-      if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "rebuild [--yes|--force] [--verbose|-v]" };
+      if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "rebuild [--yes|-y|--force] [--verbose|-v]" };
       return { kind: "oclif", commandId: "sandbox:rebuild", args: [sandboxName, ...actionArgs] };
     case "recover":
       if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "recover" };
       return { kind: "oclif", commandId: "sandbox:recover", args: [sandboxName, ...actionArgs] };
-    case "share":
-      return { kind: "oclif", commandId: "share", args: [sandboxName, ...actionArgs] };
+    case "share": {
+      const shareSub = actionArgs[0];
+      const shareArgs = actionArgs.slice(1);
+      if (shareSub === "--help" || shareSub === "-h") {
+        return { kind: "help", usage: "share <mount|unmount|status>" };
+      }
+      if (!shareSub) {
+        return { kind: "oclif", commandId: "sandbox:share", args: [sandboxName] };
+      }
+      if (shareSub === "mount") {
+        if (hasHelpFlag(shareArgs)) {
+          return { kind: "help", usage: "share mount [sandbox-path] [local-mount-point]" };
+        }
+        return { kind: "oclif", commandId: "sandbox:share:mount", args: [sandboxName, ...shareArgs] };
+      }
+      if (shareSub === "unmount") {
+        if (hasHelpFlag(shareArgs)) {
+          return { kind: "help", usage: "share unmount [local-mount-point]" };
+        }
+        return { kind: "oclif", commandId: "sandbox:share:unmount", args: [sandboxName, ...shareArgs] };
+      }
+      if (shareSub === "status") {
+        if (hasHelpFlag(shareArgs)) {
+          return { kind: "help", usage: "share status [local-mount-point]" };
+        }
+        return { kind: "oclif", commandId: "sandbox:share:status", args: [sandboxName, ...shareArgs] };
+      }
+      return { kind: "oclif", commandId: "sandbox:share", args: [sandboxName, ...actionArgs] };
+    }
     case "snapshot": {
       const snapshotSub = actionArgs[0];
       const snapshotArgs = actionArgs.slice(1);
+      if (!snapshotSub || snapshotSub === "--help" || snapshotSub === "-h") {
+        return { kind: "oclif", commandId: "sandbox:snapshot", args: [sandboxName] };
+      }
       if (snapshotSub === "list") {
         if (hasHelpFlag(snapshotArgs)) return { kind: "help", usage: "snapshot list" };
         return { kind: "oclif", commandId: "sandbox:snapshot:list", args: [sandboxName, ...snapshotArgs] };
@@ -213,8 +236,12 @@ export function resolveSandboxOclifDispatch(
         if (hasHelpFlag(actionArgs.slice(1))) return { kind: "help", usage: "config get [--key dotpath] [--format json|yaml]" };
         return { kind: "oclif", commandId: "sandbox:config:get", args: [sandboxName, ...actionArgs.slice(1)] };
       }
-      if (configSub === "--help" || configSub === "-h") return { kind: "help", usage: "config get [--key dotpath] [--format json|yaml]" };
-      return { kind: "usageError", lines: ["config get [--key dotpath] [--format json|yaml]"] };
+      if (configSub === "set") {
+        if (hasHelpFlag(actionArgs.slice(1))) return { kind: "help", usage: "config set --key <dotpath> --value <value> [--restart] [--config-accept-new-path]" };
+        return { kind: "oclif", commandId: "sandbox:config:set", args: [sandboxName, ...actionArgs.slice(1)] };
+      }
+      if (configSub === "--help" || configSub === "-h") return { kind: "help", usage: "config <get|set>" };
+      return { kind: "usageError", lines: ["config <get|set>", "get [--key dotpath] [--format json|yaml]", "set --key <dotpath> --value <value> [--restart] [--config-accept-new-path]"] };
     }
     default:
       return { kind: "unknownAction", action };
