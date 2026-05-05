@@ -3138,9 +3138,11 @@ if pid == 0:
     os.execvpe("bash", ["bash", installer], os.environ)
 
 output = bytearray()
+os.set_blocking(fd, False)
 deadline = time.time() + 20
 sent = False
 exit_code = 124
+timed_out = False
 while True:
     if not sent:
         os.write(fd, answer)
@@ -3149,6 +3151,8 @@ while True:
     if ready:
         try:
             chunk = os.read(fd, 4096)
+        except BlockingIOError:
+            chunk = b""
         except OSError:
             chunk = b""
         if chunk:
@@ -3159,20 +3163,46 @@ while True:
         exit_code = os.waitstatus_to_exitcode(status)
         break
     if time.time() > deadline:
-        os.kill(pid, signal.SIGTERM)
+        timed_out = True
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
         break
 
 try:
-    while True:
-        ready, _, _ = select.select([fd], [], [], 0)
-        if not ready:
-            break
+    if timed_out:
+        for _ in range(20):
+            waited = os.waitpid(pid, os.WNOHANG)
+            if waited[0] == pid:
+                exit_code = os.waitstatus_to_exitcode(waited[1])
+                break
+            time.sleep(0.05)
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass
+            exit_code = 124
+
+    for _ in range(100):
         chunk = os.read(fd, 4096)
         if not chunk:
             break
         output.extend(chunk)
+except BlockingIOError:
+    pass
 except OSError:
     pass
+finally:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
 
 sys.stdout.buffer.write(output)
 sys.exit(exit_code)
@@ -3180,6 +3210,8 @@ sys.exit(exit_code)
     const result = spawnSync(python, ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode], {
       cwd: tmp,
       encoding: "utf-8",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
       env: {
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
