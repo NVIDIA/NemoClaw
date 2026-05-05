@@ -367,6 +367,8 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
 }
 
 exports.main = main;
+module.exports.dispatchCli = main;
 // Compatibility for tests that require the CLI module and await completion.
 // Prefer calling main(argv) directly in new in-process harnesses.
-exports.mainPromise = main();
+exports.mainPromise =
+  process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH === "1" ? Promise.resolve() : main();
