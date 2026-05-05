@@ -676,7 +676,7 @@ show_usage_notice_shell() {
 }
 
 preflight_usage_notice_prompt() {
-  if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ] || [ -t 0 ]; then
+  if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
     return 0
   fi
 
@@ -687,6 +687,11 @@ preflight_usage_notice_prompt() {
     if [[ -n "$version" ]] && usage_notice_accepted_shell "$version"; then
       return 0
     fi
+  fi
+
+  if [ -t 0 ]; then
+    show_usage_notice_shell
+    return "$?"
   fi
 
   if { exec 3</dev/tty; } 2>/dev/null; then

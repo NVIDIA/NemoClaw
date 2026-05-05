@@ -3072,7 +3072,7 @@ exit 0`,
     return { result, phases, tmp };
   }
 
-  function runInstallerWithPipedStdinAndTty(answer: string) {
+  function runInstallerWithTty(answer: string, stdinMode: "pipe" | "tty" = "pipe") {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-tty-pipe-"));
     const fakeBin = path.join(tmp, "bin");
     const phaseLog = path.join(tmp, "phases.log");
@@ -3128,11 +3128,13 @@ import time
 
 installer = sys.argv[1]
 answer = sys.argv[2].encode()
+stdin_mode = sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
-    devnull = os.open(os.devnull, os.O_RDONLY)
-    os.dup2(devnull, 0)
-    os.close(devnull)
+    if stdin_mode == "pipe":
+        devnull = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(devnull, 0)
+        os.close(devnull)
     os.execvpe("bash", ["bash", installer], os.environ)
 
 output = bytearray()
@@ -3175,7 +3177,7 @@ except OSError:
 sys.stdout.buffer.write(output)
 sys.exit(exit_code)
 `;
-    const result = spawnSync(python, ["-c", ptyRunner, INSTALLER_PAYLOAD, answer], {
+    const result = spawnSync(python, ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode], {
       cwd: tmp,
       encoding: "utf-8",
       env: {
@@ -3187,6 +3189,14 @@ sys.exit(exit_code)
     const stateFile = path.join(tmp, ".nemoclaw", "usage-notice.json");
     const state = fs.existsSync(stateFile) ? fs.readFileSync(stateFile, "utf-8") : "";
     return { result, phases, state };
+  }
+
+  function runInstallerWithPipedStdinAndTty(answer: string) {
+    return runInstallerWithTty(answer, "pipe");
+  }
+
+  function runInstallerWithInteractiveStdin(answer: string) {
+    return runInstallerWithTty(answer, "tty");
   }
 
   it("#2671: headless curl|bash with no flags exits 1 BEFORE phase 1 (atomic — no Node/CLI install)", () => {
@@ -3220,10 +3230,21 @@ sys.exit(exit_code)
     );
     expect(phases).not.toBe("");
     expect(state).toContain(`"acceptedVersion": "${noticeVersion}"`);
-  });
+  }, 15_000);
 
   it("piped installs with a controlling TTY still stop before phase 1 when acceptance is declined", () => {
     const { result, phases, state } = runInstallerWithPipedStdinAndTty("\n");
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/Third-Party Software Notice - NemoClaw Installer/);
+    expect(output).toMatch(/Installation cancelled/);
+    expect(output).not.toMatch(/\[1\/3\] Node\.js/);
+    expect(phases).toBe("");
+    expect(state).toBe("");
+  });
+
+  it("interactive installs with stdin on a TTY still stop before phase 1 when acceptance is declined", () => {
+    const { result, phases, state } = runInstallerWithInteractiveStdin("\n");
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).not.toBe(0);
     expect(output).toMatch(/Third-Party Software Notice - NemoClaw Installer/);
