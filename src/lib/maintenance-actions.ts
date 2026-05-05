@@ -9,6 +9,7 @@ import {
   normalizeGarbageCollectImagesOptions,
 } from "./lifecycle-options";
 import { dockerListImagesFormat, dockerRmi } from "./docker";
+import { findOrphanedSandboxImages, parseSandboxImageRows } from "./maintenance-image-helpers";
 import { captureOpenshell } from "./openshell-runtime";
 import * as registry from "./registry";
 import { parseLiveSandboxNames } from "./runtime-recovery";
@@ -83,29 +84,15 @@ export async function garbageCollectImages(
     process.exit(1);
   }
 
-  const allImages = imagesOutput
-    .split("\n")
-    .map((line: string) => line.trim())
-    .filter(Boolean)
-    .map((line: string) => {
-      const [tag, size] = line.split("\t");
-      return { tag, size: size || "unknown" };
-    });
+  const allImages = parseSandboxImageRows(imagesOutput);
 
   if (allImages.length === 0) {
     console.log("  No sandbox images found on the host.");
     return;
   }
 
-  const registeredTags = new Set();
   const { sandboxes } = registry.listSandboxes();
-  for (const sb of sandboxes) {
-    if (sb.imageTag) registeredTags.add(sb.imageTag);
-  }
-
-  const orphans = allImages.filter(
-    (img: { tag: string; size: string }) => !registeredTags.has(img.tag),
-  );
+  const orphans = findOrphanedSandboxImages(allImages, sandboxes);
 
   if (orphans.length === 0) {
     console.log(`  All ${allImages.length} sandbox image(s) are in use. Nothing to clean up.`);
