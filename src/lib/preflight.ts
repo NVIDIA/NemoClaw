@@ -186,6 +186,7 @@ const TEXT_UNIT_MULTIPLIERS: Record<string, number> = {
 };
 
 export interface DockerInfo {
+  parsedAs: "json" | "text";
   serverVersion?: string;
   operatingSystem?: string;
   cgroupVersion?: "v1" | "v2";
@@ -219,6 +220,45 @@ function matchTextField(info: string, regex: RegExp): string | undefined {
   return match?.[1];
 }
 
+function pickJsonCgroupVersion(value: unknown): "v1" | "v2" | undefined {
+  if (value === "1" || value === 1) return "v1";
+  if (value === "2" || value === 2) return "v2";
+  return undefined;
+}
+
+function jsonHasContainerdSnapshotter(driverStatus: unknown): boolean {
+  if (!Array.isArray(driverStatus)) return false;
+  return driverStatus.some(
+    (entry) =>
+      Array.isArray(entry) &&
+      entry.some((cell) => /io\.containerd\.snapshotter\.v1/.test(String(cell))),
+  );
+}
+
+function parseDockerInfoFromJson(json: Record<string, unknown>): DockerInfo {
+  return {
+    parsedAs: "json",
+    serverVersion: pickString(json.ServerVersion),
+    operatingSystem: pickString(json.OperatingSystem),
+    cgroupVersion: pickJsonCgroupVersion(json.CgroupVersion),
+    storageDriver: pickString(json.Driver),
+    usesContainerdSnapshotter: jsonHasContainerdSnapshotter(json.DriverStatus),
+    cpus: pickPositiveInt(json.NCPU),
+    memTotalBytes: pickPositiveInt(json.MemTotal),
+  };
+}
+
+function parseTextCgroupVersion(info: string): "v1" | "v2" | undefined {
+  if (/Cgroup\s*Version["=: ]+2/i.test(info)) return "v2";
+  if (/Cgroup\s*Version["=: ]+1/i.test(info)) return "v1";
+  return undefined;
+}
+
+function parseTextCpus(info: string): number | undefined {
+  const match = matchTextField(info, /^\s*CPUs:\s*(\d+)\s*$/m);
+  return match ? pickPositiveInt(parseInt(match, 10)) : undefined;
+}
+
 function parseTextMemTotal(info: string): number | undefined {
   const match = info.match(/^\s*Total Memory:\s*([\d.]+)\s*([GMK]i?B)\s*$/im);
   if (!match) return undefined;
@@ -228,58 +268,28 @@ function parseTextMemTotal(info: string): number | undefined {
   return Math.round(value * multiplier);
 }
 
-function parseCgroupVersionField(
-  json: Record<string, unknown> | null,
-  info: string,
-): "v1" | "v2" | undefined {
-  const raw = json?.CgroupVersion;
-  if (raw === "1" || raw === 1) return "v1";
-  if (raw === "2" || raw === 2) return "v2";
-  if (/Cgroup\s*Version["=: ]+2/i.test(info)) return "v2";
-  if (/Cgroup\s*Version["=: ]+1/i.test(info)) return "v1";
-  return undefined;
-}
-
-function detectContainerdSnapshotter(
-  json: Record<string, unknown> | null,
-  info: string,
-): boolean {
-  const driverStatus = json?.DriverStatus;
-  if (Array.isArray(driverStatus)) {
-    for (const entry of driverStatus) {
-      if (Array.isArray(entry) && entry.some((cell) => /io\.containerd\.snapshotter\.v1/.test(String(cell)))) {
-        return true;
-      }
-    }
-  }
-  return /io\.containerd\.snapshotter\.v1/.test(info);
+function parseDockerInfoFromText(info: string): DockerInfo {
+  return {
+    parsedAs: "text",
+    serverVersion: matchTextField(info, /^\s*Server Version:\s*(.+)$/m),
+    operatingSystem: matchTextField(info, /^\s*Operating System:\s*(.+)$/m),
+    cgroupVersion: parseTextCgroupVersion(info),
+    storageDriver: matchTextField(info, /^\s*Storage Driver:\s*(\S+)\s*$/m),
+    usesContainerdSnapshotter: /io\.containerd\.snapshotter\.v1/.test(info),
+    cpus: parseTextCpus(info),
+    memTotalBytes: parseTextMemTotal(info),
+  };
 }
 
 /**
- * Parse `docker info` output into a typed view. The canonical input is the
- * `--format '{{json .}}'` form (preferred via `JSON.parse`), with a plain-text
- * fallback per field so callers that pass raw `docker info` output still get
- * partial data.
+ * Parse `docker info` output into a typed view. JSON form
+ * (`docker info --format '{{json .}}'`) is parsed structurally; otherwise the
+ * raw plain-text form is matched line-by-line. Fields that do not match are
+ * left undefined.
  */
 export function parseDockerInfo(info = ""): DockerInfo {
   const json = safeParseDockerInfoJson(info);
-  return {
-    serverVersion:
-      pickString(json?.ServerVersion) ??
-      matchTextField(info, /^\s*Server Version:\s*(.+)$/m),
-    operatingSystem:
-      pickString(json?.OperatingSystem) ??
-      matchTextField(info, /^\s*Operating System:\s*(.+)$/m),
-    cgroupVersion: parseCgroupVersionField(json, info),
-    storageDriver:
-      pickString(json?.Driver) ??
-      matchTextField(info, /^\s*Storage Driver:\s*(\S+)\s*$/m),
-    usesContainerdSnapshotter: detectContainerdSnapshotter(json, info),
-    cpus:
-      pickPositiveInt(json?.NCPU) ??
-      pickPositiveInt(Number(matchTextField(info, /^\s*CPUs:\s*(\d+)\s*$/m))),
-    memTotalBytes: pickPositiveInt(json?.MemTotal) ?? parseTextMemTotal(info),
-  };
+  return json ? parseDockerInfoFromJson(json) : parseDockerInfoFromText(info);
 }
 
 export const MIN_RECOMMENDED_DOCKER_CPUS = 4;
@@ -480,6 +490,11 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   }
   if (assessment.dockerInfoSummary) {
     assessment.notes.push(`Docker: ${assessment.dockerInfoSummary}`);
+  }
+  if (docker?.parsedAs === "text" && (dockerInfoOutput ?? "").trim().length > 0) {
+    assessment.notes.push(
+      "docker info JSON unavailable; fell back to plain-text scraping. Reported runtime stats may be inaccurate.",
+    );
   }
 
   return assessment;
