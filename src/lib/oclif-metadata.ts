@@ -2,8 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type OclifCommandMetadata = {
+  args?: Record<string, unknown>;
+  baseFlags?: Record<string, unknown>;
   description?: string;
   examples?: string[];
+  flags?: Record<string, unknown>;
+  id?: string;
+  strict?: boolean;
   summary?: string;
   usage?: string[];
 };

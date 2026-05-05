@@ -50,7 +50,7 @@ import ShareCommand, {
   ShareMountCommand,
   ShareStatusCommand,
   ShareUnmountCommand,
-} from "./share-command";
+} from "./share-cli-commands";
 import SkillInstallCliCommand, { SkillCliCommand } from "./skill-install-cli-command";
 import {
   SnapshotCommand,

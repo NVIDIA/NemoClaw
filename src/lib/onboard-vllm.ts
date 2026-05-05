@@ -89,6 +89,22 @@ const SPARK_PROFILE: VllmProfile = {
   readyMarker: /Uvicorn running on|Application startup complete/,
 };
 
+// DGX Station.
+const STATION_PROFILE: VllmProfile = {
+  name: "DGX Station",
+  image: SPARK_PROFILE.image,
+  model: SPARK_PROFILE.model,
+  containerName: "nemoclaw-vllm",
+  dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
+  command: SPARK_PROFILE.command,
+  estimatedMinutes: SPARK_PROFILE.estimatedMinutes,
+  pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
+  loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
+  progressMarkers: SPARK_PROFILE.progressMarkers,
+  fatalMarkers: SPARK_PROFILE.fatalMarkers,
+  readyMarker: SPARK_PROFILE.readyMarker,
+};
+
 // Generic discrete-GPU Linux. Uses a small nemotron model that fits on
 // most GPUs.
 const GENERIC_LINUX_PROFILE: VllmProfile = {
@@ -114,11 +130,20 @@ const GENERIC_LINUX_PROFILE: VllmProfile = {
   readyMarker: SPARK_PROFILE.readyMarker,
 };
 
-export const PROFILES: VllmProfile[] = [SPARK_PROFILE, GENERIC_LINUX_PROFILE];
+export const PROFILES: VllmProfile[] = [SPARK_PROFILE, STATION_PROFILE, GENERIC_LINUX_PROFILE];
 
 export function detectVllmProfile(
-  gpu: { spark?: boolean; type?: string } | null | undefined,
+  gpu:
+    | {
+        spark?: boolean;
+        type?: string;
+        platform?: "spark" | "station" | "linux";
+      }
+    | null
+    | undefined,
 ): VllmProfile | null {
+  if (gpu?.platform === "spark") return SPARK_PROFILE;
+  if (gpu?.platform === "station") return STATION_PROFILE;
   if (gpu?.spark) return SPARK_PROFILE;
   if (gpu?.type === "nvidia") return GENERIC_LINUX_PROFILE;
   return null;

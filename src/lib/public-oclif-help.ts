@@ -1,30 +1,65 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { CommandHelp } from "@oclif/core";
+
 import { CLI_NAME } from "./branding";
-import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
+import { getRegisteredOclifCommandMetadata, type OclifCommandMetadata } from "./oclif-metadata";
+
+type PublicHelpCommand = OclifCommandMetadata & {
+  aliases?: string[];
+  examples?: string[];
+  flags: Record<string, unknown>;
+  hiddenAliases?: string[];
+  id: string;
+};
+
+class PublicUsageCommandHelp extends CommandHelp {
+  public constructor(command: PublicHelpCommand, publicUsage: string) {
+    super(
+      command as never,
+      {
+        bin: CLI_NAME,
+        platform: process.platform,
+        shell: process.env.SHELL ?? "",
+        theme: undefined,
+      } as never,
+      { flagSortOrder: "none" } as never,
+    );
+    this.publicUsage = publicUsage;
+  }
+
+  private readonly publicUsage: string;
+
+  protected override usage(): string {
+    return `$ ${CLI_NAME} ${this.publicUsage}`;
+  }
+}
+
+function toPublicHelpCommand(
+  commandId: string,
+  metadata: OclifCommandMetadata,
+): PublicHelpCommand {
+  return {
+    ...metadata,
+    aliases: [],
+    args: metadata.args ?? {},
+    flags: {
+      ...(metadata.baseFlags ?? {}),
+      ...(metadata.flags ?? {}),
+    },
+    hiddenAliases: [],
+    id: metadata.id ?? commandId,
+    strict: metadata.strict ?? true,
+  };
+}
 
 export function renderPublicOclifHelp(commandId: string, publicUsage: string): void {
   const metadata = getRegisteredOclifCommandMetadata(commandId);
-  const lines = ["", `  Usage: ${CLI_NAME} ${publicUsage}`];
-
-  if (metadata?.summary || metadata?.description) {
-    lines.push("");
-    if (metadata.summary) {
-      lines.push(`  ${metadata.summary}`);
-    }
-    if (metadata.description && metadata.description !== metadata.summary) {
-      lines.push(`  ${metadata.description}`);
-    }
+  if (!metadata) {
+    console.log(`\n  Usage: ${CLI_NAME} ${publicUsage}`);
+    return;
   }
 
-  if (metadata?.examples?.length) {
-    lines.push("");
-    lines.push("  Examples:");
-    for (const example of metadata.examples) {
-      lines.push(`    ${example.replace(/<%= config\.bin %>/g, CLI_NAME)}`);
-    }
-  }
-
-  console.log(lines.join("\n"));
+  console.log(new PublicUsageCommandHelp(toPublicHelpCommand(commandId, metadata), publicUsage).generate());
 }

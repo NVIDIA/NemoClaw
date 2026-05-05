@@ -11,9 +11,12 @@ describe("renderPublicOclifHelp", () => {
     renderPublicOclifHelp("sandbox:logs", "<name> logs [--follow]");
     const output = log.mock.calls.map((call) => String(call[0])).join("\n");
     log.mockRestore();
-    expect(output).toContain("Usage: nemoclaw <name> logs [--follow]");
+    expect(output).toContain("USAGE");
+    expect(output).toContain("$ nemoclaw <name> logs [--follow]");
+    expect(output).toContain("FLAGS");
+    expect(output).toContain("--follow");
     expect(output).toContain("Stream sandbox logs");
-    expect(output).toContain("nemoclaw alpha logs --follow");
+    expect(output).toContain("$ nemoclaw alpha logs --follow");
     expect(output).not.toContain("sandbox:logs");
   });
 });

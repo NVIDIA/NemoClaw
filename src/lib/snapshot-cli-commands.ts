@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- thin oclif wrappers covered through CLI integration tests. */
-
 import { Args, Command, Flags } from "@oclif/core";
 
 import { runSandboxSnapshot } from "./sandbox-runtime-actions";
