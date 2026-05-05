@@ -9,6 +9,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
+  DEFAULT_VLLM_MODEL,
   INFERENCE_ROUTE_URL,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
@@ -165,7 +166,7 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("compatible-anthropic-endpoint")?.model).toBe(
       "custom-anthropic-model",
     );
-    expect(getProviderSelectionConfig("vllm-local")?.model).toBe("vllm-local");
+    expect(getProviderSelectionConfig("vllm-local")?.model).toBe(DEFAULT_VLLM_MODEL);
   });
 
   it("builds a qualified OpenClaw primary model for ollama-local", () => {
@@ -180,6 +181,9 @@ describe("inference selection config", () => {
     );
     expect(getOpenClawPrimaryModel("ollama-local")).toBe(
       `${MANAGED_PROVIDER_ID}/${DEFAULT_OLLAMA_MODEL}`,
+    );
+    expect(getOpenClawPrimaryModel("vllm-local")).toBe(
+      `${MANAGED_PROVIDER_ID}/${DEFAULT_VLLM_MODEL}`,
     );
   });
 });

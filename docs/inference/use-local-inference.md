@@ -252,6 +252,45 @@ $ NEMOCLAW_EXPERIMENTAL=1 \
 NemoClaw auto-detects the model from the running vLLM instance.
 To override the model, set `NEMOCLAW_MODEL`.
 
+### DGX Spark Host Example
+
+On a DGX Spark host, run vLLM on the Docker bridge and, if desired, the LAN
+address used by other machines on the same subnet.
+
+```console
+$ docker run -d --name nemoclaw-vllm --restart unless-stopped \
+  --gpus all \
+  -p 172.17.0.1:8000:8000 \
+  -p 172.16.253.231:8000:8000 \
+  vllm/vllm-openai:latest \
+  nvidia/Gemma-4-26B-A4B-NVFP4 \
+  --served-model-name gemma-4-26b-a4b-nvfp4 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --max-model-len 32768 \
+  --max-num-seqs 4 \
+  --max-num-batched-tokens 4096 \
+  --gpu-memory-utilization 0.88 \
+  --tool-call-parser gemma4 \
+  --reasoning-parser gemma4 \
+  --enable-auto-tool-choice \
+  --trust-remote-code
+```
+
+Then onboard with the local vLLM provider.
+
+```console
+$ NEMOCLAW_EXPERIMENTAL=1 \
+  NEMOCLAW_PROVIDER=vllm \
+  NEMOCLAW_MODEL=gemma-4-26b-a4b-nvfp4 \
+  nemoclaw onboard --non-interactive --yes
+```
+
+The sandbox reaches the host endpoint through `host.openshell.internal`.
+Keep `host.openshell.internal` out of `HTTP_PROXY` by leaving
+`NEMOCLAW_NO_PROXY_EXTRA` unset, or set it to a comma-separated replacement
+list if your host aliases differ.
+
 ## NVIDIA NIM (Experimental)
 
 NemoClaw can pull, start, and manage a NIM container on hosts with a NIM-capable NVIDIA GPU.

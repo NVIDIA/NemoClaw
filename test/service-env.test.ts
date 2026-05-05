@@ -469,13 +469,23 @@ describe("service environment", () => {
       expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:8080");
     });
 
-    it("NO_PROXY includes loopback only, not inference.local", () => {
+    it("NO_PROXY includes loopback and local runtime host aliases, not inference.local", () => {
       const vars = extractProxyVars();
       const noProxy = vars.NO_PROXY.split(",");
       expect(noProxy).toContain("localhost");
       expect(noProxy).toContain("127.0.0.1");
       expect(noProxy).toContain("::1");
+      expect(noProxy).toContain("host.openshell.internal");
+      expect(noProxy).toContain("host.docker.internal");
       expect(noProxy).not.toContain("inference.local");
+    });
+
+    it("NEMOCLAW_NO_PROXY_EXTRA can override local runtime host aliases", () => {
+      const vars = extractProxyVars({ NEMOCLAW_NO_PROXY_EXTRA: "example.internal" });
+      const noProxy = vars.NO_PROXY.split(",");
+      expect(noProxy).toContain("example.internal");
+      expect(noProxy).not.toContain("host.openshell.internal");
+      expect(noProxy).not.toContain("host.docker.internal");
     });
 
     it("NO_PROXY includes OpenShell gateway IP", () => {
