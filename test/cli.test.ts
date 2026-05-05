@@ -12,6 +12,7 @@ import { execTimeout, testTimeout, testTimeoutOptions } from "./helpers/timeouts
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 const HERMES_CLI = path.join(import.meta.dirname, "..", "bin", "nemohermes.js");
+const PARSER_EXIT_CODE = 2;
 
 type CliRunResult = {
   code: number;
@@ -360,6 +361,10 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Sandbox Management")).toBeTruthy();
     expect(r.out.includes("Policy Presets")).toBeTruthy();
     expect(r.out.includes("Compatibility Commands")).toBeTruthy();
+    expect(r.out).toContain("nemoclaw upgrade-sandboxes");
+    expect(r.out).toContain("(--check, --auto, --yes|-y)");
+    expect(r.out).toContain("nemoclaw gc");
+    expect(r.out).toContain("(--yes|-y|--force, --dry-run)");
   });
 
   it("--help exits 0", () => {
@@ -898,26 +903,27 @@ describe("CLI dispatch", () => {
   it("onboard --help exits 0 and shows usage", () => {
     const r = run("onboard --help");
     expect(r.code).toBe(0);
-    expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
-    expect(r.out.includes("--from <Dockerfile>")).toBeTruthy();
+    expect(r.out).toContain("USAGE");
+    expect(r.out).toContain("nemoclaw onboard");
+    expect(r.out).toContain("--from <Dockerfile>");
   });
 
   it("unknown onboard option exits 1", () => {
     const r = run("onboard --non-interactiv");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown onboard option")).toBeTruthy();
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
   it("accepts onboard --resume in CLI parsing", () => {
     const r = run("onboard --resume --non-interactiv");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
   it("accepts the third-party software flag in onboard CLI parsing", () => {
     const r = run("onboard --yes-i-accept-third-party-software --non-interactiv");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
   it("setup --help exits 0 and shows onboard usage", () => {
@@ -930,9 +936,8 @@ describe("CLI dispatch", () => {
 
   it("setup forwards unknown options into onboard parsing", () => {
     const r = run("setup --non-interactiv");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("deprecated")).toBeTruthy();
-    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
   it("setup forwards --resume into onboard parsing", () => {

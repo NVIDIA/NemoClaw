@@ -604,14 +604,14 @@ NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` fr
 Sandboxes that match the current digest are left alone.
 
 ```console
-$ nemoclaw upgrade-sandboxes [--check] [--auto] [--yes]
+$ nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--check` | List stale sandboxes without rebuilding any of them. Exits non-zero if any are stale. |
 | `--auto` | Rebuild every stale sandbox without prompting. Used by the installer to upgrade in place. |
-| `--yes` | Skip the confirmation prompt for the rebuild plan. |
+| `--yes`, `-y` | Skip the confirmation prompt for the rebuild plan. |
 
 Each rebuild reuses the same workspace backup-and-restore flow as `nemoclaw <name> rebuild`, so workspace files survive the upgrade.
 If the registry is unreachable (offline or firewalled hosts), NemoClaw falls back to the unpinned `:latest` tag and reports that the digest could not be resolved instead of failing.
@@ -872,13 +872,13 @@ The `destroy` and `rebuild` commands clean up the image automatically, but image
 This command lists all `openshell/sandbox-from:*` images, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
 
 ```console
-$ nemoclaw gc [--dry-run] [--yes|--force]
+$ nemoclaw gc [--dry-run] [--yes|-y|--force]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | List orphaned images without removing them |
-| `--yes`, `--force` | Skip the confirmation prompt |
+| `--yes`, `-y`, `--force` | Skip the confirmation prompt |
 
 ### `nemoclaw uninstall`
 
