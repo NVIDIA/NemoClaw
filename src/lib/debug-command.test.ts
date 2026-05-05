@@ -7,7 +7,12 @@ import {
   parseDebugArgs,
   printDebugHelp,
   runDebugCommand,
+  runDebugCommandWithOptions,
 } from "../../dist/lib/debug-command";
+
+function exitWithCode(code: number): never {
+  throw new Error(`exit:${code}`);
+}
 
 describe("debug command", () => {
   it("prints help text", () => {
@@ -23,9 +28,7 @@ describe("debug command", () => {
       getDefaultSandbox: () => "alpha",
       log: () => {},
       error: () => {},
-      exit: ((code: number) => {
-        throw new Error(`exit:${code}`);
-      }) as never,
+      exit: exitWithCode,
     });
     expect(opts).toEqual({ quick: true, output: "/tmp/out.tgz", sandboxName: "alpha" });
   });
@@ -37,11 +40,25 @@ describe("debug command", () => {
       runDebug,
       log: () => {},
       error: () => {},
-      exit: ((code: number) => {
-        throw new Error(`exit:${code}`);
-      }) as never,
+      exit: exitWithCode,
     });
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "beta" });
+  });
+
+  it("runs parsed debug options and falls back to the default sandbox", () => {
+    const runDebug = vi.fn();
+    runDebugCommandWithOptions({ quick: true, output: "/tmp/out.tgz" }, {
+      getDefaultSandbox: () => "alpha",
+      runDebug,
+      log: () => {},
+      error: () => {},
+      exit: exitWithCode,
+    });
+    expect(runDebug).toHaveBeenCalledWith({
+      quick: true,
+      output: "/tmp/out.tgz",
+      sandboxName: "alpha",
+    });
   });
 
   it("--sandbox overrides the default sandbox", () => {
@@ -51,9 +68,7 @@ describe("debug command", () => {
       runDebug,
       log: () => {},
       error: () => {},
-      exit: ((code: number) => {
-        throw new Error(`exit:${code}`);
-      }) as never,
+      exit: exitWithCode,
     });
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "mybox" });
   });
@@ -65,9 +80,7 @@ describe("debug command", () => {
       runDebug,
       log: () => {},
       error: () => {},
-      exit: ((code: number) => {
-        throw new Error(`exit:${code}`);
-      }) as never,
+      exit: exitWithCode,
     });
     expect(runDebug).toHaveBeenCalledWith({ quick: true, sandboxName: undefined });
   });
@@ -78,9 +91,7 @@ describe("debug command", () => {
         getDefaultSandbox: () => undefined,
         log: () => {},
         error: () => {},
-        exit: ((code: number) => {
-          throw new Error(`exit:${code}`);
-        }) as never,
+        exit: exitWithCode,
       }),
     ).toThrow("exit:1");
   });

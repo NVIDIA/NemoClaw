@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -14,7 +13,7 @@ const CREDENTIAL_RETRY_PROMPT =
 const CREDENTIAL_RETRY_PROMPT_RE =
   /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
 
-function writeOpenAiStyleAuthRetryCurl(fakeBin, goodToken, models = ["gpt-5.4"]) {
+function writeOpenAiStyleAuthRetryCurl(fakeBin: string, goodToken: string, models = ["gpt-5.4"]) {
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
     `#!/usr/bin/env bash
@@ -35,13 +34,20 @@ while [ "$#" -gt 0 ]; do
     *) url="$1"; shift ;;
   esac
 done
-if echo "$url" | grep -q '/models$'; then
+# Also extract auth from ?key= query parameter (Gemini uses this instead of Bearer header)
+url_auth=""
+if echo "$url" | grep -q '[?&]key='; then
+  url_auth=$(echo "$url" | sed 's/.*[?&]key=\\([^&]*\\).*/\\1/')
+fi
+# Strip query params for URL path matching
+url_path=$(echo "$url" | sed 's/?.*//')
+if echo "$url_path" | grep -q '/models$'; then
   body='{"data":[${models.map((model) => `{"id":"${model}"}`).join(",")}]}'
   status="200"
-elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/responses$'; then
+elif (echo "$auth" | grep -q '${goodToken}' || echo "$url_auth" | grep -q '${goodToken}') && echo "$url_path" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/chat/completions$'; then
+elif (echo "$auth" | grep -q '${goodToken}' || echo "$url_auth" | grep -q '${goodToken}') && echo "$url_path" | grep -q '/chat/completions$'; then
   body='{"id":"chatcmpl-123"}'
   status="200"
 fi
@@ -52,7 +58,11 @@ printf '%s' "$status"
   );
 }
 
-function writeAnthropicStyleAuthRetryCurl(fakeBin, goodToken, models = ["claude-sonnet-4-6"]) {
+function writeAnthropicStyleAuthRetryCurl(
+  fakeBin: string,
+  goodToken: string,
+  models = ["claude-sonnet-4-6"],
+) {
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
     `#!/usr/bin/env bash
@@ -132,10 +142,13 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 registry.updateSandbox = (_name, update) => updates.push(update);
@@ -178,9 +191,13 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.promptCalls, 2);
     assert.match(payload.messages[0], /Choose \[/);
     assert.match(payload.messages[1], /Choose model \[1\]/);
-    assert.ok(payload.lines.some((line) => line.includes("Detected local inference option")));
-    assert.ok(payload.lines.some((line) => line.includes("Cloud models:")));
-    assert.ok(payload.lines.some((line) => line.includes("Chat Completions API available")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Detected local inference option")),
+    );
+    assert.ok(payload.lines.some((line: string) => line.includes("Cloud models:")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Chat Completions API available")),
+    );
   });
 
   it("does not label NVIDIA Endpoints as recommended in the provider list", () => {
@@ -254,8 +271,116 @@ const { setupNim } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
-    assert.ok(payload.lines.some((line) => line.includes("NVIDIA Endpoints")));
-    assert.ok(!payload.lines.some((line) => line.includes("NVIDIA Endpoints (recommended)")));
+    assert.ok(payload.lines.some((line: string) => line.includes("NVIDIA Endpoints")));
+    assert.ok(
+      !payload.lines.some((line: string) => line.includes("NVIDIA Endpoints (recommended)")),
+    );
+  });
+
+  it("selects DeepSeek V4 Pro from the NVIDIA Endpoints model list", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-build-deepseek-selection-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "build-deepseek-selection-check.js");
+    const curlArgsLog = path.join(tmpDir, "deepseek-curl-args.log");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+args_log=${JSON.stringify(curlArgsLog)}
+printf '%s\\n' "$*" >> "$args_log"
+body='{"id":"ok"}'
+status="200"
+outfile=""
+streaming=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -N) streaming="1"; shift ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "$streaming" = "1" ]; then
+  body='data: {"id":"chatcmpl-test","choices":[{"delta":{"content":"OK"}}]}'$'\\n\\n''data: [DONE]'$'\\n'
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["1", "6"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.equal(payload.result.model, "deepseek-ai/deepseek-v4-pro");
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.match(payload.messages[1], /Choose model \[1\]/);
+    assert.ok(payload.lines.some((line: string) => line.includes("DeepSeek V4 Pro")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Chat Completions API available")),
+    );
+    const curlInvocations = fs.readFileSync(curlArgsLog, "utf-8");
+    assert.match(curlInvocations, /chat\/completions/);
+    assert.match(curlInvocations, /(^|\s)-N(\s|$)/);
   });
 
   it("accepts a manually entered NVIDIA Endpoints model after validating it against /models", () => {
@@ -284,7 +409,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"moonshotai/kimi-k2.5"},{"id":"custom/provider-model"}]}'
+  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"custom/provider-model"}]}'
 fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
@@ -305,9 +430,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434/api/tags")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 
@@ -350,7 +478,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.match(payload.messages[1], /Choose model \[1\]/);
     assert.match(payload.messages[2], /NVIDIA Endpoints model id:/);
-    assert.ok(payload.lines.some((line) => line.includes("Other...")));
+    assert.ok(payload.lines.some((line: string) => line.includes("Other...")));
   });
 
   it("reprompts for a manual NVIDIA Endpoints model when /models validation rejects it", () => {
@@ -377,7 +505,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"moonshotai/kimi-k2.5"},{"id":"z-ai/glm5"}]}'
+  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"z-ai/glm-5.1"}]}'
 fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
@@ -389,7 +517,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "bad/model", "z-ai/glm5"];
+const answers = ["1", "7", "bad/model", "z-ai/glm-5.1"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -398,9 +526,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434/api/tags")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 
@@ -438,13 +569,14 @@ const { setupNim } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.model, "z-ai/glm5");
+    assert.equal(payload.result.model, "z-ai/glm-5.1");
     assert.equal(
-      payload.messages.filter((message) => /NVIDIA Endpoints model id:/.test(message)).length,
+      payload.messages.filter((message: string) => /NVIDIA Endpoints model id:/.test(message))
+        .length,
       2,
     );
     assert.ok(
-      payload.lines.some((line) => line.includes("is not available from NVIDIA Endpoints")),
+      payload.lines.some((line: string) => line.includes("is not available from NVIDIA Endpoints")),
     );
   });
 
@@ -474,7 +606,7 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
-if echo "$url" | grep -q '/chat/completions$'; then
+if echo "$url" | grep -q '/chat/completions'; then
   status="200"
   body='{"choices":[{"message":{"content":"OK"}}]}'
 fi
@@ -535,13 +667,15 @@ const { setupNim } = require(${onboardPath});
     assert.match(payload.messages[0], /Choose \[/);
     assert.match(payload.messages[1], /Choose model \[5\]/);
     assert.match(payload.messages[2], /Google Gemini model id:/);
-    assert.ok(payload.lines.some((line) => line.includes("Google Gemini models:")));
-    assert.ok(payload.lines.some((line) => line.includes("gemini-2.5-flash")));
-    assert.ok(payload.lines.some((line) => line.includes("Other...")));
-    assert.ok(payload.lines.some((line) => line.includes("Chat Completions API available")));
+    assert.ok(payload.lines.some((line: string) => line.includes("Google Gemini models:")));
+    assert.ok(payload.lines.some((line: string) => line.includes("gemini-2.5-flash")));
+    assert.ok(payload.lines.some((line: string) => line.includes("Other...")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Chat Completions API available")),
+    );
   });
 
-  it("warms and validates Ollama via localhost before moving on", () => {
+  it("warms and validates Ollama via 127.0.0.1 before moving on", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-validation-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -583,15 +717,19 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.run = (command, opts = {}) => {
-  commands.push(command);
+  commands.push(Array.isArray(command) ? command.join(" ") : command);
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
   return "";
 };
 
@@ -631,11 +769,30 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    // GH #2519: ollama-local must not capture the host's OPENAI_API_KEY.
+    // credentialEnv should be null so the wizard summary shows
+    // "(not required for ollama-local)" and onboard-session.json does not
+    // record OPENAI_API_KEY (which would later trip the rebuild preflight).
+    assert.equal(payload.result.credentialEnv, null);
+    // credentials.json must not have been written with an OPENAI_API_KEY
+    // entry by the ollama-local path.
+    const credsPath = path.join(tmpDir, ".nemoclaw", "credentials.json");
+    if (fs.existsSync(credsPath)) {
+      const creds = JSON.parse(fs.readFileSync(credsPath, "utf-8"));
+      assert.ok(
+        !Object.prototype.hasOwnProperty.call(creds, "OPENAI_API_KEY"),
+        "ollama-local onboard must not write OPENAI_API_KEY to credentials.json",
+      );
+    }
     assert.ok(
-      payload.lines.some((line) => line.includes("Loading Ollama model: nemotron-3-nano:30b")),
+      payload.lines.some((line: string) =>
+        line.includes("Loading Ollama model: nemotron-3-nano:30b"),
+      ),
     );
     assert.ok(
-      payload.commands.some((command) => command.includes("http://localhost:11434/api/generate")),
+      payload.commands.some((command: string) =>
+        command.includes("http://127.0.0.1:11434/api/generate"),
+      ),
     );
   });
 
@@ -681,11 +838,15 @@ credentials.prompt = async (message) => {
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
 runner.run = () => ({ status: 0 });
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
   return "";
 };
 
@@ -724,9 +885,14 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
-    assert.ok(payload.lines.some((line) => line.includes("Returning to provider selection.")));
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
-    assert.equal(payload.messages.filter((message) => /Ollama model id: /.test(message)).length, 1);
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
+    );
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
+    assert.equal(
+      payload.messages.filter((message: string) => /Ollama model id: /.test(message)).length,
+      1,
+    );
   });
 
   it("offers starter Ollama models when none are installed and pulls the selected model", () => {
@@ -773,7 +939,7 @@ exit 0
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1"];
+const answers = ["7", "1", "y"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -781,11 +947,15 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (command.includes("ollama list")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
   return "";
 };
 
@@ -825,11 +995,15 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.model, "qwen2.5:7b");
-    assert.ok(payload.lines.some((line) => line.includes("Ollama starter models:")));
+    assert.ok(payload.lines.some((line: string) => line.includes("Ollama starter models:")));
     assert.ok(
-      payload.lines.some((line) => line.includes("No local Ollama models are installed yet")),
+      payload.lines.some((line: string) =>
+        line.includes("No local Ollama models are installed yet"),
+      ),
     );
-    assert.ok(payload.lines.some((line) => line.includes("Pulling Ollama model: qwen2.5:7b")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Pulling Ollama model: qwen2.5:7b")),
+    );
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
   });
 
@@ -880,7 +1054,7 @@ exit 0
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1", "2", "llama3.2:3b"];
+const answers = ["7", "1", "y", "2", "llama3.2:3b", "y"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -888,11 +1062,15 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (command.includes("ollama list")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
   return "";
 };
 
@@ -933,15 +1111,253 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.model, "llama3.2:3b");
     assert.ok(
-      payload.lines.some((line) => line.includes("Failed to pull Ollama model 'qwen2.5:7b'")),
+      payload.lines.some((line: string) =>
+        line.includes("Failed to pull Ollama model 'qwen2.5:7b'"),
+      ),
     );
     assert.ok(
-      payload.lines.some((line) =>
+      payload.lines.some((line: string) =>
         line.includes("Choose a different Ollama model or select Other."),
       ),
     );
-    assert.equal(payload.messages.filter((message) => /Ollama model id:/.test(message)).length, 1);
+    assert.equal(
+      payload.messages.filter((message: string) => /Ollama model id:/.test(message)).length,
+      1,
+    );
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b\nllama3.2:3b");
+  });
+
+  it("re-prompts for a model when the user declines the size confirmation", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-decline-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-decline-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const pullLog = path.join(tmpDir, "pulls.log");
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"resp_123"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(fakeBin, "ollama"),
+      `#!/usr/bin/env bash
+if [ "$1" = "pull" ]; then
+  echo "$2" >> ${JSON.stringify(pullLog)}
+  exit 0
+fi
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["7", "1", "n", "1", "y"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.equal(payload.result.model, "qwen2.5:7b");
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Skipped pulling Ollama model 'qwen2.5:7b'"),
+      ),
+    );
+    // Pull only happened on the second confirmation, not on the declined first attempt.
+    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
+    const downloadPrompts = payload.messages.filter((message: string) =>
+      /Download Ollama model/.test(message),
+    );
+    assert.equal(downloadPrompts.length, 2);
+    // Each prompt must surface the resolved size — the whole point of #2639 —
+    // either a "<value> <unit>" label or the explicit "size unknown" fallback.
+    const sizePattern = /\((\d+(\.\d+)? (B|KB|MB|GB|TB)( \(estimated\))?|size unknown)\)/;
+    for (const prompt of downloadPrompts) {
+      assert.match(prompt, sizePattern);
+    }
+  });
+
+  it("bypasses the size confirmation when NEMOCLAW_YES=1 is set", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-yes-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-yes-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const pullLog = path.join(tmpDir, "pulls.log");
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"resp_123"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(fakeBin, "ollama"),
+      `#!/usr/bin/env bash
+if [ "$1" = "pull" ]; then
+  echo "$2" >> ${JSON.stringify(pullLog)}
+  exit 0
+fi
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["7", "1"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.equal(payload.result.model, "qwen2.5:7b");
+    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
+    // No "Download Ollama model 'X'?" prompt was issued — the env var bypassed it.
+    assert.equal(
+      payload.messages.filter((message: string) => /Download Ollama model/.test(message)).length,
+      0,
+    );
+    // The size is still surfaced in the auto-yes path so unattended installs
+    // record what was downloaded — assert the "Pulling Ollama model" log line
+    // includes a size label or the "size unknown" fallback.
+    const sizePattern = /\((\d+(\.\d+)? (B|KB|MB|GB|TB)( \(estimated\))?|size unknown)\)/;
+    const pullingLine = payload.lines.find((line: string) =>
+      /Pulling Ollama model 'qwen2.5:7b'/.test(line),
+    );
+    assert.ok(pullingLine, "expected a 'Pulling Ollama model' log line under NEMOCLAW_YES=1");
+    assert.match(pullingLine, sizePattern);
   });
 
   it("reprompts for an OpenAI Other model when /models validation rejects it", () => {
@@ -1027,8 +1443,11 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.model, "gpt-5.4-mini");
-    assert.equal(payload.messages.filter((message) => /OpenAI model id:/.test(message)).length, 2);
-    assert.ok(payload.lines.some((line) => line.includes("is not available from OpenAI")));
+    assert.equal(
+      payload.messages.filter((message: string) => /OpenAI model id:/.test(message)).length,
+      2,
+    );
+    assert.ok(payload.lines.some((line: string) => line.includes("is not available from OpenAI")));
   });
 
   it("reprompts for an Anthropic Other model when /v1/models validation rejects it", () => {
@@ -1111,10 +1530,12 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.model, "claude-haiku-4-5");
     assert.equal(
-      payload.messages.filter((message) => /Anthropic model id:/.test(message)).length,
+      payload.messages.filter((message: string) => /Anthropic model id:/.test(message)).length,
       2,
     );
-    assert.ok(payload.lines.some((line) => line.includes("is not available from Anthropic")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("is not available from Anthropic")),
+    );
   });
 
   it("returns to provider selection when Anthropic live validation fails interactively", () => {
@@ -1206,9 +1627,13 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "anthropic-prod");
     assert.equal(payload.result.model, "claude-haiku-4-5");
-    assert.ok(payload.lines.some((line) => line.includes("Anthropic endpoint validation failed")));
-    assert.ok(payload.lines.some((line) => line.includes("Please choose a provider/model again")));
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Anthropic endpoint validation failed")),
+    );
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Please choose a provider/model again")),
+    );
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
   });
 
   it("supports Other Anthropic-compatible endpoint with live validation", () => {
@@ -1293,7 +1718,9 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.match(payload.messages[1], /Anthropic-compatible base URL/);
     assert.match(payload.messages[2], /Other Anthropic-compatible endpoint model/);
-    assert.ok(payload.lines.some((line) => line.includes("Anthropic Messages API available")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Anthropic Messages API available")),
+    );
   });
 
   it("reprompts only for model name when Other OpenAI-compatible endpoint validation fails", () => {
@@ -1386,25 +1813,27 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "good-model");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.ok(
-      payload.lines.some((line) =>
+      payload.lines.some((line: string) =>
         line.includes("Other OpenAI-compatible endpoint endpoint validation failed"),
       ),
     );
     assert.ok(
-      payload.lines.some((line) =>
+      payload.lines.some((line: string) =>
         line.includes("Please enter a different Other OpenAI-compatible endpoint model name."),
       ),
     );
     assert.equal(
-      payload.messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length,
+      payload.messages.filter((message: string) => /OpenAI-compatible base URL/.test(message))
+        .length,
       1,
     );
     assert.equal(
-      payload.messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message))
-        .length,
+      payload.messages.filter((message: string) =>
+        /Other OpenAI-compatible endpoint model/.test(message),
+      ).length,
       2,
     );
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
   });
 
   it("falls back to chat completions for custom OpenAI-compatible endpoints when /responses lacks tool calls", () => {
@@ -1498,7 +1927,219 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "compatible-endpoint");
     assert.equal(payload.result.model, "custom-model");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.ok(payload.lines.some((line) => line.includes("Chat Completions API available")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Chat Completions API available")),
+    );
+  });
+
+  it("forces chat completions for custom OpenAI-compatible endpoints even when /responses returns valid tool calls (#1932)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-custom-openai-responses-force-completions-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "custom-openai-responses-force-completions-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    // Mock curl: /v1/responses returns a VALID response with tool calls
+    // (simulates Ollama 0.20+ which exposes /v1/responses successfully)
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"error":{"message":"bad request"}}'
+status="400"
+outfile=""
+body_arg=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -d) body_arg="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$url" | grep -q '/responses$'; then
+  body='{"id":"resp_123","output":[{"id":"fc_1","type":"function_call","name":"read","arguments":"{\\"path\\":\\"/tmp/test\\"}"},{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"OK"}]}]}'
+  status="200"
+elif echo "$url" | grep -q '/chat/completions$'; then
+  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
+  status="200"
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["3", "https://ollama.local:11434/v1", "my-model"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.COMPATIBLE_API_KEY = "ollama-key";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "compatible-endpoint");
+    assert.equal(payload.result.model, "my-model");
+    // Even though /v1/responses returned valid tool calls, we must force
+    // chat completions because many backends (Ollama, vLLM, LiteLLM) do not
+    // correctly handle the developer role used by the Responses API.
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    // Verify the wizard selected chat completions (either via our forced
+    // override or via the streaming fallback — both are correct).
+    assert.ok(payload.lines.some((line: string) => line.includes("openai-completions")));
+  });
+
+  it("honors NEMOCLAW_PREFERRED_API=openai-responses override for custom OpenAI-compatible endpoints (#1932)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-custom-openai-responses-override-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "custom-openai-responses-override-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    // Mock curl: /v1/responses returns a valid response (probe passes)
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"error":{"message":"bad request"}}'
+status="400"
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -d) shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$url" | grep -q '/responses$'; then
+  body='{"id":"resp_123","output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"OK"}]}]}'
+  status="200"
+elif echo "$url" | grep -q '/chat/completions$'; then
+  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
+  status="200"
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["3", "https://openai-proxy.example.com/v1", "gpt-4o"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.COMPATIBLE_API_KEY = "sk-test";
+  // Explicit override: user knows their backend supports the Responses API
+  process.env.NEMOCLAW_PREFERRED_API = "openai-responses";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "compatible-endpoint");
+    assert.equal(payload.result.model, "gpt-4o");
+    // With NEMOCLAW_PREFERRED_API=openai-responses, the code path that
+    // forces openai-completions is bypassed: our override check sees the
+    // env var and uses validation.api instead. In this test, the mock
+    // curl doesn't support SSE streaming, so the probe's streaming
+    // fallback returns openai-completions regardless. A real backend with
+    // proper streaming would yield openai-responses here.
+    // The important thing: the env var is read and the forced-completions
+    // override does NOT fire, proving the escape hatch works.
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    // Verify the forced-override message was NOT printed (env var bypassed it)
+    assert.ok(
+      !payload.lines.some((line: string) =>
+        line.includes("compatible endpoints may not support the Responses API developer role"),
+      ),
+    );
   });
 
   it("returns to provider selection instead of exiting on blank custom endpoint input", () => {
@@ -1582,12 +2223,16 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "nvidia-prod");
     assert.equal(payload.result.model, "nvidia/nemotron-3-super-120b-a12b");
     assert.ok(
-      payload.lines.some((line) =>
+      payload.lines.some((line: string) =>
         line.includes("Endpoint URL is required for Other OpenAI-compatible endpoint."),
       ),
     );
-    assert.ok(payload.messages.some((message) => /OpenAI-compatible base URL/.test(message)));
-    assert.ok(payload.messages.filter((message) => /Choose \[1\]/.test(message)).length >= 2);
+    assert.ok(
+      payload.messages.some((message: string) => /OpenAI-compatible base URL/.test(message)),
+    );
+    assert.ok(
+      payload.messages.filter((message: string) => /Choose \[1\]/.test(message)).length >= 2,
+    );
   });
 
   it("reprompts only for model name when Other Anthropic-compatible endpoint validation fails", () => {
@@ -1679,26 +2324,27 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "good-claude");
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.ok(
-      payload.lines.some((line) =>
+      payload.lines.some((line: string) =>
         line.includes("Other Anthropic-compatible endpoint endpoint validation failed"),
       ),
     );
     assert.ok(
-      payload.lines.some((line) =>
+      payload.lines.some((line: string) =>
         line.includes("Please enter a different Other Anthropic-compatible endpoint model name."),
       ),
     );
     assert.equal(
-      payload.messages.filter((message) => /Anthropic-compatible base URL/.test(message)).length,
+      payload.messages.filter((message: string) => /Anthropic-compatible base URL/.test(message))
+        .length,
       1,
     );
     assert.equal(
-      payload.messages.filter((message) =>
+      payload.messages.filter((message: string) =>
         /Other Anthropic-compatible endpoint model/.test(message),
       ).length,
       2,
     );
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
   });
 
   it("lets users type back at a lower-level model prompt to return to provider selection", () => {
@@ -1779,10 +2425,13 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
-    assert.ok(payload.lines.some((line) => line.includes("Returning to provider selection.")));
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
+    );
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
     assert.equal(
-      payload.messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length,
+      payload.messages.filter((message: string) => /OpenAI-compatible base URL/.test(message))
+        .length,
       1,
     );
   });
@@ -1869,16 +2518,20 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
     assert.ok(
-      payload.lines.some((line) => line.includes("could not resolve the provider hostname")),
+      payload.lines.some((line: string) =>
+        line.includes("could not resolve the provider hostname"),
+      ),
     );
-    assert.ok(payload.lines.some((line) => line.includes("Returning to provider selection.")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
+    );
     assert.equal(
-      payload.messages.filter((message) =>
+      payload.messages.filter((message: string) =>
         /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
       ).length,
       1,
     );
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
   });
 
   it("returns to provider selection when endpoint validation fails interactively", () => {
@@ -1978,9 +2631,13 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.ok(payload.lines.some((line) => line.includes("OpenAI endpoint validation failed")));
-    assert.ok(payload.lines.some((line) => line.includes("Please choose a provider/model again")));
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("OpenAI endpoint validation failed")),
+    );
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Please choose a provider/model again")),
+    );
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
   });
 
   it("fails early in non-interactive mode when NVIDIA_API_KEY is not an nvapi- key", () => {
@@ -2075,9 +2732,13 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     assert.equal(payload.completed, false);
     assert.equal(payload.exitCode, 1);
     assert.equal(payload.prompts.length, 0);
-    assert.ok(payload.lines.some((line) => line.includes("Invalid key. Must start with nvapi-")));
     assert.ok(
-      payload.lines.some((line) =>
+      payload.lines.some((line: string) =>
+        line.includes("Invalid NVIDIA API key. Must start with nvapi-"),
+      ),
+    );
+    assert.ok(
+      payload.lines.some((line: string) =>
         line.includes("Get a key from https://build.nvidia.com/settings/api-keys"),
       ),
     );
@@ -2179,19 +2840,25 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "nvidia-prod");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.key, "nvapi-good");
-    assert.ok(payload.lines.some((line) => line.includes("NVIDIA Endpoints authorization failed")));
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("NVIDIA Endpoints authorization failed")),
+    );
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
     assert.equal(
-      payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length,
+      payload.messages.filter((message: string) => /Choose model \[1\]/.test(message)).length,
       1,
     );
-    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
-    const retryPrompt = payload.prompts.find((entry) => CREDENTIAL_RETRY_PROMPT_RE.test(entry.message));
+    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    const retryPrompt = payload.prompts.find((entry: { message: string }) =>
+      CREDENTIAL_RETRY_PROMPT_RE.test(entry.message),
+    );
     assert.deepEqual(retryPrompt, {
       message: CREDENTIAL_RETRY_PROMPT,
       secret: true,
     });
-    assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
+    assert.ok(
+      payload.messages.some((message: string) => /NVIDIA Endpoints API key: /.test(message)),
+    );
   });
 
   it("treats a pasted NVIDIA API key at the retry prompt as retry and re-prompts securely", () => {
@@ -2257,13 +2924,15 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "nvidia-prod");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.key, "nvapi-good");
-    assert.ok(payload.lines.some((line) => line.includes("That looks like an API key")));
-    assert.ok(payload.lines.some((line) => line.includes("Treating as 'retry'")));
-    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
-    assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.ok(payload.lines.some((line: string) => line.includes("That looks like an API key")));
+    assert.ok(payload.lines.some((line: string) => line.includes("Treating as 'retry'")));
+    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    assert.ok(
+      payload.messages.some((message: string) => /NVIDIA Endpoints API key: /.test(message)),
+    );
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
     assert.equal(
-      payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length,
+      payload.messages.filter((message: string) => /Choose model \[1\]/.test(message)).length,
       1,
     );
   });
@@ -2334,12 +3003,12 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "gpt-5.4");
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
     assert.equal(payload.key, "sk-good");
-    assert.ok(payload.lines.some((line) => line.includes("OpenAI authorization failed")));
-    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
-    assert.ok(payload.messages.some((message) => /OpenAI API key: /.test(message)));
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.ok(payload.lines.some((line: string) => line.includes("OpenAI authorization failed")));
+    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    assert.ok(payload.messages.some((message: string) => /OpenAI API key: /.test(message)));
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
     assert.equal(
-      payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length,
+      payload.messages.filter((message: string) => /Choose model \[1\]/.test(message)).length,
       2,
     );
   });
@@ -2408,12 +3077,14 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "claude-sonnet-4-6");
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.equal(payload.key, "anthropic-good");
-    assert.ok(payload.lines.some((line) => line.includes("Anthropic authorization failed")));
-    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
-    assert.ok(payload.messages.some((message) => /Anthropic API key: /.test(message)));
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Anthropic authorization failed")),
+    );
+    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    assert.ok(payload.messages.some((message: string) => /Anthropic API key: /.test(message)));
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
     assert.equal(
-      payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length,
+      payload.messages.filter((message: string) => /Choose model \[1\]/.test(message)).length,
       2,
     );
   });
@@ -2482,12 +3153,14 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "gemini-2.5-flash");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.key, "gemini-good");
-    assert.ok(payload.lines.some((line) => line.includes("Google Gemini authorization failed")));
-    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
-    assert.ok(payload.messages.some((message) => /Google Gemini API key: /.test(message)));
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Google Gemini authorization failed")),
+    );
+    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    assert.ok(payload.messages.some((message: string) => /Google Gemini API key: /.test(message)));
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
     assert.equal(
-      payload.messages.filter((message) => /Choose model \[5\]/.test(message)).length,
+      payload.messages.filter((message: string) => /Choose model \[5\]/.test(message)).length,
       2,
     );
   });
@@ -2560,26 +3233,28 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.key, "proxy-good");
     assert.ok(
-      payload.lines.some((line) =>
+      payload.lines.some((line: string) =>
         line.includes("Other OpenAI-compatible endpoint authorization failed"),
       ),
     );
-    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(
-      payload.messages.some((message) =>
+      payload.messages.some((message: string) =>
         /Other OpenAI-compatible endpoint API key: /.test(message),
       ),
     );
     assert.equal(
-      payload.messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length,
+      payload.messages.filter((message: string) => /OpenAI-compatible base URL/.test(message))
+        .length,
       1,
     );
     assert.equal(
-      payload.messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message))
-        .length,
+      payload.messages.filter((message: string) =>
+        /Other OpenAI-compatible endpoint model/.test(message),
+      ).length,
       2,
     );
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
   });
 
   it("lets users re-enter a custom Anthropic-compatible API key without re-entering the endpoint URL", () => {
@@ -2650,27 +3325,28 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.equal(payload.key, "anthropic-proxy-good");
     assert.ok(
-      payload.lines.some((line) =>
+      payload.lines.some((line: string) =>
         line.includes("Other Anthropic-compatible endpoint authorization failed"),
       ),
     );
-    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(
-      payload.messages.some((message) =>
+      payload.messages.some((message: string) =>
         /Other Anthropic-compatible endpoint API key: /.test(message),
       ),
     );
     assert.equal(
-      payload.messages.filter((message) => /Anthropic-compatible base URL/.test(message)).length,
+      payload.messages.filter((message: string) => /Anthropic-compatible base URL/.test(message))
+        .length,
       1,
     );
     assert.equal(
-      payload.messages.filter((message) =>
+      payload.messages.filter((message: string) =>
         /Other Anthropic-compatible endpoint model/.test(message),
       ).length,
       2,
     );
-    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
   });
 
   it("forces openai-completions for vLLM even when probe detects openai-responses", () => {
@@ -2725,9 +3401,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434")) return "";
-  if (command.includes("localhost:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
   return "";
 };
 
@@ -2768,8 +3447,8 @@ const { setupNim } = require(${onboardPath});
     // Key assertion: even though probe detected openai-responses, the override
     // forces openai-completions so tool-call-parser works correctly.
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.ok(payload.lines.some((line) => line.includes("Using existing vLLM")));
-    assert.ok(payload.lines.some((line) => line.includes("tool-call-parser requires")));
+    assert.ok(payload.lines.some((line: string) => line.includes("Using existing vLLM")));
+    assert.ok(payload.lines.some((line: string) => line.includes("tool-call-parser requires")));
   });
 
   it("forces openai-completions for NIM-local even when probe detects openai-responses", () => {
@@ -2823,6 +3502,7 @@ nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
 nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => true;
+nimMod.isNgcLoggedIn = () => true;
 
 // Select option 7 (nim-local), then model 1
 const answers = ["7", "1"];
@@ -2834,9 +3514,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 
@@ -2877,6 +3560,381 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "nvidia/nemotron-3-nano");
     // Key assertion: NIM uses vLLM internally — same override must apply.
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.ok(payload.lines.some((line) => line.includes("tool-call-parser requires")));
+    assert.ok(payload.lines.some((line: string) => line.includes("tool-call-parser requires")));
+  });
+
+  it("offers install-ollama option on Linux when Ollama is not installed", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-ollama-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "install-ollama-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+
+    // Fake curl binary that returns a successful response — needed because
+    // runCurlProbe and validateOllamaModel spawn real curl via child_process.
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"ok"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    // Simulate: no Ollama installed, no Ollama running, no vLLM — cloud + install-ollama should appear.
+    // On true Linux that's option 7. On WSL the menu also surfaces a Windows-host
+    // install entry first, so install-ollama (labelled "Install Ollama (WSL Linux)")
+    // shifts to option 8. Detect at runtime so the test works in both environments.
+    const isHostWsl =
+      !!process.env.WSL_DISTRO_NAME ||
+      !!process.env.WSL_INTEROP ||
+      /microsoft/i.test(os.release());
+    const installOptionIndex = isHostWsl ? "8" : "7";
+    const expectedInstallLabel = isHostWsl ? "Install Ollama (WSL Linux)" : "Install Ollama (Linux)";
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+
+// Mock child_process.spawn so startOllamaAuthProxy doesn't try to spawn a real process.
+const child_process = require("child_process");
+const originalSpawn = child_process.spawn;
+child_process.spawn = (...args) => {
+  // Return a fake ChildProcess with a pid and unref()
+  return { pid: 99999, unref() {}, on() {} };
+};
+
+// Mock spawnSync for ollama pull (real ollama is not installed) and ps checks.
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  const cmdStr = [cmd, ...(args || [])].join(" ");
+  // ollama pull — pretend it succeeds
+  if (cmd === "ollama" && args && args[0] === "pull") {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  // ps check for isOllamaProxyProcess — pretend the proxy is running
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  // Everything else (curl for probes) — use real spawnSync so fake curl binary handles it
+  return originalSpawnSync(cmd, args, opts);
+};
+
+let promptCalls = 0;
+const messages = [];
+const updates = [];
+const runCommands = [];
+
+credentials.prompt = async (message) => {
+  promptCalls += 1;
+  messages.push(message);
+  // Select install-ollama on first prompt, default on model prompt.
+  if (promptCalls === 1) return "${installOptionIndex}";
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  // No ollama installed
+  if (cmd.includes("command -v ollama")) return "";
+  // No ollama running
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  // No vLLM running
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  // After install, ollama list returns a model
+  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
+  // isOllamaProxyProcess — ps check for auth proxy
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  // validateOllamaModel probe via local-inference — return a valid JSON response
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+runner.run = (command, opts) => {
+  runCommands.push(typeof command === "string" ? command : command.join(" "));
+};
+runner.runShell = (command, opts) => {
+  runCommands.push(command);
+};
+registry.updateSandbox = (_name, update) => updates.push(update);
+
+// Force platform to linux for this test
+Object.defineProperty(process, 'platform', { value: 'linux' });
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("install-test", null);
+    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines, runCommands }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    // Should have shown the install-ollama menu option (label varies on WSL).
+    assert.ok(
+      payload.lines.some((line: string) => line.includes(expectedInstallLabel)),
+      `Should show ${expectedInstallLabel} option`,
+    );
+
+    // Should have selected ollama-local provider after install
+    assert.equal(payload.result.provider, "ollama-local");
+
+    // Should have run the curl installer (not brew)
+    assert.ok(
+      payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
+      "Should use curl installer on Linux",
+    );
+    assert.ok(
+      !payload.runCommands.some((cmd: string) => cmd.includes("brew install")),
+      "Should NOT use brew on Linux",
+    );
+  });
+
+  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-noninteractive-install-ollama-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "noninteractive-install-ollama-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"ok"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  const command = [cmd, ...(args || [])].join(" ");
+  if (command.includes("ollama pull")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
+
+let promptCalls = 0;
+const updates = [];
+const runCommands = [];
+
+credentials.prompt = async () => {
+  promptCalls += 1;
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+runner.run = (command) => {
+  runCommands.push(typeof command === "string" ? command : command.join(" "));
+};
+runner.runShell = (command) => {
+  runCommands.push(command);
+};
+registry.updateSandbox = (_name, update) => updates.push(update);
+
+Object.defineProperty(process, "platform", { value: "linux" });
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("noninteractive-install-test", null);
+    originalLog(JSON.stringify({ result, promptCalls, updates, lines, runCommands }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    assert.equal(payload.promptCalls, 0);
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.ok(
+      payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
+      "Should use the Ollama installer when requested non-interactively on a fresh host",
+    );
+  });
+
+  it("honours NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for compatible-endpoint during inference setup (#2403)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-compatible-endpoint-timeout-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const stateFile = path.join(tmpDir, "state.json");
+    const scriptPath = path.join(tmpDir, "compatible-timeout-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(stateFile, JSON.stringify({ inferenceSetArgs: null }));
+
+    // Fake openshell: records inference set args, stubs provider/gateway ops
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!${process.execPath}
+const fs = require("fs");
+const args = process.argv.slice(2);
+const stateFile = ${JSON.stringify(stateFile)};
+if (args[0] === "inference" && args[1] === "set") {
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  state.inferenceSetArgs = args.slice(2);
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  process.exit(0);
+}
+// provider get: exit 1 so upsertProvider uses "create"
+if (args[0] === "provider" && args[1] === "get") { process.exit(1); }
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+// Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
+// Handles verifyInferenceRoute's "openshell inference get" call.
+runner.runCapture = (cmd) => {
+  const args = Array.isArray(cmd) ? cmd : [];
+  if (args[1] === "inference" && args[2] === "get") {
+    return "Gateway inference:\n  Provider: compatible-endpoint\n  Model: qwen3.6:35b\n";
+  }
+  return "";
+};
+process.env.COMPATIBLE_API_KEY = "test-key";
+const { setupInference } = require(${onboardPath});
+(async () => {
+  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://lan-server:11434/v1", "COMPATIBLE_API_KEY");
+  process.exit(0);
+})().catch((err) => { console.error(err); process.exit(1); });
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "600",
+        COMPATIBLE_API_KEY: "test-key",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+    assert.ok(state.inferenceSetArgs !== null, "openshell inference set was not called");
+    assert.ok(
+      state.inferenceSetArgs.includes("--timeout"),
+      `Expected --timeout in inference set args, got: ${JSON.stringify(state.inferenceSetArgs)}`,
+    );
+    assert.ok(
+      state.inferenceSetArgs.includes("600"),
+      `Expected 600 in inference set args, got: ${JSON.stringify(state.inferenceSetArgs)}`,
+    );
   });
 });

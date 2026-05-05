@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   getCurlTimingArgs,
+  runChatCompletionsStreamingProbe,
   runCurlProbe,
   runStreamingEventProbe,
   summarizeCurlFailure,
@@ -29,9 +30,10 @@ describe("http-probe helpers", () => {
   });
 
   it("summarizes JSON and text HTTP probe failures", () => {
-    expect(summarizeProbeError('{"error":{"message":"bad key"}}', 401)).toBe(
-      "HTTP 401: bad key",
-    );
+    expect(summarizeProbeError('{"error":{"message":"bad key"}}', 401)).toBe("HTTP 401: bad key");
+    expect(
+      summarizeProbeError('{"error":{"details":{"reason":"bad key","retry":false}}}', 401),
+    ).toBe('HTTP 401: {"reason":"bad key","retry":false}');
     expect(summarizeProbeError(" plain  text   body ", 500)).toBe("HTTP 500: plain text body");
     expect(summarizeProbeFailure("", 0, 28, "timeout")).toBe("curl failed (exit 28): timeout");
   });
@@ -87,14 +89,76 @@ describe("http-probe helpers", () => {
   });
 });
 
+describe("runChatCompletionsStreamingProbe", () => {
+  function mockStreaming(sseBody: string, exitCode = 0, stdout = "200", stderr = "") {
+    return (_command: string, args: readonly string[]) => {
+      const oIdx = args.indexOf("-o");
+      if (oIdx !== -1) {
+        const outputPath = args[oIdx + 1];
+        if (typeof outputPath === "string") {
+          fs.writeFileSync(outputPath, sseBody);
+        }
+      }
+      return {
+        pid: 1,
+        output: [],
+        stdout,
+        stderr,
+        status: exitCode,
+        signal: null,
+      };
+    };
+  }
+
+  it("passes when chat-completions SSE data arrives before curl max-time", () => {
+    const sseBody = [
+      'data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"OK"}}]}',
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n");
+
+    const result = runChatCompletionsStreamingProbe(
+      ["-sS", "--max-time", "120", "https://example.test/v1/chat/completions"],
+      { spawnSyncImpl: mockStreaming(sseBody, 28) },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.curlStatus).toBe(28);
+    expect(result.body).toContain("chatcmpl-1");
+  });
+
+  it("fails when the stream has no chat-completions SSE data", () => {
+    const result = runChatCompletionsStreamingProbe(
+      ["-sS", "--max-time", "120", "https://example.test/v1/chat/completions"],
+      { spawnSyncImpl: mockStreaming("", 28, "000") },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.curlStatus).toBe(28);
+  });
+
+  it("does not treat a lone DONE frame as successful streaming data", () => {
+    const result = runChatCompletionsStreamingProbe(
+      ["-sS", "--max-time", "120", "https://example.test/v1/chat/completions"],
+      { spawnSyncImpl: mockStreaming("data: [DONE]\n\n") },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("did not return SSE data");
+  });
+});
+
 describe("runStreamingEventProbe", () => {
   /** Helper to build a spawnSyncImpl that writes SSE content to the -o file. */
   function mockStreaming(sseBody: string, exitCode = 0) {
     return (_command: string, args: readonly string[]) => {
       const oIdx = args.indexOf("-o");
       if (oIdx !== -1) {
-        const outputPath = args[oIdx + 1] as string;
-        fs.writeFileSync(outputPath, sseBody);
+        const outputPath = args[oIdx + 1];
+        if (typeof outputPath === "string") {
+          fs.writeFileSync(outputPath, sseBody);
+        }
       }
       return {
         pid: 1,
@@ -187,23 +251,20 @@ describe("runStreamingEventProbe", () => {
   });
 
   it("fails on spawn error", () => {
-    const result = runStreamingEventProbe(
-      ["-sS", "https://example.test/v1/responses"],
-      {
-        spawnSyncImpl: () => {
-          const error = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
-          return {
-            pid: 1,
-            output: [],
-            stdout: "",
-            stderr: "",
-            status: null,
-            signal: null,
-            error,
-          };
-        },
+    const result = runStreamingEventProbe(["-sS", "https://example.test/v1/responses"], {
+      spawnSyncImpl: () => {
+        const error = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+        return {
+          pid: 1,
+          output: [],
+          stdout: "",
+          stderr: "",
+          status: null,
+          signal: null,
+          error,
+        };
       },
-    );
+    });
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Streaming probe failed");
@@ -211,26 +272,26 @@ describe("runStreamingEventProbe", () => {
 
   it("cleans up temp files after probe", () => {
     let outputPath = "";
-    runStreamingEventProbe(
-      ["-sS", "--max-time", "15", "https://example.test/v1/responses"],
-      {
-        spawnSyncImpl: (_command, args) => {
-          const oIdx = args.indexOf("-o");
-          if (oIdx !== -1) {
-            outputPath = args[oIdx + 1] as string;
+    runStreamingEventProbe(["-sS", "--max-time", "15", "https://example.test/v1/responses"], {
+      spawnSyncImpl: (_command, args) => {
+        const oIdx = args.indexOf("-o");
+        if (oIdx !== -1) {
+          const nextArg = args[oIdx + 1];
+          if (typeof nextArg === "string") {
+            outputPath = nextArg;
             fs.writeFileSync(outputPath, "event: response.output_text.delta\ndata: {}\n");
           }
-          return {
-            pid: 1,
-            output: [],
-            stdout: "",
-            stderr: "",
-            status: 0,
-            signal: null,
-          };
-        },
+        }
+        return {
+          pid: 1,
+          output: [],
+          stdout: "",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
       },
-    );
+    });
 
     expect(outputPath).not.toBe("");
     expect(fs.existsSync(outputPath)).toBe(false);

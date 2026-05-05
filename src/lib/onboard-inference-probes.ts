@@ -1,0 +1,518 @@
+// @ts-nocheck
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Inference endpoint probes — validate that a provider's API responds
+// before committing the onboard wizard to a model selection.
+
+const { normalizeCredentialValue } = require("./credentials");
+const { isWsl } = require("./platform");
+const httpProbe = require("./http-probe");
+const {
+  isNvcfFunctionNotFoundForAccount,
+  nvcfFunctionNotFoundMessage,
+  shouldForceCompletionsApi,
+} = require("./validation");
+
+const {
+  getCurlTimingArgs,
+  runCurlProbe,
+  runChatCompletionsStreamingProbe,
+  runStreamingEventProbe,
+} = httpProbe;
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+// Hostnames that only resolve from inside the OpenShell sandbox network.
+// Probing them from the host always fails with curl exit 6 ("Could not
+// resolve host"), so we skip host-side validation for these URLs. See #893.
+const SANDBOX_INTERNAL_HOSTS = ["host.openshell.internal", "host.docker.internal"];
+
+function isSandboxInternalUrl(url) {
+  try {
+    const { hostname } = new URL(String(url));
+    return SANDBOX_INTERNAL_HOSTS.includes(hostname);
+  } catch {
+    return false;
+  }
+}
+
+function parseJsonObject(body) {
+  if (!body) return null;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
+
+function hasResponsesToolCall(body) {
+  const parsed = parseJsonObject(body);
+  if (!parsed || !Array.isArray(parsed.output)) return false;
+
+  const stack = [...parsed.output];
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (!item || typeof item !== "object") continue;
+    if (item.type === "function_call" || item.type === "tool_call") return true;
+    if (Array.isArray(item.content)) {
+      stack.push(...item.content);
+    }
+  }
+
+  return false;
+}
+
+function shouldRequireResponsesToolCalling(provider) {
+  return (
+    provider === "nvidia-prod" || provider === "gemini-api" || provider === "compatible-endpoint"
+  );
+}
+
+// Google Gemini rejects requests that carry both an Authorization: Bearer
+// The Gemini OpenAI-compat endpoint at /v1beta/openai/ requires
+// `Authorization: Bearer <KEY>` and rejects `?key=<KEY>` with HTTP 400
+// "Missing or invalid Authorization header." The dual-auth rejection
+// described in #1960 applies to the native /v1beta/models/...:generateContent
+// endpoint, which the onboarder probes do not use. Both callers of this
+// helper (probeOpenAiLikeEndpoint, probeResponsesToolCalling) target the
+// OpenAI-compat URL, so returning undefined for every provider is correct:
+// probes default to Bearer auth and Gemini onboarding succeeds.
+function getProbeAuthMode(_provider) {
+  return undefined;
+}
+
+// Per-validation-probe curl timing. Tighter than the default 60s in
+// getCurlTimingArgs() because validation must not hang the wizard for a
+// minute on a misbehaving model. See issue #1601 (Bug 3).
+function getValidationProbeCurlArgs(opts) {
+  if (isWsl(opts)) {
+    return ["--connect-timeout", "20", "--max-time", "30"];
+  }
+  return ["--connect-timeout", "10", "--max-time", "15"];
+}
+
+function getDeepSeekV4ProValidationProbeCurlArgs(opts) {
+  if (isWsl(opts)) {
+    return ["--connect-timeout", "30", "--max-time", "150"];
+  }
+  return ["--connect-timeout", "20", "--max-time", "120"];
+}
+
+function getCurlMaxTimeSeconds(args) {
+  const maxTimeIndex = args.indexOf("--max-time");
+  if (maxTimeIndex === -1) return 30;
+  const value = Number(args[maxTimeIndex + 1]);
+  return Number.isFinite(value) && value > 0 ? value : 30;
+}
+
+function getProbeProcessTimeoutMs(args) {
+  return (getCurlMaxTimeSeconds(args) + 5) * 1000;
+}
+
+const RETRIABLE_HTTP_PROBE_STATUSES = new Set([429]);
+const HTTP_PROBE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
+
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function shouldRetryHttpProbe(result) {
+  return (
+    result &&
+    !result.ok &&
+    result.curlStatus === 0 &&
+    RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus)
+  );
+}
+
+function isCurlTimeout(result) {
+  return result && !result.ok && result.curlStatus === 28;
+}
+
+function executeProbeWithHttpRetry(probe) {
+  let result = probe.execute();
+  for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
+    if (!shouldRetryHttpProbe(result)) break;
+    console.log(
+      `  ${probe.name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
+    );
+    sleepSync(delayMs);
+    result = probe.execute();
+  }
+  return result;
+}
+
+// ── Responses API probe ──────────────────────────────────────────
+
+function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const authHeader =
+    !useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : [];
+  const url =
+    useQueryParam && normalizedKey
+      ? `${baseUrl}/responses?key=${encodeURIComponent(normalizedKey)}`
+      : `${baseUrl}/responses`;
+  const result = runCurlProbe([
+    "-sS",
+    ...getValidationProbeCurlArgs(),
+    "-H",
+    "Content-Type: application/json",
+    ...authHeader,
+    "-d",
+    JSON.stringify({
+      model,
+      input: "Call the emit_ok function with value OK. Do not answer with plain text.",
+      tool_choice: "required",
+      tools: [
+        {
+          type: "function",
+          name: "emit_ok",
+          description: "Returns the probe value for validation.",
+          parameters: {
+            type: "object",
+            properties: {
+              value: { type: "string" },
+            },
+            required: ["value"],
+            additionalProperties: false,
+          },
+        },
+      ],
+    }),
+    url,
+  ]);
+
+  if (!result.ok) {
+    return result;
+  }
+  if (hasResponsesToolCall(result.body)) {
+    return result;
+  }
+  return {
+    ok: false,
+    httpStatus: result.httpStatus,
+    curlStatus: result.curlStatus,
+    body: result.body,
+    stderr: result.stderr,
+    message: `HTTP ${result.httpStatus}: Responses API did not return a tool call`,
+  };
+}
+
+// ── OpenAI-like probe ────────────────────────────────────────────
+function isDeepSeekV4ProModel(model) {
+  return String(model || "").toLowerCase() === "deepseek-ai/deepseek-v4-pro";
+}
+
+function getChatCompletionsProbePayload(model) {
+  const payload = {
+    model,
+    messages: [{ role: "user", content: "Reply with exactly: OK" }],
+  };
+
+  if (isDeepSeekV4ProModel(model)) {
+    return {
+      ...payload,
+      temperature: 1,
+      top_p: 0.95,
+      max_tokens: 8192,
+      chat_template_kwargs: { thinking: false },
+      stream: true,
+    };
+  }
+
+  return payload;
+}
+
+function getChatCompletionsProbeCurlArgs({ authHeader, model, url, isWsl: isWslOverride }) {
+  const platformOptions =
+    typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : undefined;
+  const timingArgs = isDeepSeekV4ProModel(model)
+    ? getDeepSeekV4ProValidationProbeCurlArgs(platformOptions)
+    : getValidationProbeCurlArgs(platformOptions);
+  return [
+    "-sS",
+    ...timingArgs,
+    "-H",
+    "Content-Type: application/json",
+    ...authHeader,
+    "-d",
+    JSON.stringify(getChatCompletionsProbePayload(model)),
+    url,
+  ];
+}
+
+function runChatCompletionsProbe({ authHeader, model, url, isWsl: isWslOverride }) {
+  const args = getChatCompletionsProbeCurlArgs({
+    authHeader,
+    model,
+    url,
+    isWsl: isWslOverride,
+  });
+  if (isDeepSeekV4ProModel(model)) {
+    return runChatCompletionsStreamingProbe(args, {
+      timeoutMs: getProbeProcessTimeoutMs(args),
+    });
+  }
+  return runCurlProbe(args);
+}
+
+function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
+  if (isSandboxInternalUrl(endpointUrl)) {
+    const { hostname } = new URL(String(endpointUrl));
+    return {
+      ok: true,
+      api: null,
+      label: null,
+      note: `${hostname} only resolves inside the sandbox — validation skipped. If the endpoint is unreachable at runtime, re-run onboard with a routable URL.`,
+    };
+  }
+
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const authHeader =
+    !useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : [];
+  const appendKey = (urlPath) =>
+    useQueryParam && normalizedKey
+      ? `${baseUrl}${urlPath}?key=${encodeURIComponent(normalizedKey)}`
+      : `${baseUrl}${urlPath}`;
+
+  const responsesProbe =
+    options.requireResponsesToolCalling === true
+      ? {
+          name: "Responses API with tool calling",
+          api: "openai-responses",
+          execute: () =>
+            probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
+        }
+      : {
+          name: "Responses API",
+          api: "openai-responses",
+          execute: () =>
+            runCurlProbe([
+              "-sS",
+              ...getValidationProbeCurlArgs(),
+              "-H",
+              "Content-Type: application/json",
+              ...authHeader,
+              "-d",
+              JSON.stringify({
+                model,
+                input: "Reply with exactly: OK",
+              }),
+              appendKey("/responses"),
+            ]),
+        };
+
+  const chatCompletionsProbe = {
+    name: "Chat Completions API",
+    api: "openai-completions",
+    execute: () =>
+      runChatCompletionsProbe({
+        authHeader,
+        model,
+        url: appendKey("/chat/completions"),
+        isWsl: options.isWsl,
+      }),
+  };
+
+  // NVIDIA Build does not expose /v1/responses; probing it always returns
+  // "404 page not found" and only adds noise to error messages. Skip it
+  // entirely for that provider. See issue #1601.
+  const probes = options.skipResponsesProbe
+    ? [chatCompletionsProbe]
+    : [responsesProbe, chatCompletionsProbe];
+
+  const failures = [];
+  for (const probe of probes) {
+    const result = executeProbeWithHttpRetry(probe);
+    if (result.ok) {
+      // Streaming event validation — catch backends like SGLang that return
+      // valid non-streaming responses but emit incomplete SSE events in
+      // streaming mode. Only run for /responses probes on custom endpoints
+      // where probeStreaming was requested.
+      if (probe.api === "openai-responses" && options.probeStreaming === true) {
+        const streamResult = runStreamingEventProbe([
+          "-sS",
+          ...getValidationProbeCurlArgs(),
+          "-H",
+          "Content-Type: application/json",
+          ...authHeader,
+          "-d",
+          JSON.stringify({
+            model,
+            input: "Reply with exactly: OK",
+            stream: true,
+          }),
+          appendKey("/responses"),
+        ]);
+        if (!streamResult.ok && streamResult.missingEvents.length > 0) {
+          // Backend responds but lacks required streaming events — fall back
+          // to /chat/completions silently.
+          console.log(`  ℹ ${streamResult.message}`);
+          failures.push({
+            name: probe.name + " (streaming)",
+            httpStatus: 0,
+            curlStatus: 0,
+            message: streamResult.message,
+            body: "",
+          });
+          continue;
+        }
+        if (!streamResult.ok) {
+          // Transport or execution failure — surface as a hard error instead
+          // of silently switching APIs.
+          return {
+            ok: false,
+            message: `${probe.name} (streaming): ${streamResult.message}`,
+            failures: [
+              {
+                name: probe.name + " (streaming)",
+                httpStatus: 0,
+                curlStatus: 0,
+                message: streamResult.message,
+                body: "",
+              },
+            ],
+          };
+        }
+      }
+      return { ok: true, api: probe.api, label: probe.name };
+    }
+    if (
+      probe.api === "openai-completions" &&
+      isDeepSeekV4ProModel(model) &&
+      isCurlTimeout(result)
+    ) {
+      const warning =
+        "DeepSeek V4 Pro validation timed out before the stream returned data; continuing with NVIDIA Endpoints because this model can take longer than the onboarding probe budget to emit its first token.";
+      console.log(`  ⚠ ${warning}`);
+      return {
+        ok: true,
+        api: probe.api,
+        label: probe.name,
+        warning,
+        validated: false,
+      };
+    }
+    // Preserve the raw response body alongside the summarized message so the
+    // NVCF "Function not found for account" detector below can fall back to
+    // the raw body if summarizeProbeError ever stops surfacing the marker
+    // through `message`.
+    failures.push({
+      name: probe.name,
+      httpStatus: result.httpStatus,
+      curlStatus: result.curlStatus,
+      message: result.message,
+      body: result.body,
+    });
+  }
+
+  // Single retry with doubled timeouts on timeout/connection failure.
+  // WSL2's virtualized network stack can cause the initial probe to time out
+  // before the TLS handshake completes. See issue #987.
+  const isTimeoutOrConnFailure = (cs) => cs === 28 || cs === 6 || cs === 7;
+  let retriedAfterTimeout = false;
+  if (failures.length > 0 && isTimeoutOrConnFailure(failures[0].curlStatus)) {
+    retriedAfterTimeout = true;
+    const baseArgs = getValidationProbeCurlArgs();
+    const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
+    const retryResult = runCurlProbe([
+      "-sS",
+      ...doubledArgs,
+      "-H",
+      "Content-Type: application/json",
+      ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+      "-d",
+      JSON.stringify(getChatCompletionsProbePayload(model)),
+      `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+    ]);
+    if (retryResult.ok) {
+      return { ok: true, api: "openai-completions", label: "Chat Completions API" };
+    }
+  }
+
+  // Detect the NVCF "Function not found for account" error and reframe it
+  // with an actionable next step instead of dumping the raw NVCF body.
+  // See issue #1601 (Bug 2).
+  const accountFailure = failures.find(
+    (failure) =>
+      isNvcfFunctionNotFoundForAccount(failure.message) ||
+      isNvcfFunctionNotFoundForAccount(failure.body),
+  );
+  if (accountFailure) {
+    return {
+      ok: false,
+      message: nvcfFunctionNotFoundMessage(model),
+      failures,
+    };
+  }
+
+  const baseMessage = failures.map((failure) => `${failure.name}: ${failure.message}`).join(" | ");
+  const wslHint =
+    isWsl() && retriedAfterTimeout
+      ? " · WSL2 detected \u2014 network verification may be slower than expected. " +
+        "Run `nemoclaw onboard` with the `--skip-verify` flag if this endpoint is known to be reachable."
+      : "";
+  return {
+    ok: false,
+    message: baseMessage + wslHint,
+    failures,
+  };
+}
+
+// ── Anthropic probe ──────────────────────────────────────────────
+
+function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
+  const result = runCurlProbe([
+    "-sS",
+    ...getCurlTimingArgs(),
+    "-H",
+    `x-api-key: ${normalizeCredentialValue(apiKey)}`,
+    "-H",
+    "anthropic-version: 2023-06-01",
+    "-H",
+    "content-type: application/json",
+    "-d",
+    JSON.stringify({
+      model,
+      max_tokens: 16,
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+    }),
+    `${String(endpointUrl).replace(/\/+$/, "")}/v1/messages`,
+  ]);
+  if (result.ok) {
+    return { ok: true, api: "anthropic-messages", label: "Anthropic Messages API" };
+  }
+  return {
+    ok: false,
+    message: result.message,
+    failures: [
+      {
+        name: "Anthropic Messages API",
+        httpStatus: result.httpStatus,
+        curlStatus: result.curlStatus,
+        message: result.message,
+      },
+    ],
+  };
+}
+
+module.exports = {
+  isSandboxInternalUrl,
+  parseJsonObject,
+  hasResponsesToolCall,
+  shouldRequireResponsesToolCalling,
+  getProbeAuthMode,
+  getValidationProbeCurlArgs,
+  getDeepSeekV4ProValidationProbeCurlArgs,
+  getChatCompletionsProbePayload,
+  getChatCompletionsProbeCurlArgs,
+  probeResponsesToolCalling,
+  probeOpenAiLikeEndpoint,
+  probeAnthropicEndpoint,
+};

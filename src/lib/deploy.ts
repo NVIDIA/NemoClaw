@@ -5,6 +5,28 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { NAME_ALLOWED_FORMAT, getNameValidationGuidance } from "./name-validation";
+import { sleepSeconds } from "./wait";
+
+type ExecLikeValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | string[]
+  | NodeJS.ProcessEnv
+  | object;
+type ExecLikeOptions = { [key: string]: ExecLikeValue };
+
+function readCommandOutput(error: object | null, key: "stdout" | "stderr"): string {
+  if (error === null) {
+    return "";
+  }
+  const value = Reflect.get(error, key);
+  return typeof value === "string" ? value : String(value || "");
+}
+
 export interface DeployCredentials {
   NVIDIA_API_KEY?: string | null;
   OPENAI_API_KEY?: string | null;
@@ -13,6 +35,8 @@ export interface DeployCredentials {
   COMPATIBLE_API_KEY?: string | null;
   COMPATIBLE_ANTHROPIC_API_KEY?: string | null;
   GITHUB_TOKEN?: string | null;
+  HF_TOKEN?: string | null;
+  HUGGING_FACE_HUB_TOKEN?: string | null;
   TELEGRAM_BOT_TOKEN?: string | null;
   ALLOWED_CHAT_IDS?: string | null;
   DISCORD_BOT_TOKEN?: string | null;
@@ -38,10 +62,10 @@ export interface DeployExecutionOptions {
   getCredential: (key: string) => string | null;
   validateName: (value: string, label: string) => string;
   shellQuote: (value: string) => string;
-  run: (command: string, opts?: { ignoreError?: boolean }) => void;
-  runInteractive: (command: string) => void;
-  execFileSync: (file: string, args: string[], opts?: Record<string, unknown>) => string;
-  spawnSync: (file: string, args: string[], opts?: Record<string, unknown>) => void;
+  run: (command: readonly string[], opts?: { ignoreError?: boolean }) => void;
+  runInteractive: (command: readonly string[]) => void;
+  execFileSync: (file: string, args: string[], opts?: ExecLikeOptions) => string;
+  spawnSync: (file: string, args: string[], opts?: ExecLikeOptions) => void;
   log: (message?: string) => void;
   error: (message?: string) => void;
   stdoutWrite: (message: string) => void;
@@ -126,7 +150,7 @@ export function buildDeployEnvLines(opts: {
     "NEMOCLAW_POLICY_MODE",
     "NEMOCLAW_POLICY_PRESETS",
     "CHAT_UI_URL",
-  ] as const;
+  ];
   for (const key of passthroughVars) {
     const value = env[key];
     if (value) envLines.push(`${key}=${shellQuote(value)}`);
@@ -157,7 +181,11 @@ export function findBrevInstanceStatus(
   try {
     const items = JSON.parse(rawJson);
     if (!Array.isArray(items)) return null;
-    return (items.find((item) => item && item.name === instanceName) as BrevInstanceStatus) || null;
+    const match = items.find(
+      (item): item is BrevInstanceStatus =>
+        typeof item === "object" && item !== null && item.name === instanceName,
+    );
+    return match ?? null;
   } catch {
     return null;
   }
@@ -199,6 +227,29 @@ function fail(
   return exit(1);
 }
 
+function validateDeploySandboxName(
+  rawSandboxName: string,
+  opts: Pick<DeployExecutionOptions, "validateName" | "error" | "exit">,
+): string {
+  try {
+    return opts.validateName(rawSandboxName, "sandbox name");
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    return fail(
+      [
+        `  ${message}`,
+        ...getNameValidationGuidance("sandbox name", rawSandboxName, {
+          includeAllowedFormat: false,
+        }).map((line) => `  ${line}`),
+        "  Brev deploy is non-interactive and cannot prompt for a corrected sandbox name.",
+        "  Set NEMOCLAW_SANDBOX_NAME to a valid sandbox name and retry.",
+      ],
+      opts.error,
+      opts.exit,
+    );
+  }
+}
+
 export async function executeDeploy(opts: DeployExecutionOptions): Promise<void> {
   const {
     instanceName,
@@ -232,6 +283,9 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
         "    nemoclaw deploy my-gpu-box",
         "    nemoclaw deploy nemoclaw-prod",
         "    nemoclaw deploy nemoclaw-test",
+        "",
+        "  Sandbox name comes from NEMOCLAW_SANDBOX_NAME (default: my-assistant).",
+        `  Allowed sandbox name format: ${NAME_ALLOWED_FORMAT}.`,
       ],
       error,
       exit,
@@ -239,16 +293,21 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
   }
 
   const name = validateName(instanceName, "instance name");
-  const qname = shellQuote(name);
   const gpu = env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
-  const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp").trim().toLowerCase();
+  const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp")
+    .trim()
+    .toLowerCase();
   const skipConnect = ["1", "true"].includes(
     String(env.NEMOCLAW_DEPLOY_NO_CONNECT || "").toLowerCase(),
   );
   const skipStartServices = ["1", "true"].includes(
     String(env.NEMOCLAW_DEPLOY_NO_START_SERVICES || "").toLowerCase(),
   );
-  const sandboxName = validateName(env.NEMOCLAW_SANDBOX_NAME || "my-assistant", "sandbox name");
+  const sandboxName = validateDeploySandboxName(env.NEMOCLAW_SANDBOX_NAME || "my-assistant", {
+    validateName,
+    error,
+    exit,
+  });
   const credentials: DeployCredentials = {
     NVIDIA_API_KEY: getCredential("NVIDIA_API_KEY"),
     OPENAI_API_KEY: getCredential("OPENAI_API_KEY"),
@@ -257,6 +316,8 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     COMPATIBLE_API_KEY: getCredential("COMPATIBLE_API_KEY"),
     COMPATIBLE_ANTHROPIC_API_KEY: getCredential("COMPATIBLE_ANTHROPIC_API_KEY"),
     GITHUB_TOKEN: getCredential("GITHUB_TOKEN"),
+    HF_TOKEN: getCredential("HF_TOKEN"),
+    HUGGING_FACE_HUB_TOKEN: getCredential("HUGGING_FACE_HUB_TOKEN"),
     TELEGRAM_BOT_TOKEN: getCredential("TELEGRAM_BOT_TOKEN"),
     ALLOWED_CHAT_IDS: getCredential("ALLOWED_CHAT_IDS"),
     DISCORD_BOT_TOKEN: getCredential("DISCORD_BOT_TOKEN"),
@@ -290,19 +351,19 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     const out = execFileSync("brev", ["ls"], { encoding: "utf-8" });
     exists = outputHasExactLine(out, name);
   } catch (caught) {
-    const err = caught as { stdout?: string; stderr?: string };
-    if (outputHasExactLine(err.stdout, name)) exists = true;
-    if (outputHasExactLine(err.stderr, name)) exists = true;
+    const caughtObject = typeof caught === "object" && caught !== null ? caught : null;
+    if (outputHasExactLine(readCommandOutput(caughtObject, "stdout"), name)) exists = true;
+    if (outputHasExactLine(readCommandOutput(caughtObject, "stderr"), name)) exists = true;
   }
 
   if (!exists) {
     log(`  Creating Brev instance '${name}' (${gpu}, provider=${brevProvider})...`);
-    run(`brev create ${qname} --type ${shellQuote(gpu)} --provider ${shellQuote(brevProvider)}`);
+    run(["brev", "create", name, "--type", gpu, "--provider", brevProvider]);
   } else {
     log(`  Brev instance '${name}' already exists.`);
   }
 
-  run("brev refresh", { ignoreError: true });
+  run(["brev", "refresh"], { ignoreError: true });
 
   stdoutWrite("  Waiting for Brev instance readiness ");
   for (let i = 0; i < 60; i++) {
@@ -333,7 +394,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       return fail([`  Timed out waiting for Brev instance readiness for ${name}`], error, exit);
     }
     stdoutWrite(".");
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
   }
 
   // ── SSH trust-on-first-use (TOFU) ──────────────────────────────
@@ -371,7 +432,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       );
     }
     stdoutWrite(".");
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
   }
 
   const sshOpts = buildSshOpts(knownHostsFile, shellQuote);
@@ -384,10 +445,24 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     const remoteDir = `${remoteHome}/nemoclaw`;
 
     log("  Syncing NemoClaw to VM...");
-    run(`ssh ${sshOpts} ${qname} 'mkdir -p ${shellQuote(remoteDir)}'`);
-    run(
-      `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv -e "ssh ${sshOpts}" "${rootDir}/" ${qname}:${shellQuote(`${remoteDir}/`)}`,
-    );
+    run(["ssh", ...sshArgs, name, `mkdir -p ${shellQuote(remoteDir)}`]);
+    run([
+      "rsync",
+      "-az",
+      "--delete",
+      "--exclude",
+      "node_modules",
+      "--exclude",
+      ".git",
+      "--exclude",
+      "dist",
+      "--exclude",
+      ".venv",
+      "-e",
+      `ssh ${sshOpts}`,
+      `${rootDir}/`,
+      `${name}:${remoteDir}/`,
+    ]);
 
     const envLines = buildDeployEnvLines({
       env,
@@ -400,10 +475,8 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     const envTmp = path.join(envDir, "env");
     fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
     try {
-      run(`scp -q ${sshOpts} ${shellQuote(envTmp)} ${qname}:${shellQuote(`${remoteDir}/.env`)}`);
-      run(
-        `ssh -q ${sshOpts} ${qname} 'chmod 600 ${shellQuote(`${remoteDir}/.env`)}'`,
-      );
+      run(["scp", "-q", ...sshArgs, envTmp, `${name}:${remoteDir}/.env`]);
+      run(["ssh", "-q", ...sshArgs, name, `chmod 600 ${shellQuote(`${remoteDir}/.env`)}`]);
     } finally {
       try {
         fs.unlinkSync(envTmp);
@@ -418,9 +491,13 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     }
 
     log("  Running setup...");
-    runInteractive(
-      `ssh -t ${sshOpts} ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software'`,
-    );
+    runInteractive([
+      "ssh",
+      "-t",
+      ...sshArgs,
+      name,
+      `cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software`,
+    ]);
 
     if (
       !skipStartServices &&
@@ -429,9 +506,12 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
         credentials.SLACK_BOT_TOKEN)
     ) {
       log("  Starting services...");
-      run(
-        `ssh ${sshOpts} ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/start-services.sh'`,
-      );
+      run([
+        "ssh",
+        ...sshArgs,
+        name,
+        `cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/start-services.sh`,
+      ]);
     }
 
     if (skipStartServices) {
@@ -449,9 +529,13 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     log("");
     log("  Connecting to sandbox...");
     log("");
-    runInteractive(
-      `ssh -t ${sshOpts} ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && openshell sandbox connect ${shellQuote(sandboxName)}'`,
-    );
+    runInteractive([
+      "ssh",
+      "-t",
+      ...sshArgs,
+      name,
+      `cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && openshell sandbox connect ${shellQuote(sandboxName)}`,
+    ]);
   } finally {
     fs.rmSync(khDir, { recursive: true, force: true });
   }

@@ -53,6 +53,42 @@ section() {
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
+dump_hermes_diagnostics() {
+  info "--- Hermes sandbox diagnostics ---"
+  if ! command -v openshell >/dev/null 2>&1; then
+    info "openshell is not available for sandbox diagnostics"
+    return
+  fi
+
+  local sandboxes diag_output diag_script
+  sandboxes=$(openshell sandbox list 2>&1 || true)
+  info "openshell sandbox list:"
+  echo "$sandboxes" | tail -20 | while IFS= read -r line; do
+    info "  $line"
+  done
+
+  if ! grep -Fq -- "$SANDBOX_NAME" <<<"$sandboxes"; then
+    info "sandbox '${SANDBOX_NAME}' is not visible to openshell"
+    return
+  fi
+
+  diag_script='set +e'
+  diag_script+='; echo "== identity =="; id 2>&1 || true'
+  diag_script+='; echo "== listening sockets =="; ss -tlnp 2>&1 || ss -tln 2>&1 || true'
+  diag_script+='; echo "== log and state paths =="; ls -ld /tmp /sandbox/.hermes /sandbox/.hermes/logs 2>&1 || true; ls -l /tmp/nemoclaw-start.log /tmp/gateway.log 2>&1 || true'
+  diag_script+='; echo "== hermes-related processes =="'
+  # shellcheck disable=SC2016  # script is intentionally evaluated inside the sandbox
+  diag_script+='; for p in /proc/[0-9]*; do cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true); case "$cmd" in *hermes*|*socat*|*nemoclaw-decode-proxy*) echo "$(basename "$p") $cmd" ;; esac; done'
+  diag_script+='; echo "== /tmp/nemoclaw-start.log tail =="; tail -n 80 /tmp/nemoclaw-start.log 2>&1 || true'
+  diag_script+='; echo "== /tmp/gateway.log tail =="; tail -n 120 /tmp/gateway.log 2>&1 || true'
+  diag_output=$(openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$diag_script" 2>&1 || true)
+
+  echo "$diag_output" | while IFS= read -r line; do
+    info "  $line"
+  done
+  info "--- End Hermes sandbox diagnostics ---"
+}
+
 # Parse chat completion response — handles both content and reasoning_content
 # (nemotron-3-super is a reasoning model that may put output in reasoning_content)
 parse_chat_content() {
@@ -81,6 +117,10 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-hermes}"
 export NEMOCLAW_AGENT="${NEMOCLAW_AGENT:-hermes}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # Hermes health probe endpoint (from agents/hermes/manifest.yaml)
 HERMES_HEALTH_URL="http://localhost:8642/health"
@@ -192,6 +232,7 @@ if [ $install_exit -eq 0 ]; then
   pass "install.sh completed (exit 0)"
 else
   fail "install.sh failed (exit $install_exit)"
+  dump_hermes_diagnostics
   exit 1
 fi
 
@@ -354,7 +395,7 @@ else
   fail "Hermes config.yaml not found at /sandbox/.hermes/config.yaml"
 fi
 
-# 4d: Verify immutable config directory (Landlock read-only)
+# 4d: Verify config directory is writable (mutable default)
 writable_check=$($TIMEOUT_CMD ssh -F "$ssh_config" \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null \
@@ -364,10 +405,10 @@ writable_check=$($TIMEOUT_CMD ssh -F "$ssh_config" \
   "touch /sandbox/.hermes/test-write 2>&1 && echo WRITABLE && rm -f /sandbox/.hermes/test-write || echo READ_ONLY" \
   2>&1) || true
 
-if echo "$writable_check" | grep -q "READ_ONLY"; then
-  pass "Hermes config directory is read-only (immutable)"
-elif echo "$writable_check" | grep -q "WRITABLE"; then
-  fail "Hermes config directory is writable — should be immutable"
+if echo "$writable_check" | grep -q "WRITABLE"; then
+  pass "Hermes config directory is writable (mutable default)"
+elif echo "$writable_check" | grep -q "READ_ONLY"; then
+  fail "Hermes config directory is read-only — should be writable by default"
 else
   skip "Could not determine config directory mutability: ${writable_check:0:100}"
 fi
@@ -379,13 +420,13 @@ data_dir_check=$($TIMEOUT_CMD ssh -F "$ssh_config" \
   -o ConnectTimeout=10 \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}" \
-  "test -d /sandbox/.hermes-data && echo EXISTS || echo MISSING" \
+  "test -d /sandbox/.hermes && echo EXISTS || echo MISSING" \
   2>&1) || true
 
 if echo "$data_dir_check" | grep -q "EXISTS"; then
-  pass "Hermes writable data directory exists at /sandbox/.hermes-data"
+  pass "Hermes config/state directory exists at /sandbox/.hermes"
 else
-  fail "Hermes writable data directory not found at /sandbox/.hermes-data"
+  fail "Hermes config/state directory not found at /sandbox/.hermes"
 fi
 
 rm -f "$ssh_config"
@@ -419,7 +460,11 @@ else
 fi
 
 # ── Test 5b: Inference through the sandbox (THE definitive test) ──
-info "[LIVE] Sandbox inference test → user → sandbox → gateway → NVIDIA API..."
+# Routing-layer check, not a Hermes/openclaw check. The HTTP request is made
+# by curl from inside the sandbox; nothing in this path exercises the Hermes
+# agent runtime or openclaw's HTTP client. See NemoClaw #2490 for the
+# openclaw 4.9 SSRF regression that was invisible to assertions of this shape.
+info "[ROUTING] inference.local DNS + OpenShell proxy reachable from Hermes sandbox..."
 ssh_config="$(mktemp)"
 sandbox_response=""
 
@@ -444,13 +489,13 @@ rm -f "$ssh_config"
 if [ -n "$sandbox_response" ]; then
   sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
   if grep -qi "PONG" <<<"$sandbox_content"; then
-    pass "[LIVE] Sandbox inference: model responded with PONG through Hermes sandbox"
-    info "Full path proven: user → Hermes sandbox → openshell gateway → NVIDIA Endpoints → response"
+    pass "[ROUTING] inference.local: OpenShell routed curl to NVIDIA Endpoints and returned PONG"
+    info "Routing path proven: sandbox curl → DNS forwarder → gateway proxy → NVIDIA Endpoints (does not exercise the Hermes agent runtime or openclaw HTTP client)"
   else
-    fail "[LIVE] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}"
+    fail "[ROUTING] inference.local: expected PONG, got: ${sandbox_content:0:200}"
   fi
 else
-  fail "[LIVE] Sandbox inference: no response from inference.local inside Hermes sandbox"
+  fail "[ROUTING] inference.local: no response from inference.local inside Hermes sandbox"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -512,7 +557,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 8: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 # Verify against the registry file directly.  `nemoclaw list` triggers

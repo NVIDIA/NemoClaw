@@ -69,6 +69,10 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-test}"
 
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 # Run a command inside the sandbox and capture output.
 # Returns __PROBE_FAILED__ and exit 1 if SSH setup or execution fails,
 # so callers can distinguish "no output" from "probe never ran".
@@ -419,10 +423,11 @@ fi
 info "C7: Checking for secret patterns in sandbox config..."
 
 # Search for real API key patterns (not our test fakes).
-# Exclude policy preset files (e.g. npm.yaml contains "npm_yarn" rule names, not secrets).
-c7_nvapi=$(sandbox_exec "grep -r 'nvapi-' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | head -5" || true)
-c7_ghp=$(sandbox_exec "grep -r 'ghp_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | head -5" || true)
-c7_npm=$(sandbox_exec "grep -r 'npm_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | head -5" || true)
+# Exclude policy preset files and vendored plugin dependencies; dependency
+# package names can contain strings like ghp_ or npm_ without storing secrets.
+c7_nvapi=$(sandbox_exec "grep -r 'nvapi-' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | grep -v '/plugin-runtime-deps/' | head -5" || true)
+c7_ghp=$(sandbox_exec "grep -r 'ghp_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | grep -v '/plugin-runtime-deps/' | head -5" || true)
+c7_npm=$(sandbox_exec "grep -r 'npm_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | grep -v '/plugin-runtime-deps/' | head -5" || true)
 
 if [ "$c7_nvapi" = "__PROBE_FAILED__" ] || [ "$c7_ghp" = "__PROBE_FAILED__" ] || [ "$c7_npm" = "__PROBE_FAILED__" ]; then
   fail "C7: Sandbox probe failed — SSH did not execute; cannot verify secret absence"

@@ -18,7 +18,7 @@ Between your shell and the running sandbox, NemoClaw contributes these integrati
 | State management | Migrates agent state across machines with credential stripping and integrity checks. |
 | Channel messaging | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the agent. NemoClaw enables this through onboarding and blueprint wiring; delivery is not a separate NemoClaw host daemon. |
 
-For repository layout, file paths, and deeper diagrams, see Architecture (see the `nemoclaw-user-reference` skill).
+For repository layout, file paths, and deeper diagrams, see Architecture (use the `nemoclaw-user-reference` skill).
 
 ```mermaid
 flowchart TB
@@ -115,17 +115,17 @@ The sandbox starts with a default policy that controls network egress, filesyste
 | Layer | What it protects | When it applies |
 |---|---|---|
 | Network | Blocks unauthorized outbound connections. | Hot-reloadable at runtime. |
-| Filesystem | Prevents reads and writes outside `/sandbox` and `/tmp`. | Locked at sandbox creation. |
+| Filesystem | Restricts system paths to read-only; `/sandbox` and `/tmp` are writable. | Locked at sandbox creation. |
 | Process | Blocks privilege escalation and dangerous syscalls. | Locked at sandbox creation. |
 | Inference | Reroutes model API calls to controlled backends. | Hot-reloadable at runtime. |
 
 When the agent tries to reach an unlisted host, OpenShell blocks the request and surfaces it in the TUI for operator approval. Approved endpoints persist for the current session but are not saved to the baseline policy file.
 
-For details on the baseline rules, refer to Network Policies (see the `nemoclaw-user-reference` skill). For container-level hardening, refer to Sandbox Hardening (see the `nemoclaw-user-deploy-remote` skill).
+For details on the baseline rules, refer to Network Policies (use the `nemoclaw-user-reference` skill). For container-level hardening, refer to Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill).
 
 ## Next Steps
 
-- Read Ecosystem (see the `nemoclaw-user-overview` skill) for stack-level relationships and NemoClaw versus OpenShell-only paths.
-- Follow the Quickstart (see the `nemoclaw-user-get-started` skill) to launch your first sandbox.
-- Refer to the Architecture (see the `nemoclaw-user-reference` skill) for the full technical structure, including file layouts and the blueprint lifecycle.
-- Refer to Inference Options (see the `nemoclaw-user-configure-inference` skill) for detailed provider configuration.
+- Read Ecosystem (use the `nemoclaw-user-overview` skill) for stack-level relationships and NemoClaw versus OpenShell-only paths.
+- Follow the Quickstart (use the `nemoclaw-user-get-started` skill) to launch your first sandbox.
+- Refer to the Architecture (use the `nemoclaw-user-reference` skill) for the full technical structure, including file layouts and the blueprint lifecycle.
+- Refer to Inference Options (use the `nemoclaw-user-configure-inference` skill) for detailed provider configuration.

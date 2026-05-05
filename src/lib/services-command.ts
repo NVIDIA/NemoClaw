@@ -18,6 +18,14 @@ export interface StopCommandDeps {
 const SAFE_SANDBOX_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 export function resolveDefaultSandboxName(listSandboxes: () => SandboxSummary): string | undefined {
+  // Explicit env var overrides take highest priority so that
+  // `NEMOCLAW_SANDBOX_NAME=foo nemoclaw stop` targets the right sandbox.
+  const envName =
+    process.env.NEMOCLAW_SANDBOX_NAME ??
+    process.env.NEMOCLAW_SANDBOX ??
+    process.env.SANDBOX_NAME;
+  if (envName && SAFE_SANDBOX_RE.test(envName)) return envName;
+
   const { defaultSandbox } = listSandboxes();
   return defaultSandbox && SAFE_SANDBOX_RE.test(defaultSandbox) ? defaultSandbox : undefined;
 }

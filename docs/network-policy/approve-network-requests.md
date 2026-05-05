@@ -12,6 +12,8 @@ content:
   type: how_to
   difficulty: technical_beginner
   audience: ["developer", "engineer", "security_engineer"]
+skill:
+  priority: 20
 status: published
 ---
 
@@ -41,7 +43,7 @@ $ openshell term
 For a remote sandbox, pass the instance name:
 
 ```console
-$ ssh my-gpu-box 'cd /home/ubuntu/nemoclaw && . .env && openshell term'
+$ ssh my-gpu-box 'cd ~/nemoclaw && . .env && openshell term'
 ```
 
 The TUI displays the sandbox state, active inference provider, and a live feed of network activity.

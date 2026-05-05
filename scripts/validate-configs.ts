@@ -22,7 +22,15 @@ interface ConfigTarget {
   files: string[];
 }
 
-/** All config files validated by default (paths relative to repo root). */
+type ConfigScalar = string | number | boolean | null;
+type ConfigValue = ConfigScalar | ConfigObject | ConfigValue[];
+type ConfigObject = { [key: string]: ConfigValue };
+
+/**
+ * Build the list of config files and their corresponding JSON Schemas.
+ * Preset YAML files are discovered dynamically from the presets directory.
+ * Returns an array of {@link ConfigTarget} objects ready for validation.
+ */
 function discoverTargets(): ConfigTarget[] {
   const targets: ConfigTarget[] = [
     {
@@ -51,10 +59,12 @@ function discoverTargets(): ConfigTarget[] {
         files: presetFiles,
       });
     } else {
-      console.warn("WARN: presets directory exists but contains no .yaml/.yml files — no preset validation performed");
+      console.warn(
+        "WARN: presets directory exists but contains no .yaml/.yml files — no preset validation performed",
+      );
     }
   } catch (err) {
-    const code = (err as { code?: string }).code;
+    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
     if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
     // presets directory may not exist — not an error
   }
@@ -62,7 +72,11 @@ function discoverTargets(): ConfigTarget[] {
   return targets;
 }
 
-function loadFile(repoRelative: string): unknown {
+/**
+ * Read and parse a config file relative to the repository root.
+ * YAML files are parsed with the `yaml` library; everything else is parsed as JSON.
+ */
+function loadFile(repoRelative: string): ConfigValue {
   const abs = join(REPO_ROOT, repoRelative);
   const raw = readFileSync(abs, "utf-8");
   if (repoRelative.endsWith(".yaml") || repoRelative.endsWith(".yml")) {
@@ -71,21 +85,107 @@ function loadFile(repoRelative: string): unknown {
   return JSON.parse(raw);
 }
 
+/**
+ * Read and parse a JSON Schema file relative to the repository root.
+ * Returns the parsed schema object ready for AJV compilation.
+ */
 function loadSchema(repoRelative: string): object {
   const abs = join(REPO_ROOT, repoRelative);
-  return JSON.parse(readFileSync(abs, "utf-8")) as object;
+  const schema: object = JSON.parse(readFileSync(abs, "utf-8"));
+  return schema;
 }
 
-function formatError(err: { instancePath: string; keyword?: string; message?: string; params?: Record<string, unknown> }): string {
+type ValidationParams = { additionalProperty?: string; unevaluatedProperty?: string };
+
+/**
+ * Format a single AJV validation error into a human-readable string.
+ * Includes the JSON Pointer path and a detail message, expanding
+ * `additionalProperty` and `unevaluatedProperty` params for clarity.
+ */
+function formatError(err: {
+  instancePath: string;
+  keyword?: string;
+  message?: string;
+  params?: ValidationParams;
+}): string {
   const path = err.instancePath || "/";
+  const message = err.message ?? "unknown error";
   const detail = err.params?.additionalProperty
-    ? `${err.message} '${err.params.additionalProperty}'`
+    ? `${message} '${err.params.additionalProperty}'`
     : err.params?.unevaluatedProperty
-      ? `${err.message} '${err.params.unevaluatedProperty}'`
-      : err.message ?? "unknown error";
+      ? `${message} '${err.params.unevaluatedProperty}'`
+      : message;
   return `  ${path}: ${detail}`;
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Dangerous-host semantic check (ref: #1445)
+//
+// JSON Schema can enforce structure (required fields, enums, ranges) but
+// can't express "this value grants access to everywhere". A commit that
+// sets `host: "*"` or `host: "0.0.0.0/0"` on a network-policy endpoint
+// would pass the schema yet widen egress to anything. Walk the parsed
+// documents after schema validation and reject those patterns explicitly.
+// Subdomain wildcards like "*.example.com" remain allowed — they're a
+// legitimate pattern for real deployments.
+// ────────────────────────────────────────────────────────────────────
+
+const DANGEROUS_HOSTS: ReadonlySet<string> = new Set(["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"]);
+
+/**
+ * Return true if `host` is a catch-all value that grants access to any destination.
+ * Rejects exact members of {@link DANGEROUS_HOSTS} and bare wildcard-with-port patterns
+ * like `*:443`. Subdomain wildcards such as `*.example.com` are intentionally allowed.
+ */
+function isDangerousHost(host: unknown): boolean {
+  if (typeof host !== "string") return false;
+  const trimmed = host.trim();
+  if (DANGEROUS_HOSTS.has(trimmed)) return true;
+  // Bare "*" with any non-domain suffix (e.g. "*:443") is also a catch-all.
+  if (trimmed === "*" || trimmed.startsWith("*:")) return true;
+  return false;
+}
+
+interface DangerousHostFinding {
+  path: string;
+  host: string;
+}
+
+/**
+ * Walk a parsed policy document (full `network_policies` map or a preset
+ * fragment with a `preset:` block) and return every endpoint whose host
+ * is in DANGEROUS_HOSTS. Safe to call on any shape — unknown structures
+ * just return [].
+ */
+function findDangerousHosts(data: unknown): DangerousHostFinding[] {
+  const findings: DangerousHostFinding[] = [];
+  if (!data || typeof data !== "object") return findings;
+  const doc = data as Record<string, unknown>;
+  const policies = doc.network_policies;
+  if (!policies || typeof policies !== "object" || Array.isArray(policies)) return findings;
+  for (const [policyName, policy] of Object.entries(policies as Record<string, unknown>)) {
+    if (!policy || typeof policy !== "object") continue;
+    const endpoints = (policy as Record<string, unknown>).endpoints;
+    if (!Array.isArray(endpoints)) continue;
+    endpoints.forEach((ep, i) => {
+      if (!ep || typeof ep !== "object") return;
+      const host = (ep as Record<string, unknown>).host;
+      if (isDangerousHost(host)) {
+        findings.push({
+          path: `/network_policies/${policyName}/endpoints/${i}/host`,
+          host: String(host),
+        });
+      }
+    });
+  }
+  return findings;
+}
+
+/**
+ * Entry point: validate all config files (or a single file via --file/--schema flags)
+ * against their JSON Schemas, then run the dangerous-host semantic check.
+ * Exits with a non-zero code if any validation errors or dangerous hosts are found.
+ */
 function main(): void {
   const args = process.argv.slice(2);
 
@@ -133,7 +233,7 @@ function main(): void {
 
     for (const file of target.files) {
       totalFiles++;
-      let data: unknown;
+      let data: ConfigValue;
       try {
         data = loadFile(file);
       } catch (err) {
@@ -144,12 +244,25 @@ function main(): void {
       }
 
       const valid = validate(data);
-      if (!valid && validate.errors) {
+      const schemaErrors = !valid && validate.errors ? validate.errors.length : 0;
+      // Semantic check: walk the parsed doc and reject catch-all hosts.
+      // Runs regardless of schema outcome so operators see all issues at once.
+      const dangerous = findDangerousHosts(data);
+
+      if (schemaErrors > 0 || dangerous.length > 0) {
         console.error(`FAIL: ${file}`);
-        for (const err of validate.errors) {
-          console.error(formatError(err));
+        if (schemaErrors > 0 && validate.errors) {
+          for (const err of validate.errors) {
+            console.error(formatError(err));
+          }
         }
-        totalErrors += validate.errors.length;
+        for (const finding of dangerous) {
+          console.error(
+            `  ${finding.path}: host "${finding.host}" grants access to any destination — ` +
+              `use a specific hostname (subdomain wildcards like "*.example.com" are allowed)`,
+          );
+        }
+        totalErrors += schemaErrors + dangerous.length;
       } else {
         console.log(`OK:   ${file}`);
       }
@@ -165,4 +278,13 @@ function main(): void {
   }
 }
 
-main();
+// Export for unit tests without re-running main().
+export { DANGEROUS_HOSTS, isDangerousHost, findDangerousHosts };
+
+// Only run main() when invoked directly (skip on test `import`).
+if (
+  import.meta.url === `file://${process.argv[1]}` ||
+  process.argv[1]?.endsWith("validate-configs.ts")
+) {
+  main();
+}

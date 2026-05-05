@@ -6,7 +6,6 @@ import { getCurlTimingArgs, runCurlProbe } from "./http-probe";
 import type { ModelCatalogFetchResult, ModelValidationResult } from "./onboard-types";
 
 // credentials.ts still uses CommonJS-style exports.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { normalizeCredentialValue } = require("./credentials");
 
 export const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
@@ -14,11 +13,28 @@ export const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 export interface ProviderModelOptions {
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
   buildEndpointUrl?: string;
+  /** When "query-param", send the API key as a ?key= URL parameter instead of
+   *  an Authorization: Bearer header. Required for Google Gemini which rejects
+   *  requests carrying both auth methods. See issue #1960. */
+  authMode?: "bearer" | "query-param";
 }
 
-function parseModelIds(body: string, itemKeys: string[] = ["id"]): string[] {
-  const parsed = JSON.parse(body) as { data?: Array<Record<string, unknown> | null> };
-  if (!Array.isArray(parsed?.data)) {
+type ModelCatalogItem = {
+  id?: string | null;
+  name?: string | null;
+};
+
+type ModelCatalogResponse = {
+  data?: Array<ModelCatalogItem | null>;
+};
+
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+function parseModelIds(body: string, itemKeys: Array<keyof ModelCatalogItem> = ["id"]): string[] {
+  const parsed = parseJson<ModelCatalogResponse>(body);
+  if (!Array.isArray(parsed.data)) {
     throw new Error("Unexpected model catalog response: expected a top-level data array");
   }
   return parsed.data
@@ -37,7 +53,7 @@ function parseModelIds(body: string, itemKeys: string[] = ["id"]): string[] {
 
 function toModelCatalogFetchResult(
   result: CurlProbeResult,
-  itemKeys: string[] = ["id"],
+  itemKeys: Array<keyof ModelCatalogItem> = ["id"],
 ): ModelCatalogFetchResult {
   if (!result.ok) {
     return {
@@ -119,12 +135,19 @@ export function fetchOpenAiLikeModels(
   options: ProviderModelOptions = {},
 ): ModelCatalogFetchResult {
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = `${String(endpointUrl).replace(/\/+$/, "")}/models`;
+  const url =
+    useQueryParam && normalizedKey
+      ? `${baseUrl}?key=${encodeURIComponent(normalizedKey)}`
+      : baseUrl;
   try {
     const result = runCurlProbeImpl([
       "-sS",
       ...getCurlTimingArgs(),
-      ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
-      `${String(endpointUrl).replace(/\/+$/, "")}/models`,
+      ...(!useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : []),
+      url,
     ]);
     return toModelCatalogFetchResult(result);
   } catch (error) {
@@ -171,7 +194,7 @@ export function validateAnthropicModel(
   options: ProviderModelOptions = {},
 ): ModelValidationResult {
   const normalizedEndpointUrl = String(endpointUrl).replace(/\/+$/, "");
-  const available = fetchAnthropicModels(endpointUrl, apiKey, options);
+  const available = fetchAnthropicModels(normalizedEndpointUrl, apiKey, options);
   if (!available.ok) {
     if (available.httpStatus === 404 || available.httpStatus === 405) {
       return { ok: true, validated: false };
@@ -202,7 +225,7 @@ export function validateOpenAiLikeModel(
   options: ProviderModelOptions = {},
 ): ModelValidationResult {
   const normalizedEndpointUrl = String(endpointUrl).replace(/\/+$/, "");
-  const available = fetchOpenAiLikeModels(endpointUrl, apiKey, options);
+  const available = fetchOpenAiLikeModels(normalizedEndpointUrl, apiKey, options);
   if (!available.ok) {
     if (available.httpStatus === 404 || available.httpStatus === 405) {
       return { ok: true, validated: false };

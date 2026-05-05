@@ -17,8 +17,14 @@ import path from "node:path";
 import { DASHBOARD_PORT } from "./ports";
 
 // runner.ts still uses CommonJS-style exports — use require here.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { runCapture } = require("./runner");
+
+type RunCaptureFn = typeof import("./runner").runCapture;
+type RunCaptureOpts = Parameters<RunCaptureFn>[1];
+type NullableRunCaptureFn = (
+  command: Parameters<RunCaptureFn>[0],
+  options?: RunCaptureOpts,
+) => string | null;
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -74,12 +80,7 @@ export interface EnsureSwapOpts {
   getMemoryInfoImpl?: (opts: GetMemoryInfoOpts) => MemoryInfo | null;
 }
 
-export type ContainerRuntime =
-  | "docker"
-  | "docker-desktop"
-  | "colima"
-  | "podman"
-  | "unknown";
+export type ContainerRuntime = "docker" | "docker-desktop" | "colima" | "podman" | "unknown";
 
 export type PackageManager = "apt" | "dnf" | "yum" | "brew" | "pacman" | "unknown";
 
@@ -101,6 +102,12 @@ export interface HostAssessment {
   dockerInfoSummary?: string;
   dockerCgroupVersion?: "v1" | "v2" | "unknown";
   dockerDefaultCgroupnsMode?: "host" | "private" | "unknown";
+  dockerStorageDriver?: string;
+  dockerUsesContainerdSnapshotter?: boolean;
+  dockerCpus?: number;
+  dockerMemTotalBytes?: number;
+  isContainerRuntimeUnderProvisioned: boolean;
+  hasNestedOverlayConflict: boolean;
   requiresHostCgroupnsFix: boolean;
   isUnsupportedRuntime: boolean;
   isHeadlessLikely: boolean;
@@ -125,17 +132,18 @@ export interface AssessHostOpts {
   dockerInfoOutput?: string;
   dockerInfoError?: string;
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
-  runCaptureImpl?: (command: string, options?: { ignoreError?: boolean }) => string;
+  runCaptureImpl?: RunCaptureFn;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
 }
 
-function commandExists(
-  commandName: string,
-  runCaptureImpl: (command: string, options?: { ignoreError?: boolean }) => string,
-): boolean {
+function buildCommandVArgv(commandName: string): readonly string[] {
+  return ["sh", "-c", 'command -v "$1"', "--", commandName];
+}
+
+function commandExists(commandName: string, runCaptureImpl: RunCaptureFn): boolean {
   try {
-    const output = runCaptureImpl(`command -v ${commandName}`, { ignoreError: true });
+    const output = runCaptureImpl(buildCommandVArgv(commandName), { ignoreError: true });
     return Boolean(String(output || "").trim());
   } catch {
     return false;
@@ -185,35 +193,114 @@ function parseDockerInfoSummary(info = ""): string | undefined {
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
+export function parseDockerStorageDriver(info = ""): string | undefined {
+  // JSON form (`docker info --format '{{json .}}'`) is the canonical caller
+  // path inside this file, but accept the plain-text `Storage Driver: <name>`
+  // form too so future callers that pass raw `docker info` don't silently
+  // miss the conflict and bypass the auto-fix.
+  const jsonMatch = info.match(/"Driver"\s*:\s*"([^"]+)"/);
+  if (jsonMatch) return jsonMatch[1];
+  const textMatch = info.match(/^\s*Storage Driver:\s*(\S+)\s*$/m);
+  return textMatch?.[1];
+}
+
+export function parseDockerUsesContainerdSnapshotter(info = ""): boolean {
+  // Docker 26+ defaults fresh installs to the containerd image store, surfaced
+  // via `docker info` DriverStatus entries that name the containerd snapshotter
+  // v1 plugin. Match either JSON or text form so we handle `--format '{{json
+  // .}}'` output and plain `docker info` alike.
+  return /io\.containerd\.snapshotter\.v1/.test(info);
+}
+
+export function parseDockerInfoCpus(info = ""): number | undefined {
+  const jsonMatch = info.match(/"NCPU"\s*:\s*(\d+)/);
+  if (jsonMatch) {
+    const n = parseInt(jsonMatch[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
+  const textMatch = info.match(/^\s*CPUs:\s*(\d+)\s*$/m);
+  if (textMatch) {
+    const n = parseInt(textMatch[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
+  return undefined;
+}
+
+export function parseDockerInfoMemTotalBytes(info = ""): number | undefined {
+  const jsonMatch = info.match(/"MemTotal"\s*:\s*(\d+)/);
+  if (jsonMatch) {
+    const n = parseInt(jsonMatch[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
+  const textMatch = info.match(/^\s*Total Memory:\s*([\d.]+)\s*([GMK]i?B)\s*$/im);
+  if (textMatch) {
+    const value = parseFloat(textMatch[1]);
+    if (!Number.isFinite(value) || value <= 0) return undefined;
+    const unit = textMatch[2].toLowerCase();
+    const multiplier =
+      unit === "gib"
+        ? 1024 ** 3
+        : unit === "gb"
+          ? 1000 ** 3
+          : unit === "mib"
+            ? 1024 ** 2
+            : unit === "mb"
+              ? 1000 ** 2
+              : unit === "kib"
+                ? 1024
+                : unit === "kb"
+                  ? 1000
+                  : 1;
+    return Math.round(value * multiplier);
+  }
+  return undefined;
+}
+
+export const MIN_RECOMMENDED_DOCKER_CPUS = 4;
+export const MIN_RECOMMENDED_DOCKER_MEM_GIB = 8;
+
+export function isDockerUnderProvisioned(
+  cpus: number | undefined,
+  memTotalBytes: number | undefined,
+): boolean {
+  const cpuLow = typeof cpus === "number" && cpus < MIN_RECOMMENDED_DOCKER_CPUS;
+  const memLow =
+    typeof memTotalBytes === "number" &&
+    memTotalBytes < MIN_RECOMMENDED_DOCKER_MEM_GIB * 1024 ** 3;
+  return cpuLow || memLow;
+}
+
 function readDockerDefaultCgroupnsMode(
   readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
 ): "host" | "private" | "unknown" {
-  try {
-    const raw = readFileImpl("/etc/docker/daemon.json", "utf-8");
-    const parsed = JSON.parse(raw) as { ["default-cgroupns-mode"]?: unknown };
-    const mode = parsed["default-cgroupns-mode"];
-    return mode === "host" || mode === "private" ? mode : "unknown";
-  } catch {
-    return "unknown";
+  const paths = ["/etc/docker/daemon.json", "/home/rootless/.config/docker/daemon.json"];
+  for (const filePath of paths) {
+    try {
+      const raw = readFileImpl(filePath, "utf-8");
+      const parsed: {
+        ["default-cgroupns-mode"]?: string;
+      } = JSON.parse(raw);
+      const mode = parsed["default-cgroupns-mode"];
+      if (mode === "host" || mode === "private") return mode;
+    } catch {
+      // Try next path
+    }
   }
+  return "unknown";
 }
 
 function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
   return !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.TERM_PROGRAM;
 }
 
-function detectNvidiaGpu(
-  runCaptureImpl: (command: string, options?: { ignoreError?: boolean }) => string,
-): boolean {
+function detectNvidiaGpu(runCaptureImpl: RunCaptureFn): boolean {
   if (!commandExists("nvidia-smi", runCaptureImpl)) {
     return false;
   }
-  return Boolean(String(runCaptureImpl("nvidia-smi -L", { ignoreError: true }) || "").trim());
+  return Boolean(String(runCaptureImpl(["nvidia-smi", "-L"], { ignoreError: true }) || "").trim());
 }
 
-function detectPackageManager(
-  runCaptureImpl: (command: string, options?: { ignoreError?: boolean }) => string,
-): PackageManager {
+function detectPackageManager(runCaptureImpl: RunCaptureFn): PackageManager {
   if (commandExists("apt-get", runCaptureImpl)) return "apt";
   if (commandExists("dnf", runCaptureImpl)) return "dnf";
   if (commandExists("yum", runCaptureImpl)) return "yum";
@@ -223,7 +310,9 @@ function detectPackageManager(
 }
 
 function parseSystemctlState(value = ""): boolean | null {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   if (!normalized) return null;
   if (normalized === "active" || normalized === "enabled") return true;
   if (
@@ -242,7 +331,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const env = opts.env ?? process.env;
   const runCaptureImpl =
     opts.runCaptureImpl ??
-    ((command: string, options?: { ignoreError?: boolean }) =>
+    ((command: readonly string[], options?: { ignoreError?: boolean }) =>
       runCapture(command, { ignoreError: options?.ignoreError ?? false }));
   const readFileImpl = opts.readFileImpl ?? fs.readFileSync;
   const dockerInstalled =
@@ -258,7 +347,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   let dockerReachable = false;
   let dockerRunning = false;
   if (dockerInstalled && dockerInfoOutput === undefined) {
-    dockerInfoOutput = runCaptureImpl("docker info --format '{{json .}}' 2>/dev/null", {
+    dockerInfoOutput = runCaptureImpl(["docker", "info", "--format", "{{json .}}"], {
       ignoreError: true,
     });
   }
@@ -284,18 +373,57 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerCgroupVersion = dockerReachable
     ? parseDockerCgroupVersion(dockerInfoOutput)
     : "unknown";
+  const dockerStorageDriver = dockerReachable
+    ? parseDockerStorageDriver(dockerInfoOutput)
+    : undefined;
+  const dockerUsesContainerdSnapshotter = dockerReachable
+    ? parseDockerUsesContainerdSnapshotter(dockerInfoOutput)
+    : false;
+  const dockerCpus = dockerReachable ? parseDockerInfoCpus(dockerInfoOutput) : undefined;
+  const dockerMemTotalBytes = dockerReachable
+    ? parseDockerInfoMemTotalBytes(dockerInfoOutput)
+    : undefined;
+  const isContainerRuntimeUnderProvisioned = isDockerUnderProvisioned(
+    dockerCpus,
+    dockerMemTotalBytes,
+  );
+  // Nested-overlay break: Docker 26+ on Linux with the containerd image store
+  // (Driver=overlayfs + DriverStatus mentions io.containerd.snapshotter.v1)
+  // does not allow k3s-in-Docker to mount its own overlay snapshots. The
+  // legacy `overlay2` graph driver materializes layers as plain directory
+  // trees and is unaffected. Docker Desktop on macOS/Windows reports
+  // overlayfs through a Linux VM that does not exhibit the same kernel
+  // limitation, so we scope the conflict to platform === 'linux'.
+  //
+  // We additionally exclude WSL2 hosts. Native Docker inside WSL2 (without
+  // Docker Desktop integration) routes through the WSL kernel, which has
+  // a different overlay-mount story than bare Linux and is not part of
+  // the user-confirmed reproducer. Engaging the auto-fix there could
+  // build an unnecessary patched image; preferring to leave WSL alone
+  // until we have a confirmed repro is the conservative call.
+  const isWslHost = detectWsl({ platform, env, release, procVersion });
+  const hasNestedOverlayConflict =
+    platform === "linux" &&
+    !isWslHost &&
+    runtime === "docker" &&
+    dockerStorageDriver === "overlayfs" &&
+    dockerUsesContainerdSnapshotter;
   const dockerDefaultCgroupnsMode = readDockerDefaultCgroupnsMode(readFileImpl);
   const dockerServiceActive =
     platform === "linux" && systemctlAvailable && dockerInstalled
-      ? parseSystemctlState(runCaptureImpl("systemctl is-active docker", { ignoreError: true }))
+      ? parseSystemctlState(
+          runCaptureImpl(["systemctl", "is-active", "docker"], { ignoreError: true }),
+        )
       : null;
   const dockerServiceEnabled =
     platform === "linux" && systemctlAvailable && dockerInstalled
-      ? parseSystemctlState(runCaptureImpl("systemctl is-enabled docker", { ignoreError: true }))
+      ? parseSystemctlState(
+          runCaptureImpl(["systemctl", "is-enabled", "docker"], { ignoreError: true }),
+        )
       : null;
   const assessment: HostAssessment = {
     platform,
-    isWsl: detectWsl({ platform, env, release, procVersion }),
+    isWsl: isWslHost,
     runtime,
     packageManager,
     systemctlAvailable,
@@ -309,6 +437,12 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerInfoSummary: parseDockerInfoSummary(dockerInfoOutput),
     dockerCgroupVersion,
     dockerDefaultCgroupnsMode,
+    dockerStorageDriver,
+    dockerUsesContainerdSnapshotter,
+    dockerCpus,
+    dockerMemTotalBytes,
+    isContainerRuntimeUnderProvisioned,
+    hasNestedOverlayConflict,
     // Current OpenShell sets host cgroupns on its own cluster container.
     requiresHostCgroupnsFix: false,
     isUnsupportedRuntime: runtime === "podman",
@@ -392,6 +526,47 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
     }
   }
 
+  if (assessment.dockerReachable && assessment.isContainerRuntimeUnderProvisioned) {
+    const cpus = assessment.dockerCpus;
+    const memGiB =
+      typeof assessment.dockerMemTotalBytes === "number"
+        ? assessment.dockerMemTotalBytes / 1024 ** 3
+        : undefined;
+    const detected: string[] = [];
+    if (typeof cpus === "number") detected.push(`${cpus} vCPU`);
+    if (typeof memGiB === "number") detected.push(`${memGiB.toFixed(1)} GiB`);
+    const detectedStr = detected.length > 0 ? detected.join(" / ") : "unknown";
+    const recommendedStr = `${MIN_RECOMMENDED_DOCKER_CPUS} vCPU / ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB`;
+    const isColima = assessment.runtime === "colima";
+    const isDockerDesktop = assessment.runtime === "docker-desktop";
+    const reason =
+      `Container runtime is under-provisioned (detected ${detectedStr}; recommended ${recommendedStr}). ` +
+      "Sandbox build will be slow and may stall when runtime resources are too low.";
+    const commands: string[] = [];
+    if (isColima) {
+      commands.push(
+        "colima stop",
+        `colima start --cpu ${MIN_RECOMMENDED_DOCKER_CPUS} --memory ${MIN_RECOMMENDED_DOCKER_MEM_GIB} --disk 100`,
+      );
+    } else if (isDockerDesktop) {
+      commands.push(
+        `Open Docker Desktop → Settings → Resources and raise CPUs to ≥ ${MIN_RECOMMENDED_DOCKER_CPUS} and memory to ≥ ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB.`,
+      );
+    } else {
+      commands.push(
+        `Raise your container runtime's resource limits to ≥ ${MIN_RECOMMENDED_DOCKER_CPUS} vCPU and ≥ ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB of memory before retrying.`,
+      );
+    }
+    actions.push({
+      id: "container_runtime_under_provisioned",
+      title: "Increase container runtime resources",
+      kind: "manual",
+      reason,
+      commands,
+      blocking: false,
+    });
+  }
+
   if (assessment.isUnsupportedRuntime) {
     actions.push({
       id: "unsupported_runtime_warning",
@@ -434,7 +609,8 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
       id: "headless_remote_hint",
       title: "Review remote/headless UI settings",
       kind: "info",
-      reason: "Headless Linux hosts often need explicit remote UI handling if you want browser access.",
+      reason:
+        "Headless Linux hosts often need explicit remote UI handling if you want browser access.",
       commands: ["Set `CHAT_UI_URL` when remote browser access matters."],
       blocking: false,
     });
@@ -517,9 +693,11 @@ export async function checkPortAvailable(
     if (typeof o.lsofOutput === "string") {
       lsofOut = o.lsofOutput;
     } else {
-      const hasLsof = runCapture("command -v lsof", { ignoreError: true });
+      const hasLsof = commandExists("lsof", (command, options) =>
+        runCapture(command, { ignoreError: options?.ignoreError ?? false }),
+      );
       if (hasLsof) {
-        lsofOut = runCapture(`lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`, {
+        lsofOut = runCapture(["lsof", "-i", `:${p}`, "-sTCP:LISTEN", "-P", "-n"], {
           ignoreError: true,
         });
       }
@@ -541,7 +719,7 @@ export async function checkPortAvailable(
       // the owning process).
       if (!o.lsofOutput) {
         const sudoOut: string | undefined = runCapture(
-          `sudo -n lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`,
+          ["sudo", "-n", "lsof", "-i", `:${p}`, "-sTCP:LISTEN", "-P", "-n"],
           { ignoreError: true },
         );
         if (typeof sudoOut === "string") {
@@ -593,7 +771,10 @@ export function getMemoryInfo(opts?: GetMemoryInfoOpts): MemoryInfo | null {
 
   if (platform === "darwin") {
     try {
-      const memBytes = parseInt(runCapture("sysctl -n hw.memsize", { ignoreError: true }), 10);
+      const memBytes = parseInt(
+        runCapture(["sysctl", "-n", "hw.memsize"], { ignoreError: true }),
+        10,
+      );
       if (!memBytes || isNaN(memBytes)) return null;
       const totalRamMB = Math.floor(memBytes / 1024 / 1024);
       // macOS does not use traditional swap files in the same way
@@ -640,9 +821,9 @@ function getExistingSwapResult(mem: MemoryInfo): SwapResult | null {
   }
 
   try {
-    runCapture("sudo swapon /swapfile", { ignoreError: false });
+    runCapture(["sudo", "swapon", "/swapfile"], { ignoreError: false });
     return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
-  } catch (err: unknown) {
+  } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
@@ -653,10 +834,10 @@ function getExistingSwapResult(mem: MemoryInfo): SwapResult | null {
 
 function checkSwapDiskSpace(): SwapResult | null {
   try {
-    const dfOut = runCapture("df / --output=avail -k 2>/dev/null | tail -1", {
+    const dfOut = runCapture(["df", "/", "--output=avail", "-k"], {
       ignoreError: true,
     });
-    const freeKB = parseInt((dfOut || "").trim(), 10);
+    const freeKB = parseInt((dfOut || "").split(/\r?\n/).at(-1)?.trim() || "", 10);
     if (!isNaN(freeKB) && freeKB < 5000000) {
       return {
         ok: false,
@@ -673,7 +854,7 @@ function checkSwapDiskSpace(): SwapResult | null {
 function writeManagedSwapMarker(): void {
   const nemoclawDir = path.join(os.homedir(), ".nemoclaw");
   if (!fs.existsSync(nemoclawDir)) {
-    runCapture(`mkdir -p ${nemoclawDir}`, { ignoreError: true });
+    runCapture(["mkdir", "-p", nemoclawDir], { ignoreError: true });
   }
 
   try {
@@ -685,8 +866,8 @@ function writeManagedSwapMarker(): void {
 
 function cleanupPartialSwap(): void {
   try {
-    runCapture("sudo swapoff /swapfile 2>/dev/null || true", { ignoreError: true });
-    runCapture("sudo rm -f /swapfile", { ignoreError: true });
+    runCapture(["sudo", "swapoff", "/swapfile"], { ignoreError: true });
+    runCapture(["sudo", "rm", "-f", "/swapfile"], { ignoreError: true });
   } catch {
     // Best effort cleanup
   }
@@ -694,20 +875,30 @@ function cleanupPartialSwap(): void {
 
 function createSwapfile(mem: MemoryInfo): SwapResult {
   try {
-    runCapture("sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none", {
-      ignoreError: false,
-    });
-    runCapture("sudo chmod 600 /swapfile", { ignoreError: false });
-    runCapture("sudo mkswap /swapfile", { ignoreError: false });
-    runCapture("sudo swapon /swapfile", { ignoreError: false });
     runCapture(
-      "grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab",
-      { ignoreError: false },
+      ["sudo", "dd", "if=/dev/zero", "of=/swapfile", "bs=1M", "count=4096", "status=none"],
+      {
+        ignoreError: false,
+      },
     );
+    runCapture(["sudo", "chmod", "600", "/swapfile"], { ignoreError: false });
+    runCapture(["sudo", "mkswap", "/swapfile"], { ignoreError: false });
+    runCapture(["sudo", "swapon", "/swapfile"], { ignoreError: false });
+    const fstab = runCapture(["sudo", "cat", "/etc/fstab"], { ignoreError: true });
+    if (
+      !String(fstab || "")
+        .split(/\r?\n/)
+        .some((line) => /^\/swapfile\s/.test(line.trim()))
+    ) {
+      runCapture(["sudo", "tee", "-a", "/etc/fstab"], {
+        ignoreError: false,
+        input: "/swapfile none swap sw 0 0\n",
+      });
+    }
     writeManagedSwapMarker();
 
     return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
-  } catch (err: unknown) {
+  } catch (err) {
     cleanupPartialSwap();
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -728,9 +919,16 @@ function createSwapfile(mem: MemoryInfo): SwapResult {
  * image push.
  */
 export function ensureSwap(minTotalMB?: number, opts: EnsureSwapOpts = {}): SwapResult {
-  const o = {
-    platform: process.platform as NodeJS.Platform,
-    memoryInfo: null as MemoryInfo | null,
+  const o: {
+    platform: NodeJS.Platform;
+    memoryInfo: MemoryInfo | null;
+    swapfileExists: boolean;
+    dryRun: boolean;
+    interactive: boolean;
+    getMemoryInfoImpl: (opts: GetMemoryInfoOpts) => MemoryInfo | null;
+  } = {
+    platform: process.platform,
+    memoryInfo: null,
     swapfileExists: fs.existsSync("/swapfile"),
     dryRun: false,
     interactive: process.stdout.isTTY && !process.env.NEMOCLAW_NON_INTERACTIVE,
@@ -775,4 +973,187 @@ export function ensureSwap(minTotalMB?: number, opts: EnsureSwapOpts = {}): Swap
   }
 
   return createSwapfile(mem);
+}
+
+// ── Container DNS probe (#2101) ───────────────────────────────────
+// The sandbox build's `npm ci` step resolves `registry.npmjs.org` from inside
+// a docker container. Networks that block outbound UDP:53 to public resolvers
+// (common in corporate environments that force DNS-over-TLS on the host) leave
+// the container unable to resolve anything — npm retries for ~15 min and then
+// prints the cryptic `Exit handler never called`. This probe catches that
+// state in a few seconds so the user gets a targeted error up front.
+
+export interface DnsProbeResult {
+  ok: boolean;
+  reason?:
+    | "no_output"
+    | "resolution_failed"
+    | "servers_unreachable"
+    | "image_pull_failed"
+    | "error";
+  details?: string;
+}
+
+export interface ProbeContainerDnsOpts {
+  /** Override the docker run command. */
+  command?: readonly string[];
+  /** Inject captured output (bypasses execution). */
+  outputOverride?: string | null;
+  /** Override runCapture. */
+  runCaptureImpl?: NullableRunCaptureFn;
+}
+
+/**
+ * Hard ceiling on the DNS probe: Node kills the child after this many
+ * milliseconds. 20 s is roughly 1.3× busybox nslookup's own retry budget
+ * (3 × 5 s), which leaves headroom for image pull on a cold cache without
+ * letting a wedged docker daemon stall preflight forever.
+ */
+const PROBE_TIMEOUT_MS = 20_000;
+
+/**
+ * Discover the IPv4 gateway address of docker's default bridge network.
+ * Returns null if docker isn't running, the inspect command fails, or the
+ * output doesn't parse. Callers use this to tailor DNS remediation hints
+ * to the user's actual bridge IP instead of assuming the conventional
+ * `172.17.0.1`.
+ */
+export function getDockerBridgeGatewayIp(
+  runCaptureImpl: NullableRunCaptureFn = (cmd, o) =>
+    runCapture(cmd, { ignoreError: o?.ignoreError ?? false }),
+): string | null {
+  let raw: string | null;
+  try {
+    raw = runCaptureImpl(
+      [
+        "docker",
+        "network",
+        "inspect",
+        "bridge",
+        "--format",
+        "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
+      ],
+      { ignoreError: true },
+    );
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  // Dual-stack bridges have multiple entries in .IPAM.Config, and the
+  // `{{range}}` template concatenates their gateways with no separator —
+  // e.g., "172.17.0.1fd00:abcd::1" for an IPv4+IPv6 bridge. Word-boundary
+  // anchors don't help here because the boundary between "1" and "f" is
+  // absent (both are word chars) and a trailing IPv6 that ends in a digit
+  // ("...::1") eats the would-be start anchor of the IPv4. Scan for the
+  // first dotted-quad anywhere in the output and validate the octets.
+  const match = trimmed.match(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
+  if (!match) return null;
+  const octets = match[0].split(".").map((s) => Number(s));
+  if (octets.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) return null;
+  return match[0];
+}
+
+/**
+ * Probe whether DNS resolution works from inside a docker container.
+ * Returns `{ ok: true }` when a busybox test container resolves
+ * `registry.npmjs.org`; otherwise returns a structured `reason` +
+ * truncated `details` so callers can tailor the error message:
+ *
+ * - `image_pull_failed` — the busybox image couldn't be pulled (docker
+ *   daemon can't reach the registry). Distinct from DNS-inside-container.
+ * - `servers_unreachable` — resolver was unreachable (UDP:53 dropped).
+ *   The typical #2101 signature on corp-firewalled hosts.
+ * - `resolution_failed` — resolver answered but lookup failed (NXDOMAIN
+ *   or similar). Unusual.
+ * - `no_output` / `error` — probe couldn't run at all.
+ */
+export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeResult {
+  // Cap the whole probe via Node's spawn-level timeout (works on every
+  // platform Node supports — no dependency on a host-side `timeout`
+  // binary). Child process is killed, runCapture returns "" under
+  // ignoreError, and we fall through to the `no_output` branch.
+  //
+  // We funnel through `sh -c` so we can `2>&1` the docker pull progress
+  // and busybox nslookup diagnostics into stdout — both write the
+  // signatures the parser below depends on (`Error response from daemon`,
+  // `no servers could be reached`) to stderr. Every token in the script
+  // is a fixed constant, so no shell injection surface.
+  const command = opts.command ?? [
+    "sh",
+    "-c",
+    "docker run --rm --pull=missing busybox:latest nslookup registry.npmjs.org 2>&1",
+  ];
+
+  let output: string | null | undefined = opts.outputOverride;
+  if (output === undefined) {
+    try {
+      const runCaptureImpl =
+        opts.runCaptureImpl ??
+        ((cmd: readonly string[], o?: RunCaptureOpts) =>
+          runCapture(cmd, {
+            ignoreError: o?.ignoreError ?? false,
+            timeout: o?.timeout,
+          }));
+      output = runCaptureImpl(command, {
+        ignoreError: true,
+        timeout: PROBE_TIMEOUT_MS,
+      });
+    } catch (e) {
+      return {
+        ok: false,
+        reason: "error",
+        details: String((e as Error)?.message ?? e),
+      };
+    }
+  }
+
+  // Treat whitespace-only output (e.g., bare newlines left by a killed
+  // child) the same as empty — otherwise the subsequent regex checks all
+  // miss and we'd mis-report it as `resolution_failed`.
+  if (!output || !output.trim()) {
+    return {
+      ok: false,
+      reason: "no_output",
+      details: "docker run produced no output (timed out or failed to start)",
+    };
+  }
+
+  // Success: busybox nslookup prints "Name:" and "Address:" lines.
+  if (/\bName:\s*registry\.npmjs\.org\b/.test(output) && /\bAddress:\s*\d/.test(output)) {
+    return { ok: true };
+  }
+
+  // Docker image-pull failure — the probe never got to run nslookup, so
+  // framing this as a DNS problem would mislead. Signatures from
+  // `docker run --pull=missing` when the daemon can't fetch the image.
+  if (
+    /Error response from daemon:.*(pull|manifest|not found)|pull access denied|manifest.*unknown|unauthorized: authentication required|Head.*https?:\/\/.*: dial/i.test(
+      output,
+    )
+  ) {
+    return {
+      ok: false,
+      reason: "image_pull_failed",
+      details: output.slice(-400),
+    };
+  }
+
+  // UDP:53 egress blocked — the #2101 signature. nslookup gave up after
+  // its retry budget without getting any DNS response.
+  if (/no servers could be reached|connection timed out/i.test(output)) {
+    return {
+      ok: false,
+      reason: "servers_unreachable",
+      details: output.slice(-400),
+    };
+  }
+
+  // Something else — resolver responded but couldn't answer.
+  return {
+    ok: false,
+    reason: "resolution_failed",
+    details: output.slice(-400),
+  };
 }
