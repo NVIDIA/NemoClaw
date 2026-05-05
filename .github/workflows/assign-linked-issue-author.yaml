@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: assign-linked-issue-author
+
+# pull_request_target runs in the base repo context, giving the token write
+# access even for fork PRs. This workflow is safe because it only reads PR
+# metadata and edits linked issue assignees. Do NOT add a checkout step or run
+# PR-sourced code here.
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, ready_for_review]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  assign-linked-issue-author:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Assign linked issues to PR authors
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          assign_author_to_issue() {
+            local issue_number="$1"
+            local author="$2"
+            local pr_number="$3"
+
+            if gh api "repos/$REPO/issues/$issue_number/assignees/$author" >/dev/null 2>&1; then
+              gh issue edit "$issue_number" --repo "$REPO" --add-assignee "$author"
+              echo "Assigned issue #$issue_number to @$author from PR #$pr_number"
+            else
+              echo "::notice::@$author cannot be assigned to issue #$issue_number from PR #$pr_number"
+            fi
+          }
+
+          process_pr_json() {
+            local pr_json="$1"
+            local author
+            local issues
+            local pr_number
+
+            pr_number="$(jq -r '.number' <<<"$pr_json")"
+            author="$(jq -r '.author.login // empty' <<<"$pr_json")"
+
+            if [ -z "$author" ]; then
+              echo "::notice::PR #$pr_number has no assignable author"
+              return
+            fi
+
+            issues="$(jq -r '.closingIssuesReferences[]?.number' <<<"$pr_json")"
+
+            if [ -z "$issues" ]; then
+              echo "PR #$pr_number does not reference any closing issues"
+              return
+            fi
+
+            while IFS= read -r issue_number; do
+              [ -n "$issue_number" ] || continue
+              assign_author_to_issue "$issue_number" "$author" "$pr_number"
+            done <<<"$issues"
+          }
+
+          if [ -n "${PR_NUMBER:-}" ]; then
+            pr_json="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author,closingIssuesReferences,number)"
+            process_pr_json "$pr_json"
+          else
+            gh pr list --repo "$REPO" --state open --limit 1000 --json author,closingIssuesReferences,number |
+              jq -c '.[]' |
+              while IFS= read -r pr_json; do
+                [ -n "$pr_json" ] || continue
+                process_pr_json "$pr_json"
+              done
+          fi

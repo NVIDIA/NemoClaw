@@ -1150,7 +1150,7 @@ function upsertProvider(
 type MessagingTokenDef = { name: string; envKey: string; token: string | null };
 
 type EndpointValidationResult =
-  | { ok: true; api: string; retry?: undefined }
+  | { ok: true; api: string | null; retry?: undefined }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
 
 type SelectionDrift = {
@@ -2235,8 +2235,12 @@ async function validateOpenAiLikeSelection(
     }
     return { ok: false, retry };
   }
-  console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
-  return { ok: true, api: probe.api };
+  if (probe.note) {
+    console.log(`  ℹ ${probe.note}`);
+  } else {
+    console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
+  }
+  return { ok: true, api: probe.api ?? "openai-completions" };
 }
 
 async function validateAnthropicSelectionWithRetryMessage(
@@ -2285,8 +2289,12 @@ async function validateCustomOpenAiLikeSelection(
     probeStreaming: true,
   });
   if (probe.ok) {
-    console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
-    return { ok: true, api: probe.api };
+    if (probe.note) {
+      console.log(`  ℹ ${probe.note}`);
+    } else {
+      console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
+    }
+    return { ok: true, api: probe.api ?? "openai-completions" };
   }
   console.error(`  ${label} endpoint validation failed.`);
   console.error(`  ${probe.message}`);
@@ -5956,9 +5964,10 @@ async function setupNim(
               console.error("  Local NVIDIA NIM base URL could not be determined.");
               process.exit(1);
             }
+            const nimValidationUrl = getLocalProviderValidationBaseUrl(provider) || endpointUrl;
             const validation = await validateOpenAiLikeSelection(
               "Local NVIDIA NIM",
-              endpointUrl,
+              nimValidationUrl,
               requireValue(model, "Expected a Local NVIDIA NIM model after startup"),
               null,
             );
@@ -6107,24 +6116,61 @@ async function setupNim(
         if (process.platform === "darwin") {
           console.log("  Installing Ollama via Homebrew...");
           run(["brew", "install", "ollama"], { ignoreError: true });
+          // brew install doesn't auto-start a service; launch directly.
+          // Shell required: backgrounding (&), env var prefix, output redirection.
+          console.log("  Starting Ollama...");
+          runShell(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+            ignoreError: true,
+          });
+          sleep(2);
         } else {
           console.log("  Installing Ollama via official installer...");
           runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
-        }
-        // On WSL the official installer enabled and started ollama.service
-        // with the default 127.0.0.1 binding (which is what we want). Skip
-        // our own `ollama serve` so systemd owns the daemon and journalctl
-        // logs stay intact. On Linux native we still need the manual start
-        // because systemd's default 127.0.0.1 isn't reachable from the
-        // sandbox via host-gateway; we override with OLLAMA_HOST=0.0.0.0.
-        // On macOS, brew install doesn't auto-start.
-        // Shell required: backgrounding (&), env var prefix, output redirection.
-        const installerStartedDaemon = isWsl() && !!findReachableOllamaHost();
-        if (!installerStartedDaemon) {
-          console.log("  Starting Ollama...");
-          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
-          runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          // Give the just-started ollama.service a moment to bind port
+          // 11434 before we probe or apply the systemd drop-in override.
           sleep(2);
+          // install.sh only creates ollama.service when systemctl is present.
+          // On non-systemd Linux (Alpine/OpenRC, container images, etc.) the
+          // installer just lays down the binary and we have to start it
+          // ourselves.
+          const hasOllamaSystemdUnit = !!runCapture(
+            [
+              "sh",
+              "-c",
+              "command -v systemctl >/dev/null && systemctl list-unit-files ollama.service --no-legend 2>/dev/null | head -n1",
+            ],
+            { ignoreError: true },
+          ).trim();
+          // Linux native + systemd: override OLLAMA_HOST=0.0.0.0 via a drop-in
+          // and let systemd own the daemon (avoids racing the installer's
+          // daemon with our own `ollama serve`). WSL keeps the default
+          // 127.0.0.1 binding (wslrelay forwards it). No-systemd / daemon
+          // failed to start: manual launch with the right binding.
+          if (!isWsl() && hasOllamaSystemdUnit) {
+            console.log("  Configuring Ollama systemd override...");
+            const dropInBody = `[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}"\n`;
+            const tmpDropIn = secureTempFile("nemoclaw-ollama-override", ".conf");
+            fs.writeFileSync(tmpDropIn, dropInBody, { mode: 0o644 });
+            runShell(
+              `sudo install -D -m 0644 ${shellQuote(tmpDropIn)} ${shellQuote("/etc/systemd/system/ollama.service.d/override.conf")} && sudo systemctl daemon-reload && sudo systemctl restart ollama`,
+              { ignoreError: true },
+            );
+            cleanupTempDir(tmpDropIn, "nemoclaw-ollama-override");
+            // Retry the probe for a few seconds before giving up — systemd's
+            // daemon may still be binding the port; a single probe could falsely
+            // conclude it's down and spawn a duplicate `ollama serve`.
+            for (let i = 0; i < 10; i++) {
+              if (findReachableOllamaHost()) break;
+              sleep(1);
+            }
+          }
+          // Fall back to manual start if systemd path failed or isn't present.
+          if (!findReachableOllamaHost()) {
+            console.log("  Starting Ollama...");
+            const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
+            runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+            sleep(2);
+          }
         }
         if (isWsl()) {
           // WSL2 doesn't need the proxy — Docker reaches the host directly.

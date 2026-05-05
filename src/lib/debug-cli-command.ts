@@ -3,18 +3,19 @@
 
 /* v8 ignore start -- thin oclif adapter covered through CLI integration tests. */
 
-import { Command } from "@oclif/core";
+import { Command, Flags } from "@oclif/core";
 
-import type { CaptureOpenshellResult } from "./openshell";
-import type { RunDebugCommandDeps } from "./debug-command";
 import { CLI_NAME } from "./branding";
 import { runDebug } from "./debug";
-import { runDebugCommand } from "./debug-command";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
+import type { DebugOptions } from "./debug";
+import type { RunDebugCommandDeps } from "./debug-command";
+import { runDebugCommandWithOptions } from "./debug-command";
+import type { CaptureOpenshellResult } from "./openshell";
 import { captureOpenshellCommand } from "./openshell";
-import { parseLiveSandboxNames } from "./runtime-recovery";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
 import * as registry from "./registry";
 import { resolveOpenshell } from "./resolve-openshell";
+import { parseLiveSandboxNames } from "./runtime-recovery";
 
 const useColor = !process.env.NO_COLOR && !!process.stderr.isTTY;
 const B = useColor ? "\x1b[1m" : "";
@@ -70,13 +71,28 @@ function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
 
 export default class DebugCliCommand extends Command {
   static id = "debug";
-  static strict = false;
+  static strict = true;
   static summary = "Collect diagnostics for bug reports";
   static description = "Collect NemoClaw diagnostic information.";
-  static usage = ["debug [--quick] [--output FILE] [--sandbox NAME]"];
+  static usage = ["debug [--quick|-q] [--output FILE|-o FILE] [--sandbox NAME]"];
+  static examples = [
+    "<%= config.bin %> debug --quick",
+    "<%= config.bin %> debug --sandbox alpha",
+    "<%= config.bin %> debug --output /tmp/nemoclaw-debug.tar.gz",
+  ];
+  static flags = {
+    help: Flags.help({ char: "h" }),
+    quick: Flags.boolean({ char: "q", description: "Only collect minimal diagnostics" }),
+    output: Flags.string({ char: "o", description: "Write a tarball to FILE" }),
+    sandbox: Flags.string({ description: "Target sandbox name" }),
+  };
 
   public async run(): Promise<void> {
-    this.parsed = true;
-    runDebugCommand(this.argv, buildDebugCommandDeps(this.config.root));
+    const { flags } = await this.parse(DebugCliCommand);
+    const options: DebugOptions = {};
+    if (flags.quick) options.quick = true;
+    if (flags.output) options.output = flags.output;
+    if (flags.sandbox) options.sandboxName = flags.sandbox;
+    runDebugCommandWithOptions(options, buildDebugCommandDeps(this.config.root));
   }
 }

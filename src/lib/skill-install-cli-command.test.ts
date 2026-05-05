@@ -19,12 +19,12 @@ describe("SkillInstallCliCommand", () => {
     expect(sandboxSkillInstall).toHaveBeenCalledWith("alpha", ["install", "/tmp/my-skill"]);
   });
 
-  it("lets legacy skill install validation report a missing path", async () => {
+  it("requires an install path before dispatch", async () => {
     const sandboxSkillInstall = vi.fn().mockResolvedValue(undefined);
     setSkillInstallRuntimeBridgeFactoryForTest(() => ({ sandboxSkillInstall }));
 
-    await SkillInstallCliCommand.run(["alpha"], rootDir);
+    await expect(SkillInstallCliCommand.run(["alpha"], rootDir)).rejects.toThrow(/path/i);
 
-    expect(sandboxSkillInstall).toHaveBeenCalledWith("alpha", ["install"]);
+    expect(sandboxSkillInstall).not.toHaveBeenCalled();
   });
 });

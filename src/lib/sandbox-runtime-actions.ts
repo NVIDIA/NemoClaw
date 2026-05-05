@@ -5,7 +5,6 @@
 
 import type { SandboxConnectOptions } from "./sandbox-connect-action";
 import type { SandboxLogsOptions } from "./sandbox-logs-options";
-import { getNemoClawRuntimeBridge } from "./nemoclaw-runtime-bridge";
 
 export async function connectSandbox(
   sandboxName: string,

@@ -67,6 +67,14 @@ export function parseDebugArgs(
   return opts;
 }
 
+export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebugCommandDeps): void {
+  const opts = { ...options };
+  if (!opts.sandboxName) {
+    opts.sandboxName = deps.getDefaultSandbox();
+  }
+  deps.runDebug(opts);
+}
+
 export function runDebugCommand(args: string[], deps: RunDebugCommandDeps): void {
   const opts = parseDebugArgs(args, deps);
   deps.runDebug(opts);

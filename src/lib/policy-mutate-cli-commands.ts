@@ -55,6 +55,11 @@ export class PolicyAddCommand extends Command {
   static summary = "Add a network or filesystem policy preset";
   static description = "Add a built-in or custom policy preset to a sandbox.";
   static usage = ["<name> policy-add [preset] [--yes|-y] [--dry-run] [--from-file <path>] [--from-dir <path>]"];
+  static examples = [
+    "<%= config.bin %> alpha policy-add slack --yes",
+    "<%= config.bin %> alpha policy-add --from-file ./policy.yaml --dry-run",
+    "<%= config.bin %> alpha policy-add --from-dir ./policies --yes",
+  ];
   static args = { sandboxName: sandboxNameArg, preset: presetArg };
   static flags = {
     help: Flags.help({ char: "h" }),
@@ -82,6 +87,10 @@ export class PolicyRemoveCommand extends Command {
   static summary = "Remove an applied policy preset";
   static description = "Remove a built-in or custom policy preset from a sandbox.";
   static usage = ["<name> policy-remove [preset] [--yes|-y] [--dry-run]"];
+  static examples = [
+    "<%= config.bin %> alpha policy-remove slack --yes",
+    "<%= config.bin %> alpha policy-remove slack --dry-run",
+  ];
   static args = { sandboxName: sandboxNameArg, preset: presetArg };
   static flags = {
     help: Flags.help({ char: "h" }),

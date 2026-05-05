@@ -36,7 +36,6 @@ const {
 } = require("./lib/docker");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
 const { hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
-const { prompt: askPrompt } = require("./lib/credentials");
 const registry = require("./lib/registry");
 import type { SandboxEntry } from "./lib/registry";
 const nim = require("./lib/nim");
@@ -48,10 +47,8 @@ const { buildStatusCommandDeps } = require("./lib/status-command-deps");
 const { help, version } = require("./lib/root-help-action");
 const onboardSession = require("./lib/onboard-session");
 import type { Session } from "./lib/onboard-session";
-const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
 const { stripAnsi } = require("./lib/openshell");
 const {
-  captureOpenshell,
   getInstalledOpenshellVersionOrNull,
   runOpenshell,
 } = require("./lib/openshell-runtime");
@@ -70,11 +67,9 @@ const {
 const {
   getSandboxDeleteOutcome,
 } = require("./lib/sandbox-destroy-action");
-const { rebuildSandbox: sandboxRebuild } = require("./lib/sandbox-rebuild-action");
 const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
 const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
 const agentRuntime = require("../bin/lib/agent-runtime");
-const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
 const { parseRestoreArgs } = sandboxState;
 const {
@@ -119,9 +114,6 @@ const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 const DEFAULT_LOGS_PROBE_TIMEOUT_MS = 5000;
 const LOGS_PROBE_TIMEOUT_ENV = "NEMOCLAW_LOGS_PROBE_TIMEOUT_MS";
 
-exports.runtimeBridge = {
-  upgradeSandboxes,
-};
 /** Print user-facing guidance when OpenShell is too old to support `openshell logs`. */
 function printOldLogsCompatibilityGuidance(installedVersion = null) {
   const versionText = installedVersion ? ` (${installedVersion})` : "";
@@ -148,117 +140,6 @@ async function runOclif(commandId: string, args: string[] = []): Promise<void> {
 
 function printSandboxActionUsage(action: string): void {
   console.log(`  Usage: ${CLI_NAME} <name> ${action}`);
-}
-
-// ── Rebuild ──────────────────────────────────────────────────────
-
-async function upgradeSandboxes(args: string[] = []): Promise<void> {
-  const checkOnly = args.includes("--check");
-  const auto = args.includes("--auto");
-  const skipConfirm = auto || args.includes("--yes");
-
-  const sandboxes = registry.listSandboxes().sandboxes;
-  if (sandboxes.length === 0) {
-    console.log("  No sandboxes found in the registry.");
-    return;
-  }
-
-  // Query live sandboxes so we can tell the user which are running
-  const liveResult = captureOpenshell(["sandbox", "list"], { ignoreError: true });
-  if (liveResult.status !== 0) {
-    console.error("  Failed to query running sandboxes from OpenShell.");
-    console.error("  Ensure OpenShell is running: openshell status");
-    process.exit(liveResult.status || 1);
-  }
-  const liveNames = parseLiveSandboxNames(liveResult.output || "");
-
-  // Classify sandboxes as stale, unknown, or current
-  const stale = [];
-  const unknown = [];
-  for (const sb of sandboxes) {
-    const versionCheck = sandboxVersion.checkAgentVersion(sb.name);
-    if (versionCheck.isStale) {
-      stale.push({
-        name: sb.name,
-        current: versionCheck.sandboxVersion,
-        expected: versionCheck.expectedVersion,
-        running: liveNames.has(sb.name),
-      });
-    } else if (versionCheck.detectionMethod === "unavailable") {
-      unknown.push({
-        name: sb.name,
-        expected: versionCheck.expectedVersion,
-        running: liveNames.has(sb.name),
-      });
-    }
-  }
-
-  if (stale.length === 0 && unknown.length === 0) {
-    console.log("  All sandboxes are up to date.");
-    return;
-  }
-
-  if (stale.length > 0) {
-    console.log(`\n  ${B}Stale sandboxes:${R}`);
-    for (const s of stale) {
-      const status = s.running ? `${G}running${R}` : `${D}stopped${R}`;
-      console.log(`    ${s.name}  v${s.current || "?"} → v${s.expected}  (${status})`);
-    }
-  }
-  if (unknown.length > 0) {
-    console.log(`\n  ${YW}Unknown version:${R}`);
-    for (const s of unknown) {
-      const status = s.running ? `${G}running${R}` : `${D}stopped${R}`;
-      console.log(`    ${s.name}  v? → v${s.expected}  (${status})`);
-    }
-  }
-  console.log("");
-
-  if (checkOnly) {
-    if (stale.length > 0) console.log(`  ${stale.length} sandbox(es) need upgrading.`);
-    if (unknown.length > 0) {
-      console.log(
-        `  ${unknown.length} sandbox(es) could not be version-checked; start them and rerun, or rebuild manually.`,
-      );
-    }
-    console.log(`  Run \`${CLI_NAME} upgrade-sandboxes\` to rebuild them.`);
-    return;
-  }
-
-  const rebuildable = stale.filter((s: { running: boolean }) => s.running);
-  const stopped = stale.filter((s: { running: boolean }) => !s.running);
-  if (stopped.length > 0) {
-    console.log(`  ${D}Skipping ${stopped.length} stopped sandbox(es) — start them first.${R}`);
-  }
-  if (rebuildable.length === 0) {
-    console.log("  No running stale sandboxes to rebuild.");
-    return;
-  }
-
-  let rebuilt = 0;
-  let failed = 0;
-  for (const s of rebuildable) {
-    if (!skipConfirm) {
-      const answer = await askPrompt(`  Rebuild '${s.name}'? [y/N]: `);
-      if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-        console.log(`  Skipped '${s.name}'.`);
-        continue;
-      }
-    }
-    try {
-      await sandboxRebuild(s.name, ["--yes"], { throwOnError: true });
-      rebuilt++;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error(`  ${YW}\u26a0${R} Failed to rebuild '${s.name}': ${errorMessage}`);
-      failed++;
-    }
-  }
-
-  console.log("");
-  if (rebuilt > 0) console.log(`  ${G}\u2713${R} ${rebuilt} sandbox(es) rebuilt.`);
-  if (failed > 0) console.log(`  ${YW}\u26a0${R} ${failed} sandbox(es) failed — see errors above.`);
-  if (failed > 0) process.exit(1);
 }
 
 // ── Pre-upgrade backup ───────────────────────────────────────────
@@ -368,47 +249,15 @@ async function runDispatchResult(
       console.error(`  Unknown action: ${result.action}`);
       console.error(`  Valid actions: ${VALID_SANDBOX_ACTIONS}`);
       process.exit(1);
-    case "legacy": {
-      const sandboxName = opts.sandboxName;
-      const actionArgs = opts.actionArgs ?? [];
-      if (!sandboxName) {
-        throw new Error(`Missing sandbox name for legacy dispatch target ${result.target}`);
-      }
-      switch (result.target) {
-        case "policy-add": {
-          const { addSandboxPolicy } = require("./lib/policy-channel-actions") as {
-            addSandboxPolicy: (sandboxName: string, args?: string[]) => Promise<void>;
-          };
-          await addSandboxPolicy(sandboxName, actionArgs);
-          return;
-        }
-        case "skill": {
-          const { installSandboxSkill } = require("./lib/sandbox-skill-install-action") as {
-            installSandboxSkill: (sandboxName: string, args?: string[]) => Promise<void>;
-          };
-          await installSandboxSkill(sandboxName, actionArgs);
-          return;
-        }
-        case "snapshot": {
-          const { runSandboxSnapshot } = require("./lib/snapshot-action") as {
-            runSandboxSnapshot: (sandboxName: string, args: string[]) => Promise<void>;
-          };
-          await runSandboxSnapshot(sandboxName, actionArgs);
-          return;
-        }
-        default:
-          throw new Error(`Unhandled legacy dispatch target ${result.target}`);
-      }
-    }
   }
 }
 
 // ── Dispatch ─────────────────────────────────────────────────────
 
-const [cmd, ...args] = process.argv.slice(2);
-
 // eslint-disable-next-line complexity
-const mainPromise = (async () => {
+async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const [cmd, ...args] = argv;
+
   // No command → help
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     await runOclif("root:help", []);
@@ -515,6 +364,11 @@ const mainPromise = (async () => {
 
   console.error(`  Run '${CLI_NAME} help' for usage.`);
   process.exit(1);
-})();
+}
 
-exports.mainPromise = mainPromise;
+exports.main = main;
+module.exports.dispatchCli = main;
+// Compatibility for tests that require the CLI module and await completion.
+// Prefer calling main(argv) directly in new in-process harnesses.
+exports.mainPromise =
+  process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH === "1" ? Promise.resolve() : main();

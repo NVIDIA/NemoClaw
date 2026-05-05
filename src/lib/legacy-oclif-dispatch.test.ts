@@ -29,6 +29,13 @@ describe("resolveSandboxOclifDispatch", () => {
     });
   });
 
+  it("keeps sandbox doctor help public", () => {
+    expect(resolveSandboxOclifDispatch("alpha", "doctor", ["--help"])).toEqual({
+      kind: "help",
+      usage: "doctor [--json]",
+    });
+  });
+
   it("keeps sandbox logs help public with supported filters", () => {
     expect(resolveSandboxOclifDispatch("alpha", "logs", ["--help"])).toEqual({
       kind: "help",
@@ -48,6 +55,59 @@ describe("resolveSandboxOclifDispatch", () => {
     expect(resolveSandboxOclifDispatch("alpha", "recover", ["--help"])).toEqual({
       kind: "help",
       usage: "recover",
+    });
+  });
+
+  it("routes sandbox config set through oclif with security flags intact", () => {
+    expect(
+      resolveSandboxOclifDispatch("alpha", "config", [
+        "set",
+        "--key",
+        "inference.endpoints",
+        "--value",
+        "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
+      ]),
+    ).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:config:set",
+      args: [
+        "alpha",
+        "--key",
+        "inference.endpoints",
+        "--value",
+        "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
+      ],
+    });
+  });
+
+  it("routes policy-add missing-value errors through the strict oclif adapter", () => {
+    expect(resolveSandboxOclifDispatch("alpha", "policy-add", ["--from-file"])).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:policy-add",
+      args: ["alpha", "--from-file"],
+    });
+  });
+
+  it("routes skill help and unknown subcommands through oclif", () => {
+    expect(resolveSandboxOclifDispatch("alpha", "skill", ["--help"])).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:skill",
+      args: ["alpha", "--help"],
+    });
+    expect(resolveSandboxOclifDispatch("alpha", "skill", ["bogus"])).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:skill",
+      args: ["alpha", "bogus"],
+    });
+  });
+
+  it("routes snapshot unknown subcommands through oclif", () => {
+    expect(resolveSandboxOclifDispatch("alpha", "snapshot", ["bogus"])).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:snapshot",
+      args: ["alpha", "bogus"],
     });
   });
 });

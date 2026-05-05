@@ -14,6 +14,7 @@ import { execTimeout } from "./helpers/timeouts";
 
 const requireForTest = createRequire(import.meta.url);
 const readline = requireForTest("node:readline") as typeof import("node:readline");
+const YAML = requireForTest("yaml");
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials.js"));
@@ -188,6 +189,22 @@ describe("policies", () => {
       expect(content).toContain("port: 11434");
       expect(content).toContain("port: 11435");
       expect(content).toContain("port: 8000");
+    });
+
+    it("local-inference preset allowlists private host-gateway IP ranges", () => {
+      const content = requirePresetContent(policies.loadPreset("local-inference"));
+      const parsed = YAML.parse(content);
+      const endpoints = parsed.network_policies.local_inference.endpoints;
+      const expectedRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+
+      for (const port of [11434, 11435, 8000]) {
+        const endpoint = endpoints.find(
+          (item: { host?: string; port?: number; allowed_ips?: string[] }) =>
+            item.host === "host.openshell.internal" && item.port === port,
+        );
+        expect(endpoint, `missing host-gateway endpoint for port ${port}`).toBeDefined();
+        expect(endpoint?.allowed_ips).toEqual(expectedRanges);
+      }
     });
 
     it("local-inference preset includes openclaw and common tool binaries", () => {
@@ -1496,7 +1513,8 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
     it("errors when --from-file is missing its path argument", () => {
       const result = runPolicyAddExternal(["--from-file"]);
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/--from-file requires a path argument/);
+      expect(result.stderr).toMatch(/--from-file/);
+      expect(result.stderr).toMatch(/value|argument|path/);
     });
 
     it("applies every preset in --from-dir in sorted order and aborts on the first failure", () => {
