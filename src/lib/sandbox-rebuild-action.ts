@@ -9,12 +9,18 @@ import {
   normalizeRebuildSandboxOptions,
   type RebuildSandboxOptions,
 } from "./lifecycle-options";
+
 const { hydrateCredentialEnv } = require("./onboard") as {
   hydrateCredentialEnv: (name: string) => string | null;
 };
+const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("./onboard-providers") as {
+  LOCAL_INFERENCE_PROVIDERS: string[];
+  REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
+};
+
 import * as nim from "./nim";
-import * as onboardSession from "./onboard-session";
 import type { Session } from "./onboard-session";
+import * as onboardSession from "./onboard-session";
 import { captureOpenshell, runOpenshell } from "./openshell-runtime";
 import * as policies from "./policies";
 import * as registry from "./registry";
@@ -28,12 +34,23 @@ import {
 } from "./sandbox-session-state";
 import * as sandboxState from "./sandbox-state";
 import * as sandboxVersion from "./sandbox-version";
-import { B, D, G, R, RD as _RD, YW } from "./terminal-style";
+import { RD as _RD, B, D, G, R, YW } from "./terminal-style";
 
 const agentRuntime = require("../../bin/lib/agent-runtime");
 
 function _rebuildLog(msg: string) {
   console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${msg}${R}`);
+}
+
+function getRebuildCredentialEnvFromRegistry(provider: string | null | undefined): string | null {
+  if (!provider || LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
+    return null;
+  }
+  const remoteConfig =
+    provider === "nvidia-nim"
+      ? REMOTE_PROVIDER_CONFIG.build
+      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
+  return remoteConfig?.credentialEnv || null;
 }
 
 export async function rebuildSandbox(
@@ -48,7 +65,7 @@ export async function rebuildSandbox(
   // When called from upgradeSandboxes in a loop, throwOnError prevents
   // process.exit from aborting the entire batch on the first failure.
   const bail = opts.throwOnError
-    ? (msg: string, code = 1) => {
+    ? (msg: string, _code = 1) => {
         throw new Error(msg);
       }
     : (_msg: string, code = 1) => process.exit(code);
@@ -97,6 +114,7 @@ export async function rebuildSandbox(
   }
   console.log("");
 
+  let rebuildConfirmed = false;
   if (!skipConfirm) {
     if (rebuildActiveSessionCount > 0) {
       const plural = rebuildActiveSessionCount > 1 ? "sessions" : "session";
@@ -118,6 +136,7 @@ export async function rebuildSandbox(
       console.log("  Cancelled.");
       return;
     }
+    rebuildConfirmed = true;
   }
 
   // Step 0: Preflight — verify recreate preconditions BEFORE destroying
@@ -128,15 +147,16 @@ export async function rebuildSandbox(
   let rebuildCredentialEnv: string | null = null;
   if (session && session.sandboxName && session.sandboxName !== sandboxName) {
     // Session belongs to a different sandbox — its credentialEnv may be
-    // wrong (e.g. hermes session while rebuilding openclaw).  Skip the
-    // credential preflight; the agent sync from the registry (#2201)
-    // and onboard itself will handle provider selection.
+    // wrong (e.g. hermes session while rebuilding openclaw). Resolve the
+    // target sandbox provider from the registry instead so destructive
+    // operations still get a credential preflight for the sandbox being rebuilt.
+    rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider);
     log(
-      `Preflight warning: session belongs to '${session.sandboxName}', not '${sandboxName}' — skipping credential preflight`,
+      `Preflight warning: session belongs to '${session.sandboxName}', not '${sandboxName}' — using registry credential env ${rebuildCredentialEnv || "(none)"}`,
     );
     console.log(
       `  ${D}Note: onboard session belongs to '${session.sandboxName}', not '${sandboxName}'. ` +
-        `Skipping credential preflight.${R}`,
+        `Using the '${sandboxName}' registry entry for credential preflight.${R}`,
     );
   } else {
     rebuildCredentialEnv = session?.credentialEnv || null;
@@ -211,15 +231,17 @@ export async function rebuildSandbox(
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
   const backup = sandboxState.backupSandboxState(sandboxName);
   log(
-    `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}, failed=${backup.failedDirs.join(",")}`,
+    `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
-  if (!backup.success) {
+  const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
+  if (!backup.success && !hasAnyBackup) {
+    // Total failure — nothing was backed up at all.
     console.error("  Failed to back up sandbox state.");
-    if (backup.backedUpDirs.length > 0) {
-      console.error(`  Partial backup: ${backup.backedUpDirs.join(", ")}`);
-    }
     if (backup.failedDirs.length > 0) {
       console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
+    }
+    if (backup.failedFiles.length > 0) {
+      console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     }
     console.error("  Aborting rebuild to prevent data loss.");
     bail("Failed to back up sandbox state.");
@@ -232,7 +254,27 @@ export async function rebuildSandbox(
     bail("Failed to record backup metadata.");
     return;
   }
-  console.log(`  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories)`);
+  if (!backup.success) {
+    // Partial backup — some state succeeded, some failed (e.g. root-owned
+    // files caused tar permission errors).  Proceed with a warning so the
+    // rebuild isn't blocked by a handful of inaccessible files (#2727).
+    console.warn(
+      `  ${YW}⚠${R} Partial backup: ${backup.backedUpDirs.length} dirs and ` +
+        `${backup.backedUpFiles.length} files OK; ${backup.failedDirs.length} dirs and ` +
+        `${backup.failedFiles.length} files failed`,
+    );
+    if (backup.failedDirs.length > 0) {
+      console.warn(`    Failed dirs: ${backup.failedDirs.join(", ")}`);
+    }
+    if (backup.failedFiles.length > 0) {
+      console.warn(`    Failed files: ${backup.failedFiles.join(", ")}`);
+    }
+    console.warn("    Rebuild will continue — failed state could not be preserved.");
+  } else {
+    console.log(
+      `  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
+    );
+  }
   console.log(`    Backup: ${backupManifest.backupPath}`);
 
   // Step 3: Delete sandbox without tearing down gateway or session.
@@ -278,6 +320,18 @@ export async function rebuildSandbox(
   // Mark session resumable and point at this sandbox; set env var as fallback.
   const sessionBefore = onboardSession.loadSession();
   const sessionMatchesSandbox = sessionBefore?.sandboxName === sandboxName;
+  const registryMessagingChannels = Array.isArray(sb.messagingChannels)
+    ? sb.messagingChannels.filter((value: unknown): value is string => typeof value === "string")
+    : null;
+  const sessionMessagingChannels =
+    sessionMatchesSandbox && Array.isArray(sessionBefore?.messagingChannels)
+      ? sessionBefore.messagingChannels.filter(
+          (value: unknown): value is string => typeof value === "string",
+        )
+      : null;
+  const rebuildMessagingChannels = registryMessagingChannels ?? sessionMessagingChannels ?? [];
+  const hasRebuildMessagingChannels =
+    registryMessagingChannels !== null || sessionMessagingChannels !== null;
   log(
     `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
   );
@@ -292,6 +346,7 @@ export async function rebuildSandbox(
     s.resumable = true;
     s.status = "in_progress";
     s.agent = rebuildAgent;
+    s.messagingChannels = rebuildMessagingChannels;
     // Persist inference selection from the about-to-be-removed registry entry
     // so onboard --resume can recreate with the same provider/model in
     // non-interactive mode. Without this the registry is gone by the time
@@ -356,6 +411,12 @@ export async function rebuildSandbox(
       recreateSandbox: true,
       agent: rebuildAgent,
       fromDockerfile: storedFromDockerfile,
+      // Reaching here means the user already consented to the destructive
+      // rebuild (either via --yes/--force or by answering "y" at the prompt).
+      // Propagate that consent so the size-confirm gate inside the
+      // non-interactive onboard does not abort after the old sandbox has
+      // been deleted (#2639 follow-up).
+      autoYes: skipConfirm || rebuildConfirmed,
     });
     log("onboard() returned successfully");
   } catch (err) {
@@ -409,20 +470,36 @@ export async function rebuildSandbox(
     return;
   }
 
+  const preservedRegistryFields = {
+    ...(hasRebuildMessagingChannels ? { messagingChannels: [...rebuildMessagingChannels] } : {}),
+    ...(Array.isArray(sb.disabledChannels) && sb.disabledChannels.length > 0
+      ? { disabledChannels: [...sb.disabledChannels] }
+      : {}),
+    ...(sb.providerCredentialHashes ? { providerCredentialHashes: sb.providerCredentialHashes } : {}),
+  };
+  if (Object.keys(preservedRegistryFields).length > 0) {
+    registry.updateSandbox(sandboxName, preservedRegistryFields);
+  }
+
   // Step 5: Restore
   console.log("");
   console.log("  Restoring workspace state...");
   log(`Restoring from: ${backupManifest.backupPath} into sandbox: ${sandboxName}`);
   const restore = sandboxState.restoreSandboxState(sandboxName, backupManifest.backupPath);
   log(
-    `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}, failed=${restore.failedDirs.join(",")}`,
+    `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}`,
   );
   if (!restore.success) {
     console.error(`  Partial restore: ${restore.restoredDirs.join(", ") || "none"}`);
     console.error(`  Failed: ${restore.failedDirs.join(", ")}`);
+    if (restore.failedFiles.length > 0) {
+      console.error(`  Failed files: ${restore.failedFiles.join(", ")}`);
+    }
     console.error(`  Manual restore available from: ${backupManifest.backupPath}`);
   } else {
-    console.log(`  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories)`);
+    console.log(
+      `  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
+    );
   }
 
   // Step 5.5: Restore policy presets (#1952)
@@ -461,8 +538,10 @@ export async function rebuildSandbox(
   }
 
   // Step 6: Post-restore agent-specific migration
-  const agentDef = agent
-    ? require("./agent-defs").loadAgent(agent.name)
+  const rebuiltAgent = agentRuntime.getSessionAgent(sandboxName);
+  const rebuiltAgentName = agentRuntime.getAgentDisplayName(rebuiltAgent);
+  const agentDef = rebuiltAgent
+    ? require("./agent-defs").loadAgent(rebuiltAgent.name)
     : require("./agent-defs").loadAgent("openclaw");
   if (agentDef.name === "openclaw") {
     // openclaw doctor --fix validates and repairs directory structure.
@@ -497,7 +576,7 @@ export async function rebuildSandbox(
   if (restore.success) {
     console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
     if (versionCheck.expectedVersion) {
-      console.log(`    Now running: ${agentName} v${versionCheck.expectedVersion}`);
+      console.log(`    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`);
     }
   } else {
     console.log(

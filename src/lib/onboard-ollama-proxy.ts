@@ -306,18 +306,37 @@ function printOllamaExposureWarning() {
   console.log("");
 }
 
+const DEFAULT_OLLAMA_PULL_TIMEOUT_MS = 30 * 60 * 1000;
+const PULL_TIMEOUT_ENV = "NEMOCLAW_OLLAMA_PULL_TIMEOUT";
+
+function getOllamaPullTimeoutMs(): number {
+  const raw = process.env[PULL_TIMEOUT_ENV];
+  if (typeof raw !== "string" || raw.trim() === "") return DEFAULT_OLLAMA_PULL_TIMEOUT_MS;
+  const seconds = Number(raw.trim());
+  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_OLLAMA_PULL_TIMEOUT_MS;
+  return Math.floor(seconds * 1000);
+}
+
+function pullTimeoutErrorHint(timeoutMs: number): string {
+  const minutes = Math.round(timeoutMs / 60_000);
+  return [
+    `  Model pull timed out after ${minutes} minutes.`,
+    "  Already-downloaded layers are kept; re-running the pull resumes them.",
+    `  Set ${PULL_TIMEOUT_ENV}=<seconds> to raise the wall-clock limit (default ${Math.round(DEFAULT_OLLAMA_PULL_TIMEOUT_MS / 60_000)} minutes).`,
+  ].join("\n");
+}
+
 function pullOllamaModelViaCli(model) {
+  const timeoutMs = getOllamaPullTimeoutMs();
   const result = spawnSync("bash", ["-c", `ollama pull ${shellQuote(model)}`], {
     cwd: ROOT,
     encoding: "utf8",
     stdio: "inherit",
-    timeout: 600_000,
+    timeout: timeoutMs,
     env: buildSubprocessEnv(),
   });
   if (result.signal === "SIGTERM") {
-    console.error(
-      `  Model pull timed out after 10 minutes. Try a smaller model or check your network connection.`,
-    );
+    console.error(pullTimeoutErrorHint(timeoutMs));
     return false;
   }
   return result.status === 0;
@@ -332,7 +351,7 @@ function pullOllamaModelViaHttp(model) {
     const host = getResolvedOllamaHost();
     const url = `http://${host}:${OLLAMA_PORT}/api/pull`;
     const body = JSON.stringify({ model, stream: true });
-    const TIMEOUT_MS = 600_000; // 10 min, matches the CLI path
+    const TIMEOUT_MS = getOllamaPullTimeoutMs();
     const isTTY = Boolean(process.stdout.isTTY);
     const BAR_WIDTH = 40;
 
@@ -343,7 +362,7 @@ function pullOllamaModelViaHttp(model) {
         "--connect-timeout",
         "10",
         "--max-time",
-        String(Math.floor(TIMEOUT_MS / 1000)),
+        String(TIMEOUT_MS / 1000),
         "-X",
         "POST",
         "-H",
@@ -450,11 +469,11 @@ function pullOllamaModelViaHttp(model) {
       if (code !== 0) {
         // curl exit 28 = CURLE_OPERATION_TIMEDOUT (--max-time hit).
         if (code === 28) {
-          console.error(`  Model pull timed out after ${TIMEOUT_MS / 60_000} minutes.`);
+          console.error(pullTimeoutErrorHint(TIMEOUT_MS));
         } else {
           console.error(`  Model pull exited with code ${String(code)} (network error).`);
+          console.error("  Already-downloaded layers are kept; re-running the pull resumes them.");
         }
-        console.error("  Already-downloaded layers are kept; re-running the pull resumes them.");
         resolve(false);
         return;
       }
@@ -551,6 +570,7 @@ function unloadOllamaModels() {
 export {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
+  getOllamaPullTimeoutMs,
   isProxyHealthy,
   killStaleProxy,
   persistProxyToken,

@@ -64,9 +64,9 @@ function toLegacyOnboardArgs(flags: OnboardFlags): string[] {
   if (flags.resume) args.push("--resume");
   if (flags.fresh) args.push("--fresh");
   if (flags["recreate-sandbox"]) args.push("--recreate-sandbox");
-  if (flags.from) args.push("--from", flags.from);
-  if (flags.name) args.push("--name", flags.name);
-  if (flags.agent) args.push("--agent", flags.agent);
+  if (flags.from !== undefined) args.push("--from", flags.from);
+  if (flags.name !== undefined) args.push("--name", flags.name);
+  if (flags.agent !== undefined) args.push("--agent", flags.agent);
   if (flags["control-ui-port"] !== undefined) {
     args.push("--control-ui-port", String(flags["control-ui-port"]));
   }

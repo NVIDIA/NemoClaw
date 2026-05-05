@@ -6,16 +6,14 @@
 import { CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
 import { parseSandboxPhase } from "./gateway-state";
 import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
-import { probeProviderHealth } from "./inference-health";
 import { parseGatewayInference } from "./inference-config";
+import { probeProviderHealth } from "./inference-health";
 import * as nim from "./nim";
 import * as onboardSession from "./onboard-session";
 import type { Session } from "./onboard-session";
-import {
-  captureOpenshellForStatus,
-  isCommandTimeout,
-} from "./openshell-runtime";
+import { captureOpenshellForStatus, isCommandTimeout } from "./openshell-runtime";
 import * as registry from "./registry";
+import { resolveOpenshell } from "./resolve-openshell";
 import {
   getReconciledSandboxGatewayState,
   getSandboxGatewayStateForStatus,
@@ -29,7 +27,6 @@ import {
 } from "./sandbox-session-state";
 import * as sandboxVersion from "./sandbox-version";
 import * as shields from "./shields";
-import { resolveOpenshell } from "./resolve-openshell";
 import { D, G, R, RD, YW } from "./terminal-style";
 
 const agentRuntime = require("../../bin/lib/agent-runtime");
@@ -37,14 +34,23 @@ const agentRuntime = require("../../bin/lib/agent-runtime");
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const sb = registry.getSandbox(sandboxName);
-  const liveResult = await captureOpenshellForStatus(["inference", "get"], {
-    ignoreError: true,
+  const lookup = await getReconciledSandboxGatewayState(sandboxName, {
+    getState: getSandboxGatewayStateForStatus,
   });
-  const live = parseGatewayInference(isCommandTimeout(liveResult) ? "" : liveResult.output);
+  const liveResult =
+    lookup.state === "present"
+      ? await captureOpenshellForStatus(["inference", "get"], {
+          ignoreError: true,
+        })
+      : null;
+  const live =
+    liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
   const inferenceHealth =
-    typeof currentProvider === "string" ? probeProviderHealth(currentProvider) : null;
+    lookup.state === "present" && typeof currentProvider === "string"
+      ? probeProviderHealth(currentProvider)
+      : null;
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
@@ -59,6 +65,9 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
         console.log(`    Inference: ${RD}unreachable${R} (${inferenceHealth.endpoint})`);
         console.log(`      ${inferenceHealth.detail}`);
       }
+    }
+    if (lookup.state !== "present") {
+      console.log("    Inference: not verified (gateway/sandbox state not verified)");
     }
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
@@ -103,9 +112,6 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     }
   }
 
-  const lookup = await getReconciledSandboxGatewayState(sandboxName, {
-    getState: getSandboxGatewayStateForStatus,
-  });
   if (lookup.state === "present") {
     console.log("");
     if ("recoveredGateway" in lookup && lookup.recoveredGateway) {
@@ -134,6 +140,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
         : undefined;
     console.log("");
     printWrongGatewayActiveGuidance(sandboxName, activeGateway, console.log);
+    process.exit(1);
   } else if (lookup.state === "missing") {
     // Belt-and-suspenders: only destroy registry state if the nemoclaw gateway
     // is demonstrably the healthy active gateway. Guards against regressions
@@ -159,6 +166,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
       console.log("  Removed stale local registry entry.");
     }
+    process.exit(1);
   } else if (lookup.state === "identity_drift") {
     console.log("");
     console.log(
@@ -173,6 +181,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     console.log(
       `  Recreate this sandbox with \`${CLI_NAME} onboard\` once the gateway runtime is stable.`,
     );
+    process.exit(1);
   } else if (lookup.state === "gateway_unreachable_after_restart") {
     console.log("");
     console.log(
@@ -187,6 +196,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     console.log(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
     );
+    process.exit(1);
   } else if (lookup.state === "gateway_missing_after_restart") {
     console.log("");
     console.log(
@@ -201,6 +211,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     console.log(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",
     );
+    process.exit(1);
   } else {
     console.log("");
     console.log(`  Could not verify sandbox '${sandboxName}' against the live OpenShell gateway.`);
@@ -208,6 +219,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log(lookup.output);
     }
     printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
+    process.exit(1);
   }
 
   // OpenClaw process health inside the sandbox
@@ -221,7 +233,9 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       } else {
         console.log(`    ${sessionAgentName}: ${RD}not running${R}`);
         console.log("");
-        console.log(`  The sandbox is alive but the ${sessionAgentName} gateway process is not running.`);
+        console.log(
+          `  The sandbox is alive but the ${sessionAgentName} gateway process is not running.`,
+        );
         console.log("  This typically happens after a gateway restart (e.g., laptop close/open).");
         console.log("");
         console.log("  To recover, run:");

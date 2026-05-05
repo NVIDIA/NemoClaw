@@ -163,11 +163,12 @@ describe("nemoclaw-start non-root fallback", () => {
 
   it("sends startup diagnostics to stderr so they do not leak into bridge output (#1064)", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const token = "a".repeat(64);
     const script = [
       "set -euo pipefail",
-      '_read_gateway_token() { printf "tok\\n"; }',
+      `_read_gateway_token() { printf "${token}\\n"; }`,
       'PUBLIC_PORT="19000"',
-      'CHAT_UI_URL="https://remote.example.test/ui"',
+      `CHAT_UI_URL="https://remote.example.test/ui/#token=${token}"`,
       startScriptLine(src, "echo 'Setting up NemoClaw...'"),
       extractShellFunctionFromSource(src, "print_dashboard_urls"),
       "print_dashboard_urls",
@@ -178,10 +179,11 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("Setting up NemoClaw");
-    expect(result.stderr).toContain("[gateway] Local UI: http://127.0.0.1:19000/#token=tok");
-    expect(result.stderr).toContain(
-      "[gateway] Remote UI: https://remote.example.test/ui/#token=tok",
-    );
+    expect(result.stderr).toContain("[gateway] Local UI: http://127.0.0.1:19000/");
+    expect(result.stderr).toContain("[gateway] Remote UI: https://remote.example.test/ui/");
+    expect(result.stderr).toContain("Dashboard auth token redacted from startup logs.");
+    expect(result.stderr).not.toContain("#token=");
+    expect(result.stderr).not.toContain(token);
   });
 
   it("unwraps the sandbox-create env self-wrapper and applies dashboard port defaults", () => {
@@ -436,8 +438,11 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("TOKEN=tok'en");
-    expect(result.stderr).toContain("http://127.0.0.1:18789/#token=tok'en");
-    expect(result.stderr).toContain("https://remote.example.test/ui/#token=tok'en");
+    expect(result.stderr).toContain("http://127.0.0.1:18789/");
+    expect(result.stderr).toContain("https://remote.example.test/ui/");
+    expect(result.stderr).toContain("Dashboard auth token redacted from startup logs.");
+    expect(result.stderr).not.toContain("#token=");
+    expect(result.stderr).not.toContain("tok'en");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN='tok'\\''en'");
     expect(envFile).toContain("nemoclaw-configure-guard begin");
     expect(envFile).not.toContain(".bashrc");
@@ -551,6 +556,29 @@ describe("nemoclaw-start configure guard behavior", () => {
       expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("agent --agent main -m hello");
       expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("config get foo");
       expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("channels list");
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // #2592 reported the guard did not fire for `openclaw channels add telegram`
+  // and `openclaw channels remove telegram` from inside the sandbox. The
+  // existing test above only exercises `add slack`. Lock in coverage for every
+  // (channel × op) combo so the guard cannot regress for any one of them
+  // while passing for another.
+  it("#2592: blocks every (channel × op) mutating combo and surfaces the host-side hint", () => {
+    const setup = writeProxyEnvWithGuard();
+    try {
+      const channels = ["slack", "telegram", "discord"];
+      const ops = ["add", "remove"];
+      for (const op of ops) {
+        for (const channel of channels) {
+          const result = runGuardedOpenclaw(setup, ["channels", op, channel]);
+          expect(result.status, `channels ${op} ${channel} should be blocked`).toBe(1);
+          expect(result.stderr).toContain(`openclaw channels ${op}`);
+          expect(result.stderr).toContain(`nemoclaw <sandbox> channels ${op}`);
+        }
+      }
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }

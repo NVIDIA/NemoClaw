@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "module";
-import { describe, it, expect, vi } from "vitest";
 import type { Mock } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // Import from compiled dist/ for coverage attribution.
 import * as nim from "../../dist/lib/nim";
@@ -92,6 +92,64 @@ describe("nim", () => {
   describe("containerName", () => {
     it("prefixes with nemoclaw-nim-", () => {
       expect(nim.containerName("my-sandbox")).toBe("nemoclaw-nim-my-sandbox");
+    });
+  });
+
+  describe("detectNvidiaPlatform", () => {
+    const fs = require("fs");
+
+    function withFirmwareModel(model: string, fn: () => void): void {
+      const origReadFileSync = fs.readFileSync;
+      fs.readFileSync = (p: string, ...args: unknown[]) => {
+        if (p === "/sys/class/dmi/id/product_name") return model;
+        if (p === "/sys/firmware/devicetree/base/model") return "";
+        return origReadFileSync(p, ...args);
+      };
+      try {
+        fn();
+      } finally {
+        fs.readFileSync = origReadFileSync;
+      }
+    }
+
+    function withDmiUnavailableAndDevicetreeModel(model: string, fn: () => void): void {
+      const origReadFileSync = fs.readFileSync;
+      fs.readFileSync = (p: string, ...args: unknown[]) => {
+        if (p === "/sys/class/dmi/id/product_name") throw new Error("ENOENT");
+        if (p === "/sys/firmware/devicetree/base/model") return `${model}\0`;
+        return origReadFileSync(p, ...args);
+      };
+      try {
+        fn();
+      } finally {
+        fs.readFileSync = origReadFileSync;
+      }
+    }
+
+    it("classifies explicit DGX Station identifiers as station", () => {
+      for (const model of ["NVIDIA DGX Station GB300", "DGX-Station", "P3830"]) {
+        withFirmwareModel(model, () => {
+          expect(nim.detectNvidiaPlatform()).toBe("station");
+        });
+      }
+    });
+
+    it("does not classify unrelated Galaxy or P3830 substrings as Station", () => {
+      for (const model of [
+        "Samsung Galaxy Book4 Ultra",
+        "Acme Galaxy Rack Server",
+        "Acme XP3830 Workstation",
+      ]) {
+        withFirmwareModel(model, () => {
+          expect(nim.detectNvidiaPlatform()).toBe("linux");
+        });
+      }
+    });
+
+    it("falls back to devicetree when DMI is unreadable", () => {
+      withDmiUnavailableAndDevicetreeModel("NVIDIA DGX Spark", () => {
+        expect(nim.detectNvidiaPlatform()).toBe("spark");
+      });
     });
   });
 

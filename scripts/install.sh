@@ -408,10 +408,37 @@ print_banner() {
   printf "\n"
 }
 
+print_cli_path_refresh_actions() {
+  local shell_name
+  shell_name="$(basename "${SHELL:-bash}")"
+
+  if [[ -z "$NEMOCLAW_RECOVERY_PROFILE" ]]; then
+    NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
+  fi
+
+  if [[ -n "$NEMOCLAW_RECOVERY_PROFILE" ]]; then
+    printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_PROFILE"
+  fi
+  if [[ -n "$NEMOCLAW_RECOVERY_EXPORT_DIR" ]]; then
+    case "$shell_name" in
+      fish)
+        printf "  %s$%s set -gx PATH \"%s\" \$PATH\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_EXPORT_DIR"
+        ;;
+      tcsh | csh)
+        printf "  %s$%s setenv PATH \"%s:\${PATH}\"\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_EXPORT_DIR"
+        ;;
+      *)
+        printf "  %s$%s export PATH=\"%s:\$PATH\"\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_EXPORT_DIR"
+        ;;
+    esac
+  fi
+  printf "  ${C_DIM}Or open a new terminal after updating your shell profile.${C_RESET}\n"
+}
+
 print_done() {
   local elapsed=$((SECONDS - _INSTALL_START))
-  local _needs_reload=false
-  needs_shell_reload && _needs_reload=true
+  local _needs_cli_refresh=false
+  needs_shell_reload && _needs_cli_refresh=true
 
   info "=== Installation complete ==="
   printf "\n"
@@ -421,15 +448,22 @@ print_done() {
     local sandbox_name agent_name
     sandbox_name="$(resolve_default_sandbox_name)"
     agent_name="$(resolve_onboarded_agent)"
-    if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
-      printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
+    if [[ "$_needs_cli_refresh" == true ]]; then
+      printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
+      printf "  ${C_DIM}Onboarding completed; refresh PATH before using the CLI from this terminal.${C_RESET}\n"
     else
-      printf "  ${C_GREEN}Your %s Sandbox is live.${C_RESET}\n" "$(agent_display_name "$agent_name")"
+      if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
+        printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
+      else
+        printf "  ${C_GREEN}Your %s Sandbox is live.${C_RESET}\n" "$(agent_display_name "$agent_name")"
+      fi
+      printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
     fi
-    printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
     printf "\n"
     printf "  ${C_GREEN}Next:${C_RESET}\n"
-    if [[ "$_needs_reload" == true ]]; then
+    if [[ "$_needs_cli_refresh" == true ]]; then
+      print_cli_path_refresh_actions
+    else
       printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
     fi
     printf "  %s$%s %s %s connect\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN" "$sandbox_name"
@@ -447,25 +481,26 @@ print_done() {
     esac
     printf "  %ssandbox@%s$%s %s\n" "$C_GREEN" "$sandbox_name" "$C_RESET" "$agent_cmd"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
-    printf "  ${C_GREEN}%s CLI is installed.${C_RESET}\n" "$_CLI_DISPLAY"
+    if [[ "$_needs_cli_refresh" == true ]]; then
+      printf "  ${C_YELLOW}%s CLI is installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
+    else
+      printf "  ${C_GREEN}%s CLI is installed.${C_RESET}\n" "$_CLI_DISPLAY"
+    fi
     printf "  ${C_DIM}Onboarding has not run yet.${C_RESET}\n"
     printf "\n"
     printf "  ${C_GREEN}Next:${C_RESET}\n"
-    if [[ "$_needs_reload" == true ]]; then
+    if [[ "$_needs_cli_refresh" == true ]]; then
+      print_cli_path_refresh_actions
+    else
       printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
     fi
     printf "  %s$%s %s onboard\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN"
   else
-    printf "  ${C_GREEN}%s CLI is installed.${C_RESET}\n" "$_CLI_DISPLAY"
-    printf "  ${C_DIM}Onboarding did not run because this shell cannot resolve '%s' yet.${C_RESET}\n" "$_CLI_BIN"
+    printf "  ${C_YELLOW}%s CLI is installed, but this shell cannot resolve '%s' yet.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
+    printf "  ${C_DIM}Onboarding did not run.${C_RESET}\n"
     printf "\n"
     printf "  ${C_GREEN}Next:${C_RESET}\n"
-    if [[ -n "$NEMOCLAW_RECOVERY_EXPORT_DIR" ]]; then
-      printf "  %s$%s export PATH=\"%s:\$PATH\"\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_EXPORT_DIR"
-    fi
-    if [[ -n "$NEMOCLAW_RECOVERY_PROFILE" ]]; then
-      printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_PROFILE"
-    fi
+    print_cli_path_refresh_actions
     printf "  %s$%s %s onboard\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN"
   fi
   printf "\n"
@@ -626,6 +661,8 @@ NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
 NEMOCLAW_READY_NOW=false
 NEMOCLAW_RECOVERY_PROFILE=""
 NEMOCLAW_RECOVERY_EXPORT_DIR=""
+NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH=false
+NEMOCLAW_INSTALLER_INITIAL_PATH="${PATH:-}"
 NEMOCLAW_SOURCE_ROOT="$(resolve_repo_root)"
 ONBOARD_RAN=false
 
@@ -699,6 +736,48 @@ detect_shell_profile() {
       ;;
   esac
   printf "%s" "$profile"
+}
+
+path_contains_dir() {
+  local path_list="${1:-}" dir="${2:-}"
+  [[ -n "$path_list" && -n "$dir" ]] || return 1
+  [[ ":$path_list:" == *":$dir:"* ]]
+}
+
+record_cli_resolution_state() {
+  local resolved_cli="${1:-}" npm_bin="${2:-}" candidate_dir preferred_dir=""
+  local -a candidate_dirs=()
+
+  if [[ "$resolved_cli" == */* ]]; then
+    candidate_dirs+=("$(dirname "$resolved_cli")")
+  fi
+  if [[ -x "$NEMOCLAW_SHIM_DIR/$_CLI_BIN" ]]; then
+    candidate_dirs+=("$NEMOCLAW_SHIM_DIR")
+  fi
+  if [[ -n "$npm_bin" && -x "$npm_bin/$_CLI_BIN" ]]; then
+    candidate_dirs+=("$npm_bin")
+  fi
+
+  for candidate_dir in "${candidate_dirs[@]}"; do
+    if path_contains_dir "$NEMOCLAW_INSTALLER_INITIAL_PATH" "$candidate_dir"; then
+      NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH=false
+      return 0
+    fi
+  done
+
+  if [[ -x "$NEMOCLAW_SHIM_DIR/$_CLI_BIN" ]]; then
+    preferred_dir="$NEMOCLAW_SHIM_DIR"
+  elif [[ "$resolved_cli" == */* ]]; then
+    preferred_dir="$(dirname "$resolved_cli")"
+  elif [[ -n "$npm_bin" && -x "$npm_bin/$_CLI_BIN" ]]; then
+    preferred_dir="$npm_bin"
+  fi
+
+  if [[ -n "$preferred_dir" ]]; then
+    NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH=true
+    NEMOCLAW_RECOVERY_EXPORT_DIR="${NEMOCLAW_RECOVERY_EXPORT_DIR:-$preferred_dir}"
+    NEMOCLAW_RECOVERY_PROFILE="${NEMOCLAW_RECOVERY_PROFILE:-$(detect_shell_profile)}"
+  fi
 }
 
 # Check whether npm link can write to the active prefix targets.
@@ -805,16 +884,12 @@ ensure_nemoclaw_shim() {
   return "$status"
 }
 
-# Detect whether the parent shell likely needs a reload after install.
-# When running via `curl | bash`, the installer executes in a subprocess.
-# Even when the bin directory is already in PATH, the parent shell may have
-# stale bash hash-table entries pointing to a previously deleted binary
-# (e.g. upgrade/reinstall after `rm $(which nemoclaw)`).  Sourcing the
-# shell profile reassigns PATH which clears the hash table, so we always
-# recommend it when the installer verified nemoclaw in the subprocess.
+# Detect whether the caller's shell needs a PATH refresh after install.
+# install.sh can export PATH for its own subprocess, but that cannot mutate the
+# terminal that launched it. If the resolved CLI directory was not present at
+# installer start, make the final output say so explicitly.
 needs_shell_reload() {
-  [[ "$NEMOCLAW_READY_NOW" != true ]] && return 1
-  return 0
+  [[ "$NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH" == true ]]
 }
 
 # Add ~/.local/bin (and for fish, the nvm node bin) to the user's shell
@@ -961,184 +1036,17 @@ install_nodejs() {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Ollama
+# 2. Ollama — handled entirely by `nemoclaw onboard` (binary install, model
+# pulls, daemon binding). install.sh used to bootstrap Ollama here, but that
+# duplicated onboard's own install-ollama branch and pulled a hardcoded
+# nemotron model regardless of NEMOCLAW_MODEL. Removed in favour of letting
+# onboard own the policy.
 # ---------------------------------------------------------------------------
-OLLAMA_MIN_VERSION="0.18.0"
-# IMPORTANT: update OLLAMA_INSTALL_SHA256 when changing OLLAMA_MIN_VERSION
-# Pattern: pin hash and verify, same as NVM_SHA256 above (line ~656).
-OLLAMA_INSTALL_SHA256="25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f"
-
-get_ollama_version() {
-  # `ollama --version` outputs something like "ollama version 0.18.0"
-  ollama --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
-}
-
 detect_gpu() {
-  # Returns 0 if a GPU is detected
+  # Returns 0 if a GPU is detected. Used by the vLLM bootstrap below.
   if command_exists nvidia-smi; then
     nvidia-smi &>/dev/null && return 0
   fi
-  return 1
-}
-
-get_vram_mb() {
-  # Returns total VRAM in MiB (NVIDIA only). Falls back to 0.
-  if command_exists nvidia-smi; then
-    nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null \
-      | awk '{s += $1} END {print s+0}'
-    return
-  fi
-  # macOS — report unified memory as VRAM
-  if [[ "$(uname -s)" == "Darwin" ]] && command_exists sysctl; then
-    local bytes
-    bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
-    echo $((bytes / 1024 / 1024))
-    return
-  fi
-  echo 0
-}
-
-install_or_upgrade_ollama() {
-  if detect_gpu && command_exists ollama; then
-    local current
-    current=$(get_ollama_version)
-    if [[ -n "$current" ]] && version_gte "$current" "$OLLAMA_MIN_VERSION"; then
-      info "Ollama v${current} meets minimum requirement (>= v${OLLAMA_MIN_VERSION})"
-    else
-      info "Ollama v${current:-unknown} is below v${OLLAMA_MIN_VERSION} — upgrading…"
-      (
-        tmpdir="$(mktemp -d)"
-        trap 'rm -rf "$tmpdir"' EXIT
-        curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
-        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama" "$OLLAMA_INSTALL_SHA256"
-        sh "$tmpdir/install_ollama.sh"
-      )
-      info "Ollama upgraded to $(get_ollama_version)"
-    fi
-  else
-    # No ollama — only install if a GPU is present
-    if detect_gpu; then
-      info "GPU detected — installing Ollama…"
-      (
-        tmpdir="$(mktemp -d)"
-        trap 'rm -rf "$tmpdir"' EXIT
-        curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
-        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama" "$OLLAMA_INSTALL_SHA256"
-        sh "$tmpdir/install_ollama.sh"
-      )
-      info "Ollama installed: v$(get_ollama_version)"
-    else
-      warn "No GPU detected — skipping Ollama installation."
-      return
-    fi
-  fi
-
-  # Pull the appropriate model based on VRAM
-  local vram_mb
-  vram_mb=$(get_vram_mb)
-  local vram_gb=$((vram_mb / 1024))
-  info "Detected ${vram_gb} GB VRAM"
-
-  if ((vram_gb >= 120)); then
-    info "Pulling nemotron-3-super:120b…"
-    ollama pull nemotron-3-super:120b
-  else
-    info "Pulling nemotron-3-nano:30b…"
-    ollama pull nemotron-3-nano:30b
-  fi
-}
-
-# ---------------------------------------------------------------------------
-# 3. vLLM (Brev GPU deploys, restored from removed brev-setup.sh — #996)
-# ---------------------------------------------------------------------------
-# Default model id mirrors the vllm profile in nemoclaw-blueprint/blueprint.yaml.
-# Update both together; install.sh queries the blueprint at runtime when present.
-VLLM_DEFAULT_MODEL="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8"
-VLLM_PORT=8000
-VLLM_READY_TIMEOUT_SECS=240
-
-resolve_vllm_model() {
-  local blueprint="${SCRIPT_DIR}/../nemoclaw-blueprint/blueprint.yaml"
-  if [ -r "$blueprint" ]; then
-    awk '/^      vllm:/{f=1; next} f && /model:/{ gsub(/.*model: *"|".*/, ""); print; exit }' \
-      "$blueprint" 2>/dev/null
-  fi
-}
-
-install_or_start_vllm() {
-  if [[ "${NEMOCLAW_PROVIDER:-}" != "vllm" ]]; then
-    return 0
-  fi
-  if ! detect_gpu; then
-    warn "NEMOCLAW_PROVIDER=vllm but no GPU detected — vLLM cannot start."
-    warn "Install on a host with an NVIDIA GPU, or unset NEMOCLAW_PROVIDER for a cloud provider."
-    return 1
-  fi
-
-  local model
-  model="$(resolve_vllm_model)"
-  [ -n "$model" ] || model="$VLLM_DEFAULT_MODEL"
-
-  if ! python3 -c "import vllm" 2>/dev/null; then
-    info "Installing vLLM…"
-    if ! command_exists pip3; then
-      sudo apt-get install -y -qq python3-pip >/dev/null 2>&1 || true
-    fi
-    pip3 install --break-system-packages vllm 2>/dev/null || pip3 install vllm
-    if ! python3 -c "import vllm" 2>/dev/null; then
-      warn "vLLM installation failed — cannot start local inference."
-      return 1
-    fi
-  else
-    info "vLLM already installed"
-  fi
-
-  # Check if vLLM is already running with the expected model. A stale
-  # instance serving a different model (e.g., the old NIM catalog name)
-  # must not be reused — otherwise the corrected HF repo id never gets applied.
-  local running_models
-  running_models="$(curl -fsS "http://localhost:${VLLM_PORT}/v1/models" 2>/dev/null || true)"
-  # Match the JSON-quoted id field ("id":"$model") rather than the raw
-  # model string. Anchoring on the surrounding quotes prevents a stale
-  # listener serving a superstring (e.g. "${model}-quantized") from
-  # falsely registering as the expected instance.
-  if [ -n "$running_models" ] && echo "$running_models" | grep -Fq "\"id\":\"$model\""; then
-    info "vLLM already running on :${VLLM_PORT} with model ${model}"
-    return 0
-  fi
-
-  info "Starting vLLM with model ${model} on :${VLLM_PORT}…"
-  nohup python3 -m vllm.entrypoints.openai.api_server \
-    --model "$model" \
-    --port "$VLLM_PORT" \
-    --host 127.0.0.1 \
-    --trust-remote-code \
-    >/tmp/vllm-server.log 2>&1 &
-  local vllm_pid=$!
-
-  info "Waiting for vLLM (model load can take several minutes)…"
-  local elapsed=0
-  local ready_models
-  while [ "$elapsed" -lt "$VLLM_READY_TIMEOUT_SECS" ]; do
-    # Validate that the listener is serving $model — a stale vLLM still
-    # bound to :8000 will answer 200 with a different model id and would
-    # otherwise let us declare readiness against the wrong process.
-    ready_models="$(curl -fsS "http://localhost:${VLLM_PORT}/v1/models" 2>/dev/null || true)"
-    if [ -n "$ready_models" ] && echo "$ready_models" | grep -Fq "\"id\":\"$model\""; then
-      info "vLLM ready (PID $vllm_pid)"
-      return 0
-    fi
-    if ! kill -0 "$vllm_pid" 2>/dev/null; then
-      warn "vLLM exited early. See /tmp/vllm-server.log"
-      return 1
-    fi
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-  # Reap the orphan so a re-run isn't blocked by a process still bound to
-  # :8000 (kill -0 above only fires when the process is already dead).
-  kill "$vllm_pid" 2>/dev/null || true
-  warn "vLLM did not become ready within ${VLLM_READY_TIMEOUT_SECS}s. See /tmp/vllm-server.log"
   return 1
 }
 
@@ -1367,10 +1275,14 @@ is_real_nemoclaw_cli() {
 
 verify_nemoclaw() {
   if command_exists "$_CLI_BIN"; then
-    if is_real_nemoclaw_cli "$(command -v "$_CLI_BIN")" "$_CLI_BIN"; then
+    local resolved_cli npm_bin
+    resolved_cli="$(command -v "$_CLI_BIN")"
+    if is_real_nemoclaw_cli "$resolved_cli" "$_CLI_BIN"; then
       NEMOCLAW_READY_NOW=true
+      npm_bin="$(resolve_npm_bin)" || true
       ensure_nemoclaw_shim || true
-      info "Verified: ${_CLI_BIN} is available at $(command -v "$_CLI_BIN")"
+      record_cli_resolution_state "$resolved_cli" "$npm_bin"
+      info "Verified: ${_CLI_BIN} is available at $resolved_cli"
       return 0
     else
       warn "Found ${_CLI_BIN} at $(command -v "$_CLI_BIN") but it is not the real ${_CLI_DISPLAY} CLI."
@@ -1386,8 +1298,11 @@ verify_nemoclaw() {
     if is_real_nemoclaw_cli "$npm_bin/$_CLI_BIN" "$_CLI_BIN"; then
       ensure_nemoclaw_shim || true
       if command_exists "$_CLI_BIN"; then
+        local resolved_cli
+        resolved_cli="$(command -v "$_CLI_BIN")"
         NEMOCLAW_READY_NOW=true
-        info "Verified: ${_CLI_BIN} is available at $(command -v "$_CLI_BIN")"
+        record_cli_resolution_state "$resolved_cli" "$npm_bin"
+        info "Verified: ${_CLI_BIN} is available at $resolved_cli"
         return 0
       fi
 
@@ -1554,7 +1469,14 @@ run_onboard() {
           if ! IFS= read -r _resume_answer <"$_prompt_stdin"; then
             error "Could not read response from TTY. Re-run with --fresh or run '${_CLI_BIN} onboard --resume'."
           fi
-          case "${_resume_answer,,}" in
+          # Use tr to lowercase the answer rather than the bash 4 case
+          # expansion form (lowercase via the comma-comma operator), which
+          # is unavailable on macOS /bin/bash 3.2 and would print
+          # "bad substitution" on macOS hosts running the curl-piped
+          # installer.
+          local _resume_answer_lc
+          _resume_answer_lc="$(printf '%s' "$_resume_answer" | tr '[:upper:]' '[:lower:]')"
+          case "$_resume_answer_lc" in
             "" | r | resume)
               onboard_cmd+=(--resume)
               break
@@ -1578,6 +1500,10 @@ run_onboard() {
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
       onboard_cmd+=(--yes-i-accept-third-party-software)
     fi
+    # A non-interactive install is by definition unattended consent;
+    # forward --yes so the Ollama size-confirmation gate does not abort
+    # the unattended download (the size is still printed to logs).
+    onboard_cmd+=(--yes)
     "${_CLI_BIN}" "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
     "${_CLI_BIN}" "${onboard_cmd[@]}"
@@ -1592,40 +1518,6 @@ run_onboard() {
   fi
 }
 
-# 6. Post-install message (printed last — after onboarding — so PATH hints stay visible)
-# ---------------------------------------------------------------------------
-post_install_message() {
-  if [[ "$NEMOCLAW_READY_NOW" == true ]]; then
-    return 0
-  fi
-
-  if [[ -z "$NEMOCLAW_RECOVERY_EXPORT_DIR" ]]; then
-    return 0
-  fi
-
-  if [[ -z "$NEMOCLAW_RECOVERY_PROFILE" ]]; then
-    NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
-  fi
-
-  echo ""
-  echo "  ──────────────────────────────────────────────────"
-  warn "Your current shell cannot resolve '${_CLI_BIN}' yet."
-  echo ""
-  echo "  To use ${_CLI_BIN} now, run:"
-  echo ""
-  echo "    export PATH=\"${NEMOCLAW_RECOVERY_EXPORT_DIR}:\$PATH\""
-  echo "    source ${NEMOCLAW_RECOVERY_PROFILE}"
-  echo ""
-  echo "  Then run:"
-  echo ""
-  echo "    ${_CLI_BIN} onboard"
-  echo ""
-  echo "  Or open a new terminal window after updating your shell profile."
-  echo "  ──────────────────────────────────────────────────"
-  echo ""
-}
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -1658,8 +1550,38 @@ main() {
   NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
+
+  # If the user explicitly accepted the third-party-software notice, treat
+  # that as non-interactive intent for the rest of the run too — show_usage_notice
+  # is only one of several phase-3 steps that need a TTY or --non-interactive
+  # (run_onboard has the same gate). Without this, ACCEPT_THIRD_PARTY_SOFTWARE=1
+  # alone clears the preflight below but the install can still partial-fail at
+  # run_onboard with the same TTY error, leaving phases 1/2 on disk anyway.
+  if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ] && [ "${NON_INTERACTIVE:-}" != "1" ]; then
+    NON_INTERACTIVE=1
+  fi
+
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
+
+  # Fail-fast license-acceptance check (#2671). If we already know phase 3
+  # (show_usage_notice + run_onboard) will hit the "requires a TTY" branch,
+  # surface that error NOW — before phases 1/2 install Node.js and put the
+  # nemoclaw CLI on PATH. Otherwise the user is left in a partial install
+  # that they have to manually `rm -rf` before retry, while their license
+  # has not actually been accepted.
+  #
+  # Skipped (and the install proceeds) only when either:
+  #  - NON_INTERACTIVE=1 (also implied by ACCEPT_THIRD_PARTY_SOFTWARE=1 above)
+  #  - stdin is a TTY — license helper prompts the user directly before install
+  #
+  # Do not treat an openable /dev/tty as sufficient here. In curl|bash mode,
+  # stdin is a pipe even though /dev/tty may still be available; falling back to
+  # /dev/tty later would run phases 1/2 before the license prompt and could leave
+  # a partial install behind if the user declines or no terminal is attached.
+  if [ "${NON_INTERACTIVE:-}" != "1" ] && [ ! -t 0 ]; then
+    error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
+  fi
 
   _INSTALL_START=$SECONDS
   print_banner
@@ -1670,21 +1592,9 @@ main() {
   ensure_supported_runtime
 
   step 2 "${_CLI_DISPLAY} CLI"
-  # Local inference setup is opt-in via NEMOCLAW_PROVIDER. Both functions
-  # short-circuit when the env var doesn't match, so the regular cloud-only
-  # install path runs unchanged.
-  if [[ "${NEMOCLAW_PROVIDER:-}" == "ollama" ]]; then
-    install_or_upgrade_ollama
-  fi
-  # Fail fast when vLLM was explicitly requested — silently continuing leaves
-  # onboarding pointed at an unavailable localhost:8000, which is the failure
-  # mode this PR exists to fix. For other providers, install_or_start_vllm
-  # short-circuits with rc=0 so this branch is effectively a no-op.
-  if [[ "${NEMOCLAW_PROVIDER:-}" == "vllm" ]]; then
-    install_or_start_vllm || error "vLLM setup failed — aborting (NEMOCLAW_PROVIDER=vllm)."
-  else
-    install_or_start_vllm
-  fi
+  # Ollama and vLLM install/upgrade and model pulls are owned by
+  # `nemoclaw onboard` (the install-ollama / install-vllm branches).
+  # install.sh stays focused on dependency setup.
   fix_npm_permissions
   install_nemoclaw
   verify_nemoclaw
@@ -1748,7 +1658,6 @@ except Exception:
   fi
 
   print_done
-  post_install_message
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then

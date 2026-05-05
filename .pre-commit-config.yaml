@@ -100,7 +100,7 @@ repos:
         name: Biome format
         entry: npx biome format --write
         language: system
-        files: ^(biome\.json|package(-lock)?\.json|nemoclaw/package(-lock)?\.json|commitlint\.config\.js|bin/.*\.js|src/.*\.ts|scripts/.*\.(js|ts)|test/.*\.js|nemoclaw/src/.*\.ts)$
+        files: ^(biome\.json|package(-lock)?\.json|nemoclaw/package(-lock)?\.json|commitlint\.config\.js|bin/.*\.js|scripts/.*\.(js|ts)|test/.*\.js|nemoclaw/src/.*\.ts)$
         pass_filenames: true
         priority: 5
 

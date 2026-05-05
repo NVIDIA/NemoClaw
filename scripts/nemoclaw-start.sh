@@ -42,8 +42,8 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # read failure), the output is still available for diagnostics.
 # The log is written in append mode and also forwarded to the original
 # stderr/stdout via tee so openshell sandbox create can still stream it.
-# SECURITY: restrict permissions before writing — the script later prints
-# tokenized dashboard URLs to stderr (#token=...).
+# SECURITY: restrict permissions before writing — startup diagnostics may
+# include dashboard URLs, but auth tokens must stay redacted in logs.
 _START_LOG="/tmp/nemoclaw-start.log"
 if [ "$(id -u)" -eq 0 ]; then
   : >"$_START_LOG"
@@ -1153,22 +1153,22 @@ harden_auth_profiles() {
 
 # configure_messaging_channels is provided by sandbox-init.sh (shared).
 
-# Print the local and remote dashboard URLs, appending the auth token if available.
+# Print the local and remote dashboard URLs without the auth token fragment.
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
 
   token="$(_read_gateway_token)"
 
-  chat_ui_base="${CHAT_UI_URL%/}"
+  chat_ui_base="${CHAT_UI_URL%%#*}"
+  chat_ui_base="${chat_ui_base%/}"
   local_url="http://127.0.0.1:${PUBLIC_PORT}/"
   remote_url="${chat_ui_base}/"
-  if [ -n "$token" ]; then
-    local_url="${local_url}#token=${token}"
-    remote_url="${remote_url}#token=${token}"
-  fi
 
   echo "[gateway] Local UI: ${local_url}" >&2
   echo "[gateway] Remote UI: ${remote_url}" >&2
+  if [ -n "$token" ]; then
+    echo "[gateway] Dashboard auth token redacted from startup logs." >&2
+  fi
 }
 
 start_persistent_gateway_log_mirror() {

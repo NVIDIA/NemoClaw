@@ -11,6 +11,11 @@ import {
   getDockerBridgeGatewayIp,
   getMemoryInfo,
   ensureSwap,
+  isDockerUnderProvisioned,
+  MIN_RECOMMENDED_DOCKER_CPUS,
+  MIN_RECOMMENDED_DOCKER_MEM_GIB,
+  parseDockerInfoCpus,
+  parseDockerInfoMemTotalBytes,
   parseDockerStorageDriver,
   parseDockerUsesContainerdSnapshotter,
   planHostRemediation,
@@ -511,6 +516,7 @@ describe("planHostRemediation", () => {
       openshellInstalled: true,
       dockerCgroupVersion: "unknown",
       dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
       hasNestedOverlayConflict: false,
       requiresHostCgroupnsFix: false,
       isUnsupportedRuntime: false,
@@ -540,6 +546,7 @@ describe("planHostRemediation", () => {
       openshellInstalled: true,
       dockerCgroupVersion: "unknown",
       dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
       hasNestedOverlayConflict: false,
       requiresHostCgroupnsFix: false,
       isUnsupportedRuntime: false,
@@ -573,6 +580,7 @@ describe("planHostRemediation", () => {
       openshellInstalled: true,
       dockerCgroupVersion: "unknown",
       dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
       hasNestedOverlayConflict: false,
       requiresHostCgroupnsFix: false,
       isUnsupportedRuntime: true,
@@ -604,6 +612,7 @@ describe("planHostRemediation", () => {
       openshellInstalled: true,
       dockerCgroupVersion: "unknown",
       dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
       hasNestedOverlayConflict: false,
       requiresHostCgroupnsFix: false,
       isUnsupportedRuntime: false,
@@ -632,6 +641,7 @@ describe("planHostRemediation", () => {
       openshellInstalled: false,
       dockerCgroupVersion: "v2",
       dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
       hasNestedOverlayConflict: false,
       requiresHostCgroupnsFix: false,
       isUnsupportedRuntime: false,
@@ -944,5 +954,175 @@ describe("getDockerBridgeGatewayIp", () => {
     });
     expect(captured.slice(0, 4)).toEqual(["docker", "network", "inspect", "bridge"]);
     expect(captured).toContain("{{range .IPAM.Config}}{{.Gateway}}{{end}}");
+  });
+});
+
+describe("parseDockerInfoCpus", () => {
+  it("extracts NCPU from JSON docker info output", () => {
+    expect(parseDockerInfoCpus('{"NCPU":6}')).toBe(6);
+    expect(parseDockerInfoCpus('{"ServerVersion":"x","NCPU":12,"Other":"y"}')).toBe(12);
+  });
+
+  it("falls back to plain-text 'CPUs: <n>' form", () => {
+    const fixture = ["Server:", " Containers: 0", " CPUs: 8", ""].join("\n");
+    expect(parseDockerInfoCpus(fixture)).toBe(8);
+  });
+
+  it("returns undefined for empty or non-matching input", () => {
+    expect(parseDockerInfoCpus("")).toBeUndefined();
+    expect(parseDockerInfoCpus("nothing useful here")).toBeUndefined();
+  });
+
+  it("returns undefined for zero or negative values", () => {
+    expect(parseDockerInfoCpus('{"NCPU":0}')).toBeUndefined();
+  });
+});
+
+describe("parseDockerInfoMemTotalBytes", () => {
+  it("extracts MemTotal from JSON docker info output", () => {
+    expect(parseDockerInfoMemTotalBytes('{"MemTotal":2054303744}')).toBe(2054303744);
+  });
+
+  it("parses plain-text 'Total Memory: <n> GiB' form", () => {
+    const fixture = ["Server:", " Total Memory: 7.756GiB", ""].join("\n");
+    const result = parseDockerInfoMemTotalBytes(fixture);
+    expect(result).toBeDefined();
+    expect(result).toBeGreaterThan(7 * 1024 ** 3);
+    expect(result).toBeLessThan(8 * 1024 ** 3);
+  });
+
+  it("returns undefined for empty input", () => {
+    expect(parseDockerInfoMemTotalBytes("")).toBeUndefined();
+  });
+});
+
+describe("isDockerUnderProvisioned", () => {
+  it("returns true when CPUs are below threshold", () => {
+    expect(isDockerUnderProvisioned(2, 16 * 1024 ** 3)).toBe(true);
+  });
+
+  it("returns true when memory is below threshold", () => {
+    expect(isDockerUnderProvisioned(8, 4 * 1024 ** 3)).toBe(true);
+  });
+
+  it("returns false when both at or above thresholds", () => {
+    expect(
+      isDockerUnderProvisioned(
+        MIN_RECOMMENDED_DOCKER_CPUS,
+        MIN_RECOMMENDED_DOCKER_MEM_GIB * 1024 ** 3,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false when fields are missing (no signal)", () => {
+    expect(isDockerUnderProvisioned(undefined, undefined)).toBe(false);
+  });
+
+  it("returns true when only the missing-CPU side is fine but memory is low", () => {
+    expect(isDockerUnderProvisioned(undefined, 1 * 1024 ** 3)).toBe(true);
+  });
+});
+
+describe("assessHost — container runtime resource detection (regression #2514)", () => {
+  it("flags default Colima (2 CPU / 2 GiB) as under-provisioned", () => {
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.4.0",
+        OperatingSystem: "Colima",
+        NCPU: 2,
+        MemTotal: 2054303744,
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+    expect(result.runtime).toBe("colima");
+    expect(result.dockerCpus).toBe(2);
+    expect(result.dockerMemTotalBytes).toBe(2054303744);
+    expect(result.isContainerRuntimeUnderProvisioned).toBe(true);
+  });
+
+  it("does not flag a resized Colima (6 CPU / 12 GiB) as under-provisioned", () => {
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.4.0",
+        OperatingSystem: "Colima",
+        NCPU: 6,
+        MemTotal: 12 * 1024 ** 3,
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+    expect(result.dockerCpus).toBe(6);
+    expect(result.isContainerRuntimeUnderProvisioned).toBe(false);
+  });
+
+  it("does not surface CPU/mem fields when docker is not reachable", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      dockerInfoOutput: "",
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+    expect(result.dockerReachable).toBe(false);
+    expect(result.dockerCpus).toBeUndefined();
+    expect(result.dockerMemTotalBytes).toBeUndefined();
+    expect(result.isContainerRuntimeUnderProvisioned).toBe(false);
+  });
+});
+
+describe("planHostRemediation — under-provisioned runtime", () => {
+  it("emits a Colima-specific resize action when runtime is colima", () => {
+    const assessment = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.4.0",
+        OperatingSystem: "Colima",
+        NCPU: 2,
+        MemTotal: 2 * 1024 ** 3,
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+    const actions = planHostRemediation(assessment);
+    const action = actions.find((a) => a.id === "container_runtime_under_provisioned");
+    expect(action).toBeDefined();
+    expect(action?.blocking).toBe(false);
+    expect(action?.commands.some((c) => c.startsWith("colima start"))).toBe(true);
+  });
+
+  it("emits a Docker Desktop hint when runtime is docker-desktop", () => {
+    const assessment = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0.0",
+        OperatingSystem: "Docker Desktop",
+        NCPU: 2,
+        MemTotal: 2 * 1024 ** 3,
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+    const actions = planHostRemediation(assessment);
+    const action = actions.find((a) => a.id === "container_runtime_under_provisioned");
+    expect(action).toBeDefined();
+    expect(action?.commands.some((c) => c.toLowerCase().includes("docker desktop"))).toBe(true);
+  });
+
+  it("emits no resource action when runtime is properly sized", () => {
+    const assessment = assessHost({
+      platform: "linux",
+      env: {},
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0.0",
+        OperatingSystem: "Ubuntu 24.04",
+        NCPU: 8,
+        MemTotal: 16 * 1024 ** 3,
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+    const actions = planHostRemediation(assessment);
+    expect(actions.find((a) => a.id === "container_runtime_under_provisioned")).toBeUndefined();
   });
 });

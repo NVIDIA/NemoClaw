@@ -45,7 +45,7 @@ Covers creating pull requests that follow the project template and drafting docu
 | `nemoclaw-user-monitor-sandbox` | Check sandbox health, read logs, and trace agent behavior to diagnose problems. |
 | `nemoclaw-user-deploy-remote` | Deploy NemoClaw to a remote GPU instance, set up the Telegram bridge, and review sandbox container hardening. |
 | `nemoclaw-user-configure-security` | Review the risk framework for every configurable security control, understand credential storage, and assess posture trade-offs. |
-| `nemoclaw-user-workspace` | Back up and restore OpenClaw workspace files (soul.md, identity.md, memory.md, agents.md) and understand file persistence across sandbox restarts. |
+| `nemoclaw-user-manage-sandboxes` | Manage day-two sandbox operations, including status, logs, diagnostics, rebuilds, upgrades, messaging channels, workspace files, backup, and restore. |
 | `nemoclaw-user-reference` | CLI command reference, plugin and blueprint architecture, baseline network policies, and troubleshooting guide. |
 <!-- user-skills-table:end -->
 

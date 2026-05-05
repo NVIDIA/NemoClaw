@@ -44,7 +44,26 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: true,
       agent: null,
       controlUiPort: null,
+      autoYes: false,
     });
+  });
+
+  it.each<{ flags: string[] }>([
+    { flags: ["--yes"] },
+    { flags: ["-y"] },
+    { flags: ["--yes", "-y"] },
+  ])("sets autoYes when invoked with $flags", ({ flags }) => {
+    const result = parseOnboardArgs(
+      flags,
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.autoYes).toBe(true);
   });
 
   it("accepts the env-based third-party notice acknowledgement", () => {
@@ -69,6 +88,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: true,
       agent: null,
       controlUiPort: null,
+      autoYes: false,
     });
   });
 
@@ -93,6 +113,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
+      autoYes: false,
     });
   });
 
@@ -145,6 +166,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
+      autoYes: false,
     });
   });
 
@@ -170,6 +192,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
+      autoYes: false,
     });
   });
 
@@ -216,6 +239,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
+      autoYes: false,
     });
   });
 
@@ -351,6 +375,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: "openclaw",
       controlUiPort: null,
+      autoYes: false,
     });
   });
 
@@ -485,6 +510,7 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
+      autoYes: false,
     });
   });
 
