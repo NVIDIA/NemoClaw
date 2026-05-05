@@ -1026,46 +1026,35 @@ Only three skills are available by default: `healthcheck`, `skill-creator`, and 
 Skills are blocked for one of three reasons.
 
 - The skill requires a macOS-only binary (`memo`, `remindctl`, `grizzly`, and similar) that is not available on the Linux (GCP) instance Brev provisions.
-- The skill requires a CLI binary that is not pre-installed in the Brev environment, such as `gh` for the GitHub skill.
+- The skill requires a CLI binary that is not pre-installed in the sandbox image, such as `gh` for the GitHub skill.
 - The skill requires API credentials that have not been configured, such as a Notion API key or Discord bot token.
 
 Skills that require macOS-only binaries cannot be enabled on Brev.
-Skills that require Linux-compatible CLIs can be unblocked by installing the required binary on the Brev host.
-
-To enable the GitHub skill, install the `gh` CLI on the Brev host (outside the sandbox) and authenticate:
-
-```console
-$ sudo apt-get update
-$ sudo apt-get install -y gh
-$ gh auth login
-```
-
-Then restart the sandbox:
+Skills that require additional CLI binaries or credentials require a custom sandbox image rebuild.
+To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
 
 ```console
-$ nemoclaw <name> stop
-$ nemoclaw <name> start
+$ nemoclaw <name> rebuild
 ```
 
-### `openclaw config set` fails with a permission error on Brev
+After the rebuild completes, return to the Skills page to confirm the skill status has changed from `blocked` to `ready`.
 
-When deploying NemoClaw on Brev, running `openclaw config set` or asking the agent to update its configuration returns:
+### `openclaw config set` fails with a permission error on Brev (Shields Up)
+
+When `nemoclaw <name> shields up` has been run, `openclaw.json` is owned by root and mounted read-only inside the sandbox.
+Running `openclaw config set` inside the sandbox then returns:
 
 ```text
 EACCES: permission denied, open '/sandbox/.openclaw/openclaw.json'
 ```
 
-This is expected behavior.
-The `openclaw.json` file is owned by root and mounted read-only inside the sandbox.
-NemoClaw's security model prevents the agent from modifying its own configuration to protect against prompt injection attacks.
-
-To change the OpenClaw configuration on Brev, use the host-side `nemoclaw <sandbox> config set` command instead:
+In the default sandbox state (before `shields up`), `openclaw.json` is writable by the sandbox user.
+If you see this error, use the host-side config command instead:
 
 ```console
-$ nemoclaw <name> config set <key> <value>
+$ nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
 ```
 
-If you need to make changes that `nemoclaw config set` does not support, connect to the Brev host via SSH or the Brev CLI, edit the file from the host with appropriate permissions, and restart the sandbox.
 Refer to [Commands](../reference/commands.md) for the full list of supported configuration keys.
 
 ### OpenClaw dashboard is unreachable after extended uptime on Brev
@@ -1073,26 +1062,34 @@ Refer to [Commands](../reference/commands.md) for the full list of supported con
 After leaving NemoClaw running for an extended period on Brev, the OpenClaw dashboard may return `ERR_CONNECTION_RESET` or fail to load in the browser.
 The agent may still respond on messaging channels such as Telegram or Slack while the dashboard is unreachable.
 
+:::{admonition} Back up your workspace first
+:class: warning
+
+Take a snapshot before running onboard to protect your workspace files.
+
+```console
+$ nemoclaw <name> snapshot create
+```
+:::
+
 Re-run onboarding to restore dashboard connectivity:
 
 ```console
-$ nemoclaw <name> onboard
+$ nemoclaw onboard
 ```
 
-This restores the gateway connection without deleting the sandbox or losing workspace files.
+Depending on current sandbox state, onboarding may prompt before recreating resources.
 
 ### Skill install buttons do not work on Brev
 
-Clicking **Install** on a skill in the OpenClaw dashboard on Brev shows no response or fails silently.
+Clicking **Install** on a skill in the OpenClaw gateway dashboard on Brev shows no response or fails silently.
 
-The sandbox filesystem is read-only for most paths.
-The `npm install -g` and `apt install` commands that skill installation depends on cannot write to their target directories inside the sandbox.
-
-Install skill dependencies from the Brev host before launching the sandbox.
-Connect to your Brev instance and install the required binary listed in the skill's **Missing** field on the Skills page.
-Then restart the sandbox:
+Skill installation runs against the sandbox environment.
+Installing packages on the Brev host does not make them available inside the sandbox.
+To install a skill dependency, add it to the sandbox image and rebuild:
 
 ```console
-$ nemoclaw <name> stop
-$ nemoclaw <name> start
+$ nemoclaw <name> rebuild
 ```
+
+After the rebuild completes, return to the Skills page to confirm the skill is ready.
