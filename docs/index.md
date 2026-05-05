@@ -308,7 +308,6 @@ Release Notes <about/release-notes>
 
 Prerequisites <get-started/prerequisites>
 Quickstart <get-started/quickstart>
-Brev Web UI <get-started/brev-web-ui-quickstart>
 Quickstart with OpenClaw <get-started/quickstart>
 Quickstart with Hermes <get-started/quickstart-hermes>
 ```
@@ -346,6 +345,7 @@ Customize the Network Policy <network-policy/customize-network-policy>
 :hidden:
 
 Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
+Brev Web UI <get-started/brev-web-ui-quickstart>
 Install OpenClaw Plugins <deployment/install-openclaw-plugins>
 Sandbox Hardening <deployment/sandbox-hardening>
 ```
