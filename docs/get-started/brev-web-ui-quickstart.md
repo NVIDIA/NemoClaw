@@ -101,35 +101,6 @@ Provider: NVIDIA Cloud
 
 Click **Chat With Agent** to open the OpenClaw gateway dashboard.
 
-## Understand the Dashboard
-
-The OpenClaw gateway dashboard has the following sections.
-
-**Chat.**
-Direct chat interface for talking to your agent.
-This is where you start.
-The agent reads your workspace files and responds using Nemotron-3-Super-120B via NVIDIA Cloud.
-
-**Control.**
-
-- **Overview** -- Agent health and status.
-- **Channels** -- Connect to Slack, Telegram, or Discord.
-- **Instances** -- Running agent instances.
-- **Sessions** -- Conversation history.
-- **Usage** -- Token and API usage.
-- **Cron Jobs** -- Schedule recurring agent tasks.
-
-**Agent.**
-
-- **Agents** -- Manage agent profiles.
-- **Skills** -- Add new capabilities to your agent.
-- **Nodes** -- Multi-agent node configuration.
-
-**Settings.**
-
-- **Config** -- Agent configuration.
-- **Debug** -- Debug logs and diagnostics.
-
 ## Have Your First Conversation
 
 In the Chat box, type the following:
@@ -179,40 +150,14 @@ Now that your agent is running, explore these capabilities.
 **Connect a messaging channel.**
 Go to **Channels** in the dashboard to connect your agent to Telegram, Slack, or Discord so it can message you proactively.
 
-**Add a new skill.**
-Go to **Skills** and browse available skills, or use the built-in Skill-Creator to build a custom skill.
-
-**Schedule a recurring task.**
-Go to **Cron Jobs** to set up tasks the agent runs automatically, such as a daily email check or calendar reminder.
-
 **Use a different AI model.**
 The agent supports switching inference providers at runtime.
 See [Switch Inference Providers](../inference/switch-inference-providers.md) for instructions.
-
-## Troubleshooting
-
-**The Deploy NemoClaw button is not visible.**
-Make sure you are signed in to `brev.nvidia.com`.
-The banner appears on the GPUs page.
-If you do not see it, try refreshing the page or navigating directly to the NemoClaw tab in the top navigation.
-
-**API key not accepted.**
-Make sure your key starts with `nvapi-` and was copied in full.
-Keys from `build.nvidia.com` are free and do not require a paid plan.
-
-**Agent takes more than 5 minutes to deploy.**
-This can happen during periods of high demand on Brev.
-The Cloudflare quota warning at the top of the Brev page may affect deployment time.
-Try again after a few minutes.
-
-**OpenClaw dashboard shows a blank chat.**
-This is normal on first launch.
-The agent reads its workspace files during the first session startup.
-Type a message and wait a few seconds for the first response.
 
 ## Next Steps
 
 - [Prerequisites](prerequisites.md) -- System requirements before getting started.
 - [Quickstart](quickstart.md) -- CLI-based local setup.
 - [Deploy to a Remote GPU Instance](../deployment/deploy-to-remote-gpu.md) -- CLI-based Brev deployment.
+- [Troubleshooting](../reference/troubleshooting.md) -- Common issues and fixes.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md)
