@@ -3,11 +3,12 @@
 
 /* v8 ignore start -- thin oclif adapter covered through CLI integration tests. */
 
-import { Args, Command, Flags } from "@oclif/core";
+import { Args, Flags } from "@oclif/core";
 
+import { NemoClawCommand } from "./nemoclaw-oclif-command";
 import { destroySandbox } from "./sandbox-runtime-actions";
 
-export default class DestroyCliCommand extends Command {
+export default class DestroyCliCommand extends NemoClawCommand {
   static id = "sandbox:destroy";
   static strict = true;
   static summary = "Stop NIM and delete sandbox";
@@ -18,16 +19,15 @@ export default class DestroyCliCommand extends Command {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
     yes: Flags.boolean({ char: "y", description: "Skip the confirmation prompt" }),
     force: Flags.boolean({ description: "Skip the confirmation prompt" }),
   };
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(DestroyCliCommand);
-    const legacyArgs: string[] = [];
-    if (flags.yes) legacyArgs.push("--yes");
-    if (flags.force) legacyArgs.push("--force");
-    await destroySandbox(args.sandboxName, legacyArgs);
+    await destroySandbox(args.sandboxName, {
+      force: flags.force === true,
+      yes: flags.yes === true,
+    });
   }
 }

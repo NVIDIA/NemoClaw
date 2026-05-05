@@ -5,6 +5,10 @@
 
 import { runDeployAction as executeDeployAction } from "./deploy-action";
 import {
+  type GarbageCollectImagesOptions,
+  type UpgradeSandboxesOptions,
+} from "./lifecycle-options";
+import {
   backupAll as executeBackupAllAction,
   garbageCollectImages as executeGarbageCollectImagesAction,
 } from "./maintenance-actions";
@@ -52,15 +56,19 @@ export function runBackupAllAction(): void {
   executeBackupAllAction();
 }
 
-export async function runUpgradeSandboxesAction(args: string[] = []): Promise<void> {
+export async function runUpgradeSandboxesAction(
+  options: string[] | UpgradeSandboxesOptions = {},
+): Promise<void> {
   const { upgradeSandboxes } = require("./upgrade-sandboxes-action") as {
-    upgradeSandboxes: (args?: string[]) => Promise<void>;
+    upgradeSandboxes: (options?: string[] | UpgradeSandboxesOptions) => Promise<void>;
   };
-  await upgradeSandboxes(args);
+  await upgradeSandboxes(options);
 }
 
-export async function runGarbageCollectImagesAction(args: string[] = []): Promise<void> {
-  await executeGarbageCollectImagesAction(args);
+export async function runGarbageCollectImagesAction(
+  options: string[] | GarbageCollectImagesOptions = {},
+): Promise<void> {
+  await executeGarbageCollectImagesAction(options);
 }
 
 export function showRootHelp(): void {

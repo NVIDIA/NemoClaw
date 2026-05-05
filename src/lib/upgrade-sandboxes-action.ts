@@ -5,6 +5,10 @@
 
 import { CLI_NAME } from "./branding";
 import { prompt as askPrompt } from "./credentials";
+import {
+  normalizeUpgradeSandboxesOptions,
+  type UpgradeSandboxesOptions,
+} from "./lifecycle-options";
 import { captureOpenshell } from "./openshell-runtime";
 import * as registry from "./registry";
 import { parseLiveSandboxNames } from "./runtime-recovery";
@@ -15,10 +19,13 @@ import { B, D, G, R, YW } from "./terminal-style";
 // ── Upgrade sandboxes (#1904) ────────────────────────────────────
 // Detect sandboxes running stale agent versions and offer to rebuild them.
 
-export async function upgradeSandboxes(args: string[] = []): Promise<void> {
-  const checkOnly = args.includes("--check");
-  const auto = args.includes("--auto");
-  const skipConfirm = auto || args.includes("--yes");
+export async function upgradeSandboxes(
+  options: string[] | UpgradeSandboxesOptions = {},
+): Promise<void> {
+  const normalized = normalizeUpgradeSandboxesOptions(options);
+  const checkOnly = normalized.check === true;
+  const auto = normalized.auto === true;
+  const skipConfirm = auto || normalized.yes === true;
 
   const sandboxes = registry.listSandboxes().sandboxes;
   if (sandboxes.length === 0) {

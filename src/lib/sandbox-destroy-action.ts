@@ -7,6 +7,10 @@ import fs from "node:fs";
 
 import { CLI_NAME } from "./branding";
 import { prompt as askPrompt } from "./credentials";
+import {
+  type DestroySandboxOptions,
+  normalizeDestroySandboxOptions,
+} from "./lifecycle-options";
 import * as onboardSession from "./onboard-session";
 import type { Session } from "./onboard-session";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
@@ -161,8 +165,12 @@ export function removeSandboxRegistryEntry(
   return removeSandbox(sandboxName);
 }
 
-export async function destroySandbox(sandboxName: string, args: string[] = []): Promise<void> {
-  const skipConfirm = args.includes("--yes") || args.includes("--force");
+export async function destroySandbox(
+  sandboxName: string,
+  options: string[] | DestroySandboxOptions = {},
+): Promise<void> {
+  const normalized = normalizeDestroySandboxOptions(options);
+  const skipConfirm = normalized.yes === true || normalized.force === true;
 
   // Active session detection — enrich the confirmation prompt if sessions are active
   let activeSessionCount = 0;
