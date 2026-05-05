@@ -3232,6 +3232,24 @@ sys.exit(exit_code)
     expect(state).toContain(`"acceptedVersion": "${noticeVersion}"`);
   }, 15_000);
 
+  it("interactive installs with stdin on a TTY prompt before phase 1 and continue after acceptance", () => {
+    const { result, phases, state } = runInstallerWithInteractiveStdin("yes\n");
+    const output = `${result.stdout}${result.stderr}`;
+    const noticeVersion = JSON.parse(
+      fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "lib", "usage-notice.json"), "utf-8"),
+    ).version;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Third-Party Software Notice - NemoClaw Installer/);
+    expect(output).toMatch(/Type 'yes'/);
+    expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(output.indexOf("Third-Party Software Notice - NemoClaw Installer")).toBeGreaterThanOrEqual(0);
+    expect(output.indexOf("Node.js")).toBeGreaterThan(
+      output.indexOf("Third-Party Software Notice - NemoClaw Installer"),
+    );
+    expect(phases).not.toBe("");
+    expect(state).toContain(`"acceptedVersion": "${noticeVersion}"`);
+  }, 15_000);
+
   it("piped installs with a controlling TTY still stop before phase 1 when acceptance is declined", () => {
     const { result, phases, state } = runInstallerWithPipedStdinAndTty("\n");
     const output = `${result.stdout}${result.stderr}`;

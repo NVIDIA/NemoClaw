@@ -638,7 +638,7 @@ print_usage_notice_body_shell() {
 }
 
 show_usage_notice_shell() {
-  local notice_json version title prompt answer answer_lc
+  local notice_json version title prompt notice_body answer answer_lc
   notice_json="$(usage_notice_config_path)"
   if [[ ! -f "$notice_json" ]]; then
     error "Third-party software notice configuration not found."
@@ -650,6 +650,10 @@ show_usage_notice_shell() {
   if [[ -z "$version" ]]; then
     error "Third-party software notice version not found."
   fi
+  notice_body="$(print_usage_notice_body_shell "$notice_json")"
+  if [[ -z "$(printf "%s" "$notice_body" | tr -d '[:space:]')" ]]; then
+    error "Third-party software notice body not found."
+  fi
 
   if usage_notice_accepted_shell "$version"; then
     return 0
@@ -658,7 +662,7 @@ show_usage_notice_shell() {
   printf "\n"
   printf "  %s\n" "${title:-Third-Party Software Notice - NemoClaw Installer}"
   printf "  ──────────────────────────────────────────────────\n"
-  print_usage_notice_body_shell "$notice_json"
+  printf "%s\n" "$notice_body"
   printf "\n"
   printf "  %s" "${prompt:-Type 'yes' to accept the NemoClaw license and third-party software notice and continue [no]: }"
   if ! IFS= read -r answer; then
