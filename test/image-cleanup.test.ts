@@ -9,10 +9,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  getSandboxDeleteOutcome,
   removeSandboxImage,
   removeSandboxRegistryEntry,
 } from "../src/lib/sandbox-destroy-action";
+import { getSandboxDeleteOutcome } from "../src/lib/sandbox-destroy-helpers";
 import { normalizeGarbageCollectImagesOptions } from "../src/lib/lifecycle-options";
 import { help as renderRootHelp } from "../src/lib/root-help-action";
 

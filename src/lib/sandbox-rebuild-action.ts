@@ -26,7 +26,8 @@ import * as policies from "./policies";
 import * as registry from "./registry";
 import { resolveOpenshell } from "./resolve-openshell";
 import { parseLiveSandboxNames } from "./runtime-recovery";
-import { getSandboxDeleteOutcome, removeSandboxRegistryEntry } from "./sandbox-destroy-action";
+import { getSandboxDeleteOutcome } from "./sandbox-destroy-helpers";
+import { removeSandboxRegistryEntry } from "./sandbox-destroy-action";
 import { executeSandboxCommand } from "./sandbox-process-recovery-action";
 import {
   createSystemDeps as createSessionDeps,
