@@ -50,7 +50,7 @@ function appendCommonFlags(
 }
 
 export class PolicyAddCommand extends Command {
-  static id = "sandbox:policy-add";
+  static id = "sandbox:policy:add";
   static strict = true;
   static summary = "Add a network or filesystem policy preset";
   static description = "Add a built-in or custom policy preset to a sandbox.";
@@ -82,7 +82,7 @@ export class PolicyAddCommand extends Command {
 }
 
 export class PolicyRemoveCommand extends Command {
-  static id = "sandbox:policy-remove";
+  static id = "sandbox:policy:remove";
   static strict = true;
   static summary = "Remove an applied policy preset";
   static description = "Remove a built-in or custom policy preset from a sandbox.";

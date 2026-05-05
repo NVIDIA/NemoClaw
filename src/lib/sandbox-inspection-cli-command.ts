@@ -37,7 +37,7 @@ export class SandboxStatusCommand extends Command {
 }
 
 export class SandboxPolicyListCommand extends Command {
-  static id = "sandbox:policy-list";
+  static id = "sandbox:policy:list";
   static strict = true;
   static summary = "List policy presets";
   static description = "List built-in and custom policy presets and show which are applied.";

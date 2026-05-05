@@ -115,13 +115,13 @@ export function resolveSandboxOclifDispatch(
           usage: "policy-add [preset] [--yes|-y] [--dry-run] [--from-file <path>] [--from-dir <path>]",
         };
       }
-      return { kind: "oclif", commandId: "sandbox:policy-add", args: [sandboxName, ...actionArgs] };
+      return { kind: "oclif", commandId: "sandbox:policy:add", args: [sandboxName, ...actionArgs] };
     case "policy-remove":
       if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "policy-remove [preset] [--yes|-y] [--dry-run]" };
-      return { kind: "oclif", commandId: "sandbox:policy-remove", args: [sandboxName, ...actionArgs] };
+      return { kind: "oclif", commandId: "sandbox:policy:remove", args: [sandboxName, ...actionArgs] };
     case "policy-list":
       if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "policy-list" };
-      return { kind: "oclif", commandId: "sandbox:policy-list", args: [sandboxName, ...actionArgs] };
+      return { kind: "oclif", commandId: "sandbox:policy:list", args: [sandboxName, ...actionArgs] };
     case "destroy":
       if (hasHelpFlag(actionArgs)) return { kind: "help", usage: "destroy [--yes|-y|--force]" };
       return { kind: "oclif", commandId: "sandbox:destroy", args: [sandboxName, ...actionArgs] };
