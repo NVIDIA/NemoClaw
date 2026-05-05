@@ -35,15 +35,16 @@ OpenShell intercepts inference traffic and forwards it to the local endpoint you
 
 - NemoClaw installed.
   Refer to the [Quickstart](../get-started/quickstart.md) if you have not installed yet.
-- A local model server running, or Ollama installed. The NemoClaw onboard wizard can also start Ollama for you.
+- A local model server running, or an Ollama setup that the NemoClaw onboard wizard can use, start, or install.
 
 ## Ollama
 
 Ollama is the default local inference option.
 The onboard wizard detects Ollama automatically when it is installed or running on the host.
 
-If Ollama is not running, NemoClaw starts it for you.
-On macOS, the wizard also offers to install Ollama through Homebrew if it is not present.
+If Ollama is installed but not running, NemoClaw starts it for you.
+On macOS and Linux, the wizard can also offer to install Ollama when it is not present.
+On WSL, the wizard can use, start, restart, or install Ollama on the Windows host through PowerShell interop.
 
 Run the onboard wizard.
 
@@ -54,17 +55,32 @@ $ nemoclaw onboard
 Select **Local Ollama** from the provider list.
 NemoClaw lists installed models or offers starter models if none are installed.
 It pulls the selected model, loads it into memory, and validates it before continuing.
-On WSL, if Ollama is running on the Windows host, NemoClaw pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
+On WSL, if you choose the Windows-host Ollama path, NemoClaw uses `host.docker.internal:11434` and pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
+
+### WSL with Windows-Host Ollama
+
+When NemoClaw runs inside WSL, the provider menu can include Windows-host Ollama actions:
+
+- **Use Ollama on Windows host** when the Windows daemon is already reachable.
+- **Restart Ollama on Windows host** when the daemon is installed but only bound to Windows loopback.
+- **Start Ollama on Windows host** when Ollama is installed but not running.
+- **Install Ollama on Windows host** when Windows does not have Ollama installed.
+
+The install and restart paths set `OLLAMA_HOST=0.0.0.0:11434` on the Windows side so Docker and WSL can reach the daemon through `host.docker.internal`.
+Use one Ollama instance on port `11434` at a time.
+If both WSL and Windows-host Ollama are running, pick the intended menu entry during onboarding so NemoClaw validates and pulls models against the right daemon.
 
 ### Authenticated Reverse Proxy
 
-NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated
-reverse proxy on `0.0.0.0:11435`.
+On non-WSL hosts, NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated reverse proxy on `0.0.0.0:11435`.
 Containers and other hosts on the local network reach Ollama only through the
 proxy, which validates a Bearer token before forwarding requests.
 Ollama itself is never exposed without authentication.
 
-The onboard wizard manages the proxy automatically:
+WSL Ollama paths do not use this proxy.
+Windows-host Ollama uses the Windows daemon through `host.docker.internal`.
+
+For non-WSL Ollama setups, the onboard wizard manages the proxy automatically:
 
 - Generates a random 24-byte token on first run and stores it in
   `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.

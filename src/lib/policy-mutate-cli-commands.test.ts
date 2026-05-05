@@ -48,4 +48,18 @@ describe("policy mutation oclif commands", () => {
       "--dry-run",
     ]);
   });
+
+  it("rejects missing custom policy paths before dispatch", async () => {
+    const runtime = {
+      sandboxPolicyAdd: vi.fn().mockResolvedValue(undefined),
+      sandboxPolicyRemove: vi.fn().mockResolvedValue(undefined),
+    };
+    setPolicyRuntimeBridgeFactoryForTest(() => runtime);
+
+    await expect(PolicyAddCommand.run(["alpha", "--from-file"], rootDir)).rejects.toThrow(
+      /from-file/,
+    );
+
+    expect(runtime.sandboxPolicyAdd).not.toHaveBeenCalled();
+  });
 });

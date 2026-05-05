@@ -1438,6 +1438,19 @@ describe("CLI dispatch", () => {
     expect(start.out).toContain("Channel 'telegram' is already enabled for 'alpha'. Nothing to do.");
   });
 
+  it("policy and channel mutations reject missing parser-owned values before dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-mutation-missing-values-"));
+    writeSandboxRegistry(home);
+
+    const missingPolicyFile = runWithEnv("alpha policy-add --from-file 2>&1", { HOME: home });
+    expect(missingPolicyFile.code).not.toBe(0);
+    expect(missingPolicyFile.out).toContain("--from-file");
+
+    const missingChannel = runWithEnv("alpha channels add 2>&1", { HOME: home });
+    expect(missingChannel.code).not.toBe(0);
+    expect(missingChannel.out).toContain("channel");
+  });
+
   it("diagnostic commands reject invalid parser-owned flags before dispatch", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-diagnostics-invalid-flags-"));
     writeSandboxRegistry(home);

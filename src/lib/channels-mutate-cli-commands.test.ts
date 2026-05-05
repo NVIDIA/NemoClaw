@@ -48,4 +48,18 @@ describe("channels mutation oclif commands", () => {
     ]);
     expect(runtime.sandboxChannelsStop).toHaveBeenCalledWith("alpha", ["slack"]);
   });
+
+  it("requires a channel before dispatch", async () => {
+    const runtime = {
+      sandboxChannelsAdd: vi.fn().mockResolvedValue(undefined),
+      sandboxChannelsRemove: vi.fn().mockResolvedValue(undefined),
+      sandboxChannelsStart: vi.fn().mockResolvedValue(undefined),
+      sandboxChannelsStop: vi.fn().mockResolvedValue(undefined),
+    };
+    setChannelsRuntimeBridgeFactoryForTest(() => runtime);
+
+    await expect(ChannelsAddCommand.run(["alpha"], rootDir)).rejects.toThrow(/channel/i);
+
+    expect(runtime.sandboxChannelsAdd).not.toHaveBeenCalled();
+  });
 });

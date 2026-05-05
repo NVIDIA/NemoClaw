@@ -58,10 +58,34 @@ describe("resolveSandboxOclifDispatch", () => {
     });
   });
 
-  it("routes policy-add missing-value errors through a raw oclif adapter", () => {
+  it("routes sandbox config set through oclif with security flags intact", () => {
+    expect(
+      resolveSandboxOclifDispatch("alpha", "config", [
+        "set",
+        "--key",
+        "inference.endpoints",
+        "--value",
+        "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
+      ]),
+    ).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:config:set",
+      args: [
+        "alpha",
+        "--key",
+        "inference.endpoints",
+        "--value",
+        "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
+      ],
+    });
+  });
+
+  it("routes policy-add missing-value errors through the strict oclif adapter", () => {
     expect(resolveSandboxOclifDispatch("alpha", "policy-add", ["--from-file"])).toEqual({
       kind: "oclif",
-      commandId: "sandbox:policy-add:raw",
+      commandId: "sandbox:policy-add",
       args: ["alpha", "--from-file"],
     });
   });

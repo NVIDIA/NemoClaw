@@ -41,11 +41,6 @@ function hasHelpFlag(args: readonly string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
 
-function hasMissingFlagValue(args: readonly string[], flagName: string): boolean {
-  const index = args.indexOf(flagName);
-  return index !== -1 && (!args[index + 1] || args[index + 1].startsWith("--"));
-}
-
 export function resolveGlobalOclifDispatch(cmd: string, args: string[]): DispatchResult {
   switch (cmd) {
     case "onboard":
@@ -119,9 +114,6 @@ export function resolveSandboxOclifDispatch(
           kind: "help",
           usage: "policy-add [preset] [--yes|-y] [--dry-run] [--from-file <path>] [--from-dir <path>]",
         };
-      }
-      if (hasMissingFlagValue(actionArgs, "--from-file") || hasMissingFlagValue(actionArgs, "--from-dir")) {
-        return { kind: "oclif", commandId: "sandbox:policy-add:raw", args: [sandboxName, ...actionArgs] };
       }
       return { kind: "oclif", commandId: "sandbox:policy-add", args: [sandboxName, ...actionArgs] };
     case "policy-remove":
@@ -214,8 +206,12 @@ export function resolveSandboxOclifDispatch(
         if (hasHelpFlag(actionArgs.slice(1))) return { kind: "help", usage: "config get [--key dotpath] [--format json|yaml]" };
         return { kind: "oclif", commandId: "sandbox:config:get", args: [sandboxName, ...actionArgs.slice(1)] };
       }
-      if (configSub === "--help" || configSub === "-h") return { kind: "help", usage: "config get [--key dotpath] [--format json|yaml]" };
-      return { kind: "usageError", lines: ["config get [--key dotpath] [--format json|yaml]"] };
+      if (configSub === "set") {
+        if (hasHelpFlag(actionArgs.slice(1))) return { kind: "help", usage: "config set --key <dotpath> --value <value> [--restart] [--config-accept-new-path]" };
+        return { kind: "oclif", commandId: "sandbox:config:set", args: [sandboxName, ...actionArgs.slice(1)] };
+      }
+      if (configSub === "--help" || configSub === "-h") return { kind: "help", usage: "config <get|set>" };
+      return { kind: "usageError", lines: ["config <get|set>", "get [--key dotpath] [--format json|yaml]", "set --key <dotpath> --value <value> [--restart] [--config-accept-new-path]"] };
     }
     default:
       return { kind: "unknownAction", action };
