@@ -70,7 +70,7 @@ export const GROUP_ORDER: readonly CommandGroup[] = [
 ] as const;
 
 /**
- * All 46 CLI commands. This is the single source of truth.
+ * All CLI commands. This is the single source of truth.
  *
  * The order within each group matches the current help() display order.
  */
@@ -234,24 +234,28 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> channels add",
     description: "Save credentials and rebuild",
+    flags: "<channel> [--dry-run]",
     group: "Messaging Channels",
     scope: "sandbox",
   },
   {
     usage: "nemoclaw <name> channels remove",
     description: "Clear credentials and rebuild",
+    flags: "<channel> [--dry-run]",
     group: "Messaging Channels",
     scope: "sandbox",
   },
   {
     usage: "nemoclaw <name> channels stop",
     description: "Disable channel (keeps credentials)",
+    flags: "<channel> [--dry-run]",
     group: "Messaging Channels",
     scope: "sandbox",
   },
   {
     usage: "nemoclaw <name> channels start",
     description: "Re-enable a previously stopped channel",
+    flags: "<channel> [--dry-run]",
     group: "Messaging Channels",
     scope: "sandbox",
   },
@@ -279,10 +283,25 @@ export const COMMANDS: readonly CommandDef[] = [
     hidden: true,
   },
 
-  // ── Hidden: config subcommands (undocumented) ──
+  // ── Hidden: config subcommands (advanced / security-sensitive) ──
   {
     usage: "nemoclaw <name> config get",
     description: "Get sandbox configuration",
+    flags: "[--key <dotpath>] [--format json|yaml]",
+    group: "Sandbox Management",
+    scope: "sandbox",
+    hidden: true,
+  },
+  {
+    usage: "nemoclaw <name> config set",
+    description: "Set sandbox configuration with SSRF validation",
+    group: "Sandbox Management",
+    scope: "sandbox",
+    hidden: true,
+  },
+  {
+    usage: "nemoclaw <name> config rotate-token",
+    description: "Rotate sandbox provider credentials",
     group: "Sandbox Management",
     scope: "sandbox",
     hidden: true,

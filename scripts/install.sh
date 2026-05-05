@@ -1617,13 +1617,15 @@ main() {
   # that they have to manually `rm -rf` before retry, while their license
   # has not actually been accepted.
   #
-  # Skipped (and the install proceeds) when any of:
+  # Skipped (and the install proceeds) only when either:
   #  - NON_INTERACTIVE=1 (also implied by ACCEPT_THIRD_PARTY_SOFTWARE=1 above)
-  #  - stdin is a TTY — license helper prompts the user directly
-  #  - /dev/tty is openable — show_usage_notice falls back to /dev/tty input
-  if [ "${NON_INTERACTIVE:-}" != "1" ] \
-    && [ ! -t 0 ] \
-    && ! (: </dev/tty) 2>/dev/null; then
+  #  - stdin is a TTY — license helper prompts the user directly before install
+  #
+  # Do not treat an openable /dev/tty as sufficient here. In curl|bash mode,
+  # stdin is a pipe even though /dev/tty may still be available; falling back to
+  # /dev/tty later would run phases 1/2 before the license prompt and could leave
+  # a partial install behind if the user declines or no terminal is attached.
+  if [ "${NON_INTERACTIVE:-}" != "1" ] && [ ! -t 0 ]; then
     error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
   fi
 

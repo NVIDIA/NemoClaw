@@ -229,11 +229,10 @@ export async function rebuildSandbox(
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
-  if (!backup.success) {
+  const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
+  if (!backup.success && !hasAnyBackup) {
+    // Total failure — nothing was backed up at all.
     console.error("  Failed to back up sandbox state.");
-    if (backup.backedUpDirs.length > 0) {
-      console.error(`  Partial backup: ${backup.backedUpDirs.join(", ")}`);
-    }
     if (backup.failedDirs.length > 0) {
       console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
     }
@@ -251,9 +250,27 @@ export async function rebuildSandbox(
     bail("Failed to record backup metadata.");
     return;
   }
-  console.log(
-    `  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
-  );
+  if (!backup.success) {
+    // Partial backup — some state succeeded, some failed (e.g. root-owned
+    // files caused tar permission errors).  Proceed with a warning so the
+    // rebuild isn't blocked by a handful of inaccessible files (#2727).
+    console.warn(
+      `  ${YW}⚠${R} Partial backup: ${backup.backedUpDirs.length} dirs and ` +
+        `${backup.backedUpFiles.length} files OK; ${backup.failedDirs.length} dirs and ` +
+        `${backup.failedFiles.length} files failed`,
+    );
+    if (backup.failedDirs.length > 0) {
+      console.warn(`    Failed dirs: ${backup.failedDirs.join(", ")}`);
+    }
+    if (backup.failedFiles.length > 0) {
+      console.warn(`    Failed files: ${backup.failedFiles.join(", ")}`);
+    }
+    console.warn("    Rebuild will continue — failed state could not be preserved.");
+  } else {
+    console.log(
+      `  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
+    );
+  }
   console.log(`    Backup: ${backupManifest.backupPath}`);
 
   // Step 3: Delete sandbox without tearing down gateway or session.

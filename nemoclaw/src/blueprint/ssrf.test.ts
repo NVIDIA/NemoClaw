@@ -107,6 +107,36 @@ describe("validateEndpointUrl", () => {
     expect(result.pinnedUrl).toBe("http://93.184.216.34/v1");
   });
 
+  it("allows public IPv4 literals without DNS lookup", async () => {
+    mockLookup.mockRejectedValue(new Error("lookup should not run for IP literals"));
+    mockLookup.mockClear();
+    const result = await validateEndpointUrl("https://93.184.216.34/v1");
+    expect(result.url).toBe("https://93.184.216.34/v1");
+    expect(result.pinnedUrl).toBe("https://93.184.216.34/v1");
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it("allows public bracketed IPv6 literals without DNS lookup", async () => {
+    mockLookup.mockRejectedValue(new Error("lookup should not run for IP literals"));
+    mockLookup.mockClear();
+    const result = await validateEndpointUrl("https://[2606:4700:4700::1111]/v1");
+    expect(result.url).toBe("https://[2606:4700:4700::1111]/v1");
+    expect(result.pinnedUrl).toBe("https://[2606:4700:4700::1111]/v1");
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it("rejects private IP literals without DNS lookup", async () => {
+    mockLookup.mockRejectedValue(new Error("lookup should not run for IP literals"));
+    mockLookup.mockClear();
+    await expect(validateEndpointUrl("https://127.0.0.1/v1")).rejects.toThrow(
+      /private\/internal address/,
+    );
+    await expect(validateEndpointUrl("https://[::1]/v1")).rejects.toThrow(
+      /private\/internal address/,
+    );
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
   it("rejects file:// scheme", async () => {
     await expect(validateEndpointUrl("file:///etc/passwd")).rejects.toThrow(
       /Unsupported URL scheme/,
@@ -174,6 +204,13 @@ describe("validateEndpointUrl", () => {
     mockDnsFailure();
     await expect(validateEndpointUrl("https://nonexistent.invalid/v1")).rejects.toThrow(
       /Cannot resolve hostname/,
+    );
+  });
+
+  it("rejects hostname when DNS returns no addresses", async () => {
+    mockLookup.mockResolvedValue([]);
+    await expect(validateEndpointUrl("https://empty.example/v1")).rejects.toThrow(
+      /no addresses returned/,
     );
   });
 
