@@ -4221,9 +4221,12 @@ async function createSandbox(
       token: getCredential(webSearch.BRAVE_API_KEY_ENV),
     });
   }
+  const previousProviderCredentialHashes =
+    registry.getSandbox(sandboxName)?.providerCredentialHashes ?? {};
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
   const reusableMessagingProviders: string[] = [];
   const reusableMessagingChannels: string[] = [];
+  const reusableMessagingEnvKeys = new Set<string>();
   if (enabledChannels != null) {
     for (const { name, envKey, token } of messagingTokenDefs) {
       if (token) continue;
@@ -4232,6 +4235,7 @@ async function createSandbox(
       if (!channel || !enabledChannels.includes(channel)) continue;
       if (!providerExistsInGateway(name)) continue;
       reusableMessagingProviders.push(name);
+      reusableMessagingEnvKeys.add(envKey);
       if (!reusableMessagingChannels.includes(channel)) {
         reusableMessagingChannels.push(channel);
       }
@@ -4986,6 +4990,12 @@ async function createSandbox(
     const hash = token ? hashCredential(token) : null;
     if (hash) {
       providerCredentialHashes[envKey] = hash;
+    }
+  }
+  for (const envKey of reusableMessagingEnvKeys) {
+    const previousHash = previousProviderCredentialHashes[envKey];
+    if (typeof previousHash === "string" && previousHash) {
+      providerCredentialHashes[envKey] = previousHash;
     }
   }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
