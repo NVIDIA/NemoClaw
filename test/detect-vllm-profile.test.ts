@@ -42,6 +42,13 @@ describe("detectVllmProfile", () => {
     expect(profile!.name).toBe("DGX Spark");
   });
 
+  it("platform field is authoritative over the legacy spark flag", () => {
+    // Conflicting payload: platform says station, legacy spark says true.
+    // platform must win.
+    const profile = detectVllmProfile({ platform: "station", spark: true, type: "nvidia" });
+    expect(profile!.name).toBe("DGX Station");
+  });
+
   it("returns null when gpu is null or undefined", () => {
     expect(detectVllmProfile(null)).toBeNull();
     expect(detectVllmProfile(undefined)).toBeNull();

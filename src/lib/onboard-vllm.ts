@@ -142,8 +142,9 @@ export function detectVllmProfile(
     | null
     | undefined,
 ): VllmProfile | null {
-  if (gpu?.platform === "spark" || gpu?.spark) return SPARK_PROFILE;
+  if (gpu?.platform === "spark") return SPARK_PROFILE;
   if (gpu?.platform === "station") return STATION_PROFILE;
+  if (gpu?.spark) return SPARK_PROFILE;
   if (gpu?.type === "nvidia") return GENERIC_LINUX_PROFILE;
   return null;
 }

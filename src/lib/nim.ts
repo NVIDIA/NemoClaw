@@ -67,8 +67,12 @@ function readPlatformModel(): string {
 
 export function detectNvidiaPlatform(): NvidiaPlatform {
   const model = readPlatformModel();
-  if (/Spark/i.test(model) || /DGX.*Spark/i.test(model)) return "spark";
-  if (/P3830|Galaxy/.test(model) || (/Station/i.test(model) && /GB300/.test(model))) {
+  if (/DGX[_\s-]+Spark/i.test(model)) return "spark";
+  if (
+    /(?<![A-Za-z0-9])P3830(?![A-Za-z0-9])/i.test(model) ||
+    /DGX[_\s-]+Station/i.test(model) ||
+    (/Station/i.test(model) && /GB300/i.test(model))
+  ) {
     return "station";
   }
   return "linux";
