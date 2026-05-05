@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { resolveSandboxOclifDispatch } from "./legacy-oclif-dispatch";
+import { resolveSandboxOclifDispatch } from "./oclif-dispatch";
 
 describe("resolveSandboxOclifDispatch", () => {
   it("routes sandbox status through oclif", () => {
@@ -15,7 +15,7 @@ describe("resolveSandboxOclifDispatch", () => {
   });
 
   it("keeps sandbox status help public", () => {
-    expect(resolveSandboxOclifDispatch("alpha", "status", ["--help"])).toEqual({
+    expect(resolveSandboxOclifDispatch("alpha", "status", ["--help"])).toMatchObject({
       kind: "help",
       usage: "status",
     });
@@ -30,14 +30,14 @@ describe("resolveSandboxOclifDispatch", () => {
   });
 
   it("keeps sandbox doctor help public", () => {
-    expect(resolveSandboxOclifDispatch("alpha", "doctor", ["--help"])).toEqual({
+    expect(resolveSandboxOclifDispatch("alpha", "doctor", ["--help"])).toMatchObject({
       kind: "help",
       usage: "doctor [--json]",
     });
   });
 
   it("keeps sandbox logs help public with supported filters", () => {
-    expect(resolveSandboxOclifDispatch("alpha", "logs", ["--help"])).toEqual({
+    expect(resolveSandboxOclifDispatch("alpha", "logs", ["--help"])).toMatchObject({
       kind: "help",
       usage: "logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
     });
@@ -52,7 +52,7 @@ describe("resolveSandboxOclifDispatch", () => {
   });
 
   it("returns help for sandbox recover", () => {
-    expect(resolveSandboxOclifDispatch("alpha", "recover", ["--help"])).toEqual({
+    expect(resolveSandboxOclifDispatch("alpha", "recover", ["--help"])).toMatchObject({
       kind: "help",
       usage: "recover",
     });
@@ -85,7 +85,7 @@ describe("resolveSandboxOclifDispatch", () => {
   it("routes policy-add missing-value errors through the strict oclif adapter", () => {
     expect(resolveSandboxOclifDispatch("alpha", "policy-add", ["--from-file"])).toEqual({
       kind: "oclif",
-      commandId: "sandbox:policy-add",
+      commandId: "sandbox:policy:add",
       args: ["alpha", "--from-file"],
     });
   });

@@ -12,7 +12,7 @@ const { fetchGatewayAuthTokenFromSandbox } = require("./onboard") as {
 };
 
 export default class GatewayTokenCliCommand extends Command {
-  static id = "sandbox:gateway-token";
+  static id = "sandbox:gateway:token";
   static strict = true;
   static summary = "Print the OpenClaw gateway auth token to stdout";
   static description = "Print the OpenClaw gateway auth token for a running sandbox to stdout.";

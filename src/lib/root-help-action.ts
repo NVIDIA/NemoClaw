@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
-import { commandsByGroup } from "./command-registry";
+import { commandsByGroup, visibleCommands, type CommandDef } from "./command-registry";
+import { getRegisteredOclifCommandSummary } from "./oclif-metadata";
 import { getVersion } from "./version";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -12,6 +13,18 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
+
+function hasDisplaySpecificDescription(command: CommandDef): boolean {
+  const sameCommandId = visibleCommands().filter((entry) => entry.commandId === command.commandId);
+  return new Set(sameCommandId.map((entry) => entry.description)).size > 1;
+}
+
+function getDisplayDescription(command: CommandDef): string {
+  if (hasDisplaySpecificDescription(command)) {
+    return command.description;
+  }
+  return getRegisteredOclifCommandSummary(command.commandId) ?? command.description;
+}
 
 export function version(): void {
   console.log(`${CLI_NAME} v${getVersion()}`);
@@ -34,7 +47,7 @@ export function help(): void {
     let isFirstInGroup = true;
     for (const cmd of cmds) {
       const usage = cmd.usage;
-      const desc = cmd.description;
+      const desc = getDisplayDescription(cmd);
       const flags = cmd.flags ? ` ${D}${cmd.flags}${R}` : "";
 
       const prefix = isFirstInGroup ? B : "";

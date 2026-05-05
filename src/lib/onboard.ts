@@ -137,6 +137,7 @@ const {
   setupWindowsOllamaWith0000Binding,
   switchToWindowsOllamaHost,
 } = require("./onboard-windows-ollama");
+const { detectVllmProfile, installVllm } = require("./onboard-vllm");
 const inferenceConfig: typeof import("./inference-config") = require("./inference-config");
 const {
   DEFAULT_CLOUD_MODEL,
@@ -5304,6 +5305,15 @@ async function setupNim(
     ["curl", "-sf", ...localProbeCurlArgs, `http://127.0.0.1:${VLLM_PORT}/v1/models`],
     { ignoreError: true },
   );
+  // Pick a vLLM install recipe for this host. Profiles live in onboard-vllm.ts;
+  // null means "no supported platform" (vLLM stays behind EXPERIMENTAL).
+  const vllmProfile = detectVllmProfile(gpu);
+  // If the profile's image is already cached, the install path is really a
+  // "start" — docker pull is a no-op and the container can come up in seconds.
+  const hasVllmImage = !!(
+    vllmProfile &&
+    docker.dockerCapture(["images", "-q", vllmProfile.image], { ignoreError: true }).trim()
+  );
   // Probed even when WSL has its own Ollama: users may prefer the Windows
   // instance for GPU access and a unified model cache.
   let hasWindowsOllama = false;
@@ -5401,7 +5411,25 @@ async function setupNim(
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
     options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
   }
-  if (EXPERIMENTAL && vllmRunning) {
+  // vLLM: profiles in onboard-vllm.ts surface as menu entries only when
+  // the user explicitly opts in via NEMOCLAW_PROVIDER, or when
+  // NEMOCLAW_EXPERIMENTAL=1 is set.
+  // Read NEMOCLAW_PROVIDER directly so interactive runs with an explicit
+  // env-var opt-in surface the menu entry too — requestedProvider is null
+  // outside non-interactive mode.
+  const explicitProvider = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
+  const userChoseVllm = explicitProvider === "vllm" || explicitProvider === "install-vllm";
+  if (vllmProfile && (userChoseVllm || EXPERIMENTAL)) {
+    if (vllmRunning) {
+      options.push({
+        key: "vllm",
+        label: `Local vLLM (localhost:${VLLM_PORT}) — running (suggested)`,
+      });
+    } else {
+      const verb = hasVllmImage ? "Start" : "Install";
+      options.push({ key: "install-vllm", label: `${verb} vLLM (${vllmProfile.name})` });
+    }
+  } else if (EXPERIMENTAL && vllmRunning) {
     options.push({
       key: "vllm",
       label: "Local vLLM [experimental] — running",
@@ -5530,10 +5558,15 @@ async function setupNim(
         }
         selected = options.find((o) => o.key === providerKey);
         if (!selected) {
-          // install-ollama is valid even when Ollama is already installed —
-          // fall back to the existing ollama option silently
+          // Action keys fall back to the equivalent running-provider key
+          // when the menu only emits the running entry (the install would
+          // have been a no-op anyway).
           if (providerKey === "install-ollama") {
             selected = options.find((o) => o.key === "ollama");
+          } else if (providerKey === "install-vllm") {
+            selected = options.find((o) => o.key === "vllm");
+          } else if (providerKey === "vllm") {
+            selected = options.find((o) => o.key === "install-vllm");
           } else if (providerKey === "ollama") {
             selected = options.find((o) => o.key === "install-ollama");
           }
@@ -6243,7 +6276,27 @@ async function setupNim(
           preferredInferenceApi = "openai-completions";
         }
         break;
-      } else if (selected.key === "vllm") {
+      } else if (selected.key === "install-vllm") {
+        if (!vllmProfile) {
+          console.error("  No vLLM install profile available for this host.");
+          if (isNonInteractive()) process.exit(1);
+          continue selectionLoop;
+        }
+        const result = await installVllm(vllmProfile, {
+          hasImage: hasVllmImage,
+          nonInteractive: isNonInteractive(),
+          promptFn: prompt,
+        });
+        if (!result.ok) {
+          if (isNonInteractive()) process.exit(1);
+          continue selectionLoop;
+        }
+        // Fall through to the same provider/model setup as the running-vLLM
+        // branch. Mutate selected.key so the existing "vllm" branch picks up.
+        selected = { key: "vllm", label: `Local vLLM (localhost:${VLLM_PORT}) — running` };
+        // intentional fall-through to the next branch
+      }
+      if (selected.key === "vllm") {
         console.log(`  ✓ Using existing vLLM on localhost:${VLLM_PORT}`);
         provider = "vllm-local";
         // See NIM branch above — internal credential env, no user API key.

@@ -1,0 +1,35 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+export type OclifCommandMetadata = {
+  description?: string;
+  examples?: string[];
+  summary?: string;
+  usage?: string[];
+};
+
+function loadOclifCommands(): Record<string, OclifCommandMetadata> | null {
+  for (const modulePath of ["./oclif-commands", "../../dist/lib/oclif-commands.js"]) {
+    try {
+      const registry = require(modulePath) as {
+        default?: Record<string, OclifCommandMetadata>;
+      };
+      if (registry.default) {
+        return registry.default;
+      }
+    } catch {
+      /* try the next runtime shape */
+    }
+  }
+  return null;
+}
+
+export function getRegisteredOclifCommandMetadata(
+  commandId: string,
+): OclifCommandMetadata | null {
+  return loadOclifCommands()?.[commandId] ?? null;
+}
+
+export function getRegisteredOclifCommandSummary(commandId: string): string | null {
+  return getRegisteredOclifCommandMetadata(commandId)?.summary ?? null;
+}

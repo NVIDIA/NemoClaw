@@ -49,6 +49,7 @@ function runPolicyAdd(
   confirmAnswer: string,
   extraArgs: string[] = [],
   envOverrides: Record<string, string | undefined> = {},
+  presetName: string = "pypi",
 ) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-add-"));
   const scriptPath = path.join(tmpDir, "policy-add-check.js");
@@ -57,9 +58,9 @@ const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
 const credentials = require(${CREDENTIALS_PATH});
 const calls = [];
-policies.selectFromList = async () => "pypi";
-policies.loadPreset = () => "network_policies:\n  pypi:\n    host: pypi.org\n";
-policies.getPresetEndpoints = () => ["pypi.org"];
+policies.selectFromList = async () => ${JSON.stringify(presetName)};
+policies.loadPreset = () => "network_policies:\n  example:\n    host: example.com\n";
+policies.getPresetEndpoints = () => ["example.com"];
 credentials.prompt = async (message) => {
   calls.push({ type: "prompt", message });
   return ${JSON.stringify(confirmAnswer)};
@@ -82,15 +83,19 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
 
   fs.writeFileSync(scriptPath, script);
 
-  return spawnSync(process.execPath, [scriptPath], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
-    env: {
-      ...process.env,
-      HOME: tmpDir,
-      ...envOverrides,
-    },
-  });
+  try {
+    return spawnSync(process.execPath, [scriptPath], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        ...envOverrides,
+      },
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 function runSelectFromList(input: string, { applied = [] }: AppliedOptions = {}) {
@@ -247,6 +252,33 @@ describe("policies", () => {
       const yaml = "host: \"example.com\"\n  host: 'other.com'";
       const hosts = policies.getPresetEndpoints(yaml);
       expect(hosts).toEqual(["example.com", "other.com"]);
+    });
+  });
+
+  describe("getMessagingPresetWarning", () => {
+    it("returns a warning for the telegram preset that mentions re-running onboard", () => {
+      const warning = policies.getMessagingPresetWarning("telegram");
+      expect(warning).toBeTruthy();
+      expect(warning).toContain("telegram");
+      expect(warning).toContain("Telegram");
+      expect(warning).toContain("nemoclaw onboard");
+    });
+
+    it("returns a warning for discord and slack", () => {
+      expect(policies.getMessagingPresetWarning("discord")).toContain("Discord");
+      expect(policies.getMessagingPresetWarning("slack")).toContain("Slack");
+    });
+
+    it("returns null for non-messaging presets", () => {
+      expect(policies.getMessagingPresetWarning("npm")).toBeNull();
+      expect(policies.getMessagingPresetWarning("pypi")).toBeNull();
+      expect(policies.getMessagingPresetWarning("github")).toBeNull();
+      expect(policies.getMessagingPresetWarning("brew")).toBeNull();
+    });
+
+    it("returns null for unknown preset names", () => {
+      expect(policies.getMessagingPresetWarning("")).toBeNull();
+      expect(policies.getMessagingPresetWarning("nonexistent")).toBeNull();
     });
   });
 
@@ -1035,7 +1067,7 @@ selectForRemoval(items, options)
       const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
       expect(calls.some((call: PolicyCall) => call.type === "prompt")).toBeFalsy();
       expect(calls.some((call: PolicyCall) => call.type === "apply")).toBeFalsy();
-      expect(result.stdout).toMatch(/Endpoints that would be opened: pypi\.org/);
+      expect(result.stdout).toMatch(/Endpoints that would be opened: example\.com/);
       expect(result.stdout).toMatch(/--dry-run: no changes applied\./);
     });
 
@@ -1072,6 +1104,24 @@ selectForRemoval(items, options)
       expect(`${result.stdout}${result.stderr}`).toMatch(
         /Non-interactive mode requires a preset name/,
       );
+    });
+
+    it("warns the user that the telegram preset alone does not enable Telegram messaging", () => {
+      const result = runPolicyAdd("y", [], {}, "telegram");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /Note: the 'telegram' preset only opens network egress to the Telegram API\./,
+      );
+      expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select Telegram/);
+    });
+
+    it("does not warn about messaging when a non-messaging preset is selected", () => {
+      const result = runPolicyAdd("y");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toMatch(/only opens network egress to the/);
+      expect(result.stdout).not.toMatch(/re-run 'nemoclaw onboard' and select/);
     });
   });
 

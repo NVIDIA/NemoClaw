@@ -13,6 +13,7 @@ export default class DeployCliCommand extends Command {
   static summary = "Deprecated Brev-specific bootstrap path";
   static description = "Deprecated compatibility command for Brev-specific deployment.";
   static usage = ["deploy [instance-name]"];
+  static examples = ["<%= config.bin %> deploy my-gpu-instance"];
   static args = {
     instanceName: Args.string({
       name: "instance-name",
