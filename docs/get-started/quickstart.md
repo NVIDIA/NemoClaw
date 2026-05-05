@@ -225,7 +225,7 @@ For example, if you picked an OpenAI-compatible endpoint, the summary looks like
   Web search:    disabled
   Messaging:     none
   Sandbox name:  my-gpt-claw
-  Note:          Sandbox build takes ~6 minutes on this host.
+  Note:          Sandbox build typically takes 5–15 minutes on this host.
   ──────────────────────────────────────────────────
   Web search and messaging channels will be prompted next.
   Apply this configuration? [Y/n]:

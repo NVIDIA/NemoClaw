@@ -3036,6 +3036,53 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
     console.log("  ⓘ Running under WSL");
   }
 
+  if (
+    host.isContainerRuntimeUnderProvisioned &&
+    process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES !== "1"
+  ) {
+    const detected: string[] = [];
+    if (typeof host.dockerCpus === "number") detected.push(`${host.dockerCpus} vCPU`);
+    if (typeof host.dockerMemTotalBytes === "number") {
+      const gib = host.dockerMemTotalBytes / 1024 ** 3;
+      detected.push(`${gib.toFixed(1)} GiB`);
+    }
+    const detectedStr = detected.length > 0 ? detected.join(" / ") : "unknown";
+    console.warn(
+      `  ⚠ Container runtime under-provisioned: ${detectedStr} detected ` +
+        `(recommended: ${preflightUtils.MIN_RECOMMENDED_DOCKER_CPUS} vCPU / ${preflightUtils.MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB).`,
+    );
+    console.warn(
+      "    The sandbox build will be slow and may stall on default Colima settings.",
+    );
+    if (host.runtime === "colima") {
+      console.warn(
+        `    Suggested: colima stop && colima start --cpu ${preflightUtils.MIN_RECOMMENDED_DOCKER_CPUS} --memory ${preflightUtils.MIN_RECOMMENDED_DOCKER_MEM_GIB}`,
+      );
+    } else if (host.runtime === "docker-desktop") {
+      console.warn("    Suggested: Docker Desktop → Settings → Resources, raise CPU/memory.");
+    }
+    console.warn(
+      "    Set NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1 to silence this check.",
+    );
+    if (!isNonInteractive()) {
+      const proceed = await promptYesNoOrDefault("  Continue with onboarding?", null, true);
+      if (!proceed) {
+        console.error("  Aborted by user. Resize your container runtime and rerun `nemoclaw onboard`.");
+        process.exit(1);
+      }
+    }
+  } else if (host.dockerReachable) {
+    const detected: string[] = [];
+    if (typeof host.dockerCpus === "number") detected.push(`${host.dockerCpus} vCPU`);
+    if (typeof host.dockerMemTotalBytes === "number") {
+      const gib = host.dockerMemTotalBytes / 1024 ** 3;
+      detected.push(`${gib.toFixed(1)} GiB`);
+    }
+    if (detected.length > 0) {
+      console.log(`  ✓ Container runtime resources: ${detected.join(" / ")}`);
+    }
+  }
+
   // OpenShell CLI — install if missing, upgrade if below minimum version.
   // MIN_VERSION in install-openshell.sh handles the version gate; calling it
   // when openshell already exists is safe (it exits early if version is OK).
@@ -3240,18 +3287,22 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
     }
   }
 
-  // Required ports — gateway and the dashboard port.
-  // When --control-ui-port is set, check that port instead of the default.
-  // When auto-allocation is possible (no explicit port), skip the dashboard
-  // port check entirely — ensureDashboardForward will find a free port.
+  // Required ports — gateway, plus the dashboard port when an explicit one
+  // is requested. envVar is the override env var documented in
+  // src/lib/ports.ts; surfacing it in the preflight error gives users a clear
+  // escape hatch when an unrelated process is holding the default port
+  // (closes #2497). When --control-ui-port is set, check that port instead
+  // of the default. When auto-allocation is possible (no explicit port),
+  // skip the dashboard port check entirely — ensureDashboardForward will
+  // find a free port.
   const dashboardPortToCheck = _preflightDashboardPort ?? null;
   const requiredPorts = [
-    { port: GATEWAY_PORT, label: "OpenShell gateway" },
+    { port: GATEWAY_PORT, label: "OpenShell gateway", envVar: "NEMOCLAW_GATEWAY_PORT" },
     ...(dashboardPortToCheck !== null
-      ? [{ port: dashboardPortToCheck, label: `${cliDisplayName()} dashboard` }]
+      ? [{ port: dashboardPortToCheck, label: `${cliDisplayName()} dashboard`, envVar: "NEMOCLAW_DASHBOARD_PORT" }]
       : []),
   ];
-  for (const { port, label } of requiredPorts) {
+  for (const { port, label, envVar } of requiredPorts) {
     let portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
       if ((port === GATEWAY_PORT || port === DASHBOARD_PORT) && gatewayReuseState === "healthy") {
@@ -3303,6 +3354,9 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
         console.error(`     Could not identify the process using port ${port}.`);
         console.error(`     Run: sudo lsof -i :${port} -sTCP:LISTEN`);
       }
+      console.error("");
+      console.error(`     Or rerun with a different port:`);
+      console.error(`       ${envVar}=<port> nemoclaw onboard`);
       console.error("");
       console.error(`     Detail: ${portCheck.reason}`);
       process.exit(1);
@@ -3912,10 +3966,30 @@ type OnboardConfigSummary = {
  * - credentialEnv:    env-var name of the API key (e.g. "NVIDIA_API_KEY").
  *                     Rendered with the fixed credentials.json location so
  *                     users can see where the key was stored.
- * - notes:            additional bullet lines shown under the summary
- *                     (e.g. "~6 minutes on this host"). Each note rendered
- *                     as "Note: <text>" so it's visually distinct.
+ * - notes:            additional bullet lines shown under the summary,
+ *                     such as a sandbox build-time estimate. Each note is
+ *                     rendered as "Note: <text>" so it stays visually
+ *                     distinct.
  */
+function formatSandboxBuildEstimateNote(host: ReturnType<typeof assessHost>): string | null {
+  if (host.isContainerRuntimeUnderProvisioned) {
+    return (
+      "Container runtime is under-provisioned; the sandbox build may take 30+ minutes " +
+      "or stall. See preflight warning above."
+    );
+  }
+  const cpus = host.dockerCpus;
+  const memBytes = host.dockerMemTotalBytes;
+  if (typeof cpus === "number" && typeof memBytes === "number") {
+    const memGiB = memBytes / 1024 ** 3;
+    if (cpus >= 8 && memGiB >= 16) {
+      return "Sandbox build typically takes 3–8 minutes on this host.";
+    }
+    return "Sandbox build typically takes 5–15 minutes on this host.";
+  }
+  return null;
+}
+
 function formatOnboardConfigSummary({
   provider,
   model,
@@ -8911,6 +8985,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       if (!sandboxName) {
         sandboxName = await promptValidatedSandboxName(agent);
       }
+      const buildEstimateNote =
+        process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1"
+          ? null
+          : formatSandboxBuildEstimateNote(assessHost());
       console.log(
         formatOnboardConfigSummary({
           provider,
@@ -8919,7 +8997,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           webSearchConfig,
           enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
           sandboxName,
-          notes: ["Sandbox build takes ~6 minutes on this host."],
+          notes: buildEstimateNote ? [buildEstimateNote] : [],
         }),
       );
       console.log("  Web search and messaging channels will be prompted next.");
@@ -9285,6 +9363,7 @@ module.exports = {
   readRecordedModel,
   readRecordedNimContainer,
   formatOnboardConfigSummary,
+  formatSandboxBuildEstimateNote,
   isInferenceRouteReady,
   shouldRunCompatibleEndpointSandboxSmoke,
   isNonInteractive,
