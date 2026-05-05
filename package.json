@@ -15,6 +15,7 @@
     }
   },
   "scripts": {
+    "preinstall": "node scripts/check-node-version.js",
     "test": "vitest run",
     "lint": "biome lint . && npm run check:credential-env",
     "lint:fix": "biome lint --write . && npm run check:credential-env",
