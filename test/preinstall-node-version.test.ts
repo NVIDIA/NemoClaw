@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -53,7 +54,7 @@ describe("preinstall node-version guard (#2399)", () => {
     // before requiring the script. We use --require to inject the override
     // before any user code runs, so the script reads the patched value.
     const tmpDir = fs.mkdtempSync(
-      path.join(require("node:os").tmpdir(), "preinstall-guard-"),
+      path.join(os.tmpdir(), "preinstall-guard-"),
     );
     try {
       const overridePath = path.join(tmpDir, "fake-node-18.js");
@@ -84,7 +85,7 @@ describe("preinstall node-version guard (#2399)", () => {
     // path.join(__dirname, '..', 'package.json'), so we copy the
     // script next to a custom package.json.
     const tmpDir = fs.mkdtempSync(
-      path.join(require("node:os").tmpdir(), "preinstall-guard-no-engines-"),
+      path.join(os.tmpdir(), "preinstall-guard-no-engines-"),
     );
     try {
       const scriptsDir = path.join(tmpDir, "scripts");
