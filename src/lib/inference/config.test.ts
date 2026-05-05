@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 // Import from compiled dist/ for correct coverage attribution.
 import {
@@ -9,13 +9,14 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
+  DEFAULT_VLLM_MODEL,
+  getOpenClawPrimaryModel,
+  getProviderSelectionConfig,
   INFERENCE_ROUTE_URL,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
-  VLLM_LOCAL_CREDENTIAL_ENV,
-  getOpenClawPrimaryModel,
-  getProviderSelectionConfig,
   parseGatewayInference,
+  VLLM_LOCAL_CREDENTIAL_ENV,
 } from "../../../dist/lib/inference/config";
 
 describe("inference selection config", () => {
@@ -166,7 +167,7 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("compatible-anthropic-endpoint")?.model).toBe(
       "custom-anthropic-model",
     );
-    expect(getProviderSelectionConfig("vllm-local")?.model).toBe("vllm-local");
+    expect(getProviderSelectionConfig("vllm-local")?.model).toBe(DEFAULT_VLLM_MODEL);
   });
 
   it("builds a qualified OpenClaw primary model for ollama-local", () => {
@@ -178,6 +179,9 @@ describe("inference selection config", () => {
   it("builds a default OpenClaw primary model for non-ollama providers", () => {
     expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(
       `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
+    );
+    expect(getOpenClawPrimaryModel("vllm-local")).toBe(
+      `${MANAGED_PROVIDER_ID}/${DEFAULT_VLLM_MODEL}`,
     );
     expect(getOpenClawPrimaryModel("ollama-local")).toBe(
       `${MANAGED_PROVIDER_ID}/${DEFAULT_OLLAMA_MODEL}`,

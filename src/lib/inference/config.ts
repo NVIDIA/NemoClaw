@@ -10,6 +10,7 @@ import { DEFAULT_OLLAMA_MODEL } from "./local";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+export const DEFAULT_VLLM_MODEL = "vllm-local";
 export const CLOUD_MODEL_OPTIONS = [
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
   { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", label: "Nemotron 3 Nano Omni 30B" },
@@ -104,7 +105,7 @@ export function getProviderSelectionConfig(
     case "vllm-local":
       return {
         ...base,
-        model: model || "vllm-local",
+        model: model || DEFAULT_VLLM_MODEL,
         credentialEnv: VLLM_LOCAL_CREDENTIAL_ENV,
         providerLabel: "Local vLLM",
       };
@@ -121,8 +122,16 @@ export function getProviderSelectionConfig(
 }
 
 export function getOpenClawPrimaryModel(provider: string, model?: string): string {
-  const resolvedModel =
-    model || (provider === "ollama-local" ? DEFAULT_OLLAMA_MODEL : DEFAULT_CLOUD_MODEL);
+  let resolvedModel = model;
+  if (!resolvedModel) {
+    if (provider === "ollama-local") {
+      resolvedModel = DEFAULT_OLLAMA_MODEL;
+    } else if (provider === "vllm-local") {
+      resolvedModel = DEFAULT_VLLM_MODEL;
+    } else {
+      resolvedModel = DEFAULT_CLOUD_MODEL;
+    }
+  }
   return `${MANAGED_PROVIDER_ID}/${resolvedModel}`;
 }
 

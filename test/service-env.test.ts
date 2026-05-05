@@ -260,7 +260,7 @@ describe("service environment", () => {
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST},host.openshell.internal,host.docker.internal"',
           "_TOOL_REDIRECTS=()",
           `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
           `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
@@ -300,7 +300,7 @@ describe("service environment", () => {
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST},host.openshell.internal,host.docker.internal"',
           "_TOOL_REDIRECTS=()",
           `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
           `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
@@ -469,12 +469,14 @@ describe("service environment", () => {
       expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:8080");
     });
 
-    it("NO_PROXY includes loopback only, not inference.local", () => {
+    it("NO_PROXY includes loopback and local host aliases, not inference.local", () => {
       const vars = extractProxyVars();
       const noProxy = vars.NO_PROXY.split(",");
       expect(noProxy).toContain("localhost");
       expect(noProxy).toContain("127.0.0.1");
       expect(noProxy).toContain("::1");
+      expect(noProxy).toContain("host.openshell.internal");
+      expect(noProxy).toContain("host.docker.internal");
       expect(noProxy).not.toContain("inference.local");
     });
 
@@ -492,6 +494,17 @@ describe("service environment", () => {
       expect(noProxy).toContain("10.200.0.1");
     });
 
+    it("NEMOCLAW_NO_PROXY_EXTRA appends custom bypass hosts", () => {
+      const vars = extractProxyVars({
+        NEMOCLAW_NO_PROXY_EXTRA: "172.17.0.1,vllm.local",
+      });
+      const noProxy = vars.NO_PROXY.split(",");
+      expect(noProxy).toContain("10.200.0.1");
+      expect(noProxy).toContain("172.17.0.1");
+      expect(noProxy).toContain("vllm.local");
+      expect(noProxy).not.toContain("host.openshell.internal");
+    });
+
     it("entrypoint writes proxy-env.sh to writable data dir", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-data-test-${process.pid}`);
       execFileSync("mkdir", ["-p", fakeDataDir]);
@@ -506,7 +519,7 @@ describe("service environment", () => {
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST},host.openshell.internal,host.docker.internal"',
           'export OPENCLAW_GATEWAY_TOKEN="test-token-123"',
           // Override the hardcoded path to use our temp dir
           persistBlock
@@ -617,7 +630,7 @@ describe("service environment", () => {
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST},host.openshell.internal,host.docker.internal"',
           persistBlock
             .trimEnd()
             .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
@@ -662,7 +675,7 @@ describe("service environment", () => {
             `PROXY_HOST="${host}"`,
             'PROXY_PORT="3128"',
             '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-            '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+            '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST},host.openshell.internal,host.docker.internal"',
             persistBlock
               .trimEnd()
               .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
@@ -710,7 +723,7 @@ describe("service environment", () => {
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST},host.openshell.internal,host.docker.internal"',
           persistBlock.trimEnd().replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnvPath),
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
@@ -739,10 +752,10 @@ describe("service environment", () => {
         const envContent = [
           'export HTTP_PROXY="http://10.200.0.1:3128"',
           'export HTTPS_PROXY="http://10.200.0.1:3128"',
-          'export NO_PROXY="localhost,127.0.0.1,::1,10.200.0.1"',
+          'export NO_PROXY="localhost,127.0.0.1,::1,10.200.0.1,host.openshell.internal,host.docker.internal"',
           'export http_proxy="http://10.200.0.1:3128"',
           'export https_proxy="http://10.200.0.1:3128"',
-          'export no_proxy="localhost,127.0.0.1,::1,10.200.0.1"',
+          'export no_proxy="localhost,127.0.0.1,::1,10.200.0.1,host.openshell.internal,host.docker.internal"',
         ].join("\n");
         writeFileSync(join(fakeDataDir, "proxy-env.sh"), envContent);
 
@@ -762,8 +775,8 @@ describe("service environment", () => {
           { encoding: "utf-8" },
         ).trim();
 
-        expect(out).toContain("NO_PROXY=localhost,127.0.0.1,::1,10.200.0.1");
-        expect(out).toContain("no_proxy=localhost,127.0.0.1,::1,10.200.0.1");
+        expect(out).toContain("NO_PROXY=localhost,127.0.0.1,::1,10.200.0.1,host.openshell.internal,host.docker.internal");
+        expect(out).toContain("no_proxy=localhost,127.0.0.1,::1,10.200.0.1,host.openshell.internal,host.docker.internal");
       } finally {
         try {
           execFileSync("rm", ["-rf", fakeDataDir]);
@@ -787,7 +800,7 @@ describe("service environment", () => {
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST},host.openshell.internal,host.docker.internal"',
           "NODE_USE_ENV_PROXY=1",
           "_TOOL_REDIRECTS=()",
           `_PROXY_FIX_SCRIPT="${fakeFixPath}"`,
@@ -831,7 +844,7 @@ describe("service environment", () => {
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST},host.openshell.internal,host.docker.internal"',
           // NODE_USE_ENV_PROXY intentionally NOT set
           "_TOOL_REDIRECTS=()",
           `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
@@ -875,7 +888,7 @@ describe("service environment", () => {
           `PROXY_HOST="10.200.0.1"`,
           `PROXY_PORT="3128"`,
           `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-          `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
+          `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST},host.openshell.internal,host.docker.internal"`,
           `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
           `_WS_FIX_SCRIPT="${fakeWsFixScript}"`,
           `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
@@ -915,7 +928,7 @@ describe("service environment", () => {
           `PROXY_HOST="10.200.0.1"`,
           `PROXY_PORT="3128"`,
           `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-          `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
+          `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST},host.openshell.internal,host.docker.internal"`,
           `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
           `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
           `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,

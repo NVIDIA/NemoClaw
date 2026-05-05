@@ -901,11 +901,20 @@ PYAUTOPAIR
 #
 # NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT can be overridden at sandbox
 # creation time if the gateway IP or port changes in a future OpenShell release.
+# NEMOCLAW_NO_PROXY_EXTRA appends additional direct-connect hosts for local
+# inference runtimes such as vLLM/Ollama on the Docker host. Set it to an empty
+# string to disable the default host aliases.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/626
 PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
 PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
+NO_PROXY_EXTRA="${NEMOCLAW_NO_PROXY_EXTRA-host.openshell.internal,host.docker.internal}"
+NO_PROXY_EXTRA="${NO_PROXY_EXTRA#,}"
+NO_PROXY_EXTRA="${NO_PROXY_EXTRA%,}"
 _PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
 _NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
+if [ -n "$NO_PROXY_EXTRA" ]; then
+  _NO_PROXY_VAL="${_NO_PROXY_VAL},${NO_PROXY_EXTRA}"
+fi
 export HTTP_PROXY="$_PROXY_URL"
 export HTTPS_PROXY="$_PROXY_URL"
 export NO_PROXY="$_NO_PROXY_VAL"
