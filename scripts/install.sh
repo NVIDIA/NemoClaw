@@ -693,6 +693,10 @@ preflight_usage_notice_prompt() {
     fi
   fi
 
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    error "Non-interactive installation requires explicit third-party software acceptance. Re-run with --yes-i-accept-third-party-software or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1."
+  fi
+
   if [ -t 0 ]; then
     show_usage_notice_shell
     return "$?"

@@ -3074,7 +3074,11 @@ exit 0`,
     return { result, phases, tmp };
   }
 
-  function runInstallerWithTty(answer: string, stdinMode: "pipe" | "tty" = "pipe") {
+  function runInstallerWithTty(
+    answer: string,
+    stdinMode: "pipe" | "tty" = "pipe",
+    env: Record<string, string | undefined> = {},
+  ) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-tty-pipe-"));
     const fakeBin = path.join(tmp, "bin");
     const phaseLog = path.join(tmp, "phases.log");
@@ -3217,6 +3221,7 @@ sys.exit(exit_code)
       env: {
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        ...env,
       },
     });
     const phases = fs.existsSync(phaseLog) ? fs.readFileSync(phaseLog, "utf-8") : "";
@@ -3306,6 +3311,22 @@ sys.exit(exit_code)
     expect(state).toBe("");
   });
 
+  it("--non-interactive alone with a controlling TTY still stops before phase 1", () => {
+    const { result, phases, state } = runInstallerWithTty("yes\n", "pipe", {
+      NEMOCLAW_NON_INTERACTIVE: "1",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(
+      /Non-interactive installation requires explicit third-party software acceptance/,
+    );
+    expect(output).toMatch(/--yes-i-accept-third-party-software/);
+    expect(output).not.toMatch(/Third-Party Software Notice - NemoClaw Installer/);
+    expect(output).not.toMatch(/\[1\/3\] Node\.js/);
+    expect(phases).toBe("");
+    expect(state).toBe("");
+  });
+
   it("--yes-i-accept-third-party-software alone is sufficient to clear the fail-fast gate", () => {
     // The flag implies non-interactive intent (set by main() before the
     // preflight check), so it must clear the gate AND let the install
@@ -3322,7 +3343,9 @@ sys.exit(exit_code)
     const { result, phases } = runInstaller({ NEMOCLAW_NON_INTERACTIVE: "1" });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).not.toBe(0);
-    expect(output).toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(output).toMatch(
+      /Non-interactive installation requires explicit third-party software acceptance/,
+    );
     expect(output).toMatch(/--yes-i-accept-third-party-software/);
     expect(phases).toBe("");
   });
