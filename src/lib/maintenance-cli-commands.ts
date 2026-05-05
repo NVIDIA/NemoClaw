@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- thin oclif adapters covered through CLI integration tests. */
-
 import { Flags } from "@oclif/core";
 
 import {
@@ -45,11 +43,11 @@ export class UpgradeSandboxesCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(UpgradeSandboxesCommand);
-    const args: string[] = [];
-    if (flags.check) args.push("--check");
-    if (flags.auto) args.push("--auto");
-    if (flags.yes) args.push("--yes");
-    await runUpgradeSandboxesAction(args);
+    await runUpgradeSandboxesAction({
+      auto: flags.auto === true,
+      check: flags.check === true,
+      yes: flags.yes === true,
+    });
   }
 }
 
@@ -68,10 +66,10 @@ export class GarbageCollectImagesCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(GarbageCollectImagesCommand);
-    const args: string[] = [];
-    if (flags["dry-run"]) args.push("--dry-run");
-    if (flags.yes) args.push("--yes");
-    if (flags.force) args.push("--force");
-    await runGarbageCollectImagesAction(args);
+    await runGarbageCollectImagesAction({
+      dryRun: flags["dry-run"] === true,
+      force: flags.force === true,
+      yes: flags.yes === true,
+    });
   }
 }

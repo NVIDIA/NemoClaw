@@ -3,7 +3,40 @@
 
 import { describe, expect, it } from "vitest";
 
-import { resolveSandboxOclifDispatch } from "./oclif-dispatch";
+import { resolveGlobalOclifDispatch, resolveSandboxOclifDispatch } from "./oclif-dispatch";
+
+describe("resolveGlobalOclifDispatch", () => {
+  it("routes simple and nested global commands through oclif", () => {
+    expect(resolveGlobalOclifDispatch("list", ["--json"])).toEqual({
+      kind: "oclif",
+      commandId: "list",
+      args: ["--json"],
+    });
+    expect(resolveGlobalOclifDispatch("tunnel", ["start"])).toEqual({
+      kind: "oclif",
+      commandId: "tunnel:start",
+      args: [],
+    });
+    expect(resolveGlobalOclifDispatch("--version", [])).toEqual({
+      kind: "oclif",
+      commandId: "root:version",
+      args: [],
+    });
+  });
+
+  it("returns usage and unknown-subcommand dispatches for unsupported global forms", () => {
+    expect(resolveGlobalOclifDispatch("tunnel", ["restart"])).toEqual({
+      kind: "usageError",
+      lines: ["tunnel <start|stop>"],
+    });
+    expect(resolveGlobalOclifDispatch("credentials", ["bogus"])).toEqual({
+      kind: "unknownSubcommand",
+      command: "credentials",
+      subcommand: "bogus",
+    });
+    expect(resolveGlobalOclifDispatch("bogus", [])).toEqual({ kind: "usageError", lines: [] });
+  });
+});
 
 describe("resolveSandboxOclifDispatch", () => {
   it("routes sandbox status through oclif", () => {
@@ -103,11 +136,45 @@ describe("resolveSandboxOclifDispatch", () => {
     });
   });
 
-  it("routes snapshot unknown subcommands through oclif", () => {
+  it("routes nested sandbox defaults, help, and usage errors", () => {
+    expect(resolveSandboxOclifDispatch("alpha", "channels", [])).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:channels:list",
+      args: ["alpha"],
+    });
+    expect(resolveSandboxOclifDispatch("alpha", "channels", ["add", "slack"])).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:channels:add",
+      args: ["alpha", "slack"],
+    });
+    expect(resolveSandboxOclifDispatch("alpha", "config", ["bogus"])).toEqual({
+      kind: "usageError",
+      lines: [
+        "config <get|set>",
+        "get [--key dotpath] [--format json|yaml]",
+        "set --key <dotpath> --value <value> [--restart] [--config-accept-new-path]",
+      ],
+    });
+    expect(resolveSandboxOclifDispatch("alpha", "shields", ["bogus"])).toEqual({
+      kind: "usageError",
+      lines: [
+        "shields <down|up|status>",
+        "  down  [--timeout 5m] [--reason 'text'] [--policy permissive]",
+        "  up    Restore policy from snapshot",
+        "  status  Show current shields state",
+      ],
+    });
+  });
+
+  it("routes snapshot unknown subcommands and unknown actions", () => {
     expect(resolveSandboxOclifDispatch("alpha", "snapshot", ["bogus"])).toEqual({
       kind: "oclif",
       commandId: "sandbox:snapshot",
       args: ["alpha", "bogus"],
+    });
+    expect(resolveSandboxOclifDispatch("alpha", "bogus", [])).toEqual({
+      kind: "unknownAction",
+      action: "bogus",
     });
   });
 });

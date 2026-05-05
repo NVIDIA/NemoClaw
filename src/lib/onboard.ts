@@ -306,26 +306,26 @@ const sandboxCreateStream: typeof import("./sandbox-create-stream") = require(".
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const webSearch: typeof import("./web-search") = require("./web-search");
 
-import { listChannels } from "./sandbox-channels";
 import type { AgentDefinition } from "./agent-defs";
+import type { CurlProbeResult } from "./http-probe";
 import type { GatewayInference, ProviderSelectionConfig } from "./inference-config";
 import type { GpuInfo, ValidationResult } from "./local-inference";
-import type { ContainerRuntime } from "./platform";
-import type { SandboxEntry } from "./registry";
 import type { Session, SessionUpdates } from "./onboard-session";
-import type { CurlProbeResult } from "./http-probe";
-import type { ProbeRecovery } from "./validation-recovery";
-import type { SandboxCreateFailure, ValidationClassification } from "./validation";
-import type { TierDefinition, TierPreset } from "./tiers";
-import type { StreamSandboxCreateResult } from "./sandbox-create-stream";
-import type { WebSearchConfig } from "./web-search";
 import type {
   ModelCatalogFetchResult,
   ModelValidationResult,
   ProbeResult,
   ValidationFailureLike,
 } from "./onboard-types";
+import type { ContainerRuntime } from "./platform";
+import type { SandboxEntry } from "./registry";
+import { listChannels } from "./sandbox-channels";
+import type { StreamSandboxCreateResult } from "./sandbox-create-stream";
 import type { BackupResult } from "./sandbox-state";
+import type { TierDefinition, TierPreset } from "./tiers";
+import type { SandboxCreateFailure, ValidationClassification } from "./validation";
+import type { ProbeRecovery } from "./validation-recovery";
+import type { WebSearchConfig } from "./web-search";
 
 /**
  * Create a temp file inside a directory with a cryptographically random name.
@@ -403,9 +403,9 @@ const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 // Re-export shared JSON types under the names used throughout this module.
 // See src/lib/json-types.ts for the canonical definitions.
 import type {
+  JsonObject as LooseObject,
   JsonScalar as LooseScalar,
   JsonValue as LooseValue,
-  JsonObject as LooseObject,
 } from "./json-types";
 
 type OnboardOptions = {
@@ -1241,6 +1241,29 @@ function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
 }
 function providerExistsInGateway(name: string) {
   return onboardProviders.providerExistsInGateway(name, runOpenshell);
+}
+
+function getMessagingChannelForEnvKey(envKey: string): string | null {
+  if (envKey === "DISCORD_BOT_TOKEN") return "discord";
+  if (envKey === "SLACK_BOT_TOKEN") return "slack";
+  if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
+  return null;
+}
+
+function getKnownMessagingChannels(channels: string[] | null | undefined): string[] {
+  if (!Array.isArray(channels)) return [];
+  const known = new Set(MESSAGING_CHANNELS.map((channel) => channel.name));
+  return [...new Set(channels.filter((channel) => known.has(channel)))];
+}
+
+function getRecordedMessagingChannelsForResume(
+  resume: boolean,
+  session: Session | null,
+): string[] | null {
+  if (!resume || !isNonInteractive() || !Array.isArray(session?.messagingChannels)) {
+    return null;
+  }
+  return getKnownMessagingChannels(session.messagingChannels);
 }
 
 /**
@@ -4198,7 +4221,26 @@ async function createSandbox(
       token: getCredential(webSearch.BRAVE_API_KEY_ENV),
     });
   }
+  const previousProviderCredentialHashes =
+    registry.getSandbox(sandboxName)?.providerCredentialHashes ?? {};
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
+  const reusableMessagingProviders: string[] = [];
+  const reusableMessagingChannels: string[] = [];
+  const reusableMessagingEnvKeys = new Set<string>();
+  if (enabledChannels != null) {
+    for (const { name, envKey, token } of messagingTokenDefs) {
+      if (token) continue;
+      const channel =
+        envKey === "SLACK_APP_TOKEN" ? "slack" : getMessagingChannelForEnvKey(envKey);
+      if (!channel || !enabledChannels.includes(channel)) continue;
+      if (!providerExistsInGateway(name)) continue;
+      reusableMessagingProviders.push(name);
+      reusableMessagingEnvKeys.add(envKey);
+      if (!reusableMessagingChannels.includes(channel)) {
+        reusableMessagingChannels.push(channel);
+      }
+    }
+  }
 
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
@@ -4570,20 +4612,20 @@ async function createSandbox(
     messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
   );
   const activeMessagingChannels = [
-    ...new Set(
-      messagingTokenDefs
+    ...new Set([
+      ...messagingTokenDefs
         .filter(({ token }) => !!token)
         .flatMap(({ envKey }) => {
-          if (envKey === "DISCORD_BOT_TOKEN") return ["discord"];
-          if (envKey === "SLACK_BOT_TOKEN") return ["slack"];
+          const channel = getMessagingChannelForEnvKey(envKey);
+          if (channel) return [channel];
           // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
           if (envKey === "SLACK_APP_TOKEN") {
             return tokensByEnvKey["SLACK_BOT_TOKEN"] ? ["slack"] : [];
           }
-          if (envKey === "TELEGRAM_BOT_TOKEN") return ["telegram"];
           return [];
         }),
-      ),
+      ...reusableMessagingChannels,
+    ]),
   ];
   const initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
     basePolicyPath,
@@ -4611,7 +4653,9 @@ async function createSandbox(
   // the provider/placeholder system instead of raw env vars. The L7 proxy
   // rewrites Authorization headers (Bearer/Bot) and URL-path segments
   // (/bot{TOKEN}/) with real secrets at egress (OpenShell >= 0.0.20).
-  const messagingProviders = upsertMessagingProviders(messagingTokenDefs);
+  const messagingProviders = [
+    ...new Set([...upsertMessagingProviders(messagingTokenDefs), ...reusableMessagingProviders]),
+  ];
   for (const p of messagingProviders) {
     createArgs.push("--provider", p);
   }
@@ -4625,7 +4669,6 @@ async function createSandbox(
   for (const ch of MESSAGING_CHANNELS) {
     if (
       enabledTokenEnvKeys.has(ch.envKey) &&
-      ch.allowIdsMode === "dm" &&
       ch.userIdEnvKey &&
       process.env[ch.userIdEnvKey]
     ) {
@@ -4947,6 +4990,12 @@ async function createSandbox(
     const hash = token ? hashCredential(token) : null;
     if (hash) {
       providerCredentialHashes[envKey] = hash;
+    }
+  }
+  for (const envKey of reusableMessagingEnvKeys) {
+    const previousHash = previousProviderCredentialHashes[envKey];
+    if (typeof previousHash === "string" && previousHash) {
+      providerCredentialHashes[envKey] = previousHash;
     }
   }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
@@ -9117,7 +9166,17 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         nextWebSearchConfig = await configureWebSearch(null, agent, webSearchSupportProbePath);
       }
       startRecordedStep("sandbox", { provider, model });
-      selectedMessagingChannels = await setupMessagingChannels();
+      const recordedMessagingChannels = getRecordedMessagingChannelsForResume(resume, session);
+      if (recordedMessagingChannels) {
+        selectedMessagingChannels = recordedMessagingChannels;
+        if (selectedMessagingChannels.length > 0) {
+          note(
+            `  [resume] Reusing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`,
+          );
+        }
+      } else {
+        selectedMessagingChannels = await setupMessagingChannels();
+      }
       onboardSession.updateSession((current: Session) => {
         current.messagingChannels = selectedMessagingChannels;
         return current;

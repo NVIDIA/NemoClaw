@@ -5,20 +5,31 @@
 
 import { CLI_NAME } from "./branding";
 import { prompt as askPrompt } from "./credentials";
+import {
+  normalizeUpgradeSandboxesOptions,
+  type UpgradeSandboxesOptions,
+} from "./lifecycle-options";
 import { captureOpenshell } from "./openshell-runtime";
 import * as registry from "./registry";
 import { parseLiveSandboxNames } from "./runtime-recovery";
 import { rebuildSandbox } from "./sandbox-rebuild-action";
 import * as sandboxVersion from "./sandbox-version";
 import { B, D, G, R, YW } from "./terminal-style";
+import {
+  classifyUpgradeableSandboxes,
+  shouldSkipUpgradeConfirmation,
+  splitRebuildableSandboxes,
+} from "./upgrade-sandboxes-helpers";
 
 // ── Upgrade sandboxes (#1904) ────────────────────────────────────
 // Detect sandboxes running stale agent versions and offer to rebuild them.
 
-export async function upgradeSandboxes(args: string[] = []): Promise<void> {
-  const checkOnly = args.includes("--check");
-  const auto = args.includes("--auto");
-  const skipConfirm = auto || args.includes("--yes");
+export async function upgradeSandboxes(
+  options: string[] | UpgradeSandboxesOptions = {},
+): Promise<void> {
+  const normalized = normalizeUpgradeSandboxesOptions(options);
+  const checkOnly = normalized.check === true;
+  const skipConfirm = shouldSkipUpgradeConfirmation(normalized);
 
   const sandboxes = registry.listSandboxes().sandboxes;
   if (sandboxes.length === 0) {
@@ -36,25 +47,11 @@ export async function upgradeSandboxes(args: string[] = []): Promise<void> {
   const liveNames = parseLiveSandboxNames(liveResult.output || "");
 
   // Classify sandboxes as stale, unknown, or current
-  const stale = [];
-  const unknown = [];
-  for (const sb of sandboxes) {
-    const versionCheck = sandboxVersion.checkAgentVersion(sb.name);
-    if (versionCheck.isStale) {
-      stale.push({
-        name: sb.name,
-        current: versionCheck.sandboxVersion,
-        expected: versionCheck.expectedVersion,
-        running: liveNames.has(sb.name),
-      });
-    } else if (versionCheck.detectionMethod === "unavailable") {
-      unknown.push({
-        name: sb.name,
-        expected: versionCheck.expectedVersion,
-        running: liveNames.has(sb.name),
-      });
-    }
-  }
+  const { stale, unknown } = classifyUpgradeableSandboxes(
+    sandboxes,
+    liveNames,
+    sandboxVersion.checkAgentVersion,
+  );
 
   if (stale.length === 0 && unknown.length === 0) {
     console.log("  All sandboxes are up to date.");
@@ -88,8 +85,7 @@ export async function upgradeSandboxes(args: string[] = []): Promise<void> {
     return;
   }
 
-  const rebuildable = stale.filter((s: { running: boolean }) => s.running);
-  const stopped = stale.filter((s: { running: boolean }) => !s.running);
+  const { rebuildable, stopped } = splitRebuildableSandboxes(stale);
   if (stopped.length > 0) {
     console.log(`  ${D}Skipping ${stopped.length} stopped sandbox(es) — start them first.${R}`);
   }

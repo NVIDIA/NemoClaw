@@ -13,6 +13,7 @@ import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 const { isNonInteractive } = require("./onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("./onboard-providers");
 import * as policies from "./policies";
+import { parsePolicyAddArgs } from "./policy-channel-helpers";
 import * as registry from "./registry";
 import { runOpenshell } from "./openshell-runtime";
 import { rebuildSandbox } from "./sandbox-runtime-actions";
@@ -44,38 +45,21 @@ const YW = useColor ? "\x1b[1;33m" : "";
  * rolled back).
  */
 export async function addSandboxPolicy(sandboxName: string, args: string[] = []): Promise<void> {
-  const dryRun = args.includes("--dry-run");
-  const skipConfirm =
-    args.includes("--yes") ||
-    args.includes("-y") ||
-    args.includes("--force") ||
-    process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  const { dryRun, skipConfirm, source, presetArg } = parsePolicyAddArgs(args);
 
-  const fromFileIdx = args.indexOf("--from-file");
-  const fromDirIdx = args.indexOf("--from-dir");
-
-  if (fromFileIdx >= 0 && fromDirIdx >= 0) {
-    console.error("  --from-file and --from-dir are mutually exclusive.");
+  if (source.kind === "error") {
+    console.error(`  ${source.message}`);
     process.exit(1);
   }
 
-  if (fromFileIdx >= 0) {
-    const filePath = args[fromFileIdx + 1];
-    if (!filePath || filePath.startsWith("--")) {
-      console.error("  --from-file requires a path argument.");
-      process.exit(1);
-    }
-    const ok = await applyExternalPreset(sandboxName, filePath, { dryRun, yes: skipConfirm });
+  if (source.kind === "file") {
+    const ok = await applyExternalPreset(sandboxName, source.path, { dryRun, yes: skipConfirm });
     if (!ok) process.exit(1);
     return;
   }
 
-  if (fromDirIdx >= 0) {
-    const dirPath = args[fromDirIdx + 1];
-    if (!dirPath || dirPath.startsWith("--")) {
-      console.error("  --from-dir requires a directory path.");
-      process.exit(1);
-    }
+  if (source.kind === "dir") {
+    const dirPath = source.path;
     const absDir = path.resolve(dirPath);
     if (!fs.existsSync(absDir) || !fs.statSync(absDir).isDirectory()) {
       console.error(`  Directory not found: ${dirPath}`);
@@ -106,7 +90,6 @@ export async function addSandboxPolicy(sandboxName: string, args: string[] = [])
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
-  const presetArg = args.find((arg) => !arg.startsWith("-"));
   let answer = null;
   if (presetArg) {
     const normalized = presetArg.trim().toLowerCase();

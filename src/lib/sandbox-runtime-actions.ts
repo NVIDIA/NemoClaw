@@ -3,6 +3,7 @@
 
 /* v8 ignore start -- transitional action facade until implementations leave src/nemoclaw.ts. */
 
+import type { DestroySandboxOptions, RebuildSandboxOptions } from "./lifecycle-options";
 import type { SandboxConnectOptions } from "./sandbox-connect-action";
 import type { SandboxLogsOptions } from "./sandbox-logs-options";
 
@@ -30,18 +31,30 @@ export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions
   showSandboxLogsAction(sandboxName, options);
 }
 
-export async function destroySandbox(sandboxName: string, args: string[] = []): Promise<void> {
+export async function destroySandbox(
+  sandboxName: string,
+  options: string[] | DestroySandboxOptions = {},
+): Promise<void> {
   const { destroySandbox: destroyExtractedSandbox } = require("./sandbox-destroy-action") as {
-    destroySandbox: (sandboxName: string, args?: string[]) => Promise<void>;
+    destroySandbox: (
+      sandboxName: string,
+      options?: string[] | DestroySandboxOptions,
+    ) => Promise<void>;
   };
-  await destroyExtractedSandbox(sandboxName, args);
+  await destroyExtractedSandbox(sandboxName, options);
 }
 
-export async function rebuildSandbox(sandboxName: string, args: string[] = []): Promise<void> {
+export async function rebuildSandbox(
+  sandboxName: string,
+  options: string[] | RebuildSandboxOptions = {},
+): Promise<void> {
   const { rebuildSandbox: rebuildExtractedSandbox } = require("./sandbox-rebuild-action") as {
-    rebuildSandbox: (sandboxName: string, args?: string[]) => Promise<void>;
+    rebuildSandbox: (
+      sandboxName: string,
+      options?: string[] | RebuildSandboxOptions,
+    ) => Promise<void>;
   };
-  await rebuildExtractedSandbox(sandboxName, args);
+  await rebuildExtractedSandbox(sandboxName, options);
 }
 
 export async function installSandboxSkill(

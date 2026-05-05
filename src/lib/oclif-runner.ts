@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- oclif runtime bridge covered through CLI integration tests. */
-
 import { Config as OclifConfig } from "@oclif/core";
 
 import { CLI_NAME } from "./branding";
