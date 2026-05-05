@@ -307,7 +307,6 @@ Release Notes <about/release-notes>
 :hidden:
 
 Prerequisites <get-started/prerequisites>
-Quickstart <get-started/quickstart>
 Quickstart with OpenClaw <get-started/quickstart>
 Quickstart with Hermes <get-started/quickstart-hermes>
 ```
