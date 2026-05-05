@@ -9,7 +9,7 @@ import { NOTICE_ACCEPT_FLAG } from "./usage-notice";
 const acceptFlagName = NOTICE_ACCEPT_FLAG.replace(/^--/, "");
 
 const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 const onboardExamples = [
@@ -30,6 +30,7 @@ type OnboardFlags = {
   name?: string;
   agent?: string;
   "control-ui-port"?: number;
+  yes?: boolean;
   [acceptFlagName]?: boolean;
 };
 
@@ -54,6 +55,10 @@ function buildOnboardFlags(): Record<string, any> {
       max: 65535,
       min: 1024,
     }),
+    yes: Flags.boolean({
+      char: "y",
+      description: "Auto-accept the Ollama model-download size confirmation",
+    }),
     [acceptFlagName]: Flags.boolean({ description: "Accept the third-party software notice" }),
   } as Record<string, any>;
 }
@@ -70,6 +75,7 @@ function toLegacyOnboardArgs(flags: OnboardFlags): string[] {
   if (flags["control-ui-port"] !== undefined) {
     args.push("--control-ui-port", String(flags["control-ui-port"]));
   }
+  if (flags.yes) args.push("--yes");
   if (flags[acceptFlagName]) args.push(NOTICE_ACCEPT_FLAG);
   return args;
 }
