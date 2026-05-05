@@ -15,6 +15,11 @@ import { parseLiveSandboxNames } from "./runtime-recovery";
 import { rebuildSandbox } from "./sandbox-rebuild-action";
 import * as sandboxVersion from "./sandbox-version";
 import { B, D, G, R, YW } from "./terminal-style";
+import {
+  classifyUpgradeableSandboxes,
+  shouldSkipUpgradeConfirmation,
+  splitRebuildableSandboxes,
+} from "./upgrade-sandboxes-helpers";
 
 // ── Upgrade sandboxes (#1904) ────────────────────────────────────
 // Detect sandboxes running stale agent versions and offer to rebuild them.
@@ -24,8 +29,7 @@ export async function upgradeSandboxes(
 ): Promise<void> {
   const normalized = normalizeUpgradeSandboxesOptions(options);
   const checkOnly = normalized.check === true;
-  const auto = normalized.auto === true;
-  const skipConfirm = auto || normalized.yes === true;
+  const skipConfirm = shouldSkipUpgradeConfirmation(normalized);
 
   const sandboxes = registry.listSandboxes().sandboxes;
   if (sandboxes.length === 0) {
@@ -43,25 +47,11 @@ export async function upgradeSandboxes(
   const liveNames = parseLiveSandboxNames(liveResult.output || "");
 
   // Classify sandboxes as stale, unknown, or current
-  const stale = [];
-  const unknown = [];
-  for (const sb of sandboxes) {
-    const versionCheck = sandboxVersion.checkAgentVersion(sb.name);
-    if (versionCheck.isStale) {
-      stale.push({
-        name: sb.name,
-        current: versionCheck.sandboxVersion,
-        expected: versionCheck.expectedVersion,
-        running: liveNames.has(sb.name),
-      });
-    } else if (versionCheck.detectionMethod === "unavailable") {
-      unknown.push({
-        name: sb.name,
-        expected: versionCheck.expectedVersion,
-        running: liveNames.has(sb.name),
-      });
-    }
-  }
+  const { stale, unknown } = classifyUpgradeableSandboxes(
+    sandboxes,
+    liveNames,
+    sandboxVersion.checkAgentVersion,
+  );
 
   if (stale.length === 0 && unknown.length === 0) {
     console.log("  All sandboxes are up to date.");
@@ -95,8 +85,7 @@ export async function upgradeSandboxes(
     return;
   }
 
-  const rebuildable = stale.filter((s: { running: boolean }) => s.running);
-  const stopped = stale.filter((s: { running: boolean }) => !s.running);
+  const { rebuildable, stopped } = splitRebuildableSandboxes(stale);
   if (stopped.length > 0) {
     console.log(`  ${D}Skipping ${stopped.length} stopped sandbox(es) — start them first.${R}`);
   }
