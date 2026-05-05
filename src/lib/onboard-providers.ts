@@ -161,11 +161,15 @@ function getNonInteractiveProvider() {
     "custom",
     "nim-local",
     "vllm",
+    "install-vllm",
+    "install-ollama",
+    "install-windows-ollama",
+    "start-windows-ollama",
   ]);
   if (!validProviders.has(normalized)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
     console.error(
-      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm",
+      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama",
     );
     process.exit(1);
   }

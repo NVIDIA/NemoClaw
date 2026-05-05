@@ -4,6 +4,10 @@
 /* v8 ignore start -- exercised through CLI subprocess maintenance tests. */
 
 import { prompt as askPrompt } from "./credentials";
+import {
+  type GarbageCollectImagesOptions,
+  normalizeGarbageCollectImagesOptions,
+} from "./lifecycle-options";
 import { dockerListImagesFormat, dockerRmi } from "./docker";
 import { captureOpenshell } from "./openshell-runtime";
 import * as registry from "./registry";
@@ -61,9 +65,12 @@ export function backupAll(): void {
   }
 }
 
-export async function garbageCollectImages(args: string[] = []): Promise<void> {
-  const dryRun = args.includes("--dry-run");
-  const skipConfirm = args.includes("--yes") || args.includes("--force");
+export async function garbageCollectImages(
+  options: string[] | GarbageCollectImagesOptions = {},
+): Promise<void> {
+  const normalized = normalizeGarbageCollectImagesOptions(options);
+  const dryRun = normalized.dryRun === true;
+  const skipConfirm = normalized.yes === true || normalized.force === true;
 
   let imagesOutput = "";
   try {

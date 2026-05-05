@@ -158,6 +158,37 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.telegram).toBeDefined();
   });
 
+  it("emits groups with requireMention when TELEGRAM_REQUIRE_MENTION is true (#3022)", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const telegramConfig = Buffer.from(JSON.stringify({ requireMention: true })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_TELEGRAM_CONFIG_B64: telegramConfig,
+    });
+    expect(config.channels.telegram.accounts.default.groupPolicy).toBe("open");
+    expect(config.channels.telegram.groups).toEqual({ "*": { requireMention: true } });
+  });
+
+  it("keeps groupPolicy open with no groups stanza when requireMention is false (#3022)", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const telegramConfig = Buffer.from(JSON.stringify({ requireMention: false })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_TELEGRAM_CONFIG_B64: telegramConfig,
+    });
+    expect(config.channels.telegram.accounts.default.groupPolicy).toBe("open");
+    expect(config.channels.telegram.groups).toBeUndefined();
+  });
+
+  it("defaults Telegram groupPolicy to 'open' with no groups stanza when telegramConfig is empty (#3022)", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+    });
+    expect(config.channels.telegram.accounts.default.groupPolicy).toBe("open");
+    expect(config.channels.telegram.groups).toBeUndefined();
+  });
+
   it("emits canonical openshell:resolve:env: placeholders for non-Slack channels", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });

@@ -45,6 +45,7 @@ type Endpoint = {
   protocol?: string;
   enforcement?: string;
   access?: string;
+  tls?: string;
   rules?: Rule[];
   binaries?: Array<{ path: string }>;
 };
@@ -394,4 +395,41 @@ describe("huggingface preset", () => {
       expect(hasGet).toBe(true);
     }
   });
+});
+
+describe("npm preset", () => {
+  // Regression #2767: npm/Yarn registry endpoints used `protocol: rest`
+  // with only GET allowed. Node 22 undici issues HTTP CONNECT through
+  // HTTPS_PROXY for TLS tunneling; the L7 proxy rejects parallel CONNECT
+  // tunnels, causing NET:FAIL and ECONNRESET on tarball downloads.
+  // The fix switches to L4 tunnel mode.
+  const NPM_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/npm.yaml",
+    import.meta.url,
+  );
+  const npmPreset = loadYaml<PolicyPreset>(NPM_PRESET_PATH);
+
+  function npmEndpoints(): Endpoint[] {
+    const np = npmPreset.network_policies;
+    if (!np) return [];
+    const entry = np.npm_yarn;
+    return Array.isArray(entry?.endpoints) ? entry.endpoints : [];
+  }
+
+  const REGISTRY_HOSTS = ["registry.npmjs.org", "registry.yarnpkg.com"];
+
+  for (const host of REGISTRY_HOSTS) {
+    it(`regression #2767: ${host} uses L4 tunnel (access: full, tls: skip) for CONNECT compatibility`, () => {
+      const endpoints = npmEndpoints().filter((ep) => ep.host === host);
+      expect(endpoints.length).toBeGreaterThan(0);
+      for (const ep of endpoints) {
+        expect(ep.access).toBe("full");
+        expect(ep).toHaveProperty("tls", "skip");
+        // Must NOT use protocol: rest — that triggers L7 method inspection
+        // which rejects CONNECT tunnels from Node 22 undici.
+        expect(ep).not.toHaveProperty("protocol");
+        expect(ep).not.toHaveProperty("rules");
+      }
+    });
+  }
 });

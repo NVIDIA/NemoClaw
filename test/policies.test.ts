@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import type { Interface as ReadlineInterface } from "node:readline";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import policies from "../dist/lib/policies";
 import { execTimeout } from "./helpers/timeouts";
@@ -49,6 +49,7 @@ function runPolicyAdd(
   confirmAnswer: string,
   extraArgs: string[] = [],
   envOverrides: Record<string, string | undefined> = {},
+  presetName: string = "pypi",
 ) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-add-"));
   const scriptPath = path.join(tmpDir, "policy-add-check.js");
@@ -57,9 +58,9 @@ const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
 const credentials = require(${CREDENTIALS_PATH});
 const calls = [];
-policies.selectFromList = async () => "pypi";
-policies.loadPreset = () => "network_policies:\n  pypi:\n    host: pypi.org\n";
-policies.getPresetEndpoints = () => ["pypi.org"];
+policies.selectFromList = async () => ${JSON.stringify(presetName)};
+policies.loadPreset = () => "network_policies:\n  example:\n    host: example.com\n";
+policies.getPresetEndpoints = () => ["example.com"];
 credentials.prompt = async (message) => {
   calls.push({ type: "prompt", message });
   return ${JSON.stringify(confirmAnswer)};
@@ -82,15 +83,19 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
 
   fs.writeFileSync(scriptPath, script);
 
-  return spawnSync(process.execPath, [scriptPath], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
-    env: {
-      ...process.env,
-      HOME: tmpDir,
-      ...envOverrides,
-    },
-  });
+  try {
+    return spawnSync(process.execPath, [scriptPath], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        ...envOverrides,
+      },
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 function runSelectFromList(input: string, { applied = [] }: AppliedOptions = {}) {
@@ -247,6 +252,33 @@ describe("policies", () => {
       const yaml = "host: \"example.com\"\n  host: 'other.com'";
       const hosts = policies.getPresetEndpoints(yaml);
       expect(hosts).toEqual(["example.com", "other.com"]);
+    });
+  });
+
+  describe("getMessagingPresetWarning", () => {
+    it("returns a warning for the telegram preset that mentions re-running onboard", () => {
+      const warning = policies.getMessagingPresetWarning("telegram");
+      expect(warning).toBeTruthy();
+      expect(warning).toContain("telegram");
+      expect(warning).toContain("Telegram");
+      expect(warning).toContain("nemoclaw onboard");
+    });
+
+    it("returns a warning for discord and slack", () => {
+      expect(policies.getMessagingPresetWarning("discord")).toContain("Discord");
+      expect(policies.getMessagingPresetWarning("slack")).toContain("Slack");
+    });
+
+    it("returns null for non-messaging presets", () => {
+      expect(policies.getMessagingPresetWarning("npm")).toBeNull();
+      expect(policies.getMessagingPresetWarning("pypi")).toBeNull();
+      expect(policies.getMessagingPresetWarning("github")).toBeNull();
+      expect(policies.getMessagingPresetWarning("brew")).toBeNull();
+    });
+
+    it("returns null for unknown preset names", () => {
+      expect(policies.getMessagingPresetWarning("")).toBeNull();
+      expect(policies.getMessagingPresetWarning("nonexistent")).toBeNull();
     });
   });
 
@@ -679,22 +711,34 @@ describe("policies", () => {
       }
     });
 
-    it("package-manager presets use protocol: rest with read-only rules", () => {
-      // Package managers only need read access to install packages.
-      // Using access: full opens a raw CONNECT tunnel that allows
-      // PUT/POST (publish, exfiltrate). Restrict via rest rules.
-      const packagePresets = ["pypi", "npm"];
-      for (const name of packagePresets) {
-        const content = requirePresetContent(policies.loadPreset(name));
-        expect(content).toBeTruthy();
-        expect(content.includes("access: full")).toBe(false);
-        expect(content.includes("protocol: rest")).toBe(true);
-        expect(content.includes("method: GET")).toBe(true);
-        // No write methods allowed
-        expect(content.includes("method: PUT")).toBe(false);
-        expect(content.includes("method: POST")).toBe(false);
-        expect(content.includes("method: DELETE")).toBe(false);
-      }
+    it("pypi preset uses protocol: rest with read-only rules", () => {
+      // PyPI only needs read access to install packages.
+      // PyPI's pip uses http.request() (not undici), so it goes through
+      // http-proxy-fix.js which rewrites FORWARD-mode to https.request,
+      // avoiding CONNECT entirely. protocol: rest is therefore safe and
+      // preferred for tighter L7 method enforcement.
+      const content = requirePresetContent(policies.loadPreset("pypi"));
+      expect(content).toBeTruthy();
+      expect(content.includes("access: full")).toBe(false);
+      expect(content.includes("protocol: rest")).toBe(true);
+      expect(content.includes("method: GET")).toBe(true);
+      // No write methods allowed
+      expect(content.includes("method: PUT")).toBe(false);
+      expect(content.includes("method: POST")).toBe(false);
+      expect(content.includes("method: DELETE")).toBe(false);
+    });
+
+    it("npm preset uses L4 tunnel for CONNECT compatibility (#2767)", () => {
+      // npm on Node 22 uses undici's built-in fetch which bypasses
+      // http.request() and issues CONNECT directly through HTTPS_PROXY.
+      // protocol: rest triggers L7 method inspection that rejects
+      // CONNECT, causing ECONNRESET on tarball downloads. access: full
+      // with tls: skip uses L4 tunneling that supports CONNECT.
+      const content = requirePresetContent(policies.loadPreset("npm"));
+      expect(content).toBeTruthy();
+      expect(content.includes("access: full")).toBe(true);
+      expect(content.includes("tls: skip")).toBe(true);
+      expect(content.includes("protocol: rest")).toBe(false);
     });
 
     it("outlook preset allows PATCH on graph.microsoft.com", () => {
@@ -1023,7 +1067,7 @@ selectForRemoval(items, options)
       const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
       expect(calls.some((call: PolicyCall) => call.type === "prompt")).toBeFalsy();
       expect(calls.some((call: PolicyCall) => call.type === "apply")).toBeFalsy();
-      expect(result.stdout).toMatch(/Endpoints that would be opened: pypi\.org/);
+      expect(result.stdout).toMatch(/Endpoints that would be opened: example\.com/);
       expect(result.stdout).toMatch(/--dry-run: no changes applied\./);
     });
 
@@ -1060,6 +1104,24 @@ selectForRemoval(items, options)
       expect(`${result.stdout}${result.stderr}`).toMatch(
         /Non-interactive mode requires a preset name/,
       );
+    });
+
+    it("warns the user that the telegram preset alone does not enable Telegram messaging", () => {
+      const result = runPolicyAdd("y", [], {}, "telegram");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /Note: the 'telegram' preset only opens network egress to the Telegram API\./,
+      );
+      expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select Telegram/);
+    });
+
+    it("does not warn about messaging when a non-messaging preset is selected", () => {
+      const result = runPolicyAdd("y");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toMatch(/only opens network egress to the/);
+      expect(result.stdout).not.toMatch(/re-run 'nemoclaw onboard' and select/);
     });
   });
 
@@ -1266,8 +1328,17 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
   });
 
   describe("loadPresetFromFile", () => {
+    const tmpDirs: string[] = [];
+    afterEach(() => {
+      while (tmpDirs.length > 0) {
+        const dir = tmpDirs.pop();
+        if (dir) fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     function writeTmp(body: string, ext = "yaml") {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-preset-"));
+      tmpDirs.push(dir);
       const file = path.join(dir, `custom.${ext}`);
       fs.writeFileSync(file, body);
       return { dir, file };
@@ -1383,6 +1454,39 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
         expect(
           msgs.some((m) => typeof m === "string" && m.includes("collides with a built-in")),
         ).toBe(true);
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it("rejects files exceeding the size limit before reading", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-preset-"));
+      tmpDirs.push(dir);
+      const file = path.join(dir, "huge.yaml");
+      const padding = "# ".repeat(5_500_000);
+      fs.writeFileSync(file, `preset:\n  name: huge\nnetwork_policies:\n  r:\n    name: r\n${padding}`);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(policies.loadPresetFromFile(file)).toBe(null);
+        const msgs = errSpy.mock.calls.map((c) => c[0]);
+        expect(msgs.some((m) => typeof m === "string" && m.includes("too large"))).toBe(true);
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it("rejects symbolic links to a preset file", () => {
+      const body = "preset:\n  name: link-target\nnetwork_policies:\n  r:\n    name: r\n";
+      const { dir, file } = writeTmp(body);
+      const linkPath = path.join(dir, "link.yaml");
+      fs.symlinkSync(file, linkPath);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(policies.loadPresetFromFile(linkPath)).toBe(null);
+        const msgs = errSpy.mock.calls.map((c) => c[0]);
+        expect(msgs.some((m) => typeof m === "string" && m.includes("must not be a symbolic link"))).toBe(
+          true,
+        );
       } finally {
         errSpy.mockRestore();
       }
@@ -1507,7 +1611,7 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
     it("errors when --from-file and --from-dir are combined", () => {
       const result = runPolicyAddExternal(["--from-file", "a.yaml", "--from-dir", "b"]);
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/mutually exclusive/);
+      expect(result.stderr).toMatch(/cannot also be provided/);
     });
 
     it("errors when --from-file is missing its path argument", () => {

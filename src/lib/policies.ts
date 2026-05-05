@@ -16,6 +16,8 @@ const { loadAgent } = require("./agent-defs");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
+const MAX_PRESET_FILE_BYTES = 10_000_000;
+
 type PresetInfo = {
   file: string;
   name: string;
@@ -91,6 +93,27 @@ function getPresetEndpoints(content: string): string[] {
     hosts.push(match[1].replace(/^["']|["']$/g, ""));
   }
   return hosts;
+}
+
+/**
+ * Messaging channel presets only open network egress to the provider's API;
+ * the bot token, channel configuration, and in-sandbox bridge are wired up at
+ * `nemoclaw onboard` time, so applying these presets after onboarding without
+ * having enabled the channel opens the firewall but leaves the sandbox
+ * without a running bridge. See #1691.
+ */
+const MESSAGING_PRESET_NAMES = new Set(["telegram", "discord", "slack"]);
+
+function getMessagingPresetWarning(presetName: string): string | null {
+  if (!MESSAGING_PRESET_NAMES.has(presetName)) return null;
+  const label =
+    presetName === "telegram" ? "Telegram" : presetName === "discord" ? "Discord" : "Slack";
+  return [
+    `Note: the '${presetName}' preset only opens network egress to the ${label} API.`,
+    `To actually enable ${label} messaging, re-run 'nemoclaw onboard' and select ${label}`,
+    "in the messaging channels step. The bot token and channel bridge are wired",
+    "up at onboard time and are not added by applying this preset alone.",
+  ].join("\n  ");
 }
 
 /**
@@ -617,28 +640,62 @@ function applyPreset(
  */
 function loadPresetFromFile(filePath: string): { presetName: string; content: string } | null {
   const abs = path.resolve(filePath);
-  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
-    console.error(`  Preset file not found: ${filePath}`);
-    return null;
-  }
   if (!/\.ya?ml$/i.test(abs)) {
     console.error(`  Preset file must be .yaml or .yml: ${filePath}`);
+    return null;
+  }
+  const NOFOLLOW = fs.constants.O_NOFOLLOW ?? 0;
+  let fd: number;
+  try {
+    fd = fs.openSync(abs, fs.constants.O_RDONLY | NOFOLLOW);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === "ELOOP" || code === "EMLINK") {
+      console.error(
+        `  Preset file must not be a symbolic link: ${filePath} (resolve with 'realpath' and pass the target path).`,
+      );
+    } else if (code === "ENOENT" || code === "ENOTDIR") {
+      console.error(`  Preset file not found: ${filePath}`);
+    } else if (code === "EACCES" || code === "EPERM") {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  Cannot read ${filePath}: ${message}`);
+    } else {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  Cannot read ${filePath}: ${message}`);
+    }
     return null;
   }
   let content: string;
   let parsed: PolicyValue;
   try {
-    content = fs.readFileSync(abs, "utf-8");
-    parsed = YAML.parse(content);
-  } catch (err: unknown) {
-    const code = (err as NodeJS.ErrnoException)?.code;
-    const message = err instanceof Error ? err.message : String(err);
-    const msg =
-      code === "ENOENT" || code === "EACCES"
-        ? `Cannot read ${filePath}: ${message}`
-        : `Invalid YAML in ${filePath}: ${message}`;
-    console.error(`  ${msg}`);
-    return null;
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      console.error(`  Preset file not found: ${filePath}`);
+      return null;
+    }
+    if (stat.size > MAX_PRESET_FILE_BYTES) {
+      console.error(
+        `  Preset file too large: ${filePath} (${stat.size} bytes; max ${MAX_PRESET_FILE_BYTES} bytes).`,
+      );
+      return null;
+    }
+    try {
+      const buffer = Buffer.allocUnsafe(stat.size);
+      let offset = 0;
+      while (offset < buffer.length) {
+        const bytesRead = fs.readSync(fd, buffer, offset, buffer.length - offset, null);
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+      }
+      content = buffer.toString("utf-8", 0, offset);
+      parsed = YAML.parse(content);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  Invalid YAML in ${filePath}: ${message}`);
+      return null;
+    }
+  } finally {
+    fs.closeSync(fd);
   }
   if (!isPolicyDocument(parsed)) {
     console.error(`  Preset must be a YAML mapping: ${filePath}`);
@@ -883,6 +940,7 @@ export {
   listPresets,
   loadPreset,
   getPresetEndpoints,
+  getMessagingPresetWarning,
   extractPresetEntries,
   parseCurrentPolicy,
   buildPolicySetCommand,
