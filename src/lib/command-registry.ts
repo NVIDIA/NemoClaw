@@ -175,7 +175,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> rebuild",
     description: "Upgrade sandbox to current agent version",
-    flags: "(--yes to skip prompt)",
+    flags: "[--yes|-y|--force] [--verbose|-v]",
     group: "Sandbox Management",
     scope: "sandbox",
   },
@@ -189,7 +189,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw <name> destroy",
     description: "Stop NIM + delete sandbox",
-    flags: "(--yes to skip prompt)",
+    flags: "[--yes|-y|--force]",
     group: "Sandbox Management",
     scope: "sandbox",
   },

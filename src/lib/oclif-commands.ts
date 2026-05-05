@@ -46,7 +46,11 @@ import {
   ShieldsStatusCommand,
   ShieldsUpCommand,
 } from "./shields-cli-commands";
-import ShareCommand from "./share-command";
+import ShareCommand, {
+  ShareMountCommand,
+  ShareStatusCommand,
+  ShareUnmountCommand,
+} from "./share-command";
 import SkillInstallCliCommand, { SkillCliCommand } from "./skill-install-cli-command";
 import {
   SnapshotCommand,
@@ -90,6 +94,10 @@ export default {
   "sandbox:policy-remove": PolicyRemoveCommand,
   "sandbox:rebuild": RebuildCliCommand,
   "sandbox:recover": RecoverCliCommand,
+  "sandbox:share": ShareCommand,
+  "sandbox:share:mount": ShareMountCommand,
+  "sandbox:share:status": ShareStatusCommand,
+  "sandbox:share:unmount": ShareUnmountCommand,
   "sandbox:shields:down": ShieldsDownCommand,
   "sandbox:shields:status": ShieldsStatusCommand,
   "sandbox:shields:up": ShieldsUpCommand,
@@ -102,7 +110,6 @@ export default {
   "sandbox:status": SandboxStatusCommand,
   setup: SetupCliCommand,
   "setup-spark": SetupSparkCliCommand,
-  share: ShareCommand,
   status: StatusCommand,
   start: DeprecatedStartCommand,
   stop: DeprecatedStopCommand,

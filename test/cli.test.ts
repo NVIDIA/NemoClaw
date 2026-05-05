@@ -748,12 +748,12 @@ describe("CLI dispatch", () => {
 
     const upgrade = run("upgrade-sandboxes --help");
     expect(upgrade.code).toBe(0);
-    expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes]");
+    expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes|-y]");
     expect(upgrade.out).toContain("Detect and rebuild stale sandboxes");
 
     const gc = run("gc --help");
     expect(gc.code).toBe(0);
-    expect(gc.out).toContain("gc [--dry-run] [--yes|--force]");
+    expect(gc.out).toContain("gc [--dry-run] [--yes|-y|--force]");
     expect(gc.out).toContain("Remove orphaned sandbox Docker images");
   });
 
@@ -1148,8 +1148,8 @@ describe("CLI dispatch", () => {
 
   it("debug exits 1 on unknown option", () => {
     const r = run("debug --quik");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown option")).toBeTruthy();
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Nonexistent flag: --quik");
   });
 
   it("help mentions debug command", () => {
@@ -1172,6 +1172,7 @@ describe("CLI dispatch", () => {
   it("debug --sandbox without a name exits 1", () => {
     const r = run("debug --sandbox");
     expect(r.code).not.toBe(0);
+    expect(r.out).toContain("--sandbox");
   });
 
   it("debug warns when default sandbox is stale", testTimeoutOptions(), () => {
@@ -1375,12 +1376,12 @@ describe("CLI dispatch", () => {
 
     const destroy = runWithEnv("alpha destroy --help", { HOME: home });
     expect(destroy.code).toBe(0);
-    expect(destroy.out).toContain("<name> destroy [--yes|--force]");
+    expect(destroy.out).toContain("<name> destroy [--yes|-y|--force]");
     expect(destroy.out).not.toContain("sandbox:destroy");
 
     const rebuild = runWithEnv("alpha rebuild --help", { HOME: home });
     expect(rebuild.code).toBe(0);
-    expect(rebuild.out).toContain("<name> rebuild [--yes|--force] [--verbose|-v]");
+    expect(rebuild.out).toContain("<name> rebuild [--yes|-y|--force] [--verbose|-v]");
     expect(rebuild.out).not.toContain("sandbox:rebuild");
 
     for (const action of ["policy-add", "policy-remove", "policy-list"]) {
@@ -2013,7 +2014,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha destroy --yes", {
+    const r = runWithEnv("alpha destroy -y", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -4944,6 +4945,27 @@ describe("list shows live gateway inference", () => {
     expect(r.out).toContain("status");
   });
 
+  it("share help keeps public sandbox-scoped usage", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-help-"));
+    writeSandboxRegistry(home);
+
+    const parent = runWithEnv("alpha share --help", { HOME: home });
+    expect(parent.code).toBe(0);
+    expect(parent.out).toContain("Usage: nemoclaw <name> share <mount|unmount|status>");
+    expect(parent.out).not.toContain("sandbox:share");
+
+    for (const [subcommand, usage] of [
+      ["mount", "share mount [sandbox-path] [local-mount-point]"],
+      ["unmount", "share unmount [local-mount-point]"],
+      ["status", "share status [local-mount-point]"],
+    ]) {
+      const result = runWithEnv(`alpha share ${subcommand} --help`, { HOME: home });
+      expect(result.code).toBe(0);
+      expect(result.out).toContain(`Usage: nemoclaw <name> ${usage}`);
+      expect(result.out).not.toContain("sandbox:share");
+    }
+  });
+
   it("share is recognized as a valid sandbox action (not 'Unknown action')", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-action-"));
     writeSandboxRegistry(home);
@@ -4953,5 +4975,15 @@ describe("list shows live gateway inference", () => {
     // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
     expect(r.code).not.toBe(0);
     expect(r.out).not.toContain("Unknown action");
+  });
+
+  it("unknown share subcommands fail before action dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-unknown-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha share bogus 2>&1", { HOME: home });
+
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Unexpected argument: bogus");
   });
 });

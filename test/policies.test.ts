@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import type { Interface as ReadlineInterface } from "node:readline";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import policies from "../dist/lib/policies";
 import { execTimeout } from "./helpers/timeouts";
@@ -679,22 +679,34 @@ describe("policies", () => {
       }
     });
 
-    it("package-manager presets use protocol: rest with read-only rules", () => {
-      // Package managers only need read access to install packages.
-      // Using access: full opens a raw CONNECT tunnel that allows
-      // PUT/POST (publish, exfiltrate). Restrict via rest rules.
-      const packagePresets = ["pypi", "npm"];
-      for (const name of packagePresets) {
-        const content = requirePresetContent(policies.loadPreset(name));
-        expect(content).toBeTruthy();
-        expect(content.includes("access: full")).toBe(false);
-        expect(content.includes("protocol: rest")).toBe(true);
-        expect(content.includes("method: GET")).toBe(true);
-        // No write methods allowed
-        expect(content.includes("method: PUT")).toBe(false);
-        expect(content.includes("method: POST")).toBe(false);
-        expect(content.includes("method: DELETE")).toBe(false);
-      }
+    it("pypi preset uses protocol: rest with read-only rules", () => {
+      // PyPI only needs read access to install packages.
+      // PyPI's pip uses http.request() (not undici), so it goes through
+      // http-proxy-fix.js which rewrites FORWARD-mode to https.request,
+      // avoiding CONNECT entirely. protocol: rest is therefore safe and
+      // preferred for tighter L7 method enforcement.
+      const content = requirePresetContent(policies.loadPreset("pypi"));
+      expect(content).toBeTruthy();
+      expect(content.includes("access: full")).toBe(false);
+      expect(content.includes("protocol: rest")).toBe(true);
+      expect(content.includes("method: GET")).toBe(true);
+      // No write methods allowed
+      expect(content.includes("method: PUT")).toBe(false);
+      expect(content.includes("method: POST")).toBe(false);
+      expect(content.includes("method: DELETE")).toBe(false);
+    });
+
+    it("npm preset uses L4 tunnel for CONNECT compatibility (#2767)", () => {
+      // npm on Node 22 uses undici's built-in fetch which bypasses
+      // http.request() and issues CONNECT directly through HTTPS_PROXY.
+      // protocol: rest triggers L7 method inspection that rejects
+      // CONNECT, causing ECONNRESET on tarball downloads. access: full
+      // with tls: skip uses L4 tunneling that supports CONNECT.
+      const content = requirePresetContent(policies.loadPreset("npm"));
+      expect(content).toBeTruthy();
+      expect(content.includes("access: full")).toBe(true);
+      expect(content.includes("tls: skip")).toBe(true);
+      expect(content.includes("protocol: rest")).toBe(false);
     });
 
     it("outlook preset allows PATCH on graph.microsoft.com", () => {
@@ -1266,8 +1278,17 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
   });
 
   describe("loadPresetFromFile", () => {
+    const tmpDirs: string[] = [];
+    afterEach(() => {
+      while (tmpDirs.length > 0) {
+        const dir = tmpDirs.pop();
+        if (dir) fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     function writeTmp(body: string, ext = "yaml") {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-preset-"));
+      tmpDirs.push(dir);
       const file = path.join(dir, `custom.${ext}`);
       fs.writeFileSync(file, body);
       return { dir, file };
@@ -1383,6 +1404,39 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
         expect(
           msgs.some((m) => typeof m === "string" && m.includes("collides with a built-in")),
         ).toBe(true);
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it("rejects files exceeding the size limit before reading", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-preset-"));
+      tmpDirs.push(dir);
+      const file = path.join(dir, "huge.yaml");
+      const padding = "# ".repeat(5_500_000);
+      fs.writeFileSync(file, `preset:\n  name: huge\nnetwork_policies:\n  r:\n    name: r\n${padding}`);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(policies.loadPresetFromFile(file)).toBe(null);
+        const msgs = errSpy.mock.calls.map((c) => c[0]);
+        expect(msgs.some((m) => typeof m === "string" && m.includes("too large"))).toBe(true);
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it("rejects symbolic links to a preset file", () => {
+      const body = "preset:\n  name: link-target\nnetwork_policies:\n  r:\n    name: r\n";
+      const { dir, file } = writeTmp(body);
+      const linkPath = path.join(dir, "link.yaml");
+      fs.symlinkSync(file, linkPath);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(policies.loadPresetFromFile(linkPath)).toBe(null);
+        const msgs = errSpy.mock.calls.map((c) => c[0]);
+        expect(msgs.some((m) => typeof m === "string" && m.includes("must not be a symbolic link"))).toBe(
+          true,
+        );
       } finally {
         errSpy.mockRestore();
       }
