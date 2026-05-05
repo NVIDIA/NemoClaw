@@ -1611,7 +1611,7 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
     it("errors when --from-file and --from-dir are combined", () => {
       const result = runPolicyAddExternal(["--from-file", "a.yaml", "--from-dir", "b"]);
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/mutually exclusive/);
+      expect(result.stderr).toMatch(/cannot also be provided/);
     });
 
     it("errors when --from-file is missing its path argument", () => {

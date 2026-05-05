@@ -66,8 +66,14 @@ export class PolicyAddCommand extends Command {
     yes: Flags.boolean({ char: "y", description: "Skip the confirmation prompt" }),
     force: Flags.boolean({ description: "Skip the confirmation prompt" }),
     "dry-run": Flags.boolean({ description: "Preview without applying" }),
-    "from-file": Flags.string({ description: "Load one custom preset YAML file" }),
-    "from-dir": Flags.string({ description: "Load all custom preset YAML files in a directory" }),
+    "from-file": Flags.string({
+      description: "Load one custom preset YAML file",
+      exclusive: ["from-dir"],
+    }),
+    "from-dir": Flags.string({
+      description: "Load all custom preset YAML files in a directory",
+      exclusive: ["from-file"],
+    }),
   };
 
   public async run(): Promise<void> {

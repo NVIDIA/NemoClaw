@@ -39,8 +39,14 @@ function buildOnboardFlags(): Record<string, any> {
   return {
     help: Flags.help({ char: "h" }),
     "non-interactive": Flags.boolean({ description: "Run without interactive prompts" }),
-    resume: Flags.boolean({ description: "Resume an interrupted onboarding session" }),
-    fresh: Flags.boolean({ description: "Ignore any saved onboarding session" }),
+    resume: Flags.boolean({
+      description: "Resume an interrupted onboarding session",
+      exclusive: ["fresh"],
+    }),
+    fresh: Flags.boolean({
+      description: "Ignore any saved onboarding session",
+      exclusive: ["resume"],
+    }),
     "recreate-sandbox": Flags.boolean({ description: "Delete and recreate an existing sandbox" }),
     from: Flags.string({ description: "Path to a Dockerfile to use as the sandbox image source" }),
     name: Flags.string({ description: "Sandbox name" }),
