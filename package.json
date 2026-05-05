@@ -17,6 +17,8 @@
   "scripts": {
     "preinstall": "node scripts/check-node-version.js",
     "test": "vitest run",
+    "clean:cli": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "dist:sourcemaps:check": "tsx scripts/check-dist-sourcemaps.ts dist",
     "lint": "biome lint . && npm run check:credential-env",
     "lint:fix": "biome lint --write . && npm run check:credential-env",
     "format": "biome format --write .",
