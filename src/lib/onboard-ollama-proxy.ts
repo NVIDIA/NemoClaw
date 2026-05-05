@@ -362,7 +362,7 @@ function pullOllamaModelViaHttp(model) {
         "--connect-timeout",
         "10",
         "--max-time",
-        String(Math.floor(TIMEOUT_MS / 1000)),
+        String(TIMEOUT_MS / 1000),
         "-X",
         "POST",
         "-H",
