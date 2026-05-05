@@ -331,6 +331,23 @@ If neither is found, verify that Colima is running:
 $ colima status
 ```
 
+### Sandbox build is slow or hangs (under-provisioned container runtime)
+
+Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headroom for the BuildKit-driven sandbox image build.
+On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
+
+Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
+On Colima, raise the resources before re-running onboard:
+
+```console
+$ colima stop
+$ colima start --cpu 6 --memory 12 --disk 100
+```
+
+On Docker Desktop, raise CPU and memory limits in *Settings → Resources*, then apply and restart.
+
+To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1` before running `nemoclaw onboard`.
+
 ### Re-onboard fails because port 18789 is held by SSH
 
 After destroying a sandbox and gateway, the SSH port-forward process for the

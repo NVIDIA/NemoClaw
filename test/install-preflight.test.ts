@@ -1415,7 +1415,7 @@ exit 0
     expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
   });
 
-  it("shows source hint even when bin dir is already in PATH (stale hash protection)", () => {
+  it("preserves ready output when nemoclaw is already resolvable after install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-ready-shell-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -1537,12 +1537,12 @@ exit 0
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
-    // Always show source hint — the parent shell may have stale hash-table
-    // entries after an upgrade/reinstall even when the dir is in PATH.
+    expect(output).not.toMatch(/this shell needs PATH refresh/);
     expect(output).toMatch(/\$ source /);
+    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
   });
 
-  it("shows shell reload hint when PATH was extended by the installer", () => {
+  it("makes current-shell PATH refresh obvious when the installer added the bin dir", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-reload-hint-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -1610,12 +1610,21 @@ fi`,
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         NVM_DIR: nvmDir,
+        SHELL: "/bin/bash",
       },
     });
 
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
-    expect(output).toMatch(/\$ source /);
+    expect(output).toContain(
+      "NemoClaw installed, but this shell needs PATH refresh before 'nemoclaw' will run.",
+    );
+    expect(output).toContain(`$ source ${path.join(tmp, ".bashrc")}`);
+    expect(output).toContain(`$ export PATH="${path.join(tmp, ".local", "bin")}:$PATH"`);
+    expect(fs.readFileSync(path.join(tmp, ".bashrc"), "utf-8")).toContain(
+      "# NemoClaw PATH setup",
+    );
+    expect(output).not.toContain("Your OpenClaw Sandbox is live.");
     expect(output).not.toContain("Onboarding has not run yet.");
     expect(output).not.toContain(
       "Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.",
