@@ -16,7 +16,7 @@
 - [ ] Doc only (includes code sample changes)
 
 ## Verification
-<!-- Check each item you ran and confirmed. Leave unchecked items you skipped. -->
+<!-- Check each item you ran and confirmed. Leave unchecked items you skipped. Doc-only changes do not require npm test unless you ran it. -->
 - [ ] `npx prek run --all-files` passes
 - [ ] `npm test` passes
 - [ ] Tests added or updated for new or changed behavior
