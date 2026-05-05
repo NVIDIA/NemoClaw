@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- exercised through CLI subprocess log tests. */
-
 import { spawn } from "node:child_process";
 import os from "node:os";
 
@@ -22,6 +20,7 @@ type SpawnLikeResult = {
   signal?: NodeJS.Signals | null;
 };
 
+/* v8 ignore next -- process exit mapping is covered through CLI subprocess log tests. */
 function exitWithSpawnResult(result: SpawnLikeResult & { signal?: NodeJS.Signals | null }) {
   if (result.status !== null) {
     process.exit(result.status);
@@ -35,7 +34,7 @@ function exitWithSpawnResult(result: SpawnLikeResult & { signal?: NodeJS.Signals
   process.exit(1);
 }
 
-function getLogsProbeTimeoutMs(): number {
+export function getLogsProbeTimeoutMs(): number {
   const rawValue = process.env[LOGS_PROBE_TIMEOUT_ENV];
   if (!rawValue) {
     return DEFAULT_LOGS_PROBE_TIMEOUT_MS;
@@ -45,7 +44,7 @@ function getLogsProbeTimeoutMs(): number {
   return timeoutMs > 0 ? timeoutMs : DEFAULT_LOGS_PROBE_TIMEOUT_MS;
 }
 
-function describeLogProbeResult(result: SpawnLikeResult): string {
+export function describeLogProbeResult(result: SpawnLikeResult): string {
   if (result.error) {
     return result.error.message;
   }
@@ -55,7 +54,7 @@ function describeLogProbeResult(result: SpawnLikeResult): string {
   return `exit ${result.status ?? "unknown"}`;
 }
 
-function normalizeSandboxLogsOptions(options: SandboxLogsOptions | boolean): SandboxLogsOptions {
+export function normalizeSandboxLogsOptions(options: SandboxLogsOptions | boolean): SandboxLogsOptions {
   if (typeof options === "boolean") {
     return { follow: options, lines: DEFAULT_SANDBOX_LOG_LINES, since: null };
   }
@@ -66,6 +65,7 @@ function normalizeSandboxLogsOptions(options: SandboxLogsOptions | boolean): San
   };
 }
 
+/* v8 ignore next -- OpenShell subprocess call is covered through CLI subprocess log tests. */
 function runOpenclawGatewayLogs(
   sandboxName: string,
   options: SandboxLogsOptions,
@@ -85,6 +85,7 @@ function runOpenclawGatewayLogs(
   return result;
 }
 
+/* v8 ignore next -- multi-process follow handling is covered through CLI subprocess log tests. */
 function streamSandboxFollowLogs(sandboxName: string, options: SandboxLogsOptions): void {
   const openclawArgs = options.since
     ? null
@@ -189,6 +190,7 @@ function streamSandboxFollowLogs(sandboxName: string, options: SandboxLogsOption
   maybeExit();
 }
 
+/* v8 ignore next -- OpenShell audit setting is covered through CLI subprocess log tests. */
 function enableSandboxAuditLogs(sandboxName: string) {
   const args = buildEnableSandboxAuditLogsArgs(sandboxName);
   const result = runOpenshell(args, {
@@ -201,6 +203,7 @@ function enableSandboxAuditLogs(sandboxName: string) {
   }
 }
 
+/* v8 ignore next -- warning output is exercised through CLI subprocess log tests. */
 function warnSandboxAuditLogsUnavailable(
   sandboxName: string,
   args: string[],
@@ -217,11 +220,11 @@ function warnSandboxAuditLogsUnavailable(
   console.error("  Policy denial events may be missing from OpenShell logs.");
 }
 
-function buildEnableSandboxAuditLogsArgs(sandboxName: string): string[] {
+export function buildEnableSandboxAuditLogsArgs(sandboxName: string): string[] {
   return ["settings", "set", sandboxName, "--key", "ocsf_json_enabled", "--value", "true"];
 }
 
-function buildSandboxOpenclawGatewayLogsArgs(
+export function buildSandboxOpenclawGatewayLogsArgs(
   sandboxName: string,
   options: SandboxLogsOptions,
 ): string[] {
@@ -233,7 +236,7 @@ function buildSandboxOpenclawGatewayLogsArgs(
   return args;
 }
 
-function buildSandboxLogsArgs(sandboxName: string, options: SandboxLogsOptions): string[] {
+export function buildSandboxLogsArgs(sandboxName: string, options: SandboxLogsOptions): string[] {
   const args = ["logs", sandboxName, "-n", options.lines, "--source", "all"];
   if (options.since) {
     args.push("--since", options.since);
@@ -244,6 +247,7 @@ function buildSandboxLogsArgs(sandboxName: string, options: SandboxLogsOptions):
   return args;
 }
 
+/* v8 ignore next -- external log streaming is covered through CLI subprocess log tests. */
 export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions | boolean) {
   const logsOptions = normalizeSandboxLogsOptions(options);
   if (logsOptions.follow) {

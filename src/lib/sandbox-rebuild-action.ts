@@ -9,6 +9,7 @@ import {
   normalizeRebuildSandboxOptions,
   type RebuildSandboxOptions,
 } from "./lifecycle-options";
+
 const { hydrateCredentialEnv } = require("./onboard") as {
   hydrateCredentialEnv: (name: string) => string | null;
 };
@@ -16,9 +17,10 @@ const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("./onboard
   LOCAL_INFERENCE_PROVIDERS: string[];
   REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
 };
+
 import * as nim from "./nim";
-import * as onboardSession from "./onboard-session";
 import type { Session } from "./onboard-session";
+import * as onboardSession from "./onboard-session";
 import { captureOpenshell, runOpenshell } from "./openshell-runtime";
 import * as policies from "./policies";
 import * as registry from "./registry";
@@ -32,7 +34,7 @@ import {
 } from "./sandbox-session-state";
 import * as sandboxState from "./sandbox-state";
 import * as sandboxVersion from "./sandbox-version";
-import { B, D, G, R, RD as _RD, YW } from "./terminal-style";
+import { RD as _RD, B, D, G, R, YW } from "./terminal-style";
 
 const agentRuntime = require("../../bin/lib/agent-runtime");
 
@@ -318,6 +320,18 @@ export async function rebuildSandbox(
   // Mark session resumable and point at this sandbox; set env var as fallback.
   const sessionBefore = onboardSession.loadSession();
   const sessionMatchesSandbox = sessionBefore?.sandboxName === sandboxName;
+  const registryMessagingChannels = Array.isArray(sb.messagingChannels)
+    ? sb.messagingChannels.filter((value: unknown): value is string => typeof value === "string")
+    : null;
+  const sessionMessagingChannels =
+    sessionMatchesSandbox && Array.isArray(sessionBefore?.messagingChannels)
+      ? sessionBefore.messagingChannels.filter(
+          (value: unknown): value is string => typeof value === "string",
+        )
+      : null;
+  const rebuildMessagingChannels = registryMessagingChannels ?? sessionMessagingChannels ?? [];
+  const hasRebuildMessagingChannels =
+    registryMessagingChannels !== null || sessionMessagingChannels !== null;
   log(
     `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
   );
@@ -332,6 +346,7 @@ export async function rebuildSandbox(
     s.resumable = true;
     s.status = "in_progress";
     s.agent = rebuildAgent;
+    s.messagingChannels = rebuildMessagingChannels;
     // Persist inference selection from the about-to-be-removed registry entry
     // so onboard --resume can recreate with the same provider/model in
     // non-interactive mode. Without this the registry is gone by the time
@@ -453,6 +468,17 @@ export async function rebuildSandbox(
       onboardExitCode,
     );
     return;
+  }
+
+  const preservedRegistryFields = {
+    ...(hasRebuildMessagingChannels ? { messagingChannels: [...rebuildMessagingChannels] } : {}),
+    ...(Array.isArray(sb.disabledChannels) && sb.disabledChannels.length > 0
+      ? { disabledChannels: [...sb.disabledChannels] }
+      : {}),
+    ...(sb.providerCredentialHashes ? { providerCredentialHashes: sb.providerCredentialHashes } : {}),
+  };
+  if (Object.keys(preservedRegistryFields).length > 0) {
+    registry.updateSandbox(sandboxName, preservedRegistryFields);
   }
 
   // Step 5: Restore

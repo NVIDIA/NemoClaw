@@ -35,6 +35,8 @@ OLD_HERMES_REGISTRY_VERSION="${OLD_HERMES_VERSION#v}"
 OLD_HERMES_TARBALL_SHA256="5e4529b8cb6e4821eb916b81517e48125109b1764d6d1e68a204a9f0ddf2d98c"
 MARKER_FILE="/sandbox/.hermes/memories/rebuild-marker.txt"
 MARKER_CONTENT="REBUILD_HM_E2E_$(date +%s)"
+DISCORD_PLACEHOLDER="openshell:resolve:env:DISCORD_BOT_TOKEN"
+DISCORD_FAKE_TOKEN="test-fake-discord-token-rebuild-e2e"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 
@@ -160,11 +162,38 @@ WORKDIR /sandbox
 RUN mkdir -p /sandbox/.hermes/memories \
              /sandbox/.hermes/sessions \
              /sandbox/.hermes/workspace \
-    && echo '{}' > /sandbox/.hermes/config.yaml
+    && printf '%s\n' \
+      '_config_version: 12' \
+      'platforms:' \
+      '  discord:' \
+      '    enabled: true' \
+      '    token: "${DISCORD_PLACEHOLDER}"' \
+      '  api_server:' \
+      '    enabled: true' \
+      '    extra:' \
+      '      port: 18642' \
+      '      host: 127.0.0.1' \
+      > /sandbox/.hermes/config.yaml \
+    && printf '%s\n' \
+      'API_SERVER_PORT=18642' \
+      'API_SERVER_HOST=127.0.0.1' \
+      'DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}' \
+      > /sandbox/.hermes/.env
 CMD ["/bin/bash"]
 DOCKERFILE
 
-openshell sandbox create --name "${SANDBOX_NAME}" --from "${TESTDIR}/Dockerfile" --gateway nemoclaw --no-tty -- true
+DISCORD_BOT_TOKEN="${DISCORD_FAKE_TOKEN}" \
+  openshell provider create --name "${SANDBOX_NAME}-discord-bridge" --type generic --credential DISCORD_BOT_TOKEN \
+  >/dev/null 2>&1 || DISCORD_BOT_TOKEN="${DISCORD_FAKE_TOKEN}" \
+  openshell provider update "${SANDBOX_NAME}-discord-bridge" --credential DISCORD_BOT_TOKEN \
+  >/dev/null 2>&1
+openshell sandbox create \
+  --name "${SANDBOX_NAME}" \
+  --from "${TESTDIR}/Dockerfile" \
+  --gateway nemoclaw \
+  --provider "${SANDBOX_NAME}-discord-bridge" \
+  --no-tty \
+  -- true
 rm -rf "${TESTDIR}"
 
 # Wait for Ready
@@ -187,10 +216,16 @@ openshell sandbox exec --name "${SANDBOX_NAME}" -- \
 
 VERIFY=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}" 2>/dev/null || true)
 [ "$VERIFY" = "${MARKER_CONTENT}" ] || fail "Marker verification failed"
+PRE_REBUILD_ENV=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat /sandbox/.hermes/.env 2>/dev/null || true)
+echo "$PRE_REBUILD_ENV" | grep -Fq "DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}" \
+  || fail "Pre-rebuild Hermes .env missing Discord placeholder"
+PRE_REBUILD_CONFIG=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat /sandbox/.hermes/config.yaml 2>/dev/null || true)
+echo "$PRE_REBUILD_CONFIG" | grep -Fq "discord:" \
+  || fail "Pre-rebuild Hermes config.yaml missing platforms.discord"
 
 # Register in NemoClaw registry
 python3 -c "
-import json
+import hashlib, json
 reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'name': '${SANDBOX_NAME}',
     'createdAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
@@ -200,7 +235,11 @@ reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'policies': [],
     'policyTier': None,
     'agent': 'hermes',
-    'agentVersion': '${OLD_HERMES_REGISTRY_VERSION}'
+    'agentVersion': '${OLD_HERMES_REGISTRY_VERSION}',
+    'messagingChannels': ['discord'],
+    'providerCredentialHashes': {
+        'DISCORD_BOT_TOKEN': hashlib.sha256('${DISCORD_FAKE_TOKEN}'.encode()).hexdigest()
+    }
 }}, 'defaultSandbox': '${SANDBOX_NAME}'}
 with open('${REGISTRY_FILE}', 'w') as f:
     json.dump(reg, f, indent=2)
@@ -214,6 +253,7 @@ except Exception:
 sess['sandboxName'] = '${SANDBOX_NAME}'
 sess['agent'] = 'hermes'
 sess['status'] = 'complete'
+sess['messagingChannels'] = ['discord']
 with open(sess_path, 'w') as f:
     json.dump(sess, f, indent=2)
 print('Registry and session updated')
@@ -234,6 +274,7 @@ pass "Current Hermes base image built"
 
 # ── Phase 6: Rebuild ────────────────────────────────────────────────
 info "Phase 6: Running nemoclaw rebuild..."
+unset DISCORD_BOT_TOKEN
 
 diag "Pre-rebuild state:"
 diag "  Registry: $(python3 -c "import json; d=json.load(open('${REGISTRY_FILE}')); print(json.dumps({k: {'agent': v.get('agent'), 'agentVersion': v.get('agentVersion')} for k,v in d.get('sandboxes',{}).items()}))" 2>/dev/null)"
@@ -255,6 +296,22 @@ if [ "$RESTORED" = "${MARKER_CONTENT}" ]; then
   pass "Marker file survived rebuild"
 else
   fail "Marker file lost: got '${RESTORED}', expected '${MARKER_CONTENT}'"
+fi
+
+# Hermes messaging config survived through non-interactive rebuild without
+# requiring the Discord token to be re-exported on the host.
+RESTORED_ENV=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat /sandbox/.hermes/.env 2>/dev/null || true)
+if echo "$RESTORED_ENV" | grep -Fq "DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}"; then
+  pass "Hermes .env preserved Discord token placeholder"
+else
+  fail "Hermes .env lost Discord placeholder after rebuild: ${RESTORED_ENV}"
+fi
+
+RESTORED_CONFIG=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat /sandbox/.hermes/config.yaml 2>/dev/null || true)
+if echo "$RESTORED_CONFIG" | grep -Fq "discord:"; then
+  pass "Hermes config.yaml preserved platforms.discord"
+else
+  fail "Hermes config.yaml lost platforms.discord after rebuild: ${RESTORED_CONFIG}"
 fi
 
 # Inference works after rebuild (proves credential chain is intact)
