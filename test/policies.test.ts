@@ -83,15 +83,19 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
 
   fs.writeFileSync(scriptPath, script);
 
-  return spawnSync(process.execPath, [scriptPath], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
-    env: {
-      ...process.env,
-      HOME: tmpDir,
-      ...envOverrides,
-    },
-  });
+  try {
+    return spawnSync(process.execPath, [scriptPath], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        ...envOverrides,
+      },
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 function runSelectFromList(input: string, { applied = [] }: AppliedOptions = {}) {
