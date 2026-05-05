@@ -14,10 +14,7 @@ import {
   isDockerUnderProvisioned,
   MIN_RECOMMENDED_DOCKER_CPUS,
   MIN_RECOMMENDED_DOCKER_MEM_GIB,
-  parseDockerInfoCpus,
-  parseDockerInfoMemTotalBytes,
-  parseDockerStorageDriver,
-  parseDockerUsesContainerdSnapshotter,
+  parseDockerInfo,
   planHostRemediation,
   probeContainerDns,
 } from "../../dist/lib/preflight";
@@ -452,50 +449,6 @@ describe("assessHost", () => {
     });
 
     expect(result.hasNestedOverlayConflict).toBe(false);
-  });
-});
-
-describe("parseDockerStorageDriver", () => {
-  it("extracts the Driver field from JSON docker info output", () => {
-    expect(parseDockerStorageDriver('{"Driver":"overlayfs","Other":"x"}')).toBe("overlayfs");
-    expect(parseDockerStorageDriver('{"Driver":"overlay2"}')).toBe("overlay2");
-  });
-
-  it("returns undefined for empty or non-matching input", () => {
-    expect(parseDockerStorageDriver("")).toBeUndefined();
-    expect(parseDockerStorageDriver("not json at all")).toBeUndefined();
-  });
-
-  it("falls back to the plain-text 'Storage Driver: <name>' form", () => {
-    // Future callers passing raw `docker info` output (no `--format` flag)
-    // should still get the conflict detected.
-    const fixture = [
-      "Server:",
-      " Containers: 7",
-      " Storage Driver: overlayfs",
-      "  driver-type: io.containerd.snapshotter.v1",
-      "",
-    ].join("\n");
-    expect(parseDockerStorageDriver(fixture)).toBe("overlayfs");
-  });
-});
-
-describe("parseDockerUsesContainerdSnapshotter", () => {
-  it("returns true when DriverStatus mentions io.containerd.snapshotter.v1", () => {
-    const fixture = JSON.stringify({
-      Driver: "overlayfs",
-      DriverStatus: [["driver-type", "io.containerd.snapshotter.v1"]],
-    });
-    expect(parseDockerUsesContainerdSnapshotter(fixture)).toBe(true);
-  });
-
-  it("returns false for legacy overlay2 driver output without the snapshotter marker", () => {
-    const fixture = JSON.stringify({ Driver: "overlay2" });
-    expect(parseDockerUsesContainerdSnapshotter(fixture)).toBe(false);
-  });
-
-  it("returns false for empty input", () => {
-    expect(parseDockerUsesContainerdSnapshotter("")).toBe(false);
   });
 });
 
@@ -957,42 +910,85 @@ describe("getDockerBridgeGatewayIp", () => {
   });
 });
 
-describe("parseDockerInfoCpus", () => {
-  it("extracts NCPU from JSON docker info output", () => {
-    expect(parseDockerInfoCpus('{"NCPU":6}')).toBe(6);
-    expect(parseDockerInfoCpus('{"ServerVersion":"x","NCPU":12,"Other":"y"}')).toBe(12);
+describe("parseDockerInfo", () => {
+  it("extracts every field from a JSON docker info payload in one pass", () => {
+    const info = JSON.stringify({
+      ServerVersion: "27.4.0",
+      OperatingSystem: "Colima",
+      CgroupVersion: "2",
+      Driver: "overlayfs",
+      DriverStatus: [["driver-type", "io.containerd.snapshotter.v1"]],
+      NCPU: 6,
+      MemTotal: 12 * 1024 ** 3,
+    });
+
+    const result = parseDockerInfo(info);
+    expect(result.serverVersion).toBe("27.4.0");
+    expect(result.operatingSystem).toBe("Colima");
+    expect(result.cgroupVersion).toBe("v2");
+    expect(result.storageDriver).toBe("overlayfs");
+    expect(result.usesContainerdSnapshotter).toBe(true);
+    expect(result.cpus).toBe(6);
+    expect(result.memTotalBytes).toBe(12 * 1024 ** 3);
   });
 
-  it("falls back to plain-text 'CPUs: <n>' form", () => {
-    const fixture = ["Server:", " Containers: 0", " CPUs: 8", ""].join("\n");
-    expect(parseDockerInfoCpus(fixture)).toBe(8);
+  it("returns a struct with all undefined fields for empty input", () => {
+    const result = parseDockerInfo("");
+    expect(result.serverVersion).toBeUndefined();
+    expect(result.operatingSystem).toBeUndefined();
+    expect(result.cgroupVersion).toBeUndefined();
+    expect(result.storageDriver).toBeUndefined();
+    expect(result.usesContainerdSnapshotter).toBe(false);
+    expect(result.cpus).toBeUndefined();
+    expect(result.memTotalBytes).toBeUndefined();
   });
 
-  it("returns undefined for empty or non-matching input", () => {
-    expect(parseDockerInfoCpus("")).toBeUndefined();
-    expect(parseDockerInfoCpus("nothing useful here")).toBeUndefined();
+  it("falls back to plain-text fields when JSON.parse fails", () => {
+    const fixture = [
+      "Server:",
+      " Server Version: 27.4.0",
+      " Storage Driver: overlay2",
+      " Cgroup Version: 2",
+      " Operating System: Ubuntu 24.04",
+      " CPUs: 8",
+      " Total Memory: 15.5GiB",
+      "",
+    ].join("\n");
+
+    const result = parseDockerInfo(fixture);
+    expect(result.serverVersion).toBe("27.4.0");
+    expect(result.operatingSystem).toBe("Ubuntu 24.04");
+    expect(result.cgroupVersion).toBe("v2");
+    expect(result.storageDriver).toBe("overlay2");
+    expect(result.cpus).toBe(8);
+    expect(result.memTotalBytes).toBeGreaterThan(15 * 1024 ** 3);
   });
 
-  it("returns undefined for zero or negative values", () => {
-    expect(parseDockerInfoCpus('{"NCPU":0}')).toBeUndefined();
+  it("ignores nested NCPU keys that would falsely match a regex", () => {
+    const info = JSON.stringify({
+      ServerVersion: "27.4.0",
+      // top-level NCPU absent; nested key would falsely match a `"NCPU":N` regex
+      Plugins: { Storage: { NCPU: 99 } },
+    });
+
+    const result = parseDockerInfo(info);
+    expect(result.cpus).toBeUndefined();
+  });
+
+  it("rejects zero or negative scalar values", () => {
+    const result = parseDockerInfo(JSON.stringify({ NCPU: 0, MemTotal: 0 }));
+    expect(result.cpus).toBeUndefined();
+    expect(result.memTotalBytes).toBeUndefined();
   });
 });
 
-describe("parseDockerInfoMemTotalBytes", () => {
-  it("extracts MemTotal from JSON docker info output", () => {
-    expect(parseDockerInfoMemTotalBytes('{"MemTotal":2054303744}')).toBe(2054303744);
-  });
-
+describe("parseDockerInfo — plain-text memory parsing", () => {
   it("parses plain-text 'Total Memory: <n> GiB' form", () => {
     const fixture = ["Server:", " Total Memory: 7.756GiB", ""].join("\n");
-    const result = parseDockerInfoMemTotalBytes(fixture);
+    const result = parseDockerInfo(fixture).memTotalBytes;
     expect(result).toBeDefined();
     expect(result).toBeGreaterThan(7 * 1024 ** 3);
     expect(result).toBeLessThan(8 * 1024 ** 3);
-  });
-
-  it("returns undefined for empty input", () => {
-    expect(parseDockerInfoMemTotalBytes("")).toBeUndefined();
   });
 });
 

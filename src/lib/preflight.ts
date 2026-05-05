@@ -176,84 +176,110 @@ function inferContainerRuntime(info = ""): ContainerRuntime {
   return "unknown";
 }
 
-function parseDockerCgroupVersion(info = ""): "v1" | "v2" | "unknown" {
-  if (/"CgroupVersion"\s*:\s*"2"/.test(info) || /CgroupVersion["=: ]+2/i.test(info)) {
-    return "v2";
+const TEXT_UNIT_MULTIPLIERS: Record<string, number> = {
+  gib: 1 << 30,
+  gb: 1_000_000_000,
+  mib: 1 << 20,
+  mb: 1_000_000,
+  kib: 1 << 10,
+  kb: 1_000,
+};
+
+export interface DockerInfo {
+  serverVersion?: string;
+  operatingSystem?: string;
+  cgroupVersion?: "v1" | "v2";
+  storageDriver?: string;
+  usesContainerdSnapshotter: boolean;
+  cpus?: number;
+  memTotalBytes?: number;
+}
+
+function safeParseDockerInfoJson(info: string): Record<string, unknown> | null {
+  if (!info.trim().startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(info);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
   }
-  if (/"CgroupVersion"\s*:\s*"1"/.test(info) || /CgroupVersion["=: ]+1/i.test(info)) {
-    return "v1";
+}
+
+function pickString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function pickPositiveInt(value: unknown): number | undefined {
+  if (typeof value !== "number") return undefined;
+  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : undefined;
+}
+
+function matchTextField(info: string, regex: RegExp): string | undefined {
+  const match = info.match(regex);
+  return match?.[1];
+}
+
+function parseTextMemTotal(info: string): number | undefined {
+  const match = info.match(/^\s*Total Memory:\s*([\d.]+)\s*([GMK]i?B)\s*$/im);
+  if (!match) return undefined;
+  const value = parseFloat(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  const multiplier = TEXT_UNIT_MULTIPLIERS[match[2].toLowerCase()] ?? 1;
+  return Math.round(value * multiplier);
+}
+
+function parseCgroupVersionField(
+  json: Record<string, unknown> | null,
+  info: string,
+): "v1" | "v2" | undefined {
+  const raw = json?.CgroupVersion;
+  if (raw === "1" || raw === 1) return "v1";
+  if (raw === "2" || raw === 2) return "v2";
+  if (/Cgroup\s*Version["=: ]+2/i.test(info)) return "v2";
+  if (/Cgroup\s*Version["=: ]+1/i.test(info)) return "v1";
+  return undefined;
+}
+
+function detectContainerdSnapshotter(
+  json: Record<string, unknown> | null,
+  info: string,
+): boolean {
+  const driverStatus = json?.DriverStatus;
+  if (Array.isArray(driverStatus)) {
+    for (const entry of driverStatus) {
+      if (Array.isArray(entry) && entry.some((cell) => /io\.containerd\.snapshotter\.v1/.test(String(cell)))) {
+        return true;
+      }
+    }
   }
-  return "unknown";
-}
-
-function parseDockerInfoSummary(info = ""): string | undefined {
-  const versionMatch = info.match(/"ServerVersion"\s*:\s*"([^"]+)"/);
-  const osMatch = info.match(/"OperatingSystem"\s*:\s*"([^"]+)"/);
-  const parts = [versionMatch?.[1], osMatch?.[1]].filter(Boolean);
-  return parts.length > 0 ? parts.join(" · ") : undefined;
-}
-
-export function parseDockerStorageDriver(info = ""): string | undefined {
-  // JSON form (`docker info --format '{{json .}}'`) is the canonical caller
-  // path inside this file, but accept the plain-text `Storage Driver: <name>`
-  // form too so future callers that pass raw `docker info` don't silently
-  // miss the conflict and bypass the auto-fix.
-  const jsonMatch = info.match(/"Driver"\s*:\s*"([^"]+)"/);
-  if (jsonMatch) return jsonMatch[1];
-  const textMatch = info.match(/^\s*Storage Driver:\s*(\S+)\s*$/m);
-  return textMatch?.[1];
-}
-
-export function parseDockerUsesContainerdSnapshotter(info = ""): boolean {
-  // Docker 26+ defaults fresh installs to the containerd image store, surfaced
-  // via `docker info` DriverStatus entries that name the containerd snapshotter
-  // v1 plugin. Match either JSON or text form so we handle `--format '{{json
-  // .}}'` output and plain `docker info` alike.
   return /io\.containerd\.snapshotter\.v1/.test(info);
 }
 
-export function parseDockerInfoCpus(info = ""): number | undefined {
-  const jsonMatch = info.match(/"NCPU"\s*:\s*(\d+)/);
-  if (jsonMatch) {
-    const n = parseInt(jsonMatch[1], 10);
-    return Number.isFinite(n) && n > 0 ? n : undefined;
-  }
-  const textMatch = info.match(/^\s*CPUs:\s*(\d+)\s*$/m);
-  if (textMatch) {
-    const n = parseInt(textMatch[1], 10);
-    return Number.isFinite(n) && n > 0 ? n : undefined;
-  }
-  return undefined;
-}
-
-export function parseDockerInfoMemTotalBytes(info = ""): number | undefined {
-  const jsonMatch = info.match(/"MemTotal"\s*:\s*(\d+)/);
-  if (jsonMatch) {
-    const n = parseInt(jsonMatch[1], 10);
-    return Number.isFinite(n) && n > 0 ? n : undefined;
-  }
-  const textMatch = info.match(/^\s*Total Memory:\s*([\d.]+)\s*([GMK]i?B)\s*$/im);
-  if (textMatch) {
-    const value = parseFloat(textMatch[1]);
-    if (!Number.isFinite(value) || value <= 0) return undefined;
-    const unit = textMatch[2].toLowerCase();
-    const multiplier =
-      unit === "gib"
-        ? 1024 ** 3
-        : unit === "gb"
-          ? 1000 ** 3
-          : unit === "mib"
-            ? 1024 ** 2
-            : unit === "mb"
-              ? 1000 ** 2
-              : unit === "kib"
-                ? 1024
-                : unit === "kb"
-                  ? 1000
-                  : 1;
-    return Math.round(value * multiplier);
-  }
-  return undefined;
+/**
+ * Parse `docker info` output into a typed view. The canonical input is the
+ * `--format '{{json .}}'` form (preferred via `JSON.parse`), with a plain-text
+ * fallback per field so callers that pass raw `docker info` output still get
+ * partial data.
+ */
+export function parseDockerInfo(info = ""): DockerInfo {
+  const json = safeParseDockerInfoJson(info);
+  return {
+    serverVersion:
+      pickString(json?.ServerVersion) ??
+      matchTextField(info, /^\s*Server Version:\s*(.+)$/m),
+    operatingSystem:
+      pickString(json?.OperatingSystem) ??
+      matchTextField(info, /^\s*Operating System:\s*(.+)$/m),
+    cgroupVersion: parseCgroupVersionField(json, info),
+    storageDriver:
+      pickString(json?.Driver) ??
+      matchTextField(info, /^\s*Storage Driver:\s*(\S+)\s*$/m),
+    usesContainerdSnapshotter: detectContainerdSnapshotter(json, info),
+    cpus:
+      pickPositiveInt(json?.NCPU) ??
+      pickPositiveInt(Number(matchTextField(info, /^\s*CPUs:\s*(\d+)\s*$/m))),
+    memTotalBytes: pickPositiveInt(json?.MemTotal) ?? parseTextMemTotal(info),
+  };
 }
 
 export const MIN_RECOMMENDED_DOCKER_CPUS = 4;
@@ -370,19 +396,12 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   if (dockerReachable && runtime === "unknown" && platform === "linux") {
     runtime = "docker";
   }
-  const dockerCgroupVersion = dockerReachable
-    ? parseDockerCgroupVersion(dockerInfoOutput)
-    : "unknown";
-  const dockerStorageDriver = dockerReachable
-    ? parseDockerStorageDriver(dockerInfoOutput)
-    : undefined;
-  const dockerUsesContainerdSnapshotter = dockerReachable
-    ? parseDockerUsesContainerdSnapshotter(dockerInfoOutput)
-    : false;
-  const dockerCpus = dockerReachable ? parseDockerInfoCpus(dockerInfoOutput) : undefined;
-  const dockerMemTotalBytes = dockerReachable
-    ? parseDockerInfoMemTotalBytes(dockerInfoOutput)
-    : undefined;
+  const docker = dockerReachable ? parseDockerInfo(dockerInfoOutput) : null;
+  const dockerCgroupVersion = docker?.cgroupVersion ?? "unknown";
+  const dockerStorageDriver = docker?.storageDriver;
+  const dockerUsesContainerdSnapshotter = docker?.usesContainerdSnapshotter ?? false;
+  const dockerCpus = docker?.cpus;
+  const dockerMemTotalBytes = docker?.memTotalBytes;
   const isContainerRuntimeUnderProvisioned = isDockerUnderProvisioned(
     dockerCpus,
     dockerMemTotalBytes,
@@ -434,7 +453,9 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerReachable,
     nodeInstalled,
     openshellInstalled,
-    dockerInfoSummary: parseDockerInfoSummary(dockerInfoOutput),
+    dockerInfoSummary: docker
+      ? [docker.serverVersion, docker.operatingSystem].filter(Boolean).join(" · ") || undefined
+      : undefined,
     dockerCgroupVersion,
     dockerDefaultCgroupnsMode,
     dockerStorageDriver,
