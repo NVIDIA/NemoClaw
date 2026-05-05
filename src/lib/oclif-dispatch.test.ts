@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { resolveSandboxOclifDispatch } from "./legacy-oclif-dispatch";
+import { resolveSandboxOclifDispatch } from "./oclif-dispatch";
 
 describe("resolveSandboxOclifDispatch", () => {
   it("routes sandbox status through oclif", () => {

@@ -89,7 +89,7 @@ import {
   resolveGlobalOclifDispatch,
   resolveSandboxOclifDispatch,
   type DispatchResult,
-} from "./lib/legacy-oclif-dispatch";
+} from "./lib/oclif-dispatch";
 
 // ── Global commands (derived from command registry) ──────────────
 
