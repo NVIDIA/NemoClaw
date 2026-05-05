@@ -3920,6 +3920,16 @@ const fs = require("node:fs");
 
 const commands = [];
 const registerCalls = [];
+registry.registerSandbox({
+  name: "my-assistant",
+  messagingChannels: ["discord", "slack"],
+  providerCredentialHashes: {
+    DISCORD_BOT_TOKEN: "hash-discord",
+    SLACK_BOT_TOKEN: "hash-slack-bot",
+    SLACK_APP_TOKEN: "hash-slack-app",
+    TELEGRAM_BOT_TOKEN: "hash-telegram",
+  },
+});
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
@@ -4037,6 +4047,11 @@ const { createSandbox } = require(${onboardPath});
       const channels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
       assert.deepEqual(channels, ["discord", "slack"]);
       assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["discord", "slack"]);
+      assert.deepEqual(payload.registerCalls[0]?.providerCredentialHashes, {
+        DISCORD_BOT_TOKEN: "hash-discord",
+        SLACK_BOT_TOKEN: "hash-slack-bot",
+        SLACK_APP_TOKEN: "hash-slack-app",
+      });
     },
   );
 

@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- thin oclif adapter covered through CLI integration tests. */
-
 import { spawnSync } from "node:child_process";
 
 import { Command, Flags } from "@oclif/core";
@@ -32,7 +30,7 @@ export default class UninstallCliCommand extends Command {
       spawnSyncImpl: spawnSync,
       log: console.log,
       error: console.error,
-      exit: (code: number) => process.exit(code),
+      exit: /* v8 ignore next -- uninstall exit behavior is covered by uninstall command tests. */ (code: number) => process.exit(code),
     });
   }
 }
