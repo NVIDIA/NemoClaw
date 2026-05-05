@@ -69,10 +69,49 @@ describe("resolveSandboxOclifDispatch", () => {
     });
   });
 
-  it("keeps logs help public with filter flags", () => {
+  it("keeps sandbox logs help public with supported filters", () => {
     expect(resolveSandboxOclifDispatch("alpha", "logs", ["--help"])).toMatchObject({
       kind: "help",
       usage: "logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
+    });
+  });
+
+  it("routes sandbox recover through oclif", () => {
+    expect(resolveSandboxOclifDispatch("alpha", "recover", [])).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:recover",
+      args: ["alpha"],
+    });
+  });
+
+  it("returns help for sandbox recover", () => {
+    expect(resolveSandboxOclifDispatch("alpha", "recover", ["--help"])).toMatchObject({
+      kind: "help",
+      usage: "recover",
+    });
+  });
+
+  it("routes sandbox config set through oclif with security flags intact", () => {
+    expect(
+      resolveSandboxOclifDispatch("alpha", "config", [
+        "set",
+        "--key",
+        "inference.endpoints",
+        "--value",
+        "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
+      ]),
+    ).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:config:set",
+      args: [
+        "alpha",
+        "--key",
+        "inference.endpoints",
+        "--value",
+        "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
+      ],
     });
   });
 
@@ -110,7 +149,11 @@ describe("resolveSandboxOclifDispatch", () => {
     });
     expect(resolveSandboxOclifDispatch("alpha", "config", ["bogus"])).toEqual({
       kind: "usageError",
-      lines: ["config get [--key dotpath] [--format json|yaml]"],
+      lines: [
+        "config <get|set>",
+        "get [--key dotpath] [--format json|yaml]",
+        "set --key <dotpath> --value <value> [--restart] [--config-accept-new-path]",
+      ],
     });
     expect(resolveSandboxOclifDispatch("alpha", "shields", ["bogus"])).toEqual({
       kind: "usageError",

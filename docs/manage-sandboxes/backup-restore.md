@@ -39,6 +39,12 @@ This guide covers snapshot commands, manual backup with CLI commands, and an aut
 
 The fastest way to back up and restore sandbox state is with the built-in snapshot commands.
 Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
+Agent manifests may also declare durable top-level state files. For Hermes,
+snapshots include `SOUL.md` and the SQLite database behind `.hermes/state.db`
+using SQLite's online backup API, then restore that database through SQLite
+instead of copying a live raw database file.
+Treat snapshot directories as private local data: the Hermes database can
+contain session metadata and message history needed for a faithful restore.
 
 ```console
 $ nemoclaw my-assistant snapshot create
@@ -65,6 +71,10 @@ $ nemoclaw my-assistant snapshot restore 2026-04-14T
 The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
 Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that were created by older images.
 Unsafe symlinks and hard links inside sandbox state are rejected during backup creation before they can enter a snapshot.
+Credential-bearing Hermes files such as `auth.json` are intentionally excluded
+from snapshots. NemoClaw-regenerated Hermes config files (`config.yaml` and
+`.env`) are also excluded; model/provider and messaging credentials are
+recreated from host-side onboarding and OpenShell provider state during rebuild.
 For full details, see the [Commands reference](../reference/commands.md).
 
 ## Manual Backup

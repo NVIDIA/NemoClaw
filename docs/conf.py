@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import logging
 import sys
 from datetime import date
 from pathlib import Path
@@ -54,6 +55,10 @@ redirects = {
     "workspace/workspace-files": "../manage-sandboxes/workspace-files.html",
     "workspace/backup-restore": "../manage-sandboxes/backup-restore.html",
 }
+
+# sphinx-reredirects rewrites redirect files on every incremental build and
+# logs each rewrite at info level. Keep real redirect warnings visible.
+logging.getLogger("sphinx.sphinx_reredirects").setLevel(logging.WARNING)
 
 autodoc_default_options = {
     "members": True,

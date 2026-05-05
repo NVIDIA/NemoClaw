@@ -46,7 +46,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync, execFileSync, type StdioOptions } from "node:child_process";
+import { execSync, execFileSync, spawnSync, type StdioOptions } from "node:child_process";
 import path from "node:path";
 
 // Instance configuration
@@ -666,6 +666,37 @@ const hasAuthenticatedBrev = (() => {
     return false;
   }
 })();
+
+describe("Brev deploy input validation", () => {
+  it("rejects invalid sandbox names before provisioning or remote work", () => {
+    const result = spawnSync(process.execPath, [CLI_PATH, "deploy", "brev-target"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: process.env.HOME,
+        NEMOCLAW_SANDBOX_NAME: "bad name",
+        NEMOCLAW_PROVIDER: "build",
+        NEMOCLAW_DEPLOY_NO_CONNECT: "1",
+        NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
+      },
+      timeout: 30_000,
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).toBe(1);
+    expect(output).toContain("Invalid sandbox name: 'bad name'");
+    expect(output).toContain("Sandbox names cannot contain spaces.");
+    expect(output).toContain(
+      "Allowed format: lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",
+    );
+    expect(output).not.toContain("brev CLI not found");
+    expect(output).not.toContain("Creating Brev instance");
+    expect(output).not.toContain("Waiting for Brev instance readiness");
+    expect(output).not.toContain("Waiting for SSH");
+    expect(output).not.toContain("bash scripts/install.sh");
+  });
+});
 
 describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   beforeAll(() => {
