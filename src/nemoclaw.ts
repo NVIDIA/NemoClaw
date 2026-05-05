@@ -83,6 +83,7 @@ const {
   globalCommandTokens,
   sandboxActionTokens,
 } = require("./lib/command-registry");
+import { normalizeArgv, suggestCommand } from "./lib/cli-argv-normalizer";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./lib/openshell-timeouts";
 import {
   resolveGlobalOclifDispatch,
@@ -148,38 +149,8 @@ function printSandboxActionUsage(action: string): void {
 
 // ── Dispatch helpers ─────────────────────────────────────────────
 
-function editDistance(left: string, right: string): number {
-  const rows = left.length + 1;
-  const cols = right.length + 1;
-  const matrix: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-  for (let i = 0; i < rows; i++) matrix[i][0] = i;
-  for (let j = 0; j < cols; j++) matrix[0][j] = j;
-  for (let i = 1; i < rows; i++) {
-    for (let j = 1; j < cols; j++) {
-      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
-      matrix[i][j] = Math.min(
-        matrix[i - 1][j] + 1,
-        matrix[i][j - 1] + 1,
-        matrix[i - 1][j - 1] + cost,
-      );
-    }
-  }
-  return matrix[left.length][right.length];
-}
-
 function suggestGlobalCommand(token: string): string | null {
-  let best: { command: string; distance: number } | null = null;
-  for (const command of GLOBAL_COMMANDS) {
-    if (command.startsWith("-")) continue;
-    const distance = editDistance(token, command);
-    if (!best || distance < best.distance) {
-      best = { command, distance };
-    }
-  }
-  if (!best) return null;
-  if (best.distance <= 1) return best.command;
-  if (token.length >= 5 && best.distance <= 2) return best.command;
-  return null;
+  return suggestCommand(token, GLOBAL_COMMANDS);
 }
 
 function findRegisteredSandboxName(tokens: string[]): string | null {
@@ -256,36 +227,31 @@ async function runDispatchResult(
 
 // eslint-disable-next-line complexity
 async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
-  const [cmd, ...args] = argv;
+  const normalized = normalizeArgv(argv, {
+    globalCommands: GLOBAL_COMMANDS,
+    isSandboxConnectFlag,
+  });
 
-  // No command → help
-  if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
+  if (normalized.kind === "rootHelp") {
     await runOclif("root:help", []);
     return;
   }
 
-  // Internal developer flag — dump canonical command list for check-docs.sh parity checks
-  if (cmd === "--dump-commands") {
+  if (normalized.kind === "dumpCommands") {
     canonicalUsageList().forEach((c: string) => console.log(c));
     return;
   }
 
-  // Global commands
-  if (GLOBAL_COMMANDS.has(cmd)) {
-    await runDispatchResult(resolveGlobalOclifDispatch(cmd, args));
+  if (normalized.kind === "global") {
+    await runDispatchResult(resolveGlobalOclifDispatch(normalized.command, normalized.args));
     return;
   }
 
-  // Sandbox-scoped commands: nemoclaw <name> <action>
-  const firstSandboxArg = args[0];
-  const implicitConnectArg = isSandboxConnectFlag(firstSandboxArg);
-  const requestedSandboxAction =
-    !firstSandboxArg || implicitConnectArg ? "connect" : firstSandboxArg;
-  const requestedSandboxActionArgs = !firstSandboxArg || implicitConnectArg ? args : args.slice(1);
-  if (
-    requestedSandboxAction === "connect" &&
-    requestedSandboxActionArgs.some((arg) => arg === "--help" || arg === "-h")
-  ) {
+  const cmd = normalized.sandboxName;
+  const args = argv.slice(1);
+  const requestedSandboxAction = normalized.action;
+  const requestedSandboxActionArgs = normalized.actionArgs;
+  if (normalized.connectHelpRequested) {
     validateName(cmd, "sandbox name");
     printSandboxConnectHelp(cmd);
     return;

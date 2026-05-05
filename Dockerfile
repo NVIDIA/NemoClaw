@@ -268,8 +268,8 @@ ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # Used to enable guild-channel responses for native Discord. Default: empty map.
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 # Base64-encoded JSON Telegram config (e.g. {"requireMention":true}).
-# When requireMention is true, Telegram groups get groupPolicy: mentions;
-# otherwise groupPolicy: open (existing default). See #1737. Default: empty map.
+# When requireMention is true, Telegram groups get groups: {"*": {"requireMention": true}}
+# with groupPolicy: open. See #1737, #3022. Default: empty map.
 ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)

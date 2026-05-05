@@ -169,9 +169,7 @@ def build_config(env: dict | None = None) -> dict:
         if ch in ("telegram", "discord"):
             account["proxy"] = proxy_url
         if ch == "telegram":
-            account["groupPolicy"] = (
-                "mentions" if _telegram_config.get("requireMention") else "open"
-            )
+            account["groupPolicy"] = "open"
         if ch in _allowed_ids and _allowed_ids[ch]:
             account["dmPolicy"] = "allowlist"
             account["allowFrom"] = _allowed_ids[ch]
@@ -181,6 +179,9 @@ def build_config(env: dict | None = None) -> dict:
         _ch_cfg["discord"].update(
             {"groupPolicy": "allowlist", "guilds": _discord_guilds}
         )
+
+    if "telegram" in _ch_cfg and _telegram_config.get("requireMention"):
+        _ch_cfg["telegram"]["groups"] = {"*": {"requireMention": True}}
 
     # Normalize schemeless URLs before parsing — urlparse("remote-host:18789")
     # misclassifies hostname as scheme. Mirrors ensureScheme() in dashboard-contract.ts.
