@@ -3100,6 +3100,20 @@ exit 0`,
 echo "docker $*" >> ${JSON.stringify(phaseLog)}
 exit 0`,
     );
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+echo "openshell $*" >> ${JSON.stringify(phaseLog)}
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "openshell 0.0.36"; fi
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+echo "nemoclaw $*" >> ${JSON.stringify(phaseLog)}
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "nemoclaw v0.5.0"; fi
+exit 0`,
+    );
 
     const python =
       spawnSync("bash", ["-lc", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
@@ -3193,6 +3207,10 @@ sys.exit(exit_code)
   it("piped installs with a controlling TTY prompt before phase 1 and continue after acceptance", () => {
     const { result, phases, state } = runInstallerWithPipedStdinAndTty("yes\n");
     const output = `${result.stdout}${result.stderr}`;
+    const noticeVersion = JSON.parse(
+      fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "lib", "usage-notice.json"), "utf-8"),
+    ).version;
+    expect(result.status, output).toBe(0);
     expect(output).toMatch(/prompting for the third-party software notice on \/dev\/tty/);
     expect(output).toMatch(/Third-Party Software Notice - NemoClaw Installer/);
     expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
@@ -3201,7 +3219,7 @@ sys.exit(exit_code)
       output.indexOf("Third-Party Software Notice - NemoClaw Installer"),
     );
     expect(phases).not.toBe("");
-    expect(state).toMatch(/"acceptedVersion": "2026-04-01b"/);
+    expect(state).toContain(`"acceptedVersion": "${noticeVersion}"`);
   });
 
   it("piped installs with a controlling TTY still stop before phase 1 when acceptance is declined", () => {
@@ -3227,10 +3245,12 @@ sys.exit(exit_code)
     expect(phases).not.toBe("");
   });
 
-  it("--non-interactive alone is sufficient to clear the fail-fast gate", () => {
+  it("--non-interactive alone does not clear the fail-fast gate", () => {
     const { result, phases } = runInstaller({ NEMOCLAW_NON_INTERACTIVE: "1" });
     const output = `${result.stdout}${result.stderr}`;
-    expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
-    expect(phases).not.toBe("");
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(output).toMatch(/--yes-i-accept-third-party-software/);
+    expect(phases).toBe("");
   });
 });

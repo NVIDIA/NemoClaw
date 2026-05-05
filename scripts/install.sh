@@ -676,8 +676,17 @@ show_usage_notice_shell() {
 }
 
 preflight_usage_notice_prompt() {
-  if [ "${NON_INTERACTIVE:-}" = "1" ] || [ -t 0 ]; then
+  if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ] || [ -t 0 ]; then
     return 0
+  fi
+
+  local notice_json version
+  notice_json="$(usage_notice_config_path)"
+  if [[ -f "$notice_json" ]]; then
+    version="$(json_string_field "$notice_json" "version")"
+    if [[ -n "$version" ]] && usage_notice_accepted_shell "$version"; then
+      return 0
+    fi
   fi
 
   if { exec 3</dev/tty; } 2>/dev/null; then
