@@ -400,7 +400,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw upgrade-sandboxes",
     description: "Detect and rebuild stale sandboxes",
-    flags: "(--check, --auto)",
+    flags: "(--check, --auto, --yes|-y)",
     group: "Upgrade",
     scope: "global",
   },
@@ -409,7 +409,7 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     usage: "nemoclaw gc",
     description: "Remove orphaned sandbox Docker images",
-    flags: "(--yes|--force, --dry-run)",
+    flags: "(--yes|-y|--force, --dry-run)",
     group: "Cleanup",
     scope: "global",
   },

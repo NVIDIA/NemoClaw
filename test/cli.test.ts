@@ -360,6 +360,10 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Sandbox Management")).toBeTruthy();
     expect(r.out.includes("Policy Presets")).toBeTruthy();
     expect(r.out.includes("Compatibility Commands")).toBeTruthy();
+    expect(r.out).toContain("nemoclaw upgrade-sandboxes");
+    expect(r.out).toContain("(--check, --auto, --yes|-y)");
+    expect(r.out).toContain("nemoclaw gc");
+    expect(r.out).toContain("(--yes|-y|--force, --dry-run)");
   });
 
   it("--help exits 0", () => {
