@@ -37,7 +37,7 @@ describe("detectVllmProfile", () => {
     expect(profile!.name).toBe("DGX Spark");
   });
 
-  it("prefers Spark over Station when both signals are present", () => {
+  it("returns Spark when both legacy spark flag and platform field are set", () => {
     const profile = detectVllmProfile({ platform: "spark", spark: true, type: "nvidia" });
     expect(profile!.name).toBe("DGX Spark");
   });
