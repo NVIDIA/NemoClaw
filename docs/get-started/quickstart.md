@@ -212,7 +212,7 @@ For setup details, including GPU recommendations and starter model choices, refe
 These options appear when `NEMOCLAW_EXPERIMENTAL=1` is set and the prerequisites are met.
 
 - **Local NVIDIA NIM** requires a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
-- **Local vLLM** requires a vLLM server already running on `localhost:8000`. NemoClaw auto-detects the loaded model.
+- **Local vLLM** uses a vLLM server already running on `localhost:8000`, or installs and starts a managed vLLM container on supported DGX Spark, DGX Station, and Linux NVIDIA GPU hosts. NemoClaw auto-detects the loaded model.
 
 For setup, refer to [Use a Local Inference Server](../inference/use-local-inference.md).
 :::

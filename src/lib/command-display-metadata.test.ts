@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { COMMANDS, visibleCommands } from "./command-registry";
-import commands from "../../dist/lib/oclif-commands.js";
+import commands from "../../dist/lib/commands/index.js";
 
 describe("public command display metadata", () => {
   it("maps every command display entry to a registered oclif command", () => {

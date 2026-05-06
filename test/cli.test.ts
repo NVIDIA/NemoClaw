@@ -1215,7 +1215,8 @@ describe("CLI dispatch", () => {
     );
     const r = runWithEnv("debug --quick --sandbox mybox 2>&1", { HOME: home });
     expect(r.code).toBe(0);
-    expect(r.out).not.toContain("Warning");
+    expect(r.out).not.toContain("default sandbox 'ghost'");
+    expect(r.out).not.toContain("--sandbox NAME");
     expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
   });
 

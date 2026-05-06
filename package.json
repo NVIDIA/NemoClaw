@@ -11,7 +11,7 @@
     "bin": "nemoclaw",
     "commands": {
       "strategy": "explicit",
-      "target": "./dist/lib/oclif-commands.js"
+      "target": "./dist/lib/commands/index.js"
     }
   },
   "scripts": {

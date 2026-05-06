@@ -25,7 +25,7 @@ status: published
 # Use a Local Inference Server
 
 NemoClaw can route inference to a model server running on your machine instead of a cloud API.
-This page covers Ollama, compatible-endpoint paths for other servers, and two experimental options for vLLM and NVIDIA NIM.
+This page covers Ollama, compatible-endpoint paths for other servers, and experimental managed options for vLLM and NVIDIA NIM.
 
 All approaches use the same `inference.local` routing model.
 The agent inside the sandbox never connects to your model server directly.
@@ -35,7 +35,7 @@ OpenShell intercepts inference traffic and forwards it to the local endpoint you
 
 - NemoClaw installed.
   Refer to the [Quickstart](../get-started/quickstart.md) if you have not installed yet.
-- A local model server running, or an Ollama setup that the NemoClaw onboard wizard can use, start, or install.
+- A local model server running, or a supported Ollama, vLLM, or NIM setup that the NemoClaw onboard wizard can use, start, or install.
 
 ## Ollama
 
@@ -223,9 +223,10 @@ $ NEMOCLAW_PROVIDER=anthropicCompatible \
   nemoclaw onboard --non-interactive
 ```
 
-## vLLM Auto-Detection (Experimental)
+## vLLM (Experimental)
 
 When vLLM is already running on `localhost:8000`, NemoClaw can detect it automatically and query the `/v1/models` endpoint to determine the loaded model.
+On supported Linux hosts with NVIDIA GPUs, the onboard wizard can also install or start a managed vLLM container for you.
 
 Set the experimental flag and run onboard.
 
@@ -234,7 +235,19 @@ $ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
 ```
 
 Select **Local vLLM [experimental]** from the provider list.
-NemoClaw detects the running model and validates the endpoint.
+If vLLM is already running, NemoClaw detects the running model and validates the endpoint.
+If vLLM is not running and your host matches a managed profile, select the **Install vLLM** or **Start vLLM** entry.
+NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, and prints progress markers while the model loads.
+The first run can take 10 to 30 minutes.
+Later runs reuse the cached image and model weights.
+
+Managed vLLM uses these profiles:
+
+| Host profile | Default model |
+|---|---|
+| DGX Spark | `Qwen/Qwen3.6-27B-FP8` |
+| DGX Station | `Qwen/Qwen3.6-27B-FP8` |
+| Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 :::{note}
 NemoClaw forces the `chat/completions` API path for vLLM.
@@ -243,14 +256,24 @@ The vLLM `/v1/responses` endpoint does not run the `--tool-call-parser`, so tool
 
 ### Non-Interactive Setup
 
+Use an already-running vLLM server:
+
 ```console
 $ NEMOCLAW_EXPERIMENTAL=1 \
   NEMOCLAW_PROVIDER=vllm \
   nemoclaw onboard --non-interactive
 ```
 
-NemoClaw auto-detects the model from the running vLLM instance.
-To override the model, set `NEMOCLAW_MODEL`.
+Install or start managed vLLM when a supported profile is detected:
+
+```console
+$ NEMOCLAW_EXPERIMENTAL=1 \
+  NEMOCLAW_PROVIDER=install-vllm \
+  nemoclaw onboard --non-interactive
+```
+
+NemoClaw records the model returned by vLLM's `/v1/models` endpoint.
+Start vLLM with the model you want before onboarding if you manage the server yourself.
 
 ## NVIDIA NIM (Experimental)
 

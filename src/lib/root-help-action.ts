@@ -3,7 +3,7 @@
 
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
 import { commandsByGroup, visibleCommands, type CommandDef } from "./command-registry";
-import { getRegisteredOclifCommandSummary } from "./oclif-metadata";
+import { getRegisteredOclifCommandSummary } from "./cli/oclif-metadata";
 import { getVersion } from "./version";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
