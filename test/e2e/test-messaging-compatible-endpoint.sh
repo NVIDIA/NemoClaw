@@ -520,10 +520,10 @@ for p in result.get('payloads') or []:
 print('\n'.join(parts))
 " 2>/dev/null) || true
 
-  if printf '%s' "$reply" | grep -qi "PONG"; then
+  if [ "$rc" -eq 0 ] && printf '%s' "$reply" | grep -qi "PONG"; then
     pass "C8: openclaw agent completed turn via compatible endpoint (http-proxy-fix.js FORWARD-mode path exercised)"
   else
-    fail "C8: openclaw agent got no response from compatible endpoint (reply='${reply:0:200}', raw='${raw:0:200}')"
+    fail "C8: openclaw agent turn failed (exit ${rc}); reply='${reply:0:200}', raw='${raw:0:200}'"
   fi
 
   # C9: Verify http-proxy-fix.js stripped proxy hop headers — they must not
