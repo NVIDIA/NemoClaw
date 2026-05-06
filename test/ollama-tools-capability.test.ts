@@ -233,7 +233,7 @@ function installSharedStubs(): void {
     probeOllamaModelCapabilities: (model: string) => OllamaCapabilities;
   };
   SHARED.originalProbe = localInference.probeOllamaModelCapabilities;
-  (localInference as Record<string, unknown>).probeOllamaModelCapabilities = (
+  (localInference as unknown as Record<string, unknown>).probeOllamaModelCapabilities = (
     _model: string,
   ) => SHARED.scriptedCaps;
 
