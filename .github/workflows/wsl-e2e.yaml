@@ -43,15 +43,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Resolve workspace path for WSL
+      - name: Resolve workspace paths for WSL
         shell: powershell
         run: |
           $winPath = "${{ github.workspace }}"
           $drive = $winPath.Substring(0,1).ToLower()
           $rest = $winPath.Substring(2).Replace('\','/')
-          $wslPath = "/mnt/$drive$rest"
-          "WSL_WORKDIR=$wslPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "WSL_WORKDIR=$wslPath"
+          $wslCheckoutPath = "/mnt/$drive$rest"
+          $wslWorkdir = "/tmp/nemoclaw-wsl-workdir/${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}"
+          "WSL_CHECKOUT_DIR=$wslCheckoutPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "WSL_WORKDIR=$wslWorkdir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "WSL_CHECKOUT_DIR=$wslCheckoutPath"
+          Write-Host "WSL_WORKDIR=$wslWorkdir"
 
       - name: Ensure Ubuntu WSL exists
         shell: powershell
@@ -60,15 +63,44 @@ jobs:
           # Native commands do not throw in PowerShell; check LASTEXITCODE.
           $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
           if ($LASTEXITCODE -ne 0) {
-            Write-Host 'Ubuntu not found - installing via wsl --install'
-            wsl --install -d $env:WSL_DISTRO --no-launch --web-download
-            if ($LASTEXITCODE -ne 0) {
-              throw ('wsl --install failed with exit code ' + $LASTEXITCODE)
+            $maxAttempts = 3
+            $installed = $false
+            for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+              Write-Host "Ubuntu not found - installing via wsl --install (attempt $attempt/$maxAttempts)"
+              wsl --install -d $env:WSL_DISTRO --no-launch --web-download
+              $installExitCode = $LASTEXITCODE
+              if ($installExitCode -eq 0) {
+                # The first launch initialises the distro with the default root user.
+                wsl -d $env:WSL_DISTRO -- bash -c 'echo distro initialised'
+                $launchExitCode = $LASTEXITCODE
+                if ($launchExitCode -eq 0) {
+                  $installed = $true
+                  break
+                }
+                Write-Warning "distro first-launch failed with exit code $launchExitCode"
+              } else {
+                Write-Warning "wsl --install failed with exit code $installExitCode"
+              }
+
+              # Some WSL installs return a non-zero code after registering a usable distro.
+              $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
+              if ($LASTEXITCODE -eq 0) {
+                Write-Host 'Ubuntu became available after the install command returned non-zero'
+                $installed = $true
+                break
+              }
+
+              if ($attempt -lt $maxAttempts) {
+                Write-Host 'Cleaning up any partial WSL registration before retrying'
+                $null = wsl --unregister $env:WSL_DISTRO 2>&1
+                $delaySeconds = [Math]::Min(60, 20 * $attempt)
+                Write-Host "Retrying WSL install in $delaySeconds seconds..."
+                Start-Sleep -Seconds $delaySeconds
+              }
             }
-            # The first launch initialises the distro with the default root user.
-            wsl -d $env:WSL_DISTRO -- bash -c 'echo distro initialised'
-            if ($LASTEXITCODE -ne 0) {
-              throw ('distro first-launch failed with exit code ' + $LASTEXITCODE)
+
+            if (-not $installed) {
+              throw ("failed to install and initialize $env:WSL_DISTRO after $maxAttempts attempts")
             }
           } else {
             Write-Host 'Ubuntu already available'
@@ -108,6 +140,40 @@ jobs:
           node --version
           npm --version
           '@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Copy checkout into WSL ext4 workspace
+        shell: powershell
+        run: |
+          $checkout = $env:WSL_CHECKOUT_DIR
+          $workdir = $env:WSL_WORKDIR
+          $workdirParent = $workdir.Substring(0, $workdir.LastIndexOf('/'))
+          $script = @"
+          set -euo pipefail
+          echo 'Syncing checkout from $checkout to $workdir'
+          if [ ! -d '$checkout/.git' ]; then
+            echo 'Expected a Git checkout at $checkout' >&2
+            exit 1
+          fi
+          # Keep npm and test I/O on WSL's ext4 VHD. Running directly from
+          # /mnt/<drive> (DrvFS) is slower and has Windows-style permission
+          # semantics that hide Linux permission regressions.
+          rm -rf '$workdir'
+          mkdir -p '$workdirParent'
+          rsync -a --no-owner --no-group --delete \
+            --exclude '/node_modules/' \
+            --exclude '/nemoclaw/node_modules/' \
+            --exclude '/nemoclaw-blueprint/.venv/' \
+            '$checkout'/ '$workdir'/
+          git config --global --add safe.directory '$workdir'
+          git -C '$workdir' reset --hard HEAD
+          git -C '$workdir' clean -ffdx
+          git -C '$workdir' status --short
+          echo 'WSL ext4 workspace ready at $workdir'
+          "@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
           $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')

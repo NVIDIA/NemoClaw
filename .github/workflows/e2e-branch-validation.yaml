@@ -201,7 +201,7 @@ jobs:
           LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
           BREV_PROVIDER: gcp
           KEEP_ALIVE: ${{ inputs.keep_alive }}
-        run: npx vitest run --project e2e-branch-validation --reporter=verbose
+        run: npx vitest run --project e2e-branch-validation
 
       - name: Update check run (completed)
         if: always() && inputs.pr_number != '' && env.CHECK_RUN_ID != ''

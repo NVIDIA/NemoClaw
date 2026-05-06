@@ -17,7 +17,6 @@ import path from "node:path";
 import { DASHBOARD_PORT } from "./ports";
 
 // runner.ts still uses CommonJS-style exports — use require here.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { runCapture } = require("./runner");
 
 type RunCaptureFn = typeof import("./runner").runCapture;
@@ -105,6 +104,9 @@ export interface HostAssessment {
   dockerDefaultCgroupnsMode?: "host" | "private" | "unknown";
   dockerStorageDriver?: string;
   dockerUsesContainerdSnapshotter?: boolean;
+  dockerCpus?: number;
+  dockerMemTotalBytes?: number;
+  isContainerRuntimeUnderProvisioned: boolean;
   hasNestedOverlayConflict: boolean;
   requiresHostCgroupnsFix: boolean;
   isUnsupportedRuntime: boolean;
@@ -208,6 +210,64 @@ export function parseDockerUsesContainerdSnapshotter(info = ""): boolean {
   // v1 plugin. Match either JSON or text form so we handle `--format '{{json
   // .}}'` output and plain `docker info` alike.
   return /io\.containerd\.snapshotter\.v1/.test(info);
+}
+
+export function parseDockerInfoCpus(info = ""): number | undefined {
+  const jsonMatch = info.match(/"NCPU"\s*:\s*(\d+)/);
+  if (jsonMatch) {
+    const n = parseInt(jsonMatch[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
+  const textMatch = info.match(/^\s*CPUs:\s*(\d+)\s*$/m);
+  if (textMatch) {
+    const n = parseInt(textMatch[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
+  return undefined;
+}
+
+export function parseDockerInfoMemTotalBytes(info = ""): number | undefined {
+  const jsonMatch = info.match(/"MemTotal"\s*:\s*(\d+)/);
+  if (jsonMatch) {
+    const n = parseInt(jsonMatch[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
+  const textMatch = info.match(/^\s*Total Memory:\s*([\d.]+)\s*([GMK]i?B)\s*$/im);
+  if (textMatch) {
+    const value = parseFloat(textMatch[1]);
+    if (!Number.isFinite(value) || value <= 0) return undefined;
+    const unit = textMatch[2].toLowerCase();
+    const multiplier =
+      unit === "gib"
+        ? 1024 ** 3
+        : unit === "gb"
+          ? 1000 ** 3
+          : unit === "mib"
+            ? 1024 ** 2
+            : unit === "mb"
+              ? 1000 ** 2
+              : unit === "kib"
+                ? 1024
+                : unit === "kb"
+                  ? 1000
+                  : 1;
+    return Math.round(value * multiplier);
+  }
+  return undefined;
+}
+
+export const MIN_RECOMMENDED_DOCKER_CPUS = 4;
+export const MIN_RECOMMENDED_DOCKER_MEM_GIB = 8;
+
+export function isDockerUnderProvisioned(
+  cpus: number | undefined,
+  memTotalBytes: number | undefined,
+): boolean {
+  const cpuLow = typeof cpus === "number" && cpus < MIN_RECOMMENDED_DOCKER_CPUS;
+  const memLow =
+    typeof memTotalBytes === "number" &&
+    memTotalBytes < MIN_RECOMMENDED_DOCKER_MEM_GIB * 1024 ** 3;
+  return cpuLow || memLow;
 }
 
 function readDockerDefaultCgroupnsMode(
@@ -319,6 +379,14 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerUsesContainerdSnapshotter = dockerReachable
     ? parseDockerUsesContainerdSnapshotter(dockerInfoOutput)
     : false;
+  const dockerCpus = dockerReachable ? parseDockerInfoCpus(dockerInfoOutput) : undefined;
+  const dockerMemTotalBytes = dockerReachable
+    ? parseDockerInfoMemTotalBytes(dockerInfoOutput)
+    : undefined;
+  const isContainerRuntimeUnderProvisioned = isDockerUnderProvisioned(
+    dockerCpus,
+    dockerMemTotalBytes,
+  );
   // Nested-overlay break: Docker 26+ on Linux with the containerd image store
   // (Driver=overlayfs + DriverStatus mentions io.containerd.snapshotter.v1)
   // does not allow k3s-in-Docker to mount its own overlay snapshots. The
@@ -371,6 +439,9 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerDefaultCgroupnsMode,
     dockerStorageDriver,
     dockerUsesContainerdSnapshotter,
+    dockerCpus,
+    dockerMemTotalBytes,
+    isContainerRuntimeUnderProvisioned,
     hasNestedOverlayConflict,
     // Current OpenShell sets host cgroupns on its own cluster container.
     requiresHostCgroupnsFix: false,
@@ -453,6 +524,47 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
         blocking: true,
       });
     }
+  }
+
+  if (assessment.dockerReachable && assessment.isContainerRuntimeUnderProvisioned) {
+    const cpus = assessment.dockerCpus;
+    const memGiB =
+      typeof assessment.dockerMemTotalBytes === "number"
+        ? assessment.dockerMemTotalBytes / 1024 ** 3
+        : undefined;
+    const detected: string[] = [];
+    if (typeof cpus === "number") detected.push(`${cpus} vCPU`);
+    if (typeof memGiB === "number") detected.push(`${memGiB.toFixed(1)} GiB`);
+    const detectedStr = detected.length > 0 ? detected.join(" / ") : "unknown";
+    const recommendedStr = `${MIN_RECOMMENDED_DOCKER_CPUS} vCPU / ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB`;
+    const isColima = assessment.runtime === "colima";
+    const isDockerDesktop = assessment.runtime === "docker-desktop";
+    const reason =
+      `Container runtime is under-provisioned (detected ${detectedStr}; recommended ${recommendedStr}). ` +
+      "Sandbox build will be slow and may stall when runtime resources are too low.";
+    const commands: string[] = [];
+    if (isColima) {
+      commands.push(
+        "colima stop",
+        `colima start --cpu ${MIN_RECOMMENDED_DOCKER_CPUS} --memory ${MIN_RECOMMENDED_DOCKER_MEM_GIB} --disk 100`,
+      );
+    } else if (isDockerDesktop) {
+      commands.push(
+        `Open Docker Desktop → Settings → Resources and raise CPUs to ≥ ${MIN_RECOMMENDED_DOCKER_CPUS} and memory to ≥ ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB.`,
+      );
+    } else {
+      commands.push(
+        `Raise your container runtime's resource limits to ≥ ${MIN_RECOMMENDED_DOCKER_CPUS} vCPU and ≥ ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB of memory before retrying.`,
+      );
+    }
+    actions.push({
+      id: "container_runtime_under_provisioned",
+      title: "Increase container runtime resources",
+      kind: "manual",
+      reason,
+      commands,
+      blocking: false,
+    });
   }
 
   if (assessment.isUnsupportedRuntime) {

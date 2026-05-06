@@ -88,6 +88,20 @@ describe("usage notice", () => {
     expect(lines.join("\n")).toContain("Installation cancelled");
   });
 
+  it("cancels interactive onboarding when the prompt fails", async () => {
+    const lines: string[] = [];
+    const ok = await ensureUsageNoticeConsent({
+      nonInteractive: false,
+      promptFn: async () => {
+        throw new Error("prompt failed");
+      },
+      writeLine: (line: string) => lines.push(line),
+    });
+
+    expect(ok).toBe(false);
+    expect(lines.join("\n")).toContain("Installation cancelled");
+  });
+
   it("records interactive acceptance when the user types yes", async () => {
     const config = loadUsageNoticeConfig();
     const ok = await ensureUsageNoticeConsent({

@@ -26,6 +26,7 @@ Environment variables:
     NEMOCLAW_MESSAGING_CHANNELS_B64     Base64-encoded channel list
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map
     NEMOCLAW_DISCORD_GUILDS_B64         Base64-encoded Discord guild config
+    NEMOCLAW_TELEGRAM_CONFIG_B64        Base64-encoded Telegram config (e.g. {"requireMention": true})
     NEMOCLAW_DISABLE_DEVICE_AUTH        Set to "1" to force-disable device auth
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
@@ -38,7 +39,24 @@ import base64
 import json
 import os
 import re
+import sys
 from urllib.parse import urlparse
+
+
+def _coerce_positive_int(env: dict, name: str, default: int) -> int:
+    raw = env.get(name) or str(default)
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value > 0:
+        return value
+    print(
+        f'[SECURITY] {name} must be a positive integer, got "{raw}" '
+        f"— skipping override, falling back to default ({default})",
+        file=sys.stderr,
+    )
+    return default
 
 
 def is_loopback(hostname: str) -> bool:
@@ -77,8 +95,9 @@ def build_config(env: dict | None = None) -> dict:
     primary_model_ref = env["NEMOCLAW_PRIMARY_MODEL_REF"]
     inference_base_url = env["NEMOCLAW_INFERENCE_BASE_URL"]
     inference_api = env["NEMOCLAW_INFERENCE_API"]
-    context_window = int(env.get("NEMOCLAW_CONTEXT_WINDOW", "131072"))
-    max_tokens = int(env.get("NEMOCLAW_MAX_TOKENS", "4096"))
+    context_window = _coerce_positive_int(env, "NEMOCLAW_CONTEXT_WINDOW", 131072)
+    max_tokens = _coerce_positive_int(env, "NEMOCLAW_MAX_TOKENS", 4096)
+
     reasoning = env.get("NEMOCLAW_REASONING", "false") == "true"
     inference_inputs = [
         v.strip()
@@ -108,6 +127,11 @@ def build_config(env: dict | None = None) -> dict:
     _discord_guilds = json.loads(
         base64.b64decode(
             env.get("NEMOCLAW_DISCORD_GUILDS_B64", "e30=") or "e30="
+        ).decode("utf-8")
+    )
+    _telegram_config = json.loads(
+        base64.b64decode(
+            env.get("NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=") or "e30="
         ).decode("utf-8")
     )
 
@@ -156,6 +180,9 @@ def build_config(env: dict | None = None) -> dict:
             {"groupPolicy": "allowlist", "guilds": _discord_guilds}
         )
 
+    if "telegram" in _ch_cfg and _telegram_config.get("requireMention"):
+        _ch_cfg["telegram"]["groups"] = {"*": {"requireMention": True}}
+
     # Normalize schemeless URLs before parsing — urlparse("remote-host:18789")
     # misclassifies hostname as scheme. Mirrors ensureScheme() in dashboard-contract.ts.
     _normalized_url = chat_ui_url
@@ -168,7 +195,23 @@ def build_config(env: dict | None = None) -> dict:
         if parsed.scheme and parsed.netloc
         else "http://127.0.0.1:18789"
     )
-    origins = list(dict.fromkeys(["http://127.0.0.1:18789", chat_origin]))
+    # When onboard injects an internal port (e.g. :18789) into a URL that the
+    # user provided without an explicit port, the browser origin from a reverse
+    # proxy (Brev Cloudflare Tunnel, nginx, Caddy, etc.) will not carry that
+    # port.  Include the portless origin so both direct and proxied access work.
+    # Skip for loopback — no reverse proxy in front of localhost.
+    try:
+        _has_explicit_port = parsed.port is not None
+    except ValueError:
+        _has_explicit_port = False
+    if parsed.scheme and parsed.hostname and _has_explicit_port and not is_loopback(parsed.hostname):
+        host_part = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+        portless_origin = f"{parsed.scheme}://{host_part}"
+    else:
+        portless_origin = None
+    origins = list(dict.fromkeys(
+        filter(None, ["http://127.0.0.1:18789", chat_origin, portless_origin])
+    ))
 
     # Auto-disable device auth when CHAT_UI_URL is non-loopback — terminal-based
     # pairing is impossible when the user only has web access (Brev Launchable,
@@ -206,19 +249,12 @@ def build_config(env: dict | None = None) -> dict:
         }
     }
 
-    # OpenClaw 2026.4.24 stages runtime dependencies for every bundled
-    # enabledByDefault provider plugin during `openclaw doctor --fix`.
-    # NemoClaw bakes one model provider into openclaw.json, so keeping unused
-    # default providers enabled bloats the sandbox image and can exhaust the
-    # CI k3s/containerd import volume before tests even start.
+    # OpenClaw stages runtime dependencies for every bundled enabledByDefault
+    # provider plugin. NemoClaw bakes one model provider into openclaw.json, so
+    # keeping unused default providers enabled bloats image builds and, once the
+    # gateway has write access to plugin-runtime-deps, can stall first startup.
     plugin_entries = {
-        "acpx": {
-            "config": {
-                "agents": {
-                    "codex": {"command": "/usr/local/bin/nemoclaw-codex-acp"},
-                }
-            }
-        },
+        "acpx": {"enabled": False},
         "bonjour": {"enabled": False},
         "qqbot": {"enabled": False},
     }
@@ -227,7 +263,13 @@ def build_config(env: dict | None = None) -> dict:
         "amazon-bedrock-mantle": {"amazon-bedrock-mantle"},
         "anthropic": {"anthropic"},
         "anthropic-vertex": {"anthropic-vertex"},
+        "fireworks": {"fireworks"},
         "google": {"google", "google-gemini-cli"},
+        "kimi": {"kimi"},
+        "lmstudio": {"lmstudio"},
+        "ollama": {"ollama", "ollama-local"},
+        "openai": {"openai"},
+        "xai": {"xai"},
     }
     for _plugin_id, _provider_keys in _bundled_provider_plugins.items():
         if provider_key not in _provider_keys:
@@ -269,14 +311,9 @@ def build_config(env: dict | None = None) -> dict:
         #     gateway can't service openclaw-agent requests — that's the
         #     TC-SBX-02 hang in 2026.4.24.
         #
-        # acpx stays enabled, but its default codex adapter command is
-        # `npx @zed-industries/codex-acp@^0.11.1`. npm refreshes registry
-        # metadata for that package spec even when codex-acp is globally
-        # installed, which hits the L7 proxy deny path during gateway startup.
-        # The sandbox image pre-installs /usr/local/bin/codex-acp. The wrapper
-        # below points ACPx at that binary with writable per-UID Codex/XDG
-        # state so the gateway user does not try to write under /sandbox or
-        # the sandbox user's redirected /tmp directories.
+        # acpx is disabled by default because its runtime dependency staging
+        # also reaches npm during gateway startup. NemoClaw's primary CLI path
+        # invokes openclaw-agent directly, not ACPx.
         #
         # Provider plugins with staged runtime dependencies are disabled above
         # unless they match NEMOCLAW_PROVIDER_KEY. That keeps the baked image

@@ -44,9 +44,9 @@ export function getTransportRecoveryMessage(failure: ValidationFailureLike = {})
   if (
     failure.curlStatus === 35 ||
     failure.curlStatus === 60 ||
-    /ssl|tls|certificate/.test(text)
+    /ssl|tls|certificate|handshake/.test(text)
   ) {
-    return "  Validation hit a TLS/certificate error. Check HTTPS trust and whether the endpoint URL is correct.";
+    return "  Validation hit a TLS/certificate error. If the endpoint uses plain HTTP, a proxy or middleware may be upgrading the connection to HTTPS. Check proxy settings, VPN, and the endpoint URL scheme.";
   }
   if (/proxy/.test(text)) {
     return "  Validation hit a proxy/connectivity error. Check proxy environment settings and endpoint reachability.";

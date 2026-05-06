@@ -9,7 +9,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { ROOT, run, shellQuote } from "./runner";
+import { ROOT, run, shellQuote, redact } from "./runner";
 import { dockerBuild, dockerImageInspect } from "./docker";
 import { loadAgent, resolveAgentName, type AgentDefinition } from "./agent-defs";
 import { getAgentBranding } from "./branding";
@@ -129,7 +129,10 @@ type AgentBinaryAvailability =
       resolvedPath?: string;
     };
 
-function verifyAgentBinaryAvailable(
+const AGENT_BINARY_CHECK_PREFIX = "NEMOCLAW_AGENT_BINARY_CHECK:";
+
+// Exported for unit coverage of the sandbox-side guard without running onboarding.
+export function verifyAgentBinaryAvailable(
   sandboxName: string,
   agent: AgentDefinition,
   runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
@@ -138,13 +141,16 @@ function verifyAgentBinaryAvailable(
   const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
   const script = binaryPath
     ? [
+        `if [ -x ${shellQuote(binaryPath)} ]; then echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)}; exit 0; fi`,
         `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
-        `[ -n "$resolved" ] || { echo not_found; exit 1; }`,
-        `[ -x ${shellQuote(binaryPath)} ] || { echo not_executable; exit 1; }`,
-        `[ "$resolved" = ${shellQuote(binaryPath)} ] || { printf 'path_mismatch:%s\\n' "$resolved"; exit 1; }`,
-        "echo ok",
-      ].join(" && ")
-    : `command -v ${shellQuote(executable)} >/dev/null 2>&1 && echo ok || echo not_found`;
+        `[ -n "$resolved" ] || { echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}; exit 0; }`,
+        `[ -x "$resolved" ] || { printf '${AGENT_BINARY_CHECK_PREFIX}not_executable:%s\\n' "$resolved"; exit 0; }`,
+        `printf '${AGENT_BINARY_CHECK_PREFIX}path_mismatch:%s\\n' "$resolved"`,
+      ].join("; ")
+    : [
+        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
+        `[ -n "$resolved" ] && [ -x "$resolved" ] && echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)} || echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}`,
+      ].join("; ");
   const result = runCaptureOpenshell(
     ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", script],
     {
@@ -152,11 +158,16 @@ function verifyAgentBinaryAvailable(
     },
   );
   const status = result?.trim() ?? "";
-  if (status === "ok") {
+  const marker = status
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith(AGENT_BINARY_CHECK_PREFIX));
+  const checkStatus = marker?.slice(AGENT_BINARY_CHECK_PREFIX.length) ?? "";
+  if (checkStatus === "ok") {
     return { available: true };
   }
-  if (binaryPath && result) {
-    const mismatch = result.match(/path_mismatch:([^\n]+)/);
+  if (binaryPath && checkStatus) {
+    const mismatch = checkStatus.match(/^path_mismatch:(.+)$/);
     if (mismatch) {
       return {
         available: false,
@@ -165,7 +176,7 @@ function verifyAgentBinaryAvailable(
         resolvedPath: mismatch[1].trim(),
       };
     }
-    if (result.includes("not_executable")) {
+    if (checkStatus.startsWith("not_executable")) {
       return { available: false, reason: "not_executable", binaryPath };
     }
   }
@@ -327,6 +338,10 @@ export function getAgentDashboardInfo(agent: AgentDefinition): {
   };
 }
 
+function dashboardUrlForDisplay(url: string): string {
+  return redact(url.replace(/#token=[^\s'"]*$/i, ""));
+}
+
 /**
  * Print the dashboard UI section for a non-OpenClaw agent.
  *
@@ -336,7 +351,7 @@ export function getAgentDashboardInfo(agent: AgentDefinition): {
  * back to the original UI-style output used by browser dashboards.
  */
 export function printDashboardUi(
-  _sandboxName: string,
+  sandboxName: string,
   token: string | null,
   agent: AgentDefinition,
   deps: {
@@ -346,6 +361,7 @@ export function printDashboardUi(
 ): void {
   const info = getAgentDashboardInfo(agent);
   const { kind, label, path } = agent.dashboard;
+  const cliName = getAgentBranding(agent.name).cli;
 
   if (kind === "api") {
     console.log(`  ${info.displayName} ${label}`);
@@ -356,25 +372,27 @@ export function printDashboardUi(
       const url = path && path !== "/" ? `${withoutHash}${path}` : `${withoutHash}/`;
       if (seen.has(url)) continue;
       seen.add(url);
-      console.log(`  ${url}`);
+      console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
     return;
   }
 
   if (token) {
     console.log(
-      `  ${info.displayName} ${label} (tokenized URL; treat it like a password; save it now - it will not be printed again)`,
+      `  ${info.displayName} ${label} (auth token redacted from displayed URLs)`,
     );
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(token, info.port)) {
-      console.log(`  ${url}`);
+      console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+    console.log(`  Token: ${cliName} ${sandboxName} gateway-token --quiet`);
+    console.log(`         append  #token=<token> locally if the browser asks for auth.`);
   } else {
     deps.note("  Could not read gateway token from the sandbox (download failed).");
     console.log(`  ${info.displayName} ${label}`);
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(null, info.port)) {
-      console.log(`  ${url}`);
+      console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
   }
 }

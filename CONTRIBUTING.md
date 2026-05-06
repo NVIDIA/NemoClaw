@@ -96,6 +96,17 @@ If you still have `core.hooksPath` set from an old Husky setup, Git will ignore 
 
 `make check` remains the primary documented linter entry point.
 
+For doc-only changes, you do not need to run the full test suite by default.
+Run the docs and hook checks instead:
+
+```bash
+npx prek run --all-files
+make docs
+```
+
+Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
+Run `npm test` when the change touches code, generated behavior, or anything that affects runtime behavior.
+
 ## Project Structure
 
 The repository is organized as follows.
@@ -205,7 +216,7 @@ Follow these steps to submit a pull request.
 
 1. Create a feature branch from `main`.
 2. Make your changes with tests.
-3. Run `make check` and `npm test` to verify.
+3. Run the relevant checks. For code changes, run `make check` and `npm test`. For doc-only changes, run `npx prek run --all-files` and `make docs`.
 4. Open a PR.
 
 ### Commit Messages

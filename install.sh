@@ -107,7 +107,7 @@ bootstrap_usage() {
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
   printf "  Options:\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
-  printf "    --yes-i-accept-third-party-software Accept the third-party software notice in non-interactive mode\n"
+  printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"

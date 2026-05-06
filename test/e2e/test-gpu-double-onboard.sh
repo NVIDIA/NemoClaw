@@ -14,7 +14,7 @@
 #   2. Install Ollama binary (do NOT start it — onboard handles that)
 #   3. First onboard — install.sh --non-interactive with NEMOCLAW_PROVIDER=ollama
 #   4. Verify sandbox, proxy, token file, inference through sandbox
-#   5. Second onboard (re-onboard) — nemoclaw onboard --non-interactive
+#   5. Second onboard (re-onboard) — nemoclaw onboard --non-interactive --yes
 #   6. Token consistency verification (the core of this test):
 #        - Read ~/.nemoclaw/ollama-proxy-token
 #        - Verify proxy accepts that token (not 401)
@@ -200,7 +200,7 @@ else
 fi
 
 # If the Ollama installer started a system service, stop it so onboard
-# can start Ollama with OLLAMA_HOST=0.0.0.0:11434 (required for containers).
+# can restart Ollama on loopback and expose only the authenticated proxy to containers.
 if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   info "Ollama service is running — attempting to stop for clean onboard..."
   systemctl --user stop ollama 2>/dev/null || true
@@ -381,12 +381,12 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 5: Second onboard (re-onboard via nemoclaw onboard)"
 
-info "Running nemoclaw onboard --non-interactive with NEMOCLAW_RECREATE_SANDBOX=1..."
+info "Running nemoclaw onboard --non-interactive --yes with NEMOCLAW_RECREATE_SANDBOX=1..."
 info "This exercises the exact code path from issue #2553:"
 info "  startOllamaAuthProxy() → killStaleProxy() → token generation → persistProxyToken()"
 
 export NEMOCLAW_RECREATE_SANDBOX=1
-nemoclaw onboard --non-interactive >"$REONBOARD_LOG" 2>&1 &
+nemoclaw onboard --non-interactive --yes >"$REONBOARD_LOG" 2>&1 &
 reonboard_pid=$!
 tail -f "$REONBOARD_LOG" --pid=$reonboard_pid 2>/dev/null &
 tail_pid=$!
@@ -555,7 +555,7 @@ echo "  What this tested (issue #2553 regression):"
 echo "    - GPU detection (nvidia-smi)"
 echo "    - Ollama binary install"
 echo "    - First onboard: install.sh → Ollama + auth proxy + sandbox + inference"
-echo "    - Second onboard (re-onboard): nemoclaw onboard --non-interactive"
+echo "    - Second onboard (re-onboard): nemoclaw onboard --non-interactive --yes"
 echo "    - TOKEN CONSISTENCY: persisted token matches running proxy after re-onboard"
 echo "    - Proxy auth enforcement: accept correct token, reject unauth + wrong token"
 echo "    - End-to-end inference through sandbox after re-onboard"

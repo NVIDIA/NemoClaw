@@ -48,6 +48,9 @@ function createFixture(opts: {
   savedCredential?: { key: string; value: string };
   /** If set, the onboard-session.json provider_selection step status */
   providerSelectionStatus?: string;
+  agent?: string | null;
+  messagingChannels?: string[] | null;
+  providerCredentialHashes?: Record<string, string>;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -55,6 +58,9 @@ function createFixture(opts: {
     credentialEnv = "NVIDIA_API_KEY",
     savedCredential,
     providerSelectionStatus = "complete",
+    agent = null,
+    messagingChannels = null,
+    providerCredentialHashes,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -73,7 +79,9 @@ function createFixture(opts: {
           provider,
           gpuEnabled: false,
           policies: [],
-          agent: null,
+          agent,
+          messagingChannels,
+          ...(providerCredentialHashes ? { providerCredentialHashes } : {}),
         },
       },
     }),
@@ -323,6 +331,33 @@ describe("Issue #2273: atomic rebuild", () => {
         expect(output).not.toContain("preflight failed");
         // Should proceed to backup step
         expect(output).toContain("Backing up sandbox state");
+      },
+    );
+
+    it(
+      "copies Hermes messaging channels from the registry into the rebuild resume session",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          messagingChannels: ["discord"],
+          providerCredentialHashes: { DISCORD_BOT_TOKEN: "hash-discord" },
+          credentialEnv: "NVIDIA_API_KEY",
+          savedCredential: {
+            key: "NVIDIA_API_KEY",
+            value: "nvapi-test-key-for-rebuild",
+          },
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+        expect(output).toContain("Creating new sandbox with current image");
+
+        const session = JSON.parse(
+          fs.readFileSync(path.join(f.nemoclawDir, "onboard-session.json"), "utf-8"),
+        );
+        expect(session.agent).toBe("hermes");
+        expect(session.messagingChannels).toEqual(["discord"]);
       },
     );
 
