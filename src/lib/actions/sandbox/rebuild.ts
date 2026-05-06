@@ -365,8 +365,10 @@ export async function rebuildSandbox(
         )
       : null;
   const rebuildMessagingChannels = registryMessagingChannels ?? sessionMessagingChannels ?? [];
+  const sessionMessagingChannelConfig =
+    sessionMatchesSandbox ? sessionBefore?.messagingChannelConfig ?? null : null;
   const rebuildMessagingChannelConfig =
-    sb.messagingChannelConfig ?? sessionBefore?.messagingChannelConfig ?? null;
+    sb.messagingChannelConfig ?? sessionMessagingChannelConfig ?? null;
   const hasRebuildMessagingChannels =
     registryMessagingChannels !== null || sessionMessagingChannels !== null;
   log(
