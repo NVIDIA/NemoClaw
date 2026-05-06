@@ -4,11 +4,11 @@
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 import type { RecoveryResult } from "./inventory-commands";
 import * as onboardSession from "./onboard-session";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
-import { captureOpenshell } from "./openshell-runtime";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { captureOpenshell } from "./adapters/openshell/runtime";
 import * as registry from "./registry";
 import type { SandboxEntry } from "./registry";
-import { resolveOpenshell } from "./resolve-openshell";
+import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "./runtime-recovery";
 import { validateName } from "./runner";
 

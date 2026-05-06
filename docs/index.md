@@ -337,6 +337,7 @@ Backup and Restore <manage-sandboxes/backup-restore>
 
 Approve or Deny Network Requests <network-policy/approve-network-requests>
 Customize the Network Policy <network-policy/customize-network-policy>
+Integration Policy Examples <network-policy/integration-policy-examples>
 ```
 
 ```{toctree}
@@ -344,7 +345,7 @@ Customize the Network Policy <network-policy/customize-network-policy>
 :hidden:
 
 Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
-Brev Web UI <get-started/brev-web-ui-quickstart>
+Brev Web UI <deployment/brev-web-ui>
 Install OpenClaw Plugins <deployment/install-openclaw-plugins>
 Sandbox Hardening <deployment/sandbox-hardening>
 ```

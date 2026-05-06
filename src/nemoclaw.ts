@@ -34,7 +34,7 @@ const {
   dockerRemoveVolumesByPrefix,
   dockerRmi,
 } = require("./lib/docker");
-const { resolveOpenshell } = require("./lib/resolve-openshell");
+const { resolveOpenshell } = require("./lib/adapters/openshell/resolve");
 const { hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
 const registry = require("./lib/registry");
 import type { SandboxEntry } from "./lib/registry";
@@ -47,11 +47,11 @@ const { buildStatusCommandDeps } = require("./lib/status-command-deps");
 const { help, version } = require("./lib/root-help-action");
 const onboardSession = require("./lib/onboard-session");
 import type { Session } from "./lib/onboard-session";
-const { stripAnsi } = require("./lib/openshell");
+const { stripAnsi } = require("./lib/adapters/openshell/client");
 const {
   getInstalledOpenshellVersionOrNull,
   runOpenshell,
-} = require("./lib/openshell-runtime");
+} = require("./lib/adapters/openshell/runtime");
 const {
   recoverNamedGatewayRuntime,
 } = require("./lib/gateway-runtime-action");
@@ -67,7 +67,7 @@ const {
 const {
   getSandboxDeleteOutcome,
 } = require("./lib/sandbox-destroy-action");
-const { runRegisteredOclifCommand } = require("./lib/oclif-runner");
+const { runRegisteredOclifCommand } = require("./lib/cli/oclif-runner");
 const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
 const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxState = require("./lib/sandbox-state");
@@ -83,13 +83,14 @@ const {
   globalCommandTokens,
   sandboxActionTokens,
 } = require("./lib/command-registry");
-import { normalizeArgv, suggestCommand } from "./lib/cli-argv-normalizer";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./lib/openshell-timeouts";
+import { normalizeArgv, suggestCommand } from "./lib/cli/argv-normalizer";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./lib/adapters/openshell/timeouts";
+import { renderPublicOclifHelp } from "./lib/cli/public-oclif-help";
 import {
   resolveGlobalOclifDispatch,
   resolveSandboxOclifDispatch,
   type DispatchResult,
-} from "./lib/oclif-dispatch";
+} from "./lib/cli/oclif-dispatch";
 
 // ── Global commands (derived from command registry) ──────────────
 
@@ -196,7 +197,11 @@ async function runDispatchResult(
       await runOclif(result.commandId, result.args);
       return;
     case "help":
-      printSandboxActionUsage(result.usage);
+      if (result.commandId) {
+        renderPublicOclifHelp(result.commandId, `<name> ${result.usage}`);
+      } else {
+        printSandboxActionUsage(result.usage);
+      }
       return;
     case "usageError":
       printDispatchUsageError(result, opts.sandboxName);

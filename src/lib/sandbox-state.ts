@@ -28,8 +28,8 @@ import path from "node:path";
 import * as registry from "./registry.js";
 import { loadAgent } from "./agent-defs.js";
 import type { AgentStateFile } from "./agent-defs.js";
-import { resolveOpenshell } from "./resolve-openshell.js";
-import { captureOpenshellCommand } from "./openshell.js";
+import { resolveOpenshell } from "./adapters/openshell/resolve.js";
+import { captureOpenshellCommand } from "./adapters/openshell/client.js";
 import { sanitizeConfigFile, isSensitiveFile } from "./credential-filter.js";
 import { shellQuote } from "./runner.js";
 

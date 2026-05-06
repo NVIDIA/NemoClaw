@@ -11,9 +11,12 @@ import { probeProviderHealth } from "./inference-health";
 import * as nim from "./nim";
 import * as onboardSession from "./onboard-session";
 import type { Session } from "./onboard-session";
-import { captureOpenshellForStatus, isCommandTimeout } from "./openshell-runtime";
+import {
+  captureOpenshellForStatus,
+  isCommandTimeout,
+} from "./adapters/openshell/runtime";
 import * as registry from "./registry";
-import { resolveOpenshell } from "./resolve-openshell";
+import { resolveOpenshell } from "./adapters/openshell/resolve";
 import {
   getReconciledSandboxGatewayState,
   getSandboxGatewayStateForStatus,

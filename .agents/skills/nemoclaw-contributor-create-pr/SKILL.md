@@ -37,14 +37,25 @@ Before creating a PR, verify the branch.
 
 ## Step 2: Run Pre-PR Checks
 
-Run both checks and confirm they pass before proceeding. Do not skip this step.
+Choose checks based on the files changed.
+
+For code changes, run both checks and confirm they pass before proceeding:
 
 ```bash
 npx prek run --all-files
 npm test
 ```
 
-If either fails, fix the issues before creating the PR.
+For doc-only changes, do not run the full test suite unless the docs change requires it.
+Run the docs and hook checks instead:
+
+```bash
+npx prek run --all-files
+make docs
+```
+
+If a required check fails, fix the issue before creating the PR.
+When preparing the PR body for a doc-only change, leave the `npm test` verification box unchecked unless you actually ran it.
 
 ## Step 3: Push the Branch
 
@@ -117,7 +128,7 @@ Use the exact template structure below. Fill in each section based on the diff (
 - [ ] Doc only (includes code sample changes)
 
 ## Verification
-<!-- Check each item you ran and confirmed. Leave unchecked items you skipped. -->
+<!-- Check each item you ran and confirmed. Leave unchecked items you skipped. Doc-only changes do not require npm test unless you ran it. -->
 - [ ] `npx prek run --all-files` passes
 - [ ] `npm test` passes
 - [ ] Tests added or updated for new or changed behavior
@@ -140,7 +151,7 @@ Follow these rules when filling in the template:
 - **Related Issue:** Include `Fixes #NNN` or `Closes #NNN` if an issue exists. Remove the section entirely if there is no related issue.
 - **Changes:** Bullet list of key changes. Be specific — reference file names, commands, or behaviors that changed.
 - **Type of Change:** Check exactly one box. Use `[x]` for checked, `[ ]` for unchecked.
-- **Verification:** Check only the boxes for steps you actually ran and confirmed passing. Do not check boxes for steps you skipped or did not verify.
+- **Verification:** Check only the boxes for steps you actually ran and confirmed passing. Do not check boxes for steps you skipped or did not verify. For doc-only changes, `npm test` is not required; leave it unchecked unless you ran it.
 - **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
 
 ## Step 6: Create the PR
@@ -187,6 +198,7 @@ Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
 - **Do not invent your own PR body format.** Use the template from Step 5 exactly.
 - **Do not omit sections.** Even if a section is not applicable, keep it with the "Skip if..." comment.
 - **Do not check boxes for steps you did not run.** If you did not run `make docs`, leave that box unchecked.
+- **Do not run the full test suite for doc-only changes by default.** Run docs and hook checks instead, and leave `npm test` unchecked unless you actually ran it.
 - **Do not forget the DCO sign-off.** CI will reject the PR without it.
 - **Do not forget `--assignee @me`.** Every PR must be assigned to its creator.
 - **Do not create PRs from main.** Always use a feature branch.

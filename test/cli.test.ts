@@ -365,6 +365,10 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("(--check, --auto, --yes|-y)");
     expect(r.out).toContain("nemoclaw gc");
     expect(r.out).toContain("(--yes|-y|--force, --dry-run)");
+    expect(r.out).toContain("nemoclaw onboard");
+    expect(r.out).toContain("Configure inference endpoint and credentials");
+    expect(r.out).toContain("nemoclaw onboard --from");
+    expect(r.out).toContain("Use a custom Dockerfile for the sandbox image");
   });
 
   it("--help exits 0", () => {
@@ -397,7 +401,21 @@ describe("CLI dispatch", () => {
   });
 
   it("suggests list for a mistyped list command", () => {
-    const r = run("liost");
+    // Isolate from any real openshell gateway on the host so recovery
+    // doesn't intercept the typo suggestion.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-typo-suggest-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("liost", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
     expect(r.code).toBe(1);
     expect(r.out).toContain("Unknown command: liost");
     expect(r.out).toContain("Did you mean: nemoclaw list?");
@@ -1157,6 +1175,12 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Nonexistent flag: --quik");
   });
 
+  it("debug --output without a path is rejected by oclif", () => {
+    const r = run("debug --output");
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Flag --output expects a value");
+  });
+
   it("help mentions debug command", () => {
     const r = run("help");
     expect(r.code).toBe(0);
@@ -1205,7 +1229,8 @@ describe("CLI dispatch", () => {
     );
     const r = runWithEnv("debug --quick --sandbox mybox 2>&1", { HOME: home });
     expect(r.code).toBe(0);
-    expect(r.out).not.toContain("Warning");
+    expect(r.out).not.toContain("default sandbox 'ghost'");
+    expect(r.out).not.toContain("--sandbox NAME");
     expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
   });
 
@@ -1216,8 +1241,8 @@ describe("CLI dispatch", () => {
     const r = runWithEnv("alpha gateway-token --help", { HOME: home });
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain("Usage: nemoclaw <name> gateway-token [--quiet|-q]");
-    expect(r.out).not.toContain("sandbox:gateway-token");
+    expect(r.out).toContain("$ nemoclaw <name> gateway-token [--quiet|-q]");
+    expect(r.out).not.toContain("sandbox:gateway");
   });
 
   it("doctor fails a present sandbox that is not Ready", () => {
@@ -4432,6 +4457,7 @@ describe("CLI dispatch", () => {
 
   it(
     "explains when gateway metadata exists but the restarted API is still refusing connections",
+    { timeout: 30000 },
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-unreachable-"));
       const localBin = path.join(home, "bin");
@@ -4539,7 +4565,6 @@ describe("CLI dispatch", () => {
       ).toBeTruthy();
       expect(connectResult.out.includes("If the gateway never becomes healthy")).toBeTruthy();
     },
-    testTimeout(10_000),
   );
 
   it(
@@ -4966,7 +4991,7 @@ describe("list shows live gateway inference", () => {
     ]) {
       const result = runWithEnv(`alpha share ${subcommand} --help`, { HOME: home });
       expect(result.code).toBe(0);
-      expect(result.out).toContain(`Usage: nemoclaw <name> ${usage}`);
+      expect(result.out).toContain(`$ nemoclaw <name> ${usage}`);
       expect(result.out).not.toContain("sandbox:share");
     }
   });

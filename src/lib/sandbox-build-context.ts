@@ -78,6 +78,13 @@ function stageOptimizedSandboxBuildContext(
   fs.cpSync(path.join(sourceBlueprintDir, "scripts"), path.join(stagedBlueprintDir, "scripts"), {
     recursive: true,
   });
+  fs.cpSync(
+    path.join(sourceBlueprintDir, "openclaw-plugins"),
+    path.join(stagedBlueprintDir, "openclaw-plugins"),
+    {
+      recursive: true,
+    },
+  );
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });
   fs.copyFileSync(

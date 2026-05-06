@@ -2,13 +2,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Telegram + OpenAI-compatible endpoint regression E2E (#2766)
+# Telegram + OpenAI-compatible endpoint regression E2E (#2766, #2572)
 #
 # Hermetic path:
 #   - starts a local OpenAI-compatible mock endpoint
 #   - onboards with NEMOCLAW_PROVIDER=custom and Telegram enabled
 #   - verifies OpenClaw keeps the managed inference.local provider shape
 #   - verifies a sandbox-side chat completion reaches the mock with auth
+#   - verifies openclaw's HTTP client completes a turn through the custom
+#     endpoint (exercises the FORWARD-mode rewrite in http-proxy-fix.js,
+#     the path that caused "LLM request failed: network connection error"
+#     for deepinfra/together.ai users on NemoClaw 0.0.24 — see #2572)
+#   - verifies no RFC 7230 hop-by-hop proxy headers leak to the upstream
 #
 # Prerequisites:
 #   - Docker running
@@ -139,10 +144,23 @@ port = int(sys.argv[1])
 model = sys.argv[2]
 api_key = sys.argv[3]
 
+# RFC 7230 §6.1 hop-by-hop headers that http-proxy-fix.js must strip before
+# the request reaches the upstream. If any of these arrive at the mock it
+# means the FORWARD-mode rewrite leaked proxy-hop fields — the bug class
+# that hit deepinfra users on NemoClaw 0.0.24 (issue #2490).
+HOP_BY_HOP = {
+    "proxy-authorization", "proxy-connection", "proxy-authenticate",
+    "connection", "keep-alive", "te", "trailer", "transfer-encoding", "upgrade",
+}
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
+
+    def _log_proxy_hop_headers(self):
+        leaked = [k for k in self.headers if k.lower() in HOP_BY_HOP]
+        print("proxy_hop_headers=%s" % ("none" if not leaked else ",".join(leaked)), flush=True)
 
     def _send(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
@@ -158,6 +176,26 @@ class Handler(BaseHTTPRequestHandler):
             "data: {\"delta\":\"OK\"}\n\n"
             "event: response.completed\n"
             "data: {}\n\n"
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_chat_sse(self, content):
+        chunk = json.dumps({
+            "id": "chatcmpl-mock",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": content}, "finish_reason": None}],
+        })
+        done_chunk = json.dumps({
+            "id": "chatcmpl-mock",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        })
+        body = (
+            "data: %s\n\ndata: %s\n\ndata: [DONE]\n\n" % (chunk, done_chunk)
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -203,9 +241,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/v1/chat/completions":
-            print("POST /v1/chat/completions auth=%s model=%s" % ("ok" if self._auth_ok() else "missing", payload.get("model")), flush=True)
+            self._log_proxy_hop_headers()
+            print("POST /v1/chat/completions auth=%s model=%s stream=%s" % ("ok" if self._auth_ok() else "missing", payload.get("model"), payload.get("stream")), flush=True)
             if not self._auth_ok():
                 self._send(401, {"error": {"message": "missing bearer credential"}})
+                return
+            if payload.get("stream"):
+                self._send_chat_sse("PONG from compatible endpoint mock")
                 return
             self._send(200, {
                 "id": "chatcmpl-mock",
@@ -423,6 +465,91 @@ print(json.dumps({
   fi
 }
 
+# C8 + C9: Run openclaw agent --json inside the sandbox and verify the
+# openclaw HTTP client (axios/follow-redirects) completes a turn through
+# the custom compatible endpoint. This exercises the FORWARD-mode rewrite
+# branch of nemoclaw-blueprint/scripts/http-proxy-fix.js — the path that
+# caused "LLM request failed: network connection error" for deepinfra users
+# on NemoClaw 0.0.24 (issue #2490). curl (used in C5) bypasses Node's
+# http.request entirely and cannot catch this class of regression.
+check_openclaw_agent_turn() {
+  local session_id raw ssh_cfg reply rc=0
+  session_id="e2e-compat-agent-$(date +%s)-$$"
+  ssh_cfg="$(mktemp)"
+
+  if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_cfg" 2>/dev/null; then
+    rm -f "$ssh_cfg"
+    fail "C8: openclaw agent turn — could not get SSH config"
+    return
+  fi
+
+  # Snapshot hop-header log count before the agent turn so C9 can prove a
+  # *new* line was written by this request and not reused from the C5 curl hit.
+  local hop_count_before
+  hop_count_before=$(grep -c "proxy_hop_headers=" "$COMPAT_MOCK_LOG" 2>/dev/null) || hop_count_before=0
+
+  # 2>/dev/null drops openclaw progress/log lines so stdout is JSON-only.
+  raw=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 \
+    -o LogLevel=ERROR \
+    "openshell-${SANDBOX_NAME}" \
+    "openclaw agent --agent main --json --session-id '${session_id}' -m 'Reply with only: PONG'" \
+    2>/dev/null) || rc=$?
+  rm -f "$ssh_cfg"
+
+  # Fail closed on provider/transport errors so a coincidental PONG in a
+  # stack trace or error message cannot mask an SSRF block or gateway failure.
+  if printf '%s' "$raw" | grep -qiE "SsrFBlockedError|Blocked hostname|transport error|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error"; then
+    fail "C8: openclaw agent turn failed with provider/transport error (exit ${rc}): ${raw:0:300}"
+    return
+  fi
+
+  reply=$(printf '%s' "$raw" | python3 -c "
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+result = doc.get('result') or {}
+parts = []
+for p in result.get('payloads') or []:
+    if isinstance(p, dict) and isinstance(p.get('text'), str):
+        parts.append(p['text'])
+print('\n'.join(parts))
+" 2>/dev/null) || true
+
+  if [ "$rc" -eq 0 ] && printf '%s' "$reply" | grep -qi "PONG"; then
+    pass "C8: openclaw agent completed turn via compatible endpoint (http-proxy-fix.js FORWARD-mode path exercised)"
+  else
+    fail "C8: openclaw agent turn failed (exit ${rc}); reply='${reply:0:200}', raw='${raw:0:200}'"
+  fi
+
+  # C9: Verify http-proxy-fix.js stripped proxy hop headers — they must not
+  # reach the upstream mock. The mock logs "proxy_hop_headers=none" when
+  # clean, or "proxy_hop_headers=<header,...>" when the strip failed.
+  # Read every line appended after the SSH command so C5's earlier
+  # /v1/chat/completions entry cannot satisfy this check, and so a retry
+  # or follow-up call can't slip a leaked-header request past us.
+  local new_hop_lines leaked
+  new_hop_lines=$(grep "proxy_hop_headers=" "$COMPAT_MOCK_LOG" 2>/dev/null \
+    | tail -n +"$((hop_count_before + 1))") || true
+  if [ -z "$new_hop_lines" ]; then
+    fail "C9: Mock logged no proxy_hop_headers line for the agent turn — agent did not reach /v1/chat/completions"
+  else
+    leaked=$(printf '%s\n' "$new_hop_lines" \
+      | sed 's/.*proxy_hop_headers=//' \
+      | grep -v '^none$' \
+      | paste -sd',' -) || true
+    if [ -z "$leaked" ]; then
+      pass "C9: No proxy hop headers leaked to the compatible endpoint upstream (http-proxy-fix.js strip verified)"
+    else
+      fail "C9: Proxy hop headers leaked to upstream — http-proxy-fix.js strip broken: ${leaked}"
+    fi
+  fi
+}
+
 cleanup() {
   stop_compat_mock
   rm -f "$COMPAT_MOCK_LOG" 2>/dev/null || true
@@ -456,7 +583,7 @@ trap cleanup EXIT
 
 echo ""
 echo "============================================================"
-echo "  Telegram + Compatible Endpoint E2E (#2766)"
+echo "  Telegram + Compatible Endpoint E2E (#2766, #2572)"
 echo "  $(date)"
 echo "============================================================"
 echo ""
@@ -518,6 +645,7 @@ fi
 check_openclaw_config
 check_gateway_ready
 check_sandbox_inference
+check_openclaw_agent_turn
 
 if grep -q "POST /v1/chat/completions auth=ok" "$COMPAT_MOCK_LOG" 2>/dev/null; then
   pass "C6: Compatible mock received authenticated chat traffic"

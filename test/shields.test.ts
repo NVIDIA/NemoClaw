@@ -76,29 +76,29 @@ describe("shields — unit logic", () => {
     // Since the CJS require resolution issue makes direct import flaky,
     // test the TypeScript duration module instead.
     it("parses minutes", async () => {
-      const { parseDuration } = await import("../src/lib/duration.js");
+      const { parseDuration } = await import("../src/lib/domain/duration.js");
       expect(parseDuration("5m")).toBe(300);
       expect(parseDuration("30m")).toBe(1800);
     });
 
     it("parses seconds", async () => {
-      const { parseDuration } = await import("../src/lib/duration.js");
+      const { parseDuration } = await import("../src/lib/domain/duration.js");
       expect(parseDuration("90s")).toBe(90);
     });
 
     it("treats bare numbers as seconds", async () => {
-      const { parseDuration } = await import("../src/lib/duration.js");
+      const { parseDuration } = await import("../src/lib/domain/duration.js");
       expect(parseDuration("300")).toBe(300);
     });
 
     it("rejects durations exceeding 30 minutes", async () => {
-      const { parseDuration } = await import("../src/lib/duration.js");
+      const { parseDuration } = await import("../src/lib/domain/duration.js");
       expect(() => parseDuration("31m")).toThrow("exceeds maximum");
       expect(() => parseDuration("1h")).toThrow("exceeds maximum");
     });
 
     it("rejects invalid input", async () => {
-      const { parseDuration } = await import("../src/lib/duration.js");
+      const { parseDuration } = await import("../src/lib/domain/duration.js");
       expect(() => parseDuration("abc")).toThrow("Invalid duration");
     });
   });

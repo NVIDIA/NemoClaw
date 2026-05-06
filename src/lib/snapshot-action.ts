@@ -10,7 +10,7 @@ import { CLI_NAME } from "./branding";
 import { dockerCapture, dockerInspect } from "./docker";
 import { parseLiveSandboxNames } from "./runtime-recovery";
 import { ROOT, run, shellQuote, validateName } from "./runner";
-import { captureOpenshell, getOpenshellBinary } from "./openshell-runtime";
+import { captureOpenshell, getOpenshellBinary } from "./adapters/openshell/runtime";
 import * as policies from "./policies";
 import * as registry from "./registry";
 import type { SandboxEntry } from "./registry";

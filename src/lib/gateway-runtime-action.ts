@@ -4,9 +4,9 @@
 const { startGatewayForRecovery } = require("./onboard") as {
   startGatewayForRecovery: () => Promise<void>;
 };
-import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
-import { stripAnsi } from "./openshell";
-import { captureOpenshell, runOpenshell } from "./openshell-runtime";
+import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { stripAnsi } from "./adapters/openshell/client";
+import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
 
 function hasNamedGateway(output = ""): boolean {
   return stripAnsi(output).includes("Gateway: nemoclaw");

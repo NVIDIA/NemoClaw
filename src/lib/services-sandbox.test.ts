@@ -14,7 +14,7 @@ import { spawnSync as realSpawnSync } from "node:child_process";
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const resolveOpenshellModule = require("../../dist/lib/resolve-openshell");
+const resolveOpenshellModule = require("../../dist/lib/adapters/openshell/resolve");
 
 import {
   stopSandboxChannels,

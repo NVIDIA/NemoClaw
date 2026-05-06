@@ -1127,17 +1127,27 @@ write_auth_profile() {
     return
   fi
 
-  python3 - <<'PYAUTH'
+  # Read the provider key from the NEMOCLAW_PROVIDER_KEY env var (exported at
+  # Dockerfile:99 from the build-time ARG). This avoids parsing openclaw.json
+  # and ensures the auth profile matches the provider key in the model config.
+  # See: https://github.com/NVIDIA/NemoClaw/issues/1332
+  local provider_key="${NEMOCLAW_PROVIDER_KEY:-inference}"
+
+  python3 - "$provider_key" <<'PYAUTH'
 import json
 import os
+import sys
+
+provider_key = sys.argv[1]
+
 path = os.path.expanduser('~/.openclaw/agents/main/agent/auth-profiles.json')
 os.makedirs(os.path.dirname(path), exist_ok=True)
 json.dump({
-    'nvidia:manual': {
+    f'{provider_key}:manual': {
         'type': 'api_key',
-        'provider': 'nvidia',
+        'provider': provider_key,
         'keyRef': {'source': 'env', 'id': 'NVIDIA_API_KEY'},
-        'profileId': 'nvidia:manual',
+        'profileId': f'{provider_key}:manual',
     }
 }, open(path, 'w'))
 os.chmod(path, 0o600)

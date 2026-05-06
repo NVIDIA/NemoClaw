@@ -21,7 +21,7 @@ const {
   parseCurrentPolicy,
   PERMISSIVE_POLICY_PATH,
 } = require("./policies");
-const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("./duration");
+const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("./domain/duration");
 const { appendAuditEntry } = require("./shields-audit");
 const { resolveAgentConfig } = require("./sandbox-config");
 

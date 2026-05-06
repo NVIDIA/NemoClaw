@@ -33,7 +33,7 @@ vi.mock("./registry.js", () => ({
   },
 }));
 
-vi.mock("./resolve-openshell.js", () => ({
+vi.mock("./adapters/openshell/resolve.js", () => ({
   resolveOpenshell: vi.fn(() => null),
 }));
 
@@ -41,7 +41,7 @@ vi.mock("./gateway-runtime-action.js", () => ({
   recoverNamedGatewayRuntime: vi.fn(),
 }));
 
-vi.mock("./openshell-runtime.js", () => ({
+vi.mock("./adapters/openshell/runtime.js", () => ({
   captureOpenshell: vi.fn(),
 }));
 

@@ -96,6 +96,27 @@ function getPresetEndpoints(content: string): string[] {
 }
 
 /**
+ * Messaging channel presets only open network egress to the provider's API;
+ * the bot token, channel configuration, and in-sandbox bridge are wired up at
+ * `nemoclaw onboard` time, so applying these presets after onboarding without
+ * having enabled the channel opens the firewall but leaves the sandbox
+ * without a running bridge. See #1691.
+ */
+const MESSAGING_PRESET_NAMES = new Set(["telegram", "discord", "slack"]);
+
+function getMessagingPresetWarning(presetName: string): string | null {
+  if (!MESSAGING_PRESET_NAMES.has(presetName)) return null;
+  const label =
+    presetName === "telegram" ? "Telegram" : presetName === "discord" ? "Discord" : "Slack";
+  return [
+    `Note: the '${presetName}' preset only opens network egress to the ${label} API.`,
+    `To actually enable ${label} messaging, re-run 'nemoclaw onboard' and select ${label}`,
+    "in the messaging channels step. The bot token and channel bridge are wired",
+    "up at onboard time and are not added by applying this preset alone.",
+  ].join("\n  ");
+}
+
+/**
  * Extract just the network_policies entries (indented content under
  * the `network_policies:` key) from a preset file, stripping the
  * `preset:` metadata header.
@@ -919,6 +940,7 @@ export {
   listPresets,
   loadPreset,
   getPresetEndpoints,
+  getMessagingPresetWarning,
   extractPresetEntries,
   parseCurrentPolicy,
   buildPolicySetCommand,

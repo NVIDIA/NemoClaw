@@ -200,7 +200,7 @@ else
 fi
 
 # If the Ollama installer started a system service, stop it so onboard
-# can start Ollama with OLLAMA_HOST=0.0.0.0:11434 (required for containers).
+# can restart Ollama on loopback and expose only the authenticated proxy to containers.
 if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   info "Ollama service is running — attempting to stop for clean onboard..."
   systemctl --user stop ollama 2>/dev/null || true

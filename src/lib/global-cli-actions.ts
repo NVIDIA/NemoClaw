@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- transitional action facade until implementations leave src/nemoclaw.ts. */
-
 import { runDeployAction as executeDeployAction } from "./deploy-action";
+import {
+  type GarbageCollectImagesOptions,
+  type UpgradeSandboxesOptions,
+} from "./domain/lifecycle/options";
 import {
   backupAll as executeBackupAllAction,
   garbageCollectImages as executeGarbageCollectImagesAction,
@@ -14,7 +16,7 @@ import {
   runSetupSparkAction as executeSetupSparkAction,
 } from "./onboard-action";
 import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "./gateway-runtime-action";
-import { runOpenshell } from "./openshell-runtime";
+import { runOpenshell } from "./adapters/openshell/runtime";
 import { help, version } from "./root-help-action";
 
 type GatewayRecovery = { recovered: boolean };
@@ -22,6 +24,7 @@ type GatewayRecovery = { recovered: boolean };
 type GlobalCliActionRuntimeHooks = {
   recoverNamedGatewayRuntime?: () => Promise<GatewayRecovery>;
   runOpenshell?: typeof runOpenshell;
+  upgradeSandboxes?: (options?: string[] | UpgradeSandboxesOptions) => Promise<void>;
 };
 
 let runtimeHooks: GlobalCliActionRuntimeHooks = {};
@@ -52,15 +55,23 @@ export function runBackupAllAction(): void {
   executeBackupAllAction();
 }
 
-export async function runUpgradeSandboxesAction(args: string[] = []): Promise<void> {
+export async function runUpgradeSandboxesAction(
+  options: string[] | UpgradeSandboxesOptions = {},
+): Promise<void> {
+  if (typeof runtimeHooks.upgradeSandboxes === "function") {
+    await runtimeHooks.upgradeSandboxes(options);
+    return;
+  }
   const { upgradeSandboxes } = require("./upgrade-sandboxes-action") as {
-    upgradeSandboxes: (args?: string[]) => Promise<void>;
+    upgradeSandboxes: (options?: string[] | UpgradeSandboxesOptions) => Promise<void>;
   };
-  await upgradeSandboxes(args);
+  await upgradeSandboxes(options);
 }
 
-export async function runGarbageCollectImagesAction(args: string[] = []): Promise<void> {
-  await executeGarbageCollectImagesAction(args);
+export async function runGarbageCollectImagesAction(
+  options: string[] | GarbageCollectImagesOptions = {},
+): Promise<void> {
+  await executeGarbageCollectImagesAction(options);
 }
 
 export function showRootHelp(): void {

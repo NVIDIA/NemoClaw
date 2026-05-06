@@ -8,6 +8,7 @@
 const { runCapture, runShell } = require("./runner");
 const { dockerCapture, dockerSpawn } = require("./docker");
 const { VLLM_PORT } = require("./ports");
+const { getGpuIndicesByName } = require("./nim");
 
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
@@ -20,6 +21,10 @@ interface VllmProfile {
   // docker run flags excluding the image and the entrypoint command. The
   // caller appends -p / --name / etc. that are not platform-specific.
   dockerRunFlags: string[];
+  // Optional dynamic flag builder. When present, its return value replaces
+  // dockerRunFlags at install time. Used by Station to pick the GB300 GPU
+  // out of a mixed-GPU host instead of using `--gpus all`.
+  buildDockerRunFlags?: () => string[];
   // bash -c command passed to docker run (pip install + vllm serve …)
   command: string;
   // Approximate first-run time shown in the confirmation prompt.
@@ -89,6 +94,40 @@ const SPARK_PROFILE: VllmProfile = {
   readyMarker: /Uvicorn running on|Application startup complete/,
 };
 
+// DGX Station.
+const STATION_PROFILE: VllmProfile = {
+  name: "DGX Station",
+  image: SPARK_PROFILE.image,
+  model: SPARK_PROFILE.model,
+  containerName: "nemoclaw-vllm",
+  dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
+  buildDockerRunFlags: () => {
+    const indices = getGpuIndicesByName(/GB300/i);
+    const gpuFlag =
+      indices.length === 0
+        ? "all"
+        : indices.length === 1
+          ? `device=${indices[0]}`
+          : `'"device=${indices.join(",")}"'`;
+    return [
+      "--gpus",
+      gpuFlag,
+      "--ipc=host",
+      "-v",
+      `${process.env.HOME}/.cache/huggingface:/root/.cache/huggingface`,
+      "-e",
+      "HF_HOME=/root/.cache/huggingface",
+    ];
+  },
+  command: SPARK_PROFILE.command,
+  estimatedMinutes: SPARK_PROFILE.estimatedMinutes,
+  pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
+  loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
+  progressMarkers: SPARK_PROFILE.progressMarkers,
+  fatalMarkers: SPARK_PROFILE.fatalMarkers,
+  readyMarker: SPARK_PROFILE.readyMarker,
+};
+
 // Generic discrete-GPU Linux. Uses a small nemotron model that fits on
 // most GPUs.
 const GENERIC_LINUX_PROFILE: VllmProfile = {
@@ -114,11 +153,20 @@ const GENERIC_LINUX_PROFILE: VllmProfile = {
   readyMarker: SPARK_PROFILE.readyMarker,
 };
 
-export const PROFILES: VllmProfile[] = [SPARK_PROFILE, GENERIC_LINUX_PROFILE];
+export const PROFILES: VllmProfile[] = [SPARK_PROFILE, STATION_PROFILE, GENERIC_LINUX_PROFILE];
 
 export function detectVllmProfile(
-  gpu: { spark?: boolean; type?: string } | null | undefined,
+  gpu:
+    | {
+        spark?: boolean;
+        type?: string;
+        platform?: "spark" | "station" | "linux";
+      }
+    | null
+    | undefined,
 ): VllmProfile | null {
+  if (gpu?.platform === "spark") return SPARK_PROFILE;
+  if (gpu?.platform === "station") return STATION_PROFILE;
   if (gpu?.spark) return SPARK_PROFILE;
   if (gpu?.type === "nvidia") return GENERIC_LINUX_PROFILE;
   return null;
@@ -237,7 +285,10 @@ function startContainer(profile: VllmProfile): { ok: boolean; reason?: string } 
     ignoreError: true,
     suppressOutput: true,
   });
-  const flags = profile.dockerRunFlags.join(" ");
+  const resolvedFlags = profile.buildDockerRunFlags
+    ? profile.buildDockerRunFlags()
+    : profile.dockerRunFlags;
+  const flags = resolvedFlags.join(" ");
   const cmd =
     `docker run -d ${flags} -p ${String(VLLM_PORT)}:8000 ` +
     `--name ${profile.containerName} ${profile.image} bash -c ${JSON.stringify(profile.command)}`;

@@ -45,7 +45,7 @@ The current generated skills and their source pages are:
 | `nemoclaw-user-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md`, `docs/inference/set-up-sub-agent.md` |
 | `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.md`, `docs/manage-sandboxes/messaging-channels.md`, `docs/manage-sandboxes/workspace-files.md`, `docs/manage-sandboxes/backup-restore.md` |
 | `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |
-| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
+| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/integration-policy-examples.md`, `docs/network-policy/approve-network-requests.md` |
 | `nemoclaw-user-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/cli-selection-guide.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
 | `nemoclaw-user-configure-security` | `docs/security/best-practices.md`, `docs/security/credential-storage.md`, `docs/security/openclaw-controls.md` |
 
@@ -105,6 +105,19 @@ To serve the docs locally and automatically rebuild on changes, run:
 ```bash
 make docs-live
 ```
+
+## Doc-Only PR Verification
+
+Doc-only pull requests do not need the full test suite by default.
+Before opening a doc-only PR, run:
+
+```bash
+npx prek run --all-files
+make docs
+```
+
+Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
+Run the full tests only when the change also touches code, generated behavior, or runtime behavior.
 
 ## Writing Conventions
 

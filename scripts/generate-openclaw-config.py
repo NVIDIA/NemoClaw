@@ -42,6 +42,16 @@ import re
 import sys
 from urllib.parse import urlparse
 
+KIMI_K26_MODEL_ID = "moonshotai/kimi-k2.6"
+KIMI_K26_MANAGED_INFERENCE_COMPAT = {
+    "requiresStringContent": True,
+    "maxTokensField": "max_tokens",
+    "requiresToolResultName": True,
+}
+KIMI_K26_MANAGED_INFERENCE_PLUGIN_ID = "nemoclaw-kimi-inference-compat"
+KIMI_K26_MANAGED_INFERENCE_PLUGIN_PATH = (
+    "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat"
+)
 
 def _coerce_positive_int(env: dict, name: str, default: int) -> int:
     raw = env.get(name) or str(default)
@@ -69,6 +79,17 @@ def is_loopback(hostname: str) -> bool:
     if normalized == "localhost" or normalized == "::1":
         return True
     return bool(re.match(r"^127(?:\.\d{1,3}){3}$", normalized))
+
+
+def _is_kimi_k26_managed_inference(
+    model: str, provider_key: str, inference_base_url: str, inference_api: str
+) -> bool:
+    return (
+        model.strip().lower() == KIMI_K26_MODEL_ID
+        and provider_key == "inference"
+        and inference_api == "openai-completions"
+        and inference_base_url.rstrip("/") == "https://inference.local/v1"
+    )
 
 
 def build_config(env: dict | None = None) -> dict:
@@ -110,9 +131,18 @@ def build_config(env: dict | None = None) -> dict:
         raise ValueError("NEMOCLAW_AGENT_TIMEOUT must be a positive integer")
     agent_timeout = int(_raw_agent_timeout)
 
+    kimi_managed_inference = _is_kimi_k26_managed_inference(
+        model, provider_key, inference_base_url, inference_api
+    )
+
     inference_compat = json.loads(
         base64.b64decode(env["NEMOCLAW_INFERENCE_COMPAT_B64"]).decode("utf-8")
     )
+    if kimi_managed_inference:
+        inference_compat = {
+            **inference_compat,
+            **KIMI_K26_MANAGED_INFERENCE_COMPAT,
+        }
 
     msg_channels = json.loads(
         base64.b64decode(
@@ -275,6 +305,11 @@ def build_config(env: dict | None = None) -> dict:
         if provider_key not in _provider_keys:
             plugin_entries[_plugin_id] = {"enabled": False}
 
+    plugins = {"entries": plugin_entries}
+    if kimi_managed_inference:
+        plugin_entries[KIMI_K26_MANAGED_INFERENCE_PLUGIN_ID] = {"enabled": True}
+        plugins["load"] = {"paths": [KIMI_K26_MANAGED_INFERENCE_PLUGIN_PATH]}
+
     config = {
         "agents": {
             "defaults": {
@@ -318,7 +353,7 @@ def build_config(env: dict | None = None) -> dict:
         # Provider plugins with staged runtime dependencies are disabled above
         # unless they match NEMOCLAW_PROVIDER_KEY. That keeps the baked image
         # limited to the provider selected during onboard.
-        "plugins": {"entries": plugin_entries},
+        "plugins": plugins,
         "gateway": {
             "mode": "local",
             "controlUi": {

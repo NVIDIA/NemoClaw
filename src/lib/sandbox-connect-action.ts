@@ -13,8 +13,8 @@ import {
   captureOpenshell,
   getOpenshellBinary,
   runOpenshell,
-} from "./openshell-runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
+} from "./adapters/openshell/runtime";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import * as registry from "./registry";
 import { ROOT } from "./runner";
 import { ensureLiveSandboxOrExit } from "./sandbox-gateway-state-action";
@@ -25,7 +25,7 @@ import {
 import { checkAndRecoverSandboxProcesses } from "./sandbox-process-recovery-action";
 import * as sandboxVersion from "./sandbox-version";
 import { D, G, R, YW } from "./terminal-style";
-import { resolveOpenshell } from "./resolve-openshell";
+import { resolveOpenshell } from "./adapters/openshell/resolve";
 
 const agentRuntime = require("../../bin/lib/agent-runtime");
 

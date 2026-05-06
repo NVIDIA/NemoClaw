@@ -7,25 +7,27 @@ import fs from "node:fs";
 
 import { CLI_NAME } from "./branding";
 import { prompt as askPrompt } from "./credentials";
+import {
+  type DestroySandboxOptions,
+  normalizeDestroySandboxOptions,
+} from "./domain/lifecycle/options";
 import * as onboardSession from "./onboard-session";
 import type { Session } from "./onboard-session";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "./ports";
 import * as registry from "./registry";
-import { resolveOpenshell } from "./resolve-openshell";
+import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "./runtime-recovery";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "./sandbox-session-state";
-import { stripAnsi } from "./openshell";
+import {
+  getSandboxDeleteOutcome,
+  shouldCleanupGatewayAfterDestroy,
+  shouldStopHostServicesAfterDestroy,
+} from "./domain/sandbox/destroy";
 import { G, R, YW } from "./terminal-style";
-
-type SpawnLikeResult = {
-  status: number | null;
-  stdout?: string;
-  stderr?: string;
-};
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -43,7 +45,7 @@ const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 function cleanupGatewayAfterLastSandbox(): void {
-  const { runOpenshell } = require("./openshell-runtime") as {
+  const { runOpenshell } = require("./adapters/openshell/runtime") as {
     runOpenshell: (args: string[], opts?: Record<string, unknown>) => { status: number | null };
   };
   const { dockerRemoveVolumesByPrefix } = require("./docker") as {
@@ -61,7 +63,7 @@ function cleanupGatewayAfterLastSandbox(): void {
 }
 
 function hasNoLiveSandboxes(): boolean {
-  const { captureOpenshell } = require("./openshell-runtime") as {
+  const { captureOpenshell } = require("./adapters/openshell/runtime") as {
     captureOpenshell: (
       args: string[],
       opts?: { ignoreError?: boolean; timeout?: number },
@@ -75,23 +77,6 @@ function hasNoLiveSandboxes(): boolean {
     return false;
   }
   return parseLiveSandboxNames(liveList.output).size === 0;
-}
-
-function isMissingSandboxDeleteResult(output = ""): boolean {
-  return /\bNotFound\b|\bNot Found\b|sandbox not found|sandbox .* not found|sandbox .* not present|sandbox does not exist|no such sandbox/i.test(
-    stripAnsi(output),
-  );
-}
-
-export function getSandboxDeleteOutcome(deleteResult: SpawnLikeResult): {
-  output: string;
-  alreadyGone: boolean;
-} {
-  const output = `${deleteResult.stdout || ""}${deleteResult.stderr || ""}`.trim();
-  return {
-    output,
-    alreadyGone: deleteResult.status !== 0 && isMissingSandboxDeleteResult(output),
-  };
 }
 
 function cleanupSandboxServices(
@@ -117,7 +102,7 @@ function cleanupSandboxServices(
 
   // Delete messaging providers created during onboard. Suppress stderr so
   // "! Provider not found" noise doesn't appear when messaging was never configured.
-  const { runOpenshell } = require("./openshell-runtime") as {
+  const { runOpenshell } = require("./adapters/openshell/runtime") as {
     runOpenshell: (args: string[], opts?: Record<string, unknown>) => { status: number | null };
   };
   for (const suffix of ["telegram-bridge", "discord-bridge", "slack-bridge"]) {
@@ -161,8 +146,12 @@ export function removeSandboxRegistryEntry(
   return removeSandbox(sandboxName);
 }
 
-export async function destroySandbox(sandboxName: string, args: string[] = []): Promise<void> {
-  const skipConfirm = args.includes("--yes") || args.includes("--force");
+export async function destroySandbox(
+  sandboxName: string,
+  options: string[] | DestroySandboxOptions = {},
+): Promise<void> {
+  const normalized = normalizeDestroySandboxOptions(options);
+  const skipConfirm = normalized.yes === true || normalized.force === true;
 
   // Active session detection — enrich the confirmation prompt if sessions are active
   let activeSessionCount = 0;
@@ -220,7 +209,7 @@ export async function destroySandbox(sandboxName: string, args: string[] = []): 
   }
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
-  const { runOpenshell } = require("./openshell-runtime") as {
+  const { runOpenshell } = require("./adapters/openshell/runtime") as {
     runOpenshell: (
       args: string[],
       opts?: Record<string, unknown>,
@@ -240,10 +229,12 @@ export async function destroySandbox(sandboxName: string, args: string[] = []): 
     process.exit(deleteResult.status || 1);
   }
 
-  const shouldStopHostServices =
-    (deleteResult.status === 0 || alreadyGone) &&
-    registry.listSandboxes().sandboxes.length === 1 &&
-    !!registry.getSandbox(sandboxName);
+  const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
+  const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
+    deleteSucceededOrAlreadyGone,
+    registeredSandboxCount: registry.listSandboxes().sandboxes.length,
+    sandboxStillRegistered: !!registry.getSandbox(sandboxName),
+  });
 
   cleanupSandboxServices(sandboxName, { stopHostServices: shouldStopHostServices });
   const removed = removeSandboxRegistryEntry(sandboxName);
@@ -255,10 +246,12 @@ export async function destroySandbox(sandboxName: string, args: string[] = []): 
     });
   }
   if (
-    (deleteResult.status === 0 || alreadyGone) &&
-    removed &&
-    registry.listSandboxes().sandboxes.length === 0 &&
-    hasNoLiveSandboxes()
+    shouldCleanupGatewayAfterDestroy({
+      deleteSucceededOrAlreadyGone,
+      removedRegistryEntry: removed,
+      noRegisteredSandboxes: registry.listSandboxes().sandboxes.length === 0,
+      noLiveSandboxes: hasNoLiveSandboxes(),
+    })
   ) {
     cleanupGatewayAfterLastSandbox();
   }

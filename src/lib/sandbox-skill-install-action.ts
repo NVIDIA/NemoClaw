@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { CLI_NAME } from "./branding";
-import { captureOpenshell } from "./openshell-runtime";
+import { captureOpenshell } from "./adapters/openshell/runtime";
 import { ensureLiveSandboxOrExit } from "./sandbox-gateway-state-action";
 import * as skillInstall from "./skill-install";
 import { D, G, R, YW } from "./terminal-style";

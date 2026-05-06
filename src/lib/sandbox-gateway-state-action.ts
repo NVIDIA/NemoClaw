@@ -18,18 +18,18 @@ const { pruneKnownHostsEntries } = require("./onboard") as {
 };
 import * as onboardSession from "./onboard-session";
 import type { Session } from "./onboard-session";
-import { stripAnsi } from "./openshell";
+import { stripAnsi } from "./adapters/openshell/client";
 import {
   captureOpenshell,
   captureOpenshellForStatus,
   getStatusProbeTimeoutMs,
   isCommandTimeout,
   runOpenshell,
-} from "./openshell-runtime";
+} from "./adapters/openshell/runtime";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
-} from "./openshell-timeouts";
+} from "./adapters/openshell/timeouts";
 import * as registry from "./registry";
 
 type SandboxGatewayState = {

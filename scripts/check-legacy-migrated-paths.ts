@@ -34,7 +34,7 @@ const REMOVED_SHIM_MOVES: Record<string, string> = {
   "bin/lib/platform.js": "src/lib/platform.ts",
   "bin/lib/preflight.js": "src/lib/preflight.ts",
   "bin/lib/registry.js": "src/lib/registry.ts",
-  "bin/lib/resolve-openshell.js": "src/lib/resolve-openshell.ts",
+  "bin/lib/resolve-openshell.js": "src/lib/adapters/openshell/resolve.ts",
   "bin/lib/runtime-recovery.js": "src/lib/runtime-recovery.ts",
   "bin/lib/sandbox-build-context.js": "src/lib/sandbox-build-context.ts",
   "bin/lib/services.js": "src/lib/services.ts",
