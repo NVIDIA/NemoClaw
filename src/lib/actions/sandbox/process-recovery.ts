@@ -153,14 +153,19 @@ function parseSandboxGatewayProbe(result: SandboxCommandResult | null): boolean 
 
 /**
  * Check whether the OpenClaw gateway process is running inside the sandbox.
- * Uses the gateway's HTTP endpoint (dashboard port) as the source of truth,
+ * Uses the gateway's HTTP /health endpoint as the source of truth,
  * since the gateway runs as a separate user and pgrep may not see it.
  * Returns true (running), false (stopped), or null (cannot determine).
+ *
+ * Uses HTTP status code extraction instead of `curl -sf` so that
+ * 401 (device auth enabled) is correctly treated as "alive".
+ * Fixes #2342 — previously `curl -sf` failed on 401, causing false
+ * "Health Offline" readings.
  */
 function isSandboxGatewayRunning(sandboxName: string): boolean | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const probeUrl = agentRuntime.getHealthProbeUrl(agent);
-  const command = `curl -sf --max-time 3 ${shellQuote(probeUrl)} > /dev/null 2>&1 && echo RUNNING || echo STOPPED`;
+  const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
   const execProbe = parseSandboxGatewayProbe(executeSandboxExecCommand(sandboxName, command));
   if (execProbe !== null) return execProbe;
   return parseSandboxGatewayProbe(executeSandboxCommand(sandboxName, command));
@@ -171,7 +176,7 @@ export async function isSandboxGatewayRunningForStatus(
 ): Promise<boolean | null> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const probeUrl = agentRuntime.getHealthProbeUrl(agent);
-  const command = `curl -sf --max-time 3 ${shellQuote(probeUrl)} > /dev/null 2>&1 && echo RUNNING || echo STOPPED`;
+  const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
   return parseSandboxGatewayProbe(await executeSandboxExecCommandForStatus(sandboxName, command));
 }
 

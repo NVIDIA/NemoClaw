@@ -65,7 +65,8 @@ on:
           rebuild-hermes-stale-base-e2e, double-onboard-e2e,
           onboard-repair-e2e, onboard-resume-e2e, runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e,
-          overlayfs-autofix-e2e, launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e
+          overlayfs-autofix-e2e, device-auth-health-e2e,
+          launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e
         required: false
         type: string
         default: ""
@@ -1418,6 +1419,42 @@ jobs:
             /tmp/nemoclaw-e2e-onboard-negative.log
           if-no-files-found: ignore
 
+  # ── Device Auth Health Probe (#2342) ────────────────────────────
+  # Regression test for #2342: verifies health probes work correctly when
+  # device auth is enabled (the default). Previously `curl -sf` treated
+  # HTTP 401 as failure, causing false "Health Offline" readings.
+  # Validates: /health returns 200, / returns 401, status != Offline,
+  # gateway recovery with device auth, port forward liveness.
+  device-auth-health-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',device-auth-health-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run device auth health E2E
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-health-auth"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-device-auth-health.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-auth-health-install-log
+          path: /tmp/nemoclaw-e2e-health-install.log
+          if-no-files-found: ignore
+
   # ── Launchable Install-Flow Smoke Test ─────────────────────────
   # Validates the community install path (brev-launchable-ci-cpu.sh) end-to-end.
   # The launchable script has ZERO Brev dependencies — it's a generic Ubuntu
@@ -1619,6 +1656,7 @@ jobs:
         credential-sanitization-e2e,
         telegram-injection-e2e,
         overlayfs-autofix-e2e,
+        device-auth-health-e2e,
         launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
@@ -1696,6 +1734,7 @@ jobs:
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         overlayfs-autofix-e2e,
+        device-auth-health-e2e,
         gpu-e2e,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
@@ -1802,6 +1841,7 @@ jobs:
         credential-sanitization-e2e,
         telegram-injection-e2e,
         overlayfs-autofix-e2e,
+        device-auth-health-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
       ]
