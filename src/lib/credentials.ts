@@ -384,6 +384,75 @@ export function removeLegacyCredentialsFile(): void {
 }
 
 /**
+ * Securely remove the legacy plaintext credentials.json *iff* it carries
+ * no migratable credential payload — i.e. it's an empty `{}`, contains
+ * only keys outside `KNOWN_CREDENTIAL_ENV_KEYS`, or every allowlisted key
+ * has a blank/non-string value. Used by the onboard completion path to
+ * clean up the stale empty file left behind on upgrades from pre-gateway
+ * NemoClaw versions (#3105).
+ *
+ * Refuses to act on a missing/symlinked/oversized/non-JSON/non-object
+ * file — those are either nothing-to-do or "leave for inspection" cases
+ * that the regular migration path already handles. Returns `true` only
+ * if the file was actually removed.
+ */
+export function removeLegacyCredentialsFileIfEmpty(): boolean {
+  const legacyFile = getCredsFile();
+
+  try {
+    rejectSymlinksOnPath(path.dirname(legacyFile));
+  } catch {
+    return false;
+  }
+
+  let fd: number;
+  try {
+    fd = fs.openSync(legacyFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch {
+    return false;
+  }
+
+  let raw: string;
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return false;
+    if (stat.size > LEGACY_CREDS_FILE_MAX_BYTES) return false;
+    raw = fs.readFileSync(fd, "utf-8");
+  } catch {
+    return false;
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* fd already closed; ignore */
+    }
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return false;
+  }
+
+  const allowed = new Set<string>(KNOWN_CREDENTIAL_ENV_KEYS);
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!allowed.has(key)) continue;
+    if (typeof value !== "string") continue;
+    if (normalizeCredentialValue(value)) {
+      return false;
+    }
+  }
+
+  secureUnlink(legacyFile);
+  return true;
+}
+
+/**
  * Read a secret value from a TTY without echoing typed characters
  * (asterisks are written instead). Resolves to the trimmed answer or
  * rejects with `code: "SIGINT"` on Ctrl-C.
