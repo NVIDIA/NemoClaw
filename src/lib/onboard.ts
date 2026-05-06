@@ -419,6 +419,7 @@ type OnboardOptions = {
   agent?: string | null;
   controlUiPort?: number | null;
   gpu?: boolean;
+  noGpu?: boolean;
   autoYes?: boolean;
 };
 // Non-interactive mode: set by --non-interactive flag or env var.
@@ -3570,8 +3571,9 @@ async function startGatewayWithOptions(
   }
 
   const gwArgs = ["--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)];
-  // Pass --gpu only on explicit request. Standard onboarding keeps inference
-  // routed through host-side providers without direct sandbox GPU access.
+  // On NVIDIA hosts, pass --gpu unless the user explicitly opted out. This
+  // makes direct CUDA tools available in the sandbox by default while still
+  // supporting host-side inference providers.
   if (gpuPassthrough) {
     gwArgs.push("--gpu");
   }
@@ -8949,18 +8951,29 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     const requestedGpuPassthrough = opts.gpu === true;
-    const resumedGpuPassthrough = resume && session?.gpuPassthrough === true;
-    const gpuPassthrough = requestedGpuPassthrough || resumedGpuPassthrough;
+    const optedOutGpuPassthrough = opts.noGpu === true;
+    const detectedNvidiaGpu = gpu?.type === "nvidia";
+    const resumeHasResolvedGpuIntent =
+      resume && session?.steps?.preflight?.status === "complete" && !requestedGpuPassthrough;
+    const gpuPassthrough = optedOutGpuPassthrough
+      ? false
+      : requestedGpuPassthrough
+        ? true
+        : resumeHasResolvedGpuIntent
+          ? session?.gpuPassthrough === true
+          : detectedNvidiaGpu;
     if (gpuPassthrough && gpu?.type !== "nvidia") {
       console.error("  GPU passthrough requires an NVIDIA GPU detected by nvidia-smi.");
-      console.error("  Install NVIDIA drivers and the Container Toolkit, then rerun with --gpu.");
+      console.error("  Install NVIDIA drivers and the Container Toolkit, or rerun with --no-gpu.");
       process.exit(1);
     }
     if (gpuPassthrough) {
       note(
-        resumedGpuPassthrough && !requestedGpuPassthrough
+        resumeHasResolvedGpuIntent && session?.gpuPassthrough === true
           ? "  [resume] Continuing GPU passthrough from the saved onboarding session."
-          : "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation.",
+          : requestedGpuPassthrough
+            ? "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation."
+            : "  NVIDIA GPU detected; enabling OpenShell GPU passthrough. Use --no-gpu to opt out.",
       );
     } else if (process.platform === "linux") {
       // Hint when hardware is present but drivers are missing.
@@ -8968,7 +8981,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         const lspci = spawnSync("lspci", { encoding: "utf-8", timeout: 5000 });
         if (lspci.status === 0 && /nvidia/i.test(lspci.stdout || "")) {
           note("  NVIDIA GPU hardware detected but nvidia-smi is not available.");
-          note("  Install NVIDIA drivers and the Container Toolkit before using --gpu.");
+          note("  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.");
         }
       } catch {
         /* lspci not available — skip hint */

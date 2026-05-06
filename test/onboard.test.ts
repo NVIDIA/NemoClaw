@@ -3037,6 +3037,20 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
+  it("defaults GPU passthrough on for detected NVIDIA GPUs unless opted out", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /const detectedNvidiaGpu = gpu\?\.type === "nvidia";/);
+    assert.match(
+      source,
+      /const gpuPassthrough = optedOutGpuPassthrough[\s\S]*\? false[\s\S]*\? true[\s\S]*: detectedNvidiaGpu;/,
+    );
+    assert.match(source, /Use --no-gpu to opt out/);
+  });
+
   it("does not persist sandboxName to onboard-session.json before createSandbox completes (#2753)", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),

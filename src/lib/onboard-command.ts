@@ -17,6 +17,7 @@ export interface OnboardCommandOptions {
   agent: string | null;
   controlUiPort: number | null;
   gpu: boolean;
+  noGpu: boolean;
   autoYes: boolean;
 }
 
@@ -42,6 +43,7 @@ const ONBOARD_BASE_ARGS = [
   "--fresh",
   "--recreate-sandbox",
   "--gpu",
+  "--no-gpu",
   "--yes",
   "-y",
 ];
@@ -49,7 +51,7 @@ const ONBOARD_BASE_ARGS = [
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   const name = CLI_NAME;
   return [
-    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${noticeAcceptFlag}]`,
+    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${noticeAcceptFlag}]`,
     "",
     "  --from <Dockerfile> uses the Dockerfile's parent directory as the Docker build context.",
     "  Put files referenced by COPY/ADD next to that Dockerfile, or move the Dockerfile into",
@@ -165,6 +167,13 @@ export function parseOnboardArgs(
     printOnboardUsage(error, noticeAcceptFlag);
     exit(1);
   }
+  const gpu = parsedArgs.includes("--gpu");
+  const noGpu = parsedArgs.includes("--no-gpu");
+  if (gpu && noGpu) {
+    error("  --gpu and --no-gpu are mutually exclusive.");
+    printOnboardUsage(error, noticeAcceptFlag);
+    exit(1);
+  }
 
   return {
     nonInteractive: parsedArgs.includes("--non-interactive"),
@@ -177,7 +186,8 @@ export function parseOnboardArgs(
       parsedArgs.includes(noticeAcceptFlag) || String(deps.env[noticeAcceptEnv] || "") === "1",
     agent,
     controlUiPort,
-    gpu: parsedArgs.includes("--gpu"),
+    gpu,
+    noGpu,
     autoYes: parsedArgs.includes("--yes") || parsedArgs.includes("-y"),
   };
 }

@@ -45,4 +45,18 @@ describe("onboard oclif command", () => {
 
     expect(runOnboardAction).toHaveBeenCalledWith(["--non-interactive", "--yes"]);
   });
+
+  it("forwards --no-gpu to the legacy onboard action", async () => {
+    await OnboardCliCommand.run(["--non-interactive", "--no-gpu"], rootDir);
+
+    expect(runOnboardAction).toHaveBeenCalledWith(["--non-interactive", "--no-gpu"]);
+  });
+
+  it("rejects mutually exclusive gpu and no-gpu flags before dispatch", async () => {
+    await expect(OnboardCliCommand.run(["--gpu", "--no-gpu"], rootDir)).rejects.toThrow(
+      /gpu|no-gpu/,
+    );
+
+    expect(runOnboardAction).not.toHaveBeenCalled();
+  });
 });

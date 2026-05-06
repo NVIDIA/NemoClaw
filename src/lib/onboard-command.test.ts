@@ -45,6 +45,7 @@ describe("onboard command", () => {
       agent: null,
       controlUiPort: null,
       gpu: false,
+      noGpu: false,
       autoYes: false,
     });
   });
@@ -90,6 +91,7 @@ describe("onboard command", () => {
       agent: null,
       controlUiPort: null,
       gpu: false,
+      noGpu: false,
       autoYes: false,
     });
   });
@@ -116,6 +118,7 @@ describe("onboard command", () => {
       agent: null,
       controlUiPort: null,
       gpu: false,
+      noGpu: false,
       autoYes: false,
     });
   });
@@ -141,6 +144,7 @@ describe("onboard command", () => {
     expect(lines.join("\n")).toContain("node_modules, .git, .venv, __pycache__");
     expect(lines.join("\n")).toContain(".env*, .ssh, .aws");
     expect(lines.join("\n")).toContain("--agent <name>");
+    expect(lines.join("\n")).toContain("--no-gpu");
   });
 
   it("parses --from <Dockerfile>", () => {
@@ -170,6 +174,7 @@ describe("onboard command", () => {
       agent: null,
       controlUiPort: null,
       gpu: false,
+      noGpu: false,
       autoYes: false,
     });
   });
@@ -197,6 +202,7 @@ describe("onboard command", () => {
       agent: null,
       controlUiPort: null,
       gpu: false,
+      noGpu: false,
       autoYes: false,
     });
   });
@@ -245,6 +251,7 @@ describe("onboard command", () => {
       agent: null,
       controlUiPort: null,
       gpu: false,
+      noGpu: false,
       autoYes: false,
     });
   });
@@ -382,6 +389,7 @@ describe("onboard command", () => {
       agent: "openclaw",
       controlUiPort: null,
       gpu: false,
+      noGpu: false,
       autoYes: false,
     });
   });
@@ -518,6 +526,7 @@ describe("onboard command", () => {
       agent: null,
       controlUiPort: null,
       gpu: false,
+      noGpu: false,
       autoYes: false,
     });
   });
@@ -553,6 +562,40 @@ describe("onboard command", () => {
       },
     );
     expect(result.gpu).toBe(true);
+    expect(result.noGpu).toBe(false);
     expect(result.nonInteractive).toBe(true);
+  });
+
+  it("parses --no-gpu as explicit GPU passthrough opt-out", () => {
+    const result = parseOnboardArgs(
+      ["--no-gpu", "--non-interactive"],
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.gpu).toBe(false);
+    expect(result.noGpu).toBe(true);
+    expect(result.nonInteractive).toBe(true);
+  });
+
+  it("rejects --gpu and --no-gpu together", () => {
+    const errors: string[] = [];
+    expect(() =>
+      parseOnboardArgs(
+        ["--gpu", "--no-gpu"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: (message = "") => errors.push(message),
+          exit: exitWithPrefixedCode,
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--gpu and --no-gpu are mutually exclusive");
   });
 });

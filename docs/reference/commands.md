@@ -65,7 +65,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes-i-accept-third-party-software]
 ```
 
 :::{warning}
@@ -247,16 +247,17 @@ $ nemoclaw onboard --from ./Dockerfile.custom
 
 ### GPU passthrough
 
-Pass `--gpu` to enable OpenShell GPU passthrough at both the gateway and sandbox level.
-Use this when the agent workload itself needs direct GPU access inside the sandbox, such as CUDA tools or `nvidia-smi`.
+When `nemoclaw onboard` detects an NVIDIA GPU on the host (`nvidia-smi` succeeds), it enables OpenShell GPU passthrough at both the gateway and sandbox level by default.
+Use `--no-gpu` to opt out when you want host-side inference providers only and do not need direct GPU access inside the sandbox.
+Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not detected.
 
 Prerequisites:
 
 - NVIDIA GPU drivers installed and working (`nvidia-smi` must succeed).
 - NVIDIA Container Toolkit configured for Docker.
 
-If a gateway already exists without GPU passthrough, `nemoclaw onboard --gpu` exits with guidance to destroy and re-onboard.
-To add GPU to an existing sandbox, rerun with `--gpu --recreate-sandbox`.
+When GPU passthrough is enabled and a gateway already exists without it, onboarding exits with guidance to destroy and re-onboard.
+To add GPU to an existing sandbox, rerun with `--recreate-sandbox`.
 
 ### `nemoclaw list`
 
