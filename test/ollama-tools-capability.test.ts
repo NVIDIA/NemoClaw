@@ -261,8 +261,11 @@ function loadProxyWithStubs(): ProxyTestHarness {
   SHARED.promptReply = "";
   SHARED.promptCalls.length = 0;
 
-  // The proxy module is a singleton — once loaded, reusing the cached
-  // copy is fine because the SHARED probe stub stays installed.
+  // Invalidate the cache and re-require so the proxy module's
+  // destructured `probeOllamaModelCapabilities` binding picks up the
+  // stub installed by installSharedStubs(). Without this, a prior test
+  // file could have loaded the proxy first and pinned the original.
+  delete require.cache[ONBOARD_OLLAMA_PROXY_PATH];
   const proxy = require(ONBOARD_OLLAMA_PROXY_PATH) as OnboardOllamaProxyModule;
 
   const logs: string[] = [];
