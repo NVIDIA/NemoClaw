@@ -21,8 +21,8 @@ routing:
   encoder_backend: transformers
 
 models:
-  - name: gpt-5.2
-    display_name: "GPT-5.2"
+  - name: nemotron-3-nano-reasoning
+    display_name: "Nemotron 3 Nano (Reasoning)"
     litellm_model: "openai/nvidia/nvidia/Nemotron-3-Nano-30B-A3B"
     cost_per_m_input_tokens: 0.05
     cost_per_m_output_tokens: 0.20
