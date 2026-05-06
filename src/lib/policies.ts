@@ -207,13 +207,127 @@ function textBasedMerge(currentPolicy: string, presetEntries: string): string {
 }
 
 /**
+ * Type guard — narrow a PolicyValue to a plain object (excludes arrays/scalars).
+ */
+function isPlainPolicyObject(value: PolicyValue): value is PolicyObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Canonical key used for de-duplicating a single `binaries:` entry.
+ * Binaries are YAML objects like `{ path: /usr/bin/python3.11 }`. Dedup by
+ * the `path` field when it is a string; fall back to the stringified entry
+ * so unusual shapes still dedupe exactly.
+ */
+function binaryEntryKey(entry: PolicyValue): string {
+  if (isPlainPolicyObject(entry) && typeof entry.path === "string") {
+    return `path:${entry.path}`;
+  }
+  return JSON.stringify(entry);
+}
+
+/**
+ * Canonical key used for de-duplicating a single `endpoints:` entry.
+ * Endpoints are YAML objects keyed by (host, port). Duplicate definitions
+ * of the same host+port pair collapse to the last-seen entry so the more
+ * specific / later definition wins (matches preset-overrides-base semantics
+ * at the endpoint level even when doing a union merge at the group level).
+ */
+function endpointEntryKey(entry: PolicyValue): string {
+  if (isPlainPolicyObject(entry)) {
+    const host = typeof entry.host === "string" ? entry.host : "";
+    const port = typeof entry.port === "number" ? String(entry.port) : "";
+    if (host) return `hostport:${host}:${port}`;
+  }
+  return JSON.stringify(entry);
+}
+
+/**
+ * Union two arrays of policy list entries (binaries, endpoints) preserving
+ * order, de-duplicating by a caller-supplied key function, and letting the
+ * later occurrence win when keys collide.
+ *
+ * Passing `unionList(base, overlay, key)` keeps everything in `base` that
+ * isn't superseded by `overlay`, then appends the overlay entries. This
+ * means preset-side definitions override base-policy definitions for the
+ * same identity (path, or host+port) while still retaining any base-only
+ * entries the preset didn't mention.
+ */
+function unionList(
+  base: PolicyValue[] | undefined,
+  overlay: PolicyValue[] | undefined,
+  key: (entry: PolicyValue) => string,
+): PolicyValue[] {
+  const overlayArr = Array.isArray(overlay) ? overlay : [];
+  const baseArr = Array.isArray(base) ? base : [];
+  const overlayKeys = new Set(overlayArr.map(key));
+  const result: PolicyValue[] = [];
+  const seen = new Set<string>();
+  for (const entry of baseArr) {
+    const k = key(entry);
+    if (overlayKeys.has(k)) continue;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    result.push(entry);
+  }
+  for (const entry of overlayArr) {
+    const k = key(entry);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    result.push(entry);
+  }
+  return result;
+}
+
+/**
+ * Merge a single policy group (e.g. `discord:`) from a preset into its
+ * counterpart from the base policy.
+ *
+ * Semantics:
+ *   - `binaries` and `endpoints` are UNIONED across base and preset so
+ *     additions in one side are not clobbered by the other. Dedup keys:
+ *     `path` for binaries, `(host, port)` for endpoints; on a key
+ *     collision the preset (overlay) entry wins.
+ *   - Every other key in the group (e.g. `name`, ad-hoc metadata) uses
+ *     preset-overrides-base semantics via a shallow spread. Presets remain
+ *     the source of truth for group identity and shape.
+ *
+ * Before this change the whole group was replaced wholesale on name
+ * collision, which silently dropped user-added entries in
+ * `policy-additions.yaml` (notably binaries) as soon as a built-in preset
+ * with the same group name was applied at onboarding time.
+ */
+function mergePolicyGroup(baseGroup: PolicyObject, presetGroup: PolicyObject): PolicyObject {
+  const merged: PolicyObject = { ...baseGroup, ...presetGroup };
+
+  const baseBinaries = Array.isArray(baseGroup.binaries) ? baseGroup.binaries : undefined;
+  const presetBinaries = Array.isArray(presetGroup.binaries) ? presetGroup.binaries : undefined;
+  if (baseBinaries || presetBinaries) {
+    merged.binaries = unionList(baseBinaries, presetBinaries, binaryEntryKey);
+  }
+
+  const baseEndpoints = Array.isArray(baseGroup.endpoints) ? baseGroup.endpoints : undefined;
+  const presetEndpoints = Array.isArray(presetGroup.endpoints) ? presetGroup.endpoints : undefined;
+  if (baseEndpoints || presetEndpoints) {
+    merged.endpoints = unionList(baseEndpoints, presetEndpoints, endpointEntryKey);
+  }
+
+  return merged;
+}
+
+/**
  * Merge preset entries into existing policy YAML using structured YAML
  * parsing. Replaces the previous text-based manipulation which could
  * produce invalid YAML when indentation or ordering varied.
  *
  * Behavior:
  *   - Parses both current policy and preset entries as YAML
- *   - Merges network_policies by name (preset overrides on collision)
+ *   - Merges network_policies by group name. On name collision:
+ *       * `binaries` and `endpoints` are UNIONED (so agent-declared
+ *         binaries in policy-additions.yaml survive preset application;
+ *         see mergePolicyGroup for identity/dedup rules).
+ *       * Other keys in the group (name, metadata) use preset-overrides
+ *         semantics via shallow spread.
  *   - Preserves all non-network sections (filesystem_policy, process, etc.)
  *   - Ensures version: 1 exists
  *
@@ -257,13 +371,26 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
     return textBasedMerge(normalizedCurrentPolicy, presetEntries);
   }
 
-  // Structured merge: preset entries override existing on name collision.
+  // Structured merge: on name collision, deep-merge the group so binaries
+  // and endpoints unify across base and preset. Presets still override for
+  // any group the base policy doesn't define.
   // Guard: network_policies may be an array in legacy policies — only
   // object-merge when both sides are plain objects.
   const existingNp = current.network_policies;
-  let mergedNp;
+  let mergedNp: PolicyObject;
   if (existingNp && typeof existingNp === "object" && !Array.isArray(existingNp)) {
-    mergedNp = { ...existingNp, ...presetPolicies };
+    mergedNp = { ...existingNp };
+    for (const [groupName, rawPresetGroup] of Object.entries(presetPolicies as PolicyObject)) {
+      const existingGroup = mergedNp[groupName];
+      const presetGroup: PolicyValue = rawPresetGroup;
+      if (isPlainPolicyObject(existingGroup) && isPlainPolicyObject(presetGroup)) {
+        mergedNp[groupName] = mergePolicyGroup(existingGroup, presetGroup);
+      } else {
+        // New group, or one side is not a plain object — fall back to
+        // preset-overrides-base (pre-existing behaviour).
+        mergedNp[groupName] = presetGroup;
+      }
+    }
   } else {
     mergedNp = presetPolicies;
   }

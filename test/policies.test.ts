@@ -619,7 +619,14 @@ describe("policies", () => {
       expect(merged).toContain("version: 1");
     });
 
-    it("deduplicates on policy name collision (preset overrides existing)", () => {
+    it("unions endpoints and binaries on policy name collision (base + preset)", () => {
+      // Base policy declares its own `pypi_access` group with an extra
+      // private mirror host and an agent-specific binary path. Merging in
+      // the preset (which also defines `pypi_access`) must PRESERVE the
+      // base entries and ADD the preset's pypi.org + binaries rather than
+      // wholesale-replacing the group. Regression test for the bug where
+      // agent-declared `binaries:` in policy-additions.yaml were silently
+      // dropped during the "Widening sandbox egress" onboarding step.
       const current =
         "version: 1\n\n" +
         "network_policies:\n" +
@@ -630,10 +637,51 @@ describe("policies", () => {
         "        port: 443\n" +
         "        access: full\n" +
         "    binaries:\n" +
-        "      - { path: /usr/bin/pip* }\n";
+        "      - { path: /usr/bin/pip3 }\n" +
+        "      - { path: /opt/hermes/.venv/bin/python }\n";
       const merged = policies.mergePresetIntoPolicy(current, realisticEntries);
+      // Preset's endpoints and binaries must be present
       expect(merged).toContain("pypi.org");
-      expect(merged).not.toContain("old-pypi.example.com");
+      expect(merged).toContain("/usr/bin/python3*");
+      // Base-only endpoints and binaries must survive the merge
+      expect(merged).toContain("old-pypi.example.com");
+      expect(merged).toContain("/opt/hermes/.venv/bin/python");
+      expect(merged).toContain("/usr/bin/pip3");
+    });
+
+    it("dedupes binaries by path when base and preset declare the same binary", () => {
+      // Same binary path on both sides should appear exactly once in the
+      // merged output — we preserve the preset's (overlay) entry so any
+      // additional fields on the preset side win on key collision.
+      const current =
+        "version: 1\n\n" +
+        "network_policies:\n" +
+        "  pypi_access:\n" +
+        "    name: pypi_access\n" +
+        "    binaries:\n" +
+        "      - { path: /usr/bin/python3* }\n";
+      const merged = policies.mergePresetIntoPolicy(current, realisticEntries);
+      const occurrences = merged.match(/\/usr\/bin\/python3\*/g) ?? [];
+      expect(occurrences.length).toBe(1);
+    });
+
+    it("dedupes endpoints by (host, port) on collision, preset wins", () => {
+      // If base and preset both declare pypi.org:443 with different access
+      // modes, the (host, port) pair collapses to a single entry and the
+      // preset (overlay) definition is the one that survives.
+      const current =
+        "version: 1\n\n" +
+        "network_policies:\n" +
+        "  pypi_access:\n" +
+        "    name: pypi_access\n" +
+        "    endpoints:\n" +
+        "      - host: pypi.org\n" +
+        "        port: 443\n" +
+        "        access: full\n";
+      const merged = policies.mergePresetIntoPolicy(current, realisticEntries);
+      // Exactly one pypi.org entry remains (preset's).
+      const occurrences = merged.match(/host:\s*pypi\.org\b/g) ?? [];
+      expect(occurrences.length).toBe(1);
     });
 
     it("preserves non-network sections during structured merge", () => {
