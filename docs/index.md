@@ -156,7 +156,17 @@ Proceed to the [Quickstart](get-started/quickstart.md) for step-by-step instruct
 :link: about/overview
 :link-type: doc
 
-What NemoClaw is: capabilities, benefits, and typical uses.
+Learn what NemoClaw is and its capabilities, benefits, and common use cases.
+
++++
+{bdg-secondary}`Concept`
+:::
+
+:::{grid-item-card} Architecture Overview
+:link: about/how-it-works
+:link-type: doc
+
+High-level overview of plugin, blueprint, sandbox lifecycle, and protection layers.
 
 +++
 {bdg-secondary}`Concept`
@@ -166,13 +176,13 @@ What NemoClaw is: capabilities, benefits, and typical uses.
 :link: about/ecosystem
 :link-type: doc
 
-How OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone.
+Learn how OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone.
 
 +++
 {bdg-secondary}`Concept`
 :::
 
-:::{grid-item-card} Quickstart
+:::{grid-item-card} Quickstart with OpenClaw
 :link: get-started/quickstart
 :link-type: doc
 
@@ -182,7 +192,7 @@ Install the CLI, configure inference, and launch your first sandboxed agent.
 {bdg-secondary}`Tutorial`
 :::
 
-:::{grid-item-card} NemoClaw Quickstart for Hermes
+:::{grid-item-card} Quickstart with Hermes
 :link: get-started/quickstart-hermes
 :link-type: doc
 
@@ -192,16 +202,6 @@ Launch Hermes in an OpenShell sandbox with the `nemohermes` alias.
 {bdg-secondary}`Tutorial`
 :::
 
-:::{grid-item-card} Commands
-:link: reference/commands
-:link-type: doc
-
-CLI commands for launching, connecting, monitoring, and managing sandboxes.
-
-+++
-{bdg-secondary}`Reference`
-:::
-
 :::{grid-item-card} Inference Options
 :link: inference/inference-options
 :link-type: doc
@@ -209,27 +209,17 @@ CLI commands for launching, connecting, monitoring, and managing sandboxes.
 Providers available during onboarding and how inference routing works.
 
 +++
-{bdg-secondary}`Concept`
-:::
-
-:::{grid-item-card} How It Works
-:link: about/how-it-works
-:link-type: doc
-
-How NemoClaw runs: plugin, blueprint, OpenShell orchestration, routing, and policy layers.
-
-+++
-{bdg-secondary}`Concept`
-:::
-
-:::{grid-item-card} Architecture
-:link: reference/architecture
-:link-type: doc
-
-Plugin structure, blueprint system, and sandbox lifecycle.
-
-+++
 {bdg-secondary}`Reference`
+:::
+
+:::{grid-item-card} Manage Sandboxes
+:link: manage-sandboxes/workspace-files
+:link-type: doc
+
+Understand `SOUL.md`, `USER.md`, and other workspace files, plus backup and restore.
+
++++
+{bdg-secondary}`Concept`
 :::
 
 :::{grid-item-card} Network Policies
@@ -242,16 +232,6 @@ Egress control, operator approval flow, and policy configuration.
 {bdg-secondary}`Reference`
 :::
 
-:::{grid-item-card} Workspace Files
-:link: manage-sandboxes/workspace-files
-:link-type: doc
-
-Understand `SOUL.md`, `USER.md`, and other workspace files, plus backup and restore.
-
-+++
-{bdg-secondary}`Concept`
-:::
-
 :::{grid-item-card} Security Best Practices
 :link: security/best-practices
 :link-type: doc
@@ -262,14 +242,24 @@ Controls reference, risk framework, and posture profiles for sandbox security.
 {bdg-secondary}`Concept`
 :::
 
-:::{grid-item-card} How-To Guides
-:link: inference/switch-inference-providers
+:::{grid-item-card} Architecture Details
+:link: reference/architecture
 :link-type: doc
 
-Task-oriented guides for inference, deployment, and policy management.
+Learn the detailed architecture of NemoClaw, including plugin structure, blueprint system, and sandbox lifecycle.
 
 +++
-{bdg-secondary}`How-To`
+{bdg-secondary}`Reference`
+:::
+
+:::{grid-item-card} Commands
+:link: reference/commands
+:link-type: doc
+
+CLI commands for launching, connecting, monitoring, and managing sandboxes.
+
++++
+{bdg-secondary}`Reference`
 :::
 
 :::{grid-item-card} Agent Skills

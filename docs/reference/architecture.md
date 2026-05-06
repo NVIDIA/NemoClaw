@@ -3,7 +3,7 @@ title:
   page: "NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure"
   nav: "Architecture"
 description:
-  main: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
+  main: "Learn how NemoClaw combines a host CLI, sandbox plugin, and versioned blueprint to move OpenClaw into a controlled sandbox."
   agent: "Describes the NemoClaw plugin and blueprint architecture and how they orchestrate the OpenClaw sandbox. Use when looking up architecture, plugin structure, or blueprint design."
 keywords: ["nemoclaw architecture", "nemoclaw plugin blueprint structure"]
 topics: ["generative_ai", "ai_agents"]
@@ -22,7 +22,7 @@ status: published
 
 # Architecture
 
-NemoClaw has two main components: a TypeScript plugin that integrates with the OpenClaw CLI, and a Python blueprint that orchestrates OpenShell resources.
+NemoClaw combines a host CLI, a TypeScript plugin that runs with OpenClaw inside the sandbox, and a versioned YAML blueprint that defines the sandbox image, policies, and inference profiles applied through OpenShell.
 
 ## System Overview
 
@@ -188,9 +188,9 @@ nemoclaw/
 
 ## NemoClaw Blueprint
 
-The blueprint is a versioned Python artifact with its own release stream.
-The plugin resolves, verifies, and executes the blueprint as a subprocess.
-The blueprint drives all interactions with the OpenShell CLI.
+The blueprint is a versioned YAML package with its own release stream.
+The runner resolves, verifies, and applies the blueprint through the OpenShell CLI.
+The blueprint defines the sandbox shape, default policies, and inference profiles; the runner performs the OpenShell operations.
 
 ```text
 nemoclaw-blueprint/

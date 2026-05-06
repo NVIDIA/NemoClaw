@@ -22,12 +22,12 @@ status: published
 
 # Overview
 
-NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants.
+NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
 NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
 It incorporates policy-based privacy and security guardrails, giving you control over your agents’ behavior and data handling.
 This enables self-evolving claws to run more safely in clouds, on prem, RTX PCs and DGX Spark.
 
-NemoClaw pairs open-source and hosted models (for example [NVIDIA Nemotron](https://build.nvidia.com)) with a hardened sandbox, routed inference, and declarative egress policy so deployment stays safer and more repeatable.
+NemoClaw pairs hosted models on inference providers or local endpoints with a hardened sandbox, routed inference, and declarative egress policy so deployment stays safer and more repeatable.
 The sandbox runtime comes from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell); NemoClaw adds the blueprint, `nemoclaw` CLI, onboarding, and related tooling as the reference way to run OpenClaw there.
 
 | Capability              | Description                                                                                                                                          |
@@ -45,7 +45,7 @@ NemoClaw provides the following product capabilities.
 | Guided onboarding | Validates credentials, selects providers, and creates a working sandbox in one command. |
 | Hardened blueprint | A security-first Dockerfile with capability drops, least-privilege network rules, and declarative policy. |
 | State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
-| Channel messaging | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the sandboxed agent. NemoClaw configures channels during onboarding; OpenShell supplies the native constructs, credential flow, and runtime supervision. |
+| Messaging channels | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the sandboxed agent. NemoClaw configures channels during onboarding; OpenShell supplies the native constructs, credential flow, and runtime supervision. |
 | Routed inference | Provider-routed model calls through the OpenShell gateway, transparent to the agent. Supports NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and local Ollama. |
 | Layered protection | Network, filesystem, process, and inference controls that can be hot-reloaded or locked at creation. |
 
