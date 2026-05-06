@@ -526,6 +526,51 @@ describe("removeLegacyCredentialsFileIfEmpty (post-upgrade cleanup, #3105)", () 
     expect(fs.existsSync(legacyFile)).toBe(true);
   });
 
+  it("removes a 0-byte legacy file (CodeRabbit nit: whitespace-only doesn't throw)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("removes a whitespace-only legacy file", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "   \n\t\r\n  ", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("returns false when the secure unlink silently fails (CodeRabbit nit)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "{}", { mode: 0o600 });
+
+    // Simulate a swallowed unlink failure: secureUnlink internally calls
+    // fs.unlinkSync with try/catch, so a no-op stub leaves the file intact.
+    // The helper must detect this and return false rather than lying.
+    const spy = vi.spyOn(fs, "unlinkSync").mockImplementation(() => undefined);
+    try {
+      const credentials = await importCredentialsModule(home);
+      expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(fs.existsSync(legacyFile)).toBe(true);
+  });
+
   it("zero-fills an empty file before unlinking (defence in depth)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credsDir = path.join(home, ".nemoclaw");

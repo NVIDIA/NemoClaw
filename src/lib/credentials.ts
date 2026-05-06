@@ -428,28 +428,44 @@ export function removeLegacyCredentialsFileIfEmpty(): boolean {
     }
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return false;
-  }
-
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return false;
-  }
-
-  const allowed = new Set<string>(KNOWN_CREDENTIAL_ENV_KEYS);
-  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!allowed.has(key)) continue;
-    if (typeof value !== "string") continue;
-    if (normalizeCredentialValue(value)) {
+  // A 0-byte or whitespace-only file is functionally identical to an
+  // empty {} — there's no migratable payload, so skip JSON.parse (which
+  // would throw on the empty input) and fall through to the unlink.
+  if (raw.trim() !== "") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
       return false;
+    }
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return false;
+    }
+
+    const allowed = new Set<string>(KNOWN_CREDENTIAL_ENV_KEYS);
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!allowed.has(key)) continue;
+      if (typeof value !== "string") continue;
+      if (normalizeCredentialValue(value)) {
+        return false;
+      }
     }
   }
 
+  // secureUnlink is best-effort and swallows errors. Verify the file is
+  // actually gone before claiming a successful removal — otherwise the
+  // runner would log "Removed stale ..." on a permission-denied unlink.
   secureUnlink(legacyFile);
-  return true;
+  try {
+    fs.lstatSync(legacyFile);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return true;
+    }
+    return false;
+  }
+  return false;
 }
 
 /**
