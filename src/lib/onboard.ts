@@ -1129,6 +1129,32 @@ function runCaptureOpenshell(
   return runCapture(openshellArgv(args, opts), opts);
 }
 
+/**
+ * Execute a shell command inside a sandbox for post-deployment verification.
+ * Returns a structured result with status, stdout, stderr — or null if
+ * the sandbox is unreachable. Uses `openshell sandbox exec` with sh -c.
+ */
+function executeSandboxCommandForVerification(
+  sandboxName: string,
+  script: string,
+): { status: number; stdout: string; stderr: string } | null {
+  try {
+    const result = spawnSync(
+      getOpenshellBinary(),
+      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
+      { encoding: "utf-8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    if (result.error) return null;
+    return {
+      status: result.status ?? 1,
+      stdout: (result.stdout || "").trim(),
+      stderr: (result.stderr || "").trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 // URL/string utilities — delegated to src/lib/url-utils.ts
 const {
   compactText,
@@ -5282,23 +5308,18 @@ async function createSandbox(
   // Wait for the branded dashboard to become fully ready (web server live)
   // This prevents port forwards from connecting to a non-existent port
   // or seeing 502/503 errors during initial load.
-  console.log(`  Waiting for ${cliDisplayName()} dashboard to become ready...`);
+  // Probes /health endpoint and accepts 200 or 401 (device auth) as "alive".
+  // Previously used `curl -sf` which failed on 401, causing false negatives. Fixes #2342.
+  console.log("  Waiting for NemoClaw dashboard to become ready...");
   const openshellBin = getOpenshellBinary();
   for (let i = 0; i < 15; i++) {
-    const readyMatch = runCaptureOpenshell(
-      [
-        "sandbox",
-        "exec",
-        "-n",
-        sandboxName,
-        "--",
-        "curl",
-        "-sf",
-        `http://localhost:${effectiveDashboardPort}/`,
-      ],
+    const readyOutput = runCaptureOpenshell(
+      ["sandbox", "exec", "-n", sandboxName, "--", "curl", "-so", "/dev/null", "-w", "%{http_code}",
+        "--max-time", "3", `http://localhost:${effectiveDashboardPort}/health`],
       { ignoreError: true },
     );
-    if (readyMatch) {
+    const readyCode = parseInt((readyOutput || "").trim(), 10) || 0;
+    if (readyCode === 200 || readyCode === 401) {
       console.log("  ✓ Dashboard is live");
       break;
     }
@@ -9856,6 +9877,41 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           `providers/channels enabled to migrate them, then the file is removed automatically.`,
       );
     }
+    // Post-deployment verification — confirm the full delivery chain is
+    // operational before telling the user "YOUR AGENT IS LIVE". Fixes #2342.
+    const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+    const _verifyChatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`;
+    const verifyChain = buildChain({ chatUiUrl: _verifyChatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() });
+    const verificationResult = verifyDeploymentModule.verifyDeployment(
+      sandboxName,
+      verifyChain,
+      {
+        executeSandboxCommand: (name: string, script: string) => {
+          return executeSandboxCommandForVerification(name, script);
+        },
+        probeHostPort: (port: number, probePath: string) => {
+          const result = runCapture(
+            ["curl", "-so", "/dev/null", "-w", "%{http_code}", "--max-time", "3",
+              `http://127.0.0.1:${port}${probePath}`],
+            { ignoreError: true },
+          );
+          return parseInt(result.trim(), 10) || 0;
+        },
+        captureForwardList: () => {
+          const output = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
+          return output || null;
+        },
+        getMessagingChannels: (_name: string) => selectedMessagingChannels || [],
+        providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
+      },
+    );
+
+    // Print verification diagnostics
+    const diagLines = verifyDeploymentModule.formatVerificationDiagnostics(verificationResult);
+    for (const line of diagLines) {
+      console.log(line);
+    }
+
     printDashboard(sandboxName, model, provider, nimContainer, agent);
   } finally {
     releaseOnboardLock();
