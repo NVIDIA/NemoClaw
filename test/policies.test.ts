@@ -763,6 +763,23 @@ describe("policies", () => {
       }
     });
 
+    it("Hermes Discord gateway policy uses the OpenClaw L4 WebSocket tunnel shape", () => {
+      const policyFiles = [
+        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
+        path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"),
+      ];
+
+      for (const file of policyFiles) {
+        const content = fs.readFileSync(file, "utf8");
+        const gatewaySection =
+          content.split("host: gateway.discord.gg")[1]?.split("- host:")[0] ?? "";
+        expect(gatewaySection).toContain("access: full");
+        expect(gatewaySection).toContain("tls: skip");
+        expect(gatewaySection).not.toContain("protocol: rest");
+        expect(gatewaySection).not.toContain("rules:");
+      }
+    });
+
     it("REST policy YAML avoids deprecated tls: terminate", () => {
       const agentsDir = path.join(REPO_ROOT, "agents");
       const agentPolicyFiles = fs.existsSync(agentsDir)

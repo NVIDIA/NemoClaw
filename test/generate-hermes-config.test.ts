@@ -146,20 +146,6 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).toContain("DISCORD_ALLOWED_USERS=1005536447329222676\n");
   });
 
-  it("omits the Discord placeholder when runtime token env is selected", () => {
-    const { config, envFile } = runConfigScript({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["discord"]),
-      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
-        discord: ["1005536447329222676"],
-      }),
-      NEMOCLAW_HERMES_RUNTIME_TOKEN_ENVS_B64: encodeJson(["DISCORD_BOT_TOKEN"]),
-    });
-
-    expect(config.discord).toBeDefined();
-    expect(envFile).not.toContain("DISCORD_BOT_TOKEN=");
-    expect(envFile).toContain("DISCORD_ALLOWED_USERS=1005536447329222676\n");
-  });
-
   it("preserves the Discord all-messages reply mode from onboarding", () => {
     const { config } = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["discord"]),

@@ -41,7 +41,6 @@ function main(): void {
     settings.messaging.enabledChannels,
     settings.messaging.allowedIds,
     settings.messaging.discordGuilds,
-    settings.messaging.runtimeTokenEnvKeys,
   );
   const written = writeHermesConfigFiles(config, envLines);
 

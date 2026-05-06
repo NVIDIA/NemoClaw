@@ -13,14 +13,12 @@ export function buildMessagingEnvLines(
   enabledChannels: Set<string>,
   allowedIds: MessagingAllowedIds,
   discordGuilds: DiscordGuilds,
-  runtimeTokenEnvKeys: Set<string> = new Set(),
 ): string[] {
   const envLines = ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1"];
 
   for (const channel of enabledChannels) {
     const envKeys = CHANNEL_TOKEN_ENVS[channel] ?? [];
     for (const envKey of envKeys) {
-      if (runtimeTokenEnvKeys.has(envKey)) continue;
       envLines.push(`${envKey}=openshell:resolve:env:${envKey}`);
     }
   }

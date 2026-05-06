@@ -2337,7 +2337,6 @@ function patchStagedDockerfile(
   discordGuilds: LooseObject = {},
   baseImageRef: string | null = null,
   telegramConfig: LooseObject = {},
-  hermesRuntimeTokenEnvKeys: string[] = [],
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -2483,14 +2482,6 @@ function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_TELEGRAM_CONFIG_B64=.*$/m,
       `ARG NEMOCLAW_TELEGRAM_CONFIG_B64=${encodeDockerJsonArg(telegramConfig)}`,
-    );
-  }
-  if (hermesRuntimeTokenEnvKeys.length > 0) {
-    dockerfile = dockerfile.replace(
-      /^ARG NEMOCLAW_HERMES_RUNTIME_TOKEN_ENVS_B64=.*$/m,
-      `ARG NEMOCLAW_HERMES_RUNTIME_TOKEN_ENVS_B64=${encodeDockerJsonArg(
-        hermesRuntimeTokenEnvKeys,
-      )}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);
@@ -4561,17 +4552,6 @@ async function createSandbox(
   const previousProviderCredentialHashes =
     registry.getSandbox(sandboxName)?.providerCredentialHashes ?? {};
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
-  const usesHermesRuntimeDiscordToken =
-    agent?.name === "hermes" &&
-    !!messagingTokenDefs.find(
-      ({ envKey, token }) => envKey === "DISCORD_BOT_TOKEN" && !!token,
-    );
-  const runtimeMessagingEnvKeys = new Set<string>(
-    usesHermesRuntimeDiscordToken ? ["DISCORD_BOT_TOKEN"] : [],
-  );
-  const providerMessagingTokenDefs = messagingTokenDefs.filter(
-    ({ envKey }) => !runtimeMessagingEnvKeys.has(envKey),
-  );
   const reusableMessagingProviders: string[] = [];
   const reusableMessagingChannels: string[] = [];
   const reusableMessagingEnvKeys = new Set<string>();
@@ -4642,7 +4622,7 @@ async function createSandbox(
     // this avoids destroying sandboxes already created with provider attachments.
     const needsProviderMigration =
       hasMessagingTokens &&
-      providerMessagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
+      messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
     const selectionDrift = getSelectionDrift(sandboxName, provider, model);
     const confirmedSelectionDrift = selectionDrift.changed && !selectionDrift.unknown;
 
@@ -4686,7 +4666,7 @@ async function createSandbox(
           } else {
             // Upsert messaging providers even on reuse so credential changes take
             // effect without requiring a full sandbox recreation.
-            upsertMessagingProviders(providerMessagingTokenDefs);
+            upsertMessagingProviders(messagingTokenDefs);
             if (selectionDrift.unknown) {
               note(
                 "  [non-interactive] Existing provider/model selection is unreadable; reusing sandbox.",
@@ -4735,7 +4715,7 @@ async function createSandbox(
           console.log(`  Sandbox '${sandboxName}' already exists.`);
           console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
-            upsertMessagingProviders(providerMessagingTokenDefs);
+            upsertMessagingProviders(messagingTokenDefs);
             const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
             process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort2}`;
             updateReusedSandboxMetadata(
@@ -4775,7 +4755,7 @@ async function createSandbox(
         } else {
           console.error("  State backup failed — aborting rebuild to prevent data loss.");
           console.error("  Pass --recreate-sandbox to force recreation without backup.");
-          upsertMessagingProviders(providerMessagingTokenDefs);
+          upsertMessagingProviders(messagingTokenDefs);
           // Update stored hashes so the next onboard doesn't re-detect rotation.
           const abortHashes: Record<string, string> = {};
           for (const { envKey, token } of messagingTokenDefs) {
@@ -4801,7 +4781,7 @@ async function createSandbox(
         const errorMessage = err instanceof Error ? err.message : String(err);
         console.error(`  State backup threw: ${errorMessage} — aborting rebuild.`);
         console.error("  Pass --recreate-sandbox to force recreation without backup.");
-        upsertMessagingProviders(providerMessagingTokenDefs);
+        upsertMessagingProviders(messagingTokenDefs);
         const abortHashes: Record<string, string> = {};
         for (const { envKey, token } of messagingTokenDefs) {
           const hash = token ? hashCredential(token) : null;
@@ -5023,15 +5003,8 @@ async function createSandbox(
   // the provider/placeholder system instead of raw env vars. The L7 proxy
   // rewrites Authorization headers (Bearer/Bot) and URL-path segments
   // (/bot{TOKEN}/) with real secrets at egress (OpenShell >= 0.0.20).
-  // Hermes Discord is the exception: Discord gateway auth puts the bot token
-  // in a WebSocket IDENTIFY payload, and OpenShell does not rewrite upgraded
-  // WebSocket frames yet (OpenShell#872). When the token is available locally,
-  // pass it only as runtime process env and omit the .env placeholder.
   const messagingProviders = [
-    ...new Set([
-      ...upsertMessagingProviders(providerMessagingTokenDefs),
-      ...reusableMessagingProviders,
-    ]),
+    ...new Set([...upsertMessagingProviders(messagingTokenDefs), ...reusableMessagingProviders]),
   ];
   for (const p of messagingProviders) {
     createArgs.push("--provider", p);
@@ -5148,14 +5121,10 @@ async function createSandbox(
     discordGuilds,
     resolved ? resolved.ref : null,
     telegramConfig,
-    [...runtimeMessagingEnvKeys],
   );
-  // Only pass non-sensitive env vars to the sandbox by default. Credentials
-  // flow through OpenShell providers — the gateway injects them as placeholders
-  // and the L7 proxy rewrites Authorization headers with real secrets at egress.
-  // Hermes Discord has a narrow runtime-env exception below because Discord
-  // gateway auth sends the token inside WebSocket frames that OpenShell cannot
-  // rewrite yet.
+  // Only pass non-sensitive env vars to the sandbox. Credentials flow through
+  // OpenShell providers — the gateway injects them as placeholders and the L7
+  // proxy rewrites Authorization headers with real secrets at egress.
   // See: crates/openshell-sandbox/src/secrets.rs (placeholder rewriting),
   //      crates/openshell-router/src/backend.rs (inference auth injection).
   //
@@ -5213,9 +5182,6 @@ async function createSandbox(
     if (tokensByEnvKey["SLACK_APP_TOKEN"]) {
       envArgs.push(formatEnvAssignment("SLACK_APP_TOKEN", tokensByEnvKey["SLACK_APP_TOKEN"]));
     }
-  }
-  if (usesHermesRuntimeDiscordToken && tokensByEnvKey["DISCORD_BOT_TOKEN"]) {
-    envArgs.push(formatEnvAssignment("DISCORD_BOT_TOKEN", tokensByEnvKey["DISCORD_BOT_TOKEN"]));
   }
   const sandboxEnv = buildSubprocessEnv();
   // Remove host-infrastructure credentials that the generic allowlist

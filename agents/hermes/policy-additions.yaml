@@ -209,6 +209,7 @@ network_policies:
       - host: gateway.discord.gg
         port: 443
         access: full
+        tls: skip
       - host: cdn.discordapp.com
         port: 443
         protocol: rest
