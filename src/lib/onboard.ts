@@ -6813,6 +6813,31 @@ async function setupMessagingChannels(): Promise<string[]> {
   const getMessagingToken = (envKey: string): string | null =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
 
+  // #3061: hydrate process.env from credentials.json for the per-channel
+  // config keys (server ID, user/allowlist IDs, reply-mode preference)
+  // BEFORE deciding non-interactive vs interactive. createSandbox reads
+  // these env vars at deploy time; if a non-interactive re-onboard has
+  // them only in credentials.json, the sandbox would launch with the
+  // wrong (default) values. Existing process.env values win, so a
+  // user who exports a fresh value still overrides the persisted one.
+  for (const ch of MESSAGING_CHANNELS) {
+    for (const key of [ch.serverIdEnvKey, ch.userIdEnvKey, ch.requireMentionEnvKey]) {
+      if (!key || process.env[key]) continue;
+      const persisted = getMessagingToken(key);
+      if (key === ch.requireMentionEnvKey) {
+        // Only "0" / "1" are meaningful for the require-mention boolean;
+        // anything else means the credential file was hand-edited or
+        // pre-dates the persistence change. Skip it so the prompt path
+        // can re-collect a clean value.
+        if (persisted === "0" || persisted === "1") {
+          process.env[key] = persisted;
+        }
+      } else if (persisted) {
+        process.env[key] = persisted;
+      }
+    }
+  }
+
   // Non-interactive: skip prompt, tokens come from env/credentials
   if (isNonInteractive() || process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
     const found = MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name);
