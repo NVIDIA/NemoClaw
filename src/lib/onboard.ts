@@ -900,8 +900,13 @@ async function startModelRouter(routerCfg: BlueprintRouterConfig): Promise<numbe
   const { buildSubprocessEnv } = require("./subprocess-env");
   const credEnvVars: Record<string, string> = {};
   const credName = routerCfg.credential_env || "NVIDIA_API_KEY";
-  if (process.env[credName]) credEnvVars[credName] = process.env[credName];
-  if (process.env.OPENAI_API_KEY) credEnvVars.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  const routedCredential = resolveProviderCredential(credName);
+  const openAiCredential = resolveProviderCredential("OPENAI_API_KEY");
+  if (routedCredential) {
+    credEnvVars[credName] = routedCredential;
+    if (!openAiCredential) credEnvVars.OPENAI_API_KEY = routedCredential;
+  }
+  if (openAiCredential) credEnvVars.OPENAI_API_KEY = openAiCredential;
   const _providerKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
   if (_providerKey) {
     if (!credEnvVars[credName]) credEnvVars[credName] = _providerKey;
@@ -1001,11 +1006,11 @@ async function reconcileModelRouter(): Promise<void> {
   const routerCredentialEnv = bp.router.credential_env || bp.credential_env || "NVIDIA_API_KEY";
   const routerCredential =
     hydrateCredentialEnv(routerCredentialEnv) ||
-    normalizeCredentialValue(process.env[routerCredentialEnv] || "");
+    normalizeCredentialValue(bp.credential_default || "");
   if (!routerCredential) {
     throw new Error(`${routerCredentialEnv} is required to start Model Router.`);
   }
-  process.env[routerCredentialEnv] = routerCredential;
+  saveCredential(routerCredentialEnv, routerCredential);
   const routerCredentialHash = hashCredential(routerCredential);
   const session = onboardSession.loadSession();
   const recordedPid = session?.routerPid ?? null;
@@ -6776,21 +6781,21 @@ async function setupNim(
           hydrateCredentialEnv(routerCredentialEnv) ||
           normalizeCredentialValue(bp.credential_default || "");
         if (routedCredential) {
-          process.env[routerCredentialEnv] = routedCredential;
+          saveCredential(routerCredentialEnv, routedCredential);
         }
         const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-        if (_providerKeyHint && !process.env[routerCredentialEnv]) {
-          process.env[routerCredentialEnv] = _providerKeyHint;
+        if (_providerKeyHint && !resolveProviderCredential(routerCredentialEnv)) {
+          saveCredential(routerCredentialEnv, _providerKeyHint);
         }
         if (isNonInteractive()) {
-          if (!process.env[routerCredentialEnv]) {
+          if (!resolveProviderCredential(routerCredentialEnv)) {
             console.error(
               `  ${routerCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for Model Router in non-interactive mode.`,
             );
             process.exit(1);
           }
         } else {
-          if (!process.env[routerCredentialEnv]) {
+          if (!resolveProviderCredential(routerCredentialEnv)) {
             await ensureNamedCredential(routerCredentialEnv, "Model Router API key", null);
           }
         }
