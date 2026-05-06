@@ -103,7 +103,12 @@ const STATION_PROFILE: VllmProfile = {
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
     const indices = getGpuIndicesByName(/GB300/i);
-    const gpuFlag = indices.length > 0 ? `device=${indices.join(",")}` : "all";
+    const gpuFlag =
+      indices.length === 0
+        ? "all"
+        : indices.length === 1
+          ? `device=${indices[0]}`
+          : `'"device=${indices.join(",")}"'`;
     return [
       "--gpus",
       gpuFlag,
