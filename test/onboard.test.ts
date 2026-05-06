@@ -226,7 +226,18 @@ describe("onboard helpers", () => {
       expect(getDefaultSandboxNameForAgent(hermes)).toBe("hermes");
       expect(getSandboxPromptDefault(hermes)).toBe("hermes");
 
+      // #3060: NEMOCLAW_SANDBOX_NAME set in the environment is honored as
+      // the prompt default when valid.
       process.env.NEMOCLAW_SANDBOX_NAME = "custom-hermes";
+      expect(getSandboxPromptDefault(hermes)).toBe("custom-hermes");
+
+      // #3060: an invalid env value falls back to the agent default rather
+      // than getting the user stuck on a value validateName() will reject.
+      process.env.NEMOCLAW_SANDBOX_NAME = "123-leading-digit-invalid";
+      expect(getSandboxPromptDefault(hermes)).toBe("hermes");
+
+      // Empty NEMOCLAW_SANDBOX_NAME also falls back.
+      process.env.NEMOCLAW_SANDBOX_NAME = "";
       expect(getSandboxPromptDefault(hermes)).toBe("hermes");
     } finally {
       if (previousSandboxName === undefined) {

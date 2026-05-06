@@ -3860,7 +3860,21 @@ function getDefaultSandboxNameForAgent(agent: AgentDefinition | null | undefined
 }
 
 function getSandboxPromptDefault(agent: AgentDefinition | null | undefined): string {
-  return getDefaultSandboxNameForAgent(agent);
+  // #3060: when NEMOCLAW_SANDBOX_NAME is set in the user's environment,
+  // pre-populate the interactive prompt with it (and use it as the
+  // empty-enter fallback). Other env vars (e.g. NEMOCLAW_ENDPOINT_URL)
+  // already pre-populate; the sandbox name was the inconsistent case.
+  // If the env value is non-empty but invalid (rejected by validateName),
+  // fall back to the agent default so the prompt does not get stuck on a
+  // value the user cannot accept by hitting enter.
+  const envName = (process.env.NEMOCLAW_SANDBOX_NAME ?? "").trim();
+  const agentDefault = getDefaultSandboxNameForAgent(agent);
+  if (!envName) return agentDefault;
+  try {
+    return validateName(envName, "sandbox name");
+  } catch {
+    return agentDefault;
+  }
 }
 
 function getEffectiveSandboxAgent(agent: AgentDefinition | null | undefined): AgentDefinition {
