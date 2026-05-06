@@ -63,6 +63,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
 
   github:
     name: github
@@ -76,6 +77,7 @@ network_policies:
     binaries:
       - { path: /usr/bin/gh }
       - { path: /usr/bin/git }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── Nous Research — Hermes auth, updates, portal ──────────────
   nous_research:
@@ -105,6 +107,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── PyPI — needed for pip install (skill/plugin deps) ─────────
   pypi:
@@ -125,6 +128,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/pip3 }
       - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── Messaging — pre-allowed for agent notifications ───────────
   telegram:
@@ -141,6 +145,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
 
   discord:
     name: discord
@@ -164,3 +169,4 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
