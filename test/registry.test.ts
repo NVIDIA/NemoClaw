@@ -163,6 +163,28 @@ describe("registry", () => {
     expect(data.sandboxes.tagged.imageTag).toBe("openshell/sandbox-from:1776766054");
   });
 
+  it("stores messaging channel config at registration time", () => {
+    registry.registerSandbox({
+      name: "messaging",
+      messagingChannels: ["telegram"],
+      messagingChannelConfig: {
+        TELEGRAM_ALLOWED_IDS: "123,456",
+        TELEGRAM_REQUIRE_MENTION: "1",
+      },
+    });
+
+    const sb = registry.getSandbox("messaging");
+    expect(sb.messagingChannelConfig).toEqual({
+      TELEGRAM_ALLOWED_IDS: "123,456",
+      TELEGRAM_REQUIRE_MENTION: "1",
+    });
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.messaging.messagingChannelConfig).toEqual({
+      TELEGRAM_ALLOWED_IDS: "123,456",
+      TELEGRAM_REQUIRE_MENTION: "1",
+    });
+  });
+
   it("imageTag defaults to null when not provided", () => {
     registry.registerSandbox({ name: "no-tag" });
     const sb = registry.getSandbox("no-tag");

@@ -66,24 +66,11 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("messaging channel config persistence (#3061)", () => {
-  it("persists per-channel allowlist + reply-mode env keys", () => {
-    // #3061: re-onboard previously re-prompted for telegram allowed IDs
-    // and discord server/user IDs because saveCredential was never called
-    // for those keys. Persisting them requires the keys to be in the
-    // KNOWN_CREDENTIAL_ENV_KEYS list so the credential machinery accepts
-    // them via saveCredential / getCredential.
-    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("TELEGRAM_ALLOWED_IDS");
-    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("TELEGRAM_REQUIRE_MENTION");
-    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("DISCORD_SERVER_ID");
-    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("DISCORD_USER_ID");
-    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("DISCORD_REQUIRE_MENTION");
-  });
-
+describe("messaging legacy bridge credentials", () => {
   it("keeps the legacy ALLOWED_CHAT_IDS entry for the deploy-time bridge", () => {
     // The Telegram bridge runtime injected by deploy.ts still expects the
-    // legacy env name. Adding TELEGRAM_ALLOWED_IDS for the host-side
-    // prompt does not displace it.
+    // legacy env name. Channel config values are persisted separately from
+    // provider credentials, but this credential key stays for deploy.ts.
     expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("ALLOWED_CHAT_IDS");
   });
 });

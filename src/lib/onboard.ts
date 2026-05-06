@@ -310,6 +310,14 @@ import type { AgentDefinition } from "./agent-defs";
 import type { CurlProbeResult } from "./http-probe";
 import type { GatewayInference, ProviderSelectionConfig } from "./inference-config";
 import type { GpuInfo, ValidationResult } from "./local-inference";
+import {
+  hydrateMessagingChannelConfig,
+  mergeMessagingChannelConfigs,
+  normalizeMessagingChannelConfigValue,
+  readMessagingChannelConfigFromEnv,
+  sanitizeMessagingChannelConfig,
+  type MessagingChannelConfig,
+} from "./messaging-channel-config";
 import type { Session, SessionUpdates } from "./onboard-session";
 import type {
   ModelCatalogFetchResult,
@@ -4733,6 +4741,7 @@ async function createSandbox(
   }
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
+  const messagingChannelConfig = readMessagingChannelConfigFromEnv();
   // Build allowed sender IDs map from env vars set during the messaging prompt.
   // Each channel with a userIdEnvKey in MESSAGING_CHANNELS may have a
   // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
@@ -4793,17 +4802,14 @@ async function createSandbox(
   // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and
   // force a sandbox recreate — otherwise the old groupPolicy would stay baked
   // in. Mirrors the pattern used for webSearchConfig. See CodeRabbit on #2417.
-  if (typeof telegramConfig.requireMention === "boolean") {
-    onboardSession.updateSession((current) => {
-      current.telegramConfig = { requireMention: telegramConfig.requireMention as boolean };
-      return current;
-    });
-  } else {
-    onboardSession.updateSession((current) => {
-      current.telegramConfig = null;
-      return current;
-    });
-  }
+  onboardSession.updateSession((current) => {
+    current.telegramConfig =
+      typeof telegramConfig.requireMention === "boolean"
+        ? { requireMention: telegramConfig.requireMention as boolean }
+        : null;
+    current.messagingChannelConfig = messagingChannelConfig;
+    return current;
+  });
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
   // exactly what we just fetched. This prevents stale :latest tags from
   // silently reusing a cached old image after NemoClaw upgrades (#1904).
@@ -5091,6 +5097,7 @@ async function createSandbox(
     providerCredentialHashes:
       Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
     messagingChannels: activeMessagingChannels,
+    messagingChannelConfig: messagingChannelConfig || undefined,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
     dashboardPort: actualDashboardPort,
   });
@@ -6748,6 +6755,38 @@ async function setupInference(
 
 const MESSAGING_CHANNELS = listChannels();
 
+function getStoredMessagingChannelConfig(
+  sandboxName: string | null,
+  session: Session | null,
+): MessagingChannelConfig | null {
+  const registryConfig = sandboxName
+    ? sanitizeMessagingChannelConfig(registry.getSandbox(sandboxName)?.messagingChannelConfig)
+    : null;
+  const sessionMatchesSandbox =
+    !session?.sandboxName || !sandboxName || session.sandboxName === sandboxName;
+  const sessionConfig = sessionMatchesSandbox
+    ? sanitizeMessagingChannelConfig(session?.messagingChannelConfig)
+    : null;
+  return mergeMessagingChannelConfigs(registryConfig, sessionConfig);
+}
+
+function persistMessagingChannelConfigToSession(config: MessagingChannelConfig | null): void {
+  onboardSession.updateSession((current: Session) => {
+    current.messagingChannelConfig = config;
+    return current;
+  });
+}
+
+function messagingChannelConfigsEqual(
+  left: MessagingChannelConfig | null,
+  right: MessagingChannelConfig | null,
+): boolean {
+  const leftKeys = Object.keys(left || {}).sort();
+  const rightKeys = Object.keys(right || {}).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key, index) => key === rightKeys[index] && left?.[key] === right?.[key]);
+}
+
 // Curl exit codes that indicate a network-level failure (not a token problem).
 // 35 (TLS handshake failure) covers corporate proxies that MITM HTTPS.
 const TELEGRAM_NETWORK_CURL_CODES = new Set([6, 7, 28, 35, 52, 56]);
@@ -6813,30 +6852,8 @@ async function setupMessagingChannels(): Promise<string[]> {
   const getMessagingToken = (envKey: string): string | null =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
 
-  // #3061: hydrate process.env from credentials.json for the per-channel
-  // config keys (server ID, user/allowlist IDs, reply-mode preference)
-  // BEFORE deciding non-interactive vs interactive. createSandbox reads
-  // these env vars at deploy time; if a non-interactive re-onboard has
-  // them only in credentials.json, the sandbox would launch with the
-  // wrong (default) values. Existing process.env values win, so a
-  // user who exports a fresh value still overrides the persisted one.
-  for (const ch of MESSAGING_CHANNELS) {
-    for (const key of [ch.serverIdEnvKey, ch.userIdEnvKey, ch.requireMentionEnvKey]) {
-      if (!key || process.env[key]) continue;
-      const persisted = getMessagingToken(key);
-      if (key === ch.requireMentionEnvKey) {
-        // Only "0" / "1" are meaningful for the require-mention boolean;
-        // anything else means the credential file was hand-edited or
-        // pre-dates the persistence change. Skip it so the prompt path
-        // can re-collect a clean value.
-        if (persisted === "0" || persisted === "1") {
-          process.env[key] = persisted;
-        }
-      } else if (persisted) {
-        process.env[key] = persisted;
-      }
-    }
-  }
+  const getMessagingConfigValue = (envKey: string): string | null =>
+    normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);
 
   // Non-interactive: skip prompt, tokens come from env/credentials
   if (isNonInteractive() || process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
@@ -7023,7 +7040,7 @@ async function setupMessagingChannels(): Promise<string[]> {
       }
     }
     if (ch.serverIdEnvKey) {
-      const existingServerIds = getMessagingToken(ch.serverIdEnvKey) || "";
+      const existingServerIds = getMessagingConfigValue(ch.serverIdEnvKey) || "";
       if (existingServerIds) {
         process.env[ch.serverIdEnvKey] = existingServerIds;
         console.log(`  ✓ ${ch.name} — server ID already set: ${existingServerIds}`);
@@ -7031,8 +7048,6 @@ async function setupMessagingChannels(): Promise<string[]> {
         console.log(`  ${ch.serverIdHelp}`);
         const serverId = (await prompt(`  ${ch.serverIdLabel}: `)).trim();
         if (serverId) {
-          // #3061: persist so re-onboard finds it again instead of re-prompting
-          saveCredential(ch.serverIdEnvKey, serverId);
           process.env[ch.serverIdEnvKey] = serverId;
           console.log(`  ✓ ${ch.name} server ID saved`);
         } else {
@@ -7047,11 +7062,7 @@ async function setupMessagingChannels(): Promise<string[]> {
     // the bot is added to, so the prompt always fires there. See #1737.
     const requireMentionKey = ch.requireMentionEnvKey;
     if (requireMentionKey && (!ch.serverIdEnvKey || Boolean(process.env[ch.serverIdEnvKey]))) {
-      const persistedRequireMention = getMessagingToken(requireMentionKey);
-      const existingRequireMention =
-        persistedRequireMention === "0" || persistedRequireMention === "1"
-          ? persistedRequireMention
-          : process.env[requireMentionKey];
+      const existingRequireMention = getMessagingConfigValue(requireMentionKey);
       if (existingRequireMention === "0" || existingRequireMention === "1") {
         process.env[requireMentionKey] = existingRequireMention;
         const mode = existingRequireMention === "0" ? "all messages" : "@mentions only";
@@ -7060,8 +7071,6 @@ async function setupMessagingChannels(): Promise<string[]> {
         console.log(`  ${ch.requireMentionHelp}`);
         const answer = (await prompt("  Reply only when @mentioned? [Y/n]: ")).trim().toLowerCase();
         const value = answer === "n" || answer === "no" ? "0" : "1";
-        // #3061: persist so re-onboard remembers the user's preference
-        saveCredential(requireMentionKey, value);
         process.env[requireMentionKey] = value;
         const mode = value === "0" ? "all messages" : "@mentions only";
         console.log(`  ✓ ${ch.name} reply mode saved: ${mode}`);
@@ -7069,7 +7078,7 @@ async function setupMessagingChannels(): Promise<string[]> {
     }
     // Prompt for user/sender ID when the channel supports allowlisting
     if (ch.userIdEnvKey && (!ch.serverIdEnvKey || process.env[ch.serverIdEnvKey])) {
-      const existingIds = getMessagingToken(ch.userIdEnvKey) || "";
+      const existingIds = getMessagingConfigValue(ch.userIdEnvKey) || "";
       if (existingIds) {
         process.env[ch.userIdEnvKey] = existingIds;
         console.log(`  ✓ ${ch.name} — allowed IDs already set: ${existingIds}`);
@@ -7077,8 +7086,6 @@ async function setupMessagingChannels(): Promise<string[]> {
         console.log(`  ${ch.userIdHelp}`);
         const userId = (await prompt(`  ${ch.userIdLabel}: `)).trim();
         if (userId) {
-          // #3061: persist so re-onboard finds the IDs again instead of re-prompting
-          saveCredential(ch.userIdEnvKey, userId);
           process.env[ch.userIdEnvKey] = userId;
           console.log(`  ✓ ${ch.name} user ID saved`);
         } else {
@@ -8604,6 +8611,7 @@ function toSessionUpdates(
     webSearchConfig?: WebSearchConfig | null;
     policyPresets?: string[] | null;
     messagingChannels?: string[] | null;
+    messagingChannelConfig?: MessagingChannelConfig | null;
   } = {},
 ): SessionUpdates {
   const normalized: SessionUpdates = {};
@@ -8623,6 +8631,9 @@ function toSessionUpdates(
   if (updates.webSearchConfig !== undefined) normalized.webSearchConfig = updates.webSearchConfig;
   if (updates.policyPresets) normalized.policyPresets = updates.policyPresets;
   if (updates.messagingChannels) normalized.messagingChannels = updates.messagingChannels;
+  if (updates.messagingChannelConfig !== undefined) {
+    normalized.messagingChannelConfig = updates.messagingChannelConfig;
+  }
   return normalized;
 }
 
@@ -9275,6 +9286,19 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       });
     }
 
+    const storedMessagingChannelConfig = getStoredMessagingChannelConfig(sandboxName, session);
+    const effectiveMessagingChannelConfig = hydrateMessagingChannelConfig(storedMessagingChannelConfig);
+    const messagingChannelConfigChanged = !messagingChannelConfigsEqual(
+      effectiveMessagingChannelConfig,
+      storedMessagingChannelConfig,
+    );
+    if (effectiveMessagingChannelConfig) {
+      persistMessagingChannelConfigToSession(effectiveMessagingChannelConfig);
+      if (session) {
+        session.messagingChannelConfig = effectiveMessagingChannelConfig;
+      }
+    }
+
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     // Telegram mention-mode is baked into openclaw.json at sandbox build time, so
@@ -9298,6 +9322,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume &&
       !webSearchConfigChanged &&
       !telegramConfigChanged &&
+      !messagingChannelConfigChanged &&
       session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
     if (resumeSandbox) {
@@ -9315,6 +9340,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           }
         } else if (telegramConfigChanged) {
           note("  [resume] TELEGRAM_REQUIRE_MENTION changed; recreating sandbox.");
+          if (sandboxName) {
+            registry.removeSandbox(sandboxName);
+          }
+        } else if (messagingChannelConfigChanged) {
+          note("  [resume] Messaging channel configuration changed; recreating sandbox.");
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
           }
@@ -9353,8 +9383,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       } else {
         selectedMessagingChannels = await setupMessagingChannels();
       }
+      const messagingChannelConfig = readMessagingChannelConfigFromEnv();
       onboardSession.updateSession((current: Session) => {
         current.messagingChannels = selectedMessagingChannels;
+        current.messagingChannelConfig = messagingChannelConfig;
         return current;
       });
       if (typeof model !== "string" || typeof provider !== "string") {
@@ -9386,7 +9418,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       registry.setDefault(sandboxName);
       onboardSession.markStepComplete(
         "sandbox",
-        toSessionUpdates({ sandboxName, provider, model, nimContainer, webSearchConfig }),
+        toSessionUpdates({
+          sandboxName,
+          provider,
+          model,
+          nimContainer,
+          webSearchConfig,
+          messagingChannelConfig,
+        }),
       );
     }
 

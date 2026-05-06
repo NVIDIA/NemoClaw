@@ -12,6 +12,10 @@ import path from "node:path";
 
 import { redactSensitiveText, redactUrl } from "./redact";
 import { isErrnoException } from "./errno";
+import {
+  sanitizeMessagingChannelConfig,
+  type MessagingChannelConfig,
+} from "./messaging-channel-config";
 import type { WebSearchConfig } from "./web-search";
 
 export const SESSION_VERSION = 1;
@@ -77,6 +81,7 @@ export interface Session {
   webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
+  messagingChannelConfig: MessagingChannelConfig | null;
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
   // env-name. Persisted across process restarts so a `--resume` run that
@@ -125,6 +130,7 @@ export interface SessionUpdates {
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
   messagingChannels?: string[];
+  messagingChannelConfig?: MessagingChannelConfig | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
@@ -301,6 +307,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
+    messagingChannelConfig: sanitizeMessagingChannelConfig(overrides.messagingChannelConfig),
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
@@ -336,6 +343,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
+    messagingChannelConfig: sanitizeMessagingChannelConfig(data.messagingChannelConfig),
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
@@ -702,6 +710,12 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   }
   if (Array.isArray(updates.messagingChannels)) {
     safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
+  }
+  if (updates.messagingChannelConfig === null) {
+    safe.messagingChannelConfig = null;
+  } else {
+    const messagingChannelConfig = sanitizeMessagingChannelConfig(updates.messagingChannelConfig);
+    if (messagingChannelConfig) safe.messagingChannelConfig = messagingChannelConfig;
   }
   if (isObject(updates.migratedLegacyValueHashes)) {
     const cleaned: Record<string, string> = {};

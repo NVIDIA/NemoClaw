@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "./errno";
+import type { MessagingChannelConfig } from "./messaging-channel-config";
 
 export interface CustomPolicyEntry {
   name: string;
@@ -29,6 +30,7 @@ export interface SandboxEntry {
   imageTag?: string | null;
   providerCredentialHashes?: Record<string, string>;
   messagingChannels?: string[];
+  messagingChannelConfig?: MessagingChannelConfig;
   disabledChannels?: string[];
   dashboardPort?: number | null;
 }
@@ -196,6 +198,10 @@ export function registerSandbox(entry: SandboxEntry): void {
       imageTag: entry.imageTag || null,
       providerCredentialHashes: entry.providerCredentialHashes || undefined,
       messagingChannels: entry.messagingChannels || [],
+      messagingChannelConfig:
+        entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0
+          ? { ...entry.messagingChannelConfig }
+          : undefined,
       disabledChannels:
         Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
           ? [...entry.disabledChannels]
