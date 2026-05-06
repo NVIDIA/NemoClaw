@@ -6,10 +6,10 @@
 import * as onboardSession from "./onboard-session";
 import type { ListSandboxesCommandDeps } from "./inventory-commands";
 import { parseGatewayInference } from "./inference-config";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { parseSshProcesses, createSystemDeps } from "./sandbox-session-state";
-import { resolveOpenshell } from "./resolve-openshell";
-import { captureOpenshell } from "./openshell-runtime";
+import { resolveOpenshell } from "./adapters/openshell/resolve";
+import { captureOpenshell } from "./adapters/openshell/runtime";
 import { recoverRegistryEntries } from "./registry-recovery-action";
 
 export function buildListCommandDeps(): ListSandboxesCommandDeps {

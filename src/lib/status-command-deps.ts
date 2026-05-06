@@ -8,11 +8,11 @@ import { spawnSync } from "node:child_process";
 import { parseGatewayInference } from "./inference-config";
 import type { MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory-commands";
 import { backfillMessagingChannels, findAllOverlaps } from "./messaging-conflict";
-import type { CaptureOpenshellResult } from "./openshell";
-import { captureOpenshellCommand, stripAnsi } from "./openshell";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
+import type { CaptureOpenshellResult } from "./adapters/openshell/client";
+import { captureOpenshellCommand, stripAnsi } from "./adapters/openshell/client";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import * as registry from "./registry";
-import { resolveOpenshell } from "./resolve-openshell";
+import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./services";
 
 function captureOpenshell(

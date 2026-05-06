@@ -337,6 +337,7 @@ Backup and Restore <manage-sandboxes/backup-restore>
 
 Approve or Deny Network Requests <network-policy/approve-network-requests>
 Customize the Network Policy <network-policy/customize-network-policy>
+Integration Policy Examples <network-policy/integration-policy-examples>
 ```
 
 ```{toctree}

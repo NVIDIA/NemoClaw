@@ -579,6 +579,140 @@ show_usage_notice() {
   fi
 }
 
+usage_notice_config_path() {
+  local repo_root source_root notice_json
+  repo_root="$(resolve_repo_root)"
+  source_root="${NEMOCLAW_SOURCE_ROOT:-$repo_root}"
+  notice_json="${source_root}/bin/lib/usage-notice.json"
+  if [[ ! -f "$notice_json" ]]; then
+    notice_json="${repo_root}/bin/lib/usage-notice.json"
+  fi
+  printf "%s" "$notice_json"
+}
+
+json_string_field() {
+  local file="$1" field="$2"
+  sed -nE "s/^[[:space:]]*\"${field}\"[[:space:]]*:[[:space:]]*\"(.*)\"[,]?[[:space:]]*$/\\1/p" "$file" \
+    | head -n 1 \
+    | sed 's/\\"/"/g; s/\\\\/\\/g'
+}
+
+usage_notice_state_file() {
+  printf "%s/.nemoclaw/usage-notice.json" "${HOME}"
+}
+
+usage_notice_accepted_shell() {
+  local version="$1" state_file saved_version
+  state_file="$(usage_notice_state_file)"
+  [[ -n "$version" && -f "$state_file" ]] || return 1
+  saved_version="$(sed -nE 's/.*"acceptedVersion"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$state_file" | head -n 1)"
+  [[ "$saved_version" == "$version" ]]
+}
+
+save_usage_notice_acceptance_shell() {
+  local version="$1" state_file state_dir accepted_at
+  state_file="$(usage_notice_state_file)"
+  state_dir="$(dirname "$state_file")"
+  accepted_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date)"
+  mkdir -p "$state_dir"
+  chmod 700 "$state_dir" 2>/dev/null || true
+  printf '{\n  "acceptedVersion": "%s",\n  "acceptedAt": "%s"\n}\n' "$version" "$accepted_at" >"$state_file"
+  chmod 600 "$state_file" 2>/dev/null || true
+}
+
+print_usage_notice_body_shell() {
+  local file="$1"
+  awk '
+    /"body"[[:space:]]*:/ { in_body = 1; next }
+    in_body && /^[[:space:]]*]/ { exit }
+    in_body {
+      line = $0
+      sub(/^[[:space:]]*"/, "", line)
+      sub(/",[[:space:]]*$/, "", line)
+      sub(/"[[:space:]]*$/, "", line)
+      gsub(/\\"/, "\"", line)
+      gsub(/\\\\/, "\\", line)
+      printf "  %s\n", line
+    }
+  ' "$file"
+}
+
+show_usage_notice_shell() {
+  local notice_json version title prompt notice_body answer answer_lc
+  notice_json="$(usage_notice_config_path)"
+  if [[ ! -f "$notice_json" ]]; then
+    error "Third-party software notice configuration not found."
+  fi
+
+  version="$(json_string_field "$notice_json" "version")"
+  title="$(json_string_field "$notice_json" "title")"
+  prompt="$(json_string_field "$notice_json" "interactivePrompt")"
+  if [[ -z "$version" ]]; then
+    error "Third-party software notice version not found."
+  fi
+  notice_body="$(print_usage_notice_body_shell "$notice_json")"
+  if [[ -z "$(printf "%s" "$notice_body" | tr -d '[:space:]')" ]]; then
+    error "Third-party software notice body not found."
+  fi
+
+  if usage_notice_accepted_shell "$version"; then
+    return 0
+  fi
+
+  printf "\n"
+  printf "  %s\n" "${title:-Third-Party Software Notice - NemoClaw Installer}"
+  printf "  ──────────────────────────────────────────────────\n"
+  printf "%s\n" "$notice_body"
+  printf "\n"
+  printf "  %s" "${prompt:-Type 'yes' to accept the NemoClaw license and third-party software notice and continue [no]: }"
+  if ! IFS= read -r answer; then
+    printf "\n  Installation cancelled\n" >&2
+    return 1
+  fi
+  answer_lc="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$answer_lc" != "yes" ]]; then
+    printf "  Installation cancelled\n" >&2
+    return 1
+  fi
+
+  save_usage_notice_acceptance_shell "$version"
+  return 0
+}
+
+preflight_usage_notice_prompt() {
+  if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
+    return 0
+  fi
+
+  local notice_json version
+  notice_json="$(usage_notice_config_path)"
+  if [[ -f "$notice_json" ]]; then
+    version="$(json_string_field "$notice_json" "version")"
+    if [[ -n "$version" ]] && usage_notice_accepted_shell "$version"; then
+      return 0
+    fi
+  fi
+
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    error "Non-interactive installation requires explicit third-party software acceptance. Re-run with --yes-i-accept-third-party-software or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1."
+  fi
+
+  if [ -t 0 ]; then
+    show_usage_notice_shell
+    return "$?"
+  fi
+
+  if { exec 3</dev/tty; } 2>/dev/null; then
+    info "Installer stdin is piped; prompting for the third-party software notice on /dev/tty before install."
+    local status=0
+    show_usage_notice_shell <&3 || status=$?
+    exec 3<&-
+    return "$status"
+  fi
+
+  error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
+}
+
 # spin "label" cmd [args...]
 #   Runs a command in the background, showing a braille spinner until it exits.
 #   Stdout/stderr are captured; dumped only on failure.
@@ -1564,24 +1698,11 @@ main() {
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
-  # Fail-fast license-acceptance check (#2671). If we already know phase 3
-  # (show_usage_notice + run_onboard) will hit the "requires a TTY" branch,
-  # surface that error NOW — before phases 1/2 install Node.js and put the
-  # nemoclaw CLI on PATH. Otherwise the user is left in a partial install
-  # that they have to manually `rm -rf` before retry, while their license
-  # has not actually been accepted.
-  #
-  # Skipped (and the install proceeds) only when either:
-  #  - NON_INTERACTIVE=1 (also implied by ACCEPT_THIRD_PARTY_SOFTWARE=1 above)
-  #  - stdin is a TTY — license helper prompts the user directly before install
-  #
-  # Do not treat an openable /dev/tty as sufficient here. In curl|bash mode,
-  # stdin is a pipe even though /dev/tty may still be available; falling back to
-  # /dev/tty later would run phases 1/2 before the license prompt and could leave
-  # a partial install behind if the user declines or no terminal is attached.
-  if [ "${NON_INTERACTIVE:-}" != "1" ] && [ ! -t 0 ]; then
-    error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
-  fi
+  # Fail-fast license-acceptance check (#2671). Headless curl|bash still exits
+  # before phase 1 so it cannot leave a half-install behind. Piped installs from
+  # a real terminal are different: stdin is the script pipe, but /dev/tty can
+  # still collect acceptance before Node.js or the CLI are installed.
+  preflight_usage_notice_prompt
 
   _INSTALL_START=$SECONDS
   print_banner

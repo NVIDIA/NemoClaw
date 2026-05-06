@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import commands from "../../dist/lib/oclif-commands.js";
+import commands from "../../dist/lib/commands/index.js";
 
 const publicCommandEntries = Object.entries(commands).filter(([, commandClass]) => {
   const cls = commandClass as { hidden?: boolean };

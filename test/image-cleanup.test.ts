@@ -9,11 +9,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  getSandboxDeleteOutcome,
   removeSandboxImage,
   removeSandboxRegistryEntry,
-} from "../src/lib/sandbox-destroy-action";
-import { normalizeGarbageCollectImagesOptions } from "../src/lib/lifecycle-options";
+} from "../src/lib/actions/sandbox/destroy";
+import { getSandboxDeleteOutcome } from "../src/lib/domain/sandbox/destroy";
+import { normalizeGarbageCollectImagesOptions } from "../src/lib/domain/lifecycle/options";
 import { help as renderRootHelp } from "../src/lib/root-help-action";
 
 const ROOT = path.resolve(import.meta.dirname, "..");

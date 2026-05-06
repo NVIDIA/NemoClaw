@@ -27,7 +27,7 @@ const { isPrivateHostname, isPrivateIp } = require("./private-networks");
 
 type ConfigObject = import("./credential-filter").ConfigObject;
 type ConfigValue = import("./credential-filter").ConfigValue;
-const { runOpenshellCommand, captureOpenshellCommand } = require("./openshell");
+const { runOpenshellCommand, captureOpenshellCommand } = require("./adapters/openshell/client");
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);

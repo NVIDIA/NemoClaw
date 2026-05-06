@@ -103,7 +103,7 @@ graph TB
     classDef pod fill:#444,stroke:#76b900,color:#fff,stroke-width:2px
     classDef external fill:#f5f5f5,stroke:#e0e0e0,color:#1a1a1a,stroke-width:1px
 
-    subgraph HOST["Host machine · Linux / macOS / WSL2 / DGX Spark"]
+    subgraph HOST["Host machine · Linux / macOS / WSL2 / DGX Spark / DGX Station"]
         direction TB
         CLI["nemoclaw CLI<br/><small>bin/nemoclaw.js → dist/<br/>onboard · connect · status · logs</small>"]:::cli
 

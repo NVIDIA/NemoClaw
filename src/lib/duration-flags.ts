@@ -3,7 +3,7 @@
 
 import { Errors, Flags } from "@oclif/core";
 
-import { parseDuration } from "./duration";
+import { parseDuration } from "./domain/duration";
 
 const LOGS_SINCE_DURATION_RE = /^[1-9]\d*(?:ms|s|m|h|d)$/i;
 

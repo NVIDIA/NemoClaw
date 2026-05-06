@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { parseDuration } from "./duration";
+import { parseDuration } from "./domain/duration";
 import { parseGatewayTokenArgs, runGatewayTokenCommand } from "./gateway-token-command";
 import { resolveDefaultSandboxName, runStartCommand, runStopCommand } from "./services-command";
 import { getVersion } from "./version";

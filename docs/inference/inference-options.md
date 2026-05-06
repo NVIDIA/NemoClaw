@@ -58,6 +58,7 @@ NemoClaw uses provider-specific local tokens for those routes, and rebuilds of l
 The onboard wizard presents the following provider options by default.
 The first six are always available.
 Ollama appears when it is installed or running on the host.
+Experimental local vLLM appears when you opt in and NemoClaw detects either a running vLLM server or a supported NVIDIA GPU host profile.
 
 | Option | Description | Curated models |
 |--------|-------------|----------------|
@@ -90,7 +91,7 @@ The following local inference options require `NEMOCLAW_EXPERIMENTAL=1` and, whe
 | Option | Condition | Notes |
 |--------|-----------|-------|
 | Local NVIDIA NIM | NIM-capable GPU detected | Pulls and manages a NIM container. |
-| Local vLLM | vLLM running on `localhost:8000` | Auto-detects the loaded model. |
+| Local vLLM | vLLM running on `localhost:8000`, or a supported DGX Spark, DGX Station, or Linux NVIDIA GPU profile | Auto-detects the loaded model. Can install or start a managed vLLM container for supported profiles. |
 
 For setup instructions, refer to [Use a Local Inference Server](use-local-inference.md).
 

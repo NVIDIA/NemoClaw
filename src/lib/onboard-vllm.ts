@@ -8,6 +8,7 @@
 const { runCapture, runShell } = require("./runner");
 const { dockerCapture, dockerSpawn } = require("./docker");
 const { VLLM_PORT } = require("./ports");
+const { getGpuIndicesByName } = require("./nim");
 
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
@@ -20,6 +21,10 @@ interface VllmProfile {
   // docker run flags excluding the image and the entrypoint command. The
   // caller appends -p / --name / etc. that are not platform-specific.
   dockerRunFlags: string[];
+  // Optional dynamic flag builder. When present, its return value replaces
+  // dockerRunFlags at install time. Used by Station to pick the GB300 GPU
+  // out of a mixed-GPU host instead of using `--gpus all`.
+  buildDockerRunFlags?: () => string[];
   // bash -c command passed to docker run (pip install + vllm serve …)
   command: string;
   // Approximate first-run time shown in the confirmation prompt.
@@ -96,6 +101,24 @@ const STATION_PROFILE: VllmProfile = {
   model: SPARK_PROFILE.model,
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
+  buildDockerRunFlags: () => {
+    const indices = getGpuIndicesByName(/GB300/i);
+    const gpuFlag =
+      indices.length === 0
+        ? "all"
+        : indices.length === 1
+          ? `device=${indices[0]}`
+          : `'"device=${indices.join(",")}"'`;
+    return [
+      "--gpus",
+      gpuFlag,
+      "--ipc=host",
+      "-v",
+      `${process.env.HOME}/.cache/huggingface:/root/.cache/huggingface`,
+      "-e",
+      "HF_HOME=/root/.cache/huggingface",
+    ];
+  },
   command: SPARK_PROFILE.command,
   estimatedMinutes: SPARK_PROFILE.estimatedMinutes,
   pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
@@ -262,7 +285,10 @@ function startContainer(profile: VllmProfile): { ok: boolean; reason?: string } 
     ignoreError: true,
     suppressOutput: true,
   });
-  const flags = profile.dockerRunFlags.join(" ");
+  const resolvedFlags = profile.buildDockerRunFlags
+    ? profile.buildDockerRunFlags()
+    : profile.dockerRunFlags;
+  const flags = resolvedFlags.join(" ");
   const cmd =
     `docker run -d ${flags} -p ${String(VLLM_PORT)}:8000 ` +
     `--name ${profile.containerName} ${profile.image} bash -c ${JSON.stringify(profile.command)}`;

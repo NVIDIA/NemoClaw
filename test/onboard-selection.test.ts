@@ -320,7 +320,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "6"];
+const answers = ["1", "7"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -421,7 +421,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "custom/provider-model"];
+const answers = ["1", "8", "custom/provider-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -517,7 +517,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "bad/model", "z-ai/glm-5.1"];
+const answers = ["1", "8", "bad/model", "z-ai/glm-5.1"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -793,6 +793,132 @@ const { setupNim } = require(${onboardPath});
       payload.commands.some((command: string) =>
         command.includes("http://127.0.0.1:11434/api/generate"),
       ),
+    );
+  });
+
+  it("starts managed Ollama on loopback before exposing the auth proxy", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-loopback-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-loopback-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"ok"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
+
+const messages = [];
+const runCommands = [];
+const shellCommands = [];
+const answers = ["7", "1"];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+runner.run = (command) => {
+  runCommands.push(Array.isArray(command) ? command.join(" ") : command);
+  return { status: 0 };
+};
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines, runCommands, shellCommands }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.ok(
+      payload.shellCommands.some((command: string) =>
+        command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
+      ),
+      "managed Ollama launch should be loopback-only",
+    );
+    assert.ok(
+      !payload.shellCommands.some((command: string) =>
+        command.includes("OLLAMA_HOST=0.0.0.0:11434"),
+      ),
+      "managed Ollama launch must not expose raw Ollama on all interfaces",
     );
   });
 
@@ -3572,6 +3698,7 @@ const { setupNim } = require(${onboardPath});
     const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
 
     // Fake curl binary that returns a successful response — needed because
     // runCurlProbe and validateOllamaModel spawn real curl via child_process.
@@ -3598,20 +3725,15 @@ fi
       { mode: 0o755 },
     );
 
-    // Simulate: no Ollama installed, no Ollama running, no vLLM — cloud + install-ollama should appear.
-    // On true Linux that's option 7. On WSL the menu also surfaces a Windows-host
-    // install entry first, so install-ollama (labelled "Install Ollama (WSL Linux)")
-    // shifts to option 8. Detect at runtime so the test works in both environments.
-    const isHostWsl =
-      !!process.env.WSL_DISTRO_NAME ||
-      !!process.env.WSL_INTEROP ||
-      /microsoft/i.test(os.release());
-    const installOptionIndex = isHostWsl ? "8" : "7";
-    const expectedInstallLabel = isHostWsl ? "Install Ollama (WSL Linux)" : "Install Ollama (Linux)";
+    // Simulate: no Ollama installed, no Ollama running, no vLLM on native
+    // Linux, so cloud + install-ollama should appear.
+    const installOptionIndex = "7";
+    const expectedInstallLabel = "Install Ollama (Linux)";
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const platform = require(${platformPath});
 
 // Mock child_process.spawn so startOllamaAuthProxy doesn't try to spawn a real process.
 const child_process = require("child_process");
@@ -3677,6 +3799,7 @@ registry.updateSandbox = (_name, update) => updates.push(update);
 
 // Force platform to linux for this test
 Object.defineProperty(process, 'platform', { value: 'linux' });
+platform.isWsl = () => false;
 
 const { setupNim } = require(${onboardPath});
 
@@ -3729,6 +3852,91 @@ const { setupNim } = require(${onboardPath});
       !payload.runCommands.some((cmd: string) => cmd.includes("brew install")),
       "Should NOT use brew on Linux",
     );
+    assert.ok(
+      payload.runCommands.some((cmd: string) =>
+        cmd.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
+      ),
+      "Linux install fallback should start Ollama on loopback",
+    );
+    assert.ok(
+      !payload.runCommands.some((cmd: string) => cmd.includes("OLLAMA_HOST=0.0.0.0:11434")),
+      "Linux install path must not expose raw Ollama on all interfaces",
+    );
+  });
+
+  it("fails closed when the Linux systemd loopback override cannot be applied", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-systemd-fail-"));
+    const scriptPath = path.join(tmpDir, "systemd-fail-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+
+const menuLines = [];
+const originalLog = console.log;
+console.log = (...args) => {
+  const line = args.join(" ");
+  menuLines.push(line);
+  originalLog(...args);
+};
+
+function findInstallOllamaChoice() {
+  const option = menuLines.find((line) => /Install Ollama \((WSL )?Linux\)/.test(line));
+  const match = option && option.match(/^\s*(\d+)\)/);
+  if (!match) {
+    throw new Error("Could not find Linux Ollama install option in menu:\\n" + menuLines.join("\\n"));
+  }
+  return match[1];
+}
+
+credentials.prompt = async () => findInstallOllamaChoice();
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  return "";
+};
+runner.runShell = (command) => {
+  if (command.includes("ollama.com/install.sh")) return { status: 0 };
+  if (command.includes("sudo install -D -m 0644")) return { status: 1 };
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim("systemd-fail-test", null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Failed to apply Ollama systemd loopback override/);
+    assert.match(result.stderr, /Refusing to continue/);
   });
 
   it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", () => {
@@ -3742,6 +3950,7 @@ const { setupNim } = require(${onboardPath});
     const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -3770,6 +3979,7 @@ fi
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const platform = require(${platformPath});
 const child_process = require("child_process");
 
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
@@ -3814,6 +4024,7 @@ runner.runShell = (command) => {
 registry.updateSandbox = (_name, update) => updates.push(update);
 
 Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
 
 const { setupNim } = require(${onboardPath});
 
@@ -3856,6 +4067,16 @@ const { setupNim } = require(${onboardPath});
     assert.ok(
       payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
       "Should use the Ollama installer when requested non-interactively on a fresh host",
+    );
+    assert.ok(
+      payload.runCommands.some((cmd: string) =>
+        cmd.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
+      ),
+      "non-interactive install fallback should start Ollama on loopback",
+    );
+    assert.ok(
+      !payload.runCommands.some((cmd: string) => cmd.includes("OLLAMA_HOST=0.0.0.0:11434")),
+      "non-interactive install path must not expose raw Ollama on all interfaces",
     );
   });
 

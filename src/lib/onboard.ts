@@ -259,7 +259,7 @@ const {
 const { sleepSeconds } = require("./wait");
 const platformUtils: typeof import("./platform") = require("./platform");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
-const { resolveOpenshell } = require("./resolve-openshell");
+const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials") = require("./credentials");
 const {
   prompt,
@@ -418,6 +418,8 @@ type OnboardOptions = {
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   controlUiPort?: number | null;
+  gpu?: boolean;
+  noGpu?: boolean;
   autoYes?: boolean;
 };
 // Non-interactive mode: set by --non-interactive flag or env var.
@@ -1241,6 +1243,29 @@ function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
 }
 function providerExistsInGateway(name: string) {
   return onboardProviders.providerExistsInGateway(name, runOpenshell);
+}
+
+function getMessagingChannelForEnvKey(envKey: string): string | null {
+  if (envKey === "DISCORD_BOT_TOKEN") return "discord";
+  if (envKey === "SLACK_BOT_TOKEN") return "slack";
+  if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
+  return null;
+}
+
+function getKnownMessagingChannels(channels: string[] | null | undefined): string[] {
+  if (!Array.isArray(channels)) return [];
+  const known = new Set(MESSAGING_CHANNELS.map((channel) => channel.name));
+  return [...new Set(channels.filter((channel) => known.has(channel)))];
+}
+
+function getRecordedMessagingChannelsForResume(
+  resume: boolean,
+  session: Session | null,
+): string[] | null {
+  if (!resume || !isNonInteractive() || !Array.isArray(session?.messagingChannels)) {
+    return null;
+  }
+  return getKnownMessagingChannels(session.messagingChannels);
 }
 
 /**
@@ -2582,6 +2607,67 @@ function destroyGateway() {
   dockerRemoveVolumesByPrefix(`openshell-cluster-${GATEWAY_NAME}`, { ignoreError: true });
 }
 
+type FinalGatewayStartFailureOptions = {
+  retries: number;
+  collectDiagnostics?: () => string | null | undefined;
+  cleanupGateway?: () => void;
+  exitProcess?: (code: number) => never;
+  printError?: (message?: string) => void;
+};
+
+function handleFinalGatewayStartFailure({
+  retries,
+  collectDiagnostics = () =>
+    runCaptureOpenshell(["doctor", "logs", "--name", GATEWAY_NAME], {
+      ignoreError: true,
+      timeout: 10_000,
+    }),
+  cleanupGateway = destroyGateway,
+  exitProcess = (code) => process.exit(code),
+  printError = (message = "") => console.error(message),
+}: FinalGatewayStartFailureOptions): never {
+  printError(`  Gateway failed to start after ${retries + 1} attempts.`);
+  printError("  Gateway state preserved until diagnostics are collected.");
+  printError("");
+
+  try {
+    const logs = redact(collectDiagnostics() || "");
+    if (logs) {
+      printError("  Gateway logs:");
+      for (const line of String(logs)
+        .split("\n")
+        .map((l) => l.replace(/\r/g, "").replace(ANSI_RE, ""))
+        .filter(Boolean)) {
+        printError(`    ${line}`);
+      }
+      printError("");
+    }
+  } catch {
+    // doctor logs unavailable — continue to best-effort cleanup and manual instructions
+  }
+
+  printError("  Cleaning up failed gateway state...");
+  try {
+    cleanupGateway();
+    printError("  Cleanup attempted.");
+  } catch (err) {
+    const message = compactText(err instanceof Error ? err.message : String(err));
+    printError(message ? `  Cleanup attempt failed: ${message}` : "  Cleanup attempt failed.");
+  }
+  printError("");
+  printError("  Diagnostic command attempted before cleanup:");
+  printError(`    openshell doctor logs --name ${GATEWAY_NAME}`);
+  printError("    openshell doctor check");
+  printError("");
+  printError("  If gateway cleanup did not complete, run:");
+  printError(`    openshell gateway destroy -g ${GATEWAY_NAME}`);
+  printError(
+    `    docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs -r docker volume rm`,
+  );
+  printError(`    nemoclaw onboard --resume`);
+  return exitProcess(1);
+}
+
 function getGatewayClusterContainerState(): string {
   const containerName = getGatewayClusterContainerName();
   const state = dockerContainerInspectFormat(
@@ -3441,7 +3527,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
 /** Start the OpenShell gateway with retry logic and post-start health polling. */
 async function startGatewayWithOptions(
   _gpu: ReturnType<typeof nim.detectGpu>,
-  { exitOnFailure = true }: { exitOnFailure?: boolean } = {},
+  { exitOnFailure = true, gpuPassthrough = false }: { exitOnFailure?: boolean; gpuPassthrough?: boolean } = {},
 ) {
   step(2, 8, "Starting OpenShell gateway");
 
@@ -3485,11 +3571,12 @@ async function startGatewayWithOptions(
   }
 
   const gwArgs = ["--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)];
-  // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
-  // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
-  // sandbox itself does not need direct GPU access. Passing --gpu causes
-  // FailedPrecondition errors when the gateway's k3s device plugin cannot
-  // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
+  // On NVIDIA hosts, pass --gpu unless the user explicitly opted out. This
+  // makes direct CUDA tools available in the sandbox by default while still
+  // supporting host-side inference providers.
+  if (gpuPassthrough) {
+    gwArgs.push("--gpu");
+  }
   const gatewayEnv = getGatewayStartEnv();
   if (gatewayEnv.OPENSHELL_CLUSTER_IMAGE) {
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
@@ -3574,32 +3661,7 @@ async function startGatewayWithOptions(
     );
   } catch {
     if (exitOnFailure) {
-      console.error(`  Gateway failed to start after ${retries + 1} attempts.`);
-      console.error("  Gateway state preserved for diagnostics.");
-      console.error("");
-      try {
-        const logs = redact(
-          runCaptureOpenshell(["doctor", "logs", "--name", GATEWAY_NAME], {
-            ignoreError: true,
-          }),
-        );
-        if (logs) {
-          console.error("  Gateway logs:");
-          for (const line of String(logs)
-            .split("\n")
-            .map((l) => l.replace(/\r/g, "").replace(ANSI_RE, ""))
-            .filter(Boolean)) {
-            console.error(`    ${line}`);
-          }
-          console.error("");
-        }
-      } catch {
-        // doctor logs unavailable — fall through to manual instructions
-      }
-      console.error("  Troubleshooting:");
-      console.error("    openshell doctor logs --name nemoclaw");
-      console.error("    openshell doctor check");
-      process.exit(1);
+      handleFinalGatewayStartFailure({ retries });
     }
     throw new Error("Gateway failed to start");
   }
@@ -3619,8 +3681,11 @@ async function startGatewayWithOptions(
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
-async function startGateway(_gpu: ReturnType<typeof nim.detectGpu>): Promise<void> {
-  return startGatewayWithOptions(_gpu, { exitOnFailure: true });
+async function startGateway(
+  _gpu: ReturnType<typeof nim.detectGpu>,
+  { gpuPassthrough = false }: { gpuPassthrough?: boolean } = {},
+): Promise<void> {
+  return startGatewayWithOptions(_gpu, { exitOnFailure: true, gpuPassthrough });
 }
 
 async function startGatewayForRecovery(_gpu: ReturnType<typeof nim.detectGpu>): Promise<void> {
@@ -3837,7 +3902,14 @@ function getDefaultSandboxNameForAgent(agent: AgentDefinition | null | undefined
 }
 
 function getSandboxPromptDefault(agent: AgentDefinition | null | undefined): string {
-  return getDefaultSandboxNameForAgent(agent);
+  const envName = (process.env.NEMOCLAW_SANDBOX_NAME || "").trim().toLowerCase();
+  const agentDefault = getDefaultSandboxNameForAgent(agent);
+  if (!envName) return agentDefault;
+  try {
+    return validateName(envName, "sandbox name");
+  } catch {
+    return agentDefault;
+  }
 }
 
 function getEffectiveSandboxAgent(agent: AgentDefinition | null | undefined): AgentDefinition {
@@ -4039,6 +4111,7 @@ async function createSandbox(
   fromDockerfile: string | null = null,
   agent: AgentDefinition | null = null,
   controlUiPort: number | null = null,
+  gpuPassthrough: boolean = false,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -4198,7 +4271,26 @@ async function createSandbox(
       token: getCredential(webSearch.BRAVE_API_KEY_ENV),
     });
   }
+  const previousProviderCredentialHashes =
+    registry.getSandbox(sandboxName)?.providerCredentialHashes ?? {};
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
+  const reusableMessagingProviders: string[] = [];
+  const reusableMessagingChannels: string[] = [];
+  const reusableMessagingEnvKeys = new Set<string>();
+  if (enabledChannels != null) {
+    for (const { name, envKey, token } of messagingTokenDefs) {
+      if (token) continue;
+      const channel =
+        envKey === "SLACK_APP_TOKEN" ? "slack" : getMessagingChannelForEnvKey(envKey);
+      if (!channel || !enabledChannels.includes(channel)) continue;
+      if (!providerExistsInGateway(name)) continue;
+      reusableMessagingProviders.push(name);
+      reusableMessagingEnvKeys.add(envKey);
+      if (!reusableMessagingChannels.includes(channel)) {
+        reusableMessagingChannels.push(channel);
+      }
+    }
+  }
 
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
@@ -4269,6 +4361,26 @@ async function createSandbox(
       !needsProviderMigration &&
       !credentialRotation.changed
     ) {
+      // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
+      // Placed before the non-interactive / interactive split so all reuse
+      // paths are covered (interactive prompt, non-interactive ready, unknown drift).
+      // Note: legacy registries had gpuEnabled always true (bug fixed in this PR),
+      // so gpuEnabled=true on a legacy entry doesn't guarantee GPU support.
+      // The gateway Docker-inspect check (above) catches legacy CPU-only gateways
+      // before we reach this point, so a legacy sandbox behind a verified GPU
+      // gateway is safe to reuse — the sandbox will be recreated if needed.
+      if (gpuPassthrough) {
+        const entry = registry.getSandbox(sandboxName);
+        if (entry && !entry.gpuEnabled) {
+          console.error(`  Sandbox '${sandboxName}' exists but was created without GPU passthrough.`);
+          console.error(
+            "  Pass --recreate-sandbox to recreate with GPU, or destroy and re-onboard:",
+          );
+          console.error(`    nemoclaw onboard --recreate-sandbox`);
+          process.exit(1);
+        }
+      }
+
       if (isNonInteractive()) {
         if (existingSandboxState === "ready") {
           if (confirmedSelectionDrift) {
@@ -4570,20 +4682,20 @@ async function createSandbox(
     messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
   );
   const activeMessagingChannels = [
-    ...new Set(
-      messagingTokenDefs
+    ...new Set([
+      ...messagingTokenDefs
         .filter(({ token }) => !!token)
         .flatMap(({ envKey }) => {
-          if (envKey === "DISCORD_BOT_TOKEN") return ["discord"];
-          if (envKey === "SLACK_BOT_TOKEN") return ["slack"];
+          const channel = getMessagingChannelForEnvKey(envKey);
+          if (channel) return [channel];
           // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
           if (envKey === "SLACK_APP_TOKEN") {
             return tokensByEnvKey["SLACK_BOT_TOKEN"] ? ["slack"] : [];
           }
-          if (envKey === "TELEGRAM_BOT_TOKEN") return ["telegram"];
           return [];
         }),
-      ),
+      ...reusableMessagingChannels,
+    ]),
   ];
   const initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
     basePolicyPath,
@@ -4605,13 +4717,17 @@ async function createSandbox(
     "--policy",
     initialSandboxPolicy.policyPath,
   ];
-  // --gpu is intentionally omitted. See comment in startGateway().
+  if (gpuPassthrough) {
+    createArgs.push("--gpu");
+  }
 
   // Create OpenShell providers for messaging credentials so they flow through
   // the provider/placeholder system instead of raw env vars. The L7 proxy
   // rewrites Authorization headers (Bearer/Bot) and URL-path segments
   // (/bot{TOKEN}/) with real secrets at egress (OpenShell >= 0.0.20).
-  const messagingProviders = upsertMessagingProviders(messagingTokenDefs);
+  const messagingProviders = [
+    ...new Set([...upsertMessagingProviders(messagingTokenDefs), ...reusableMessagingProviders]),
+  ];
   for (const p of messagingProviders) {
     createArgs.push("--provider", p);
   }
@@ -4948,6 +5064,12 @@ async function createSandbox(
       providerCredentialHashes[envKey] = hash;
     }
   }
+  for (const envKey of reusableMessagingEnvKeys) {
+    const previousHash = previousProviderCredentialHashes[envKey];
+    if (typeof previousHash === "string" && previousHash) {
+      providerCredentialHashes[envKey] = previousHash;
+    }
+  }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const builtImageMatch = createResult.output.match(/Built image (openshell\/sandbox-from:\d+)/);
   if (!builtImageMatch) {
@@ -4963,7 +5085,7 @@ async function createSandbox(
     name: sandboxName,
     model: model || null,
     provider: provider || null,
-    gpuEnabled: !!gpu,
+    gpuEnabled: gpuPassthrough,
     ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
     imageTag: resolvedImageTag,
     providerCredentialHashes:
@@ -6066,14 +6188,12 @@ async function setupNim(
         if (!checkOllamaPortsOrWarn()) continue selectionLoop;
         if (!ollamaRunning) {
           console.log("  Starting Ollama...");
-          // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
-          // cannot reach via host-gateway. The default 127.0.0.1 binding works
-          // because WSL2 relays IPv4-only sockets to the Windows host.
+          // Keep raw Ollama loopback-only. Non-WSL containers reach it through
+          // the authenticated proxy on OLLAMA_PROXY_PORT.
           // Shell required: backgrounding (&), env var prefix, output redirection.
-          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
+          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} `;
           runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
           sleep(2);
-          if (!isWsl()) printOllamaExposureWarning();
         }
         if (isWsl()) {
           // WSL2 doesn't need the proxy — Docker can reach the host directly.
@@ -6192,7 +6312,7 @@ async function setupNim(
           // brew install doesn't auto-start a service; launch directly.
           // Shell required: backgrounding (&), env var prefix, output redirection.
           console.log("  Starting Ollama...");
-          runShell(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+          runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
             ignoreError: true,
           });
           sleep(2);
@@ -6214,21 +6334,27 @@ async function setupNim(
             ],
             { ignoreError: true },
           ).trim();
-          // Linux native + systemd: override OLLAMA_HOST=0.0.0.0 via a drop-in
+          // Linux native + systemd: force a loopback-only OLLAMA_HOST drop-in
           // and let systemd own the daemon (avoids racing the installer's
-          // daemon with our own `ollama serve`). WSL keeps the default
-          // 127.0.0.1 binding (wslrelay forwards it). No-systemd / daemon
-          // failed to start: manual launch with the right binding.
+          // daemon with our own `ollama serve`). This also repairs older
+          // NemoClaw-created overrides that exposed raw Ollama on all interfaces.
+          // WSL keeps Ollama's default binding. No-systemd / daemon failed to
+          // start: manual launch with the loopback binding.
           if (!isWsl() && hasOllamaSystemdUnit) {
-            console.log("  Configuring Ollama systemd override...");
-            const dropInBody = `[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}"\n`;
+            console.log("  Configuring Ollama systemd loopback override...");
+            const dropInBody = `[Service]\nEnvironment="OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT}"\n`;
             const tmpDropIn = secureTempFile("nemoclaw-ollama-override", ".conf");
             fs.writeFileSync(tmpDropIn, dropInBody, { mode: 0o644 });
-            runShell(
+            const overrideResult = runShell(
               `sudo install -D -m 0644 ${shellQuote(tmpDropIn)} ${shellQuote("/etc/systemd/system/ollama.service.d/override.conf")} && sudo systemctl daemon-reload && sudo systemctl restart ollama`,
               { ignoreError: true },
             );
             cleanupTempDir(tmpDropIn, "nemoclaw-ollama-override");
+            if (overrideResult.error || overrideResult.status !== 0) {
+              console.error("  Failed to apply Ollama systemd loopback override.");
+              console.error("  Refusing to continue with a potentially non-loopback Ollama bind.");
+              process.exit(1);
+            }
             // Retry the probe for a few seconds before giving up — systemd's
             // daemon may still be binding the port; a single probe could falsely
             // conclude it's down and spawn a duplicate `ollama serve`.
@@ -6240,7 +6366,7 @@ async function setupNim(
           // Fall back to manual start if systemd path failed or isn't present.
           if (!findReachableOllamaHost()) {
             console.log("  Starting Ollama...");
-            const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
+            const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} `;
             runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
             sleep(2);
           }
@@ -6249,7 +6375,6 @@ async function setupNim(
           // WSL2 doesn't need the proxy — Docker reaches the host directly.
           console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
         } else {
-          printOllamaExposureWarning();
           if (!startOllamaAuthProxy()) {
             process.exit(1);
           }
@@ -8534,11 +8659,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     (isNonInteractive() ? process.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
   // Resolve the explicit sandbox name early so both validation and the
   // --from guard work off the same source. --name always counts; the env
-  // var only counts when we cannot prompt (otherwise interactive runs would
-  // bypass the prompt UX), since the existing prompt path already seeds
-  // from the env var via promptOrDefault when --non-interactive is set.
-  // Cover both --non-interactive and missing-TTY runs (CI scripts, piped
-  // stdin) — the issue's test plan asks for both.
+  // var is used as the interactive prompt default via getSandboxPromptDefault,
+  // and also as the resolved name when we cannot prompt (non-interactive or
+  // missing-TTY runs such as CI scripts and piped stdin).
   const stdinIsTty = Boolean(process.stdin && process.stdin.isTTY);
   const stdoutIsTty = Boolean(process.stdout && process.stdout.isTTY);
   const cannotPrompt = isNonInteractive() || !stdinIsTty || !stdoutIsTty;
@@ -8835,6 +8958,51 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSession.markStepComplete("preflight");
     }
 
+    const requestedGpuPassthrough = opts.gpu === true;
+    const optedOutGpuPassthrough = opts.noGpu === true;
+    const detectedNvidiaGpu = gpu?.type === "nvidia";
+    const resumeHasResolvedGpuIntent =
+      resume && session?.steps?.preflight?.status === "complete" && !requestedGpuPassthrough;
+    const gpuPassthrough = optedOutGpuPassthrough
+      ? false
+      : requestedGpuPassthrough
+        ? true
+        : resumeHasResolvedGpuIntent
+          ? session?.gpuPassthrough === true
+          : detectedNvidiaGpu;
+    if (gpuPassthrough && gpu?.type !== "nvidia") {
+      console.error("  GPU passthrough requires an NVIDIA GPU detected by nvidia-smi.");
+      console.error("  Install NVIDIA drivers and the Container Toolkit, or rerun with --no-gpu.");
+      process.exit(1);
+    }
+    if (gpuPassthrough) {
+      note(
+        resumeHasResolvedGpuIntent && session?.gpuPassthrough === true
+          ? "  [resume] Continuing GPU passthrough from the saved onboarding session."
+          : requestedGpuPassthrough
+            ? "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation."
+            : "  NVIDIA GPU detected; enabling OpenShell GPU passthrough. Use --no-gpu to opt out.",
+      );
+    } else if (process.platform === "linux") {
+      // Hint when hardware is present but drivers are missing.
+      try {
+        const lspci = spawnSync("lspci", { encoding: "utf-8", timeout: 5000 });
+        if (lspci.status === 0 && /nvidia/i.test(lspci.stdout || "")) {
+          note("  NVIDIA GPU hardware detected but nvidia-smi is not available.");
+          note("  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.");
+        }
+      } catch {
+        /* lspci not available — skip hint */
+      }
+    }
+    // Persist GPU intent in the session so resume can restore it.
+    if (session && session.gpuPassthrough !== gpuPassthrough) {
+      session = onboardSession.updateSession((current: Session) => {
+        current.gpuPassthrough = gpuPassthrough;
+        return current;
+      });
+    }
+
     const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
     const gatewayInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
       ignoreError: true,
@@ -8873,6 +9041,26 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
+
+    // Verify the reusable gateway has GPU passthrough when needed. Runs for
+    // both fresh-reuse and resume paths so a gateway recreated without GPU
+    // between runs is caught.
+    if (canReuseHealthyGateway && gpuPassthrough) {
+      const container = `openshell-cluster-${GATEWAY_NAME}`;
+      const gpuCheck = docker.dockerInspect(
+        ["--type", "container", "--format", "{{json .HostConfig.DeviceRequests}}", container],
+        { ignoreError: true, suppressOutput: true },
+      );
+      const gpuOutput = String(gpuCheck.stdout || "").trim();
+      const gatewayHasGpu = gpuCheck.status === 0 && gpuOutput !== "null" && gpuOutput !== "[]";
+      if (!gatewayHasGpu) {
+        console.error("  Existing gateway was started without GPU passthrough.");
+        console.error("  To enable GPU, destroy the existing sandbox and gateway, then re-onboard:");
+        console.error(`    nemoclaw <name> destroy --yes && nemoclaw onboard --gpu`);
+        process.exit(1);
+      }
+    }
+
     const resumeGateway =
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
     if (resumeGateway) {
@@ -8893,7 +9081,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
       }
       startRecordedStep("gateway");
-      await startGateway(gpu);
+      await startGateway(gpu, { gpuPassthrough });
       onboardSession.markStepComplete("gateway");
     }
 
@@ -9116,7 +9304,17 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         nextWebSearchConfig = await configureWebSearch(null, agent, webSearchSupportProbePath);
       }
       startRecordedStep("sandbox", { provider, model });
-      selectedMessagingChannels = await setupMessagingChannels();
+      const recordedMessagingChannels = getRecordedMessagingChannelsForResume(resume, session);
+      if (recordedMessagingChannels) {
+        selectedMessagingChannels = recordedMessagingChannels;
+        if (selectedMessagingChannels.length > 0) {
+          note(
+            `  [resume] Reusing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`,
+          );
+        }
+      } else {
+        selectedMessagingChannels = await setupMessagingChannels();
+      }
       onboardSession.updateSession((current: Session) => {
         current.messagingChannels = selectedMessagingChannels;
         return current;
@@ -9136,6 +9334,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         fromDockerfile,
         agent,
         opts.controlUiPort || null,
+        gpuPassthrough,
       );
       webSearchConfig = nextWebSearchConfig;
       // Persist model and provider after the sandbox entry exists in the registry.
@@ -9310,6 +9509,7 @@ module.exports = {
   getGatewayClusterContainerState,
   getGatewayHealthWaitConfig,
   getGatewayReuseState,
+  handleFinalGatewayStartFailure,
   getNavigationChoice,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,

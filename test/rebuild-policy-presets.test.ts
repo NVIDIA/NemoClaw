@@ -13,7 +13,7 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 
 const sandboxState = await import(path.join(REPO_ROOT, "dist", "lib", "sandbox-state.js"));
 const rebuildAction = await import(
-  path.join(REPO_ROOT, "dist", "lib", "sandbox-rebuild-action.js")
+  path.join(REPO_ROOT, "dist", "lib", "actions", "sandbox", "rebuild.js")
 );
 
 const customPresetYaml = `preset:

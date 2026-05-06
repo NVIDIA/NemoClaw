@@ -78,6 +78,29 @@ export function detectNvidiaPlatform(): NvidiaPlatform {
   return "linux";
 }
 
+// Return the indices of NVIDIA GPUs whose name matches `pattern`. Returns
+// [] if nvidia-smi is unavailable or no GPU matches. Used to pin a Docker
+// container to a specific GPU on hosts with mixed configurations (e.g.
+// DGX Station's GB300 alongside other GPUs).
+export function getGpuIndicesByName(pattern: RegExp): number[] {
+  const out = runCapture(
+    ["nvidia-smi", "--query-gpu=index,name", "--format=csv,noheader,nounits"],
+    { ignoreError: true },
+  );
+  if (!out) return [];
+  const indices: number[] = [];
+  for (const line of out.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const idx = trimmed.indexOf(",");
+    if (idx === -1) continue;
+    const i = Number(trimmed.slice(0, idx).trim());
+    const name = trimmed.slice(idx + 1).trim();
+    if (!Number.isNaN(i) && pattern.test(name)) indices.push(i);
+  }
+  return indices;
+}
+
 export interface NimStatus {
   running: boolean;
   healthy?: boolean;

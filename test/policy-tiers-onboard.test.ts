@@ -54,7 +54,7 @@ function buildPreamble({
   const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
   const resolveOpenshellPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "resolve-openshell.js"),
+    path.join(repoRoot, "dist", "lib", "adapters", "openshell", "resolve.js"),
   );
 
   // Both stubs must run before onboard.js is required — onboard destructures
