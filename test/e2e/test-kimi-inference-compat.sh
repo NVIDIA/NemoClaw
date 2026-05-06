@@ -335,9 +335,9 @@ prepare_source_cli() {
   if [ ! -f "$REPO/dist/nemoclaw.js" ]; then
     info "Installing npm dependencies and building source CLI"
     (
-      cd "$REPO" &&
-        npm ci --ignore-scripts &&
-        npm run build:cli
+      cd "$REPO" \
+        && npm ci --ignore-scripts \
+        && npm run build:cli
     ) >>"$BUILD_LOG" 2>&1 || rc=$?
     if [ "$rc" -ne 0 ]; then
       return "$rc"
