@@ -264,8 +264,8 @@ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uni
 
 The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above also apply to the hosted script. Pass them after `bash -s --`:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
+```console
+$ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
 ```
 
 For a full comparison of the two forms, including what they fetch, what they trust, and when to prefer each, see `nemoclaw uninstall` vs. the hosted `uninstall.sh` (use the `nemoclaw-user-reference` skill).
