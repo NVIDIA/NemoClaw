@@ -3,46 +3,54 @@
 
 /* v8 ignore start -- exercised through CLI subprocess rebuild tests. */
 
-import { CLI_NAME } from "./branding";
-import { prompt as askPrompt } from "./credentials";
+import { CLI_NAME } from "../../branding";
+import { prompt as askPrompt } from "../../credentials";
 import {
   normalizeRebuildSandboxOptions,
   type RebuildSandboxOptions,
-} from "./domain/lifecycle/options";
+} from "../../domain/lifecycle/options";
 
-const { hydrateCredentialEnv } = require("./onboard") as {
+const { hydrateCredentialEnv } = require("../../onboard") as {
   hydrateCredentialEnv: (name: string) => string | null;
 };
-const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("./onboard-providers") as {
+const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("../../onboard-providers") as {
   LOCAL_INFERENCE_PROVIDERS: string[];
   REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
 };
 
-import * as nim from "./nim";
-import type { Session } from "./onboard-session";
-import * as onboardSession from "./onboard-session";
-import { captureOpenshell, runOpenshell } from "./openshell-runtime";
-import * as policies from "./policies";
-import * as registry from "./registry";
-import { resolveOpenshell } from "./resolve-openshell";
-import { parseLiveSandboxNames } from "./runtime-recovery";
-import { getSandboxDeleteOutcome } from "./domain/sandbox/destroy";
-import { removeSandboxRegistryEntry } from "./sandbox-destroy-action";
-import { executeSandboxCommand } from "./sandbox-process-recovery-action";
+import { loadAgent } from "../../agent-defs";
+import { ensureAgentBaseImage } from "../../agent-onboard";
+import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import * as nim from "../../nim";
+import type { Session } from "../../onboard-session";
+import * as onboardSession from "../../onboard-session";
+import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import * as policies from "../../policies";
+import * as registry from "../../registry";
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { parseLiveSandboxNames } from "../../runtime-recovery";
+import { removeSandboxRegistryEntry } from "./destroy";
+import { executeSandboxCommand } from "./process-recovery";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
-} from "./sandbox-session-state";
-import * as sandboxState from "./sandbox-state";
-import * as sandboxVersion from "./sandbox-version";
-import { RD as _RD, B, D, G, R, YW } from "./terminal-style";
+} from "../../sandbox-session-state";
+import * as sandboxState from "../../sandbox-state";
+import * as sandboxVersion from "../../sandbox-version";
+import { B, D, G, R, RD as _RD, YW } from "../../terminal-style";
 
-const agentRuntime = require("../../bin/lib/agent-runtime");
+const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
+/**
+ * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
+ */
 function _rebuildLog(msg: string) {
   console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${msg}${R}`);
 }
 
+/**
+ * Resolve the credential environment variable required to recreate a sandbox.
+ */
 function getRebuildCredentialEnvFromRegistry(provider: string | null | undefined): string | null {
   if (!provider || LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
     return null;
@@ -54,6 +62,13 @@ function getRebuildCredentialEnvFromRegistry(provider: string | null | undefined
   return remoteConfig?.credentialEnv || null;
 }
 
+/**
+ * Rebuild a live sandbox while preserving registered agent state and policies.
+ *
+ * Agent sandboxes force-refresh their base image before backup/delete so local
+ * `Dockerfile.base` changes fail before destructive work and are applied to the
+ * recreated sandbox image.
+ */
 export async function rebuildSandbox(
   sandboxName: string,
   options: string[] | RebuildSandboxOptions = {},
@@ -100,6 +115,7 @@ export async function rebuildSandbox(
     return;
   }
 
+  const rebuildAgent = sb.agent || null;
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
 
@@ -227,6 +243,24 @@ export async function rebuildSandbox(
     return;
   }
 
+  // Build agent base layers before backup/delete so Dockerfile.base errors leave
+  // the existing sandbox intact. This is what applies local Hermes version edits.
+  if (rebuildAgent) {
+    const agentDef = loadAgent(rebuildAgent);
+    try {
+      ensureAgentBaseImage(agentDef, { forceBaseImageRebuild: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("");
+      console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be built.`);
+      console.error(`  ${message}`);
+      console.error("");
+      console.error("  Sandbox is untouched — no data was lost.");
+      bail(message);
+      return;
+    }
+  }
+
   // Step 2: Backup
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
@@ -341,7 +375,6 @@ export async function rebuildSandbox(
   // rebuilds the correct sandbox type.  Without this, a stale session.agent
   // from a previous onboard of a *different* agent type would be picked up
   // by resolveAgentName() and the wrong Dockerfile would be used.  (#2201)
-  const rebuildAgent = sb.agent || null;
   onboardSession.updateSession((s: Session) => {
     s.sandboxName = sandboxName;
     s.resumable = true;
@@ -391,7 +424,7 @@ export async function rebuildSandbox(
   // release, build context cleanup, session failure marking).  We
   // manually release the lock and mark the session failed in the
   // onboardFailed block below.
-  const { onboard } = require("./onboard");
+  const { onboard } = require("../../onboard");
   let onboardFailed = false;
   let onboardExitCode = 1;
   const _savedExit = process.exit;
@@ -541,9 +574,7 @@ export async function rebuildSandbox(
   // Step 6: Post-restore agent-specific migration
   const rebuiltAgent = agentRuntime.getSessionAgent(sandboxName);
   const rebuiltAgentName = agentRuntime.getAgentDisplayName(rebuiltAgent);
-  const agentDef = rebuiltAgent
-    ? require("./agent-defs").loadAgent(rebuiltAgent.name)
-    : require("./agent-defs").loadAgent("openclaw");
+  const agentDef = rebuiltAgent ? loadAgent(rebuiltAgent.name) : loadAgent("openclaw");
   if (agentDef.name === "openclaw") {
     // openclaw doctor --fix validates and repairs directory structure.
     // Idempotent and safe — catches structural changes between OpenClaw versions

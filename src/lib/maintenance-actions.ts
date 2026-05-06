@@ -10,7 +10,7 @@ import {
 } from "./domain/lifecycle/options";
 import { dockerListImagesFormat, dockerRmi } from "./docker";
 import { findOrphanedSandboxImages, parseSandboxImageRows } from "./domain/maintenance/images";
-import { captureOpenshell } from "./openshell-runtime";
+import { captureOpenshell } from "./adapters/openshell/runtime";
 import * as registry from "./registry";
 import { parseLiveSandboxNames } from "./runtime-recovery";
 import * as sandboxState from "./sandbox-state";

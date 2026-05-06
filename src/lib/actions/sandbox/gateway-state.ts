@@ -7,30 +7,30 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
-import { parseSandboxPhase } from "./gateway-state";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
+import { parseSandboxPhase } from "../../gateway-state";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
-} from "./gateway-runtime-action";
-const { pruneKnownHostsEntries } = require("./onboard") as {
+} from "../../gateway-runtime-action";
+const { pruneKnownHostsEntries } = require("../../onboard") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
-import * as onboardSession from "./onboard-session";
-import type { Session } from "./onboard-session";
-import { stripAnsi } from "./openshell";
+import * as onboardSession from "../../onboard-session";
+import type { Session } from "../../onboard-session";
+import { stripAnsi } from "../../adapters/openshell/client";
 import {
   captureOpenshell,
   captureOpenshellForStatus,
   getStatusProbeTimeoutMs,
   isCommandTimeout,
   runOpenshell,
-} from "./openshell-runtime";
+} from "../../adapters/openshell/runtime";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
-} from "./openshell-timeouts";
-import * as registry from "./registry";
+} from "../../adapters/openshell/timeouts";
+import * as registry from "../../registry";
 
 type SandboxGatewayState = {
   state: string;

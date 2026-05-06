@@ -10,6 +10,7 @@ const {
   getChatCompletionsProbeCurlArgs,
   getChatCompletionsProbePayload,
   getDeepSeekV4ProValidationProbeCurlArgs,
+  getKimiK26ValidationProbeCurlArgs,
   isSandboxInternalUrl,
   probeOpenAiLikeEndpoint,
 } = require("../../dist/lib/onboard-inference-probes");
@@ -32,6 +33,38 @@ describe("OpenAI-compatible inference probes", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
     });
+  });
+
+  it("caps Kimi K2.6 probe output and gives it a slower validation budget", () => {
+    expect(getChatCompletionsProbePayload("moonshotai/kimi-k2.6")).toEqual({
+      model: "moonshotai/kimi-k2.6",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 8,
+    });
+
+    expect(getKimiK26ValidationProbeCurlArgs({ isWsl: false })).toEqual([
+      "--connect-timeout",
+      "10",
+      "--max-time",
+      "60",
+    ]);
+    expect(getKimiK26ValidationProbeCurlArgs({ isWsl: true })).toEqual([
+      "--connect-timeout",
+      "20",
+      "--max-time",
+      "90",
+    ]);
+
+    const args = getChatCompletionsProbeCurlArgs({
+      authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+      model: "moonshotai/kimi-k2.6",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: false,
+    });
+
+    expect(args).toContain("--max-time");
+    expect(args[args.indexOf("--max-time") + 1]).toBe("60");
+    expect(args).toContain(JSON.stringify(getChatCompletionsProbePayload("moonshotai/kimi-k2.6")));
   });
 
   it("uses an extended streaming validation budget for DeepSeek V4 Pro", () => {

@@ -166,6 +166,21 @@ process.exit(0);
     { mode: 0o755 },
   );
 
+  // ── Fake docker ─────────────────────────────────────────────────
+  // Hermes rebuilds refresh the local agent base image before deleting the
+  // sandbox, then onboard checks whether that image exists while recreating.
+  fs.writeFileSync(
+    path.join(tmpDir, "docker"),
+    `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0]==="build") { process.exit(0); }
+if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
+if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+
   // ── Fake ssh ──────────────────────────────────────────────────
   // backupSandboxState makes two ssh calls:
   //   1. dir-existence check (command has "[ -d") → print "workspace"
@@ -195,6 +210,9 @@ process.exit(0);
   return { tmpDir, nemoclawDir, sandboxName };
 }
 
+/**
+ * Run the real rebuild CLI against a fixture with fake runtime binaries.
+ */
 function runRebuild(fixture: ReturnType<typeof createFixture>) {
   return spawnSync(
     process.execPath,
@@ -216,11 +234,17 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
 
 type SessionFixture = { agent?: string | null };
 
+/**
+ * Read the fixture's persisted onboarding session.
+ */
 function readSession(fixture: ReturnType<typeof createFixture>): SessionFixture {
   const p = path.join(fixture.nemoclawDir, "onboard-session.json");
   return JSON.parse(fs.readFileSync(p, "utf-8"));
 }
 
+/**
+ * Read only the agent recorded in the fixture onboarding session.
+ */
 function readSessionAgent(fixture: ReturnType<typeof createFixture>): string | null | undefined {
   return readSession(fixture).agent;
 }

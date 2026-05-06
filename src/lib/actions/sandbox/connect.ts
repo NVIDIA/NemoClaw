@@ -6,28 +6,28 @@
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 
-import { CLI_NAME } from "./branding";
-import { parseGatewayInference } from "./inference-config";
-import { ensureOllamaAuthProxy } from "./onboard-ollama-proxy";
+import { CLI_NAME } from "../../branding";
+import { parseGatewayInference } from "../../inference-config";
+import { ensureOllamaAuthProxy } from "../../onboard-ollama-proxy";
 import {
   captureOpenshell,
   getOpenshellBinary,
   runOpenshell,
-} from "./openshell-runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
-import * as registry from "./registry";
-import { ROOT } from "./runner";
-import { ensureLiveSandboxOrExit } from "./sandbox-gateway-state-action";
+} from "../../adapters/openshell/runtime";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import * as registry from "../../registry";
+import { ROOT } from "../../runner";
+import { ensureLiveSandboxOrExit } from "./gateway-state";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
-} from "./sandbox-session-state";
-import { checkAndRecoverSandboxProcesses } from "./sandbox-process-recovery-action";
-import * as sandboxVersion from "./sandbox-version";
-import { D, G, R, YW } from "./terminal-style";
-import { resolveOpenshell } from "./resolve-openshell";
+} from "../../sandbox-session-state";
+import { checkAndRecoverSandboxProcesses } from "./process-recovery";
+import * as sandboxVersion from "../../sandbox-version";
+import { D, G, R, YW } from "../../terminal-style";
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
 
-const agentRuntime = require("../../bin/lib/agent-runtime");
+const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -139,7 +139,7 @@ export async function connectSandbox(
   sandboxName: string,
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
-  const { isSandboxReady, parseSandboxStatus } = require("./onboard");
+  const { isSandboxReady, parseSandboxStatus } = require("../../onboard");
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 
   if (probeOnly) {

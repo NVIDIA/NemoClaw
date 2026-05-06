@@ -8,7 +8,7 @@ import { NOTICE_ACCEPT_FLAG } from "../../usage-notice";
 const acceptFlagName = NOTICE_ACCEPT_FLAG.replace(/^--/, "");
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -25,6 +25,8 @@ export type OnboardFlags = {
   resume?: boolean;
   fresh?: boolean;
   "recreate-sandbox"?: boolean;
+  gpu?: boolean;
+  "no-gpu"?: boolean;
   from?: string;
   name?: string;
   agent?: string;
@@ -46,6 +48,14 @@ export function buildOnboardFlags(): Record<string, any> {
       exclusive: ["resume"],
     }),
     "recreate-sandbox": Flags.boolean({ description: "Delete and recreate an existing sandbox" }),
+    gpu: Flags.boolean({
+      description: "Require OpenShell GPU passthrough for the gateway and sandbox",
+      exclusive: ["no-gpu"],
+    }),
+    "no-gpu": Flags.boolean({
+      description: "Disable GPU passthrough even when an NVIDIA GPU is detected",
+      exclusive: ["gpu"],
+    }),
     from: Flags.string({ description: "Path to a Dockerfile to use as the sandbox image source" }),
     name: Flags.string({ description: "Sandbox name" }),
     agent: Flags.string({ description: "Agent runtime to onboard" }),
@@ -68,6 +78,8 @@ export function toLegacyOnboardArgs(flags: OnboardFlags): string[] {
   if (flags.resume) args.push("--resume");
   if (flags.fresh) args.push("--fresh");
   if (flags["recreate-sandbox"]) args.push("--recreate-sandbox");
+  if (flags.gpu) args.push("--gpu");
+  if (flags["no-gpu"]) args.push("--no-gpu");
   if (flags.from !== undefined) args.push("--from", flags.from);
   if (flags.name !== undefined) args.push("--name", flags.name);
   if (flags.agent !== undefined) args.push("--agent", flags.agent);

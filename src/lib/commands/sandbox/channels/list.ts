@@ -3,7 +3,7 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { listSandboxChannels } from "../../../policy-channel-actions";
+import { listSandboxChannels } from "../../../actions/sandbox/policy-channel";
 import { sandboxNameArg } from "../common";
 
 export default class SandboxChannelsListCommand extends Command {

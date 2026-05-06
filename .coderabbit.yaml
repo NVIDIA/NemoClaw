@@ -274,10 +274,11 @@ reviews:
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
           isolation
         - `rebuild-hermes-e2e` — Hermes upgrade path
+        - `rebuild-hermes-stale-base-e2e` — Hermes rebuild with stale cached base image
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-discord-e2e,rebuild-hermes-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-discord-e2e,rebuild-hermes-e2e,rebuild-hermes-stale-base-e2e
         ```
 
     - path: "nemoclaw-blueprint/policies/**"

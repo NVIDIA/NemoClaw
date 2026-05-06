@@ -16,7 +16,7 @@ import {
   runSetupSparkAction as executeSetupSparkAction,
 } from "./onboard-action";
 import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "./gateway-runtime-action";
-import { runOpenshell } from "./openshell-runtime";
+import { runOpenshell } from "./adapters/openshell/runtime";
 import { help, version } from "./root-help-action";
 
 type GatewayRecovery = { recovered: boolean };

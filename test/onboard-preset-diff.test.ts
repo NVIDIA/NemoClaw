@@ -52,7 +52,7 @@ function buildPreamble({
   const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
   const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
   const resolveOpenshellPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "resolve-openshell.js"),
+    path.join(repoRoot, "dist", "lib", "adapters", "openshell", "resolve.js"),
   );
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
 

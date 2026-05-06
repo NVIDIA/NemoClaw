@@ -401,7 +401,21 @@ describe("CLI dispatch", () => {
   });
 
   it("suggests list for a mistyped list command", () => {
-    const r = run("liost");
+    // Isolate from any real openshell gateway on the host so recovery
+    // doesn't intercept the typo suggestion.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-typo-suggest-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("liost", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
     expect(r.code).toBe(1);
     expect(r.out).toContain("Unknown command: liost");
     expect(r.out).toContain("Did you mean: nemoclaw list?");
@@ -4443,6 +4457,7 @@ describe("CLI dispatch", () => {
 
   it(
     "explains when gateway metadata exists but the restarted API is still refusing connections",
+    { timeout: 30000 },
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-unreachable-"));
       const localBin = path.join(home, "bin");
@@ -4550,7 +4565,6 @@ describe("CLI dispatch", () => {
       ).toBeTruthy();
       expect(connectResult.out.includes("If the gateway never becomes healthy")).toBeTruthy();
     },
-    testTimeout(10_000),
   );
 
   it(

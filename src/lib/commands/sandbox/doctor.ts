@@ -3,7 +3,7 @@
 
 import { Args, Command, Flags } from "@oclif/core";
 
-import { runSandboxDoctor } from "../../sandbox-doctor-action";
+import { runSandboxDoctor } from "../../actions/sandbox/doctor";
 
 export default class SandboxDoctorCliCommand extends Command {
   static id = "sandbox:doctor";

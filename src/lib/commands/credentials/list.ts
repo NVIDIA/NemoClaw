@@ -5,7 +5,7 @@ import { Command, Flags } from "@oclif/core";
 
 import { CLI_NAME } from "../../branding";
 import { runOpenshellProviderCommand } from "../../global-cli-actions";
-import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../openshell-timeouts";
+import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { isBridgeProviderName, recoverGatewayOrExit } from "./common";
 
 export default class CredentialsListCommand extends Command {

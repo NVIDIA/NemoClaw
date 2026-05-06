@@ -227,12 +227,54 @@ describe("onboard helpers", () => {
       expect(getSandboxPromptDefault(hermes)).toBe("hermes");
 
       process.env.NEMOCLAW_SANDBOX_NAME = "custom-hermes";
-      expect(getSandboxPromptDefault(hermes)).toBe("hermes");
+      expect(getSandboxPromptDefault(hermes)).toBe("custom-hermes");
     } finally {
       if (previousSandboxName === undefined) {
         delete process.env.NEMOCLAW_SANDBOX_NAME;
       } else {
         process.env.NEMOCLAW_SANDBOX_NAME = previousSandboxName;
+      }
+    }
+  });
+
+  it("uses NEMOCLAW_SANDBOX_NAME as the interactive prompt default", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "mythos";
+      expect(getSandboxPromptDefault(null)).toBe("mythos");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
+      }
+    }
+  });
+
+  it("falls back to agent default when NEMOCLAW_SANDBOX_NAME is invalid", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "123-leading-digit-invalid";
+      expect(getSandboxPromptDefault(null)).toBe("my-assistant");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
+      }
+    }
+  });
+
+  it("falls back to agent default when NEMOCLAW_SANDBOX_NAME contains spaces", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "bad name";
+      expect(getSandboxPromptDefault(null)).toBe("my-assistant");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
       }
     }
   });
@@ -783,6 +825,23 @@ describe("onboard helpers", () => {
         inferenceBaseUrl: "https://inference.local/v1",
         inferenceApi: "openai-completions",
         inferenceCompat: null,
+      },
+    );
+  });
+
+  it("adds Kimi K2.6 compat for NVIDIA Endpoints on the routed inference provider", () => {
+    assert.deepEqual(
+      getSandboxInferenceConfig("moonshotai/kimi-k2.6", "nvidia-prod", "openai-completions"),
+      {
+        providerKey: "inference",
+        primaryModelRef: "inference/moonshotai/kimi-k2.6",
+        inferenceBaseUrl: "https://inference.local/v1",
+        inferenceApi: "openai-completions",
+        inferenceCompat: {
+          requiresStringContent: true,
+          maxTokensField: "max_tokens",
+          requiresToolResultName: true,
+        },
       },
     );
   });
@@ -3033,8 +3092,22 @@ const { setupInference } = require(${onboardPath});
       source,
       // #2753: sandboxName is intentionally absent from the options here so
       // the session does not record a name before createSandbox completes.
-      /startRecordedStep\("sandbox", \{ provider, model \}\);\s*const recordedMessagingChannels = getRecordedMessagingChannelsForResume\(resume, session\);[\s\S]*?selectedMessagingChannels = recordedMessagingChannels;[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(\);[\s\S]*?onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*opts\.controlUiPort \|\| null,\s*\);/,
+      /startRecordedStep\("sandbox", \{ provider, model \}\);\s*const recordedMessagingChannels = getRecordedMessagingChannelsForResume\(resume, session\);[\s\S]*?selectedMessagingChannels = recordedMessagingChannels;[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(\);[\s\S]*?onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*opts\.controlUiPort \|\| null,\s*gpuPassthrough,\s*\);/,
     );
+  });
+
+  it("defaults GPU passthrough on for detected NVIDIA GPUs unless opted out", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /const detectedNvidiaGpu = gpu\?\.type === "nvidia";/);
+    assert.match(
+      source,
+      /const gpuPassthrough = optedOutGpuPassthrough[\s\S]*\? false[\s\S]*\? true[\s\S]*: detectedNvidiaGpu;/,
+    );
+    assert.match(source, /Use --no-gpu to opt out/);
   });
 
   it("does not persist sandboxName to onboard-session.json before createSandbox completes (#2753)", () => {

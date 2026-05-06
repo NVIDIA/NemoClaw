@@ -141,7 +141,7 @@ Endpoint rules restrict allowed HTTP methods and URL paths.
 
 | Aspect | Detail |
 |---|---|
-| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `integrate.api.nvidia.com` allows POST only to inference and embedding paths and GET to model listings). Read-only endpoints such as `docs.openclaw.ai` allow GET only. The `npm_registry` baseline entry and the `npm`/`pypi` presets are GET-only (plus HEAD for PyPI). |
+| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `integrate.api.nvidia.com` allows POST only to inference and embedding paths and GET to model listings). Read-only endpoints such as `docs.openclaw.ai`, the `npm_registry` baseline entry, and the `pypi` preset allow GET only (PyPI also allows HEAD). The `npm` preset is an intentional exception: npm/Yarn registry traffic uses L4 pass-through for Node 22 undici CONNECT compatibility. |
 | What you can change | Add methods (PUT, DELETE, PATCH) or restrict paths to specific prefixes. |
 | Risk if relaxed | Allowing all methods on an API endpoint gives the agent write and delete access. For example, allowing DELETE on `api.github.com` lets the agent delete repositories. |
 | Recommendation | Use GET-only rules for endpoints that the agent only reads. Add write methods only for endpoints where the agent must create or modify resources. Restrict paths to specific API routes when possible. |
@@ -156,7 +156,7 @@ The `protocol` field on an endpoint controls whether the proxy also inspects ind
 | Default | Endpoints without a `protocol` field use L4-only enforcement: the proxy checks host, port, and binary identity, then relays the TCP stream without inspecting payloads. Setting `protocol: rest` enables L7 inspection: the proxy auto-detects and terminates TLS, then evaluates each HTTP request's method and path against the endpoint's `rules` or `access` preset. |
 | What you can change | Add `protocol: rest` to an endpoint to enable per-request HTTP inspection. Use the `access` preset (`full`, `read-only`, `read-write`) or explicit `rules` to control allowed methods and paths. |
 | Risk if relaxed | L4-only endpoints (no `protocol` field) allow the agent to send any data through the tunnel after the initial connection is permitted. The proxy cannot see or filter the HTTP method, path, or body. The `access: full` preset with `protocol: rest` enables inspection but allows all methods and paths, so it does not restrict what the agent can do at the HTTP level. |
-| Recommendation | Use `protocol: rest` with specific `rules` for REST APIs where you want method and path control. Use `protocol: rest` with `access: read-only` for read-only endpoints. Omit `protocol` only for non-HTTP protocols (WebSocket, gRPC streaming) or endpoints that do not need HTTP inspection. |
+| Recommendation | Use `protocol: rest` with specific `rules` for REST APIs where you want method and path control. Use `protocol: rest` with `access: read-only` for read-only endpoints. Omit `protocol` only for non-HTTP protocols (WebSocket, gRPC streaming), endpoints that do not need HTTP inspection, or documented compatibility exceptions that require a client-managed CONNECT tunnel. |
 
 ### Operator Approval Flow
 
@@ -181,7 +181,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 | `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `gh` and `git`. |
 | `huggingface` | Hugging Face Hub (download-only) and inference router. | Allows downloading arbitrary models and datasets. POST is restricted to the inference router only. |
 | `jira` | Atlassian Jira API. | Gives agent read/write access to project issues and comments. |
-| `npm` | npm and Yarn registries (GET-only). | Allows installing arbitrary npm packages, which may contain malicious code. Publishing is blocked. |
+| `npm` | npm and Yarn registries via L4 pass-through. | Allows installing arbitrary npm packages, which may contain malicious code. OpenShell still gates by host, port, and binary, but does not inspect HTTP method, path, or body for this preset. |
 | `outlook` | Microsoft 365, Outlook. | Gives agent access to email. |
 | `pypi` | Python Package Index (GET and HEAD only). | Allows installing arbitrary Python packages, which may contain malicious code. Publishing is blocked. |
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
@@ -513,7 +513,7 @@ The following patterns weaken security without providing meaningful benefit.
 
 | Mistake | Why it matters | What to do instead |
 |---------|---------------|-------------------|
-| Omitting `protocol: rest` on REST API endpoints | Endpoints without a `protocol` field use L4-only enforcement. The proxy allows the TCP stream through after checking host, port, and binary, but cannot see or filter individual HTTP requests. | Add `protocol: rest` with explicit `rules` to enable per-request method and path control on REST APIs. |
+| Omitting `protocol: rest` on REST API endpoints without a compatibility reason | Endpoints without a `protocol` field use L4-only enforcement. The proxy allows the TCP stream through after checking host, port, and binary, but cannot see or filter individual HTTP requests. | Add `protocol: rest` with explicit `rules` to enable per-request method and path control on REST APIs. Use L4 pass-through only for documented cases such as npm/Yarn on Node 22, where the client requires a CONNECT tunnel that L7 inspection would break. |
 | Adding endpoints to the baseline policy for one-off requests | Adding an endpoint to the baseline policy makes it permanently reachable across all sandbox instances. | Use operator approval. Approved endpoints persist within the sandbox instance but reset when you destroy and recreate the sandbox. |
 | Relying solely on the entrypoint for capability drops | The entrypoint drops dangerous capabilities using `capsh`, but this is best-effort. If `capsh` is unavailable or `CAP_SETPCAP` is not in the bounding set, the container runs with the default capability set. | Pass `--cap-drop=ALL` at the container runtime level as defense-in-depth. |
 | Leaving `/sandbox/.openclaw` writable on sensitive workloads | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent disable CORS, redirect inference routing, or weaken gateway protections. | Run `nemoclaw <name> shields up` to lock config for always-on assistants handling sensitive data. |

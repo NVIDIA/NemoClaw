@@ -3,33 +3,36 @@
 
 /* v8 ignore start -- exercised through CLI subprocess status tests. */
 
-import { CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
-import { parseSandboxPhase } from "./gateway-state";
-import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
-import { parseGatewayInference } from "./inference-config";
-import { probeProviderHealth } from "./inference-health";
-import * as nim from "./nim";
-import * as onboardSession from "./onboard-session";
-import type { Session } from "./onboard-session";
-import { captureOpenshellForStatus, isCommandTimeout } from "./openshell-runtime";
-import * as registry from "./registry";
-import { resolveOpenshell } from "./resolve-openshell";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
+import { parseSandboxPhase } from "../../gateway-state";
+import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import { parseGatewayInference } from "../../inference-config";
+import { probeProviderHealth } from "../../inference-health";
+import * as nim from "../../nim";
+import * as onboardSession from "../../onboard-session";
+import type { Session } from "../../onboard-session";
+import {
+  captureOpenshellForStatus,
+  isCommandTimeout,
+} from "../../adapters/openshell/runtime";
+import * as registry from "../../registry";
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   getReconciledSandboxGatewayState,
   getSandboxGatewayStateForStatus,
   printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
-} from "./sandbox-gateway-state-action";
-import { isSandboxGatewayRunningForStatus } from "./sandbox-process-recovery-action";
+} from "./gateway-state";
+import { isSandboxGatewayRunningForStatus } from "./process-recovery";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
-} from "./sandbox-session-state";
-import * as sandboxVersion from "./sandbox-version";
-import * as shields from "./shields";
-import { D, G, R, RD, YW } from "./terminal-style";
+} from "../../sandbox-session-state";
+import * as sandboxVersion from "../../sandbox-version";
+import * as shields from "../../shields";
+import { D, G, R, RD, YW } from "../../terminal-style";
 
-const agentRuntime = require("../../bin/lib/agent-runtime");
+const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {

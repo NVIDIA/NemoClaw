@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveOpenshell } from "../../dist/lib/resolve-openshell";
+import { resolveOpenshell } from "../../../../dist/lib/adapters/openshell/resolve";
 
 describe("lib/resolve-openshell", () => {
   it("returns command -v result when absolute path", () => {

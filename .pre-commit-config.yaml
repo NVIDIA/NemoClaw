@@ -98,7 +98,7 @@ repos:
     hooks:
       - id: biome-format
         name: Biome format
-        entry: npx biome format --write
+        entry: npx biome format --write --no-errors-on-unmatched
         language: system
         files: ^(biome\.json|package(-lock)?\.json|nemoclaw/package(-lock)?\.json|commitlint\.config\.js|bin/.*\.js|scripts/.*\.(js|ts)|test/.*\.js|nemoclaw/src/.*\.ts)$
         pass_filenames: true
@@ -189,7 +189,7 @@ repos:
   - repo: local
     hooks:
       - id: docs-to-skills-dry-run
-        name: Validate docs-to-skills conversion
+        name: Verify docs-to-skills output
         entry: python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
         language: system
         files: ^(docs/.*\.md$|docs/conf\.py$|ci/platform-matrix\.json$|scripts/docs-to-skills\.py$|scripts/generate-platform-docs\.py$)

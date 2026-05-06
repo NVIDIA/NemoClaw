@@ -5,15 +5,15 @@
 
 import type { StdioOptions } from "node:child_process";
 
-import { ROOT } from "./runner";
+import { ROOT } from "../../runner";
 import {
   captureOpenshellCommand,
   captureOpenshellCommandAsync,
   getInstalledOpenshellVersion,
   runOpenshellCommand,
-} from "./openshell";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
-import { resolveOpenshell } from "./resolve-openshell";
+} from "./client";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
+import { resolveOpenshell } from "./resolve";
 
 type CommandArgs = string[];
 

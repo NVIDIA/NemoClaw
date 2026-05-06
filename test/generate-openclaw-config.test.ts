@@ -262,6 +262,32 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.models.providers.deepinfra).toBeUndefined();
   });
 
+  it("adds Kimi K2.6 compat for managed inference.local chat completions", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "moonshotai/kimi-k2.6",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/moonshotai/kimi-k2.6",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(JSON.stringify({ supportsStore: false })).toString(
+        "base64",
+      ),
+    });
+
+    expect(config.models.providers.inference.models[0].compat).toEqual({
+      supportsStore: false,
+      requiresStringContent: true,
+      maxTokensField: "max_tokens",
+      requiresToolResultName: true,
+    });
+    expect(config.plugins.entries["nemoclaw-kimi-inference-compat"]).toEqual({
+      enabled: true,
+    });
+    expect(config.plugins.load.paths).toEqual([
+      "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat",
+    ]);
+  });
+
   it("sets gateway auth token to empty string", () => {
     const config = runConfigScript();
     expect(config.gateway.auth.token).toBe("");

@@ -25,6 +25,7 @@ describe("inference selection config", () => {
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
       "z-ai/glm-5.1",
       "minimaxai/minimax-m2.7",
+      "moonshotai/kimi-k2.6",
       "openai/gpt-oss-120b",
       "deepseek-ai/deepseek-v4-pro",
     ]);

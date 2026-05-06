@@ -4,7 +4,7 @@
 import { Args, Flags } from "@oclif/core";
 
 import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
-import { rebuildSandbox } from "../../sandbox-runtime-actions";
+import { rebuildSandbox } from "../../actions/sandbox/runtime";
 
 export default class RebuildCliCommand extends NemoClawCommand {
   static id = "sandbox:rebuild";

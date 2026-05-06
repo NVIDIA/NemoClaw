@@ -230,10 +230,15 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/scripts/ws-proxy-fix.js /usr/local/lib/nemoclaw/ws-proxy-fix.js
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
+COPY nemoclaw-blueprint/openclaw-plugins/kimi-inference-compat/ /usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /usr/local/lib/nemoclaw/generate-openclaw-config.py \
-    && chmod 644 /usr/local/lib/nemoclaw/ws-proxy-fix.js
+    && chmod 644 /usr/local/lib/nemoclaw/ws-proxy-fix.js \
+    && chmod 755 /usr/local/share/nemoclaw \
+        /usr/local/share/nemoclaw/openclaw-plugins \
+        /usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat \
+    && chmod 644 /usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat/*
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.

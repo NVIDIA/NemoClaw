@@ -13,12 +13,12 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { parseVersionFromText, versionGte } from "./openshell.js";
+import { parseVersionFromText, versionGte } from "./adapters/openshell/client.js";
 import * as registry from "./registry.js";
 import { loadAgent } from "./agent-defs.js";
-import { resolveOpenshell } from "./resolve-openshell.js";
-import { captureOpenshellCommand } from "./openshell.js";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts.js";
+import { resolveOpenshell } from "./adapters/openshell/resolve.js";
+import { captureOpenshellCommand } from "./adapters/openshell/client.js";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts.js";
 
 export interface VersionCheckResult {
   sandboxVersion: string | null;

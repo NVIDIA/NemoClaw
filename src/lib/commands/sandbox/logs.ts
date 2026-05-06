@@ -6,7 +6,7 @@ import { Args, Command, Flags } from "@oclif/core";
 import { logsSinceDurationFlag } from "../../duration-flags";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import { DEFAULT_SANDBOX_LOG_LINES } from "../../domain/sandbox/log-options";
-import { showSandboxLogs } from "../../sandbox-runtime-actions";
+import { showSandboxLogs } from "../../actions/sandbox/runtime";
 
 type SandboxLogsRuntimeBridge = {
   sandboxLogs: (sandboxName: string, options: SandboxLogsOptions) => void;

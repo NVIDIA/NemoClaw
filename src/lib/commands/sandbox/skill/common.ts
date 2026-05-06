@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { installSandboxSkill } from "../../../sandbox-runtime-actions";
+import { installSandboxSkill } from "../../../actions/sandbox/runtime";
 
 let runtimeBridgeFactory = () => ({ sandboxSkillInstall: installSandboxSkill });
 

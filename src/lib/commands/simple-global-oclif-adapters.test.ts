@@ -36,9 +36,9 @@ vi.mock("../global-cli-actions", () => ({
   showRootHelp: mocks.showRootHelp,
   showVersion: mocks.showVersion,
 }));
-vi.mock("../openshell", () => ({ captureOpenshellCommand: mocks.captureOpenshellCommand }));
+vi.mock("../adapters/openshell/client", () => ({ captureOpenshellCommand: mocks.captureOpenshellCommand }));
 vi.mock("../registry", () => ({ listSandboxes: mocks.listSandboxes }));
-vi.mock("../resolve-openshell", () => ({ resolveOpenshell: mocks.resolveOpenshell }));
+vi.mock("../adapters/openshell/resolve", () => ({ resolveOpenshell: mocks.resolveOpenshell }));
 vi.mock("../services", () => ({ startAll: mocks.startAll, stopAll: mocks.stopAll }));
 vi.mock("../services-command", () => ({
   runStartCommand: mocks.runStartCommand,

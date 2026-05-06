@@ -51,6 +51,7 @@ function createFixture(opts: {
   agent?: string | null;
   messagingChannels?: string[] | null;
   providerCredentialHashes?: Record<string, string>;
+  dockerBuildExitCode?: number;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -61,6 +62,7 @@ function createFixture(opts: {
     agent = null,
     messagingChannels = null,
     providerCredentialHashes,
+    dockerBuildExitCode = 0,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -212,6 +214,23 @@ process.exit(0);
     { mode: 0o755 },
   );
 
+  // ── Fake Docker ───────────────────────────────────────────────
+  // Hermes rebuild forces a base-image build before backup/delete.
+  // This fixture only exercises rebuild session state, so Docker succeeds.
+  fs.writeFileSync(
+    path.join(tmpDir, "docker"),
+    `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0]==="build") { process.exit(${dockerBuildExitCode}); }
+if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
+if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
+if (a[0]==="ps") { process.exit(0); }
+process.stderr.write("unexpected docker call: " + a.join(" ") + "\\n");
+process.exit(1);
+`,
+    { mode: 0o755 },
+  );
+
   // ── Fake ssh ──────────────────────────────────────────────────
   fs.writeFileSync(
     path.join(tmpDir, "ssh"),
@@ -358,6 +377,33 @@ describe("Issue #2273: atomic rebuild", () => {
         );
         expect(session.agent).toBe("hermes");
         expect(session.messagingChannels).toEqual(["discord"]);
+      },
+    );
+
+    it(
+      "aborts rebuild before backup when forced Hermes base image build fails",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          credentialEnv: "NVIDIA_API_KEY",
+          savedCredential: {
+            key: "NVIDIA_API_KEY",
+            value: "nvapi-test-key-for-rebuild",
+          },
+          dockerBuildExitCode: 23,
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(result.status).not.toBe(0);
+        expect(output).toContain("Rebuild preflight failed");
+        expect(output).toContain("agent base image could not be built");
+        expect(output).toContain("Failed to build Hermes Agent base image (exit 23)");
+        expect(output).toContain("Sandbox is untouched");
+        expect(output).not.toContain("Backing up sandbox state");
+        expect(registryHasSandbox(f)).toBe(true);
       },
     );
 

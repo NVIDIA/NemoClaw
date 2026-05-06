@@ -3,8 +3,8 @@
 
 import { spawn } from "node:child_process";
 
-import { ROOT } from "./runner";
-import { getOpenshellBinary, runOpenshell } from "./openshell-runtime";
+import { ROOT } from "../../runner";
+import { getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import {
   buildEnableSandboxAuditLogsArgs,
   buildSandboxLogsArgs,
@@ -14,8 +14,8 @@ import {
   getLogsProbeTimeoutMs,
   normalizeSandboxLogsOptions,
   type LogProbeResult,
-} from "./domain/sandbox/logs";
-import type { SandboxLogsOptions } from "./domain/sandbox/log-options";
+} from "../../domain/sandbox/logs";
+import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 
 /* v8 ignore next -- process exit mapping is covered through CLI subprocess log tests. */
 function exitWithSpawnResult(result: LogProbeResult) {

@@ -7,26 +7,26 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
-import { isErrnoException } from "./errno";
-import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
-import { probeProviderHealth } from "./inference-health";
-import { parseGatewayInference } from "./inference-config";
-import { stripAnsi } from "./openshell";
-import { captureOpenshell } from "./openshell-runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
-import { GATEWAY_PORT, OLLAMA_PORT } from "./ports";
-import * as registry from "./registry";
-import type { SandboxEntry } from "./registry";
-import { resolveOpenshell } from "./resolve-openshell";
-import { ROOT } from "./runner";
-import { parseLiveSandboxNames } from "./runtime-recovery";
-import * as sandboxVersion from "./sandbox-version";
-import * as shields from "./shields";
-import { buildStatusCommandDeps } from "./status-command-deps";
-import { B, D, G, R, RD, YW } from "./terminal-style";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
+import { isErrnoException } from "../../errno";
+import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import { probeProviderHealth } from "../../inference-health";
+import { parseGatewayInference } from "../../inference-config";
+import { stripAnsi } from "../../adapters/openshell/client";
+import { captureOpenshell } from "../../adapters/openshell/runtime";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import { GATEWAY_PORT, OLLAMA_PORT } from "../../ports";
+import * as registry from "../../registry";
+import type { SandboxEntry } from "../../registry";
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { ROOT } from "../../runner";
+import { parseLiveSandboxNames } from "../../runtime-recovery";
+import * as sandboxVersion from "../../sandbox-version";
+import * as shields from "../../shields";
+import { buildStatusCommandDeps } from "../../status-command-deps";
+import { B, D, G, R, RD, YW } from "../../terminal-style";
 
-const agentRuntime = require("../../bin/lib/agent-runtime");
+const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 

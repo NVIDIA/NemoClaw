@@ -8,11 +8,11 @@ import { runDebug } from "../debug";
 import type { DebugOptions } from "../debug";
 import type { RunDebugCommandDeps } from "../debug-command";
 import { runDebugCommandWithOptions } from "../debug-command";
-import type { CaptureOpenshellResult } from "../openshell";
-import { captureOpenshellCommand } from "../openshell";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../openshell-timeouts";
+import type { CaptureOpenshellResult } from "../adapters/openshell/client";
+import { captureOpenshellCommand } from "../adapters/openshell/client";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import * as registry from "../registry";
-import { resolveOpenshell } from "../resolve-openshell";
+import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "../runtime-recovery";
 
 const useColor = !process.env.NO_COLOR && !!process.stderr.isTTY;

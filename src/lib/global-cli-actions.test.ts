@@ -29,7 +29,7 @@ vi.mock("./onboard-action", () => ({
   runSetupAction: mocks.runSetupAction,
   runSetupSparkAction: mocks.runSetupSparkAction,
 }));
-vi.mock("./openshell-runtime", () => ({ runOpenshell: mocks.runOpenshell }));
+vi.mock("./adapters/openshell/runtime", () => ({ runOpenshell: mocks.runOpenshell }));
 vi.mock("./root-help-action", () => ({ help: mocks.help, version: mocks.version }));
 
 import {

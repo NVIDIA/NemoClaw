@@ -4,7 +4,7 @@
 import { Args, Command, Flags } from "@oclif/core";
 
 import { CLI_NAME } from "../../branding";
-import { connectSandbox } from "../../sandbox-runtime-actions";
+import { connectSandbox } from "../../actions/sandbox/runtime";
 
 export default class ConnectCliCommand extends Command {
   static id = "sandbox:connect";

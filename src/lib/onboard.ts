@@ -259,7 +259,7 @@ const {
 const { sleepSeconds } = require("./wait");
 const platformUtils: typeof import("./platform") = require("./platform");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
-const { resolveOpenshell } = require("./resolve-openshell");
+const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials") = require("./credentials");
 const {
   prompt,
@@ -418,6 +418,8 @@ type OnboardOptions = {
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   controlUiPort?: number | null;
+  gpu?: boolean;
+  noGpu?: boolean;
   autoYes?: boolean;
 };
 // Non-interactive mode: set by --non-interactive flag or env var.
@@ -3525,7 +3527,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
 /** Start the OpenShell gateway with retry logic and post-start health polling. */
 async function startGatewayWithOptions(
   _gpu: ReturnType<typeof nim.detectGpu>,
-  { exitOnFailure = true }: { exitOnFailure?: boolean } = {},
+  { exitOnFailure = true, gpuPassthrough = false }: { exitOnFailure?: boolean; gpuPassthrough?: boolean } = {},
 ) {
   step(2, 8, "Starting OpenShell gateway");
 
@@ -3569,11 +3571,12 @@ async function startGatewayWithOptions(
   }
 
   const gwArgs = ["--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)];
-  // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
-  // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
-  // sandbox itself does not need direct GPU access. Passing --gpu causes
-  // FailedPrecondition errors when the gateway's k3s device plugin cannot
-  // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
+  // On NVIDIA hosts, pass --gpu unless the user explicitly opted out. This
+  // makes direct CUDA tools available in the sandbox by default while still
+  // supporting host-side inference providers.
+  if (gpuPassthrough) {
+    gwArgs.push("--gpu");
+  }
   const gatewayEnv = getGatewayStartEnv();
   if (gatewayEnv.OPENSHELL_CLUSTER_IMAGE) {
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
@@ -3678,8 +3681,11 @@ async function startGatewayWithOptions(
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
-async function startGateway(_gpu: ReturnType<typeof nim.detectGpu>): Promise<void> {
-  return startGatewayWithOptions(_gpu, { exitOnFailure: true });
+async function startGateway(
+  _gpu: ReturnType<typeof nim.detectGpu>,
+  { gpuPassthrough = false }: { gpuPassthrough?: boolean } = {},
+): Promise<void> {
+  return startGatewayWithOptions(_gpu, { exitOnFailure: true, gpuPassthrough });
 }
 
 async function startGatewayForRecovery(_gpu: ReturnType<typeof nim.detectGpu>): Promise<void> {
@@ -3896,7 +3902,14 @@ function getDefaultSandboxNameForAgent(agent: AgentDefinition | null | undefined
 }
 
 function getSandboxPromptDefault(agent: AgentDefinition | null | undefined): string {
-  return getDefaultSandboxNameForAgent(agent);
+  const envName = (process.env.NEMOCLAW_SANDBOX_NAME || "").trim().toLowerCase();
+  const agentDefault = getDefaultSandboxNameForAgent(agent);
+  if (!envName) return agentDefault;
+  try {
+    return validateName(envName, "sandbox name");
+  } catch {
+    return agentDefault;
+  }
 }
 
 function getEffectiveSandboxAgent(agent: AgentDefinition | null | undefined): AgentDefinition {
@@ -4098,6 +4111,7 @@ async function createSandbox(
   fromDockerfile: string | null = null,
   agent: AgentDefinition | null = null,
   controlUiPort: number | null = null,
+  gpuPassthrough: boolean = false,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -4347,6 +4361,26 @@ async function createSandbox(
       !needsProviderMigration &&
       !credentialRotation.changed
     ) {
+      // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
+      // Placed before the non-interactive / interactive split so all reuse
+      // paths are covered (interactive prompt, non-interactive ready, unknown drift).
+      // Note: legacy registries had gpuEnabled always true (bug fixed in this PR),
+      // so gpuEnabled=true on a legacy entry doesn't guarantee GPU support.
+      // The gateway Docker-inspect check (above) catches legacy CPU-only gateways
+      // before we reach this point, so a legacy sandbox behind a verified GPU
+      // gateway is safe to reuse — the sandbox will be recreated if needed.
+      if (gpuPassthrough) {
+        const entry = registry.getSandbox(sandboxName);
+        if (entry && !entry.gpuEnabled) {
+          console.error(`  Sandbox '${sandboxName}' exists but was created without GPU passthrough.`);
+          console.error(
+            "  Pass --recreate-sandbox to recreate with GPU, or destroy and re-onboard:",
+          );
+          console.error(`    nemoclaw onboard --recreate-sandbox`);
+          process.exit(1);
+        }
+      }
+
       if (isNonInteractive()) {
         if (existingSandboxState === "ready") {
           if (confirmedSelectionDrift) {
@@ -4683,7 +4717,9 @@ async function createSandbox(
     "--policy",
     initialSandboxPolicy.policyPath,
   ];
-  // --gpu is intentionally omitted. See comment in startGateway().
+  if (gpuPassthrough) {
+    createArgs.push("--gpu");
+  }
 
   // Create OpenShell providers for messaging credentials so they flow through
   // the provider/placeholder system instead of raw env vars. The L7 proxy
@@ -5049,7 +5085,7 @@ async function createSandbox(
     name: sandboxName,
     model: model || null,
     provider: provider || null,
-    gpuEnabled: !!gpu,
+    gpuEnabled: gpuPassthrough,
     ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
     imageTag: resolvedImageTag,
     providerCredentialHashes:
@@ -8623,11 +8659,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     (isNonInteractive() ? process.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
   // Resolve the explicit sandbox name early so both validation and the
   // --from guard work off the same source. --name always counts; the env
-  // var only counts when we cannot prompt (otherwise interactive runs would
-  // bypass the prompt UX), since the existing prompt path already seeds
-  // from the env var via promptOrDefault when --non-interactive is set.
-  // Cover both --non-interactive and missing-TTY runs (CI scripts, piped
-  // stdin) — the issue's test plan asks for both.
+  // var is used as the interactive prompt default via getSandboxPromptDefault,
+  // and also as the resolved name when we cannot prompt (non-interactive or
+  // missing-TTY runs such as CI scripts and piped stdin).
   const stdinIsTty = Boolean(process.stdin && process.stdin.isTTY);
   const stdoutIsTty = Boolean(process.stdout && process.stdout.isTTY);
   const cannotPrompt = isNonInteractive() || !stdinIsTty || !stdoutIsTty;
@@ -8924,6 +8958,51 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSession.markStepComplete("preflight");
     }
 
+    const requestedGpuPassthrough = opts.gpu === true;
+    const optedOutGpuPassthrough = opts.noGpu === true;
+    const detectedNvidiaGpu = gpu?.type === "nvidia";
+    const resumeHasResolvedGpuIntent =
+      resume && session?.steps?.preflight?.status === "complete" && !requestedGpuPassthrough;
+    const gpuPassthrough = optedOutGpuPassthrough
+      ? false
+      : requestedGpuPassthrough
+        ? true
+        : resumeHasResolvedGpuIntent
+          ? session?.gpuPassthrough === true
+          : detectedNvidiaGpu;
+    if (gpuPassthrough && gpu?.type !== "nvidia") {
+      console.error("  GPU passthrough requires an NVIDIA GPU detected by nvidia-smi.");
+      console.error("  Install NVIDIA drivers and the Container Toolkit, or rerun with --no-gpu.");
+      process.exit(1);
+    }
+    if (gpuPassthrough) {
+      note(
+        resumeHasResolvedGpuIntent && session?.gpuPassthrough === true
+          ? "  [resume] Continuing GPU passthrough from the saved onboarding session."
+          : requestedGpuPassthrough
+            ? "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation."
+            : "  NVIDIA GPU detected; enabling OpenShell GPU passthrough. Use --no-gpu to opt out.",
+      );
+    } else if (process.platform === "linux") {
+      // Hint when hardware is present but drivers are missing.
+      try {
+        const lspci = spawnSync("lspci", { encoding: "utf-8", timeout: 5000 });
+        if (lspci.status === 0 && /nvidia/i.test(lspci.stdout || "")) {
+          note("  NVIDIA GPU hardware detected but nvidia-smi is not available.");
+          note("  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.");
+        }
+      } catch {
+        /* lspci not available — skip hint */
+      }
+    }
+    // Persist GPU intent in the session so resume can restore it.
+    if (session && session.gpuPassthrough !== gpuPassthrough) {
+      session = onboardSession.updateSession((current: Session) => {
+        current.gpuPassthrough = gpuPassthrough;
+        return current;
+      });
+    }
+
     const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
     const gatewayInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
       ignoreError: true,
@@ -8962,6 +9041,26 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
+
+    // Verify the reusable gateway has GPU passthrough when needed. Runs for
+    // both fresh-reuse and resume paths so a gateway recreated without GPU
+    // between runs is caught.
+    if (canReuseHealthyGateway && gpuPassthrough) {
+      const container = `openshell-cluster-${GATEWAY_NAME}`;
+      const gpuCheck = docker.dockerInspect(
+        ["--type", "container", "--format", "{{json .HostConfig.DeviceRequests}}", container],
+        { ignoreError: true, suppressOutput: true },
+      );
+      const gpuOutput = String(gpuCheck.stdout || "").trim();
+      const gatewayHasGpu = gpuCheck.status === 0 && gpuOutput !== "null" && gpuOutput !== "[]";
+      if (!gatewayHasGpu) {
+        console.error("  Existing gateway was started without GPU passthrough.");
+        console.error("  To enable GPU, destroy the existing sandbox and gateway, then re-onboard:");
+        console.error(`    nemoclaw <name> destroy --yes && nemoclaw onboard --gpu`);
+        process.exit(1);
+      }
+    }
+
     const resumeGateway =
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
     if (resumeGateway) {
@@ -8982,7 +9081,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
       }
       startRecordedStep("gateway");
-      await startGateway(gpu);
+      await startGateway(gpu, { gpuPassthrough });
       onboardSession.markStepComplete("gateway");
     }
 
@@ -9235,6 +9334,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         fromDockerfile,
         agent,
         opts.controlUiPort || null,
+        gpuPassthrough,
       );
       webSearchConfig = nextWebSearchConfig;
       // Persist model and provider after the sandbox entry exists in the registry.

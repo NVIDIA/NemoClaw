@@ -8,7 +8,7 @@ import {
   OPENSHELL_HEAVY_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
-} from "./openshell-timeouts";
+} from "./timeouts";
 
 describe("openshell-timeouts", () => {
   it("exports positive integer constants", () => {

@@ -545,9 +545,19 @@ export function validateOllamaModel(
   try {
     const parsed = JSON.parse(output);
     if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
+      const errText = parsed.error.trim();
+      if (/does not support tools/i.test(errText)) {
+        return {
+          ok: false,
+          message:
+            `Selected Ollama model '${model}' does not support tool calling, which ` +
+            `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
+            `model's capabilities and pick one whose list includes 'tools'.`,
+        };
+      }
       return {
         ok: false,
-        message: `Selected Ollama model '${model}' failed the local probe: ${parsed.error.trim()}`,
+        message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
       };
     }
   } catch {
@@ -555,4 +565,118 @@ export function validateOllamaModel(
   }
 
   return { ok: true };
+}
+
+// ─── Tools-capability probe (issue #2667) ─────────────────────────
+//
+// Ollama exposes a model's declared capabilities via /api/show. Tool calling
+// is gated on a "tools" entry in that array. Models without it raise
+// "400 ... does not support tools" the first time the agent issues a tool
+// call — too late to recover gracefully. The onboard flow probes this up
+// front and warns or blocks before the user wastes a long pull.
+
+export interface OllamaCapabilities {
+  source: "api" | "unknown";
+  capabilities: string[];
+  supportsTools: boolean | null;
+  rawError?: string;
+}
+
+/**
+ * Probe `/api/show` for a model's declared capabilities. Returns
+ * `{source:"api", supportsTools: bool}` when the response is well-formed,
+ * or `{source:"unknown", supportsTools: null, rawError}` on any failure
+ * (network, HTTP error, malformed JSON, missing field, unexpected shape).
+ *
+ * Defensive parsing is intentional: older Ollama daemons and custom registries
+ * may omit the `capabilities` field. We never block on probe failure.
+ */
+export function probeOllamaModelCapabilities(
+  model: string,
+  runCaptureImpl?: RunCaptureFn,
+): OllamaCapabilities {
+  const capture = runCaptureImpl ?? runCapture;
+  const host = getResolvedOllamaHost();
+  const body = JSON.stringify({ model });
+  let output: string;
+  try {
+    output = capture(
+      [
+        "curl",
+        "-sS",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "5",
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        body,
+        `http://${host}:${OLLAMA_PORT}/api/show`,
+      ],
+      { ignoreError: true },
+    );
+  } catch (err) {
+    return {
+      source: "unknown",
+      capabilities: [],
+      supportsTools: null,
+      rawError: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  if (!output || !String(output).trim()) {
+    return {
+      source: "unknown",
+      capabilities: [],
+      supportsTools: null,
+      rawError: "empty response from /api/show",
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(output));
+  } catch (err) {
+    return {
+      source: "unknown",
+      capabilities: [],
+      supportsTools: null,
+      rawError: err instanceof Error ? err.message : "JSON parse error",
+    };
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    return {
+      source: "unknown",
+      capabilities: [],
+      supportsTools: null,
+      rawError: "unexpected /api/show payload shape",
+    };
+  }
+
+  const capsRaw = (parsed as { capabilities?: unknown }).capabilities;
+  if (!Array.isArray(capsRaw)) {
+    // Ollama returned a body but no capabilities array (older version,
+    // custom registry, or shape change). Degrade to unknown.
+    const errText =
+      typeof (parsed as { error?: unknown }).error === "string"
+        ? String((parsed as { error?: unknown }).error)
+        : "missing capabilities field";
+    return {
+      source: "unknown",
+      capabilities: [],
+      supportsTools: null,
+      rawError: errText,
+    };
+  }
+
+  const capabilities = capsRaw.filter((c: unknown): c is string => typeof c === "string");
+  return {
+    source: "api",
+    capabilities,
+    supportsTools: capabilities.includes("tools"),
+  };
 }

@@ -89,6 +89,7 @@ export interface Session {
   // migrated set is NOT seeded from the persisted record, so the cleanup
   // gate keeps the file until the *current* value is actually re-migrated.
   migratedLegacyValueHashes: Record<string, string> | null;
+  gpuPassthrough: boolean;
   telegramConfig: TelegramConfig | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
@@ -125,6 +126,7 @@ export interface SessionUpdates {
   policyPresets?: string[];
   messagingChannels?: string[];
   migratedLegacyValueHashes?: Record<string, string>;
+  gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
@@ -145,6 +147,7 @@ export interface DebugSessionSummary {
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   policyPresets: string[] | null;
+  gpuPassthrough: boolean;
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
@@ -301,6 +304,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
+    gpuPassthrough: overrides.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
@@ -333,6 +337,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
+    gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
@@ -705,6 +710,9 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     }
     safe.migratedLegacyValueHashes = cleaned;
   }
+  if (updates.gpuPassthrough === true || updates.gpuPassthrough === false) {
+    safe.gpuPassthrough = updates.gpuPassthrough;
+  }
   if (isObject(updates.telegramConfig) && typeof updates.telegramConfig.requireMention === "boolean") {
     safe.telegramConfig = { requireMention: updates.telegramConfig.requireMention };
   } else if (updates.telegramConfig === null) {
@@ -817,6 +825,7 @@ export function summarizeForDebug(
     preferredInferenceApi: session.preferredInferenceApi,
     nimContainer: session.nimContainer,
     policyPresets: session.policyPresets,
+    gpuPassthrough: session.gpuPassthrough,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
