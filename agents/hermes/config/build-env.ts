@@ -17,6 +17,8 @@ export type TelegramConfig = {
   requireMention?: boolean;
 };
 
+export type RuntimeTokenEnvKeys = string[];
+
 export type HermesBuildSettings = {
   model: string;
   baseUrl: string;
@@ -27,6 +29,7 @@ export type HermesBuildSettings = {
     allowedIds: MessagingAllowedIds;
     discordGuilds: DiscordGuilds;
     telegramConfig: TelegramConfig;
+    runtimeTokenEnvKeys: Set<string>;
   };
 };
 
@@ -53,6 +56,13 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
         env,
         "NEMOCLAW_TELEGRAM_CONFIG_B64",
         "e30=",
+      ),
+      runtimeTokenEnvKeys: new Set(
+        readBase64Json<RuntimeTokenEnvKeys>(
+          env,
+          "NEMOCLAW_HERMES_RUNTIME_TOKEN_ENVS_B64",
+          "W10=",
+        ),
       ),
     },
   };

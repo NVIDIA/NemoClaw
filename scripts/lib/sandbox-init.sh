@@ -452,8 +452,9 @@ harden_config_symlinks() {
 # ── Messaging channels ──────────────────────────────────────────
 # Channel entries are baked into the config at image build time via
 # NEMOCLAW_MESSAGING_CHANNELS_B64. Placeholder tokens flow through
-# to the L7 proxy for rewriting at egress. Real tokens are never
-# visible inside the sandbox.
+# to the L7 proxy for rewriting at egress. Runtimes that must authenticate
+# inside upgraded WebSocket payloads may instead receive a runtime-only
+# process env token because OpenShell does not rewrite those frames yet.
 #
 # This function just logs which channels are active. Runtime patching
 # of config files is not possible — Landlock enforces read-only at
