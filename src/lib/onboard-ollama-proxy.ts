@@ -20,7 +20,6 @@ const {
   getResolvedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   probeOllamaModelCapabilities,
-  TOOLS_CAPABLE_OLLAMA_MODELS,
   validateOllamaModel,
 } = require("./local-inference");
 const { buildSubprocessEnv } = require("./subprocess-env");
@@ -555,9 +554,8 @@ function printToolsIncompatibleWarning(model: string): void {
   console.log("    NemoClaw agents need tool-calling for file operations, web search, and");
   console.log("    running commands. This model will likely fail with \"400 ... does not");
   console.log("    support tools\" at first prompt.");
-  console.log(
-    `    Tools-capable starter models: ${TOOLS_CAPABLE_OLLAMA_MODELS.join(", ")}`,
-  );
+  console.log("    Inspect a model's capabilities with `ollama show <model>` and pick");
+  console.log("    one whose list includes 'tools'.");
 }
 
 async function checkOllamaModelToolSupport(

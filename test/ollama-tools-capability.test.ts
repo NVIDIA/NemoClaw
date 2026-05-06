@@ -32,7 +32,6 @@ interface LocalInferenceModule {
   ) => { ok: boolean; message?: string };
   setResolvedOllamaHost: (host: string) => void;
   resetOllamaHostCache: () => void;
-  TOOLS_CAPABLE_OLLAMA_MODELS: readonly string[];
   OLLAMA_LOCALHOST: string;
 }
 
@@ -181,11 +180,10 @@ describe("validateOllamaModel — tools-capable error mapping", () => {
     expect(result.ok).toBe(false);
     expect(result.message).toBeTruthy();
     expect(result.message!).toContain("phi4");
-    // Friendly message must include at least one tools-capable suggestion.
-    const hasSuggestion = localInference.TOOLS_CAPABLE_OLLAMA_MODELS.some((m) =>
-      result.message!.includes(m),
-    );
-    expect(hasSuggestion).toBe(true);
+    // Friendly message must direct the user to inspect capabilities themselves
+    // rather than recommending a hardcoded list of models.
+    expect(result.message!).toMatch(/ollama show/i);
+    expect(result.message!.toLowerCase()).toContain("tools");
   });
 });
 

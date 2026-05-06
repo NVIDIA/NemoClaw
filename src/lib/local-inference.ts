@@ -551,8 +551,8 @@ export function validateOllamaModel(
           ok: false,
           message:
             `Selected Ollama model '${model}' does not support tool calling, which ` +
-            `NemoClaw agents require. Switch to a tools-capable model: ` +
-            `${TOOLS_CAPABLE_OLLAMA_MODELS.join(", ")}.`,
+            `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
+            `model's capabilities and pick one whose list includes 'tools'.`,
         };
       }
       return {
@@ -574,17 +574,6 @@ export function validateOllamaModel(
 // "400 ... does not support tools" the first time the agent issues a tool
 // call — too late to recover gracefully. The onboard flow probes this up
 // front and warns or blocks before the user wastes a long pull.
-
-/**
- * Tools-capable Ollama starter models, surfaced in user-facing warnings and
- * error messages. Order matches the bootstrap selector order (smallest first).
- */
-export const TOOLS_CAPABLE_OLLAMA_MODELS = [
-  "qwen2.5:7b",
-  "llama3.1",
-  "mistral-nemo",
-  "nemotron-3-nano:30b",
-];
 
 export interface OllamaCapabilities {
   source: "api" | "unknown";
