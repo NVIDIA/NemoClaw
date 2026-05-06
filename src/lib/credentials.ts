@@ -39,7 +39,16 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "HUGGING_FACE_HUB_TOKEN",
   "TELEGRAM_BOT_TOKEN",
   "ALLOWED_CHAT_IDS",
+  // #3061: per-channel allowlist + reply-mode config that the host-side
+  // onboard prompt needs to read back on re-onboard so users do not have
+  // to re-enter the same IDs every time. ALLOWED_CHAT_IDS above is kept
+  // for the deploy-time bridge runtime that still expects that env name.
+  "TELEGRAM_ALLOWED_IDS",
+  "TELEGRAM_REQUIRE_MENTION",
   "DISCORD_BOT_TOKEN",
+  "DISCORD_SERVER_ID",
+  "DISCORD_USER_ID",
+  "DISCORD_REQUIRE_MENTION",
   "SLACK_BOT_TOKEN",
   "SLACK_APP_TOKEN",
 ];

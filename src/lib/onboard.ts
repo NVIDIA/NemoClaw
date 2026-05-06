@@ -6998,13 +6998,16 @@ async function setupMessagingChannels(): Promise<string[]> {
       }
     }
     if (ch.serverIdEnvKey) {
-      const existingServerIds = process.env[ch.serverIdEnvKey] || "";
+      const existingServerIds = getMessagingToken(ch.serverIdEnvKey) || "";
       if (existingServerIds) {
+        process.env[ch.serverIdEnvKey] = existingServerIds;
         console.log(`  ✓ ${ch.name} — server ID already set: ${existingServerIds}`);
       } else {
         console.log(`  ${ch.serverIdHelp}`);
         const serverId = (await prompt(`  ${ch.serverIdLabel}: `)).trim();
         if (serverId) {
+          // #3061: persist so re-onboard finds it again instead of re-prompting
+          saveCredential(ch.serverIdEnvKey, serverId);
           process.env[ch.serverIdEnvKey] = serverId;
           console.log(`  ✓ ${ch.name} server ID saved`);
         } else {
@@ -7019,28 +7022,38 @@ async function setupMessagingChannels(): Promise<string[]> {
     // the bot is added to, so the prompt always fires there. See #1737.
     const requireMentionKey = ch.requireMentionEnvKey;
     if (requireMentionKey && (!ch.serverIdEnvKey || Boolean(process.env[ch.serverIdEnvKey]))) {
-      const existingRequireMention = process.env[requireMentionKey];
+      const persistedRequireMention = getMessagingToken(requireMentionKey);
+      const existingRequireMention =
+        persistedRequireMention === "0" || persistedRequireMention === "1"
+          ? persistedRequireMention
+          : process.env[requireMentionKey];
       if (existingRequireMention === "0" || existingRequireMention === "1") {
+        process.env[requireMentionKey] = existingRequireMention;
         const mode = existingRequireMention === "0" ? "all messages" : "@mentions only";
         console.log(`  ✓ ${ch.name} — reply mode already set: ${mode}`);
       } else {
         console.log(`  ${ch.requireMentionHelp}`);
         const answer = (await prompt("  Reply only when @mentioned? [Y/n]: ")).trim().toLowerCase();
-        process.env[requireMentionKey] = answer === "n" || answer === "no" ? "0" : "1";
-        const mode =
-          process.env[requireMentionKey] === "0" ? "all messages" : "@mentions only";
+        const value = answer === "n" || answer === "no" ? "0" : "1";
+        // #3061: persist so re-onboard remembers the user's preference
+        saveCredential(requireMentionKey, value);
+        process.env[requireMentionKey] = value;
+        const mode = value === "0" ? "all messages" : "@mentions only";
         console.log(`  ✓ ${ch.name} reply mode saved: ${mode}`);
       }
     }
     // Prompt for user/sender ID when the channel supports allowlisting
     if (ch.userIdEnvKey && (!ch.serverIdEnvKey || process.env[ch.serverIdEnvKey])) {
-      const existingIds = process.env[ch.userIdEnvKey] || "";
+      const existingIds = getMessagingToken(ch.userIdEnvKey) || "";
       if (existingIds) {
+        process.env[ch.userIdEnvKey] = existingIds;
         console.log(`  ✓ ${ch.name} — allowed IDs already set: ${existingIds}`);
       } else {
         console.log(`  ${ch.userIdHelp}`);
         const userId = (await prompt(`  ${ch.userIdLabel}: `)).trim();
         if (userId) {
+          // #3061: persist so re-onboard finds the IDs again instead of re-prompting
+          saveCredential(ch.userIdEnvKey, userId);
           process.env[ch.userIdEnvKey] = userId;
           console.log(`  ✓ ${ch.name} user ID saved`);
         } else {
