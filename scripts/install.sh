@@ -1673,6 +1673,79 @@ run_onboard() {
   fi
 }
 
+# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback).
+# Echoes "DGX Spark", "DGX Station", or empty. Used to gate the express
+# install prompt; only platforms with a known sensible default are offered.
+detect_express_platform() {
+  local model=""
+  if [ -r /sys/class/dmi/id/product_name ]; then
+    model="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
+  fi
+  if [ -z "$model" ] && [ -r /sys/firmware/devicetree/base/model ]; then
+    model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
+  fi
+  case "$model" in
+    *DGX*Spark*) printf "DGX Spark" ;;
+    *DGX*Station*) printf "DGX Station" ;;
+    *) ;;
+  esac
+}
+
+# Prompt the user to opt into express install on Spark/Station. Sets the
+# non-interactive + provider/model env vars when accepted. Skipped when
+# the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
+# no TTY.
+maybe_offer_express_install() {
+  local platform
+  platform="$(detect_express_platform)"
+  # Not on a platform we have an express recipe for — say nothing.
+  if [ -z "$platform" ]; then
+    return 0
+  fi
+  # On a supported platform but a skip condition applies — explain why so
+  # the user understands they could have gotten express otherwise.
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    info "Detected ${platform}. Skipping express prompt (--non-interactive set)."
+    return 0
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
+    return 0
+  fi
+  if [ ! -t 0 ]; then
+    info "Detected ${platform}. Skipping express prompt (no TTY)."
+    return 0
+  fi
+  info "Detected ${platform}."
+  printf "  Run express install (accepts third-party software notice, auto-configures inference, applies suggested security policy)? [Y/n]: "
+  local reply=""
+  read -r reply </dev/tty || true
+  reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
+  case "$reply" in
+    "" | y | yes)
+      info "Using express install for ${platform}."
+      NON_INTERACTIVE=1
+      ACCEPT_THIRD_PARTY_SOFTWARE=1
+      export NEMOCLAW_NON_INTERACTIVE=1
+      export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+      export NEMOCLAW_YES=1
+      export NEMOCLAW_POLICY_MODE=suggested
+      case "$platform" in
+        "DGX Spark")
+          export NEMOCLAW_PROVIDER=install-ollama
+          export NEMOCLAW_MODEL=qwen3.6:35b
+          ;;
+        "DGX Station")
+          export NEMOCLAW_PROVIDER=install-vllm
+          ;;
+      esac
+      ;;
+    *)
+      info "Skipping express install. Continuing with interactive flow."
+      ;;
+  esac
+}
+
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -1705,6 +1778,11 @@ main() {
   NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
+
+  # Offer express install on supported platforms (DGX Spark / Station). When
+  # accepted, sets non-interactive + accept-notice + provider/model env vars
+  # so the rest of the run is fully unattended.
+  maybe_offer_express_install
 
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
