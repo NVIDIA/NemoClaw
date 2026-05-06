@@ -6,7 +6,6 @@ import { isSafeModelId } from "./validation";
 import { validateNvidiaEndpointModel } from "./provider-models";
 
 // credentials.ts still uses CommonJS-style exports.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { getCredential, prompt } = require("./credentials");
 
 export const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";

@@ -44,8 +44,27 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: true,
       agent: null,
       controlUiPort: null,
-
+      gpu: false,
+      autoYes: false,
     });
+  });
+
+  it.each<{ flags: string[] }>([
+    { flags: ["--yes"] },
+    { flags: ["-y"] },
+    { flags: ["--yes", "-y"] },
+  ])("sets autoYes when invoked with $flags", ({ flags }) => {
+    const result = parseOnboardArgs(
+      flags,
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.autoYes).toBe(true);
   });
 
   it("accepts the env-based third-party notice acknowledgement", () => {
@@ -70,7 +89,8 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: true,
       agent: null,
       controlUiPort: null,
-
+      gpu: false,
+      autoYes: false,
     });
   });
 
@@ -95,7 +115,8 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
-
+      gpu: false,
+      autoYes: false,
     });
   });
 
@@ -148,7 +169,8 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
-
+      gpu: false,
+      autoYes: false,
     });
   });
 
@@ -174,7 +196,8 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
-
+      gpu: false,
+      autoYes: false,
     });
   });
 
@@ -221,7 +244,8 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
-
+      gpu: false,
+      autoYes: false,
     });
   });
 
@@ -357,7 +381,8 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: "openclaw",
       controlUiPort: null,
-
+      gpu: false,
+      autoYes: false,
     });
   });
 
@@ -492,7 +517,8 @@ describe("onboard command", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
-
+      gpu: false,
+      autoYes: false,
     });
   });
 
@@ -515,26 +541,9 @@ describe("onboard command", () => {
     expect(runOnboard).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects --gpu as an unknown option (GPU passthrough is auto-detected)", () => {
-    const errors: string[] = [];
-    expect(() =>
-      parseOnboardArgs(
-        ["--gpu", "--non-interactive"],
-        "--yes-i-accept-third-party-software",
-        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
-        {
-          env: {},
-          error: (message = "") => errors.push(message),
-          exit: exitWithPrefixedCode,
-        },
-      ),
-    ).toThrow("exit:1");
-    expect(errors.join("\n")).toContain("Unknown onboard option(s): --gpu");
-  });
-
-  it("does not include gpu in parsed result", () => {
+  it("parses --gpu as explicit GPU passthrough intent", () => {
     const result = parseOnboardArgs(
-      ["--non-interactive"],
+      ["--gpu", "--non-interactive"],
       "--yes-i-accept-third-party-software",
       "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
       {
@@ -543,6 +552,7 @@ describe("onboard command", () => {
         exit: exitWithCode,
       },
     );
-    expect(result).not.toHaveProperty("gpu");
+    expect(result.gpu).toBe(true);
+    expect(result.nonInteractive).toBe(true);
   });
 });

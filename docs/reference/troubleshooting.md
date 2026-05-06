@@ -304,7 +304,7 @@ The `install-openshell.sh` script also enforces this constraint and pins fresh i
 
 ### Invalid sandbox name
 
-Sandbox names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
+Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Uppercase letters are automatically lowercased.
 
 Names that collide with global CLI commands are also rejected.
@@ -330,6 +330,23 @@ If neither is found, verify that Colima is running:
 ```console
 $ colima status
 ```
+
+### Sandbox build is slow or hangs (under-provisioned container runtime)
+
+Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headroom for the BuildKit-driven sandbox image build.
+On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
+
+Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
+On Colima, raise the resources before re-running onboard:
+
+```console
+$ colima stop
+$ colima start --cpu 6 --memory 12 --disk 100
+```
+
+On Docker Desktop, raise CPU and memory limits in *Settings → Resources*, then apply and restart.
+
+To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1` before running `nemoclaw onboard`.
 
 ### Re-onboard fails because port 18789 is held by SSH
 
@@ -477,7 +494,7 @@ Follow these steps to reconnect.
 
 If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
 The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
+Back up your workspace first by following the instructions at [Back Up and Restore](../manage-sandboxes/backup-restore.md).
 :::
 
 ### Sandbox is running an outdated agent version
@@ -597,6 +614,9 @@ $ nemoclaw onboard
 If you previously set `NEMOCLAW_PREFERRED_API=openai-responses` to force the
 Responses API, unset it before re-running onboard.
 
+When you enable Telegram messaging with an OpenAI-compatible endpoint, onboarding also checks `inference.local` from inside the sandbox.
+If that smoke check fails, fix the compatible-endpoint base URL, credentials, model, or network route before testing the Telegram bot again.
+
 Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone — it patches the config
 at container startup but does not update the Dockerfile ARG baked into the
 image.
@@ -635,7 +655,7 @@ This is expected.
 The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
-To change your configuration, exit the sandbox and rerun onboarding:
+For most configuration changes, exit the sandbox and rerun onboarding:
 
 ```console
 $ nemoclaw onboard
@@ -643,6 +663,14 @@ $ nemoclaw onboard
 
 If NemoClaw reports a resumable failed onboarding session, run `nemoclaw onboard --resume` instead.
 This rebuilds the sandbox with your updated settings.
+
+For advanced live edits, use the host-side config command instead of running `openclaw config set` inside the sandbox:
+
+```console
+$ nemoclaw <sandbox> config set --key <dotpath> --value '<json-or-string>' --restart
+```
+
+Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with `nemoclaw <sandbox> config rotate-token` instead.
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 
@@ -693,7 +721,7 @@ Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mod
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
 ```console
-$ openshell term <sandbox-name>
+$ nemoclaw <sandbox-name> connect
 $ tail -f /tmp/gateway.log
 ```
 

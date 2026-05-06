@@ -66,6 +66,8 @@ ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG CHAT_UI_URL=http://127.0.0.1:8642
 ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
+ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
+ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 ARG NEMOCLAW_BUILD_ID=default
 
 # Promote build-args to env vars for the config generation script.
@@ -74,7 +76,9 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64}
+    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
+    NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
+    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64}
 
 WORKDIR /sandbox
 USER sandbox
@@ -187,7 +191,8 @@ RUN set -eu; \
         "$config_dir/workspace" \
         "$config_dir/profiles" \
         "$config_dir/cache" \
-        "$config_dir/pairing"; \
+        "$config_dir/pairing" \
+        "$config_dir/runtime"; \
     if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
         echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
         exit 1; \
@@ -211,9 +216,29 @@ RUN set -eu; \
     done; \
     rm -rf /root/.cache/pip /sandbox/.cache \
     && chown -R sandbox:sandbox /sandbox/.hermes \
+    && chown gateway:sandbox /sandbox/.hermes/runtime \
     && chmod 750 /sandbox/.hermes \
+    && chmod 770 \
+        /sandbox/.hermes/memories \
+        /sandbox/.hermes/sessions \
+        /sandbox/.hermes/skills \
+        /sandbox/.hermes/plugins \
+        /sandbox/.hermes/cron \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/skins \
+        /sandbox/.hermes/plans \
+        /sandbox/.hermes/workspace \
+        /sandbox/.hermes/profiles \
+        /sandbox/.hermes/cache \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/runtime \
+    && chmod 2770 /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \
-    && chmod 640 /sandbox/.hermes/.env
+    && chmod 640 /sandbox/.hermes/.env \
+    && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
+        rm -f "/sandbox/.hermes/${name}"; \
+        ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
+    done
 
 # Pin config hash at build time for integrity verification at startup.
 RUN mkdir -p /etc/nemoclaw \

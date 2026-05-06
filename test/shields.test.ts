@@ -76,29 +76,29 @@ describe("shields — unit logic", () => {
     // Since the CJS require resolution issue makes direct import flaky,
     // test the TypeScript duration module instead.
     it("parses minutes", async () => {
-      const { parseDuration } = await import("../src/lib/duration.js");
+      const { parseDuration } = await import("../src/lib/domain/duration.js");
       expect(parseDuration("5m")).toBe(300);
       expect(parseDuration("30m")).toBe(1800);
     });
 
     it("parses seconds", async () => {
-      const { parseDuration } = await import("../src/lib/duration.js");
+      const { parseDuration } = await import("../src/lib/domain/duration.js");
       expect(parseDuration("90s")).toBe(90);
     });
 
     it("treats bare numbers as seconds", async () => {
-      const { parseDuration } = await import("../src/lib/duration.js");
+      const { parseDuration } = await import("../src/lib/domain/duration.js");
       expect(parseDuration("300")).toBe(300);
     });
 
     it("rejects durations exceeding 30 minutes", async () => {
-      const { parseDuration } = await import("../src/lib/duration.js");
+      const { parseDuration } = await import("../src/lib/domain/duration.js");
       expect(() => parseDuration("31m")).toThrow("exceeds maximum");
       expect(() => parseDuration("1h")).toThrow("exceeds maximum");
     });
 
     it("rejects invalid input", async () => {
-      const { parseDuration } = await import("../src/lib/duration.js");
+      const { parseDuration } = await import("../src/lib/domain/duration.js");
       expect(() => parseDuration("abc")).toThrow("Invalid duration");
     });
   });
@@ -265,18 +265,13 @@ describe("shields — unit logic", () => {
   // NC-2227-02: Three-state shields model
   // -------------------------------------------------------------------
   describe("NC-2227-02: three-state shields model", () => {
-    it("deriveShieldsMode encodes the fresh, locked, unlocked, and legacy-state cases", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "src", "lib", "shields.ts"),
-        "utf-8",
-      );
-      const fn = src.match(/function deriveShieldsMode\([\s\S]*?^}/m);
-      expect(fn).toBeTruthy();
-      expect(fn![0]).toContain('if (!hasStateFile) return "mutable_default"');
-      expect(fn![0]).toContain('if (state.shieldsDown === true) return "temporarily_unlocked"');
-      expect(fn![0]).toContain('if (state.shieldsDown === false) return "locked"');
-      expect(fn![0]).toContain('return "mutable_default"');
-      expect(src).toContain("deriveShieldsMode(state, state._hasStateFile)");
+    it("deriveShieldsMode encodes the fresh, locked, unlocked, and legacy-state cases", async () => {
+      const { deriveShieldsMode } = await import("../dist/lib/shields.js");
+
+      expect(deriveShieldsMode({}, false)).toBe("mutable_default");
+      expect(deriveShieldsMode({ shieldsDown: true }, true)).toBe("temporarily_unlocked");
+      expect(deriveShieldsMode({ shieldsDown: false }, true)).toBe("locked");
+      expect(deriveShieldsMode({}, true)).toBe("mutable_default");
     });
   });
 });
@@ -423,7 +418,12 @@ describe("NC-2227-05: shields.ts locks state directories", () => {
     expect(src).toContain("function applyStateDirLockMode");
     expect(src).toContain("workspace-*");
     expect(fnBody).toContain("applyStateDirLockMode");
+    expect(fnBody).toContain('["chmod", "g-s", target.configDir]');
+    expect(src).toContain('["chmod", "g-s", dirPath]');
+    expect(src).toContain("Best effort; do not skip recursive write stripping.");
+    expect(src).toContain('[ "$clear_setgid" = "1" ] && chmod g-s "$dir"');
     expect(fnBody).toContain("chown");
+    expect(fnBody).toContain("g-s");
     expect(fnBody).toContain("root:root");
   });
 

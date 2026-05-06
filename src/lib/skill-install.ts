@@ -116,7 +116,6 @@ export function resolveSkillPaths(
 
 // Re-export shellQuote from runner.ts — a repo-wide test enforces
 // a single definition lives in runner.ts.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { shellQuote } = require("./runner");
 export { shellQuote };
 
@@ -148,7 +147,7 @@ export interface SshResult {
 
 /**
  * Run a command on the sandbox via SSH with optional stdin content.
- * Uses the same SSH flags as executeSandboxCommand in nemoclaw.ts.
+ * Uses the same SSH flags as executeSandboxCommand in sandbox-process-recovery-action.ts.
  */
 export function sshExec(
   ctx: SshContext,

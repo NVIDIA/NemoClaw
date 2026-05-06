@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import logging
 import sys
 from datetime import date
 from pathlib import Path
@@ -48,7 +49,16 @@ redirects = {
     # tutorials/dgx-spark pages were removed; DGX Spark content now lives
     # in the NVIDIA Spark playbook (https://build.nvidia.com/spark/nemoclaw).
     "get-started/windows-setup": "windows-preparation.html",
+    # Manage Sandboxes reorganization (May 2026): operational pages moved
+    # from deployment/ and workspace/ into manage-sandboxes/.
+    "deployment/set-up-telegram-bridge": "../manage-sandboxes/messaging-channels.html",
+    "workspace/workspace-files": "../manage-sandboxes/workspace-files.html",
+    "workspace/backup-restore": "../manage-sandboxes/backup-restore.html",
 }
+
+# sphinx-reredirects rewrites redirect files on every incremental build and
+# logs each rewrite at info level. Keep real redirect warnings visible.
+logging.getLogger("sphinx.sphinx_reredirects").setLevel(logging.WARNING)
 
 autodoc_default_options = {
     "members": True,

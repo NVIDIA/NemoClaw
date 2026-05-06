@@ -4,8 +4,8 @@
 /**
  * Coverage for GPU passthrough session persistence (#1751, #999).
  *
- * GPU passthrough is auto-detected (enabled when NVIDIA GPU found),
- * but the intent is persisted in the session so resume flows preserve it.
+ * GPU passthrough is an explicit onboarding intent (`--gpu`), and the
+ * session persists that intent so resume flows preserve it.
  *
  * What this file locks down:
  *   1. filterSafeUpdates → gpuPassthrough roundtrip.
@@ -74,7 +74,7 @@ describe("Issue #1751 — GPU passthrough session persistence", () => {
     expect(fresh.gpuPassthrough).toBe(false);
   });
 
-  it("gpuPassthrough can be set to true via createSession override (simulates auto-detect)", () => {
+  it("gpuPassthrough can be set to true via createSession override (simulates explicit --gpu)", () => {
     const s = session.createSession({ gpuPassthrough: true });
     session.saveSession(s);
     const loaded = session.loadSession()!;
@@ -113,7 +113,7 @@ describe("Issue #1751 — GPU passthrough session persistence", () => {
     expect(loaded.steps.gateway?.status).toBe("failed");
   });
 
-  it("normalizeSession handles missing gpuPassthrough (pre-auto-detect sessions)", () => {
+  it("normalizeSession handles missing gpuPassthrough (pre-GPU-intent sessions)", () => {
     // Simulate a session saved before gpuPassthrough existed
     const s = session.createSession();
     session.saveSession(s);

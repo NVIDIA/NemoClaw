@@ -97,6 +97,15 @@ else
   exit 1
 fi
 
+# #2497: the preflight error must surface the env-var override so users
+# can rerun with a different port instead of being blocked indefinitely.
+if echo "$p4_out" | grep -Fq "NEMOCLAW_GATEWAY_PORT=<port> nemoclaw onboard"; then
+  PASS "Onboard error surfaces NEMOCLAW_GATEWAY_PORT override hint (#2497)"
+else
+  FAIL "Expected NEMOCLAW_GATEWAY_PORT override hint in onboard output (#2497)"
+  exit 1
+fi
+
 INFO "Restoring nemoclaw gateway for subsequent phases..."
 if ! openshell gateway start --name nemoclaw 2>&1; then
   FAIL "openshell gateway start --name nemoclaw failed after port test"

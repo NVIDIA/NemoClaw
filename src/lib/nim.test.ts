@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "module";
-import { describe, it, expect, vi } from "vitest";
 import type { Mock } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // Import from compiled dist/ for coverage attribution.
 import * as nim from "../../dist/lib/nim";
@@ -50,6 +50,17 @@ function hasCurlTimeoutArgs(cmd: string | string[]): boolean {
   return cmd[0] === "curl" && cmd[connectTimeout + 1] === "5" && cmd[maxTime + 1] === "5";
 }
 
+function timeoutForCommand(
+  runCapture: Mock,
+  predicate: (cmd: string | string[]) => boolean,
+): number | undefined {
+  const call = runCapture.mock.calls.find((mockCall) => {
+    const cmd = mockCall[0] as string | string[];
+    return predicate(cmd);
+  });
+  return (call?.[1] as { timeout?: number } | undefined)?.timeout;
+}
+
 describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
@@ -81,6 +92,64 @@ describe("nim", () => {
   describe("containerName", () => {
     it("prefixes with nemoclaw-nim-", () => {
       expect(nim.containerName("my-sandbox")).toBe("nemoclaw-nim-my-sandbox");
+    });
+  });
+
+  describe("detectNvidiaPlatform", () => {
+    const fs = require("fs");
+
+    function withFirmwareModel(model: string, fn: () => void): void {
+      const origReadFileSync = fs.readFileSync;
+      fs.readFileSync = (p: string, ...args: unknown[]) => {
+        if (p === "/sys/class/dmi/id/product_name") return model;
+        if (p === "/sys/firmware/devicetree/base/model") return "";
+        return origReadFileSync(p, ...args);
+      };
+      try {
+        fn();
+      } finally {
+        fs.readFileSync = origReadFileSync;
+      }
+    }
+
+    function withDmiUnavailableAndDevicetreeModel(model: string, fn: () => void): void {
+      const origReadFileSync = fs.readFileSync;
+      fs.readFileSync = (p: string, ...args: unknown[]) => {
+        if (p === "/sys/class/dmi/id/product_name") throw new Error("ENOENT");
+        if (p === "/sys/firmware/devicetree/base/model") return `${model}\0`;
+        return origReadFileSync(p, ...args);
+      };
+      try {
+        fn();
+      } finally {
+        fs.readFileSync = origReadFileSync;
+      }
+    }
+
+    it("classifies explicit DGX Station identifiers as station", () => {
+      for (const model of ["NVIDIA DGX Station GB300", "DGX-Station", "P3830"]) {
+        withFirmwareModel(model, () => {
+          expect(nim.detectNvidiaPlatform()).toBe("station");
+        });
+      }
+    });
+
+    it("does not classify unrelated Galaxy or P3830 substrings as Station", () => {
+      for (const model of [
+        "Samsung Galaxy Book4 Ultra",
+        "Acme Galaxy Rack Server",
+        "Acme XP3830 Workstation",
+      ]) {
+        withFirmwareModel(model, () => {
+          expect(nim.detectNvidiaPlatform()).toBe("linux");
+        });
+      }
+    });
+
+    it("falls back to devicetree when DMI is unreadable", () => {
+      withDmiUnavailableAndDevicetreeModel("NVIDIA DGX Spark", () => {
+        expect(nim.detectNvidiaPlatform()).toBe("spark");
+      });
     });
   });
 
@@ -353,6 +422,18 @@ describe("nim", () => {
           true,
         );
         expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);
+        expect(
+          timeoutForCommand(
+            runCapture,
+            (c) => Array.isArray(c) && c[0] === "docker" && c.includes("inspect"),
+          ),
+        ).toBe(5000);
+        expect(
+          timeoutForCommand(
+            runCapture,
+            (c) => Array.isArray(c) && c[0] === "curl" && c.includes("http://127.0.0.1:9000/v1/models"),
+          ),
+        ).toBe(6000);
       } finally {
         restore();
       }
@@ -375,6 +456,18 @@ describe("nim", () => {
 
           expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
           expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(true);
+          expect(
+            timeoutForCommand(
+              runCapture,
+              (c) => Array.isArray(c) && c[0] === "docker" && c.includes("inspect"),
+            ),
+          ).toBe(5000);
+          expect(
+            timeoutForCommand(
+              runCapture,
+              (c) => Array.isArray(c) && c[0] === "docker" && c.includes("port"),
+            ),
+          ).toBe(5000);
         } finally {
           restore();
         }
@@ -410,6 +503,12 @@ describe("nim", () => {
       try {
         const st = nimModule.nimStatusByName("foo");
         expect(st).toMatchObject({ running: false, healthy: false, container: "foo", state: "exited" });
+        expect(
+          timeoutForCommand(
+            runCapture,
+            (c) => Array.isArray(c) && c[0] === "docker" && c.includes("inspect"),
+          ),
+        ).toBe(5000);
         expect(runCapture.mock.calls).toHaveLength(1);
       } finally {
         restore();

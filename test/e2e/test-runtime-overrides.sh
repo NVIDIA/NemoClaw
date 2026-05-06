@@ -51,7 +51,7 @@ info "Logging Docker stderr to: $LOG_FILE"
 run_override() {
   local env_args=("$@")
   docker run --rm "${env_args[@]}" "$IMAGE" \
-    bash -c 'cat /sandbox/.openclaw/openclaw.json' 2>>"$LOG_FILE"
+    bash -c 'cat /sandbox/.openclaw/openclaw.json; printf "\n"' 2>>"$LOG_FILE"
 }
 
 # Helper: run entrypoint with env vars and capture stderr for validation messages.
@@ -172,7 +172,8 @@ NEW_LEN=$(echo "$CFG" | jq '.gateway.controlUi.allowedOrigins | length')
 if [ "$HAS_ORIGIN" = "true" ] && [ "$NEW_LEN" -gt "$BASELINE_ORIGINS" ]; then
   pass "CORS origin added: $CORS"
 else
-  fail "CORS origin not found in allowedOrigins"
+  ORIGINS=$(echo "$CFG" | jq -c '.gateway.controlUi.allowedOrigins // []' 2>/dev/null || printf '%s' "$CFG")
+  fail "CORS origin not found in allowedOrigins: ${ORIGINS}"
 fi
 
 # ── Test 7: Combined overrides ───────────────────────────────────
@@ -250,13 +251,13 @@ fi
 # ── Test 14: Original config unchanged after rejected override ───
 
 info "14. Config unchanged after rejected override"
-run_override_stderr -e "NEMOCLAW_MODEL_OVERRIDE=test" -e "NEMOCLAW_CONTEXT_WINDOW=notanumber" >/dev/null
-CFG=$(run_override)
+CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=test" -e "NEMOCLAW_CONTEXT_WINDOW=notanumber")
 ACTUAL_CTX=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].contextWindow')
-if [ "$ACTUAL_CTX" = "$BASELINE_CTX" ]; then
+ACTUAL_MODEL=$(echo "$CFG" | jq -r '.agents.defaults.model.primary')
+if [ "$ACTUAL_CTX" = "$BASELINE_CTX" ] && [ "$ACTUAL_MODEL" = "$BASELINE_MODEL" ]; then
   pass "config unchanged after rejected override"
 else
-  fail "config was modified despite rejected override: ctx=$ACTUAL_CTX (expected $BASELINE_CTX)"
+  fail "config was modified despite rejected override: model=$ACTUAL_MODEL ctx=$ACTUAL_CTX (expected model=$BASELINE_MODEL ctx=$BASELINE_CTX)"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────
