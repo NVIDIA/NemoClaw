@@ -75,6 +75,30 @@ registry_has() {
   [ -f "$REGISTRY" ] && grep -q "$sandbox_name" "$REGISTRY"
 }
 
+# Force-remove a sandbox's Docker container by name prefix.  In
+# Docker-driver mode `openshell sandbox delete` acks the removal but
+# the underlying Docker container may linger for a moment — this
+# helper ensures it's truly gone so subsequent tests start from a
+# clean state.
+force_remove_sandbox_container() {
+  local sandbox_name="$1"
+  local cid
+  cid="$(docker ps -aqf "name=openshell-${sandbox_name}-" 2>/dev/null | head -1)"
+  if [ -n "$cid" ]; then
+    docker rm -f "$cid" >/dev/null 2>&1 || true
+  fi
+}
+
+# Full Docker-driver-aware sandbox teardown: delete from OpenShell,
+# force-remove the Docker container, and wait briefly for state to
+# converge.
+full_sandbox_delete() {
+  local sandbox_name="$1"
+  openshell sandbox delete "$sandbox_name" 2>/dev/null || true
+  force_remove_sandbox_container "$sandbox_name"
+  sleep 1
+}
+
 SANDBOX_A="e2e-double-a"
 SANDBOX_B="e2e-double-b"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
@@ -239,9 +263,13 @@ info "Destroying any leftover test sandboxes/gateway from previous runs..."
 if [ -x "$REPO_ROOT/bin/nemoclaw.js" ] || command -v nemoclaw >/dev/null 2>&1; then
   run_nemoclaw "$SANDBOX_A" destroy --yes 2>/dev/null || true
   run_nemoclaw "$SANDBOX_B" destroy --yes 2>/dev/null || true
+  # Clean up the default sandbox left by the Install NemoClaw step so the
+  # Docker-driver gateway starts from a blank slate (#3034).
+  run_nemoclaw my-assistant destroy --yes 2>/dev/null || true
 fi
-openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
-openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
+full_sandbox_delete "$SANDBOX_A"
+full_sandbox_delete "$SANDBOX_B"
+full_sandbox_delete "my-assistant"
 openshell forward stop 18789 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 pass "Pre-cleanup complete"
@@ -473,6 +501,11 @@ section "Phase 5: Stale registry reconciliation"
 info "Deleting '$SANDBOX_A' directly in OpenShell to leave a stale NemoClaw registry entry..."
 
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
+# Docker-driver mode: the gateway acks the delete but the Docker
+# container can linger briefly.  Force-remove so the stale-registry
+# assertions below test NemoClaw reconciliation, not Docker latency.
+force_remove_sandbox_container "$SANDBOX_A"
+sleep 1
 
 if registry_has "$SANDBOX_A"; then
   pass "Registry still contains stale '$SANDBOX_A' entry"
@@ -548,8 +581,8 @@ section "Phase 7: Final cleanup"
 
 run_nemoclaw "$SANDBOX_A" destroy --yes 2>/dev/null || true
 run_nemoclaw "$SANDBOX_B" destroy --yes 2>/dev/null || true
-openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
-openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
+full_sandbox_delete "$SANDBOX_A"
+full_sandbox_delete "$SANDBOX_B"
 openshell forward stop 18789 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
