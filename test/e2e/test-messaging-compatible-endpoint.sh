@@ -529,16 +529,20 @@ print('\n'.join(parts))
   # C9: Verify http-proxy-fix.js stripped proxy hop headers — they must not
   # reach the upstream mock. The mock logs "proxy_hop_headers=none" when
   # clean, or "proxy_hop_headers=<header,...>" when the strip failed.
-  # Read only lines appended after the SSH command so C5's earlier
-  # /v1/chat/completions entry cannot satisfy this check.
-  local new_hop_line leaked
-  new_hop_line=$(grep "proxy_hop_headers=" "$COMPAT_MOCK_LOG" 2>/dev/null \
-    | tail -n +"$((hop_count_before + 1))" | head -1) || true
-  if [ -z "$new_hop_line" ]; then
+  # Read every line appended after the SSH command so C5's earlier
+  # /v1/chat/completions entry cannot satisfy this check, and so a retry
+  # or follow-up call can't slip a leaked-header request past us.
+  local new_hop_lines leaked
+  new_hop_lines=$(grep "proxy_hop_headers=" "$COMPAT_MOCK_LOG" 2>/dev/null \
+    | tail -n +"$((hop_count_before + 1))") || true
+  if [ -z "$new_hop_lines" ]; then
     fail "C9: Mock logged no proxy_hop_headers line for the agent turn — agent did not reach /v1/chat/completions"
   else
-    leaked=$(printf '%s' "$new_hop_line" | sed 's/.*proxy_hop_headers=//')
-    if [ "$leaked" = "none" ]; then
+    leaked=$(printf '%s\n' "$new_hop_lines" \
+      | sed 's/.*proxy_hop_headers=//' \
+      | grep -v '^none$' \
+      | paste -sd',' -) || true
+    if [ -z "$leaked" ]; then
       pass "C9: No proxy hop headers leaked to the compatible endpoint upstream (http-proxy-fix.js strip verified)"
     else
       fail "C9: Proxy hop headers leaked to upstream — http-proxy-fix.js strip broken: ${leaked}"
