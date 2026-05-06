@@ -15,10 +15,10 @@ export default class PolicyRemoveCommand extends Command {
   static strict = true;
   static summary = "Remove an applied policy preset";
   static description = "Remove a built-in or custom policy preset from a sandbox.";
-  static usage = ["<name> policy-remove [preset] [--yes|-y] [--dry-run]"];
+  static usage = ["<name> [preset] [--yes|-y] [--dry-run]"];
   static examples = [
-    "<%= config.bin %> alpha policy-remove slack --yes",
-    "<%= config.bin %> alpha policy-remove slack --dry-run",
+    "<%= config.bin %> sandbox policy remove alpha slack --yes",
+    "<%= config.bin %> sandbox policy remove alpha slack --dry-run",
   ];
   static args = policyMutationArgs;
   static flags = policyMutationFlags;

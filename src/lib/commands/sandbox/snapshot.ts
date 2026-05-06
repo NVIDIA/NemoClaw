@@ -10,11 +10,11 @@ export default class SnapshotCommand extends Command {
   static strict = true;
   static summary = "Show snapshot usage";
   static description = "Show snapshot usage for create, list, and restore subcommands.";
-  static usage = ["<name> snapshot <create|list|restore>"];
+  static usage = ["<create|list|restore> <name>"];
   static examples = [
-    "<%= config.bin %> alpha snapshot create",
-    "<%= config.bin %> alpha snapshot list",
-    "<%= config.bin %> alpha snapshot restore",
+    "<%= config.bin %> sandbox snapshot create alpha",
+    "<%= config.bin %> sandbox snapshot list alpha",
+    "<%= config.bin %> sandbox snapshot restore alpha",
   ];
   static args = {
     sandboxName: sandboxNameArg,

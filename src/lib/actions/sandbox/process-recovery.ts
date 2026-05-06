@@ -18,7 +18,7 @@ import {
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import { parseForwardList } from "../../sandbox-session-state";
+import { parseForwardList } from "../../state/sandbox-session";
 import { G, R } from "../../terminal-style";
 import { sleepSeconds } from "../../wait";
 

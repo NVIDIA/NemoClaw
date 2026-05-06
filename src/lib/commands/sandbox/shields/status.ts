@@ -12,7 +12,7 @@ export default class ShieldsStatusCommand extends Command {
   static strict = true;
   static summary = "Show current shields state";
   static description = "Show current sandbox shields state.";
-  static usage = ["<name> shields status"];
+  static usage = ["<name>"];
   static args = { sandboxName: sandboxNameArg };
   static flags = {
     help: Flags.help({ char: "h" }),

@@ -15,13 +15,13 @@ import * as onboardSession from "../../onboard-session";
 import type { Session } from "../../onboard-session";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../ports";
-import * as registry from "../../registry";
+import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
-} from "../../sandbox-session-state";
+} from "../../state/sandbox-session";
 import {
   getSandboxDeleteOutcome,
   shouldCleanupGatewayAfterDestroy,
@@ -48,7 +48,7 @@ function cleanupGatewayAfterLastSandbox(): void {
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
     runOpenshell: (args: string[], opts?: Record<string, unknown>) => { status: number | null };
   };
-  const { dockerRemoveVolumesByPrefix } = require("../../docker") as {
+  const { dockerRemoveVolumesByPrefix } = require("../../adapters/docker") as {
     dockerRemoveVolumesByPrefix: (prefix: string, opts?: { ignoreError?: boolean }) => void;
   };
 
@@ -123,7 +123,7 @@ export function removeSandboxImage(
 ): void {
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
   const removeImage =
-    deps.dockerRmi ?? (require("../../docker") as { dockerRmi: DockerRmi }).dockerRmi;
+    deps.dockerRmi ?? (require("../../adapters/docker") as { dockerRmi: DockerRmi }).dockerRmi;
   const sb = getSandbox(sandboxName);
   if (!sb?.imageTag) return;
   const result = removeImage(sb.imageTag, { ignoreError: true });

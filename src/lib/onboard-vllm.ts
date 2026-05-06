@@ -6,7 +6,7 @@
 // right profile per platform and running the install.
 
 const { runCapture, runShell } = require("./runner");
-const { dockerCapture, dockerSpawn } = require("./docker");
+const { dockerCapture, dockerSpawn } = require("./adapters/docker");
 const { VLLM_PORT } = require("./ports");
 const { getGpuIndicesByName } = require("./nim");
 

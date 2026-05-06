@@ -11,10 +11,10 @@ export default class ConnectCliCommand extends Command {
   static strict = true;
   static summary = "Shell into a running sandbox";
   static description = "Connect to a running sandbox.";
-  static usage = ["<name> connect [--probe-only]"];
+  static usage = ["<name> [--probe-only]"];
   static examples = [
-    "<%= config.bin %> alpha connect",
-    "<%= config.bin %> alpha connect --probe-only",
+    "<%= config.bin %> sandbox connect alpha",
+    "<%= config.bin %> sandbox connect alpha --probe-only",
   ];
   static args = {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),

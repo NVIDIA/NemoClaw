@@ -8,12 +8,12 @@ import {
   type GarbageCollectImagesOptions,
   normalizeGarbageCollectImagesOptions,
 } from "../domain/lifecycle/options";
-import { dockerListImagesFormat, dockerRmi } from "../docker";
+import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
 import { findOrphanedSandboxImages, parseSandboxImageRows } from "../domain/maintenance/images";
 import { captureOpenshell } from "../adapters/openshell/runtime";
-import * as registry from "../registry";
+import * as registry from "../state/registry";
 import { parseLiveSandboxNames } from "../runtime-recovery";
-import * as sandboxState from "../sandbox-state";
+import * as sandboxState from "../state/sandbox";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =

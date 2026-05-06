@@ -231,8 +231,8 @@ repos:
         entry: npx tsc -p tsconfig.cli.json
         language: system
         pass_filenames: false
-        files: ^(bin|scripts)/
-        types_or: [ts, tsx]
+        files: ^(bin|scripts|src|test|nemoclaw-blueprint/scripts)/.*\.(ts|tsx)$|^tsconfig\.cli\.json$
+        always_run: true
         stages: [pre-push]
         priority: 10
 

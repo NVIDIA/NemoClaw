@@ -236,7 +236,7 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=deployment-services-e2e
         ```
 
-    - path: "src/lib/sandbox-state.ts"
+    - path: "src/lib/state/sandbox.ts"
       instructions: |
         This file manages sandbox state (backup, restore, rebuild,
         snapshot). Changes affect data persistence across sandbox

@@ -15,13 +15,13 @@ import {
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import * as registry from "../../registry";
+import * as registry from "../../state/registry";
 import { ROOT } from "../../runner";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
-} from "../../sandbox-session-state";
+} from "../../state/sandbox-session";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import * as sandboxVersion from "../../sandbox-version";
 import { D, G, R, YW } from "../../terminal-style";

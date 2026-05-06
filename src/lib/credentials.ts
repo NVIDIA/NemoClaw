@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-import { rejectSymlinksOnPath } from "./config-io";
+import { rejectSymlinksOnPath } from "./state/config-io";
 import { isErrnoException } from "./errno";
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);

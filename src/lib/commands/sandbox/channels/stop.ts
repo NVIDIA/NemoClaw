@@ -15,8 +15,8 @@ export default class ChannelsStopCommand extends Command {
   static strict = true;
   static summary = "Disable channel without wiping credentials";
   static description = "Disable a messaging channel while keeping credentials in the gateway.";
-  static usage = ["<name> channels stop <channel> [--dry-run]"];
-  static examples = ["<%= config.bin %> alpha channels stop discord"];
+  static usage = ["<name> <channel> [--dry-run]"];
+  static examples = ["<%= config.bin %> sandbox channels stop alpha discord"];
   static args = channelMutationArgs;
   static flags = channelMutationFlags;
 

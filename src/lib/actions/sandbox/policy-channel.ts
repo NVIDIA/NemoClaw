@@ -14,7 +14,7 @@ const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () 
 const onboardProviders = require("../../onboard-providers");
 import * as policies from "../../policies";
 import { parsePolicyAddArgs } from "../../domain/policy-channel";
-import * as registry from "../../registry";
+import * as registry from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { rebuildSandbox } from "./runtime";
 import {

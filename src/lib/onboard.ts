@@ -55,7 +55,7 @@ const { ROOT, SCRIPTS, redact, run, runShell, runCapture, runFile, shellQuote, v
   runner;
 const nameValidation: typeof import("./name-validation") = require("./name-validation");
 const { NAME_ALLOWED_FORMAT, getNameValidationGuidance } = nameValidation;
-const docker: typeof import("./docker") = require("./docker");
+const docker: typeof import("./adapters/docker") = require("./adapters/docker");
 const {
   dockerContainerInspectFormat,
   dockerExecArgv,
@@ -272,7 +272,7 @@ const {
   saveCredential,
 } = credentials;
 const { hashCredential }: typeof import("./credential-hash") = require("./credential-hash");
-const registry: typeof import("./registry") = require("./registry");
+const registry: typeof import("./state/registry") = require("./state/registry");
 const nim: typeof import("./nim") = require("./nim");
 const onboardSession: typeof import("./onboard-session") = require("./onboard-session");
 const policies: typeof import("./policies") = require("./policies");
@@ -293,8 +293,8 @@ const {
 const agentOnboard = require("./agent-onboard");
 const agentDefs = require("./agent-defs");
 
-const gatewayState: typeof import("./gateway-state") = require("./gateway-state");
-const sandboxState: typeof import("./sandbox-state") = require("./sandbox-state");
+const gatewayState: typeof import("./state/gateway") = require("./state/gateway");
+const sandboxState: typeof import("./state/sandbox") = require("./state/sandbox");
 const validation: typeof import("./validation") = require("./validation");
 const urlUtils: typeof import("./url-utils") = require("./url-utils");
 const buildContext = require("./build-context");
@@ -310,6 +310,8 @@ import type { AgentDefinition } from "./agent-defs";
 import type { CurlProbeResult } from "./http-probe";
 import type { GatewayInference, ProviderSelectionConfig } from "./inference-config";
 import type { GpuInfo, ValidationResult } from "./local-inference";
+import type { ContainerRuntime } from "./platform";
+import type { SandboxEntry } from "./state/registry";
 import type { Session, SessionUpdates } from "./onboard-session";
 import type {
   ModelCatalogFetchResult,
@@ -317,11 +319,9 @@ import type {
   ProbeResult,
   ValidationFailureLike,
 } from "./onboard-types";
-import type { ContainerRuntime } from "./platform";
-import type { SandboxEntry } from "./registry";
 import { listChannels } from "./sandbox-channels";
 import type { StreamSandboxCreateResult } from "./sandbox-create-stream";
-import type { BackupResult } from "./sandbox-state";
+import type { BackupResult } from "./state/sandbox";
 import type { TierDefinition, TierPreset } from "./tiers";
 import type { SandboxCreateFailure, ValidationClassification } from "./validation";
 import type { ProbeRecovery } from "./validation-recovery";
@@ -505,7 +505,7 @@ async function promptYesNoOrDefault(
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-// Gateway state functions — delegated to src/lib/gateway-state.ts
+// Gateway state functions — delegated to src/lib/state/gateway.ts
 const {
   isSandboxReady,
   parseSandboxStatus,
@@ -4135,10 +4135,12 @@ async function recoverGatewayRuntime() {
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
 
-// Names that collide with global CLI commands. A sandbox named 'status'
+// Names that collide with CLI command namespaces. A sandbox named 'status'
 // makes 'nemoclaw status connect' route to the global status command
-// instead of the sandbox, so reject these wherever a sandbox name enters
-// the system (interactive prompt, --name flag, NEMOCLAW_SANDBOX_NAME).
+// instead of the sandbox, and a sandbox named 'sandbox' collides with the
+// oclif-native `nemoclaw sandbox ...` command namespace. Reject these wherever
+// a sandbox name enters the system (interactive prompt, --name flag,
+// NEMOCLAW_SANDBOX_NAME).
 const RESERVED_SANDBOX_NAMES = new Set([
   "onboard",
   "list",
@@ -4152,6 +4154,7 @@ const RESERVED_SANDBOX_NAMES = new Set([
   "uninstall",
   "credentials",
   "help",
+  "sandbox",
 ]);
 
 function normalizeSandboxAgentName(agentName: string | null | undefined): string {

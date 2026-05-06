@@ -10,7 +10,7 @@ import {
   type UpgradeSandboxesOptions,
 } from "../domain/lifecycle/options";
 import { captureOpenshell } from "../adapters/openshell/runtime";
-import * as registry from "../registry";
+import * as registry from "../state/registry";
 import { parseLiveSandboxNames } from "../runtime-recovery";
 import { rebuildSandbox } from "./sandbox/rebuild";
 import * as sandboxVersion from "../sandbox-version";

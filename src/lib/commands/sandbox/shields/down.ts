@@ -13,7 +13,7 @@ export default class ShieldsDownCommand extends Command {
   static strict = true;
   static summary = "Lower sandbox security shields";
   static description = "Temporarily lower sandbox shields.";
-  static usage = ["<name> shields down [--timeout 5m] [--reason <text>] [--policy permissive]"];
+  static usage = ["<name> [--timeout 5m] [--reason <text>] [--policy permissive]"];
   static args = { sandboxName: sandboxNameArg };
   static flags = {
     help: Flags.help({ char: "h" }),

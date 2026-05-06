@@ -121,7 +121,7 @@ function isActionFile(repoPath: string): boolean {
 }
 
 function isGeneratedOrRegistryCommandFile(repoPath: string): boolean {
-  return repoPath === "src/lib/commands/index.ts" || repoPath.endsWith("/common.ts");
+  return repoPath.endsWith("/common.ts");
 }
 
 function importTargetsForbiddenLayer(

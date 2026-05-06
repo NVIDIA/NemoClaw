@@ -20,7 +20,7 @@ const readline = require("readline");
 // ── Stubs ──────────────────────────────────────────────────────────────────
 const creds = require("../dist/lib/credentials.js");
 const runner = require("../dist/lib/runner.js");
-const registry = require("../dist/lib/registry.js");
+const registry = require("../dist/lib/state/registry.js");
 
 creds.ensureApiKey = async () => {};
 creds.getCredential = () => null;

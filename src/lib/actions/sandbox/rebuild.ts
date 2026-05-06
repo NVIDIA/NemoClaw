@@ -26,7 +26,7 @@ import type { Session } from "../../onboard-session";
 import * as onboardSession from "../../onboard-session";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import * as policies from "../../policies";
-import * as registry from "../../registry";
+import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { removeSandboxRegistryEntry } from "./destroy";
@@ -34,8 +34,8 @@ import { executeSandboxCommand } from "./process-recovery";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
-} from "../../sandbox-session-state";
-import * as sandboxState from "../../sandbox-state";
+} from "../../state/sandbox-session";
+import * as sandboxState from "../../state/sandbox";
 import * as sandboxVersion from "../../sandbox-version";
 import { B, D, G, R, RD as _RD, YW } from "../../terminal-style";
 

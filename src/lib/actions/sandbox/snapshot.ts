@@ -7,14 +7,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { CLI_NAME } from "../../branding";
-import { dockerCapture, dockerInspect } from "../../docker";
+import { dockerCapture, dockerInspect } from "../../adapters/docker";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { captureOpenshell, getOpenshellBinary } from "../../adapters/openshell/runtime";
 import * as policies from "../../policies";
-import * as registry from "../../registry";
-import type { SandboxEntry } from "../../registry";
-import * as sandboxState from "../../sandbox-state";
+import * as registry from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry";
+import * as sandboxState from "../../state/sandbox";
 
 const { parseRestoreArgs } = sandboxState;
 
@@ -119,7 +119,7 @@ async function autoCreateSandboxFromSource(
   srcEntry: SandboxEntry | { name: string },
 ): Promise<void> {
   const sandboxCreateStream = require("../../sandbox-create-stream");
-  const { isSandboxReady } = require("../../gateway-state");
+  const { isSandboxReady } = require("../../state/gateway");
   const basePolicy = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const openshellBin = getOpenshellBinary();
 

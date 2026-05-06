@@ -39,7 +39,7 @@ describe("sandboxName command hardening in onboard.js", () => {
       pathToFileURL(path.join(repoRoot, "dist", "lib", "runner.js")).href,
     );
     const registryUrl = JSON.stringify(
-      pathToFileURL(path.join(repoRoot, "dist", "lib", "registry.js")).href,
+      pathToFileURL(path.join(repoRoot, "dist", "lib", "state", "registry.js")).href,
     );
     const preflightUrl = JSON.stringify(
       pathToFileURL(path.join(repoRoot, "dist", "lib", "preflight.js")).href,

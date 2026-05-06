@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
-import { parseSandboxPhase } from "../../gateway-state";
+import { parseSandboxPhase } from "../../state/gateway";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
@@ -30,7 +30,7 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
-import * as registry from "../../registry";
+import * as registry from "../../state/registry";
 
 type SandboxGatewayState = {
   state: string;
