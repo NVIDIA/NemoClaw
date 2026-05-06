@@ -18,6 +18,7 @@ profiles:
   - ncp
   - nim-local
   - vllm
+  - routed
 
 description: |
   NemoClaw blueprint: orchestrates OpenClaw sandbox creation, migration,
@@ -69,6 +70,19 @@ components:
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
         timeout_secs: 180
+
+      routed:
+        provider_type: "openai"
+        provider_name: "nvidia-router"
+        endpoint: "http://localhost:4000/v1"
+        model: "nvidia-routed"
+        credential_env: "NVIDIA_API_KEY"
+        timeout_secs: 180
+
+  router:
+    enabled: true
+    port: 4000
+    pool_config_path: "router/pool-config.yaml"
 
   policy:
     base: "sandboxes/openclaw/policy.yaml"

@@ -16,7 +16,7 @@ const CANONICAL_REWRITER = path.join(
 );
 const START_SCRIPT = path.join(ROOT, "scripts", "nemoclaw-start.sh");
 
-describe("slack-token-rewriter heredoc sync (#2085)", () => {
+describe("slack-token-rewriter preload sync (#2085)", () => {
   it("entrypoint emits byte-for-byte canonical rewriter and registers it in NODE_OPTIONS", () => {
     const canonical = fs.readFileSync(CANONICAL_REWRITER, "utf-8");
     const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -35,6 +35,10 @@ describe("slack-token-rewriter heredoc sync (#2085)", () => {
       .replace(
         '_SLACK_REWRITER_SCRIPT="/tmp/nemoclaw-slack-token-rewriter.js"',
         `_SLACK_REWRITER_SCRIPT=${JSON.stringify(rewriterPath)}`,
+      )
+      .replace(
+        '_SLACK_REWRITER_SOURCE="/usr/local/lib/nemoclaw/preloads/slack-token-rewriter.js"',
+        `_SLACK_REWRITER_SOURCE=${JSON.stringify(CANONICAL_REWRITER)}`,
       )
       .replace(
         'local config_file="/sandbox/.openclaw/openclaw.json"',

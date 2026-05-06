@@ -25,7 +25,7 @@ export function buildShareCommandDeps(): ShareCommandDeps {
       opts?: { ignoreError?: boolean; timeout?: number },
     ) => { status: number | null; output: string };
   };
-  const { ensureLiveSandboxOrExit } = require("./sandbox-gateway-state-action") as {
+  const { ensureLiveSandboxOrExit } = require("./actions/sandbox/gateway-state") as {
     ensureLiveSandboxOrExit: (sandboxName: string) => Promise<unknown>;
   };
 

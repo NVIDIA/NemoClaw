@@ -20,7 +20,7 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 const POLICIES_PATH = path.join(REPO_ROOT, "dist", "lib", "policies.js");
 const RUNNER_PATH = path.join(REPO_ROOT, "dist", "lib", "runner.js");
 const CLI_PATH = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const REGISTRY_PATH = path.join(REPO_ROOT, "dist", "lib", "registry.js");
+const REGISTRY_PATH = path.join(REPO_ROOT, "dist", "lib", "state", "registry.js");
 
 /**
  * Run a CJS script in a subprocess and return stdout.

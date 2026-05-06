@@ -12,7 +12,7 @@ export default class ShieldsUpCommand extends Command {
   static strict = true;
   static summary = "Raise sandbox security shields";
   static description = "Restore sandbox shields from the saved snapshot.";
-  static usage = ["<name> shields up"];
+  static usage = ["<name>"];
   static args = { sandboxName: sandboxNameArg };
   static flags = {
     help: Flags.help({ char: "h" }),

@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 const { redact: runnerRedact } = require("../dist/lib/runner");
 
 describe("secret redaction consistency (#1736)", () => {
-  // Tokens whose prefix is a literal string that must appear in debug.sh.
+  // Tokens whose prefix is a literal string that must be redacted by the shared debug redactor.
   const LITERAL_PREFIX_TOKENS = [
     { name: "NVIDIA API key", token: "nvapi-" + "a".repeat(30) },
     { name: "NVIDIA Cloud Functions", token: "nvcf-" + "b".repeat(30) },
@@ -27,10 +27,8 @@ describe("secret redaction consistency (#1736)", () => {
     },
   ];
 
-  // Tokens added for messaging integrations (#2336). debug.sh uses
-  // character-class regexes for these, so the prefix-containment sub-test
-  // does not apply — they are covered by the runner/debug TS blocks and
-  // by the EXPECTED_SHELL_PREFIXES substring check (xox) where applicable.
+  // Tokens added for messaging integrations (#2336). They are covered by
+  // the shared runner/debug TypeScript redactors.
   const MESSAGING_TOKENS = [
     { name: "Slack bot token", token: "xoxb-" + "1".repeat(12) + "-" + "e".repeat(24) },
     { name: "Slack app token", token: "xapp-" + "1".repeat(12) + "-" + "f".repeat(24) },
@@ -82,7 +80,12 @@ describe("secret redaction consistency (#1736)", () => {
       try {
         const result = spawnSync("bash", [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"], {
           encoding: "utf-8",
-          env: { ...process.env, TMPDIR: tmp, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+          env: {
+            ...process.env,
+            NEMOCLAW_NODE: process.execPath,
+            TMPDIR: tmp,
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          },
           timeout: 30_000,
         });
         expect(result.status).toBe(0);
@@ -94,26 +97,20 @@ describe("secret redaction consistency (#1736)", () => {
     }, 40_000);
   });
 
-  describe("debug.sh sed fallback includes essential prefixes", () => {
-    it("redacts essential token prefixes when node is unavailable", () => {
-      const tmp = mkdtempSync(join(tmpdir(), "nemoclaw-debug-sed-redact-"));
+  describe("debug.sh wrapper locates node from env", () => {
+    it("uses NEMOCLAW_NODE and the compiled redactor when node is absent from PATH", () => {
+      const tmp = mkdtempSync(join(tmpdir(), "nemoclaw-debug-node-env-redact-"));
       const fakeBin = join(tmp, "bin");
       mkdirSync(fakeBin);
       for (const name of [
         "cat",
-        "dirname",
         "dmesg",
         "free",
         "head",
-        "mktemp",
         "ps",
-        "pwd",
-        "rm",
-        "sed",
+        "sh",
         "sort",
         "tail",
-        "tee",
-        "tr",
         "uname",
         "uptime",
       ]) {
@@ -134,7 +131,12 @@ describe("secret redaction consistency (#1736)", () => {
       try {
         const result = spawnSync("/bin/bash", [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"], {
           encoding: "utf-8",
-          env: { ...process.env, TMPDIR: tmp, PATH: fakeBin },
+          env: {
+            ...process.env,
+            NEMOCLAW_NODE: process.execPath,
+            TMPDIR: tmp,
+            PATH: fakeBin,
+          },
           timeout: 30_000,
         });
         expect(result.status).toBe(0);

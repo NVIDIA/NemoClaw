@@ -3,7 +3,7 @@
 
 import { Command } from "@oclif/core";
 
-import { runSetupAction } from "../global-cli-actions";
+import { runSetupAction } from "../actions/global";
 import { buildOnboardFlags, type OnboardFlags, toLegacyOnboardArgs } from "./onboard/common";
 
 export default class SetupCliCommand extends Command {

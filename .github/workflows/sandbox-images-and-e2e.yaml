@@ -74,7 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm --user sandbox nemoclaw-hermes-production \
-            test -r /opt/nemoclaw-generate-config.ts
+            test -r /opt/nemoclaw-hermes-config/generate-config.ts
           docker run --rm --user sandbox nemoclaw-hermes-production \
             test -r /opt/nemoclaw-hermes-plugin/plugin.yaml
           docker run --rm --user sandbox nemoclaw-hermes-production \

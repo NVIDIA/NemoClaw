@@ -10,9 +10,11 @@
   "oclif": {
     "bin": "nemoclaw",
     "commands": {
-      "strategy": "explicit",
-      "target": "./dist/lib/commands/index.js"
-    }
+      "strategy": "pattern",
+      "target": "./dist/commands"
+    },
+    "flexibleTaxonomy": true,
+    "topicSeparator": " "
   },
   "scripts": {
     "preinstall": "node scripts/check-node-version.js",

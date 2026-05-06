@@ -10,8 +10,8 @@ export default class SkillCliCommand extends Command {
   static strict = false;
   static summary = "Show skill command usage";
   static description = "Show skill install usage or report unknown skill subcommands.";
-  static usage = ["<name> skill install <path>"];
-  static examples = ["<%= config.bin %> alpha skill install ./my-skill"];
+  static usage = ["install <name> <path>"];
+  static examples = ["<%= config.bin %> sandbox skill install alpha ./my-skill"];
 
   public async run(): Promise<void> {
     const [sandboxName, ...actionArgs] = this.argv;

@@ -38,9 +38,11 @@ ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 
-# Copy config generation script and URL-decode proxy
-COPY agents/hermes/generate-config.ts /opt/nemoclaw-generate-config.ts
-RUN chmod 444 /opt/nemoclaw-generate-config.ts
+# Copy config generator and URL-decode proxy
+COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
+COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
+RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
+    && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} +
 COPY agents/hermes/decode-proxy.py /usr/local/bin/nemoclaw-decode-proxy
 RUN chmod 755 /usr/local/bin/nemoclaw-decode-proxy
 
@@ -92,7 +94,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # via `shields up`. .env holds API key placeholders for OpenShell provider pipeline.
 # SECURITY: Uses a separate script file instead of inline code to avoid
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
-RUN node --experimental-strip-types /opt/nemoclaw-generate-config.ts
+RUN node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts
 
 # Install NemoClaw plugin into Hermes
 RUN mkdir -p /sandbox/.hermes/plugins/nemoclaw \

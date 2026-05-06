@@ -42,7 +42,7 @@ function modeBits(filePath: string): number {
 
 function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const dockerExecModule = require("../dist/lib/docker/exec.js") as {
+  const dockerExecModule = require("../dist/lib/adapters/docker/exec.js") as {
     dockerExecFileSync: (args: readonly string[]) => string;
   };
   const originalDockerExecFileSync = dockerExecModule.dockerExecFileSync;
@@ -173,7 +173,7 @@ const Module = require("node:module");
 const originalLoad = Module._load;
 const calls = [];
 Module._load = function patchedLoad(request, parent, isMain) {
-  if (request === "./docker/exec") {
+  if (request === "./adapters/docker/exec") {
     return {
       dockerExecFileSync(args) {
         const separator = args.indexOf("--");
@@ -235,7 +235,7 @@ const Module = require("node:module");
 const originalLoad = Module._load;
 const calls = [];
 Module._load = function patchedLoad(request, parent, isMain) {
-  if (request === "./docker/exec") {
+  if (request === "./adapters/docker/exec") {
     return {
       dockerExecFileSync(args) {
         const separator = args.indexOf("--");

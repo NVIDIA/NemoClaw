@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Typed command registry — single source of truth for all CLI commands.
+ * Public command display registry derived from oclif command metadata.
  *
- * Every command that the CLI dispatches, documents, or prints in help() is
- * defined here. Helper functions derive GLOBAL_COMMANDS, sandboxActions,
- * help() groupings, and the canonical usage list consumed by check-docs.sh.
+ * The command entries shown in root help, docs checks, and legacy dispatch
+ * helpers are colocated with the oclif command entrypoints under
+ * `src/commands/**` via `withCommandDisplay(...)`. This module projects that
+ * metadata into the historical `CommandDef` shape while command discovery
+ * itself stays owned by oclif.
  *
  * Usage strings use "nemoclaw" as a canonical placeholder. The exported
  * {@link brandedUsage} helper replaces it with the active CLI_NAME
@@ -14,43 +16,19 @@
  */
 
 import { CLI_NAME } from "./branding";
+import type { CommandDisplayEntry, CommandGroup } from "./cli/command-display";
+import { getRegisteredOclifCommandsMetadata } from "./cli/oclif-metadata";
+
+export type { CommandGroup } from "./cli/command-display";
 
 /** Replace the canonical "nemoclaw" prefix in a usage string with CLI_NAME. */
 export function brandedUsage(usage: string): string {
   return usage.replace(/^nemoclaw/, CLI_NAME);
 }
 
-export type CommandGroup =
-  | "Getting Started"
-  | "Sandbox Management"
-  | "Skills"
-  | "Policy Presets"
-  | "Messaging Channels"
-  | "Compatibility Commands"
-  | "Services"
-  | "Troubleshooting"
-  | "Credentials"
-  | "Backup"
-  | "Upgrade"
-  | "Cleanup";
-
-export interface CommandDef {
-  /** Canonical command signature, e.g. "nemoclaw <name> snapshot create" */
-  usage: string;
+export interface CommandDef extends Omit<CommandDisplayEntry, "order"> {
   /** Registered internal oclif command ID that handles this public command shape. */
   commandId: string;
-  /** One-line description for help output */
-  description: string;
-  /** Optional flag syntax, e.g. "[--name <label>]" */
-  flags?: string;
-  /** Section header in help output */
-  group: CommandGroup;
-  /** Deprecated commands show dimmed in help */
-  deprecated?: boolean;
-  /** Hidden commands are excluded from help and canonical list but included in dispatch */
-  hidden?: boolean;
-  /** Whether this command is global or sandbox-scoped */
-  scope: "global" | "sandbox";
 }
 
 /** Group display order matching the current help() UX */
@@ -69,446 +47,23 @@ export const GROUP_ORDER: readonly CommandGroup[] = [
   "Cleanup",
 ] as const;
 
-/**
- * All CLI commands. This is the single source of truth.
- *
- * The order within each group matches the current help() display order.
- */
-export const COMMANDS: readonly CommandDef[] = [
-  // ── Getting Started ──
-  {
-    usage: "nemoclaw onboard",
-    commandId: "onboard",
-    description: "Configure inference endpoint and credentials",
-    group: "Getting Started",
-    scope: "global",
-  },
-  {
-    usage: "nemoclaw onboard --from",
-    commandId: "onboard",
-    description: "Use a custom Dockerfile for the sandbox image",
-    group: "Getting Started",
-    scope: "global",
-  },
+type RegisteredCommandDisplayEntry = CommandDisplayEntry & { commandId: string };
 
-  // ── Sandbox Management ──
-  {
-    usage: "nemoclaw list",
-    commandId: "list",
-    description: "List all sandboxes",
-    flags: "[--json]",
-    group: "Sandbox Management",
-    scope: "global",
-  },
-  {
-    usage: "nemoclaw <name> connect",
-    commandId: "sandbox:connect",
-    description: "Shell into a running sandbox",
-    flags: "[--probe-only]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> recover",
-    commandId: "sandbox:recover",
-    description: "Restart the sandbox gateway and dashboard port-forward",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> status",
-    commandId: "sandbox:status",
-    description: "Sandbox health + NIM status",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> doctor",
-    commandId: "sandbox:doctor",
-    description: "Run host, gateway, sandbox, and inference health checks",
-    flags: "[--json]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> logs",
-    commandId: "sandbox:logs",
-    description: "Stream sandbox logs",
-    flags: "[--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> snapshot create",
-    commandId: "sandbox:snapshot:create",
-    description: "Create a snapshot of sandbox state",
-    flags: "[--name <label>]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> snapshot list",
-    commandId: "sandbox:snapshot:list",
-    description: "List available snapshots",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> snapshot restore",
-    commandId: "sandbox:snapshot:restore",
-    description: "Restore state from a snapshot",
-    flags:
-      "[v<N>|name|timestamp] [--to <dst>] (omit version for latest; auto-creates <dst> from this sandbox image if needed)",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> share mount",
-    commandId: "sandbox:share:mount",
-    description: "Mount sandbox filesystem on the host via SSHFS",
-    flags: "[sandbox-path] [local-mount-point]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> share unmount",
-    commandId: "sandbox:share:unmount",
-    description: "Unmount a previously mounted sandbox filesystem",
-    flags: "[local-mount-point]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> share status",
-    commandId: "sandbox:share:status",
-    description: "Check whether the sandbox filesystem is currently mounted",
-    flags: "[local-mount-point]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> rebuild",
-    commandId: "sandbox:rebuild",
-    description: "Upgrade sandbox to current agent version",
-    flags: "[--yes|-y|--force] [--verbose|-v]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> gateway-token",
-    commandId: "sandbox:gateway:token",
-    description: "Print the OpenClaw gateway auth token to stdout",
-    flags: "[--quiet|-q]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> destroy",
-    commandId: "sandbox:destroy",
-    description: "Stop NIM + delete sandbox",
-    flags: "[--yes|-y|--force]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-  },
+function displayEntriesFromOclifMetadata(): CommandDef[] {
+  const entries: RegisteredCommandDisplayEntry[] = [];
+  for (const [commandId, metadata] of Object.entries(getRegisteredOclifCommandsMetadata())) {
+    for (const displayEntry of metadata.display ?? []) {
+      entries.push({ ...displayEntry, commandId });
+    }
+  }
 
-  // ── Skills ──
-  {
-    usage: "nemoclaw <name> skill install",
-    commandId: "sandbox:skill:install",
-    description: "Deploy a skill directory to the sandbox",
-    group: "Skills",
-    scope: "sandbox",
-  },
+  return entries
+    .sort((a, b) => a.order - b.order)
+    .map(({ order: _order, ...entry }) => entry);
+}
 
-  // ── Policy Presets ──
-  {
-    usage: "nemoclaw <name> policy-add",
-    commandId: "sandbox:policy:add",
-    description: "Add a network or filesystem policy preset",
-    flags: "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>)",
-    group: "Policy Presets",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> policy-remove",
-    commandId: "sandbox:policy:remove",
-    description: "Remove an applied policy preset (built-in or custom)",
-    flags: "(--yes, -y, --dry-run)",
-    group: "Policy Presets",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> policy-list",
-    commandId: "sandbox:policy:list",
-    description: "List presets (● = applied)",
-    group: "Policy Presets",
-    scope: "sandbox",
-  },
-
-  // ── Messaging Channels ──
-  {
-    usage: "nemoclaw <name> channels list",
-    commandId: "sandbox:channels:list",
-    description: "List supported messaging channels",
-    group: "Messaging Channels",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> channels add",
-    commandId: "sandbox:channels:add",
-    description: "Save credentials and rebuild",
-    flags: "<channel> [--dry-run]",
-    group: "Messaging Channels",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> channels remove",
-    commandId: "sandbox:channels:remove",
-    description: "Clear credentials and rebuild",
-    flags: "<channel> [--dry-run]",
-    group: "Messaging Channels",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> channels stop",
-    commandId: "sandbox:channels:stop",
-    description: "Disable channel (keeps credentials)",
-    flags: "<channel> [--dry-run]",
-    group: "Messaging Channels",
-    scope: "sandbox",
-  },
-  {
-    usage: "nemoclaw <name> channels start",
-    commandId: "sandbox:channels:start",
-    description: "Re-enable a previously stopped channel",
-    flags: "<channel> [--dry-run]",
-    group: "Messaging Channels",
-    scope: "sandbox",
-  },
-
-  // ── Hidden: shields subcommands (undocumented) ──
-  {
-    usage: "nemoclaw <name> shields down",
-    commandId: "sandbox:shields:down",
-    description: "Lower sandbox security shields",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw <name> shields up",
-    commandId: "sandbox:shields:up",
-    description: "Raise sandbox security shields",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw <name> shields status",
-    commandId: "sandbox:shields:status",
-    description: "Show current shields state",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    hidden: true,
-  },
-
-  // ── Hidden: config subcommands (advanced / security-sensitive) ──
-  {
-    usage: "nemoclaw <name> config get",
-    commandId: "sandbox:config:get",
-    description: "Get sandbox configuration",
-    flags: "[--key <dotpath>] [--format json|yaml]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw <name> config set",
-    commandId: "sandbox:config:set",
-    description: "Set sandbox configuration with SSRF validation",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw <name> config rotate-token",
-    commandId: "sandbox:config:set",
-    description: "Rotate sandbox provider credentials",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    hidden: true,
-  },
-
-  // ── Compatibility Commands ──
-  {
-    usage: "nemoclaw setup",
-    commandId: "setup",
-    description: "Deprecated alias for nemoclaw onboard",
-    group: "Compatibility Commands",
-    scope: "global",
-    deprecated: true,
-  },
-  {
-    usage: "nemoclaw setup-spark",
-    commandId: "setup-spark",
-    description: "Deprecated alias for nemoclaw onboard",
-    group: "Compatibility Commands",
-    scope: "global",
-    deprecated: true,
-  },
-  {
-    usage: "nemoclaw deploy",
-    commandId: "deploy",
-    description: "Deprecated Brev-specific bootstrap path",
-    group: "Compatibility Commands",
-    scope: "global",
-    deprecated: true,
-  },
-
-  // ── Services ──
-  {
-    usage: "nemoclaw tunnel start",
-    commandId: "tunnel:start",
-    description: "Start the cloudflared public-URL tunnel",
-    group: "Services",
-    scope: "global",
-  },
-  {
-    usage: "nemoclaw tunnel stop",
-    commandId: "tunnel:stop",
-    description: "Stop the cloudflared public-URL tunnel",
-    group: "Services",
-    scope: "global",
-  },
-  {
-    usage: "nemoclaw start",
-    commandId: "start",
-    description: "Deprecated alias for 'tunnel start'",
-    group: "Services",
-    scope: "global",
-    deprecated: true,
-  },
-  {
-    usage: "nemoclaw stop",
-    commandId: "stop",
-    description: "Deprecated alias for 'tunnel stop'",
-    group: "Services",
-    scope: "global",
-    deprecated: true,
-  },
-  {
-    usage: "nemoclaw status",
-    commandId: "status",
-    description: "Show sandbox list and service status",
-    flags: "[--json]",
-    group: "Services",
-    scope: "global",
-  },
-
-  // ── Troubleshooting ──
-  {
-    usage: "nemoclaw debug",
-    commandId: "debug",
-    description: "Collect diagnostics for bug reports",
-    flags: "[--quick] [--sandbox NAME]",
-    group: "Troubleshooting",
-    scope: "global",
-  },
-
-  // ── Credentials ──
-  {
-    usage: "nemoclaw credentials list",
-    commandId: "credentials:list",
-    description: "List stored credential keys",
-    group: "Credentials",
-    scope: "global",
-  },
-  {
-    usage: "nemoclaw credentials reset",
-    commandId: "credentials:reset",
-    description: "Remove a stored credential so onboard re-prompts",
-    group: "Credentials",
-    scope: "global",
-  },
-
-  // ── Backup ──
-  {
-    usage: "nemoclaw backup-all",
-    commandId: "backup-all",
-    description: "Back up all sandbox state before upgrade",
-    group: "Backup",
-    scope: "global",
-  },
-
-  // ── Upgrade ──
-  {
-    usage: "nemoclaw upgrade-sandboxes",
-    commandId: "upgrade-sandboxes",
-    description: "Detect and rebuild stale sandboxes",
-    flags: "(--check, --auto, --yes|-y)",
-    group: "Upgrade",
-    scope: "global",
-  },
-
-  // ── Cleanup ──
-  {
-    usage: "nemoclaw gc",
-    commandId: "gc",
-    description: "Remove orphaned sandbox Docker images",
-    flags: "(--yes|-y|--force, --dry-run)",
-    group: "Cleanup",
-    scope: "global",
-  },
-  {
-    usage: "nemoclaw uninstall",
-    commandId: "uninstall",
-    description: "Run uninstall.sh (local only; no remote fallback)",
-    group: "Cleanup",
-    scope: "global",
-  },
-
-  // ── Hidden: help/version aliases (global dispatch, not in help groups) ──
-  {
-    usage: "nemoclaw help",
-    commandId: "root:help",
-    description: "Show help",
-    group: "Getting Started",
-    scope: "global",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw --help",
-    commandId: "root:help",
-    description: "Show help",
-    group: "Getting Started",
-    scope: "global",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw -h",
-    commandId: "root:help",
-    description: "Show help",
-    group: "Getting Started",
-    scope: "global",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw --version",
-    commandId: "root:version",
-    description: "Show version",
-    group: "Getting Started",
-    scope: "global",
-    hidden: true,
-  },
-  {
-    usage: "nemoclaw -v",
-    commandId: "root:version",
-    description: "Show version",
-    group: "Getting Started",
-    scope: "global",
-    hidden: true,
-  },
-] as const;
+/** All CLI display commands. Hidden entries are included for dispatch helpers. */
+export const COMMANDS: readonly CommandDef[] = displayEntriesFromOclifMetadata();
 
 /** All global-scope commands. */
 export function globalCommands(): CommandDef[] {
@@ -557,7 +112,6 @@ export function canonicalUsageList(): string[] {
 
 /**
  * First token(s) after "nemoclaw" for each global command.
- * Replaces the hand-maintained GLOBAL_COMMANDS set.
  *
  * For multi-word commands like "nemoclaw tunnel start", extracts "tunnel".
  * For flag-style like "nemoclaw --help", extracts "--help".
@@ -566,9 +120,7 @@ export function canonicalUsageList(): string[] {
 export function globalCommandTokens(): Set<string> {
   const tokens = new Set<string>();
   for (const cmd of globalCommands()) {
-    // Extract the token after "nemoclaw "
     const rest = cmd.usage.replace(/^nemoclaw\s+/, "");
-    // First word (handles "tunnel start" → "tunnel", "onboard --from" → "onboard")
     const token = rest.split(/\s+/)[0];
     tokens.add(token);
   }
@@ -577,7 +129,6 @@ export function globalCommandTokens(): Set<string> {
 
 /**
  * Action tokens for sandbox commands.
- * Replaces the hand-maintained sandboxActions array.
  *
  * For "nemoclaw <name> connect", extracts "connect".
  * Includes empty string for default connect behavior.
@@ -586,16 +137,13 @@ export function sandboxActionTokens(): string[] {
   const seen = new Set<string>();
   const tokens: string[] = [];
   for (const cmd of sandboxCommands()) {
-    // Extract action: "nemoclaw <name> connect" → "connect"
     const rest = cmd.usage.replace(/^nemoclaw\s+<name>\s*/, "");
-    // First word: "snapshot create" → "snapshot", "connect" → "connect"
     const token = rest.split(/\s+/)[0];
     if (!seen.has(token)) {
       seen.add(token);
       tokens.push(token);
     }
   }
-  // Include empty string for default connect (no action specified)
   if (!seen.has("")) {
     tokens.push("");
   }

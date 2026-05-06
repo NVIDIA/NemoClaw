@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "scripts");
 
 function configureGuardBlock(src: string): string {
   const start = src.indexOf("# nemoclaw-configure-guard begin");
@@ -45,8 +46,16 @@ function nonRootFallbackBlock(src: string): string {
 
 function startScriptHeredoc(src: string, marker: string): string {
   const match = src.match(new RegExp(`<<'${marker}'[^\\n]*\\n([\\s\\S]*?)\\n${marker}`));
-  expect(match).toBeTruthy();
-  return match![1];
+  if (match) return match[1];
+  const preloadByMarker: Record<string, string> = {
+    CIAO_GUARD_EOF: "ciao-network-guard.js",
+    SAFETY_NET_EOF: "sandbox-safety-net.js",
+    SLACK_GUARD_EOF: "slack-channel-guard.js",
+    TELEGRAM_DIAGNOSTICS_EOF: "telegram-diagnostics.js",
+  };
+  const preload = preloadByMarker[marker];
+  expect(preload).toBeTruthy();
+  return fs.readFileSync(path.join(PRELOAD_SCRIPTS, preload), "utf-8");
 }
 
 function extractShellFunctionFromSource(src: string, name: string): string {
@@ -897,6 +906,10 @@ describe("Slack channel guard — unhandled-rejection safety net (#2340)", () =>
         `_SLACK_GUARD_SCRIPT=${JSON.stringify(guardPath)}`,
       )
       .replace(
+        '_SLACK_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/slack-channel-guard.js"',
+        `_SLACK_GUARD_SOURCE=${JSON.stringify(path.join(PRELOAD_SCRIPTS, "slack-channel-guard.js"))}`,
+      )
+      .replace(
         'local config_file="/sandbox/.openclaw/openclaw.json"',
         `local config_file=${JSON.stringify(configPath)}`,
       );
@@ -1405,6 +1418,10 @@ describe("Slack token rewriter (#2085)", () => {
         `_SLACK_REWRITER_SCRIPT=${JSON.stringify(rewriterPath)}`,
       )
       .replace(
+        '_SLACK_REWRITER_SOURCE="/usr/local/lib/nemoclaw/preloads/slack-token-rewriter.js"',
+        `_SLACK_REWRITER_SOURCE=${JSON.stringify(path.join(PRELOAD_SCRIPTS, "slack-token-rewriter.js"))}`,
+      )
+      .replace(
         'local config_file="/sandbox/.openclaw/openclaw.json"',
         `local config_file=${JSON.stringify(configPath)}`,
       );
@@ -1497,6 +1514,10 @@ describe("Telegram diagnostics (#2766)", () => {
       .replace(
         '_TELEGRAM_DIAGNOSTICS_SCRIPT="/tmp/nemoclaw-telegram-diagnostics.js"',
         `_TELEGRAM_DIAGNOSTICS_SCRIPT=${JSON.stringify(preloadPath)}`,
+      )
+      .replace(
+        '_TELEGRAM_DIAGNOSTICS_SOURCE="/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js"',
+        `_TELEGRAM_DIAGNOSTICS_SOURCE=${JSON.stringify(path.join(PRELOAD_SCRIPTS, "telegram-diagnostics.js"))}`,
       )
       .replace(
         'local config_file="/sandbox/.openclaw/openclaw.json"',

@@ -3,7 +3,7 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { listSandboxChannels } from "../../../policy-channel-actions";
+import { listSandboxChannels } from "../../../actions/sandbox/policy-channel";
 import { sandboxNameArg } from "../common";
 
 export default class SandboxChannelsListCommand extends Command {
@@ -11,8 +11,8 @@ export default class SandboxChannelsListCommand extends Command {
   static strict = true;
   static summary = "List supported messaging channels";
   static description = "List supported messaging channels for a sandbox.";
-  static usage = ["<name> channels list"];
-  static examples = ["<%= config.bin %> alpha channels list"];
+  static usage = ["<name>"];
+  static examples = ["<%= config.bin %> sandbox channels list alpha"];
   static args = {
     sandboxName: sandboxNameArg,
   };
