@@ -511,30 +511,87 @@ run_agent_prompt() {
   fi
 }
 
+extract_runtime_session_id() {
+  python3 - "$AGENT_LOG" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+for idx, ch in enumerate(text):
+    if ch != "{":
+        continue
+    try:
+        data = json.loads(text[idx:])
+    except Exception:
+        continue
+    sid = (
+        data.get("result", {})
+        .get("meta", {})
+        .get("agentMeta", {})
+        .get("sessionId")
+    )
+    if sid:
+        print(sid)
+        break
+PY
+}
+
 check_trajectory_acceptance() {
-  local output rc=0 script
+  local output rc=0 script runtime_session_id
+  runtime_session_id="$(extract_runtime_session_id)"
   script=$(
     cat <<'SH'
-python3 - "$1" <<'PY'
+python3 - "$1" "$2" <<'PY'
 import json
 import pathlib
 import sys
 
-sid = sys.argv[1]
+explicit_sid = sys.argv[1]
+runtime_sid = sys.argv[2] if len(sys.argv) > 2 else ""
+candidate_sids = [sid for sid in [runtime_sid, explicit_sid] if sid]
+root = pathlib.Path("/sandbox/.openclaw")
 base = pathlib.Path("/sandbox/.openclaw/agents/main/sessions")
-session_path = base / (sid + ".jsonl")
-trajectory_path = base / (sid + ".trajectory.jsonl")
-errors = []
-if not session_path.exists():
-    errors.append("missing session jsonl")
-if not trajectory_path.exists():
-    errors.append("missing trajectory jsonl")
-if errors:
-    print(json.dumps({"errors": errors}, indent=2))
+
+
+def add_candidate(pairs, session_path, trajectory_path, label):
+    key = (str(session_path), str(trajectory_path))
+    if key not in {item[:2] for item in pairs}:
+        pairs.append((str(session_path), str(trajectory_path), label))
+
+
+pairs = []
+for sid in candidate_sids:
+    add_candidate(pairs, base / (sid + ".jsonl"), base / (sid + ".trajectory.jsonl"), sid)
+
+for trajectory_path in root.rglob("*.trajectory.jsonl"):
+    stem = trajectory_path.name[: -len(".trajectory.jsonl")]
+    add_candidate(pairs, trajectory_path.with_name(stem + ".jsonl"), trajectory_path, "recursive")
+
+session_path = None
+trajectory_path = None
+for session_candidate, trajectory_candidate, _label in pairs:
+    maybe_session = pathlib.Path(session_candidate)
+    maybe_trajectory = pathlib.Path(trajectory_candidate)
+    if maybe_session.exists() and maybe_trajectory.exists():
+        session_path = maybe_session
+        trajectory_path = maybe_trajectory
+        break
+
+if not session_path or not trajectory_path:
+    diagnostic = {
+        "errors": ["missing session/trajectory jsonl pair"],
+        "explicitSessionId": explicit_sid,
+        "runtimeSessionId": runtime_sid,
+        "checkedPairs": pairs[:20],
+        "sessionFiles": [str(p) for p in root.rglob("*.jsonl")][:40],
+        "trajectoryFiles": [str(p) for p in root.rglob("*.trajectory.jsonl")][:40],
+    }
+    print(json.dumps(diagnostic, indent=2))
     sys.exit(1)
 
 session = [json.loads(line) for line in session_path.read_text().splitlines() if line.strip()]
 trajectory = [json.loads(line) for line in trajectory_path.read_text().splitlines() if line.strip()]
+errors = []
 artifacts = [item for item in trajectory if item.get("type") == "trace.artifacts"]
 completed = [item for item in trajectory if item.get("type") == "model.completed"]
 if len(artifacts) != 1:
@@ -586,7 +643,9 @@ if not tool_result_indices or not assistant_indices or max(assistant_indices) <=
     errors.append("final assistant response did not occur after all tool results")
 
 summary = {
-    "sessionId": sid,
+    "explicitSessionId": explicit_sid,
+    "runtimeSessionId": runtime_sid,
+    "sessionPath": str(session_path),
     "trajectoryPath": str(trajectory_path),
     "finalStatus": artifact_data.get("finalStatus"),
     "toolMetasCount": len(metas),
@@ -607,7 +666,7 @@ sys.exit(1 if errors else 0)
 PY
 SH
   )
-  output=$(sandbox_exec_sh_script "$script" "$SESSION_ID" 2>&1) || rc=$?
+  output=$(sandbox_exec_sh_script "$script" "$SESSION_ID" "$runtime_session_id" 2>&1) || rc=$?
   info "Trajectory summary:"
   printf '%s\n' "$output" | sed 's/^/    /'
   if [ "$rc" -eq 0 ]; then
