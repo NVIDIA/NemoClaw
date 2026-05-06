@@ -2049,6 +2049,19 @@ function isValidProxyPort(value: string): boolean {
   return port >= 1 && port <= 65535;
 }
 
+function buildSandboxProxyEnvArgs(env: NodeJS.ProcessEnv = process.env): string[] {
+  const args: string[] = [];
+  const host = env.NEMOCLAW_PROXY_HOST;
+  if (host && isValidProxyHost(host)) {
+    args.push(formatEnvAssignment("NEMOCLAW_PROXY_HOST", host));
+  }
+  const port = env.NEMOCLAW_PROXY_PORT;
+  if (port && isValidProxyPort(port)) {
+    args.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", port));
+  }
+  return args;
+}
+
 function patchStagedDockerfile(
   dockerfilePath: string,
   model: string,
@@ -4880,14 +4893,7 @@ async function createSandbox(
   // build-time substitution and runtime env stay in sync as a result.
   // Fixes #2424. Uses the shared isValidProxyHost / isValidProxyPort
   // helpers so build-time and runtime validation stay aligned.
-  const sandboxProxyHost = process.env.NEMOCLAW_PROXY_HOST;
-  if (sandboxProxyHost && isValidProxyHost(sandboxProxyHost)) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_HOST", sandboxProxyHost));
-  }
-  const sandboxProxyPort = process.env.NEMOCLAW_PROXY_PORT;
-  if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
-  }
+  envArgs.push(...buildSandboxProxyEnvArgs());
   if (webSearchConfig?.fetchEnabled) {
     const braveKey =
       getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
@@ -9590,6 +9596,7 @@ module.exports = {
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
+  buildSandboxProxyEnvArgs,
   ensureOllamaAuthProxy,
   fetchGatewayAuthTokenFromSandbox,
   getProbeAuthMode,

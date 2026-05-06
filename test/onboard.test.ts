@@ -108,6 +108,7 @@ type OnboardTestInternals = {
   ) => string;
   parsePolicyPresetEnv: (value: string | null) => string[];
   patchStagedDockerfile: ShimFn<void>;
+  buildSandboxProxyEnvArgs: (env?: NodeJS.ProcessEnv) => string[];
   pullAndResolveBaseImageDigest: () => { digest: string; ref: string } | null;
   SANDBOX_BASE_IMAGE: string;
   printSandboxCreateRecoveryHints: ShimFn<void>;
@@ -201,6 +202,7 @@ const {
   normalizeProviderBaseUrl,
   parsePolicyPresetEnv,
   patchStagedDockerfile,
+  buildSandboxProxyEnvArgs,
   pullAndResolveBaseImageDigest,
   SANDBOX_BASE_IMAGE,
   printSandboxCreateRecoveryHints,
@@ -1278,6 +1280,46 @@ describe("onboard helpers", () => {
       }
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("regression #1409: propagates NEMOCLAW_PROXY_HOST/PORT to sandbox runtime env", () => {
+    const args = buildSandboxProxyEnvArgs({
+      NEMOCLAW_PROXY_HOST: "1.2.3.4",
+      NEMOCLAW_PROXY_PORT: "9999",
+    });
+    assert.deepEqual(args, ["NEMOCLAW_PROXY_HOST=1.2.3.4", "NEMOCLAW_PROXY_PORT=9999"]);
+  });
+
+  it("regression #1409: emits no proxy runtime env args when host/port are unset", () => {
+    assert.deepEqual(buildSandboxProxyEnvArgs({}), []);
+    assert.deepEqual(
+      buildSandboxProxyEnvArgs({ NEMOCLAW_PROXY_HOST: "", NEMOCLAW_PROXY_PORT: "" }),
+      [],
+    );
+  });
+
+  it("regression #1409: rejects malformed NEMOCLAW_PROXY_HOST/PORT at runtime", () => {
+    assert.deepEqual(
+      buildSandboxProxyEnvArgs({
+        NEMOCLAW_PROXY_HOST: "1.2.3.4\nRUN rm -rf /",
+        NEMOCLAW_PROXY_PORT: "abcd",
+      }),
+      [],
+    );
+    assert.deepEqual(
+      buildSandboxProxyEnvArgs({
+        NEMOCLAW_PROXY_HOST: "1.2.3.4",
+        NEMOCLAW_PROXY_PORT: "70000",
+      }),
+      ["NEMOCLAW_PROXY_HOST=1.2.3.4"],
+    );
+    assert.deepEqual(
+      buildSandboxProxyEnvArgs({
+        NEMOCLAW_PROXY_HOST: "::1",
+        NEMOCLAW_PROXY_PORT: "9999",
+      }),
+      ["NEMOCLAW_PROXY_PORT=9999"],
+    );
   });
 
   it("#2281: bakes NEMOCLAW_AGENT_TIMEOUT env into the staged Dockerfile", () => {
