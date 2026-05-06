@@ -11,6 +11,9 @@
 #   messaging-compatible-endpoint-e2e
 #                            Validates Telegram + OpenAI-compatible endpoint inference routing
 #                            through inference.local with a hermetic local mock (#2766).
+#   kimi-inference-compat-e2e
+#                            Validates Kimi K2.6 safe exec splitting through OpenClaw trajectories
+#                            with a hermetic OpenAI-compatible mock (#2620).
 #   token-rotation-e2e       Validates that rotating a messaging token and re-running onboard
 #                            propagates the new credential to the sandbox. Combined Telegram +
 #                            Discord + Slack coverage with cross-talk assertions. See issue #1903.
@@ -51,6 +54,7 @@ on:
           Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
           skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
           messaging-compatible-endpoint-e2e,
+          kimi-inference-compat-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e, hermes-discord-e2e,
           sandbox-operations-e2e, inference-routing-e2e,
@@ -309,6 +313,54 @@ jobs:
         with:
           name: install-log-messaging-compatible-endpoint
           path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
+          if-no-files-found: ignore
+
+  # ── Kimi inference compatibility regression (#2620) ───────────
+  # Hermetic OpenAI-compatible endpoint path. The mock emits one combined
+  # Kimi exec tool call (`hostname; date; uptime`) and the test asserts the
+  # sandbox trajectory records three split exec calls with clean completion.
+  kimi-inference-compat-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',kimi-inference-compat-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Kimi inference compatibility E2E test
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-kimi-compat"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-kimi-inference-compat.sh
+
+      - name: Upload onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-kimi-inference-compat
+          path: /tmp/nemoclaw-e2e-kimi-inference-compat-onboard.log
+          if-no-files-found: ignore
+
+      - name: Upload build/setup log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-kimi-inference-compat
+          path: /tmp/nemoclaw-e2e-kimi-inference-compat-build.log
+          if-no-files-found: ignore
+
+      - name: Upload agent log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-log-kimi-inference-compat
+          path: /tmp/nemoclaw-e2e-kimi-inference-compat-agent.log
           if-no-files-found: ignore
 
   # ── Token rotation (credential propagation to L7 proxy) ─────
@@ -1543,6 +1595,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        kimi-inference-compat-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         hermes-e2e,
@@ -1626,6 +1679,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        kimi-inference-compat-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         hermes-e2e,
@@ -1724,6 +1778,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        kimi-inference-compat-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         hermes-e2e,

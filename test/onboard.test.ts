@@ -829,6 +829,23 @@ describe("onboard helpers", () => {
     );
   });
 
+  it("adds Kimi K2.6 compat for NVIDIA Endpoints on the routed inference provider", () => {
+    assert.deepEqual(
+      getSandboxInferenceConfig("moonshotai/kimi-k2.6", "nvidia-prod", "openai-completions"),
+      {
+        providerKey: "inference",
+        primaryModelRef: "inference/moonshotai/kimi-k2.6",
+        inferenceBaseUrl: "https://inference.local/v1",
+        inferenceApi: "openai-completions",
+        inferenceCompat: {
+          requiresStringContent: true,
+          maxTokensField: "max_tokens",
+          requiresToolResultName: true,
+        },
+      },
+    );
+  });
+
   it("maps OpenAI-compatible endpoints to the managed inference provider", () => {
     assert.deepEqual(
       getSandboxInferenceConfig("deepseek-ai/DeepSeek-V4-Flash", "compatible-endpoint"),

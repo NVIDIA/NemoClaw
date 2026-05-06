@@ -1,0 +1,12 @@
+{
+  "id": "nemoclaw-kimi-inference-compat",
+  "name": "NemoClaw Kimi Inference Compatibility",
+  "version": "0.1.0",
+  "description": "Normalizes managed inference.local Kimi tool schemas for NemoClaw sandboxes.",
+  "providers": ["inference"],
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}
