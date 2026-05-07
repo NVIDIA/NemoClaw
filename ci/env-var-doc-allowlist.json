@@ -1,0 +1,10 @@
+[
+  {
+    "name": "NEMOCLAW_DISABLE_AUTO_DISPATCH",
+    "reason": "Test harness sentinel set to '1' so test files can import src/nemoclaw.ts without triggering main(). Never user-set in production."
+  },
+  {
+    "name": "NEMOCLAW_TEST_NO_SLEEP",
+    "reason": "Test sentinel that bypasses real-time sleep() calls in onboard inference probes. Set to '1' only by Vitest tests; never user-set."
+  }
+]
