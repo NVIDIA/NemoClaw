@@ -629,13 +629,6 @@ async function prepareOllamaModel(model, installedModels = []) {
 
 /**
  * Unload all running Ollama models from GPU memory.
- *
- * Uses `spawnSync("curl", ...)` rather than node's `http` module so that the
- * request observably completes before the call returns: a curl child process
- * is owned by the kernel, not Node's event loop, so `process.exit()` from a
- * destroy/uninstall path cannot drop a half-flushed socket. The pattern
- * matches `probeProxyToken` and `pullOllamaModelViaHttp` in this file.
- *
  * Best-effort operation: silently ignores errors if Ollama is not running.
  */
 function unloadOllamaModels() {

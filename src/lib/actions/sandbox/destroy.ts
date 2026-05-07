@@ -208,9 +208,6 @@ export async function destroySandbox(
   }
 
   if (sb?.provider?.includes("ollama")) {
-    // The Ollama unload is delegated to cleanupSandboxServices() further
-    // down — keeping it here would triple-call (direct + cleanup branch +
-    // stopAll when host services are stopping). See issue #2717.
     const { killStaleProxy } = require("../../onboard-ollama-proxy");
     killStaleProxy();
   }
