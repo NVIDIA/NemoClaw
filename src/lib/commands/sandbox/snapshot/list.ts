@@ -10,8 +10,8 @@ export default class SnapshotListCommand extends Command {
   static strict = true;
   static summary = "List available snapshots";
   static description = "List available snapshots for a sandbox.";
-  static usage = ["<name> snapshot list"];
-  static examples = ["<%= config.bin %> alpha snapshot list"];
+  static usage = ["<name>"];
+  static examples = ["<%= config.bin %> sandbox snapshot list alpha"];
   static args = {
     sandboxName: sandboxNameArg,
   };

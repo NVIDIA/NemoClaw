@@ -11,7 +11,7 @@ const ROOT = path.join(import.meta.dirname, "..");
 const CANONICAL_FIX = path.join(ROOT, "nemoclaw-blueprint", "scripts", "http-proxy-fix.js");
 const START_SCRIPT = path.join(ROOT, "scripts", "nemoclaw-start.sh");
 
-describe("http-proxy-fix heredoc sync (#2109)", () => {
+describe("http-proxy-fix preload sync (#2109)", () => {
   it("entrypoint emits byte-for-byte canonical fix and registers it in NODE_OPTIONS", () => {
     const canonical = fs.readFileSync(CANONICAL_FIX, "utf-8");
     const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -28,7 +28,11 @@ describe("http-proxy-fix heredoc sync (#2109)", () => {
     const fixPath = path.join(tempDir, "http-proxy-fix.js");
     const block = startScript
       .slice(start, end)
-      .replace('_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"', `_PROXY_FIX_SCRIPT=${JSON.stringify(fixPath)}`);
+      .replace('_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"', `_PROXY_FIX_SCRIPT=${JSON.stringify(fixPath)}`)
+      .replace(
+        '_PROXY_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/http-proxy-fix.js"',
+        `_PROXY_FIX_SOURCE=${JSON.stringify(CANONICAL_FIX)}`,
+      );
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",

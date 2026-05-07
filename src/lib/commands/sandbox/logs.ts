@@ -6,7 +6,7 @@ import { Args, Command, Flags } from "@oclif/core";
 import { logsSinceDurationFlag } from "../../duration-flags";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import { DEFAULT_SANDBOX_LOG_LINES } from "../../domain/sandbox/log-options";
-import { showSandboxLogs } from "../../sandbox-runtime-actions";
+import { showSandboxLogs } from "../../actions/sandbox/runtime";
 
 type SandboxLogsRuntimeBridge = {
   sandboxLogs: (sandboxName: string, options: SandboxLogsOptions) => void;
@@ -31,12 +31,12 @@ export default class SandboxLogsCommand extends Command {
   static strict = true;
   static summary = "Stream sandbox logs";
   static description = "Show OpenClaw gateway logs and OpenShell audit logs for a sandbox.";
-  static usage = ["<name> logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]"];
+  static usage = ["<name> [--follow] [--tail <lines>|-n <lines>] [--since <duration>]"];
   static examples = [
-    "<%= config.bin %> alpha logs",
-    "<%= config.bin %> alpha logs --tail 100",
-    "<%= config.bin %> alpha logs --since 5m",
-    "<%= config.bin %> alpha logs --follow",
+    "<%= config.bin %> sandbox logs alpha",
+    "<%= config.bin %> sandbox logs alpha --tail 100",
+    "<%= config.bin %> sandbox logs alpha --since 5m",
+    "<%= config.bin %> sandbox logs alpha --follow",
   ];
   static args = {
     sandboxName: Args.string({

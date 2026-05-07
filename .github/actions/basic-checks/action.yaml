@@ -39,10 +39,8 @@ runs:
       run: npm run build:cli
 
     - name: Typecheck CLI + tests (strict)
-      # Explicit gate independent of the prek tsc-cli hook's file-pattern filter.
-      # The hook's `files:` scope excludes test/ and src/, which let #2130 +
-      # #2422 interact to ship a strict-mode regression onto main silently.
-      # Running this unconditionally here catches that class of drift.
+      # Explicit CI gate that complements the pre-push tsc-cli hook. CI runs it
+      # unconditionally so type drift is caught even when a local hook is skipped.
       shell: bash
       run: npm run typecheck:cli
 

@@ -610,7 +610,7 @@ function pollForSandboxReady(elapsed: () => string): void {
  * The onboard hangs on the dashboard port-forward step and never writes
  * sandboxes.json. We kill it and write the registry ourselves.
  *
- * Note: The registry shape matches SandboxRegistry from src/lib/registry.ts
+ * Note: The registry shape matches SandboxRegistry from src/lib/state/registry.ts
  * (sandboxes + defaultSandbox only — no version field).
  */
 function writeManualRegistry(elapsed: () => string): void {

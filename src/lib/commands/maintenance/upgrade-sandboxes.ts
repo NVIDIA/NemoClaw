@@ -3,7 +3,7 @@
 
 import { Flags } from "@oclif/core";
 
-import { runUpgradeSandboxesAction } from "../../global-cli-actions";
+import { runUpgradeSandboxesAction } from "../../actions/global";
 import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
 
 export default class UpgradeSandboxesCommand extends NemoClawCommand {

@@ -50,6 +50,8 @@ NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traff
 The Hermes image includes runtime dependencies for the supported NemoClaw messaging integrations, API service, and health endpoint.
 The base image does not include unsupported Hermes integrations.
 
+> **Note:** Hermes uses an agent-specific baseline policy that allows the Hermes binary and Python runtime to reach the required Nous Research service endpoints, PyPI, NVIDIA inference endpoints, and selected messaging APIs.
+
 ## Use Non-Interactive Setup
 
 For CI or scripted installs, set the required environment variables before running the installer.

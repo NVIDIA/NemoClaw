@@ -24,20 +24,20 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("node:child_process", () => ({ spawnSync: mocks.spawnSync }));
-vi.mock("../debug", () => ({ runDebug: vi.fn() }));
-vi.mock("../debug-command", () => ({
+vi.mock("../diagnostics/debug", () => ({ runDebug: vi.fn() }));
+vi.mock("../diagnostics/debug-command", () => ({
   runDebugCommandWithOptions: mocks.runDebugCommandWithOptions,
 }));
 vi.mock("../gateway-token-command", () => ({
   runGatewayTokenCommand: mocks.runGatewayTokenCommand,
 }));
-vi.mock("../global-cli-actions", () => ({
+vi.mock("../actions/global", () => ({
   runDeployAction: mocks.runDeployAction,
   showRootHelp: mocks.showRootHelp,
   showVersion: mocks.showVersion,
 }));
 vi.mock("../adapters/openshell/client", () => ({ captureOpenshellCommand: mocks.captureOpenshellCommand }));
-vi.mock("../registry", () => ({ listSandboxes: mocks.listSandboxes }));
+vi.mock("../state/registry", () => ({ listSandboxes: mocks.listSandboxes }));
 vi.mock("../adapters/openshell/resolve", () => ({ resolveOpenshell: mocks.resolveOpenshell }));
 vi.mock("../services", () => ({ startAll: mocks.startAll, stopAll: mocks.stopAll }));
 vi.mock("../services-command", () => ({

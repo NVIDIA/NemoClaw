@@ -11,7 +11,7 @@ type ChannelsRuntimeBridge = {
 };
 
 let runtimeBridgeFactory = (): ChannelsRuntimeBridge => {
-  const actions = require("../../../policy-channel-actions") as {
+  const actions = require("../../../actions/sandbox/policy-channel") as {
     addSandboxChannel: ChannelsRuntimeBridge["sandboxChannelsAdd"];
     removeSandboxChannel: ChannelsRuntimeBridge["sandboxChannelsRemove"];
     startSandboxChannel: ChannelsRuntimeBridge["sandboxChannelsStart"];

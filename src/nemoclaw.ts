@@ -33,18 +33,18 @@ const {
   dockerInspect,
   dockerRemoveVolumesByPrefix,
   dockerRmi,
-} = require("./lib/docker");
+} = require("./lib/adapters/docker");
 const { resolveOpenshell } = require("./lib/adapters/openshell/resolve");
 const { hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
-const registry = require("./lib/registry");
-import type { SandboxEntry } from "./lib/registry";
+const registry = require("./lib/state/registry");
+import type { SandboxEntry } from "./lib/state/registry";
 const nim = require("./lib/nim");
 const shields = require("./lib/shields");
 const { parseGatewayInference } = require("./lib/inference-config");
 const policies = require("./lib/policies");
 const { probeProviderHealth } = require("./lib/inference-health");
 const { buildStatusCommandDeps } = require("./lib/status-command-deps");
-const { help, version } = require("./lib/root-help-action");
+const { help, version } = require("./lib/actions/root-help");
 const onboardSession = require("./lib/onboard-session");
 import type { Session } from "./lib/onboard-session";
 const { stripAnsi } = require("./lib/adapters/openshell/client");
@@ -60,24 +60,23 @@ const {
   isSandboxConnectFlag,
   parseSandboxConnectArgs,
   printSandboxConnectHelp,
-} = require("./lib/sandbox-connect-action");
+} = require("./lib/actions/sandbox/connect");
 const {
   executeSandboxCommand,
-} = require("./lib/sandbox-process-recovery-action");
+} = require("./lib/actions/sandbox/process-recovery");
 const {
   getSandboxDeleteOutcome,
-} = require("./lib/sandbox-destroy-action");
-const { runRegisteredOclifCommand } = require("./lib/cli/oclif-runner");
+} = require("./lib/actions/sandbox/destroy");
+const { runOclifArgv, runRegisteredOclifCommand } = require("./lib/cli/oclif-runner");
 const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
 const agentRuntime = require("../bin/lib/agent-runtime");
-const sandboxState = require("./lib/sandbox-state");
+const sandboxState = require("./lib/state/sandbox");
 const { parseRestoreArgs } = sandboxState;
 const {
   getActiveSandboxSessions,
   createSystemDeps: createSessionDeps,
   parseForwardList,
-} = require("./lib/sandbox-session-state");
-
+} = require("./lib/state/sandbox-session");
 const {
   canonicalUsageList,
   globalCommandTokens,
@@ -88,7 +87,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "./lib/adapters/openshell/timeouts";
 import { renderPublicOclifHelp } from "./lib/cli/public-oclif-help";
 import {
   resolveGlobalOclifDispatch,
-  resolveSandboxOclifDispatch,
+  resolveLegacySandboxDispatch,
   type DispatchResult,
 } from "./lib/cli/oclif-dispatch";
 
@@ -138,10 +137,6 @@ async function runOclif(commandId: string, args: string[] = []): Promise<void> {
     error: console.error,
     exit: (code: number) => process.exit(code),
   });
-}
-
-function printSandboxActionUsage(action: string): void {
-  console.log(`  Usage: ${CLI_NAME} <name> ${action}`);
 }
 
 // ── Pre-upgrade backup ───────────────────────────────────────────
@@ -197,11 +192,7 @@ async function runDispatchResult(
       await runOclif(result.commandId, result.args);
       return;
     case "help":
-      if (result.commandId) {
-        renderPublicOclifHelp(result.commandId, `<name> ${result.usage}`);
-      } else {
-        printSandboxActionUsage(result.usage);
-      }
+      renderPublicOclifHelp(result.commandId, result.publicUsage);
       return;
     case "usageError":
       printDispatchUsageError(result, opts.sandboxName);
@@ -232,6 +223,15 @@ async function runDispatchResult(
 
 // eslint-disable-next-line complexity
 async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  if (argv[0] === "internal" || argv[0] === "sandbox") {
+    await runOclifArgv(argv, {
+      rootDir: ROOT,
+      error: console.error,
+      exit: (code: number) => process.exit(code),
+    });
+    return;
+  }
+
   const normalized = normalizeArgv(argv, {
     globalCommands: GLOBAL_COMMANDS,
     isSandboxConnectFlag,
@@ -314,7 +314,7 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
     if (action === "connect") {
       parseSandboxConnectArgs(cmd, actionArgs);
     }
-    await runDispatchResult(resolveSandboxOclifDispatch(cmd, action, actionArgs), {
+    await runDispatchResult(resolveLegacySandboxDispatch(cmd, action, actionArgs), {
       sandboxName: cmd,
       actionArgs,
     });

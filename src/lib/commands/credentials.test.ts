@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../credentials", () => ({ prompt: mocks.prompt }));
-vi.mock("../global-cli-actions", () => ({
+vi.mock("../actions/global", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));

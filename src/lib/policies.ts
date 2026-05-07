@@ -11,8 +11,8 @@ const os = require("os");
 const readline = require("readline");
 const YAML = require("yaml");
 const { ROOT, run, runCapture } = require("./runner");
-const registry = require("./registry");
-const { loadAgent } = require("./agent-defs");
+const registry = require("./state/registry");
+const { loadAgent } = require("./agent/defs");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 

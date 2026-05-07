@@ -3,7 +3,7 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { listSandboxPolicies } from "../../../policy-channel-actions";
+import { listSandboxPolicies } from "../../../actions/sandbox/policy-channel";
 import { sandboxNameArg } from "../common";
 
 export default class SandboxPolicyListCommand extends Command {
@@ -11,8 +11,8 @@ export default class SandboxPolicyListCommand extends Command {
   static strict = true;
   static summary = "List policy presets";
   static description = "List built-in and custom policy presets and show which are applied.";
-  static usage = ["<name> policy-list"];
-  static examples = ["<%= config.bin %> alpha policy-list"];
+  static usage = ["<name>"];
+  static examples = ["<%= config.bin %> sandbox policy list alpha"];
   static args = {
     sandboxName: sandboxNameArg,
   };

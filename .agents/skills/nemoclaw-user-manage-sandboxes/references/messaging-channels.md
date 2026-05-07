@@ -146,7 +146,7 @@ Stopping the in-sandbox gateway stops Telegram, Discord, and Slack polling for t
 
 After the sandbox is running, send a message to the configured bot or app.
 If delivery fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the channel API.
-Use the matching policy preset (`telegram`, `discord`, or `slack`) or review Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill).
+Use the matching policy preset (`telegram`, `discord`, or `slack`) or review Common Integration Policy Examples (use the `nemoclaw-user-manage-policy` skill).
 
 ## Tunnel Command
 

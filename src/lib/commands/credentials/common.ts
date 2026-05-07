@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
-import { recoverNamedGatewayRuntime } from "../../global-cli-actions";
+import { recoverNamedGatewayRuntime } from "../../actions/global";
 
 // Suffixes that mark per-sandbox messaging integrations in the gateway's
 // provider list. These are managed by `channels`, not `credentials`.

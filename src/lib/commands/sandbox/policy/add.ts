@@ -16,12 +16,12 @@ export default class PolicyAddCommand extends Command {
   static summary = "Add a network or filesystem policy preset";
   static description = "Add a built-in or custom policy preset to a sandbox.";
   static usage = [
-    "<name> policy-add [preset] [--yes|-y] [--dry-run] [--from-file <path>] [--from-dir <path>]",
+    "<name> [preset] [--yes|-y] [--dry-run] [--from-file <path>] [--from-dir <path>]",
   ];
   static examples = [
-    "<%= config.bin %> alpha policy-add slack --yes",
-    "<%= config.bin %> alpha policy-add --from-file ./policy.yaml --dry-run",
-    "<%= config.bin %> alpha policy-add --from-dir ./policies --yes",
+    "<%= config.bin %> sandbox policy add alpha slack --yes",
+    "<%= config.bin %> sandbox policy add alpha --from-file ./policy.yaml --dry-run",
+    "<%= config.bin %> sandbox policy add alpha --from-dir ./policies --yes",
   ];
   static args = policyMutationArgs;
   static flags = {

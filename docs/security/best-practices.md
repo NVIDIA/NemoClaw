@@ -237,19 +237,18 @@ In root mode, the gateway process still runs as the separate `gateway` user, but
 Writable agent state such as plugins, skills, hooks, and workspace metadata lives directly under `/sandbox/.openclaw`.
 
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
-Operators can opt into immutability by running `nemoclaw <name> shields up`, which locks the config and writable state entry points until `shields down` restores the default writable state.
+For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so config and writable state entry points cannot be changed by the sandbox user.
 
 - **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `700` and `openclaw.json` with mode `600`, so the agent can read and write config directly.
-- **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. After `nemoclaw <name> shields up` locks the hash root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
-- **Gateway token environment.** The gateway exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or with Shields UP.
-- **Shields UP (opt-in).** `nemoclaw <name> shields up` applies root-owned read-only permissions and best-effort immutable bits to sensitive config files, and locks writable state directories such as workspace, memory, skills, hooks, cron, agents, and extensions.
+- **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. When the hash is root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
+- **Gateway token environment.** The gateway exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or an immutable config posture.
 
 | Aspect | Detail |
 |---|---|
 | Default | The sandbox keeps `/sandbox/.openclaw` writable (`700 sandbox:sandbox`), sets `openclaw.json` to `600 sandbox:sandbox`, lets the agent manage state directly, and has the gateway place `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. |
-| What you can change | Run `nemoclaw <name> shields up` to lock config and state directories with DAC permissions and the immutable flag where available. Run `shields down` to return to the writable default. |
+| What you can change | Apply a reviewed host-side immutability workflow to lock config and state directories with DAC permissions and the immutable flag where available. |
 | Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
-| Recommendation | For always-on assistants handling sensitive workloads, use `shields up` to lock config after initial setup. For development workflows, the writable default is appropriate. |
+| Recommendation | For always-on assistants handling sensitive workloads, lock config after initial setup. For development workflows, the writable default is appropriate. |
 
 ### Writable Paths
 
@@ -537,7 +536,7 @@ The following patterns weaken security without providing meaningful benefit.
 | Omitting `protocol: rest` on REST API endpoints without a compatibility reason | Endpoints without a `protocol` field use L4-only enforcement. The proxy allows the TCP stream through after checking host, port, and binary, but cannot see or filter individual HTTP requests. | Add `protocol: rest` with explicit `rules` to enable per-request method and path control on REST APIs. Use L4 pass-through only for documented cases such as npm/Yarn on Node 22, where the client requires a CONNECT tunnel that L7 inspection would break. |
 | Adding endpoints to the baseline policy for one-off requests | Adding an endpoint to the baseline policy makes it permanently reachable across all sandbox instances. | Use operator approval. Approved endpoints persist within the sandbox instance but reset when you destroy and recreate the sandbox. |
 | Relying solely on the entrypoint for capability drops | The entrypoint drops dangerous capabilities using `capsh`, but this is best-effort. If `capsh` is unavailable or `CAP_SETPCAP` is not in the bounding set, the container runs with the default capability set. | Pass `--cap-drop=ALL` at the container runtime level as defense-in-depth. |
-| Leaving `/sandbox/.openclaw` writable on sensitive workloads | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent disable CORS, redirect inference routing, or weaken gateway protections. | Run `nemoclaw <name> shields up` to lock config for always-on assistants handling sensitive data. |
+| Leaving `/sandbox/.openclaw` writable on sensitive workloads | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent disable CORS, redirect inference routing, or weaken gateway protections. | Lock config for always-on assistants handling sensitive data. |
 | Adding inference provider hosts to the network policy | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. |
 | Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |
 
