@@ -3,7 +3,7 @@
 
 import { Command } from "@oclif/core";
 
-import { showRootHelp } from "../../global-cli-actions";
+import { showRootHelp } from "../../actions/global";
 
 export default class RootHelpCommand extends Command {
   static id = "root:help";

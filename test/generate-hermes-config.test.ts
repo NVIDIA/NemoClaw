@@ -9,6 +9,7 @@ import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "agents", "hermes", "generate-config.ts");
+const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "..", "agents", "hermes", "config");
 
 const BASE_ENV: Record<string, string> = {
   NEMOCLAW_MODEL: "test-model",
@@ -30,16 +31,7 @@ function runConfigScript(envOverrides: Record<string, string> = {}): {
   envFile: string;
 } {
   fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
-  const result = spawnSync(process.execPath, ["--experimental-strip-types", SCRIPT_PATH], {
-    encoding: "utf-8",
-    env: {
-      PATH: process.env.PATH || "/usr/bin:/bin",
-      ...BASE_ENV,
-      ...envOverrides,
-      HOME: tmpDir,
-    },
-    timeout: 10_000,
-  });
+  const result = runConfigScriptRaw(envOverrides);
 
   if (result.status !== 0) {
     throw new Error(
@@ -52,6 +44,48 @@ function runConfigScript(envOverrides: Record<string, string> = {}): {
     config: YAML.parse(fs.readFileSync(path.join(hermesDir, "config.yaml"), "utf-8")),
     envFile: fs.readFileSync(path.join(hermesDir, ".env"), "utf-8"),
   };
+}
+
+function runConfigScriptRaw(
+  envOverrides: Record<string, string> = {},
+  opts: { cwd?: string; scriptPath?: string } = {},
+) {
+  fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
+  return spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", opts.scriptPath || SCRIPT_PATH],
+    {
+      encoding: "utf-8",
+      cwd: opts.cwd,
+      env: {
+        PATH: process.env.PATH || "/usr/bin:/bin",
+        ...BASE_ENV,
+        ...envOverrides,
+        HOME: tmpDir,
+      },
+      timeout: 10_000,
+    },
+  );
+}
+
+function writeRegistryManifest(
+  blueprintDir: string,
+  relativeManifestPath: string,
+  manifest: Record<string, unknown>,
+): string {
+  const manifestPath = path.join(blueprintDir, "model-specific-setup", relativeManifestPath);
+  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  return path.join(blueprintDir, "model-specific-setup");
+}
+
+function copyConfigGeneratorFixture(fixtureRoot: string): string {
+  const fixtureScriptPath = path.join(fixtureRoot, "agents", "hermes", "generate-config.ts");
+  const fixtureConfigDir = path.join(fixtureRoot, "agents", "hermes", "config");
+  fs.mkdirSync(path.dirname(fixtureScriptPath), { recursive: true });
+  fs.copyFileSync(SCRIPT_PATH, fixtureScriptPath);
+  fs.cpSync(CONFIG_MODULE_DIR, fixtureConfigDir, { recursive: true });
+  return fixtureScriptPath;
 }
 
 beforeEach(() => {
@@ -152,5 +186,166 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.telegram).toBeUndefined();
     expect(config.platforms.telegram).toBeUndefined();
     expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
+  });
+
+  it("ignores the OpenClaw Kimi model-specific setup for Hermes output", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_MODEL: "moonshotai/kimi-k2.6",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+    });
+
+    expect(config.model).toEqual({
+      default: "moonshotai/kimi-k2.6",
+      provider: "custom",
+      base_url: "https://inference.local/v1",
+    });
+    expect(config.kimi).toBeUndefined();
+    expect(config.openclawPlugins).toBeUndefined();
+    expect(envFile).toContain("API_SERVER_PORT=18642\n");
+  });
+
+  it("discovers and validates Hermes manifests without changing runtime output", () => {
+    const blueprintDir = path.join(tmpDir, "fixture-blueprint");
+    const registryDir = writeRegistryManifest(
+      blueprintDir,
+      "hermes/fixture.json",
+      {
+        id: "fixture-hermes",
+        agent: "hermes",
+        description: "Fixture Hermes setup",
+        match: {
+          modelIds: ["fixture/hermes-model"],
+          providerKey: "custom",
+          baseUrl: "https://inference.local/v1",
+        },
+        effects: {
+          hermesCompat: {
+            future: true,
+          },
+        },
+      },
+    );
+
+    const { config } = runConfigScript({
+      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,
+      NEMOCLAW_MODEL: "fixture/hermes-model",
+      NEMOCLAW_PROVIDER_KEY: "custom",
+    });
+
+    expect(config.model.default).toBe("fixture/hermes-model");
+    expect(config.hermesCompat).toBeUndefined();
+    expect(JSON.stringify(config)).not.toContain("future");
+  });
+
+  it("discovers the bundled registry from the script path when cwd differs", () => {
+    const sourceRegistryDir = path.join(
+      import.meta.dirname,
+      "..",
+      "nemoclaw-blueprint",
+      "model-specific-setup",
+    );
+    const fixtureRoot = path.join(tmpDir, "script-relative-fixture");
+    const fixtureScriptPath = copyConfigGeneratorFixture(fixtureRoot);
+    const registryDir = path.join(fixtureRoot, "nemoclaw-blueprint", "model-specific-setup");
+    const manifestPath = path.join(
+      registryDir,
+      "hermes",
+      `fixture-invalid-${String(process.pid)}-${String(Date.now())}.json`,
+    );
+
+    try {
+      fs.cpSync(sourceRegistryDir, registryDir, { recursive: true });
+      fs.writeFileSync(
+        manifestPath,
+        JSON.stringify(
+          {
+            id: "fixture-invalid-hermes",
+            agent: "hermes",
+            description: "Invalid Hermes setup",
+            match: {
+              modelIds: ["fixture/script-relative-hermes-model"],
+            },
+            effects: {
+              openclawCompat: {},
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runConfigScriptRaw(
+        {
+          NEMOCLAW_MODEL: "fixture/script-relative-hermes-model",
+          NEMOCLAW_PROVIDER_KEY: "custom",
+        },
+        { cwd: tmpDir, scriptPath: fixtureScriptPath },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("unknown effects for agent 'hermes': openclawCompat");
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unknown Hermes model-specific effect keys", () => {
+    const blueprintDir = path.join(tmpDir, "fixture-blueprint");
+    const registryDir = writeRegistryManifest(
+      blueprintDir,
+      "hermes/bad-effect.json",
+      {
+        id: "bad-hermes-effect",
+        agent: "hermes",
+        description: "Invalid Hermes effect",
+        match: { modelIds: ["test-model"] },
+        effects: {
+          openclawCompat: {},
+        },
+      },
+    );
+
+    const result = runConfigScriptRaw({
+      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("unknown effects for agent 'hermes': openclawCompat");
+  });
+
+  it("rejects empty match objects and invalid explicit registry overrides", () => {
+    const missingRegistry = path.join(tmpDir, "missing-registry");
+    const missingRegistryResult = runConfigScriptRaw({
+      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: missingRegistry,
+    });
+
+    expect(missingRegistryResult.status).not.toBe(0);
+    expect(missingRegistryResult.stderr).toContain(
+      "NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR must point to an existing directory",
+    );
+
+    const blueprintDir = path.join(tmpDir, "fixture-blueprint");
+    const registryDir = writeRegistryManifest(
+      blueprintDir,
+      "hermes/empty-match.json",
+      {
+        id: "empty-hermes-match",
+        agent: "hermes",
+        description: "Invalid Hermes match",
+        match: {},
+        effects: {
+          hermesCompat: {},
+        },
+      },
+    );
+
+    const emptyMatchResult = runConfigScriptRaw({
+      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,
+    });
+
+    expect(emptyMatchResult.status).not.toBe(0);
+    expect(emptyMatchResult.stderr).toContain("field 'match' must be a non-empty object");
   });
 });

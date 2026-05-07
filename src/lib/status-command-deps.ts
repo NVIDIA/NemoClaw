@@ -11,7 +11,7 @@ import { backfillMessagingChannels, findAllOverlaps } from "./messaging-conflict
 import type { CaptureOpenshellResult } from "./adapters/openshell/client";
 import { captureOpenshellCommand, stripAnsi } from "./adapters/openshell/client";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
-import * as registry from "./registry";
+import * as registry from "./state/registry";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./services";
 

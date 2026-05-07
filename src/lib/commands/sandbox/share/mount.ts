@@ -11,10 +11,10 @@ export default class ShareMountCommand extends Command {
   static strict = true;
   static summary = "Mount sandbox filesystem on the host";
   static description = "Mount a sandbox path on the host using SSHFS over OpenShell's SSH proxy.";
-  static usage = ["<name> share mount [sandbox-path] [local-mount-point]"];
+  static usage = ["<name> [sandbox-path] [local-mount-point]"];
   static examples = [
-    "<%= config.bin %> alpha share mount",
-    "<%= config.bin %> alpha share mount /workspace ~/mnt/alpha",
+    "<%= config.bin %> sandbox share mount alpha",
+    "<%= config.bin %> sandbox share mount alpha /workspace ~/mnt/alpha",
   ];
   static args = {
     sandboxName: sandboxNameArg,

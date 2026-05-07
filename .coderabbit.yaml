@@ -236,7 +236,7 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=deployment-services-e2e
         ```
 
-    - path: "src/lib/sandbox-state.ts"
+    - path: "src/lib/state/sandbox.ts"
       instructions: |
         This file manages sandbox state (backup, restore, rebuild,
         snapshot). Changes affect data persistence across sandbox
@@ -389,6 +389,25 @@ reviews:
         ```
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=messaging-compatible-endpoint-e2e
         ```
+
+    - path: "test/e2e/test-kimi-inference-compat.sh"
+      instructions: &e2e-kimi-inference-compat |
+        This script validates Kimi K2.6 managed inference.local
+        compatibility with a hermetic OpenAI-compatible mock endpoint.
+        Changes here affect OpenClaw tool-call splitting and trajectory
+        proof for the Kimi compatibility path.
+
+        **E2E test recommendation:**
+        - `kimi-inference-compat-e2e` — Kimi managed inference.local
+          compatibility and safe exec splitting
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=kimi-inference-compat-e2e
+        ```
+
+    - path: "nemoclaw-blueprint/openclaw-plugins/kimi-inference-compat/**"
+      instructions: *e2e-kimi-inference-compat
 
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |

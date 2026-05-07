@@ -50,6 +50,10 @@ function isOptionalFiniteNumber(value: unknown): value is number | undefined {
   return value === undefined || (typeof value === "number" && Number.isFinite(value));
 }
 
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
@@ -142,6 +146,20 @@ function isBlueprint(value: unknown): value is Blueprint {
     }
   }
 
+  const router = components.router;
+  if (router !== undefined) {
+    if (!isObjectLike(router)) {
+      return false;
+    }
+    if (
+      !isOptionalBoolean(router.enabled) ||
+      !(router.port === undefined || isValidPort(router.port)) ||
+      !isOptionalString(router.pool_config_path)
+    ) {
+      return false;
+    }
+  }
+
   const policy = components.policy;
   if (policy !== undefined) {
     if (!isObjectLike(policy)) {
@@ -199,6 +217,7 @@ interface Blueprint {
       profiles?: InferenceProfileMap;
     };
     sandbox?: SandboxConfig;
+    router?: RouterConfig;
     policy?: {
       additions?: PolicyAdditions;
     };
@@ -220,6 +239,14 @@ interface SandboxConfig {
   name?: string;
   forward_ports?: number[];
 }
+
+interface RouterConfig {
+  enabled?: boolean;
+  port?: number;
+  pool_config_path?: string;
+}
+
+const DEFAULT_ROUTER_PORT = 4000;
 
 export function loadBlueprint(): Blueprint {
   const blueprintPath = process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".";
@@ -272,6 +299,7 @@ async function resolveRunConfig(
   inferenceProfiles: InferenceProfileMap;
   inferenceCfg: InferenceProfile;
   sandboxCfg: SandboxConfig;
+  routerCfg: RouterConfig;
 }> {
   const inferenceProfiles = blueprint.components?.inference?.profiles ?? {};
   if (!(profile in inferenceProfiles)) {
@@ -297,7 +325,8 @@ async function resolveRunConfig(
   }
 
   const sandboxCfg = blueprint.components?.sandbox ?? {};
-  return { inferenceProfiles, inferenceCfg, sandboxCfg };
+  const routerCfg = blueprint.components?.router ?? {};
+  return { inferenceProfiles, inferenceCfg, sandboxCfg, routerCfg };
 }
 
 // ── Actions ─────────────────────────────────────────────────────
@@ -317,6 +346,11 @@ export interface RunPlan {
     model: string | undefined;
     credential_env: string | undefined;
   };
+  router: {
+    enabled: boolean;
+    port: number;
+    pool_config_path: string | undefined;
+  };
   policy_additions: PolicyAdditions;
   dry_run: boolean;
 }
@@ -329,7 +363,7 @@ export async function actionPlan(
   const rid = emitRunId();
   progress(10, "Validating blueprint");
 
-  const { inferenceCfg, sandboxCfg } = await resolveRunConfig(
+  const { inferenceCfg, sandboxCfg, routerCfg } = await resolveRunConfig(
     profile,
     blueprint,
     options?.endpointUrl,
@@ -341,6 +375,9 @@ export async function actionPlan(
       "openshell CLI not found. Install OpenShell first.\n  See: https://github.com/NVIDIA/OpenShell",
     );
   }
+
+  const routerEnabled = routerCfg.enabled === true;
+  const routerPort = routerCfg.port ?? DEFAULT_ROUTER_PORT;
 
   const plan: RunPlan = {
     run_id: rid,
@@ -356,6 +393,11 @@ export async function actionPlan(
       endpoint: inferenceCfg.endpoint,
       model: inferenceCfg.model,
       credential_env: inferenceCfg.credential_env,
+    },
+    router: {
+      enabled: routerEnabled,
+      port: routerPort,
+      pool_config_path: routerCfg.pool_config_path,
     },
     policy_additions: blueprint.components?.policy?.additions ?? {},
     dry_run: options?.dryRun ?? false,

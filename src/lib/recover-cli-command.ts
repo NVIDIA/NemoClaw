@@ -5,7 +5,7 @@
 
 import { Args, Command, Flags } from "@oclif/core";
 
-import { connectSandbox } from "./sandbox-runtime-actions";
+import { connectSandbox } from "./actions/sandbox/runtime";
 
 export default class RecoverCliCommand extends Command {
   static id = "sandbox:recover";

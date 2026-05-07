@@ -67,6 +67,15 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+describe("messaging legacy bridge credentials", () => {
+  it("keeps the legacy ALLOWED_CHAT_IDS entry for the deploy-time bridge", () => {
+    // The Telegram bridge runtime injected by deploy.ts still expects the
+    // legacy env name. Channel config values are persisted separately from
+    // provider credentials, but this credential key stays for deploy.ts.
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("ALLOWED_CHAT_IDS");
+  });
+});
+
 describe("host-side credential staging", () => {
   it("stages values in process.env and never writes to disk", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));

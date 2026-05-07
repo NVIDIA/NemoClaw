@@ -3,7 +3,7 @@
 
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 
-import { ROOT } from "./paths";
+import { ROOT } from "./state/paths";
 
 export interface StreamSandboxCreateResult {
   status: number;

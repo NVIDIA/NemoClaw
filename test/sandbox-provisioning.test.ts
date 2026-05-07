@@ -254,6 +254,8 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const localShare = path.join(tmp, "usr", "local", "share", "nemoclaw");
     const pluginDir = path.join(localShare, "openclaw-plugins", "kimi-inference-compat");
     const pluginFile = path.join(pluginDir, "index.js");
+    const nestedPluginDir = path.join(pluginDir, "lib");
+    const nestedPluginFile = path.join(nestedPluginDir, "helper.js");
     const files = [
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-codex-acp"),
@@ -261,12 +263,13 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localLib, "generate-openclaw-config.py"),
       path.join(localLib, "ws-proxy-fix.js"),
       pluginFile,
+      nestedPluginFile,
     ];
 
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
-      fs.mkdirSync(pluginDir, { recursive: true });
+      fs.mkdirSync(nestedPluginDir, { recursive: true });
       for (const file of files) {
         fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
         fs.chmodSync(file, 0o600);
@@ -291,10 +294,14 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       );
       const pluginDirMode = (fs.statSync(pluginDir).mode & 0o777).toString(8);
       const pluginMode = (fs.statSync(pluginFile).mode & 0o777).toString(8);
+      const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
+      const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
       expect(generatorMode).toBe("755");
       expect(wsProxyMode).toBe("644");
       expect(pluginDirMode).toBe("755");
       expect(pluginMode).toBe("644");
+      expect(nestedPluginDirMode).toBe("755");
+      expect(nestedPluginMode).toBe("644");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -40,18 +40,15 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 from urllib.parse import urlparse
 
-KIMI_K26_MODEL_ID = "moonshotai/kimi-k2.6"
-KIMI_K26_MANAGED_INFERENCE_COMPAT = {
-    "requiresStringContent": True,
-    "maxTokensField": "max_tokens",
-    "requiresToolResultName": True,
+KNOWN_MODEL_SETUP_AGENTS = {"openclaw", "hermes"}
+MODEL_SETUP_EFFECT_KEYS = {
+    "openclaw": {"openclawCompat", "openclawPlugins"},
+    "hermes": {"hermesCompat"},
 }
-KIMI_K26_MANAGED_INFERENCE_PLUGIN_ID = "nemoclaw-kimi-inference-compat"
-KIMI_K26_MANAGED_INFERENCE_PLUGIN_PATH = (
-    "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat"
-)
+
 
 def _coerce_positive_int(env: dict, name: str, default: int) -> int:
     raw = env.get(name) or str(default)
@@ -81,15 +78,223 @@ def is_loopback(hostname: str) -> bool:
     return bool(re.match(r"^127(?:\.\d{1,3}){3}$", normalized))
 
 
-def _is_kimi_k26_managed_inference(
-    model: str, provider_key: str, inference_base_url: str, inference_api: str
-) -> bool:
-    return (
-        model.strip().lower() == KIMI_K26_MODEL_ID
-        and provider_key == "inference"
-        and inference_api == "openai-completions"
-        and inference_base_url.rstrip("/") == "https://inference.local/v1"
+def _registry_roots(env: dict) -> list[Path]:
+    roots: list[Path] = []
+    explicit = env.get("NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR")
+    if explicit:
+        roots.append(Path(explicit))
+
+    script_dir = Path(__file__).resolve().parent
+    roots.extend(
+        [
+            Path("/opt/nemoclaw-blueprint/model-specific-setup"),
+            Path("/sandbox/.nemoclaw/blueprints/0.1.0/model-specific-setup"),
+            script_dir.parent / "nemoclaw-blueprint" / "model-specific-setup",
+            Path.cwd() / "nemoclaw-blueprint" / "model-specific-setup",
+        ]
     )
+
+    unique_roots: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root)
+        if key not in seen:
+            unique_roots.append(root)
+            seen.add(key)
+    return unique_roots
+
+
+def _find_registry_root(env: dict) -> Path | None:
+    explicit = env.get("NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR")
+    if explicit:
+        explicit_path = Path(explicit)
+        if not explicit_path.is_dir():
+            raise ValueError(
+                "NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR must point to an existing directory: "
+                f"{explicit}"
+            )
+        return explicit_path
+
+    for root in _registry_roots(env):
+        if root.is_dir():
+            return root
+    return None
+
+
+def _validate_manifest_payload(payload: object, manifest_path: Path) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError(f"{manifest_path}: manifest must be a JSON object")
+
+    setup_id = payload.get("id")
+    if not isinstance(setup_id, str) or not setup_id.strip():
+        raise ValueError(f"{manifest_path}: field 'id' must be a non-empty string")
+
+    agent = payload.get("agent")
+    if not isinstance(agent, str) or not agent.strip():
+        raise ValueError(f"{manifest_path}: field 'agent' is required")
+    if agent not in KNOWN_MODEL_SETUP_AGENTS:
+        raise ValueError(f"{manifest_path}: unknown agent '{agent}'")
+
+    description = payload.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError(f"{manifest_path}: field 'description' must be a non-empty string")
+
+    match = payload.get("match")
+    if not isinstance(match, dict):
+        raise ValueError(f"{manifest_path}: field 'match' must be an object")
+    if not match:
+        raise ValueError(f"{manifest_path}: field 'match' must be a non-empty object")
+    allowed_match_keys = {"modelIds", "providerKey", "inferenceApi", "baseUrl"}
+    unknown_match_keys = sorted(set(match) - allowed_match_keys)
+    if unknown_match_keys:
+        raise ValueError(
+            f"{manifest_path}: unknown match keys: {', '.join(unknown_match_keys)}"
+        )
+    model_ids = match.get("modelIds")
+    if model_ids is not None and (
+        not isinstance(model_ids, list)
+        or not model_ids
+        or not all(isinstance(model_id, str) and model_id.strip() for model_id in model_ids)
+    ):
+        raise ValueError(f"{manifest_path}: match.modelIds must be a non-empty string array")
+    for key in ("providerKey", "inferenceApi", "baseUrl"):
+        value = match.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"{manifest_path}: match.{key} must be a non-empty string")
+
+    effects = payload.get("effects")
+    if not isinstance(effects, dict) or not effects:
+        raise ValueError(f"{manifest_path}: field 'effects' must be a non-empty object")
+
+    return payload
+
+
+def _validate_selected_agent_effects(payload: dict, manifest_path: Path, registry_root: Path) -> None:
+    agent = payload["agent"]
+    effects = payload["effects"]
+    allowed_effect_keys = MODEL_SETUP_EFFECT_KEYS[agent]
+    unknown_effect_keys = sorted(set(effects) - allowed_effect_keys)
+    if unknown_effect_keys:
+        raise ValueError(
+            f"{manifest_path}: unknown effects for agent '{agent}': "
+            f"{', '.join(unknown_effect_keys)}"
+        )
+
+    if agent == "openclaw":
+        compat = effects.get("openclawCompat")
+        if compat is not None and not isinstance(compat, dict):
+            raise ValueError(f"{manifest_path}: effects.openclawCompat must be an object")
+
+        plugins = effects.get("openclawPlugins", [])
+        if not isinstance(plugins, list):
+            raise ValueError(f"{manifest_path}: effects.openclawPlugins must be an array")
+        for index, plugin in enumerate(plugins):
+            if not isinstance(plugin, dict):
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawPlugins[{index}] must be an object"
+                )
+            for key in ("id", "path", "loadPath"):
+                value = plugin.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"{manifest_path}: effects.openclawPlugins[{index}].{key} "
+                        "must be a non-empty string"
+                    )
+            source_path = Path(plugin["path"])
+            if source_path.is_absolute() or ".." in source_path.parts:
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawPlugins[{index}].path "
+                    "must be relative to nemoclaw-blueprint"
+                )
+            if not (registry_root.parent / source_path).exists():
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawPlugins[{index}].path does not exist: "
+                    f"{plugin['path']}"
+                )
+            expected_load_path = f"/usr/local/share/nemoclaw/{plugin['path'].strip('/')}"
+            if plugin["loadPath"].rstrip("/") != expected_load_path:
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawPlugins[{index}].loadPath "
+                    f"must be '{expected_load_path}'"
+                )
+
+    if agent == "hermes":
+        compat = effects.get("hermesCompat")
+        if compat is not None and not isinstance(compat, dict):
+            raise ValueError(f"{manifest_path}: effects.hermesCompat must be an object")
+
+
+def _model_setup_matches(payload: dict, context: dict) -> bool:
+    match = payload["match"]
+    model_ids = match.get("modelIds")
+    if model_ids and context["model"].strip().lower() not in {
+        model_id.strip().lower() for model_id in model_ids
+    }:
+        return False
+
+    provider_key = match.get("providerKey")
+    if provider_key and context["providerKey"] != provider_key:
+        return False
+
+    inference_api = match.get("inferenceApi")
+    if inference_api and context["inferenceApi"] != inference_api:
+        return False
+
+    base_url = match.get("baseUrl")
+    if base_url and context["baseUrl"].rstrip("/") != base_url.rstrip("/"):
+        return False
+
+    return True
+
+
+def _matching_model_specific_setups(agent: str, context: dict, env: dict) -> list[dict]:
+    registry_root = _find_registry_root(env)
+    if registry_root is None:
+        return []
+
+    manifests: list[dict] = []
+    for manifest_path in sorted(registry_root.glob("**/*.json")):
+        if manifest_path.name == "schema.json":
+            continue
+        with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+            payload = _validate_manifest_payload(json.load(manifest_file), manifest_path)
+        if payload["agent"] != agent:
+            continue
+        _validate_selected_agent_effects(payload, manifest_path, registry_root)
+        if _model_setup_matches(payload, context):
+            manifests.append(payload)
+    return manifests
+
+
+def _coerce_compat_dict(value: object) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    raise ValueError("NEMOCLAW_INFERENCE_COMPAT_B64 must decode to a JSON object or null")
+
+
+def _apply_openclaw_setup_effects(
+    setup: dict, inference_compat: dict, openclaw_plugins: list[dict], plugin_ids: set[str]
+) -> None:
+    effects = setup["effects"]
+    for key, value in effects.get("openclawCompat", {}).items():
+        if key in inference_compat and inference_compat[key] != value:
+            raise ValueError(
+                "model-specific setup "
+                f"'{setup['id']}' conflicts with inference compat key '{key}'"
+            )
+        inference_compat[key] = value
+
+    for plugin in effects.get("openclawPlugins", []):
+        plugin_id = plugin["id"]
+        if plugin_id in plugin_ids:
+            raise ValueError(
+                "model-specific setup "
+                f"'{setup['id']}' declares duplicate OpenClaw plugin '{plugin_id}'"
+            )
+        plugin_ids.add(plugin_id)
+        openclaw_plugins.append(plugin)
 
 
 def build_config(env: dict | None = None) -> dict:
@@ -131,18 +336,28 @@ def build_config(env: dict | None = None) -> dict:
         raise ValueError("NEMOCLAW_AGENT_TIMEOUT must be a positive integer")
     agent_timeout = int(_raw_agent_timeout)
 
-    kimi_managed_inference = _is_kimi_k26_managed_inference(
-        model, provider_key, inference_base_url, inference_api
+    model_specific_setups = _matching_model_specific_setups(
+        "openclaw",
+        {
+            "model": model,
+            "providerKey": provider_key,
+            "baseUrl": inference_base_url,
+            "inferenceApi": inference_api,
+        },
+        env,
     )
 
-    inference_compat = json.loads(
-        base64.b64decode(env["NEMOCLAW_INFERENCE_COMPAT_B64"]).decode("utf-8")
+    inference_compat = _coerce_compat_dict(
+        json.loads(
+            base64.b64decode(env["NEMOCLAW_INFERENCE_COMPAT_B64"]).decode("utf-8")
+        )
     )
-    if kimi_managed_inference:
-        inference_compat = {
-            **inference_compat,
-            **KIMI_K26_MANAGED_INFERENCE_COMPAT,
-        }
+    openclaw_plugins: list[dict] = []
+    openclaw_plugin_ids: set[str] = set()
+    for setup in model_specific_setups:
+        _apply_openclaw_setup_effects(
+            setup, inference_compat, openclaw_plugins, openclaw_plugin_ids
+        )
 
     msg_channels = json.loads(
         base64.b64decode(
@@ -306,9 +521,13 @@ def build_config(env: dict | None = None) -> dict:
             plugin_entries[_plugin_id] = {"enabled": False}
 
     plugins = {"entries": plugin_entries}
-    if kimi_managed_inference:
-        plugin_entries[KIMI_K26_MANAGED_INFERENCE_PLUGIN_ID] = {"enabled": True}
-        plugins["load"] = {"paths": [KIMI_K26_MANAGED_INFERENCE_PLUGIN_PATH]}
+    plugin_load_paths: list[str] = []
+    for plugin in openclaw_plugins:
+        plugin_entries[plugin["id"]] = {"enabled": True}
+        if plugin["loadPath"] not in plugin_load_paths:
+            plugin_load_paths.append(plugin["loadPath"])
+    if plugin_load_paths:
+        plugins["load"] = {"paths": plugin_load_paths}
 
     config = {
         "agents": {

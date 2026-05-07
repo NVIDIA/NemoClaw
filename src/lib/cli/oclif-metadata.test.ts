@@ -9,8 +9,14 @@ import {
 } from "./oclif-metadata";
 
 describe("oclif metadata lookup", () => {
-  it("returns registered command summaries", () => {
+  it("returns pattern-discovered command summaries", () => {
     expect(getRegisteredOclifCommandSummary("sandbox:logs")).toBe("Stream sandbox logs");
+  });
+
+  it("looks up internal commands from pattern discovery", () => {
+    expect(getRegisteredOclifCommandSummary("internal:uninstall:plan")).toBe(
+      "Internal: build the NemoClaw uninstall plan",
+    );
   });
 
   it("returns null for unknown command IDs", () => {

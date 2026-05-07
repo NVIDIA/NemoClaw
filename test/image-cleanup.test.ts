@@ -11,10 +11,12 @@ import path from "node:path";
 import {
   removeSandboxImage,
   removeSandboxRegistryEntry,
-} from "../src/lib/sandbox-destroy-action";
+} from "../src/lib/actions/sandbox/destroy";
 import { getSandboxDeleteOutcome } from "../src/lib/domain/sandbox/destroy";
 import { normalizeGarbageCollectImagesOptions } from "../src/lib/domain/lifecycle/options";
-import { help as renderRootHelp } from "../src/lib/root-help-action";
+import { help as renderRootHelp } from "../src/lib/actions/root-help";
+import { COMMANDS, globalCommandTokens } from "../src/lib/command-registry";
+import { getRegisteredOclifCommandMetadata } from "../src/lib/cli/oclif-metadata";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -98,7 +100,7 @@ describe("image cleanup: onboard records imageTag in registry (#2086)", () => {
 });
 
 describe("image cleanup: registry stores imageTag (#2086)", () => {
-  const registrySrc = fs.readFileSync(path.join(ROOT, "src/lib/registry.ts"), "utf-8");
+  const registrySrc = fs.readFileSync(path.join(ROOT, "src/lib/state/registry.ts"), "utf-8");
 
   it("SandboxEntry interface includes imageTag field", () => {
     expect(registrySrc).toMatch(/imageTag\?:\s*string\s*\|\s*null/);
@@ -109,25 +111,22 @@ describe("image cleanup: registry stores imageTag (#2086)", () => {
     const registerMatch = registrySrc.match(/function registerSandbox[\s\S]*?^}/m);
     expect(registerMatch).toBeTruthy();
     if (!registerMatch) {
-      throw new Error("Expected registerSandbox() in src/lib/registry.ts");
+      throw new Error("Expected registerSandbox() in src/lib/state/registry.ts");
     }
     expect(registerMatch[0]).toContain("imageTag");
   });
 });
 
 describe("image cleanup: gc command exists (#2086)", () => {
-  const nemoclawSrc = fs.readFileSync(path.join(ROOT, "src/nemoclaw.ts"), "utf-8");
-  const registrySrc = fs.readFileSync(path.join(ROOT, "src/lib/command-registry.ts"), "utf-8");
-
   it("gc is a global command", () => {
-    // GLOBAL_COMMANDS is now derived from the command registry.
-    expect(registrySrc).toContain('"nemoclaw gc"');
-    expect(nemoclawSrc).toContain("globalCommandTokens()");
+    expect(COMMANDS).toContainEqual(
+      expect.objectContaining({ commandId: "gc", scope: "global", usage: "nemoclaw gc" }),
+    );
+    expect(globalCommandTokens()).toContain("gc");
   });
 
-  it("gc command is dispatched through the oclif bridge", () => {
-    expect(nemoclawSrc).toContain("resolveGlobalOclifDispatch");
-    expect(registrySrc).toContain('"nemoclaw gc"');
+  it("gc command is discovered by oclif", () => {
+    expect(getRegisteredOclifCommandMetadata("gc")).toBeTruthy();
   });
 
   it("gc option normalization supports dry-run and confirmation aliases", () => {

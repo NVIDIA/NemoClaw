@@ -15,8 +15,8 @@ export default class ChannelsRemoveCommand extends Command {
   static strict = true;
   static summary = "Clear messaging channel credentials and rebuild";
   static description = "Remove credentials for a messaging channel and queue a sandbox rebuild.";
-  static usage = ["<name> channels remove <channel> [--dry-run]"];
-  static examples = ["<%= config.bin %> alpha channels remove slack --dry-run"];
+  static usage = ["<name> <channel> [--dry-run]"];
+  static examples = ["<%= config.bin %> sandbox channels remove alpha slack --dry-run"];
   static args = channelMutationArgs;
   static flags = channelMutationFlags;
 

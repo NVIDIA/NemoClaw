@@ -1,29 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Config as OclifConfig } from "@oclif/core";
 import { describe, expect, it } from "vitest";
 
-import commands from "../../dist/lib/commands/index.js";
-
-const publicCommandEntries = Object.entries(commands).filter(([, commandClass]) => {
-  const cls = commandClass as { hidden?: boolean };
-  return cls.hidden !== true;
-});
-
 describe("oclif command metadata", () => {
-  it("keeps public registered commands documented in oclif statics", () => {
+  it("keeps public discovered commands documented in oclif statics", async () => {
+    const config = await OclifConfig.load(process.cwd());
+    const publicCommands = config.commands.filter((command) => command.hidden !== true);
     const missing: string[] = [];
-    for (const [id, commandClass] of publicCommandEntries) {
-      const cls = commandClass as {
-        description?: string;
-        examples?: string[];
-        summary?: string;
-        usage?: string[];
-      };
-      if (!cls.summary) missing.push(`${id}: summary`);
-      if (!cls.description) missing.push(`${id}: description`);
-      if (!Array.isArray(cls.usage) || cls.usage.length === 0) missing.push(`${id}: usage`);
-      if (!Array.isArray(cls.examples) || cls.examples.length === 0) missing.push(`${id}: examples`);
+
+    for (const command of publicCommands) {
+      if (!command.summary) missing.push(`${command.id}: summary`);
+      if (!command.description) missing.push(`${command.id}: description`);
+      if (!Array.isArray(command.usage) || command.usage.length === 0) {
+        missing.push(`${command.id}: usage`);
+      }
+      if (!Array.isArray(command.examples) || command.examples.length === 0) {
+        missing.push(`${command.id}: examples`);
+      }
     }
 
     expect(missing).toEqual([]);

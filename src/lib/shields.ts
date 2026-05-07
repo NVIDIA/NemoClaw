@@ -14,7 +14,7 @@ const fs = require("fs");
 const path = require("path");
 const { fork } = require("child_process");
 const { run, runCapture, validateName, shellQuote } = require("./runner");
-const { dockerExecFileSync } = require("./docker/exec");
+const { dockerExecFileSync } = require("./adapters/docker/exec");
 const {
   buildPolicyGetCommand,
   buildPolicySetCommand,

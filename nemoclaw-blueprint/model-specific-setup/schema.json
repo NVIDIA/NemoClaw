@@ -1,0 +1,147 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/nemoclaw-blueprint/model-specific-setup/schema.json",
+  "title": "NemoClaw Model-Specific Setup Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "agent", "description", "match", "effects"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+    },
+    "agent": {
+      "type": "string",
+      "enum": ["openclaw", "hermes"]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "match": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "modelIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "providerKey": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "inferenceApi": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "baseUrl": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        }
+      }
+    },
+    "effects": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "openclawCompat": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "openclawPlugins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "path", "loadPath"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^openclaw-plugins/(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+              },
+              "loadPath": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^/usr/local/share/nemoclaw/openclaw-plugins/(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+              }
+            }
+          }
+        },
+        "hermesCompat": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["agent"],
+        "properties": {
+          "agent": {
+            "const": "openclaw"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "effects": {
+            "not": {
+              "required": ["hermesCompat"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["agent"],
+        "properties": {
+          "agent": {
+            "const": "hermes"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "effects": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": ["openclawCompat"]
+                },
+                {
+                  "required": ["openclawPlugins"]
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}
