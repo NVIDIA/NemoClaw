@@ -177,6 +177,42 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
   });
 
+  it("writes SLACK_ALLOWED_USERS to .env when slack allowed IDs are provided", () => {
+    const { envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["slack"]),
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
+        slack: ["U01ABCDEF", "U02GHIJKL"],
+      }),
+    });
+
+    expect(envFile).toContain("SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n");
+    expect(envFile).toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
+    expect(envFile).toContain("SLACK_ALLOWED_USERS=U01ABCDEF,U02GHIJKL\n");
+  });
+
+  it("omits SLACK_ALLOWED_USERS when no slack allowed IDs are provided", () => {
+    const { envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["slack"]),
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({}),
+    });
+
+    expect(envFile).not.toContain("SLACK_ALLOWED_USERS=");
+  });
+
+  it("passes a slack '*' wildcard through to SLACK_ALLOWED_USERS unchanged", () => {
+    const { envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["slack"]),
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
+        slack: ["*"],
+      }),
+    });
+
+    // Hermes' slack platform treats '*' as "any workspace user" — see
+    // gateway/platforms/slack.py. The NemoClaw config builder must not
+    // rewrite or filter the wildcard.
+    expect(envFile).toContain("SLACK_ALLOWED_USERS=*\n");
+  });
+
   it("omits Telegram behavior config when requireMention is not boolean", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram"]),

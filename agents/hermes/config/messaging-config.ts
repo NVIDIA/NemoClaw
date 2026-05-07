@@ -30,6 +30,9 @@ export function buildMessagingEnvLines(
   if (allowedIds.telegram?.length) {
     envLines.push(`TELEGRAM_ALLOWED_USERS=${allowedIds.telegram.map(String).join(",")}`);
   }
+  if (allowedIds.slack?.length) {
+    envLines.push(`SLACK_ALLOWED_USERS=${allowedIds.slack.map(String).join(",")}`);
+  }
 
   return envLines;
 }

@@ -18,6 +18,7 @@ describe("messaging channel config", () => {
       "DISCORD_SERVER_ID",
       "DISCORD_USER_ID",
       "DISCORD_REQUIRE_MENTION",
+      "SLACK_ALLOWED_USERS",
     ]);
   });
 

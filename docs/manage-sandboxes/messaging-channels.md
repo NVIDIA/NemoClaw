@@ -46,7 +46,7 @@ For details, refer to [Commands](../reference/commands.md).
 |---------|-----------------|-------------------|
 | Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting, `TELEGRAM_REQUIRE_MENTION` for group-chat replies |
 | Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
-| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | None |
+| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM allowlisting |
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
@@ -63,6 +63,9 @@ Set `DISCORD_USER_ID` to restrict access to one user; otherwise, any member of t
 
 Slack uses Socket Mode and requires two tokens.
 Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_TOKEN` for the app-level Socket Mode token (`xapp-...`).
+`SLACK_ALLOWED_USERS` is a comma-separated list of Slack member IDs (starting with `U...`, or `W...` on enterprise grid) that are authorized to DM the bot.
+Set it to `*` to allow any user in the installed workspace.
+Find a member ID by opening a user's profile in Slack, then **View full profile → ⋯ → Copy member ID**.
 
 ## Enable Channels During Onboarding
 
@@ -108,7 +111,7 @@ $ nemoclaw my-assistant channels add slack
 
 `channels add` prompts for missing credentials, registers the bridge with the OpenShell gateway, updates the sandbox registry, and asks whether to rebuild immediately.
 Choose the rebuild so the running sandbox image picks up the new channel.
-If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, or `DISCORD_REQUIRE_MENTION`, export them before the rebuild starts.
+If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, or `SLACK_ALLOWED_USERS`, export them before the rebuild starts.
 If you defer the rebuild, apply the change later:
 
 ```console

@@ -64,12 +64,16 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
     label: "Slack Bot Token",
     tokenFormat: /^xoxb-[A-Za-z0-9_-]+$/,
-    tokenFormatHint: "Slack bot tokens start with 'xoxb-' (e.g. xoxb-1234-5678-abcdef).",
+    tokenFormatHint: "Slack bot tokens start with 'xoxb-' (e.g. xoxb-1...cdef).",
     appTokenEnvKey: "SLACK_APP_TOKEN",
     appTokenHelp: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
     appTokenLabel: "Slack App Token (Socket Mode)",
     appTokenFormat: /^xapp-[A-Za-z0-9_-]+$/,
     appTokenFormatHint: "Slack app tokens start with 'xapp-' (e.g. xapp-1-A0000-12345-abcdef).",
+    userIdEnvKey: "SLACK_ALLOWED_USERS",
+    userIdHelp: "Slack → View full profile → ⋯ → Copy member ID",
+    userIdLabel: "Slack User ID (for DM access)",
+    allowIdsMode: "dm",
   },
 };
 

@@ -28,6 +28,15 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelDef("slack")?.appTokenEnvKey).toBe("SLACK_APP_TOKEN");
   });
 
+  it("exposes a DM allowlist env key for slack", () => {
+    const slack = getChannelDef("slack");
+    expect(slack?.userIdEnvKey).toBe("SLACK_ALLOWED_USERS");
+    expect(slack?.allowIdsMode).toBe("dm");
+    // No serverIdEnvKey — Slack gates on workspace install + user allowlist,
+    // not on a server/guild selection like Discord.
+    expect(slack?.serverIdEnvKey).toBeUndefined();
+  });
+
   it("normalises case and whitespace when resolving a channel name", () => {
     expect(getChannelDef("  Telegram  ")).toBe(KNOWN_CHANNELS.telegram);
     expect(getChannelDef("DISCORD")).toBe(KNOWN_CHANNELS.discord);
