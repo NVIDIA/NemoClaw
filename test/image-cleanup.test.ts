@@ -160,6 +160,22 @@ describe("shields state cleanup on destroy (#3114)", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("rejects path traversal in sandbox name", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-cleanup-"));
+    const escapedFile = path.join(tmpDir, "..", "shields-traversal.json");
+    try {
+      fs.writeFileSync(escapedFile, "should survive");
+
+      // A name containing ../ should not delete files outside stateDir
+      removeShieldsState("../../shields-traversal", tmpDir);
+
+      expect(fs.existsSync(escapedFile)).toBe(true);
+    } finally {
+      fs.rmSync(escapedFile, { force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("image cleanup: gc command exists (#2086)", () => {

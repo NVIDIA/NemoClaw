@@ -127,8 +127,14 @@ export function removeShieldsState(
   sandboxName: string,
   stateDir = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state"),
 ): void {
+  const resolvedStateDir = path.resolve(stateDir);
   for (const prefix of ["shields-", "shields-timer-"]) {
-    const filePath = path.join(stateDir, `${prefix}${sandboxName}.json`);
+    const filePath = path.resolve(resolvedStateDir, `${prefix}${sandboxName}.json`);
+    if (!filePath.startsWith(`${resolvedStateDir}${path.sep}`)) {
+      // Defense-in-depth: sandbox names are validated to [a-z0-9-] at
+      // all entry points, but reject traversal attempts just in case.
+      continue;
+    }
     try {
       fs.rmSync(filePath, { force: true });
     } catch (error) {
