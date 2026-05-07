@@ -4,6 +4,7 @@
 /* v8 ignore start -- exercised through CLI subprocess destroy/rebuild tests. */
 
 import fs from "node:fs";
+import path from "node:path";
 
 import { CLI_NAME } from "./branding";
 import { prompt as askPrompt } from "./credentials";
@@ -129,6 +130,32 @@ function cleanupSandboxServices(
 }
 
 /**
+ * Remove host-side shields state files for a sandbox.
+ *
+ * Without this cleanup a stale shields-<name>.json from a previous
+ * `shields up` survives destroy → re-onboard and causes
+ * `deriveShieldsMode` to report "locked" on a fresh sandbox.
+ *
+ * See: https://github.com/NVIDIA/NemoClaw/issues/3114
+ */
+export function removeShieldsState(
+  sandboxName: string,
+  stateDir = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state"),
+): void {
+  for (const prefix of ["shields-", "shields-timer-"]) {
+    const filePath = path.join(stateDir, `${prefix}${sandboxName}.json`);
+    try {
+      fs.rmSync(filePath, { force: true });
+    } catch (error) {
+      // force: true already suppresses ENOENT; warn on real failures
+      // (e.g. EPERM) so stale state doesn't silently survive.
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`  ${YW}⚠${R} Failed to remove shields state '${filePath}': ${message}`);
+    }
+  }
+}
+
+/**
  * Remove the host-side Docker image that was built for a sandbox during onboard.
  * Must be called before registry.removeSandbox() since the imageTag is stored there.
  */
@@ -246,6 +273,7 @@ export async function destroySandbox(sandboxName: string, args: string[] = []): 
     !!registry.getSandbox(sandboxName);
 
   cleanupSandboxServices(sandboxName, { stopHostServices: shouldStopHostServices });
+  removeShieldsState(sandboxName);
   const removed = removeSandboxRegistryEntry(sandboxName);
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {

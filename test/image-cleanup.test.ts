@@ -6,12 +6,14 @@
 
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
   getSandboxDeleteOutcome,
   removeSandboxImage,
   removeSandboxRegistryEntry,
+  removeShieldsState,
 } from "../src/lib/sandbox-destroy-action";
 import { help as renderRootHelp } from "../src/lib/root-help-action";
 
@@ -111,6 +113,49 @@ describe("image cleanup: registry stores imageTag (#2086)", () => {
       throw new Error("Expected registerSandbox() in src/lib/registry.ts");
     }
     expect(registerMatch[0]).toContain("imageTag");
+  });
+});
+
+describe("shields state cleanup on destroy (#3114)", () => {
+  it("removes shields and shields-timer state files for the sandbox", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-cleanup-"));
+    try {
+      const shieldsFile = path.join(tmpDir, "shields-alpha.json");
+      const timerFile = path.join(tmpDir, "shields-timer-alpha.json");
+      fs.writeFileSync(shieldsFile, JSON.stringify({ shieldsDown: false }));
+      fs.writeFileSync(timerFile, JSON.stringify({ pid: 12345 }));
+
+      removeShieldsState("alpha", tmpDir);
+
+      expect(fs.existsSync(shieldsFile)).toBe(false);
+      expect(fs.existsSync(timerFile)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("is a no-op when no shields state files exist", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-cleanup-"));
+    try {
+      // Must not throw
+      removeShieldsState("nonexistent", tmpDir);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not remove state files for other sandboxes", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-cleanup-"));
+    try {
+      const otherFile = path.join(tmpDir, "shields-bravo.json");
+      fs.writeFileSync(otherFile, JSON.stringify({ shieldsDown: false }));
+
+      removeShieldsState("alpha", tmpDir);
+
+      expect(fs.existsSync(otherFile)).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
