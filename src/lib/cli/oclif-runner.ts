@@ -28,6 +28,14 @@ function isOclifParseError(error: unknown): boolean {
   return name === "NonExistentFlagsError" || name === "UnexpectedArgsError" || name === "CLIError";
 }
 
+function isOclifExitError(error: unknown): boolean {
+  const name =
+    error && typeof error === "object"
+      ? (error as { constructor?: { name?: string } }).constructor?.name
+      : "";
+  return name === "ExitError";
+}
+
 function formatOclifError(error: unknown): string {
   if (error instanceof Error) {
     return error.message.trim();
@@ -80,6 +88,15 @@ export async function runRegisteredOclifCommand(
     if (isOclifParseError(error)) {
       errorLine(`  ${formatOclifError(error)}`);
       exit(exitCode ?? 1);
+    }
+
+    // NCQ #3180: oclif's Command.exit(code) throws an ExitError carrying
+    // `oclif.exit`. Treat that as a graceful exit with the requested code
+    // so we don't leak a raw `at Object.exit (... /@oclif/core/...)` stack
+    // trace to the user. Other oclif error classes (e.g. RequiredArgsError)
+    // are left to bubble up so oclif's own handler still prints them.
+    if (isOclifExitError(error) && typeof exitCode === "number") {
+      exit(exitCode);
     }
 
     throw error;
