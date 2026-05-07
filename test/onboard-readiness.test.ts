@@ -88,6 +88,16 @@ describe("sandbox readiness parsing", () => {
     ).toBeTruthy();
   });
 
+  it("treats Running phase as alive (Brev launchable deployments)", () => {
+    expect(isSandboxReady("my-assistant   Running   2m ago", "my-assistant")).toBeTruthy();
+  });
+
+  it("treats Running phase with ANSI codes as alive", () => {
+    expect(
+      isSandboxReady("\x1b[1mmy-assistant\x1b[0m   \x1b[33mRunning\x1b[0m   2m ago", "my-assistant"),
+    ).toBeTruthy();
+  });
+
   it("rejects when output only contains name in a URL or path", () => {
     expect(
       !isSandboxReady("Connecting to my-assistant.openshell.internal Ready", "my-assistant"),

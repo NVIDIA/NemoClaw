@@ -33,7 +33,7 @@ vi.mock("../status-command-deps", () => ({
   buildStatusCommandDeps: mocks.buildStatusCommandDeps,
 }));
 
-vi.mock("../global-cli-actions", () => ({
+vi.mock("../actions/global", () => ({
   runBackupAllAction: mocks.runBackupAllAction,
   runGarbageCollectImagesAction: mocks.runGarbageCollectImagesAction,
   runOnboardAction: mocks.runOnboardAction,

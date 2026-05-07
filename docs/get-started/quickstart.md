@@ -75,12 +75,14 @@ The inference provider prompt presents a numbered list.
   5) Other Anthropic-compatible endpoint
   6) Google Gemini
   7) Local Ollama (localhost:11434)
+  8) Model Router (complexity-based routing)
   Choose [1]:
 ```
 
 Pick the option that matches where you want inference traffic to go, then expand the matching helper below for the follow-up prompts and the API key environment variable to set.
 For the full list of providers and validation behavior, refer to [Inference Options](../inference/inference-options.md).
 Local Ollama appears when NemoClaw detects a usable local Ollama path or can offer an install or start action for your platform.
+The Model Router option appears when the blueprint router profile is enabled.
 
 :::{tip}
 Export the API key before launching the installer so the wizard does not have to ask for it.
@@ -206,6 +208,31 @@ For setup details, including GPU recommendations and starter model choices, refe
 
 :::
 
+:::{dropdown} Option 8: Model Router
+:icon: git-compare
+
+Starts a host-side model router and routes sandbox inference through OpenShell to that router.
+The router chooses from the model pool in `nemoclaw-blueprint/router/pool-config.yaml` for each request.
+
+Use `NVIDIA_API_KEY` for the model pool credentials.
+
+Respond to the wizard as follows.
+
+1. At the `Choose [1]:` prompt, type `8` to select **Model Router (complexity-based routing)**.
+2. At the `NVIDIA_API_KEY:` prompt, paste your key if it is not already exported.
+3. Review the configuration summary and continue with the sandbox build.
+
+For scripted setup, set:
+
+```console
+$ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
+```
+
+The router listens on the host at port `4000`.
+The sandbox still calls `https://inference.local/v1`, so do not point in-sandbox tools at the host router port directly.
+
+:::
+
 :::{dropdown} Experimental: Local NIM and Local vLLM
 :icon: beaker
 
@@ -263,6 +290,8 @@ The preset selector lets you include more destinations, such as GitHub, Jira, Sl
 Press `r` to toggle a selected preset between read-only and read-write when the preset supports both modes.
 
 When the install completes, a summary confirms the running environment.
+Before printing the summary, NemoClaw verifies that the sandbox gateway and dashboard port forward are reachable.
+Inference route and messaging bridge checks are reported as warnings when they need more time or additional configuration.
 The `Model` and provider line reflects the inference option you picked during onboarding.
 The example below shows the result if you picked an OpenAI-compatible endpoint during onboarding.
 
@@ -279,7 +308,7 @@ Logs:        nemoclaw my-gpt-claw logs --follow
 [INFO]  === Installation complete ===
 ```
 
-If you picked a different option, the `Model` line shows that provider's model and label instead. For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
+If you picked a different option, the `Model` line shows that provider's model and label instead. For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
 
 ## Run Your First Agent Prompt
 

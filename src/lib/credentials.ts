@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-import { rejectSymlinksOnPath } from "./config-io";
+import { rejectSymlinksOnPath } from "./state/config-io";
 import { isErrnoException } from "./errno";
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
@@ -381,6 +381,91 @@ export function removeLegacyCredentialsFile(): void {
     return;
   }
   secureUnlink(legacyFile);
+}
+
+/**
+ * Securely remove the legacy plaintext credentials.json *iff* it carries
+ * no migratable credential payload — i.e. it's an empty `{}`, contains
+ * only keys outside `KNOWN_CREDENTIAL_ENV_KEYS`, or every allowlisted key
+ * has a blank/non-string value. Used by the onboard completion path to
+ * clean up the stale empty file left behind on upgrades from pre-gateway
+ * NemoClaw versions (#3105).
+ *
+ * Refuses to act on a missing/symlinked/oversized/non-JSON/non-object
+ * file — those are either nothing-to-do or "leave for inspection" cases
+ * that the regular migration path already handles. Returns `true` only
+ * if the file was actually removed.
+ */
+export function removeLegacyCredentialsFileIfEmpty(): boolean {
+  const legacyFile = getCredsFile();
+
+  try {
+    rejectSymlinksOnPath(path.dirname(legacyFile));
+  } catch {
+    return false;
+  }
+
+  let fd: number;
+  try {
+    fd = fs.openSync(legacyFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch {
+    return false;
+  }
+
+  let raw: string;
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return false;
+    if (stat.size > LEGACY_CREDS_FILE_MAX_BYTES) return false;
+    raw = fs.readFileSync(fd, "utf-8");
+  } catch {
+    return false;
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* fd already closed; ignore */
+    }
+  }
+
+  // A 0-byte or whitespace-only file is functionally identical to an
+  // empty {} — there's no migratable payload, so skip JSON.parse (which
+  // would throw on the empty input) and fall through to the unlink.
+  if (raw.trim() !== "") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return false;
+    }
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return false;
+    }
+
+    const allowed = new Set<string>(KNOWN_CREDENTIAL_ENV_KEYS);
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!allowed.has(key)) continue;
+      if (typeof value !== "string") continue;
+      if (normalizeCredentialValue(value)) {
+        return false;
+      }
+    }
+  }
+
+  // secureUnlink is best-effort and swallows errors. Verify the file is
+  // actually gone before claiming a successful removal — otherwise the
+  // runner would log "Removed stale ..." on a permission-denied unlink.
+  secureUnlink(legacyFile);
+  try {
+    fs.lstatSync(legacyFile);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return true;
+    }
+    return false;
+  }
+  return false;
 }
 
 /**

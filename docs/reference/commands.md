@@ -233,6 +233,7 @@ $ nemoclaw onboard --non-interactive --name my-build --from path/to/Dockerfile
 ```
 
 The flag wins over `NEMOCLAW_SANDBOX_NAME`.
+When prompting is possible, `NEMOCLAW_SANDBOX_NAME` fills the interactive default so you can press Enter to accept it.
 When prompting is impossible (no TTY or `--non-interactive`), the env var is also honoured so existing CI scripts keep working.
 Combining `--from <Dockerfile>` with non-interactive onboarding requires one of `--name` or `NEMOCLAW_SANDBOX_NAME`; otherwise onboarding exits rather than silently defaulting to `my-assistant` and clobbering the default sandbox.
 
@@ -338,6 +339,7 @@ Remote providers (NVIDIA Endpoints, OpenAI, Anthropic, Gemini) use a lightweight
 No API keys are sent.
 For cloud-only providers, the output omits the NIM status line unless a NIM container is registered or an unexpected NIM container is running.
 If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
+Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
 
 A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.

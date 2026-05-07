@@ -29,7 +29,7 @@ type ManifestWithOptionalPresets = {
 };
 
 // Import compiled modules from dist/
-const sandboxState = await import(path.join(REPO_ROOT, "dist", "lib", "sandbox-state.js"));
+const sandboxState = await import(path.join(REPO_ROOT, "dist", "lib", "state", "sandbox.js"));
 
 describe("rebuild policy preset restoration (#1952)", () => {
   describe("RebuildManifest policyPresets field", () => {

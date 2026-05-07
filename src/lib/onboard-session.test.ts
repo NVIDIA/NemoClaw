@@ -182,6 +182,44 @@ describe("onboard session", () => {
     expect(fresh.messagingChannels).toBeNull();
   });
 
+  it("persists messagingChannelConfig across save/load roundtrips", () => {
+    const created = session.createSession();
+    created.messagingChannelConfig = {
+      TELEGRAM_ALLOWED_IDS: "123,456",
+      TELEGRAM_REQUIRE_MENTION: "1",
+    };
+    session.saveSession(created);
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.messagingChannelConfig).toEqual({
+      TELEGRAM_ALLOWED_IDS: "123,456",
+      TELEGRAM_REQUIRE_MENTION: "1",
+    });
+  });
+
+  it("filters malformed messagingChannelConfig entries on load", () => {
+    const created = session.createSession();
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        ...created,
+        messagingChannelConfig: {
+          TELEGRAM_ALLOWED_IDS: "123",
+          TELEGRAM_REQUIRE_MENTION: "true",
+          DISCORD_REQUIRE_MENTION: "0",
+          NVIDIA_API_KEY: "not-channel-config",
+        },
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.messagingChannelConfig).toEqual({
+      TELEGRAM_ALLOWED_IDS: "123",
+      DISCORD_REQUIRE_MENTION: "0",
+    });
+  });
+
   it("#1737: persists telegramConfig across save/load roundtrips (requireMention=true)", () => {
     const created = session.createSession();
     created.telegramConfig = { requireMention: true };
@@ -544,6 +582,23 @@ describe("onboard session", () => {
 
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.messagingChannels).toEqual(["slack", "discord"]);
+  });
+
+  it("filterSafeUpdates preserves sanitized messagingChannelConfig", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      messagingChannelConfig: {
+        TELEGRAM_ALLOWED_IDS: "123",
+        TELEGRAM_REQUIRE_MENTION: "1",
+        DISCORD_REQUIRE_MENTION: "invalid",
+      },
+    });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.messagingChannelConfig).toEqual({
+      TELEGRAM_ALLOWED_IDS: "123",
+      TELEGRAM_REQUIRE_MENTION: "1",
+    });
   });
 
   it("#1737: filterSafeUpdates routes telegramConfig through markStepComplete", () => {

@@ -10,10 +10,10 @@ export default class SkillInstallCliCommand extends Command {
   static strict = true;
   static summary = "Deploy a skill directory to the sandbox";
   static description = "Validate a local SKILL.md directory and upload it to a running sandbox.";
-  static usage = ["<name> skill install <path>"];
+  static usage = ["<name> <path>"];
   static examples = [
-    "<%= config.bin %> alpha skill install ./my-skill",
-    "<%= config.bin %> alpha skill install ./my-skill/SKILL.md",
+    "<%= config.bin %> sandbox skill install alpha ./my-skill",
+    "<%= config.bin %> sandbox skill install alpha ./my-skill/SKILL.md",
   ];
   static args = {
     sandboxName: Args.string({

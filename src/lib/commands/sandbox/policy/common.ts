@@ -9,7 +9,7 @@ type PolicyRuntimeBridge = {
 };
 
 let runtimeBridgeFactory = (): PolicyRuntimeBridge => {
-  const actions = require("../../../policy-channel-actions") as {
+  const actions = require("../../../actions/sandbox/policy-channel") as {
     addSandboxPolicy: PolicyRuntimeBridge["sandboxPolicyAdd"];
     removeSandboxPolicy: PolicyRuntimeBridge["sandboxPolicyRemove"];
   };

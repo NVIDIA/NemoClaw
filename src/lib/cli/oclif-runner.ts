@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Config as OclifConfig } from "@oclif/core";
+import { Config as OclifConfig, execute as executeOclif } from "@oclif/core";
 
 import { CLI_NAME } from "../branding";
 
@@ -84,4 +84,8 @@ export async function runRegisteredOclifCommand(
 
     throw error;
   }
+}
+
+export async function runOclifArgv(args: string[], opts: OclifCommandRunOptions): Promise<void> {
+  await executeOclif({ args, dir: opts.rootDir });
 }

@@ -3,7 +3,7 @@
 
 import { Args } from "@oclif/core";
 
-import { runSandboxSnapshot } from "../../../sandbox-runtime-actions";
+import { runSandboxSnapshot } from "../../../actions/sandbox/runtime";
 
 let runtimeBridgeFactory = () => ({ sandboxSnapshot: runSandboxSnapshot });
 

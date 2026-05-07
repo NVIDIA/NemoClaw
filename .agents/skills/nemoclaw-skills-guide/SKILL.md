@@ -66,7 +66,7 @@ Covers creating pull requests that follow the project template and drafting docu
 | Skill | Summary |
 |-------|---------|
 | `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, and DCO sign-off. |
-| `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes and draft or update the corresponding documentation pages. |
+| `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes, draft or update documentation pages, and refresh generated user skills during release prep. |
 
 ## Getting Started
 

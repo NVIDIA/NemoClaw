@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SandboxEntry } from "./registry.js";
+import type { SandboxEntry } from "./state/registry.js";
 
 interface MockRegistryState {
   sandboxes: Record<string, SandboxEntry>;
@@ -12,7 +12,7 @@ interface MockRegistryState {
 
 const mockRegistryState: MockRegistryState = { sandboxes: {}, defaultSandbox: null };
 
-vi.mock("./registry.js", () => ({
+vi.mock("./state/registry.js", () => ({
   listSandboxes: () => ({
     sandboxes: Object.values(mockRegistryState.sandboxes),
     defaultSandbox: mockRegistryState.defaultSandbox,

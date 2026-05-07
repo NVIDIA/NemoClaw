@@ -17,14 +17,14 @@ const mocks = vi.hoisted(() => ({
   showSandboxStatus: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../../sandbox-runtime-actions", () => ({
+vi.mock("../../actions/sandbox/runtime", () => ({
   connectSandbox: mocks.connectSandbox,
   destroySandbox: mocks.destroySandbox,
   rebuildSandbox: mocks.rebuildSandbox,
   showSandboxStatus: mocks.showSandboxStatus,
 }));
 
-vi.mock("../../policy-channel-actions", () => ({
+vi.mock("../../actions/sandbox/policy-channel", () => ({
   listSandboxChannels: mocks.listSandboxChannels,
   listSandboxPolicies: mocks.listSandboxPolicies,
 }));
@@ -33,7 +33,7 @@ vi.mock("../../sandbox-config", () => ({
   configGet: mocks.configGet,
 }));
 
-vi.mock("../../sandbox-doctor-action", () => ({
+vi.mock("../../actions/sandbox/doctor", () => ({
   runSandboxDoctor: mocks.runSandboxDoctor,
 }));
 

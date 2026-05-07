@@ -25,7 +25,7 @@ type GuardedPath = {
 const RUNTIME_MOVES: Record<string, string> = moveMap.runtimeMoves;
 const REMOVED_SHIM_MOVES: Record<string, string> = {
   "bin/lib/chat-filter.js": "src/lib/chat-filter.ts",
-  "bin/lib/config-io.js": "src/lib/config-io.ts",
+  "bin/lib/config-io.js": "src/lib/state/config-io.ts",
   "bin/lib/debug.js": "src/lib/debug.ts",
   "bin/lib/inference-config.js": "src/lib/inference-config.ts",
   "bin/lib/local-inference.js": "src/lib/local-inference.ts",
@@ -33,7 +33,7 @@ const REMOVED_SHIM_MOVES: Record<string, string> = {
   "bin/lib/onboard-session.js": "src/lib/onboard-session.ts",
   "bin/lib/platform.js": "src/lib/platform.ts",
   "bin/lib/preflight.js": "src/lib/preflight.ts",
-  "bin/lib/registry.js": "src/lib/registry.ts",
+  "bin/lib/registry.js": "src/lib/state/registry.ts",
   "bin/lib/resolve-openshell.js": "src/lib/adapters/openshell/resolve.ts",
   "bin/lib/runtime-recovery.js": "src/lib/runtime-recovery.ts",
   "bin/lib/sandbox-build-context.js": "src/lib/sandbox-build-context.ts",

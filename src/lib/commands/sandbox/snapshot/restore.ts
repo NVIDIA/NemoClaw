@@ -10,11 +10,11 @@ export default class SnapshotRestoreCommand extends Command {
   static strict = true;
   static summary = "Restore state from a snapshot";
   static description = "Restore sandbox workspace state from a snapshot.";
-  static usage = ["<name> snapshot restore [selector] [--to <dst>]"];
+  static usage = ["<name> [selector] [--to <dst>]"];
   static examples = [
-    "<%= config.bin %> alpha snapshot restore",
-    "<%= config.bin %> alpha snapshot restore v2",
-    "<%= config.bin %> alpha snapshot restore before-upgrade --to beta",
+    "<%= config.bin %> sandbox snapshot restore alpha",
+    "<%= config.bin %> sandbox snapshot restore alpha v2",
+    "<%= config.bin %> sandbox snapshot restore alpha before-upgrade --to beta",
   ];
   static args = {
     sandboxName: sandboxNameArg,

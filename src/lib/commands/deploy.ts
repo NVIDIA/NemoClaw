@@ -3,7 +3,7 @@
 
 import { Args, Command, Flags } from "@oclif/core";
 
-import { runDeployAction } from "../global-cli-actions";
+import { runDeployAction } from "../actions/global";
 
 export default class DeployCliCommand extends Command {
   static id = "deploy";

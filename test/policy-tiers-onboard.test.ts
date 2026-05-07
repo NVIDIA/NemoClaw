@@ -51,7 +51,7 @@ function buildPreamble({
 } = {}): string {
   const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
   const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
   const resolveOpenshellPath = JSON.stringify(
     path.join(repoRoot, "dist", "lib", "adapters", "openshell", "resolve.js"),
@@ -380,7 +380,7 @@ describe("selectTierPresetsAndAccess", () => {
   function buildPresetsScript(body: string): string {
     const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     return String.raw`
 const credentials = require(${credPath});

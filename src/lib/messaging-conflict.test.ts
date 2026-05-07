@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { SandboxEntry } from "./registry";
+import type { SandboxEntry } from "./state/registry";
 import {
   backfillMessagingChannels,
   findAllOverlaps,

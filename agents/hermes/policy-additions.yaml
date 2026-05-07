@@ -63,6 +63,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
 
   github:
     name: github
@@ -76,6 +77,7 @@ network_policies:
     binaries:
       - { path: /usr/bin/gh }
       - { path: /usr/bin/git }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── Nous Research — Hermes auth, updates, portal ──────────────
   nous_research:
@@ -95,7 +97,56 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-      - host: api.nousresearch.com
+      - host: inference-api.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: portal.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: browser-use-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: modal-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: openai-audio-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: fal-queue-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: firecrawl-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: tool-gateway.nousresearch.com
         port: 443
         protocol: rest
         enforcement: enforce
@@ -105,6 +156,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── PyPI — needed for pip install (skill/plugin deps) ─────────
   pypi:
@@ -125,6 +177,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/pip3 }
       - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── Messaging — pre-allowed for agent notifications ───────────
   telegram:
@@ -141,6 +194,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
 
   discord:
     name: discord
@@ -164,3 +218,4 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }

@@ -282,7 +282,7 @@ describe("shields — unit logic", () => {
 describe("NC-2227-04: sandbox-state.ts tar commands do not follow symlinks", () => {
   function getSourceCode(): string {
     return fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "sandbox-state.ts"),
+      path.join(import.meta.dirname, "..", "src", "lib", "state", "sandbox.ts"),
       "utf-8",
     );
   }
