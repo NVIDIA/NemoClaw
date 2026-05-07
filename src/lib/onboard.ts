@@ -10030,13 +10030,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       );
     } else if (gpu?.platform === "jetson") {
       note("  GPU sandbox passthrough disabled by default on Jetson.");
-    } else if (process.platform === "linux") {
-      // Hint when hardware is present but drivers are missing.
+    } else if (process.platform === "linux" && !opts.noGpu) {
       try {
         const lspci = spawnSync("lspci", { encoding: "utf-8", timeout: 5000 });
         if (lspci.status === 0 && /nvidia/i.test(lspci.stdout || "")) {
-          note("  NVIDIA GPU hardware detected but nvidia-smi is not available.");
-          note("  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.");
+          const smi = spawnSync("nvidia-smi", ["--query-gpu=name", "--format=csv,noheader,nounits"], { encoding: "utf-8", timeout: 5000 });
+          note(smi.status === 0 && smi.stdout?.trim() ? "  NVIDIA GPU detected with working drivers, but GPU passthrough was not enabled.\n  If Docker GPU support is needed, install nvidia-container-toolkit and run:\n  sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker" : "  NVIDIA GPU hardware detected but nvidia-smi is not available.\n  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.");
         }
       } catch {
         /* lspci not available — skip hint */
