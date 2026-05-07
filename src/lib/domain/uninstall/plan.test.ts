@@ -34,7 +34,17 @@ describe("uninstall plan", () => {
         { kind: "preserve-ollama-models", names: ["nemotron-3-super:120b", "nemotron-3-nano:30b"] },
         { kind: "delete-managed-swap" },
         { kind: "delete-openshell-binary", path: "/usr/local/bin/openshell" },
+        { kind: "stop-ollama-auth-proxy" },
       ]),
+    );
+
+    // The Ollama auth proxy must be stopped during the "Stopping services"
+    // step, before any "State and binaries" cleanup deletes the PID file.
+    // Otherwise a stale proxy on :11435 blocks reinstall (issue #2759).
+    const stoppingServicesStep = plan.steps.find((step) => step.name === "Stopping services");
+    expect(stoppingServicesStep).toBeTruthy();
+    expect(stoppingServicesStep?.actions).toEqual(
+      expect.arrayContaining([{ kind: "stop-ollama-auth-proxy" }]),
     );
   });
 

@@ -222,6 +222,78 @@ function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: str
   }
 }
 
+// Identifier we look for in `/proc/<pid>/cmdline` (via `ps -p <pid> -o args=`)
+// to confirm a candidate PID is the Ollama auth proxy and not another node
+// process that happens to be on the same port. Mirrors the
+// `isOllamaProxyProcess` check in `src/lib/onboard-ollama-proxy.ts`.
+const OLLAMA_AUTH_PROXY_CMDLINE_MARK = "ollama-auth-proxy.js";
+
+// Default port the Ollama auth proxy listens on. Hardcoded against
+// `ports.OLLAMA_PROXY_PORT` rather than imported to keep `uninstall-run-plan.ts`
+// self-contained — the port is part of NemoClaw's stable runtime contract.
+const OLLAMA_PROXY_PORT = 11435;
+
+function isOllamaAuthProxyPid(pid: number, runtime: UninstallRuntime): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
+  return result.status === 0 && result.stdout.includes(OLLAMA_AUTH_PROXY_CMDLINE_MARK);
+}
+
+function tryStopOllamaProxyPid(pid: number, runtime: UninstallRuntime): boolean {
+  if (runtime.kill(pid) || runtime.kill(pid, "SIGKILL")) {
+    runtime.log(`Stopped Ollama auth proxy ${pid}`);
+    return true;
+  }
+  runtime.warn(`Failed to stop Ollama auth proxy ${pid}`);
+  return false;
+}
+
+function stopOllamaAuthProxy(paths: UninstallPaths, runtime: UninstallRuntime): void {
+  // The auth proxy is a detached node child started by the Local Ollama
+  // onboard path that listens on `OLLAMA_PROXY_PORT`. Without this cleanup,
+  // uninstall + reinstall fails with `Ollama auth proxy failed to start on
+  // :11435` — the on-disk PID file is removed by the "State and binaries"
+  // step but the process keeps running. The two-prong check (persisted PID
+  // first, then port-bound listeners) mirrors `killStaleProxy()` in
+  // `src/lib/onboard-ollama-proxy.ts` and verifies cmdline on every PID, so
+  // an unrelated process on the same port (custom proxy, test setup) is
+  // never killed. See issue #2759.
+  const stopped = new Set<number>();
+
+  // 1. Try the persisted PID file. The proxy stays bound across NemoClaw
+  //    sessions; the PID file is the most reliable signal. The path mirrors
+  //    `PROXY_PID_PATH` in `src/lib/onboard-ollama-proxy.ts` (`~/.nemoclaw`).
+  const pidFile = path.join(paths.nemoclawStateDir, "ollama-auth-proxy.pid");
+  if (runtime.existsSync(pidFile)) {
+    try {
+      const raw = fs.readFileSync(pidFile, "utf-8").trim();
+      const pid = Number.parseInt(raw, 10);
+      if (Number.isFinite(pid) && pid > 0 && isOllamaAuthProxyPid(pid, runtime)) {
+        if (tryStopOllamaProxyPid(pid, runtime)) stopped.add(pid);
+      }
+    } catch {
+      /* ignore — the State step deletes the file shortly anyway */
+    }
+  }
+
+  // 2. Fall back to the configured proxy port for orphans whose PID file is
+  //    gone (e.g. a previous uninstall already wiped state but the process
+  //    survived). Filter via cmdline so we never kill unrelated listeners.
+  if (!runtime.commandExists("lsof")) {
+    if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
+    return;
+  }
+  const lsof = runtime.run("lsof", ["-ti", `:${OLLAMA_PROXY_PORT}`], { env: runtime.env });
+  const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
+  for (const pid of pids) {
+    if (stopped.has(pid)) continue;
+    if (!isOllamaAuthProxyPid(pid, runtime)) continue;
+    if (tryStopOllamaProxyPid(pid, runtime)) stopped.add(pid);
+  }
+
+  if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
+}
+
 function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
   if (!runtime.commandExists("pgrep")) {
     runtime.warn("pgrep not found; skipping orphaned openshell process cleanup.");
@@ -416,6 +488,7 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
       removeGlob(paths.helperServiceGlob, runtime);
       stopMatchingPids(`openshell.*forward.*${runtime.env.NEMOCLAW_DASHBOARD_PORT || "18789"}`, runtime, "local OpenShell forward processes");
       stopOrphanedOpenShell(runtime);
+      stopOllamaAuthProxy(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);
     } else if (step.name === "NemoClaw CLI") {
