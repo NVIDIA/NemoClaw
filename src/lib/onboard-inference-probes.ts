@@ -117,11 +117,19 @@ function getProbeProcessTimeoutMs(args) {
   return (getCurlMaxTimeSeconds(args) + 5) * 1000;
 }
 
-const RETRIABLE_HTTP_PROBE_STATUSES = new Set([429]);
+// 429 = Too Many Requests; 502/503/504 = upstream gateway/availability flakes
+// (NVIDIA Endpoints and other hosted providers periodically emit these for
+// minutes at a time). All four are transient — retry with backoff before
+// surfacing a hard failure to the wizard. See issues #2980 and #3033.
+const RETRIABLE_HTTP_PROBE_STATUSES = new Set([429, 502, 503, 504]);
 const HTTP_PROBE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
 function sleepSync(ms) {
   if (ms <= 0) return;
+  // Skip real waits under vitest so retry-loop coverage doesn't burn 50s of
+  // wall-clock per test. process.env.VITEST is set automatically by the
+  // test runner.
+  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
@@ -432,16 +440,24 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     });
   }
 
-  // Single retry with doubled timeouts on timeout/connection failure.
-  // WSL2's virtualized network stack can cause the initial probe to time out
-  // before the TLS handshake completes. See issue #987.
+  // Retry with doubled timeouts on timeout/connection failure, using the same
+  // backoff schedule as transient HTTP statuses. WSL2's virtualized network
+  // stack can cause the initial probe to time out before the TLS handshake
+  // completes (#987); hosted providers also occasionally drop connections for
+  // tens of seconds during incidents (#3033).
   const isTimeoutOrConnFailure = (cs) => cs === 28 || cs === 6 || cs === 7;
+  const isRetriableProbeResult = (result) =>
+    isTimeoutOrConnFailure(result.curlStatus) ||
+    RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus);
+  // Look across every failure entry rather than only failures[0] so a probe
+  // ordering like /responses (HTTP error) followed by /chat/completions
+  // (curl 28) still triggers the chat-completions retry path.
   let retriedAfterTimeout = false;
-  if (failures.length > 0 && isTimeoutOrConnFailure(failures[0].curlStatus)) {
+  if (failures.some((failure) => isTimeoutOrConnFailure(failure.curlStatus))) {
     retriedAfterTimeout = true;
     const baseArgs = getValidationProbeCurlArgs();
     const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
-    const retryResult = runCurlProbe([
+    const buildRetryArgs = () => [
       "-sS",
       ...doubledArgs,
       "-H",
@@ -450,9 +466,24 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       "-d",
       JSON.stringify(getChatCompletionsProbePayload(model)),
       `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
-    ]);
+    ];
+    let retryResult = runCurlProbe(buildRetryArgs());
     if (retryResult.ok) {
       return { ok: true, api: "openai-completions", label: "Chat Completions API" };
+    }
+    for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
+      if (!isRetriableProbeResult(retryResult)) break;
+      const reason = isTimeoutOrConnFailure(retryResult.curlStatus)
+        ? "timed out"
+        : `returned HTTP ${retryResult.httpStatus}`;
+      console.log(
+        `  Chat Completions API validation ${reason}; retrying in ${Math.round(delayMs / 1000)}s...`,
+      );
+      sleepSync(delayMs);
+      retryResult = runCurlProbe(buildRetryArgs());
+      if (retryResult.ok) {
+        return { ok: true, api: "openai-completions", label: "Chat Completions API" };
+      }
     }
   }
 
@@ -536,4 +567,5 @@ module.exports = {
   probeResponsesToolCalling,
   probeOpenAiLikeEndpoint,
   probeAnthropicEndpoint,
+  RETRIABLE_HTTP_PROBE_STATUSES,
 };

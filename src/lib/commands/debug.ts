@@ -11,7 +11,7 @@ import { runDebugCommandWithOptions } from "../debug-command";
 import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import { captureOpenshellCommand } from "../adapters/openshell/client";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
-import * as registry from "../registry";
+import * as registry from "../state/registry";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "../runtime-recovery";
 

@@ -11,10 +11,10 @@ export default class ShareStatusCommand extends Command {
   static strict = true;
   static summary = "Show sandbox share mount status";
   static description = "Check whether a sandbox filesystem share is currently mounted on the host.";
-  static usage = ["<name> share status [local-mount-point]"];
+  static usage = ["<name> [local-mount-point]"];
   static examples = [
-    "<%= config.bin %> alpha share status",
-    "<%= config.bin %> alpha share status ~/mnt/alpha",
+    "<%= config.bin %> sandbox share status alpha",
+    "<%= config.bin %> sandbox share status alpha ~/mnt/alpha",
   ];
   static args = {
     sandboxName: sandboxNameArg,

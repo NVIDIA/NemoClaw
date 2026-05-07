@@ -9,13 +9,19 @@ import { spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const SECCOMP_GUARD_SOURCE = path.join(
+  import.meta.dirname,
+  "..",
+  "nemoclaw-blueprint",
+  "scripts",
+  "seccomp-guard.js",
+);
 
 function extractStartScriptHeredoc(src: string, marker: string): string {
-  const heredoc = src.match(new RegExp(`<<'${marker}'\\n([\\s\\S]*?)\\n${marker}`));
-  if (!heredoc) {
-    throw new Error(`Expected ${marker} heredoc in scripts/nemoclaw-start.sh`);
-  }
-  return heredoc[1];
+  const heredoc = src.match(new RegExp(`<<'${marker}'\n([\s\S]*?)\n${marker}`));
+  if (heredoc) return heredoc[1];
+  if (marker === "SECCOMP_GUARD_EOF") return fs.readFileSync(SECCOMP_GUARD_SOURCE, "utf-8");
+  throw new Error(`Expected ${marker} heredoc in scripts/nemoclaw-start.sh`);
 }
 
 function extractRuntimeShellEnvSnippet(src: string): string {
@@ -39,7 +45,13 @@ describe("Seccomp guard preload", () => {
     if (start === -1 || end === -1 || end <= start) {
       throw new Error("Expected seccomp guard entrypoint block in scripts/nemoclaw-start.sh");
     }
-    const block = src.slice(start, end).replaceAll("/tmp/nemoclaw-seccomp-guard.js", preloadPath);
+    const block = src
+      .slice(start, end)
+      .replaceAll("/tmp/nemoclaw-seccomp-guard.js", preloadPath)
+      .replace(
+        '_SECCOMP_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/seccomp-guard.js"',
+        `_SECCOMP_GUARD_SOURCE=${JSON.stringify(SECCOMP_GUARD_SOURCE)}`,
+      );
     const persistBlock = extractRuntimeShellEnvSnippet(src).replaceAll(
       "/tmp/nemoclaw-proxy-env.sh",
       proxyEnvPath,
@@ -176,7 +188,7 @@ describe("ws-proxy-fix Landlock mitigation", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ws-fix-entrypoint-"));
     const sourcePath = path.join(tempDir, "source-ws-proxy-fix.js");
     const runtimePath = path.join(tempDir, "runtime-ws-proxy-fix.js");
-    const start = src.indexOf('_WS_FIX_SOURCE="/usr/local/lib/nemoclaw/ws-proxy-fix.js"');
+    const start = src.indexOf('_WS_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/ws-proxy-fix.js"');
     const end = src.indexOf("# ── Seccomp syscall guard", start);
     if (start === -1 || end === -1 || end <= start) {
       throw new Error("Expected ws-proxy-fix entrypoint block in scripts/nemoclaw-start.sh");
@@ -184,7 +196,7 @@ describe("ws-proxy-fix Landlock mitigation", () => {
     const block = src
       .slice(start, end)
       .replace(
-        '_WS_FIX_SOURCE="/usr/local/lib/nemoclaw/ws-proxy-fix.js"',
+        '_WS_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/ws-proxy-fix.js"',
         `_WS_FIX_SOURCE=${JSON.stringify(sourcePath)}`,
       )
       .replace(

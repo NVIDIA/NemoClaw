@@ -11,7 +11,7 @@ import {
 } from "node:child_process";
 
 import type { ProbeResult } from "./onboard-types";
-import { ROOT } from "./paths";
+import { ROOT } from "./state/paths";
 import { compactText } from "./url-utils";
 
 import { isErrnoException } from "./errno";

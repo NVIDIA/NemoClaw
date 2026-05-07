@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runBackupAllAction } from "../../global-cli-actions";
+import { runBackupAllAction } from "../../actions/global";
 import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
 
 export default class BackupAllCommand extends NemoClawCommand {

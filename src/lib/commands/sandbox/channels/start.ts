@@ -15,8 +15,8 @@ export default class ChannelsStartCommand extends Command {
   static strict = true;
   static summary = "Re-enable a stopped messaging channel";
   static description = "Re-enable a previously stopped messaging channel.";
-  static usage = ["<name> channels start <channel> [--dry-run]"];
-  static examples = ["<%= config.bin %> alpha channels start discord"];
+  static usage = ["<name> <channel> [--dry-run]"];
+  static examples = ["<%= config.bin %> sandbox channels start alpha discord"];
   static args = channelMutationArgs;
   static flags = channelMutationFlags;
 

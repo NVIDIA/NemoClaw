@@ -19,7 +19,7 @@ const path = require("path");
 const { promises: dnsPromises } = require("node:dns");
 const { isIP } = require("node:net");
 const { validateName } = require("./runner");
-const { dockerExecFileSync } = require("./docker/exec");
+const { dockerExecFileSync } = require("./adapters/docker/exec");
 const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue, isCredentialField } = credentialFilter;
 const { appendAuditEntry } = require("./shields-audit");
@@ -94,7 +94,7 @@ const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
 
 function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
   try {
-    const registry = require("./registry");
+    const registry = require("./state/registry");
     const entry = registry.getSandbox(sandboxName);
     if (!entry || !entry.agent) return DEFAULT_AGENT_CONFIG;
 

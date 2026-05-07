@@ -4,17 +4,17 @@
 import { Args, Flags } from "@oclif/core";
 
 import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
-import { rebuildSandbox } from "../../sandbox-runtime-actions";
+import { rebuildSandbox } from "../../actions/sandbox/runtime";
 
 export default class RebuildCliCommand extends NemoClawCommand {
   static id = "sandbox:rebuild";
   static strict = true;
   static summary = "Upgrade sandbox to current agent version";
   static description = "Back up, recreate, and restore a sandbox using the current agent image.";
-  static usage = ["<name> rebuild [--yes|-y|--force] [--verbose|-v]"];
+  static usage = ["<name> [--yes|-y|--force] [--verbose|-v]"];
   static examples = [
-    "<%= config.bin %> alpha rebuild",
-    "<%= config.bin %> alpha rebuild --yes --verbose",
+    "<%= config.bin %> sandbox rebuild alpha",
+    "<%= config.bin %> sandbox rebuild alpha --yes --verbose",
   ];
   static args = {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),

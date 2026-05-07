@@ -40,7 +40,7 @@ graph LR
     USER(["👤 User"]):::user
 
     subgraph EXTERNAL["External Services"]
-        INFERENCE["Inference Provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM</small>"]:::external
+        INFERENCE["Inference Provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM · Model Router</small>"]:::external
         MSGAPI["Messaging Platforms<br/><small>Telegram · Discord · Slack</small>"]:::external
         INTERNET["Internet<br/><small>PyPI · npm · GitHub · APIs</small>"]:::external
     end
@@ -126,7 +126,7 @@ graph TB
         end
     end
 
-    INFER["Inference provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM</small>"]:::external
+    INFER["Inference provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM · Model Router</small>"]:::external
 
     CLI -->|"openshell CLI<br/>(orchestrates)"| GWCON
     AGENT -->|"inference requests<br/><small>placeholder credentials</small>"| PROXY
@@ -195,6 +195,8 @@ The blueprint drives all interactions with the OpenShell CLI.
 ```text
 nemoclaw-blueprint/
 ├── blueprint.yaml                  Manifest: version, profiles, compatibility
+├── model-specific-setup/           Agent-scoped model/provider compatibility manifests
+├── router/                         Model Router config and routing engine
 ├── policies/
 │   └── openclaw-sandbox.yaml       Default network + filesystem policy
 ```
@@ -245,6 +247,12 @@ OpenShell intercepts them and routes to the configured provider:
 ```text
 Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build.nvidia.com)
 ```
+
+When you select the Model Router provider, the OpenShell gateway routes to a host-side router process instead of a single upstream model.
+The router selects from the configured pool, then calls the upstream NVIDIA endpoint with the credential held outside the sandbox.
+
+Some model and provider combinations need agent-specific compatibility setup.
+NemoClaw keeps those declarations under `nemoclaw-blueprint/model-specific-setup/<agent>/` so OpenClaw and Hermes fixes can be tested and reviewed independently.
 
 Refer to [Inference Options](../inference/inference-options.md) for provider configuration details.
 

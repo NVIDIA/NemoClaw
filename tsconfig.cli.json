@@ -8,6 +8,7 @@
     "allowJs": true,
     "checkJs": false,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -15,6 +16,6 @@
     "moduleDetection": "force",
     "types": ["node"]
   },
-  "include": ["bin/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts", "nemoclaw-blueprint/scripts/**/*.ts"],
+  "include": ["agents/hermes/**/*.ts", "bin/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts", "nemoclaw-blueprint/scripts/**/*.ts"],
   "exclude": ["node_modules", "nemoclaw"]
 }

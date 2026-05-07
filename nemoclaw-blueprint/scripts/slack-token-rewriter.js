@@ -34,12 +34,10 @@
 //   - Fast path: indexOf short-circuits the regex on the 99.9% of
 //     requests that don't contain a placeholder.
 //
-// This file is the canonical source for review and tests. At sandbox boot,
+// This file is the canonical source for review and tests. The Dockerfile
+// copies it into /usr/local/lib/nemoclaw/preloads/, then at sandbox boot
 // nemoclaw-start.sh writes a byte-identical copy to /tmp and loads it via
-// NODE_OPTIONS=--require. A sync test enforces byte-for-byte equality.
-// Mirrors the http-proxy-fix.js / ws-proxy-fix.js convention; see those
-// files for the rationale on why the content cannot live under
-// /opt/nemoclaw-blueprint/scripts/ in the optimized sandbox build.
+// NODE_OPTIONS=--require.
 //
 // Ref: https://github.com/NVIDIA/NemoClaw/issues/2085
 

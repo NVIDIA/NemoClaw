@@ -16,7 +16,7 @@ describe("renderPublicOclifHelp", () => {
     expect(output).toContain("FLAGS");
     expect(output).toContain("--follow");
     expect(output).toContain("Stream sandbox logs");
-    expect(output).toContain("$ nemoclaw alpha logs --follow");
+    expect(output).toContain("$ nemoclaw sandbox logs alpha --follow");
     expect(output).not.toContain("sandbox:logs");
   });
 });

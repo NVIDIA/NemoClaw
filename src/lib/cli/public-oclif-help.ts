@@ -56,7 +56,7 @@ function toPublicHelpCommand(
 
 export function renderPublicOclifHelp(commandId: string, publicUsage: string): void {
   const metadata = getRegisteredOclifCommandMetadata(commandId);
-  if (!metadata) {
+  if (!metadata || commandId === "sandbox:share") {
     console.log(`\n  Usage: ${CLI_NAME} ${publicUsage}`);
     return;
   }

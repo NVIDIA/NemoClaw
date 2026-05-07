@@ -14,7 +14,7 @@ import os from "os";
 import path from "path";
 
 import { parseVersionFromText, versionGte } from "./adapters/openshell/client.js";
-import * as registry from "./registry.js";
+import * as registry from "./state/registry.js";
 import { loadAgent } from "./agent-defs.js";
 import { resolveOpenshell } from "./adapters/openshell/resolve.js";
 import { captureOpenshellCommand } from "./adapters/openshell/client.js";

@@ -3,7 +3,7 @@
 
 import { Flags } from "@oclif/core";
 
-import { runGarbageCollectImagesAction } from "../../global-cli-actions";
+import { runGarbageCollectImagesAction } from "../../actions/global";
 import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
 
 export default class GarbageCollectImagesCommand extends NemoClawCommand {
