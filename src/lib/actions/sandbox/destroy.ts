@@ -84,14 +84,19 @@ function cleanupSandboxServices(
   { stopHostServices = false }: { stopHostServices?: boolean } = {},
 ): void {
   if (stopHostServices) {
+    // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
+    // see src/lib/services.ts. Don't double-call here.
     const { stopAll } = require("../../services");
     stopAll({ sandboxName });
-  }
-
-  const sb = registry.getSandbox(sandboxName);
-  if (sb?.provider?.includes("ollama")) {
-    const { unloadOllamaModels } = require("../../onboard-ollama-proxy");
-    unloadOllamaModels();
+  } else {
+    // No global stop, so `stopAll()` did not run; explicitly free Ollama
+    // models for this sandbox if its provider used Ollama. Without this
+    // branch a single-sandbox destroy would leave models loaded on the GPU.
+    const sb = registry.getSandbox(sandboxName);
+    if (sb?.provider?.includes("ollama")) {
+      const { unloadOllamaModels } = require("../../onboard-ollama-proxy");
+      unloadOllamaModels();
+    }
   }
 
   try {
@@ -203,8 +208,10 @@ export async function destroySandbox(
   }
 
   if (sb?.provider?.includes("ollama")) {
-    const { unloadOllamaModels, killStaleProxy } = require("../../onboard-ollama-proxy");
-    unloadOllamaModels();
+    // The Ollama unload is delegated to cleanupSandboxServices() further
+    // down — keeping it here would triple-call (direct + cleanup branch +
+    // stopAll when host services are stopping). See issue #2717.
+    const { killStaleProxy } = require("../../onboard-ollama-proxy");
     killStaleProxy();
   }
 

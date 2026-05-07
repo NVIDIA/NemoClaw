@@ -429,6 +429,13 @@ export function stopAll(opts: ServiceOptions = {}): void {
   }
 
   try {
+    // Unconditional unload (no provider gate) because `stopAll` is invoked
+    // from sandbox-agnostic paths (`nemoclaw stop`, `nemoclaw tunnel stop`,
+    // and the destroy hook when stopping host services) where the caller
+    // doesn't know whether the active sandbox uses Ollama. The unload
+    // itself is no-op when no models are loaded, so calling it on every
+    // global stop is cheap and avoids leaking GPU memory when the registry
+    // is empty (#2717).
     const { unloadOllamaModels } = require("./onboard-ollama-proxy");
     unloadOllamaModels();
   } catch {

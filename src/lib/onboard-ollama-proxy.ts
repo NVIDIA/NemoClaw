@@ -631,6 +631,10 @@ async function prepareOllamaModel(model, installedModels = []) {
 /**
  * Unload all running Ollama models from GPU memory.
  * Best-effort operation: silently ignores errors if Ollama is not running.
+ *
+ * NOTE: `test/ollama-gpu-cleanup.test.ts` imports this function directly
+ * from `dist/lib/onboard-ollama-proxy.js`. Renaming or relocating it will
+ * break that test — keep both in sync (issue #2717).
  */
 function unloadOllamaModels() {
   try {
