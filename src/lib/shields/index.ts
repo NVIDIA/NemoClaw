@@ -23,7 +23,7 @@ const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
   parseCurrentPolicy,
-  PERMISSIVE_POLICY_PATH,
+  resolvePermissivePolicyPath,
 } = require("../policy");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const { appendAuditEntry } = require("./audit");
@@ -682,7 +682,7 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   // 2. Determine and apply relaxed policy
   let policyFile: string;
   if (policyName === "permissive") {
-    policyFile = PERMISSIVE_POLICY_PATH;
+    policyFile = resolvePermissivePolicyPath(sandboxName);
   } else if (fs.existsSync(policyName)) {
     policyFile = path.resolve(policyName);
   } else {

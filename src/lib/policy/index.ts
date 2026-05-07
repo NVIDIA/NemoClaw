@@ -996,6 +996,7 @@ export {
   loadPresetFromFile,
   removePreset,
   applyPermissivePolicy,
+  resolvePermissivePolicyPath,
   getAppliedPresets,
   getGatewayPresets,
   listCustomPresets,
