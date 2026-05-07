@@ -28,6 +28,7 @@ import path from "node:path";
 import * as registry from "./registry.js";
 import { loadAgent } from "./agent-defs.js";
 import type { AgentStateFile } from "./agent-defs.js";
+import type { CustomPolicyEntry, SandboxEntry } from "./registry.js";
 import { resolveOpenshell } from "./adapters/openshell/resolve.js";
 import { captureOpenshellCommand } from "./adapters/openshell/client.js";
 import { sanitizeConfigFile, isSensitiveFile } from "./credential-filter.js";
@@ -62,9 +63,17 @@ export interface RebuildManifest {
   backupPath: string;
   blueprintDigest: string | null;
   policyPresets?: string[];
+  customPolicyPresets?: RebuildCustomPolicyPreset[];
   instances?: InstanceBackup[];
   // Optional user-provided label for `snapshot restore <name>`.
   name?: string;
+}
+
+export interface RebuildCustomPolicyPreset {
+  name: string;
+  content: string;
+  sourcePath?: string;
+  appliedAt?: string;
 }
 
 // Manifest enriched with a virtual version number computed at list time.
@@ -134,6 +143,16 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+function isRebuildCustomPolicyPreset(value: unknown): value is RebuildCustomPolicyPreset {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    typeof value.content === "string" &&
+    (value.sourcePath === undefined || typeof value.sourcePath === "string") &&
+    (value.appliedAt === undefined || typeof value.appliedAt === "string")
+  );
+}
+
 function isStateFileSpec(value: unknown): value is StateFileSpec {
   return (
     isRecord(value) &&
@@ -172,11 +191,27 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
       value.blueprintDigest === null ||
       typeof value.blueprintDigest === "string") &&
     (value.policyPresets === undefined || isStringArray(value.policyPresets)) &&
+    (value.customPolicyPresets === undefined ||
+      (Array.isArray(value.customPolicyPresets) &&
+        value.customPolicyPresets.every(isRebuildCustomPolicyPreset))) &&
     (value.instances === undefined ||
       (Array.isArray(value.instances) &&
         value.instances.every((entry) => isInstanceBackup(entry)))) &&
     (value.name === undefined || typeof value.name === "string")
   );
+}
+
+export function getPolicyPresetsForManifest(sb: SandboxEntry | null): {
+  policyPresets: string[];
+  customPolicyPresets: RebuildCustomPolicyPreset[];
+} {
+  return {
+    policyPresets: sb?.policies && sb.policies.length > 0 ? [...sb.policies] : [],
+    customPolicyPresets:
+      sb?.customPolicies && sb.customPolicies.length > 0
+        ? sb.customPolicies.map((entry: CustomPolicyEntry) => ({ ...entry }))
+        : [],
+  };
 }
 
 // ── Safe tar extraction ──────────────────────────────────────────
@@ -879,8 +914,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   // Capture applied policy presets from the registry so they can be
   // re-applied after rebuild. Presets live in the gateway policy engine,
   // not on the sandbox filesystem, so they are lost on destroy/recreate.
-  const policyPresets: string[] = sb?.policies && sb.policies.length > 0 ? [...sb.policies] : [];
+  const { policyPresets, customPolicyPresets } = getPolicyPresetsForManifest(sb);
   _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
+  _log(`customPolicyPresets from registry: [${customPolicyPresets.map((p) => p.name).join(",")}]`);
 
   const manifest: RebuildManifest = {
     version: MANIFEST_VERSION,
@@ -895,6 +931,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
     policyPresets,
+    customPolicyPresets,
     ...(providedName !== null ? { name: providedName } : {}),
   };
 

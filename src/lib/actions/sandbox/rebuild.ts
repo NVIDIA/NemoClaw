@@ -48,6 +48,108 @@ function _rebuildLog(msg: string) {
   console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${msg}${R}`);
 }
 
+export interface RestorePolicyPresetsResult {
+  restoredPresets: string[];
+  failedPresets: string[];
+  restoredCustomPresets: string[];
+  failedCustomPresets: string[];
+}
+
+interface RestorePolicyPresetsDeps {
+  applyPreset?: typeof policies.applyPreset;
+  applyPresetContent?: typeof policies.applyPresetContent;
+  log?: (msg: string) => void;
+  stdout?: { log: (...args: unknown[]) => void };
+  stderr?: { error: (...args: unknown[]) => void };
+}
+
+export function restorePolicyPresetsFromManifest(
+  sandboxName: string,
+  backupManifest: sandboxState.RebuildManifest,
+  deps: RestorePolicyPresetsDeps = {},
+): RestorePolicyPresetsResult {
+  const applyPreset = deps.applyPreset ?? policies.applyPreset;
+  const applyPresetContent = deps.applyPresetContent ?? policies.applyPresetContent;
+  const log = deps.log ?? (() => {});
+  const stdout = deps.stdout ?? console;
+  const stderr = deps.stderr ?? console;
+
+  const savedPresets = backupManifest.policyPresets || [];
+  const savedCustomPresets = backupManifest.customPolicyPresets || [];
+  const restoredPresets: string[] = [];
+  const failedPresets: string[] = [];
+  const restoredCustomPresets: string[] = [];
+  const failedCustomPresets: string[] = [];
+
+  if (savedPresets.length === 0 && savedCustomPresets.length === 0) {
+    return { restoredPresets, failedPresets, restoredCustomPresets, failedCustomPresets };
+  }
+
+  stdout.log("");
+  stdout.log("  Restoring policy presets...");
+
+  if (savedPresets.length > 0) {
+    log(`Policy presets to restore: [${savedPresets.join(",")}]`);
+  }
+  for (const presetName of savedPresets) {
+    try {
+      log(`Applying preset: ${presetName}`);
+      const applied = applyPreset(sandboxName, presetName);
+      if (applied) {
+        restoredPresets.push(presetName);
+      } else {
+        failedPresets.push(presetName);
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log(`Failed to apply preset '${presetName}': ${errorMessage}`);
+      failedPresets.push(presetName);
+    }
+  }
+
+  if (savedCustomPresets.length > 0) {
+    log(`Custom policy presets to restore: [${savedCustomPresets.map((p) => p.name).join(",")}]`);
+  }
+  for (const preset of savedCustomPresets) {
+    try {
+      log(`Applying custom preset: ${preset.name}`);
+      const applied = applyPresetContent(sandboxName, preset.name, preset.content, {
+        custom: { sourcePath: preset.sourcePath },
+      });
+      if (applied) {
+        restoredCustomPresets.push(preset.name);
+      } else {
+        failedCustomPresets.push(preset.name);
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log(`Failed to apply custom preset '${preset.name}': ${errorMessage}`);
+      failedCustomPresets.push(preset.name);
+    }
+  }
+
+  if (restoredPresets.length > 0) {
+    stdout.log(`  ${G}\u2713${R} Policy presets restored: ${restoredPresets.join(", ")}`);
+  }
+  if (restoredCustomPresets.length > 0) {
+    stdout.log(
+      `  ${G}\u2713${R} Custom policy presets restored: ${restoredCustomPresets.join(", ")}`,
+    );
+  }
+  if (failedPresets.length > 0) {
+    stderr.error(`  ${YW}\u26a0${R} Failed to restore presets: ${failedPresets.join(", ")}`);
+    stderr.error(`    Re-apply manually with: ${CLI_NAME} ${sandboxName} policy-add`);
+  }
+  if (failedCustomPresets.length > 0) {
+    stderr.error(
+      `  ${YW}\u26a0${R} Failed to restore custom presets: ${failedCustomPresets.join(", ")}`,
+    );
+    stderr.error(`    Re-apply manually with: ${CLI_NAME} ${sandboxName} policy-add --from-file`);
+  }
+
+  return { restoredPresets, failedPresets, restoredCustomPresets, failedCustomPresets };
+}
+
 /**
  * Resolve the credential environment variable required to recreate a sandbox.
  */
@@ -540,36 +642,7 @@ export async function rebuildSandbox(
   // Policy presets live in the gateway policy engine, not the sandbox filesystem.
   // They are lost when the sandbox is destroyed and recreated. Re-apply any
   // presets that were captured in the backup manifest.
-  const savedPresets = backupManifest.policyPresets || [];
-  if (savedPresets.length > 0) {
-    console.log("");
-    console.log("  Restoring policy presets...");
-    log(`Policy presets to restore: [${savedPresets.join(",")}]`);
-    const restoredPresets: string[] = [];
-    const failedPresets: string[] = [];
-    for (const presetName of savedPresets) {
-      try {
-        log(`Applying preset: ${presetName}`);
-        const applied = policies.applyPreset(sandboxName, presetName);
-        if (applied) {
-          restoredPresets.push(presetName);
-        } else {
-          failedPresets.push(presetName);
-        }
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        log(`Failed to apply preset '${presetName}': ${errorMessage}`);
-        failedPresets.push(presetName);
-      }
-    }
-    if (restoredPresets.length > 0) {
-      console.log(`  ${G}\u2713${R} Policy presets restored: ${restoredPresets.join(", ")}`);
-    }
-    if (failedPresets.length > 0) {
-      console.error(`  ${YW}\u26a0${R} Failed to restore presets: ${failedPresets.join(", ")}`);
-      console.error(`    Re-apply manually with: ${CLI_NAME} ${sandboxName} policy-add`);
-    }
-  }
+  restorePolicyPresetsFromManifest(sandboxName, backupManifest, { log });
 
   // Step 6: Post-restore agent-specific migration
   const rebuiltAgent = agentRuntime.getSessionAgent(sandboxName);

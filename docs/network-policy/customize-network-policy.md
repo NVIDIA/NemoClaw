@@ -301,6 +301,8 @@ Custom presets applied with `--from-file` or `--from-dir` are recorded in the Ne
 $ nemoclaw my-assistant policy-remove my-internal-api --yes
 ```
 
+NemoClaw also uses the stored YAML content when you run `nemoclaw <name> rebuild`, so custom presets survive rebuild even if the original preset file is no longer on disk.
+
 `policy-remove` accepts both built-in and custom preset names. Run `nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
 
 ## Related Topics
