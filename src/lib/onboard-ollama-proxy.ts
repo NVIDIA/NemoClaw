@@ -9,7 +9,6 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
-const http = require("http");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("./ports");
 const {
@@ -630,61 +629,48 @@ async function prepareOllamaModel(model, installedModels = []) {
 
 /**
  * Unload all running Ollama models from GPU memory.
- * Best-effort operation: silently ignores errors if Ollama is not running.
  *
- * NOTE: `test/ollama-gpu-cleanup.test.ts` imports this function directly
- * from `dist/lib/onboard-ollama-proxy.js`. Renaming or relocating it will
- * break that test — keep both in sync (issue #2717).
+ * Uses `spawnSync("curl", ...)` rather than node's `http` module so that the
+ * request observably completes before the call returns: a curl child process
+ * is owned by the kernel, not Node's event loop, so `process.exit()` from a
+ * destroy/uninstall path cannot drop a half-flushed socket. The pattern
+ * matches `probeProxyToken` and `pullOllamaModelViaHttp` in this file.
+ *
+ * Best-effort operation: silently ignores errors if Ollama is not running.
  */
 function unloadOllamaModels() {
   try {
-    const req = http.get(
-      {
-        hostname: "localhost",
-        port: OLLAMA_PORT,
-        path: "/api/ps",
-        timeout: 3000,
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (chunk) => {
-          data += chunk;
-        });
-        res.on("end", () => {
-          if (res.statusCode !== 200) return;
-          try {
-            const parsed = JSON.parse(data);
-            const models = parsed.models || [];
-            for (const entry of models) {
-              if (!entry.name) continue;
-              const unloadReq = http.request(
-                {
-                  hostname: "localhost",
-                  port: OLLAMA_PORT,
-                  path: "/api/generate",
-                  method: "POST",
-                  timeout: 3000,
-                  headers: { "Content-Type": "application/json" },
-                },
-                () => {
-                  /* ignore response */
-                },
-              );
-              unloadReq.on("error", () => {
-                /* best-effort */
-              });
-              unloadReq.write(JSON.stringify({ model: entry.name, keep_alive: 0 }));
-              unloadReq.end();
-            }
-          } catch {
-            /* best-effort */
-          }
-        });
-      },
+    const psResult = spawnSync(
+      "curl",
+      ["-sS", "--max-time", "3", `http://localhost:${OLLAMA_PORT}/api/ps`],
+      { encoding: "utf8" },
     );
-    req.on("error", () => {
-      /* best-effort */
-    });
+    if (psResult.status !== 0) return;
+
+    const parsed = JSON.parse(psResult.stdout || "{}");
+    const models = Array.isArray(parsed.models) ? parsed.models : [];
+
+    for (const entry of models) {
+      if (!entry?.name) continue;
+      spawnSync(
+        "curl",
+        [
+          "-sS",
+          "-o",
+          "/dev/null",
+          "--max-time",
+          "3",
+          "-X",
+          "POST",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          JSON.stringify({ model: entry.name, keep_alive: 0 }),
+          `http://localhost:${OLLAMA_PORT}/api/generate`,
+        ],
+        { encoding: "utf8" },
+      );
+    }
   } catch {
     /* best-effort */
   }
