@@ -21,6 +21,7 @@ export const REMOTE_MODEL_OPTIONS: Record<string, string[]> = {
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
   ],
+  hermesProvider: ["anthropic/claude-opus-4.7", "anthropic/claude-sonnet-4.6"],
 };
 
 export interface PromptValidationResult {

@@ -10,6 +10,7 @@ import { DEFAULT_OLLAMA_MODEL } from "./local";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+export const DEFAULT_HERMES_PROVIDER_MODEL = "anthropic/claude-opus-4.7";
 export const CLOUD_MODEL_OPTIONS = [
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
   { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", label: "Nemotron 3 Nano Omni 30B" },
@@ -100,6 +101,13 @@ export function getProviderSelectionConfig(
         model: model || "custom-model",
         credentialEnv: "COMPATIBLE_API_KEY",
         providerLabel: "Other OpenAI-compatible endpoint",
+      };
+    case "hermes-provider":
+      return {
+        ...base,
+        model: model || DEFAULT_HERMES_PROVIDER_MODEL,
+        credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+        providerLabel: "Hermes Provider",
       };
     case "vllm-local":
       return {

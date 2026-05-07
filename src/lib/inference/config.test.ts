@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 // Import from compiled dist/ for correct coverage attribution.
 import {
   CLOUD_MODEL_OPTIONS,
+  DEFAULT_HERMES_PROVIDER_MODEL,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
@@ -103,6 +104,16 @@ describe("inference selection config", () => {
       provider: "compatible-endpoint",
       providerLabel: "Other OpenAI-compatible endpoint",
     });
+    expect(getProviderSelectionConfig("hermes-provider", "anthropic/claude-opus-4.7")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "anthropic/claude-opus-4.7",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+      provider: "hermes-provider",
+      providerLabel: "Hermes Provider",
+    });
     // Full-object assertion for one local provider — uses dedicated
     // credential env, not OPENAI_API_KEY (GH #2519).
     expect(getProviderSelectionConfig("vllm-local", "meta-llama")).toEqual({
@@ -131,6 +142,7 @@ describe("inference selection config", () => {
       "compatible-anthropic-endpoint",
       "gemini-api",
       "compatible-endpoint",
+      "hermes-provider",
       "vllm-local",
       "ollama-local",
     ];
@@ -165,6 +177,9 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
     expect(getProviderSelectionConfig("compatible-anthropic-endpoint")?.model).toBe(
       "custom-anthropic-model",
+    );
+    expect(getProviderSelectionConfig("hermes-provider")?.model).toBe(
+      DEFAULT_HERMES_PROVIDER_MODEL,
     );
     expect(getProviderSelectionConfig("vllm-local")?.model).toBe("vllm-local");
   });

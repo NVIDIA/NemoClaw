@@ -75,6 +75,7 @@ export interface Session {
   model: string | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
+  hermesAuthMethod: string | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   routerPid: number | null;
@@ -126,6 +127,7 @@ export interface SessionUpdates {
   model?: string;
   endpointUrl?: string;
   credentialEnv?: string;
+  hermesAuthMethod?: string;
   preferredInferenceApi?: string;
   nimContainer?: string;
   routerPid?: number;
@@ -153,6 +155,7 @@ export interface DebugSessionSummary {
   model: string | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
+  hermesAuthMethod: string | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   policyPresets: string[] | null;
@@ -308,6 +311,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     model: overrides.model ?? null,
     endpointUrl: overrides.endpointUrl ?? null,
     credentialEnv: overrides.credentialEnv ?? null,
+    hermesAuthMethod: overrides.hermesAuthMethod ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
@@ -347,6 +351,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     model: readString(data.model),
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
     credentialEnv: readString(data.credentialEnv),
+    hermesAuthMethod: readString(data.hermesAuthMethod),
     preferredInferenceApi: readString(data.preferredInferenceApi),
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
@@ -708,6 +713,8 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (typeof updates.model === "string") safe.model = updates.model;
   if (typeof updates.endpointUrl === "string") safe.endpointUrl = redactUrl(updates.endpointUrl);
   if (typeof updates.credentialEnv === "string") safe.credentialEnv = updates.credentialEnv;
+  if (typeof updates.hermesAuthMethod === "string")
+    safe.hermesAuthMethod = updates.hermesAuthMethod;
   if (typeof updates.preferredInferenceApi === "string")
     safe.preferredInferenceApi = updates.preferredInferenceApi;
   if (typeof updates.nimContainer === "string") safe.nimContainer = updates.nimContainer;
@@ -853,6 +860,7 @@ export function summarizeForDebug(
     model: session.model,
     endpointUrl: redactUrl(session.endpointUrl),
     credentialEnv: session.credentialEnv,
+    hermesAuthMethod: session.hermesAuthMethod,
     preferredInferenceApi: session.preferredInferenceApi,
     nimContainer: session.nimContainer,
     policyPresets: session.policyPresets,

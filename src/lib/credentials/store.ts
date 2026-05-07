@@ -28,6 +28,7 @@ type CredentialInput = string | null | undefined;
 // sync without a second hand-maintained copy.
 export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "NVIDIA_API_KEY",
+  "NOUS_API_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",

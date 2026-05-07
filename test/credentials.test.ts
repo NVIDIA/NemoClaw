@@ -76,6 +76,12 @@ describe("messaging legacy bridge credentials", () => {
   });
 });
 
+describe("Hermes Provider credentials", () => {
+  it("allows staging Nous API keys for Hermes inference", () => {
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("NOUS_API_KEY");
+  });
+});
+
 describe("host-side credential staging", () => {
   it("stages values in process.env and never writes to disk", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
