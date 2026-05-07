@@ -17,6 +17,10 @@ const BASE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
 );
+const PERMISSIVE_POLICY_PATH = new URL(
+  "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+  import.meta.url,
+);
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
   "provider_type",
   "endpoint",
@@ -320,6 +324,42 @@ describe("base sandbox policy", () => {
     // npm/node being in this list lets the agent bypass 'none' policy preset.
     // Exact allowlist — adding any binary here requires a deliberate review.
     expect(paths).toEqual(["/usr/local/bin/openclaw"]);
+  });
+});
+
+describe("permissive sandbox policy", () => {
+  // openclaw-sandbox-permissive.yaml is applied by `shields down --policy
+  // permissive`. It must carry forward the gateway-managed inference route
+  // so the mental model stays consistent with the base policy and so we
+  // don't silently depend on OpenShell's implicit allow for
+  // gateway-bound virtual hostnames.
+  // Ref: https://github.com/NVIDIA/NemoClaw/issues/2513, #2663
+  const policy = loadYaml<SandboxPolicy>(PERMISSIVE_POLICY_PATH);
+
+  it("parses and declares network_policies", () => {
+    expect(policy.network_policies).toBeDefined();
+  });
+
+  it("regression #2513: managed_inference block allows inference.local:443", () => {
+    const np = policy.network_policies ?? {};
+    expect(np.managed_inference).toBeDefined();
+    const endpoints = np.managed_inference?.endpoints ?? [];
+    const inferenceEp = endpoints.find((ep) => ep.host === "inference.local");
+    expect(inferenceEp).toBeDefined();
+    expect(inferenceEp?.port).toBe(443);
+    // Permissive policy uses the `access: full` convention (any method, any
+    // path) rather than explicit per-method rules. That is consistent with
+    // every other host in this file.
+    expect(inferenceEp?.access).toBe("full");
+    expect(inferenceEp?.enforcement).toBe("enforce");
+  });
+
+  it("regression #2513: managed_inference uses permissive '/**' binary allowlist", () => {
+    const np = policy.network_policies ?? {};
+    const binaries = (np.managed_inference?.binaries ?? []).map((b) => b.path);
+    // Matches the permissive-file convention used by every other block
+    // (e.g. `nvidia`, `github`, `huggingface`, etc.).
+    expect(binaries).toEqual(["/**"]);
   });
 });
 
