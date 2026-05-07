@@ -235,7 +235,7 @@ function installSharedStubs(): void {
     _model: string,
   ) => SHARED.scriptedCaps;
 
-  const credentialsPath = path.join(REPO_ROOT, "dist", "lib", "credentials.js");
+  const credentialsPath = path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js");
   const credentials = require(credentialsPath) as {
     prompt: (msg: string) => Promise<string>;
   };

@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../branding";
-import { commandsByGroup, visibleCommands, type CommandDef } from "../command-registry";
+import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
+import { commandsByGroup, visibleCommands, type CommandDef } from "../cli/command-registry";
 import { getRegisteredOclifCommandSummary } from "../cli/oclif-metadata";
-import { getVersion } from "../version";
+import { getVersion } from "../core/version";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =

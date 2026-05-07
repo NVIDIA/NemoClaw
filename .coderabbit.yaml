@@ -251,7 +251,7 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=snapshot-commands-e2e,rebuild-openclaw-e2e
         ```
 
-    - path: "src/lib/shields*.ts"
+    - path: "src/lib/shields/**"
       instructions: |
         These files control shields down/up, config mutability, audit
         trail, and auto-restore timer.

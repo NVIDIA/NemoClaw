@@ -8,7 +8,7 @@
 const { spawn, spawnSync } = require("child_process");
 const { run, runCapture } = require("./runner");
 const { OLLAMA_HOST_DOCKER_INTERNAL, setResolvedOllamaHost } = require("./local-inference");
-const { OLLAMA_PORT } = require("./ports");
+const { OLLAMA_PORT } = require("./core/ports");
 
 function sleep(seconds: number): void {
   spawnSync("sleep", [String(seconds)]);

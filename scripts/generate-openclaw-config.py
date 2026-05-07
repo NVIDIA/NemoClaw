@@ -69,7 +69,7 @@ def _coerce_positive_int(env: dict, name: str, default: int) -> int:
 def is_loopback(hostname: str) -> bool:
     """Check if a hostname is a loopback address.
 
-    Mirrors isLoopbackHostname() from src/lib/url-utils.ts.
+    Mirrors isLoopbackHostname() from src/lib/core/url-utils.ts.
     Returns True for localhost, ::1, and 127.x.x.x addresses.
     """
     normalized = (hostname or "").strip().lower().strip("[]")

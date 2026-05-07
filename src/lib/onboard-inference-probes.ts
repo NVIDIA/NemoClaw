@@ -5,7 +5,7 @@
 // Inference endpoint probes — validate that a provider's API responds
 // before committing the onboard wizard to a model selection.
 
-const { normalizeCredentialValue } = require("./credentials");
+const { normalizeCredentialValue } = require("./credentials/store");
 const { isWsl } = require("./platform");
 const httpProbe = require("./http-probe");
 const {

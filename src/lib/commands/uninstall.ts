@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 
 import { Command, Flags } from "@oclif/core";
 
-import { getVersion } from "../version";
+import { getVersion } from "../core/version";
 import { buildVersionedUninstallUrl, runUninstallCommand } from "../uninstall-command";
 
 export default class UninstallCliCommand extends Command {

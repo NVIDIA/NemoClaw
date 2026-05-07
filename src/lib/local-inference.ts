@@ -11,8 +11,8 @@ import { runCurlProbe } from "./http-probe";
 
 const { shellQuote, runCapture } = require("./runner");
 
-import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "./ports";
-import { sleepSeconds } from "./wait";
+import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "./core/ports";
+import { sleepSeconds } from "./core/wait";
 
 const { isWsl } = require("./platform");
 

@@ -15,7 +15,7 @@ import {
 import { getSandboxDeleteOutcome } from "../src/lib/domain/sandbox/destroy";
 import { normalizeGarbageCollectImagesOptions } from "../src/lib/domain/lifecycle/options";
 import { help as renderRootHelp } from "../src/lib/actions/root-help";
-import { COMMANDS, globalCommandTokens } from "../src/lib/command-registry";
+import { COMMANDS, globalCommandTokens } from "../src/lib/cli/command-registry";
 import { getRegisteredOclifCommandMetadata } from "../src/lib/cli/oclif-metadata";
 
 const ROOT = path.resolve(import.meta.dirname, "..");

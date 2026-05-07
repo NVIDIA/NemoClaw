@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { DASHBOARD_PORT } from "../../ports";
+import { DASHBOARD_PORT } from "../../core/ports";
 import { ROOT, shellQuote } from "../../runner";
 import {
   captureOpenshell,
@@ -19,8 +19,8 @@ import {
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { parseForwardList } from "../../state/sandbox-session";
-import { G, R } from "../../terminal-style";
-import { sleepSeconds } from "../../wait";
+import { G, R } from "../../cli/terminal-style";
+import { sleepSeconds } from "../../core/wait";
 
 const agentRuntime = require("../../../../bin/lib/agent-runtime");
 

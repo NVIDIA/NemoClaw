@@ -5,7 +5,7 @@
 // Supports non-interactive mode via --non-interactive flag or
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
-const { getAgentBranding } = require("./branding");
+const { getAgentBranding } = require("./cli/branding");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -31,7 +31,7 @@ function setOnboardBrandingAgent(agentName: string | null | undefined): void {
   onboardBrandingAgent = agentName || null;
 }
 
-function onboardBranding(): import("./branding").AgentBranding {
+function onboardBranding(): import("./cli/branding").AgentBranding {
   return getAgentBranding(onboardBrandingAgent || process.env.NEMOCLAW_AGENT || null);
 }
 
@@ -70,7 +70,7 @@ const {
   dockerRmi,
   dockerStop,
 } = docker;
-const errnoUtils: typeof import("./errno") = require("./errno");
+const errnoUtils: typeof import("./core/errno") = require("./core/errno");
 const { isErrnoException } = errnoUtils;
 
 type RunnerOptions = {
@@ -105,7 +105,7 @@ const {
   OLLAMA_PROXY_PORT,
   DASHBOARD_PORT_RANGE_START,
   DASHBOARD_PORT_RANGE_END,
-} = require("./ports");
+} = require("./core/ports");
 const localInference: typeof import("./local-inference") = require("./local-inference");
 const {
   findReachableOllamaHost,
@@ -256,11 +256,11 @@ const {
     inferenceCompat: LooseObject | null;
   };
 };
-const { sleepSeconds } = require("./wait");
+const { sleepSeconds } = require("./core/wait");
 const platformUtils: typeof import("./platform") = require("./platform");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
-const credentials: typeof import("./credentials") = require("./credentials");
+const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
   prompt,
   ensureApiKey,
@@ -271,7 +271,7 @@ const {
   resolveProviderCredential,
   saveCredential,
 } = credentials;
-const { hashCredential }: typeof import("./credential-hash") = require("./credential-hash");
+const { hashCredential }: typeof import("./security/credential-hash") = require("./security/credential-hash");
 const {
   cleanupStaleHostFiles,
 }: typeof import("./host-artifact-cleanup") = require("./host-artifact-cleanup");
@@ -293,15 +293,15 @@ const {
   planHostRemediation,
   probeContainerDns,
 } = preflightUtils;
-const agentOnboard = require("./agent-onboard");
-const agentDefs = require("./agent-defs");
+const agentOnboard = require("./agent/onboard");
+const agentDefs = require("./agent/defs");
 
 const gatewayState: typeof import("./state/gateway") = require("./state/gateway");
 const sandboxState: typeof import("./state/sandbox") = require("./state/sandbox");
 const validation: typeof import("./validation") = require("./validation");
-const urlUtils: typeof import("./url-utils") = require("./url-utils");
+const urlUtils: typeof import("./core/url-utils") = require("./core/url-utils");
 const buildContext = require("./build-context");
-const dashboardContract: typeof import("./dashboard-contract") = require("./dashboard-contract");
+const dashboardContract: typeof import("./dashboard/contract") = require("./dashboard/contract");
 const httpProbe: typeof import("./http-probe") = require("./http-probe");
 const modelPrompts: typeof import("./model-prompts") = require("./model-prompts");
 const providerModels: typeof import("./provider-models") = require("./provider-models");
@@ -309,7 +309,7 @@ const sandboxCreateStream: typeof import("./sandbox-create-stream") = require(".
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const webSearch: typeof import("./web-search") = require("./web-search");
 
-import type { AgentDefinition } from "./agent-defs";
+import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./http-probe";
 import type { GatewayInference, ProviderSelectionConfig } from "./inference-config";
 import type { GpuInfo, ValidationResult } from "./local-inference";
@@ -412,12 +412,12 @@ const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 
 // Re-export shared JSON types under the names used throughout this module.
-// See src/lib/json-types.ts for the canonical definitions.
+// See src/lib/core/json-types.ts for the canonical definitions.
 import type {
   JsonObject as LooseObject,
   JsonScalar as LooseScalar,
   JsonValue as LooseValue,
-} from "./json-types";
+} from "./core/json-types";
 
 type OnboardOptions = {
   nonInteractive?: boolean;
@@ -1166,7 +1166,7 @@ function executeSandboxCommandForVerification(
   }
 }
 
-// URL/string utilities — delegated to src/lib/url-utils.ts
+// URL/string utilities — delegated to src/lib/core/url-utils.ts
 const {
   compactText,
   normalizeProviderBaseUrl,
@@ -3245,7 +3245,36 @@ function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
+// CDI spec gap (#3152). When Docker is configured for CDI device injection
+// (CDISpecDirs is set) but no nvidia.com/gpu spec is present, OpenShell's
+// `gateway start --gpu` fails minutes later with `unresolvable CDI devices
+// nvidia.com/gpu=all`. Block now and surface `nvidia-ctk cdi generate`. The
+// check is a no-op when the user opts out of GPU passthrough (--no-gpu),
+// since the legacy nvidia runtime does not need a CDI spec.
+//
+// Extracted so the same guard runs on the `--resume` branch, where preflight()
+// itself is skipped via the cached session.
+function assertCdiNvidiaGpuSpecPresent(
+  host: ReturnType<typeof assessHost>,
+  optedOutGpuPassthrough: boolean,
+): void {
+  if (!host.cdiNvidiaGpuSpecMissing || optedOutGpuPassthrough) return;
+  console.error(
+    "  Docker is configured for CDI device injection (CDISpecDirs is set), but no",
+  );
+  console.error(
+    "  nvidia.com/gpu CDI spec was found on the host. OpenShell's gateway start will",
+  );
+  console.error(
+    "  fail with `unresolvable CDI devices nvidia.com/gpu=all` (issue #3152).",
+  );
+  printRemediationActions(planHostRemediation(host));
+  process.exit(1);
+}
+
+async function preflight(
+  preflightOpts: { optedOutGpuPassthrough?: boolean } = {},
+): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
 
   const host = assessHost();
@@ -3257,6 +3286,8 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
     process.exit(1);
   }
   console.log("  ✓ Docker is running");
+
+  assertCdiNvidiaGpuSpecPresent(host, preflightOpts.optedOutGpuPassthrough === true);
 
   // DNS resolution from inside containers (#2101). A corp firewall that
   // blocks outbound UDP:53 to public resolvers leaves the sandbox build
@@ -3687,7 +3718,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
 
   // Required ports — gateway, plus the dashboard port when an explicit one
   // is requested. envVar is the override env var documented in
-  // src/lib/ports.ts; surfacing it in the preflight error gives users a clear
+  // src/lib/core/ports.ts; surfacing it in the preflight error gives users a clear
   // escape hatch when an unrelated process is holding the default port
   // (closes #2497). When --control-ui-port is set, check that port instead
   // of the default. When auto-allocation is possible (no explicit port),
@@ -8416,7 +8447,7 @@ function syncPresetSelection(
 
 const CONTROL_UI_PORT = DASHBOARD_PORT;
 
-// Dashboard helpers — delegated to src/lib/dashboard-contract.ts
+// Dashboard helpers — delegated to src/lib/dashboard/contract.ts
 const { buildChain, buildControlUiUrls } = dashboardContract;
 
 // Parses `openshell forward list` output and returns the sandbox currently
@@ -9389,9 +9420,20 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     if (resumePreflight) {
       skippedStepMessage("preflight", "cached");
       gpu = nim.detectGpu();
+      // Re-check the CDI spec gap on resume (#3152). The cached preflight
+      // result does not capture host CDI state, and the original onboard
+      // attempt that wrote the cache likely aborted at gateway-start with
+      // exactly this CDI failure — so resuming without re-checking would
+      // walk into the same wall. Honour persisted `gpuPassthrough: false`
+      // from the prior session as an opt-out, since the resume invocation
+      // does not need to re-pass `--no-gpu` to keep that intent (the same
+      // resolution is replayed a few lines below for `gpuPassthrough`).
+      const resumeOptedOutGpuPassthrough =
+        opts.noGpu === true || (opts.gpu !== true && session?.gpuPassthrough === false);
+      assertCdiNvidiaGpuSpecPresent(assessHost(), resumeOptedOutGpuPassthrough);
     } else {
       startRecordedStep("preflight");
-      gpu = await preflight();
+      gpu = await preflight({ optedOutGpuPassthrough: opts.noGpu === true });
       onboardSession.markStepComplete("preflight");
     }
 
