@@ -143,7 +143,9 @@ describe("runGatewayTokenCommand", () => {
     expect(getSandboxAgent).toHaveBeenCalledWith("hermes");
     expect(fetchToken).not.toHaveBeenCalled();
     expect(sinks.out).toEqual([]);
-    const stderr = sinks.err.join("\n");
+    // Issue #3180 contract: a single agent-aware "not applicable" line.
+    expect(sinks.err).toHaveLength(1);
+    const stderr = sinks.err[0] ?? "";
     expect(stderr).toMatch(/hermes/);
     expect(stderr).toMatch(/OpenClaw/);
     expect(stderr).toMatch(/not applicable/i);

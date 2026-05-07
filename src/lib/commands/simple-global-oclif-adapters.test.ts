@@ -130,6 +130,24 @@ describe("simple global oclif adapters", () => {
     }
   });
 
+  it("clears a stale non-zero process.exitCode on a successful gateway-token run", async () => {
+    // CodeRabbit #3182: if a prior run() left process.exitCode = 1, a later
+    // successful invocation must still report success. Always overwrite.
+    mocks.runGatewayTokenCommand.mockReturnValueOnce(0);
+    setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
+      fetchGatewayAuthTokenFromSandbox: mocks.fetchGatewayAuthTokenFromSandbox,
+      getSandboxAgent: () => "openclaw",
+    }));
+    const previousExitCode = process.exitCode;
+    process.exitCode = 1;
+    try {
+      await GatewayTokenCliCommand.run(["alpha", "--quiet"], rootDir);
+      expect(process.exitCode).toBe(0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it("runs hidden root help and version adapters", async () => {
     await RootHelpCommand.run([], rootDir);
     await VersionCommand.run([], rootDir);

@@ -65,10 +65,7 @@ export function runGatewayTokenCommand(
   }
   if (resolvedAgent && resolvedAgent !== "openclaw") {
     error(
-      `  gateway-token is not applicable for the '${resolvedAgent}' agent -- it is OpenClaw-specific.`,
-    );
-    error(
-      `  Sandbox '${sandboxName}' uses the ${resolvedAgent} agent, which does not expose an equivalent token.`,
+      `  gateway-token is not applicable for sandbox '${sandboxName}': it uses the '${resolvedAgent}' agent, which does not expose a gateway auth token. This command only supports the OpenClaw agent.`,
     );
     return 1;
   }

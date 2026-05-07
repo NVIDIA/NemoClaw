@@ -82,11 +82,10 @@ export default class GatewayTokenCliCommand extends Command {
     );
     // NCQ #3180: avoid this.exit(code), which throws @oclif/core ExitError.
     // The legacy `nemoclaw <name> gateway-token` dispatch did not catch the
-    // throw, leaking a raw JS stack trace to the user. Setting
-    // process.exitCode keeps the diagnostic output clean while still
-    // signalling failure to shell callers.
-    if (exitCode !== 0) {
-      process.exitCode = exitCode;
-    }
+    // throw, leaking a raw JS stack trace to the user. Always assigning
+    // process.exitCode keeps the diagnostic output clean and prevents a
+    // stale non-zero code from a prior run() in the same process from
+    // bleeding through on a successful invocation.
+    process.exitCode = exitCode;
   }
 }
