@@ -1,129 +1,298 @@
 ---
 name: "nemoclaw-user-configure-inference"
-description: "Shows the NemoClaw-specific file paths and update flow for adding an auxiliary OpenClaw sub-agent model. Use when users ask how to add a second model, configure a sub-agent model, use Omni for vision tasks, configure agents.list, or use sessions_spawn in NemoClaw. Trigger keywords - nemoclaw additional model, nemoclaw sub-agent model, openclaw sub-agent, agents.list, sessions_spawn, vlm-demo, switch nemoclaw inference model, change inference runtime, nemoclaw local inference, ollama nemoclaw, vllm nemoclaw, local model server, openai compatible endpoint, nemoclaw inference options, nemoclaw onboarding providers, nemoclaw inference routing."
+description: "Connects NemoClaw to a local inference server. Use when setting up Ollama, vLLM, TensorRT-LLM, NIM, or any OpenAI-compatible local model server with NemoClaw. Trigger keywords - nemoclaw local inference, ollama nemoclaw, vllm nemoclaw, local model server, openai compatible endpoint, switch nemoclaw inference model, change inference runtime, nemoclaw additional model, nemoclaw sub-agent model, openclaw sub-agent, agents.list, sessions_spawn, vlm-demo, nemoclaw inference options, nemoclaw onboarding providers, nemoclaw inference routing."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Set up a Task-Specific Sub-Agent
+# Use a Local Inference Server with NemoClaw
 
-OpenClaw documents the sub-agent behavior, `sessions_spawn` tool, `agents.list` configuration, tool policy, nesting, and auth model in [Sub-Agents](https://docs.openclaw.ai/tools/subagents).
-Use that page as the source of truth for how OpenClaw sub-agents work.
+## Prerequisites
 
-This NemoClaw page covers the sandbox-specific pieces: where the OpenClaw config lives, where to put per-agent credentials, which writable workspace path agents should use, and how the Omni VLM demo maps onto those paths.
+- NemoClaw installed.
+- A local model server running, or Ollama installed. The NemoClaw onboard wizard can also start Ollama for you.
 
-## Step 1: NemoClaw Sandbox Paths
+NemoClaw can route inference to a model server running on your machine instead of a cloud API.
+This page covers Ollama, compatible-endpoint paths for other servers, and two experimental options for vLLM and NVIDIA NIM.
 
-NemoClaw runs OpenClaw inside an OpenShell sandbox.
-When adapting an OpenClaw sub-agent setup, use these paths inside the sandbox:
+All approaches use the same `inference.local` routing model.
+The agent inside the sandbox never connects to your model server directly.
+OpenShell intercepts inference traffic and forwards it to the local endpoint you configure.
 
-| Path | Purpose |
+## Step 1: Ollama
+
+Ollama is the default local inference option.
+The onboard wizard detects Ollama automatically when it is installed or running on the host.
+
+If Ollama is not running, NemoClaw starts it for you.
+On macOS, the wizard also offers to install Ollama through Homebrew if it is not present.
+
+Run the onboard wizard.
+
+```console
+$ nemoclaw onboard
+```
+
+Select **Local Ollama** from the provider list.
+NemoClaw lists installed models or offers starter models if none are installed.
+It pulls the selected model, loads it into memory, and validates it before continuing.
+On WSL, if Ollama is running on the Windows host, NemoClaw pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
+
+### Authenticated Reverse Proxy
+
+NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated
+reverse proxy on `0.0.0.0:11435`.
+Containers and other hosts on the local network reach Ollama only through the
+proxy, which validates a Bearer token before forwarding requests.
+Ollama itself is never exposed without authentication.
+
+The onboard wizard manages the proxy automatically:
+
+- Generates a random 24-byte token on first run and stores it in
+  `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
+- Starts the proxy after Ollama and verifies it before continuing.
+- Cleans up stale proxy processes from previous runs.
+- Retries the sandbox container reachability check and can continue when the host-side proxy is healthy even if the container probe fails.
+- Reuses the persisted token after a host reboot so you do not need to re-run
+  onboard.
+
+The sandbox provider is configured to use proxy port `11435` with the generated
+token as its `OPENAI_API_KEY` credential.
+OpenShell's L7 proxy injects the token at egress, so the agent inside the
+sandbox never sees the token directly.
+
+`GET /api/tags` is exempt from authentication so container health checks
+continue to work.
+All other endpoints (including `POST /api/tags`) require the Bearer token.
+
+If Ollama is already running on a non-loopback address when you start onboard,
+the wizard restarts it on `127.0.0.1:11434` so the proxy is the only network
+path to the model server.
+
+### GPU Memory Cleanup
+
+When you switch away from Ollama, stop host services, or destroy an Ollama-backed sandbox, NemoClaw asks Ollama to unload currently loaded models from GPU memory.
+The cleanup sends `keep_alive: 0` for each model reported by Ollama and runs on a best-effort basis, so shutdown continues if Ollama is already stopped.
+This does not delete downloaded model files.
+
+### Non-Interactive Setup
+
+```console
+$ NEMOCLAW_PROVIDER=ollama \
+  NEMOCLAW_MODEL=qwen2.5:14b \
+  nemoclaw onboard --non-interactive --yes
+```
+
+If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
+
+`--yes` (or `NEMOCLAW_YES=1`) authorises the Ollama model download without an interactive confirmation prompt.
+Under `--non-interactive`, `--yes` (or `NEMOCLAW_YES=1`) is required to authorise the download — onboard exits otherwise, since it cannot prompt.
+Run onboard without `--non-interactive` to get the interactive `[y/N]` prompt that shows the model size before downloading.
+
+| Variable | Purpose |
 |---|---|
-| `/sandbox/.openclaw/openclaw.json` | OpenClaw config, including `models.providers`, `agents.defaults`, and `agents.list`. |
-| `/sandbox/.openclaw/.config-hash` | Hash for `openclaw.json`. Keep it in sync after manual config edits; it becomes a startup-enforced trust anchor only after `shields up` locks it root-owned and read-only. |
-| `/sandbox/.openclaw/agents/<agent-id>/agent/auth-profiles.json` | Per-agent provider credentials. Use this when a sub-agent calls an auxiliary provider directly. |
-| `/sandbox/.openclaw/workspace/` | Writable shared workspace path for files the primary agent passes to the sub-agent. |
-| `/tmp/gateway.log` | OpenClaw gateway log. Use it to confirm config reloads and diagnose sub-agent failures. |
+| `NEMOCLAW_PROVIDER` | Set to `ollama`. |
+| `NEMOCLAW_MODEL` | Ollama model tag to use. Optional. |
+| `NEMOCLAW_YES` | Set to `1` to auto-accept the model-download confirmation prompt. Optional. |
 
-For file-based tasks, instruct agents to use `/sandbox/.openclaw/workspace/`.
-Avoid relying on legacy `.openclaw-data` paths or read-only OpenClaw paths in delegation instructions.
+## Step 2: OpenAI-Compatible Server
 
-## Step 2: Omni Vision Sub-Agent Example
+This option works with any server that implements `/v1/chat/completions`, including vLLM, TensorRT-LLM, llama.cpp, LocalAI, and others.
+For compatible endpoints, NemoClaw uses `/v1/chat/completions` by default.
+This avoids a class of failures where local backends accept `/v1/responses` requests but silently drop the system prompt and tool definitions.
+To opt in to `/v1/responses`, set `NEMOCLAW_PREFERRED_API=openai-responses` before running onboard.
 
-The [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-demo) applies the OpenClaw sub-agent pattern to a vision task.
-It keeps the primary `main` agent on the normal NemoClaw inference route and adds a `vision-operator` sub-agent backed by an Omni vision model.
+Start your model server.
+The examples below use vLLM, but any OpenAI-compatible server works.
 
-| OpenClaw field | Omni example value |
+```console
+$ vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
+```
+
+Run the onboard wizard.
+
+```console
+$ nemoclaw onboard
+```
+
+When the wizard asks you to choose an inference provider, select **Other OpenAI-compatible endpoint**.
+Enter the base URL of your local server, for example `http://localhost:8000/v1`.
+
+The wizard prompts for an API key.
+If your server does not require authentication, enter any non-empty string (for example, `dummy`).
+
+NemoClaw validates the endpoint by sending a test inference request before continuing.
+The wizard probes `/v1/chat/completions` by default for the compatible-endpoint provider.
+If you set `NEMOCLAW_PREFERRED_API=openai-responses`, NemoClaw probes `/v1/responses` instead and only selects it when the response includes the streaming events OpenClaw requires.
+
+### Non-Interactive Setup
+
+Set the following environment variables for scripted or CI/CD deployments.
+
+```console
+$ NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
+  NEMOCLAW_MODEL=meta-llama/Llama-3.1-8B-Instruct \
+  COMPATIBLE_API_KEY=dummy \
+  nemoclaw onboard --non-interactive
+```
+
+| Variable | Purpose |
 |---|---|
-| Primary agent | `main` |
-| Primary model | `inference/nvidia/nemotron-3-super-120b-a12b` |
-| Auxiliary provider | `nvidia-omni` |
-| Sub-agent | `vision-operator` |
-| Sub-agent model | `nvidia-omni/private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b` |
-| Delegation tool | `sessions_spawn` |
+| `NEMOCLAW_PROVIDER` | Set to `custom` for an OpenAI-compatible endpoint. |
+| `NEMOCLAW_ENDPOINT_URL` | Base URL of the local server. |
+| `NEMOCLAW_MODEL` | Model ID as reported by the server. |
+| `COMPATIBLE_API_KEY` | API key for the endpoint. Use any non-empty value if authentication is not required. |
 
-Omni is used as the specialist model for image tasks.
-The primary orchestration model remains responsible for conversation, planning, and deciding when to delegate.
+### Selecting the API Path
 
-## Step 3: Update the Sandbox Config
+For the compatible-endpoint provider, `/v1/chat/completions` is the default.
+NemoClaw tests streaming events during onboarding and uses chat completions
+without probing the Responses API.
 
-Fetch the current OpenClaw config from the sandbox, patch it with your auxiliary provider and `agents.list` changes, then upload it back.
-
-```console
-$ export SANDBOX=my-assistant
-$ export DOCKER_CTR=openshell-cluster-nemoclaw
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- cat /sandbox/.openclaw/openclaw.json > /tmp/openclaw.json
-```
-
-Create `/tmp/openclaw.updated.json` with the OpenClaw sub-agent config.
-For the Omni example, the demo provides `vlm-demo/vlm-subagent/openclaw-patch.py`.
-
-Upload the patched config and refresh the hash.
-In the default mutable state, this keeps the local hash consistent but does not make it tamper-proof; run `nemoclaw <name> shields up` afterward if the sandbox should enforce config integrity at startup.
+To opt in to `/v1/responses`, set `NEMOCLAW_PREFERRED_API` before running onboard:
 
 ```console
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/openclaw.json
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/.config-hash
-$ cat /tmp/openclaw.updated.json | docker exec -i "$DOCKER_CTR" kubectl exec -i -n openshell "$SANDBOX" -c agent -- sh -c 'cat > /sandbox/.openclaw/openclaw.json'
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 444 /sandbox/.openclaw/openclaw.json
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 444 /sandbox/.openclaw/.config-hash
+$ NEMOCLAW_PREFERRED_API=openai-responses nemoclaw onboard
 ```
 
-Check `/tmp/gateway.log` after upload and confirm the gateway hot-reloaded the provider or `agents.list` change.
+The wizard then probes `/v1/responses` and only selects it when streaming
+support is complete.
+If the probe fails, the wizard falls back to `/v1/chat/completions`
+automatically.
+You can use this variable in both interactive and non-interactive mode.
 
-## Step 4: Add Sub-Agent Credentials
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_PREFERRED_API` | `openai-completions`, `openai-responses` | `openai-completions` for compatible endpoints |
 
-If the auxiliary model uses a provider key outside the normal NemoClaw inference route, put that key in the sub-agent auth profile.
-For the Omni example:
+If you already onboarded and the sandbox is failing at runtime, re-run
+`nemoclaw onboard` to re-probe the endpoint and bake the correct API path
+into the image.
+Refer to Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for details.
 
-```text
-/sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json
-```
+## Step 3: Anthropic-Compatible Server
 
-Use the same provider ID that appears in `models.providers`, such as `nvidia-omni`.
-After uploading the auth profile, make sure the sub-agent directory is owned by the sandbox user:
+If your local server implements the Anthropic Messages API (`/v1/messages`), choose **Other Anthropic-compatible endpoint** during onboarding instead.
 
 ```console
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chown -R sandbox:sandbox /sandbox/.openclaw/agents/vision-operator
+$ nemoclaw onboard
 ```
 
-## Step 5: Allow Auxiliary Provider Egress
+For non-interactive setup, use `NEMOCLAW_PROVIDER=anthropicCompatible` and set `COMPATIBLE_ANTHROPIC_API_KEY`.
 
-If the sub-agent calls a provider directly, update the OpenShell network policy for the binary that makes the request.
-In the Omni demo, the OpenClaw gateway runs as `/usr/local/bin/node`, so the NVIDIA endpoint policy must allow that binary.
-
-Refer to Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for policy update workflows.
-
-## Step 6: Add Delegation Instructions
-
-OpenClaw handles `sessions_spawn`, but the primary agent still needs task instructions.
-Place those instructions in the writable workspace, for example:
-
-```text
-/sandbox/.openclaw/workspace/TOOLS.md
+```console
+$ NEMOCLAW_PROVIDER=anthropicCompatible \
+  NEMOCLAW_ENDPOINT_URL=http://localhost:8080 \
+  NEMOCLAW_MODEL=my-model \
+  COMPATIBLE_ANTHROPIC_API_KEY=dummy \
+  nemoclaw onboard --non-interactive
 ```
 
-The Omni demo includes `vlm-demo/vlm-subagent/TOOLS.md`, which tells `main` to delegate image tasks to `vision-operator` and tells the sub-agent to read the image path it receives.
-Adapt that file for other task-specific models.
+## Step 4: vLLM Auto-Detection (Experimental)
 
-## Step 7: Demo Assets
+When vLLM is already running on `localhost:8000`, NemoClaw can detect it automatically and query the `/v1/models` endpoint to determine the loaded model.
 
-Use the [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-demo) repository for runnable Omni example assets:
+Set the experimental flag and run onboard.
 
-- `vlm-subagent-guide.md` for a command-by-command walkthrough.
-- `vlm-subagent/openclaw-patch.py` for patching `openclaw.json`.
-- `vlm-subagent/auth-profiles.template.json` for the sub-agent auth profile.
-- `vlm-subagent/TOOLS.md` for delegation instructions.
+```console
+$ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
+```
+
+Select **Local vLLM [experimental]** from the provider list.
+NemoClaw detects the running model and validates the endpoint.
+
+> **Note:** NemoClaw forces the `chat/completions` API path for vLLM.
+> The vLLM `/v1/responses` endpoint does not run the `--tool-call-parser`, so tool calls arrive as raw text.
+
+### Non-Interactive Setup
+
+```console
+$ NEMOCLAW_EXPERIMENTAL=1 \
+  NEMOCLAW_PROVIDER=vllm \
+  nemoclaw onboard --non-interactive
+```
+
+NemoClaw auto-detects the model from the running vLLM instance.
+To override the model, set `NEMOCLAW_MODEL`.
+
+## Step 5: NVIDIA NIM (Experimental)
+
+NemoClaw can pull, start, and manage a NIM container on hosts with a NIM-capable NVIDIA GPU.
+
+Set the experimental flag and run onboard.
+
+```console
+$ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
+```
+
+Select **Local NVIDIA NIM [experimental]** from the provider list.
+NemoClaw filters available models by GPU VRAM, pulls the NIM container image, starts it, and waits for it to become healthy before continuing.
+
+NIM container images are hosted on `nvcr.io` and require NGC registry authentication before `docker pull` succeeds.
+If Docker is not already logged in to `nvcr.io`, onboard prompts for an [NGC API key](https://org.ngc.nvidia.com/setup/api-key) and runs `docker login nvcr.io` over `--password-stdin` so the key is never written to disk or shell history.
+The prompt masks the key during input and retries once on a bad key before failing.
+In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run `docker login nvcr.io` yourself, then re-run `nemoclaw onboard --non-interactive`.
+
+> **Note:** NIM uses vLLM internally.
+> The same `chat/completions` API path restriction applies.
+
+### Non-Interactive Setup
+
+```console
+$ NEMOCLAW_EXPERIMENTAL=1 \
+  NEMOCLAW_PROVIDER=nim \
+  nemoclaw onboard --non-interactive
+```
+
+To select a specific model, set `NEMOCLAW_MODEL`.
+
+## Step 6: Timeout Configuration
+
+Local inference requests use a default timeout of 180 seconds.
+Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so NemoClaw sets a higher default for Ollama, vLLM, NIM, and compatible-endpoint setup.
+
+To override the timeout, set the `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` environment variable before onboarding:
+
+```console
+$ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+$ nemoclaw onboard
+```
+
+The value is in seconds.
+This setting is baked into the sandbox at build time.
+Changing it after onboarding requires re-running `nemoclaw onboard`.
+
+## Step 7: Verify the Configuration
+
+After onboarding completes, confirm the active provider and model.
+
+```console
+$ nemoclaw <name> status
+```
+
+The output shows the provider label (for example, "Local vLLM" or "Other OpenAI-compatible endpoint") and the active model.
+
+## Step 8: Switch Models at Runtime
+
+You can change the model without re-running onboard.
+Refer to Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for the full procedure.
+
+For compatible endpoints, the command is:
+
+```console
+$ openshell inference set --provider compatible-endpoint --model <model-name>
+```
+
+If the provider itself needs to change (for example, switching from vLLM to a cloud API), rerun `nemoclaw onboard`.
 
 ## References
 
 - **Load [references/switch-inference-providers.md](references/switch-inference-providers.md)** when switching inference providers, changing the model runtime, or reconfiguring inference routing. Changes the active inference model without restarting the sandbox.
-- **Load [references/use-local-inference.md](references/use-local-inference.md)** when setting up Ollama, vLLM, TensorRT-LLM, NIM, or any OpenAI-compatible local model server with NemoClaw. Connects NemoClaw to a local inference server.
+- **Load [references/set-up-sub-agent.md](references/set-up-sub-agent.md)** when users ask how to add a second model, configure a sub-agent model, use Omni for vision tasks, configure agents.list, or use sessions_spawn in NemoClaw. Shows the NemoClaw-specific file paths and update flow for adding an auxiliary OpenClaw sub-agent model.
 - **Load [references/inference-options.md](references/inference-options.md)** when explaining which providers are available, what the onboard wizard presents, or how inference routing works. Lists all inference providers offered during NemoClaw onboarding.
 
 ## Related Skills
 
-- Refer to [OpenClaw Sub-Agents](https://docs.openclaw.ai/tools/subagents) for `sessions_spawn`, `agents.list`, nesting, tool policy, and auth behavior.
-- `nemoclaw-user-workspace` — Refer to Workspace Files (use the `nemoclaw-user-workspace` skill) to understand per-agent workspace directories
+- `nemoclaw-user-get-started` — Quickstart (use the `nemoclaw-user-get-started` skill) for first-time installation

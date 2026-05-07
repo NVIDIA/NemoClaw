@@ -32,18 +32,23 @@ $ nemohermes onboard
 The onboard wizard asks for a sandbox name, inference provider, model, credentials, and network policy preset.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 
+The default Hermes sandbox name is `hermes`.
 Use a distinct sandbox name, such as `my-hermes`, so you can run Hermes and OpenClaw sandboxes side by side.
+NemoClaw prevents same-name reuse when an existing sandbox uses a different agent.
 
 ```text
-Sandbox name [my-assistant]: my-hermes
+Sandbox name [hermes]: my-hermes
 ```
 
 Choose the inference provider that matches where you want Hermes model traffic to go.
 The provider options and credential environment variables are the same as the standard NemoClaw quickstart.
 For provider-specific prompts, refer to the Respond to the Onboard Wizard (use the `nemoclaw-user-get-started` skill) section and the Inference Options (use the `nemoclaw-user-configure-inference` skill) page.
+The Hermes wizard does not ask for Brave Web Search because Hermes does not use NemoClaw's OpenClaw web-search configuration.
 
 After provider and policy selection, review the summary and confirm the build.
 NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
+The Hermes image includes runtime dependencies for the supported NemoClaw messaging integrations, API service, and health endpoint.
+The base image does not include unsupported Hermes integrations.
 
 ## Use Non-Interactive Setup
 
@@ -118,6 +123,7 @@ Do not append an OpenClaw `#token=` URL fragment to the Hermes endpoint.
 
 Use the same lifecycle commands as a standard NemoClaw sandbox.
 The `nemohermes` alias keeps help text and recovery messages aligned with Hermes, while targeting the same registered sandbox.
+`nemoclaw list` shows the agent type for each sandbox so you can distinguish Hermes and OpenClaw entries.
 
 ```console
 $ nemohermes my-hermes status
@@ -142,5 +148,5 @@ $ nemohermes my-hermes destroy
 
 - Inference Options (use the `nemoclaw-user-configure-inference` skill) to choose a provider and model.
 - Commands (use the `nemoclaw-user-reference` skill) to see the full `nemohermes` alias behavior.
-- Backup and Restore (use the `nemoclaw-user-workspace` skill) to preserve sandbox state before destructive operations.
+- Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill) to preserve sandbox state before destructive operations.
 - Monitor Sandbox Activity (use the `nemoclaw-user-monitor-sandbox` skill) to inspect OpenShell events and sandbox logs.
