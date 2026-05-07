@@ -7,10 +7,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { dockerSpawnSync } from "../adapters/docker/exec";
-import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../domain/uninstall/paths";
-import { buildUninstallPlan, type UninstallPlan } from "../domain/uninstall/plan";
-import { classifyShimPath, type FileSystemDeps } from "./uninstall-plan";
+import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
+import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
+import { classifyShimPath, type FileSystemDeps } from "./plan";
 
 export interface RunResult {
   status: number | null;

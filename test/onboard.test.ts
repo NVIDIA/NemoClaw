@@ -2429,6 +2429,7 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-inference-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-router-check.js");
+    const routerPort = 44000 + (process.pid % 10000);
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
@@ -2469,9 +2470,23 @@ const { setupInference } = require(${onboardPath});
     );
 
     const script = String.raw`
+const fs = require("fs");
+const path = require("path");
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
+const routerPort = ${routerPort};
+const blueprintPath = path.join(${JSON.stringify(repoRoot)}, "nemoclaw-blueprint", "blueprint.yaml");
+const originalReadFileSync = fs.readFileSync;
+fs.readFileSync = (filePath, ...args) => {
+  const raw = originalReadFileSync(filePath, ...args);
+  if (filePath === blueprintPath || String(filePath) === blueprintPath) {
+    return String(raw)
+      .replace('endpoint: "http://localhost:4000/v1"', 'endpoint: "http://localhost:' + routerPort + '/v1"')
+      .replace("port: 4000", "port: " + routerPort);
+  }
+  return raw;
+};
 
 const commands = [];
 runner.run = (command, opts = {}) => {
@@ -2505,7 +2520,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
     "router-box",
     "nvidia-routed",
     "nvidia-router",
-    "http://host.openshell.internal:4000/v1",
+    "http://host.openshell.internal:" + routerPort + "/v1",
     "NVIDIA_API_KEY",
   );
   console.log(JSON.stringify({
@@ -2542,7 +2557,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
     assert.match(providerCommand.command, /--credential NVIDIA_API_KEY/);
     assert.match(
       providerCommand.command,
-      /OPENAI_BASE_URL=http:\/\/host\.openshell\.internal:4000\/v1/,
+      new RegExp(`OPENAI_BASE_URL=http:\\/\\/host\\.openshell\\.internal:${routerPort}\\/v1`),
     );
     assert.doesNotMatch(providerCommand.command, /nvapi-router-secret/);
     assert.equal(providerCommand.env?.NVIDIA_API_KEY, "nvapi-router-secret");

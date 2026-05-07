@@ -3,8 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { runFixCoreDns, runSetupDnsProxy } from "../../../dist/lib/actions/dns.js";
-import type { CommandResult } from "./dns";
+import { runFixCoreDns, runSetupDnsProxy } from "../../../../dist/lib/actions/dns/index.js";
+import type { CommandResult } from "./index";
 
 function ok(stdout = ""): CommandResult {
   return { status: 0, stdout, stderr: "" };

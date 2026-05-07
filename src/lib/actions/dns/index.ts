@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { dockerSpawnSync } from "../adapters/docker/exec";
+import { dockerSpawnSync } from "../../adapters/docker/exec";
 import {
   buildCoreDnsPatchJson,
   dockerHostRuntime,
@@ -14,7 +14,7 @@ import {
   resolveCoreDnsUpstream,
   selectOpenshellClusterContainer,
   type ContainerRuntime,
-} from "../domain/dns/coredns";
+} from "../../domain/dns/coredns";
 import {
   buildDnsProxyPython,
   buildDnsReadyProbePython,
@@ -24,7 +24,7 @@ import {
   parseVethGateway,
   selectSandboxNamespace,
   selectSandboxPod,
-} from "../domain/dns/setup-proxy";
+} from "../../domain/dns/setup-proxy";
 
 export type CommandResult = Pick<SpawnSyncReturns<string>, "stderr" | "stdout" | "status">;
 

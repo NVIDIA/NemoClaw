@@ -4,9 +4,9 @@
 /* v8 ignore start -- covered by source-level unit tests; CLI coverage tracks dist integration. */
 import fs from "node:fs";
 
-import { defaultUninstallPaths } from "../domain/uninstall/paths";
-import { buildUninstallPlan, type UninstallPlan, type UninstallPlanOptions } from "../domain/uninstall/plan";
-import { classifyNemoclawShim, type ShimClassification } from "../domain/uninstall/shims";
+import { defaultUninstallPaths } from "../../domain/uninstall/paths";
+import { buildUninstallPlan, type UninstallPlan, type UninstallPlanOptions } from "../../domain/uninstall/plan";
+import { classifyNemoclawShim, type ShimClassification } from "../../domain/uninstall/shims";
 
 export interface FileSystemDeps {
   lstatSync?: typeof fs.lstatSync;

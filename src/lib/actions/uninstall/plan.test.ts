@@ -6,8 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { buildHostUninstallPlan, classifyShimPath } from "./uninstall-plan";
-import { flattenUninstallPlan } from "../domain/uninstall/plan";
+import { flattenUninstallPlan } from "../../domain/uninstall/plan";
+import { buildHostUninstallPlan, classifyShimPath } from "./plan";
 
 describe("uninstall plan actions", () => {
   it("classifies an on-disk dev shim", () => {

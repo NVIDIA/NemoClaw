@@ -6,8 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { DEV_SHIM_MARKER } from "../domain/dev-shim";
-import { runNpmLinkOrShim } from "./dev-shim";
+import { DEV_SHIM_MARKER } from "../../domain/dev/npm-link-or-shim";
+import { runNpmLinkOrShim } from "./npm-link-or-shim";
 
 function setupRepo(): { binPath: string; homeDir: string; repoDir: string; tmpDir: string } {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dev-shim-action-"));

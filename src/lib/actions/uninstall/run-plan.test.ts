@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { buildRunPlan, runUninstallPlan, type RunResult } from "./uninstall-run-plan";
+import { buildRunPlan, runUninstallPlan, type RunResult } from "./run-plan";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };

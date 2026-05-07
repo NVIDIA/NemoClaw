@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildInstallerPlan, normalizeInstallerEnv } from "./installer-plan";
+import { buildInstallerPlan, normalizeInstallerEnv } from "./plan";
 
 const writableState = {
   exists: (targetPath: string) => targetPath !== "/missing",

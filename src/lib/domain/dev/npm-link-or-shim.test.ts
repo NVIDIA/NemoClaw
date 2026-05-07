@@ -8,7 +8,7 @@ import {
   buildDevShimContents,
   classifyDevShim,
   pathContainsDirectory,
-} from "./dev-shim";
+} from "./npm-link-or-shim";
 
 describe("dev shim domain helpers", () => {
   it("classifies absent, managed, and foreign shims", () => {

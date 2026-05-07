@@ -10,7 +10,7 @@ import {
   buildDevShimContents,
   classifyDevShim,
   pathContainsDirectory,
-} from "../domain/dev-shim";
+} from "../../domain/dev/npm-link-or-shim";
 
 export type ProcessResult = Pick<SpawnSyncReturns<string>, "stderr" | "stdout" | "status">;
 

@@ -7,14 +7,14 @@ import {
   pathWithPrependedEntries,
   type NpmLinkTargetState,
   type NpmLinkTargetWritableResult,
-} from "../domain/installer/npm";
+} from "../../domain/installer/npm";
 import {
   installerProviderHelpValues,
   normalizeInstallerProvider,
   type InstallerProvider,
-} from "../domain/installer/provider";
-import { resolveInstallerVersion, resolveInstallRef, type InstallerRefEnv } from "../domain/installer/ref";
-import { checkInstallerRuntime, type RuntimeCheckResult } from "../domain/installer/version";
+} from "../../domain/installer/provider";
+import { resolveInstallerVersion, resolveInstallRef, type InstallerRefEnv } from "../../domain/installer/ref";
+import { checkInstallerRuntime, type RuntimeCheckResult } from "../../domain/installer/version";
 
 export interface InstallerPlanEnv extends InstallerRefEnv {
   NEMOCLAW_PROVIDER?: string | undefined;
