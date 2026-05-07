@@ -1956,6 +1956,7 @@ function getMessagingChannelForEnvKey(envKey: string): string | null {
   if (envKey === "DISCORD_BOT_TOKEN") return "discord";
   if (envKey === "SLACK_BOT_TOKEN") return "slack";
   if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
+  if (envKey === "WECHAT_BOT_TOKEN") return "wechat";
   return null;
 }
 
@@ -5173,6 +5174,11 @@ async function createSandbox(
       envKey: "TELEGRAM_BOT_TOKEN",
       token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
     },
+    {
+      name: `${sandboxName}-wechat-bridge`,
+      envKey: "WECHAT_BOT_TOKEN",
+      token: getMessagingToken("WECHAT_BOT_TOKEN"),
+    },
   ]
     .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
@@ -5734,6 +5740,21 @@ async function createSandbox(
       telegramConfig.requireMention = telegramRequireMention;
     }
   }
+  // WeChat per-account metadata captured by the host-side QR login. The
+  // values themselves are non-secret (account id, base URL, user id) — the
+  // bot token is held separately in the OpenShell provider. We pass them
+  // through to the sandbox so the in-sandbox wrapper plugin can pre-seed
+  // the upstream @tencent-weixin/openclaw-weixin credentials file without
+  // re-running the QR handshake.
+  const wechatConfig: { accountId?: string; baseUrl?: string; userId?: string } = {};
+  if (enabledTokenEnvKeys.has("WECHAT_BOT_TOKEN")) {
+    const accountId = normalizeCredentialValue(process.env.WECHAT_ACCOUNT_ID || "");
+    const baseUrl = normalizeCredentialValue(process.env.WECHAT_BASE_URL || "");
+    const userId = normalizeCredentialValue(process.env.WECHAT_USER_ID || "");
+    if (accountId) wechatConfig.accountId = accountId;
+    if (baseUrl) wechatConfig.baseUrl = baseUrl;
+    if (userId) wechatConfig.userId = userId;
+  }
   // Persist the effective Telegram config into the session so a later resume
   // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and
   // force a sandbox recreate — otherwise the old groupPolicy would stay baked
@@ -5742,6 +5763,14 @@ async function createSandbox(
     current.telegramConfig =
       typeof telegramConfig.requireMention === "boolean"
         ? { requireMention: telegramConfig.requireMention as boolean }
+        : null;
+    current.wechatConfig =
+      Object.keys(wechatConfig).length > 0
+        ? {
+            accountId: wechatConfig.accountId,
+            baseUrl: wechatConfig.baseUrl,
+            userId: wechatConfig.userId,
+          }
         : null;
     current.messagingChannelConfig = messagingChannelConfig;
     return current;
@@ -5795,6 +5824,7 @@ async function createSandbox(
     discordGuilds,
     resolved ? resolved.ref : null,
     telegramConfig,
+    wechatConfig,
     process.platform === "darwin",
     sandboxInferenceBaseUrlOverride,
   );
@@ -8265,6 +8295,45 @@ async function setupMessagingChannels(): Promise<string[]> {
     }
     if (getMessagingToken(ch.envKey)) {
       console.log(`  ✓ ${ch.name} — already configured`);
+    } else if (ch.loginMethod === "host-qr" && ch.name === "wechat") {
+      // Host-side iLink QR handshake — see src/lib/wechat/login.ts. Captures
+      // both the bot token (persisted as a provider credential) and the
+      // non-secret per-account metadata (account id, base URL, user id) the
+      // wrapper plugin needs to skip a second QR scan inside the sandbox.
+      console.log("");
+      console.log(`  ${ch.help}`);
+      const { runWechatHostQrLogin } = require("./wechat/login");
+      const result = await runWechatHostQrLogin();
+      if (result.kind !== "ok") {
+        const reason =
+          result.kind === "timeout"
+            ? "QR login timed out"
+            : result.kind === "expired"
+              ? "QR expired too many times"
+              : result.kind === "aborted"
+                ? "login aborted"
+                : `login failed: ${result.message}`;
+        console.log(`  Skipped ${ch.name} (${reason})`);
+        enabled.delete(ch.name);
+        continue;
+      }
+      const { token, accountId, baseUrl, userId } = result.credentials;
+      saveCredential(ch.envKey, token);
+      process.env[ch.envKey] = token;
+      // The account metadata is non-secret but must round-trip through the
+      // sandbox build via NEMOCLAW_WECHAT_CONFIG_B64 — stash it on env so
+      // the build path picks it up alongside the credentials it reads here.
+      process.env.WECHAT_ACCOUNT_ID = accountId;
+      process.env.WECHAT_BASE_URL = baseUrl;
+      process.env.WECHAT_USER_ID = userId;
+      // Seed the DM allowlist with the operator who scanned, unless the
+      // user already supplied their own list. Mirrors the Telegram UX
+      // where the user pastes their own id but for WeChat we already know
+      // it from the QR exchange.
+      if (ch.userIdEnvKey && !process.env[ch.userIdEnvKey]) {
+        process.env[ch.userIdEnvKey] = userId;
+      }
+      console.log(`  ✓ ${ch.name} token saved (account ${accountId})`);
     } else {
       console.log("");
       console.log(`  ${ch.help}`);
@@ -8428,6 +8497,7 @@ function getSuggestedPolicyPresets({
   maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
   maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
   maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
+  maybeSuggestMessagingPreset("wechat", "WECHAT_BOT_TOKEN");
 
   if (webSearchConfig) suggestions.push("brave");
 
@@ -10602,11 +10672,27 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const sandboxGpuConfigChanged = sandboxName
       ? hasSandboxGpuDrift(sandboxName, sandboxGpuConfig)
       : false;
+    // WeChat per-account metadata is baked into openclaw.json at build time
+    // via the wrapper plugin. If the host re-ran the QR login and got a new
+    // accountId/baseUrl/userId, treat it as drift and force a recreate so
+    // the sandbox doesn't keep talking to the previous IDC base URL. We
+    // compare the recorded session metadata against whatever is currently
+    // staged on env (set by setupMessagingChannels for a fresh login).
+    const recordedWechat = session?.wechatConfig ?? null;
+    const currentWechatAccountId = normalizeCredentialValue(process.env.WECHAT_ACCOUNT_ID || "");
+    const currentWechatBaseUrl = normalizeCredentialValue(process.env.WECHAT_BASE_URL || "");
+    const currentWechatUserId = normalizeCredentialValue(process.env.WECHAT_USER_ID || "");
+    const wechatConfigChanged =
+      Boolean(currentWechatAccountId) &&
+      ((recordedWechat?.accountId ?? "") !== currentWechatAccountId ||
+        (recordedWechat?.baseUrl ?? "") !== currentWechatBaseUrl ||
+        (recordedWechat?.userId ?? "") !== currentWechatUserId);
     const resumeSandbox =
       resume &&
       !webSearchConfigChanged &&
       !telegramConfigChanged &&
       !sandboxGpuConfigChanged &&
+      !wechatConfigChanged &&
       !messagingChannelConfigChanged &&
       session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
@@ -10630,6 +10716,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           }
         } else if (sandboxGpuConfigChanged) {
           note("  [resume] Sandbox GPU settings changed; recreating sandbox.");
+          if (sandboxName) {
+            registry.removeSandbox(sandboxName);
+          }
+        } else if (wechatConfigChanged) {
+          note("  [resume] WeChat account metadata changed; recreating sandbox.");
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
           }

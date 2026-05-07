@@ -113,6 +113,13 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "generate-openclaw-config.py"),
     path.join(stagedScriptsDir, "generate-openclaw-config.py"),
   );
+  // WeChat-account seed for the @tencent-weixin/openclaw-weixin plugin —
+  // runs at image build time when WeChat is enabled to skip the upstream
+  // plugin's in-sandbox QR login.
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "seed-wechat-accounts.py"),
+    path.join(stagedScriptsDir, "seed-wechat-accounts.py"),
+  );
   // Dockerfile Patch 4 helper — must be present in the build context because
   // the Dockerfile COPYs it before the patching RUN step (#2689).
   fs.copyFileSync(

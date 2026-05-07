@@ -24,6 +24,9 @@ export interface ChannelDef {
   tokenFormatHint?: string;
   appTokenFormat?: RegExp;
   appTokenFormatHint?: string;
+  // "host-qr" channels capture the token via a host-side QR handshake instead
+  // of a paste prompt. Defaults to "token-paste" when omitted.
+  loginMethod?: "token-paste" | "host-qr";
 }
 
 export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
@@ -57,6 +60,19 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
       "Optional: enable Developer Mode in Discord, then right-click your user/avatar and copy the User ID. Leave blank to allow any member of the configured server to message the bot.",
     userIdLabel: "Discord User ID (optional guild allowlist)",
     allowIdsMode: "guild",
+  },
+  wechat: {
+    envKey: "WECHAT_BOT_TOKEN",
+    description: "WeChat (personal) bot messaging",
+    help:
+      "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
+    label: "WeChat Bot Token",
+    userIdEnvKey: "WECHAT_ALLOWED_IDS",
+    userIdHelp:
+      "Optional: restrict who can DM the bot. The WeChat user id of the operator who scanned is added automatically; supply additional ids as a comma-separated list.",
+    userIdLabel: "WeChat User ID(s) (DM allowlist)",
+    allowIdsMode: "dm",
+    loginMethod: "host-qr",
   },
   slack: {
     envKey: "SLACK_BOT_TOKEN",

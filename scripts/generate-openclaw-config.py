@@ -30,6 +30,7 @@ Environment variables:
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map
     NEMOCLAW_DISCORD_GUILDS_B64         Base64-encoded Discord guild config
     NEMOCLAW_TELEGRAM_CONFIG_B64        Base64-encoded Telegram config (e.g. {"requireMention": true})
+    NEMOCLAW_WECHAT_CONFIG_B64          Base64-encoded WeChat config (e.g. {"accountId": "...", "baseUrl": "...", "userId": "..."})
     NEMOCLAW_DISABLE_DEVICE_AUTH        Set to "1" to force-disable device auth
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
@@ -442,8 +443,17 @@ def build_config(env: dict | None = None) -> dict:
             env.get("NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=") or "e30="
         ).decode("utf-8")
     )
+    _wechat_config = json.loads(
+        base64.b64decode(
+            env.get("NEMOCLAW_WECHAT_CONFIG_B64", "e30=") or "e30="
+        ).decode("utf-8")
+    )
 
-    _token_keys = {"discord": "token", "telegram": "botToken", "slack": "botToken"}
+    _token_keys = {
+        "discord": "token",
+        "telegram": "botToken",
+        "slack": "botToken",
+    }
     _env_keys = {
         "discord": "DISCORD_BOT_TOKEN",
         "telegram": "TELEGRAM_BOT_TOKEN",
@@ -481,6 +491,20 @@ def build_config(env: dict | None = None) -> dict:
             account["dmPolicy"] = "allowlist"
             account["allowFrom"] = _allowed_ids[ch]
         _ch_cfg[ch] = {"accounts": {"default": account}}
+
+    # WeChat (openclaw-weixin) is intentionally NOT added to channels.* here.
+    # The upstream @tencent-weixin/openclaw-weixin plugin gets registered with
+    # OpenClaw later in the Dockerfile, AFTER this script runs — writing
+    # channels.openclaw-weixin upfront makes `openclaw plugins install` fail
+    # with "unknown channel id: openclaw-weixin" because the plugin registry
+    # hasn't seen the channel yet (chicken-and-egg).
+    #
+    # The plugin doesn't need anything in openclaw.json to start: its bot
+    # token, baseUrl, and userId live in <stateDir>/openclaw-weixin/accounts/
+    # (seeded by scripts/seed-wechat-accounts.py), and the DM allowlist uses
+    # the framework allowFrom file at credentials/openclaw-weixin-{accountId}-
+    # allowFrom.json — not the openclaw.json accounts.<id>.allowFrom mechanism
+    # that telegram/discord/slack use.
 
     if "discord" in _ch_cfg and _discord_guilds:
         _ch_cfg["discord"].update(

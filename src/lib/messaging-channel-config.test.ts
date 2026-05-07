@@ -19,6 +19,7 @@ describe("messaging channel config", () => {
       "DISCORD_USER_ID",
       "DISCORD_REQUIRE_MENTION",
       "SLACK_ALLOWED_USERS",
+      "WECHAT_ALLOWED_IDS",
     ]);
   });
 

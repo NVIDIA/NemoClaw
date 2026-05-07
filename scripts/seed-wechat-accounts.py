@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Seed @tencent-weixin/openclaw-weixin's local account store with the
+# session metadata captured by NemoClaw's host-side QR login (see
+# src/lib/wechat/login.ts). Runs once at sandbox image build time.
+#
+# Skips the upstream plugin's own `openclaw channels login` flow, which
+# would otherwise drive an in-sandbox QR scan that has no terminal and no
+# paired phone access.
+#
+# Files written (matching auth/accounts.ts in @tencent-weixin/openclaw-weixin@2.4.2):
+#   <stateDir>/openclaw-weixin/accounts.json                  — JSON array of accountIds
+#   <stateDir>/openclaw-weixin/accounts/<accountId>.json      — { token, savedAt, baseUrl, userId }
+#
+# State dir resolution mirrors the upstream's resolveStateDir():
+#   $OPENCLAW_STATE_DIR || $CLAWDBOT_STATE_DIR || ~/.openclaw
+#
+# Token field carries the canonical NemoClaw placeholder
+# `openshell:resolve:env:WECHAT_BOT_TOKEN`. The OpenShell L7 proxy rewrites
+# that string to the real bot token at egress, so the secret never lands
+# on disk inside the image.
+#
+# Inputs (from environment, populated by the Dockerfile patcher):
+#   NEMOCLAW_WECHAT_ENABLED=1                Gate. Otherwise this script no-ops.
+#   NEMOCLAW_WECHAT_CONFIG_B64               Base64-encoded JSON: {accountId, baseUrl, userId}.
+
+from __future__ import annotations
+
+import base64
+import datetime as _dt
+import json
+import os
+import pathlib
+import sys
+
+
+WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN"
+
+
+def _state_dir() -> pathlib.Path:
+    raw = (
+        os.environ.get("OPENCLAW_STATE_DIR")
+        or os.environ.get("CLAWDBOT_STATE_DIR")
+        or os.path.join(os.path.expanduser("~"), ".openclaw")
+    )
+    return pathlib.Path(raw.strip()).resolve()
+
+
+def _decode_config() -> dict:
+    raw = os.environ.get("NEMOCLAW_WECHAT_CONFIG_B64", "e30=") or "e30="
+    try:
+        decoded = base64.b64decode(raw).decode("utf-8")
+        parsed = json.loads(decoded)
+    except (ValueError, json.JSONDecodeError) as err:
+        print(
+            f"[seed-wechat-accounts] could not decode NEMOCLAW_WECHAT_CONFIG_B64: {err}",
+            file=sys.stderr,
+        )
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _atomic_write(path: pathlib.Path, payload: str, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def main() -> int:
+    if os.environ.get("NEMOCLAW_WECHAT_ENABLED") != "1":
+        return 0
+
+    config = _decode_config()
+    account_id = (config.get("accountId") or "").strip()
+    base_url = (config.get("baseUrl") or "").strip()
+    user_id = (config.get("userId") or "").strip()
+
+    # accountId is non-secret but mandatory: without it we can't pick a
+    # filename, and the upstream plugin won't see any registered accounts.
+    if not account_id:
+        print(
+            "[seed-wechat-accounts] WeChat is enabled but no accountId in "
+            "NEMOCLAW_WECHAT_CONFIG_B64; skipping seed (channel will refuse "
+            "to start with 'weixin not configured: missing token').",
+            file=sys.stderr,
+        )
+        return 0
+
+    plugin_dir = _state_dir() / "openclaw-weixin"
+    accounts_index = plugin_dir / "accounts.json"
+    account_file = plugin_dir / "accounts" / f"{account_id}.json"
+
+    # Per-account credential file. Schema mirrors WeixinAccountData; ordering
+    # mirrors saveWeixinAccount() so a future upstream save merges cleanly.
+    account_payload: dict[str, str] = {
+        "token": WECHAT_TOKEN_PLACEHOLDER,
+        "savedAt": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+    }
+    if base_url:
+        account_payload["baseUrl"] = base_url
+    if user_id:
+        account_payload["userId"] = user_id
+
+    _atomic_write(account_file, json.dumps(account_payload, indent=2) + "\n", 0o600)
+
+    # Account index. Append-only semantics: if the upstream plugin or a prior
+    # seed step already registered other accountIds, preserve them.
+    existing: list[str] = []
+    if accounts_index.exists():
+        try:
+            raw = json.loads(accounts_index.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                existing = [item for item in raw if isinstance(item, str) and item.strip()]
+        except json.JSONDecodeError:
+            existing = []
+
+    if account_id not in existing:
+        existing.append(account_id)
+        _atomic_write(accounts_index, json.dumps(existing, indent=2) + "\n", 0o644)
+
+    print(
+        f"[seed-wechat-accounts] seeded {account_file} and registered {account_id} in {accounts_index}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

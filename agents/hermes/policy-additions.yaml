@@ -287,3 +287,24 @@ network_policies:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
+
+  # ── WeChat (personal) — pre-allowed for agent notifications ────
+  # The wildcard host is intentionally broader than the other channels:
+  # WeChat's iLink gateway uses per-account dynamic baseUrls behind IDC
+  # redirects, so a pinned subdomain would break on rotation. See the
+  # nemoclaw-blueprint/policies/presets/wechat.yaml preset for the
+  # operator-facing rationale.
+  wechat:
+    name: wechat
+    endpoints:
+      - host: "*.weixin.qq.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
