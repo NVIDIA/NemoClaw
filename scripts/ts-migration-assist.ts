@@ -27,7 +27,7 @@ const SPECIAL_REWRITES: Record<string, Array<[string, string]>> = {
     ['require("./platform")', 'require("../../bin/lib/platform")'],
     ['require("./resolve-openshell")', 'require("../../bin/lib/resolve-openshell")'],
     ['require("./credentials")', 'require("../../bin/lib/credentials")'],
-    ['require("./registry")', 'require("../../bin/lib/registry")'],
+    ['require("./state/registry")', 'require("../../bin/lib/registry")'],
     ['require("./nim")', 'require("../../bin/lib/nim")'],
     ['require("./onboard-session")', 'require("../../bin/lib/onboard-session")'],
     ['require("./policies")', 'require("../../bin/lib/policies")'],

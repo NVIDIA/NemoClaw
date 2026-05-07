@@ -16,9 +16,9 @@ import {
 import { join } from "node:path";
 
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME } from "./branding";
-import { dockerSpawnSync } from "./docker";
+import { dockerSpawnSync } from "./adapters/docker";
 import { DASHBOARD_PORT } from "./ports";
-import { resolveOpenshell } from "./resolve-openshell";
+import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { buildSubprocessEnv } from "./subprocess-env";
 
 // ---------------------------------------------------------------------------

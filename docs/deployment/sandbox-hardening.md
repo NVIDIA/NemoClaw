@@ -90,7 +90,7 @@ The agent's home directory (`/sandbox`) is writable by default:
 | Path | Access | Purpose |
 |------|--------|---------|
 | `/sandbox` | read-write | Home directory — agents can create files and use standard home paths |
-| `/sandbox/.openclaw` | read-write | Agent config, state, workspace, plugins (lockable via `shields up`) |
+| `/sandbox/.openclaw` | read-write | Agent config, state, workspace, plugins |
 | `/sandbox/.nemoclaw` | read-write | Plugin state and config; blueprints within are DAC-protected (root-owned) |
 | `/tmp` | read-write | Temporary files and logs |
 

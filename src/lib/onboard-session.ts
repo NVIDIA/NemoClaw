@@ -12,6 +12,10 @@ import path from "node:path";
 
 import { redactSensitiveText, redactUrl } from "./redact";
 import { isErrnoException } from "./errno";
+import {
+  sanitizeMessagingChannelConfig,
+  type MessagingChannelConfig,
+} from "./messaging-channel-config";
 import type { WebSearchConfig } from "./web-search";
 
 export const SESSION_VERSION = 1;
@@ -74,9 +78,12 @@ export interface Session {
   credentialEnv: string | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  routerPid: number | null;
+  routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
+  messagingChannelConfig: MessagingChannelConfig | null;
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
   // env-name. Persisted across process restarts so a `--resume` run that
@@ -89,6 +96,7 @@ export interface Session {
   // migrated set is NOT seeded from the persisted record, so the cleanup
   // gate keeps the file until the *current* value is actually re-migrated.
   migratedLegacyValueHashes: Record<string, string> | null;
+  gpuPassthrough: boolean;
   telegramConfig: TelegramConfig | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
@@ -121,10 +129,14 @@ export interface SessionUpdates {
   credentialEnv?: string;
   preferredInferenceApi?: string;
   nimContainer?: string;
+  routerPid?: number;
+  routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
   messagingChannels?: string[];
+  messagingChannelConfig?: MessagingChannelConfig | null;
   migratedLegacyValueHashes?: Record<string, string>;
+  gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
@@ -145,6 +157,7 @@ export interface DebugSessionSummary {
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   policyPresets: string[] | null;
+  gpuPassthrough: boolean;
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
@@ -184,6 +197,10 @@ export function isObject(value: unknown): value is UnknownRecord {
 
 function readString(value: SessionJsonValue | undefined): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function readPositiveInteger(value: SessionJsonValue | undefined): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
 function readStringArray(value: SessionJsonValue | undefined): string[] | null {
@@ -294,13 +311,17 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
     nimContainer: overrides.nimContainer ?? null,
+    routerPid: readPositiveInteger(overrides.routerPid),
+    routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig:
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
+    messagingChannelConfig: sanitizeMessagingChannelConfig(overrides.messagingChannelConfig),
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
+    gpuPassthrough: overrides.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
@@ -329,10 +350,14 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     credentialEnv: readString(data.credentialEnv),
     preferredInferenceApi: readString(data.preferredInferenceApi),
     nimContainer: readString(data.nimContainer),
+    routerPid: readPositiveInteger(data.routerPid),
+    routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
+    messagingChannelConfig: sanitizeMessagingChannelConfig(data.messagingChannelConfig),
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
+    gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
@@ -687,6 +712,12 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (typeof updates.preferredInferenceApi === "string")
     safe.preferredInferenceApi = updates.preferredInferenceApi;
   if (typeof updates.nimContainer === "string") safe.nimContainer = updates.nimContainer;
+  if (typeof updates.routerPid === "number" && Number.isInteger(updates.routerPid) && updates.routerPid > 0) {
+    safe.routerPid = updates.routerPid;
+  }
+  if (typeof updates.routerCredentialHash === "string") {
+    safe.routerCredentialHash = updates.routerCredentialHash;
+  }
   if (isObject(updates.webSearchConfig) && updates.webSearchConfig.fetchEnabled === true) {
     safe.webSearchConfig = { fetchEnabled: true };
   } else if (updates.webSearchConfig === null) {
@@ -698,12 +729,21 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (Array.isArray(updates.messagingChannels)) {
     safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
   }
+  if (updates.messagingChannelConfig === null) {
+    safe.messagingChannelConfig = null;
+  } else {
+    const messagingChannelConfig = sanitizeMessagingChannelConfig(updates.messagingChannelConfig);
+    if (messagingChannelConfig) safe.messagingChannelConfig = messagingChannelConfig;
+  }
   if (isObject(updates.migratedLegacyValueHashes)) {
     const cleaned: Record<string, string> = {};
     for (const [k, v] of Object.entries(updates.migratedLegacyValueHashes)) {
       if (typeof k === "string" && typeof v === "string") cleaned[k] = v;
     }
     safe.migratedLegacyValueHashes = cleaned;
+  }
+  if (updates.gpuPassthrough === true || updates.gpuPassthrough === false) {
+    safe.gpuPassthrough = updates.gpuPassthrough;
   }
   if (isObject(updates.telegramConfig) && typeof updates.telegramConfig.requireMention === "boolean") {
     safe.telegramConfig = { requireMention: updates.telegramConfig.requireMention };
@@ -817,6 +857,7 @@ export function summarizeForDebug(
     preferredInferenceApi: session.preferredInferenceApi,
     nimContainer: session.nimContainer,
     policyPresets: session.policyPresets,
+    gpuPassthrough: session.gpuPassthrough,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),

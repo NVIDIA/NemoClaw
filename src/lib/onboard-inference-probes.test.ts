@@ -10,8 +10,10 @@ const {
   getChatCompletionsProbeCurlArgs,
   getChatCompletionsProbePayload,
   getDeepSeekV4ProValidationProbeCurlArgs,
+  getKimiK26ValidationProbeCurlArgs,
   isSandboxInternalUrl,
   probeOpenAiLikeEndpoint,
+  RETRIABLE_HTTP_PROBE_STATUSES,
 } = require("../../dist/lib/onboard-inference-probes");
 
 describe("OpenAI-compatible inference probes", () => {
@@ -32,6 +34,38 @@ describe("OpenAI-compatible inference probes", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
     });
+  });
+
+  it("caps Kimi K2.6 probe output and gives it a slower validation budget", () => {
+    expect(getChatCompletionsProbePayload("moonshotai/kimi-k2.6")).toEqual({
+      model: "moonshotai/kimi-k2.6",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 8,
+    });
+
+    expect(getKimiK26ValidationProbeCurlArgs({ isWsl: false })).toEqual([
+      "--connect-timeout",
+      "10",
+      "--max-time",
+      "60",
+    ]);
+    expect(getKimiK26ValidationProbeCurlArgs({ isWsl: true })).toEqual([
+      "--connect-timeout",
+      "20",
+      "--max-time",
+      "90",
+    ]);
+
+    const args = getChatCompletionsProbeCurlArgs({
+      authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+      model: "moonshotai/kimi-k2.6",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: false,
+    });
+
+    expect(args).toContain("--max-time");
+    expect(args[args.indexOf("--max-time") + 1]).toBe("60");
+    expect(args).toContain(JSON.stringify(getChatCompletionsProbePayload("moonshotai/kimi-k2.6")));
   });
 
   it("uses an extended streaming validation budget for DeepSeek V4 Pro", () => {
@@ -94,6 +128,245 @@ describe("OpenAI-compatible inference probes", () => {
       );
       expect(result).toMatchObject({ ok: true, api: null });
       expect(result.note).toMatch(/host\.docker\.internal/);
+    });
+  });
+
+  describe("retriable HTTP statuses (issues #2980, #3033)", () => {
+    it("retries 429 (rate limit)", () => {
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(429)).toBe(true);
+    });
+
+    it("retries 502/503/504 (upstream gateway flakes)", () => {
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(502)).toBe(true);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(503)).toBe(true);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(504)).toBe(true);
+    });
+
+    it("does not retry on client-side or non-transient statuses", () => {
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(400)).toBe(false);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(401)).toBe(false);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(403)).toBe(false);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(404)).toBe(false);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(500)).toBe(false);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(200)).toBe(false);
+    });
+
+    it("recovers when an upstream 502 clears on retry (regression #2980)", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-502-probe-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const counter = path.join(tmpDir, "counter");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(counter, "0");
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+if [ "$n" -lt 2 ]; then
+  if [ -n "$outfile" ]; then
+    printf '<html>502 Bad Gateway</html>' > "$outfile"
+  fi
+  printf '502'
+  exit 0
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      const originalNoSleep = process.env.NEMOCLAW_TEST_NO_SLEEP;
+      const originalLog = console.log;
+      const lines: string[] = [];
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+      console.log = (...args) => lines.push(args.join(" "));
+      try {
+        const result = probeOpenAiLikeEndpoint(
+          "https://integrate.api.nvidia.com/v1",
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvapi-test",
+          { skipResponsesProbe: true },
+        );
+
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        expect(lines.join("\n")).toContain("HTTP 502");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+      } finally {
+        console.log = originalLog;
+        process.env.PATH = originalPath;
+        if (originalNoSleep === undefined) {
+          delete process.env.NEMOCLAW_TEST_NO_SLEEP;
+        } else {
+          process.env.NEMOCLAW_TEST_NO_SLEEP = originalNoSleep;
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("retries chat-completions when /responses errors then chat-completions times out", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mixed-probe-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const counter = path.join(tmpDir, "counter");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(counter, "0");
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+if echo "$url" | grep -q '/responses'; then
+  if [ -n "$outfile" ]; then
+    printf '404 page not found' > "$outfile"
+  fi
+  printf '404'
+  exit 0
+fi
+if [ "$n" -le 2 ]; then
+  if [ -n "$outfile" ]; then
+    : > "$outfile"
+  fi
+  printf '000'
+  exit 28
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      const originalNoSleep = process.env.NEMOCLAW_TEST_NO_SLEEP;
+      const originalLog = console.log;
+      const lines: string[] = [];
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+      console.log = (...args) => lines.push(args.join(" "));
+      try {
+        const result = probeOpenAiLikeEndpoint(
+          "https://api.example.com/v1",
+          "test-model",
+          "sk-test",
+        );
+
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        // /responses (404) + /chat/completions (28) + chat-completions retry (200)
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("3");
+      } finally {
+        console.log = originalLog;
+        process.env.PATH = originalPath;
+        if (originalNoSleep === undefined) {
+          delete process.env.NEMOCLAW_TEST_NO_SLEEP;
+        } else {
+          process.env.NEMOCLAW_TEST_NO_SLEEP = originalNoSleep;
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps retrying when initial timeout is followed by a transient 502", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-timeout-502-probe-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const counter = path.join(tmpDir, "counter");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(counter, "0");
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+if [ "$n" -eq 1 ]; then
+  if [ -n "$outfile" ]; then
+    : > "$outfile"
+  fi
+  printf '000'
+  exit 28
+fi
+if [ "$n" -eq 2 ]; then
+  if [ -n "$outfile" ]; then
+    printf '<html>502 Bad Gateway</html>' > "$outfile"
+  fi
+  printf '502'
+  exit 0
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      const originalNoSleep = process.env.NEMOCLAW_TEST_NO_SLEEP;
+      const originalLog = console.log;
+      const lines: string[] = [];
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+      console.log = (...args) => lines.push(args.join(" "));
+      try {
+        const result = probeOpenAiLikeEndpoint(
+          "https://integrate.api.nvidia.com/v1",
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvapi-test",
+          { skipResponsesProbe: true },
+        );
+
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        expect(lines.join("\n")).toContain("HTTP 502");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("3");
+      } finally {
+        console.log = originalLog;
+        process.env.PATH = originalPath;
+        if (originalNoSleep === undefined) {
+          delete process.env.NEMOCLAW_TEST_NO_SLEEP;
+        } else {
+          process.env.NEMOCLAW_TEST_NO_SLEEP = originalNoSleep;
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
   });
 

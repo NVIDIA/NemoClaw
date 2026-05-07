@@ -42,7 +42,7 @@ const {
   readRecordedNimContainer,
 } = onboardModule;
 
-const registry: typeof import("../dist/lib/registry") = require("../dist/lib/registry");
+const registry: typeof import("../dist/lib/state/registry") = require("../dist/lib/state/registry");
 const onboardSession: typeof import("../dist/lib/onboard-session") = require("../dist/lib/onboard-session");
 
 // Force readLiveInference's defaultSandbox check to fail so unit tests that

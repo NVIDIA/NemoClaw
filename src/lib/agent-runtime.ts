@@ -7,7 +7,7 @@
 // When the session agent is openclaw (or absent), all functions return
 // defaults that match the hardcoded OpenClaw values on main.
 
-import * as registry from "./registry";
+import * as registry from "./state/registry";
 import { DASHBOARD_PORT } from "./ports";
 import * as onboardSession from "./onboard-session";
 import { loadAgent, type AgentDefinition } from "./agent-defs";
@@ -41,11 +41,15 @@ export function getSessionAgent(sandboxName?: string): AgentDefinition | null {
 
 /**
  * Get the health probe URL for the agent.
- * Returns the agent's configured probe URL, or the OpenClaw default.
+ * Returns the agent's configured probe URL, or the OpenClaw /health endpoint.
+ *
+ * Uses /health (not /) because /health returns 200 regardless of device auth
+ * state, while / returns 401 when device auth is enabled. This ensures
+ * health probes work correctly in all configurations. Fixes #2342.
  */
 export function getHealthProbeUrl(agent: AgentDefinition | null): string {
-  if (!agent) return `http://127.0.0.1:${DASHBOARD_PORT}/`;
-  return agent.healthProbe?.url || `http://127.0.0.1:${DASHBOARD_PORT}/`;
+  if (!agent) return `http://127.0.0.1:${DASHBOARD_PORT}/health`;
+  return agent.healthProbe?.url || `http://127.0.0.1:${DASHBOARD_PORT}/health`;
 }
 
 function escapeEre(value: string): string {
@@ -138,6 +142,21 @@ function gatewayLaunchCommand(command: string, runAsUser?: string): string {
   return `${logSelection} if [ "$(id -u)" = "0" ] && command -v gosu >/dev/null 2>&1 && id ${shellQuote(runAsUser)} >/dev/null 2>&1; then nohup gosu ${shellQuote(runAsUser)} ${command} >> "$_GATEWAY_LOG" 2>&1 & else ${userLaunch} fi;`;
 }
 
+function hermesGatewayEnvPrefix(): string {
+  const decodeProxy = "http://127.0.0.1:3129";
+  return [
+    "HERMES_HOME=/sandbox/.hermes",
+    `HTTPS_PROXY=${decodeProxy}`,
+    `HTTP_PROXY=${decodeProxy}`,
+    `https_proxy=${decodeProxy}`,
+    `http_proxy=${decodeProxy}`,
+  ].join(" ");
+}
+
+function hermesDecodeProxyRecoveryCommand(): string {
+  return 'if ! command -v ss >/dev/null 2>&1 || ! ss -tln 2>/dev/null | grep -q "127.0.0.1:3129"; then nohup python3 /usr/local/bin/nemoclaw-decode-proxy >/dev/null 2>&1 & for _i in 1 2 3 4 5 6 7 8 9 10; do ! command -v ss >/dev/null 2>&1 || ss -tln 2>/dev/null | grep -q "127.0.0.1:3129" && break; sleep 0.5; done; fi;';
+}
+
 /**
  * Build the OpenClaw recovery shell script used by the default sandbox.
  */
@@ -147,7 +166,7 @@ export function buildOpenClawRecoveryScript(port: number): string {
     "if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; else _PE_MISSING=1; fi;",
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     'if [ "$_PE_MISSING" = "0" ]; then case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _SN_MISSING=0 ;; *) _SN_MISSING=1 ;; esac; case "${NODE_OPTIONS:-}" in *nemoclaw-ciao-network-guard*) _CIAO_MISSING=0 ;; *) _CIAO_MISSING=1 ;; esac; if [ "$_SN_MISSING" = "0" ] && [ "$_CIAO_MISSING" = "0" ]; then _GUARDS_MISSING=0; else _GUARDS_MISSING=1; fi; else _GUARDS_MISSING=0; fi;',
-    `if curl -sf --max-time 3 http://127.0.0.1:${port}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
+    `_GW_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${port}/health 2>/dev/null || echo 000); case "$_GW_CODE" in 200|401) echo ALREADY_RUNNING; exit 0 ;; esac;`,
     "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
     ...buildGatewayLogSetup(true, "gateway"),
     buildGatewayLogSelection(),
@@ -193,11 +212,14 @@ export function buildRecoveryScript(agent: AgentDefinition | null, port: number)
   // survive past the gateway launch — otherwise the warning explaining
   // *why* the gateway is about to crash gets wiped by the same launch
   // that's about to crash on a missing guard. (#2478)
-  const launchCommand = usesValidatedBinary
-    ? gatewayLaunchCommand(`"$AGENT_BIN" gateway run --port ${port}`)
-    : gatewayLaunchCommand(`${configuredGatewayCommand} --port ${port}`);
   const isHermes = agent.name === "hermes";
   const hermesHome = isHermes ? "export HERMES_HOME=/sandbox/.hermes; " : "";
+  const hermesLaunchEnv = isHermes ? `env ${hermesGatewayEnvPrefix()} ` : "";
+  const launchCommand = usesValidatedBinary
+    ? gatewayLaunchCommand(`${hermesLaunchEnv}"$AGENT_BIN" gateway run${isHermes ? "" : ` --port ${port}`}`)
+    : gatewayLaunchCommand(
+        `${hermesLaunchEnv}${configuredGatewayCommand}${isHermes ? "" : ` --port ${port}`}`,
+      );
 
   // Source /tmp/nemoclaw-proxy-env.sh immediately before launching. That file
   // is the single source of truth for NODE_OPTIONS preload guards (safety-net,
@@ -209,7 +231,7 @@ export function buildRecoveryScript(agent: AgentDefinition | null, port: number)
   return [
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     hermesHome,
-    `if curl -sf --max-time 3 ${shellQuote(probeUrl)} > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
+    `_GW_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$_GW_CODE" in 200|401) echo ALREADY_RUNNING; exit 0 ;; esac;`,
     ...buildGatewayLogSetup(false),
     buildGatewayLogSelection(),
     `_GATEWAY_PROC_PATTERN=${shellQuote(staleGatewayPattern)};`,
@@ -219,6 +241,7 @@ export function buildRecoveryScript(agent: AgentDefinition | null, port: number)
     'if [ "$_PE_MISSING" = "0" ]; then case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _SN_MISSING=0 ;; *) _SN_MISSING=1 ;; esac; case "${NODE_OPTIONS:-}" in *nemoclaw-ciao-network-guard*) _CIAO_MISSING=0 ;; *) _CIAO_MISSING=1 ;; esac; if [ "$_SN_MISSING" = "0" ] && [ "$_CIAO_MISSING" = "0" ]; then _GUARDS_MISSING=0; else _GUARDS_MISSING=1; fi; else _GUARDS_MISSING=0; fi;',
     '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing - gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> "$_GATEWAY_LOG"; };',
     '[ "$_PE_MISSING" = "0" ] && [ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: /tmp/nemoclaw-proxy-env.sh present but NODE_OPTIONS missing safety-net preload or ciao preload - refusing unguarded gateway relaunch (#2478)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
+    isHermes ? hermesDecodeProxyRecoveryCommand() : "",
     launchCommand,
     "GPID=$!; sleep 2;",
     'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; tail -5 "$_GATEWAY_LOG" 2>/dev/null; fi',
@@ -237,4 +260,20 @@ export function getAgentDisplayName(agent: AgentDefinition | null): string {
  */
 export function getGatewayCommand(agent: AgentDefinition | null): string {
   return agent?.gateway_command || "openclaw gateway run";
+}
+
+/**
+ * Build a single copy-pasteable command for the user to run when automatic
+ * gateway recovery fails. Unlike the raw gateway command, this keeps the
+ * process alive after disconnect and preserves the agent-specific launch shape.
+ */
+export function buildManualRecoveryCommand(agent: AgentDefinition | null, port: number): string {
+  const binaryPath = agent?.binary_path || "/usr/local/bin/openclaw";
+  const defaultGatewayCommand = `${shellQuote(binaryPath)} gateway run`;
+  const gatewayCmd = agent?.gateway_command?.trim() || defaultGatewayCommand;
+  const isHermes = agent?.name === "hermes";
+  const envPrefix = isHermes ? `${hermesGatewayEnvPrefix()} ` : "";
+  const portFlag = isHermes ? "" : ` --port ${port}`;
+  const decodeProxySetup = isHermes ? `${hermesDecodeProxyRecoveryCommand()} ` : "";
+  return `${buildGatewayLogSelection()} ${decodeProxySetup}${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;
 }

@@ -127,6 +127,7 @@ Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts every inference call and routes it to the configured provider.
 During onboarding, NemoClaw validates the selected provider and model, configures the OpenShell route, and bakes the matching model reference into the sandbox image.
 The sandbox then talks to `inference.local`, while the host owns the actual provider credential and upstream endpoint.
+If you select the Model Router provider, `inference.local` routes to a host-side router that chooses from the configured NVIDIA model pool for each request.
 
 ## Protection Layers
 

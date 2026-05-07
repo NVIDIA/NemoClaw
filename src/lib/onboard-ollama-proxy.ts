@@ -19,6 +19,7 @@ const {
   getOllamaWarmupCommand,
   getResolvedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
+  probeOllamaModelCapabilities,
   validateOllamaModel,
 } = require("./local-inference");
 const { buildSubprocessEnv } = require("./subprocess-env");
@@ -306,18 +307,37 @@ function printOllamaExposureWarning() {
   console.log("");
 }
 
+const DEFAULT_OLLAMA_PULL_TIMEOUT_MS = 30 * 60 * 1000;
+const PULL_TIMEOUT_ENV = "NEMOCLAW_OLLAMA_PULL_TIMEOUT";
+
+function getOllamaPullTimeoutMs(): number {
+  const raw = process.env[PULL_TIMEOUT_ENV];
+  if (typeof raw !== "string" || raw.trim() === "") return DEFAULT_OLLAMA_PULL_TIMEOUT_MS;
+  const seconds = Number(raw.trim());
+  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_OLLAMA_PULL_TIMEOUT_MS;
+  return Math.floor(seconds * 1000);
+}
+
+function pullTimeoutErrorHint(timeoutMs: number): string {
+  const minutes = Math.round(timeoutMs / 60_000);
+  return [
+    `  Model pull timed out after ${minutes} minutes.`,
+    "  Already-downloaded layers are kept; re-running the pull resumes them.",
+    `  Set ${PULL_TIMEOUT_ENV}=<seconds> to raise the wall-clock limit (default ${Math.round(DEFAULT_OLLAMA_PULL_TIMEOUT_MS / 60_000)} minutes).`,
+  ].join("\n");
+}
+
 function pullOllamaModelViaCli(model) {
+  const timeoutMs = getOllamaPullTimeoutMs();
   const result = spawnSync("bash", ["-c", `ollama pull ${shellQuote(model)}`], {
     cwd: ROOT,
     encoding: "utf8",
     stdio: "inherit",
-    timeout: 600_000,
+    timeout: timeoutMs,
     env: buildSubprocessEnv(),
   });
   if (result.signal === "SIGTERM") {
-    console.error(
-      `  Model pull timed out after 10 minutes. Try a smaller model or check your network connection.`,
-    );
+    console.error(pullTimeoutErrorHint(timeoutMs));
     return false;
   }
   return result.status === 0;
@@ -332,7 +352,7 @@ function pullOllamaModelViaHttp(model) {
     const host = getResolvedOllamaHost();
     const url = `http://${host}:${OLLAMA_PORT}/api/pull`;
     const body = JSON.stringify({ model, stream: true });
-    const TIMEOUT_MS = 600_000; // 10 min, matches the CLI path
+    const TIMEOUT_MS = getOllamaPullTimeoutMs();
     const isTTY = Boolean(process.stdout.isTTY);
     const BAR_WIDTH = 40;
 
@@ -343,7 +363,7 @@ function pullOllamaModelViaHttp(model) {
         "--connect-timeout",
         "10",
         "--max-time",
-        String(Math.floor(TIMEOUT_MS / 1000)),
+        String(TIMEOUT_MS / 1000),
         "-X",
         "POST",
         "-H",
@@ -450,11 +470,11 @@ function pullOllamaModelViaHttp(model) {
       if (code !== 0) {
         // curl exit 28 = CURLE_OPERATION_TIMEDOUT (--max-time hit).
         if (code === 28) {
-          console.error(`  Model pull timed out after ${TIMEOUT_MS / 60_000} minutes.`);
+          console.error(pullTimeoutErrorHint(TIMEOUT_MS));
         } else {
           console.error(`  Model pull exited with code ${String(code)} (network error).`);
+          console.error("  Already-downloaded layers are kept; re-running the pull resumes them.");
         }
-        console.error("  Already-downloaded layers are kept; re-running the pull resumes them.");
         resolve(false);
         return;
       }
@@ -471,6 +491,119 @@ async function pullOllamaModel(model) {
   return pullOllamaModelViaCli(model);
 }
 
+// ── Tools-capability gate (issue #2667) ─────────────────────────
+//
+// Ollama models without the "tools" capability fail at first agent prompt
+// with "400 ... does not support tools" — too late to recover gracefully.
+// We probe /api/show right after the pull completes (and before warmup) to
+// warn the user up front and either prompt for confirmation, accept an
+// override env var in non-interactive mode, or block. Probe failures
+// degrade to "unknown" and never block onboarding.
+
+function isProxyNonInteractive(): boolean {
+  // Lazy-require to avoid a circular import (onboard.ts requires this file
+  // at module-load time). isNonInteractive is exported from onboard.ts;
+  // fall back to the env var if onboard hasn't fully loaded yet.
+  try {
+    const onboardMod = require("./onboard");
+    if (typeof onboardMod.isNonInteractive === "function") {
+      return Boolean(onboardMod.isNonInteractive());
+    }
+  } catch {
+    /* fall through to env-var check */
+  }
+  return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+}
+
+function isProxyAutoYes(): boolean {
+  // isAutoYes is not exported from onboard.ts, so fall back to the env var.
+  // The interactive override prompt path still covers --yes-only invocations
+  // because non-interactive mode is the gate that matters here.
+  try {
+    const onboardMod = require("./onboard");
+    if (typeof onboardMod.isAutoYes === "function") {
+      return Boolean(onboardMod.isAutoYes());
+    }
+  } catch {
+    /* fall through to env-var check */
+  }
+  return process.env.NEMOCLAW_YES === "1";
+}
+
+async function promptProxyYesNo(question: string, defaultIsYes: boolean): Promise<boolean> {
+  // Prefer onboard's promptYesNoOrDefault so we get the same indicator
+  // formatting and non-interactive note. Lazy-require to avoid the cycle.
+  try {
+    const onboardMod = require("./onboard");
+    if (typeof onboardMod.promptYesNoOrDefault === "function") {
+      return Boolean(await onboardMod.promptYesNoOrDefault(question, null, defaultIsYes));
+    }
+  } catch {
+    /* fall through */
+  }
+  const reply = await prompt(`${question} ${defaultIsYes ? "[Y/n]" : "[y/N]"}: `);
+  const v = String(reply ?? "").trim().toLowerCase();
+  if (v === "y" || v === "yes") return true;
+  if (v === "n" || v === "no") return false;
+  return defaultIsYes;
+}
+
+function printToolsIncompatibleWarning(model: string): void {
+  console.log("");
+  console.log(`  ⚠ Ollama model '${model}' does not advertise the 'tools' capability.`);
+  console.log("    NemoClaw agents need tool-calling for file operations, web search, and");
+  console.log("    running commands. This model will likely fail with \"400 ... does not");
+  console.log("    support tools\" at first prompt.");
+  console.log("    Inspect a model's capabilities with `ollama show <model>` and pick");
+  console.log("    one whose list includes 'tools'.");
+}
+
+async function checkOllamaModelToolSupport(
+  model: string,
+): Promise<{ ok: boolean; message?: string }> {
+  const caps = probeOllamaModelCapabilities(model);
+
+  if (caps.supportsTools === true) {
+    return { ok: true };
+  }
+
+  if (caps.supportsTools === null) {
+    // Graceful degradation — never block on probe failure.
+    console.log(
+      `  \x1b[2mCould not verify 'tools' capability for '${model}' — Ollama did ` +
+        `not return capability metadata; continuing.\x1b[0m`,
+    );
+    return { ok: true };
+  }
+
+  // supportsTools === false — model is on disk but advertises no tools support.
+  printToolsIncompatibleWarning(model);
+
+  if (isProxyAutoYes()) {
+    console.log("  Continuing because --yes was passed.");
+    return { ok: true };
+  }
+
+  if (isProxyNonInteractive()) {
+    if (process.env.NEMOCLAW_OLLAMA_REQUIRE_TOOLS === "0") {
+      console.error(
+        `  NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 set — proceeding with '${model}' despite missing 'tools'.`,
+      );
+      return { ok: true };
+    }
+    console.error(
+      "  Re-run with NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 to override, or pick a tools-capable model.",
+    );
+    return { ok: false, message: "Tools-incompatible model in non-interactive mode." };
+  }
+
+  const proceed = await promptProxyYesNo("  Use this model anyway?", false);
+  if (!proceed) {
+    return { ok: false, message: "Choose a tools-capable model." };
+  }
+  return { ok: true };
+}
+
 async function prepareOllamaModel(model, installedModels = []) {
   const alreadyInstalled = installedModels.includes(model);
   if (!alreadyInstalled) {
@@ -483,6 +616,11 @@ async function prepareOllamaModel(model, installedModels = []) {
           "Check the model name and that Ollama can access the registry, then try another model.",
       };
     }
+  }
+
+  const capCheck = await checkOllamaModelToolSupport(model);
+  if (!capCheck.ok) {
+    return { ok: false, message: capCheck.message };
   }
 
   console.log(`  Loading Ollama model: ${model}`);
@@ -549,8 +687,10 @@ function unloadOllamaModels() {
 }
 
 export {
+  checkOllamaModelToolSupport,
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
+  getOllamaPullTimeoutMs,
   isProxyHealthy,
   killStaleProxy,
   persistProxyToken,

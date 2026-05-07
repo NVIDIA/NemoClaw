@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-manage-policy"
-description: "Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access. Trigger keywords - customize nemoclaw network policy, sandbox egress policy configuration, nemoclaw approve network requests, sandbox egress approval tui."
+description: "Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access. Trigger keywords - customize nemoclaw network policy, sandbox egress policy configuration, nemoclaw integration policy examples, post-install policy setup, openshell approval workflow, policy preset, nemoclaw approve network requests, sandbox egress approval tui."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -157,6 +157,7 @@ This is useful when you want to test a destination before deciding whether it be
 
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
+For guided post-install examples, see Common Integration Policy Examples (use the `nemoclaw-user-manage-policy` skill).
 
 During onboarding, the policy tier (use the `nemoclaw-user-reference` skill) you select determines which presets are enabled by default.
 You can add or remove individual presets in the interactive preset screen that follows tier selection.
@@ -171,6 +172,7 @@ Available presets:
 | `github` | GitHub and GitHub REST API |
 | `huggingface` | Hugging Face Hub (download-only) and inference router |
 | `jira` | Atlassian Jira API |
+| `local-inference` | Local Ollama and vLLM through the host gateway |
 | `npm` | npm and Yarn registries |
 | `outlook` | Microsoft 365 and Outlook |
 | `pypi` | Python Package Index |
@@ -278,6 +280,7 @@ $ nemoclaw my-assistant policy-remove my-internal-api --yes
 
 ## References
 
+- **[references/integration-policy-examples.md](references/integration-policy-examples.md)** — Guides users through common post-install integration policy setup for maintained NemoClaw policy presets, including Outlook, messaging channels, GitHub, Jira, Brave Search, package managers, Hugging Face, local inference, and OpenShell approval workflows.
 - **Load [references/approve-network-requests.md](references/approve-network-requests.md)** when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI. Reviews and approves blocked agent network requests in the TUI.
 
 ## Related Skills

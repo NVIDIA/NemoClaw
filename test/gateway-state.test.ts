@@ -14,7 +14,7 @@ import {
   hasActiveGatewayInfo,
   getReportedGatewayName,
   parseSandboxPhase,
-} from "../src/lib/gateway-state.js";
+} from "../src/lib/state/gateway.js";
 
 // Realistic CLI outputs
 const STATUS_CONNECTED = `

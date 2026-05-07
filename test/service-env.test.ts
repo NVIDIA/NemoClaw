@@ -10,7 +10,7 @@ import {
 import { mkdtempSync, writeFileSync, unlinkSync, readFileSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveOpenshell } from "../dist/lib/resolve-openshell";
+import { resolveOpenshell } from "../dist/lib/adapters/openshell/resolve";
 import { parseAllowedChatIds, isChatAllowed } from "../dist/lib/chat-filter.js";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");

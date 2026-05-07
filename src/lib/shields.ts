@@ -14,14 +14,14 @@ const fs = require("fs");
 const path = require("path");
 const { fork } = require("child_process");
 const { run, runCapture, validateName, shellQuote } = require("./runner");
-const { dockerExecFileSync } = require("./docker/exec");
+const { dockerExecFileSync } = require("./adapters/docker/exec");
 const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
   parseCurrentPolicy,
   PERMISSIVE_POLICY_PATH,
 } = require("./policies");
-const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("./duration");
+const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("./domain/duration");
 const { appendAuditEntry } = require("./shields-audit");
 const { resolveAgentConfig } = require("./sandbox-config");
 

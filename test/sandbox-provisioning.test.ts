@@ -245,6 +245,69 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
   });
 });
 
+describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () => {
+  it("normalizes the config generator mode after Docker COPY preserves a restrictive source mode", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-helper-mode-"));
+    const localBin = path.join(tmp, "usr", "local", "bin");
+    const localLib = path.join(tmp, "usr", "local", "lib", "nemoclaw");
+    const localShare = path.join(tmp, "usr", "local", "share", "nemoclaw");
+    const pluginDir = path.join(localShare, "openclaw-plugins", "kimi-inference-compat");
+    const pluginFile = path.join(pluginDir, "index.js");
+    const nestedPluginDir = path.join(pluginDir, "lib");
+    const nestedPluginFile = path.join(nestedPluginDir, "helper.js");
+    const files = [
+      path.join(localBin, "nemoclaw-start"),
+      path.join(localBin, "nemoclaw-codex-acp"),
+      path.join(localLib, "sandbox-init.sh"),
+      path.join(localLib, "generate-openclaw-config.py"),
+      path.join(localLib, "ws-proxy-fix.js"),
+      pluginFile,
+      nestedPluginFile,
+    ];
+
+    try {
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(localLib, { recursive: true });
+      fs.mkdirSync(nestedPluginDir, { recursive: true });
+      for (const file of files) {
+        fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
+        fs.chmodSync(file, 0o600);
+      }
+
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# Copy startup script and shared sandbox initialisation library",
+        "# Build args for config that varies per deployment.",
+      )
+        .replaceAll("/usr/local/bin", localBin)
+        .replaceAll("/usr/local/lib/nemoclaw", localLib)
+        .replaceAll("/usr/local/share/nemoclaw", localShare);
+      const { result } = runLoggedDockerShell(command, tmp);
+
+      expect(result.status, result.stderr).toBe(0);
+      const generatorMode = (
+        fs.statSync(path.join(localLib, "generate-openclaw-config.py")).mode & 0o777
+      ).toString(8);
+      const wsProxyMode = (fs.statSync(path.join(localLib, "ws-proxy-fix.js")).mode & 0o777).toString(
+        8,
+      );
+      const pluginDirMode = (fs.statSync(pluginDir).mode & 0o777).toString(8);
+      const pluginMode = (fs.statSync(pluginFile).mode & 0o777).toString(8);
+      const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
+      const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
+      expect(generatorMode).toBe("755");
+      expect(wsProxyMode).toBe("644");
+      expect(pluginDirMode).toBe("755");
+      expect(pluginMode).toBe("644");
+      expect(nestedPluginDirMode).toBe("755");
+      expect(nestedPluginMode).toBe("644");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Hermes sandbox provisioning", () => {
   function runHermesPathValidation(pathEntriesBeforeManifest: string[] = []) {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");

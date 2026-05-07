@@ -39,7 +39,7 @@ describe("sandboxName command hardening in onboard.js", () => {
       pathToFileURL(path.join(repoRoot, "dist", "lib", "runner.js")).href,
     );
     const registryUrl = JSON.stringify(
-      pathToFileURL(path.join(repoRoot, "dist", "lib", "registry.js")).href,
+      pathToFileURL(path.join(repoRoot, "dist", "lib", "state", "registry.js")).href,
     );
     const preflightUrl = JSON.stringify(
       pathToFileURL(path.join(repoRoot, "dist", "lib", "preflight.js")).href,
@@ -83,7 +83,7 @@ runner.runCapture = (command) => {
   if (text.includes("sandbox get my-assistant")) return "";
   if (text.includes("sandbox list")) return "my-assistant Ready";
   if (text.includes("forward list")) return "";
-  if (text.includes("sandbox exec -n my-assistant -- curl -sf")) return "ok";
+  if (text.includes("sandbox exec") && text.includes("http://localhost:") && text.includes("/health")) return "200";
   if (text === "uname -r") return "6.8.0";
   return "";
 };

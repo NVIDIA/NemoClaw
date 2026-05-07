@@ -45,7 +45,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes-i-accept-third-party-software]
 ```
 
 > **Warning:** For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
@@ -111,7 +111,12 @@ or:
 $ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
 ```
 
-For scripted installer runs, set `NEMOCLAW_NON_INTERACTIVE=1` and `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before invoking `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`.
+For scripted installer runs, pass explicit acceptance to the `bash` side of the installer pipe:
+
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```
+
 If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
 
 To enable Brave Search in non-interactive mode, set:
@@ -206,6 +211,7 @@ $ nemoclaw onboard --non-interactive --name my-build --from path/to/Dockerfile
 ```
 
 The flag wins over `NEMOCLAW_SANDBOX_NAME`.
+When prompting is possible, `NEMOCLAW_SANDBOX_NAME` fills the interactive default so you can press Enter to accept it.
 When prompting is impossible (no TTY or `--non-interactive`), the env var is also honoured so existing CI scripts keep working.
 Combining `--from <Dockerfile>` with non-interactive onboarding requires one of `--name` or `NEMOCLAW_SANDBOX_NAME`; otherwise onboarding exits rather than silently defaulting to `my-assistant` and clobbering the default sandbox.
 
@@ -217,6 +223,20 @@ This variant of `nemoclaw onboard` accepts a `--from <Dockerfile>` argument to b
 ```console
 $ nemoclaw onboard --from ./Dockerfile.custom
 ```
+
+### GPU passthrough
+
+When `nemoclaw onboard` detects an NVIDIA GPU on the host (`nvidia-smi` succeeds), it enables OpenShell GPU passthrough at both the gateway and sandbox level by default.
+Use `--no-gpu` to opt out when you want host-side inference providers only and do not need direct GPU access inside the sandbox.
+Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not detected.
+
+Prerequisites:
+
+- NVIDIA GPU drivers installed and working (`nvidia-smi` must succeed).
+- NVIDIA Container Toolkit configured for Docker.
+
+When GPU passthrough is enabled and a gateway already exists without it, onboarding exits with guidance to destroy and re-onboard.
+To add GPU to an existing sandbox, rerun with `--recreate-sandbox`.
 
 ### `nemoclaw list`
 
@@ -295,6 +315,7 @@ Remote providers (NVIDIA Endpoints, OpenAI, Anthropic, Gemini) use a lightweight
 No API keys are sent.
 For cloud-only providers, the output omits the NIM status line unless a NIM container is registered or an unexpected NIM container is running.
 If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
+Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
 
 A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.
@@ -365,7 +386,7 @@ For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently load
 > If you want to upgrade the sandbox while preserving state, use `nemoclaw <name> rebuild` instead.
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
-Pass `--yes` or `--force` to skip the prompt in scripted workflows.
+Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
 ```console
 $ nemoclaw my-assistant destroy
@@ -554,16 +575,16 @@ Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 
 ```console
-$ nemoclaw my-assistant rebuild [--yes] [--verbose]
+$ nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--yes`, `--force` | Skip the confirmation prompt |
-| `--verbose` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
+| `--yes`, `-y`, `--force` | Skip the confirmation prompt |
+| `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 
 If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox.
-Pass `--yes` or `--force` to skip the prompt in scripted workflows.
+Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
 The sandbox must be running for the backup step to succeed.
 If any manifest-defined state path cannot be archived, `rebuild` reports the failed paths and exits before destroying the original sandbox.
@@ -576,14 +597,14 @@ NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` fr
 Sandboxes that match the current digest are left alone.
 
 ```console
-$ nemoclaw upgrade-sandboxes [--check] [--auto] [--yes]
+$ nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--check` | List stale sandboxes without rebuilding any of them. Exits non-zero if any are stale. |
 | `--auto` | Rebuild every stale sandbox without prompting. Used by the installer to upgrade in place. |
-| `--yes` | Skip the confirmation prompt for the rebuild plan. |
+| `--yes`, `-y` | Skip the confirmation prompt for the rebuild plan. |
 
 Each rebuild reuses the same workspace backup-and-restore flow as `nemoclaw <name> rebuild`, so workspace files survive the upgrade.
 If the registry is unreachable (offline or firewalled hosts), NemoClaw falls back to the unpinned `:latest` tag and reports that the digest could not be resolved instead of failing.
@@ -794,14 +815,14 @@ Gathers system info, Docker state, gateway logs, and sandbox status into a summa
 Use `--sandbox <name>` to target a specific sandbox, `--quick` for a smaller snapshot, or `--output <path>` to save a tarball that you can attach to an issue.
 
 ```console
-$ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
+$ nemoclaw debug [--quick|-q] [--sandbox NAME] [--output PATH|-o PATH]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--quick` | Collect minimal diagnostics only |
+| `--quick`, `-q` | Collect minimal diagnostics only |
 | `--sandbox NAME` | Target a specific sandbox (default: auto-detect) |
-| `--output PATH` | Write diagnostics tarball to the given path |
+| `--output PATH`, `-o PATH` | Write diagnostics tarball to the given path |
 
 If `--output` is set and the tarball cannot be written (for example, the destination directory is missing or read-only), the command exits non-zero so scripts can detect the failure.
 
@@ -836,13 +857,13 @@ The `destroy` and `rebuild` commands clean up the image automatically, but image
 This command lists all `openshell/sandbox-from:*` images, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
 
 ```console
-$ nemoclaw gc [--dry-run] [--yes|--force]
+$ nemoclaw gc [--dry-run] [--yes|-y|--force]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | List orphaned images without removing them |
-| `--yes`, `--force` | Skip the confirmation prompt |
+| `--yes`, `-y`, `--force` | Skip the confirmation prompt |
 
 ### `nemoclaw uninstall`
 

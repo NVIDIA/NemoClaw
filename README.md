@@ -93,6 +93,13 @@ The script installs Node.js if it is not already present, then runs the guided o
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+The piped installer prompts through your terminal. In headless scripts or CI,
+pass explicit acceptance to the `bash` side of the pipe:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```
+
 If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 
@@ -130,6 +137,58 @@ Alternatively, send a single message and print the response:
 ```bash
 openclaw agent --agent main --local -m "hello" --session-id test
 ```
+
+### Model Router (Complexity-Based Routing)
+
+NemoClaw includes an optional model router that automatically picks the most efficient model for each query. Instead of sending every request to a single large model, the router uses a lightweight encoder to predict which model in a pool can handle each query correctly, then routes to the cheapest one that meets an accuracy threshold.
+
+The router uses the [NVIDIA LLM Router v3](https://github.com/NVIDIA-AI-Blueprints/llm-router/tree/v3) prefill routing engine and runs on the host as a LiteLLM proxy. The sandbox reaches it through the OpenShell gateway and continues to call `https://inference.local/v1`; do not probe `localhost:4000` or `host.openshell.internal` directly from inside the sandbox.
+
+#### Enable during onboard
+
+Select **Model Router (complexity-based routing)** during the onboard wizard, or set `NEMOCLAW_PROVIDER=routed` for non-interactive mode:
+
+```bash
+NEMOCLAW_PROVIDER=routed nemoclaw onboard --non-interactive
+```
+
+The onboard wizard starts the router, configures the OpenShell provider, and creates the sandbox. The router process runs on the host on port 4000.
+
+#### Configure the model pool
+
+Edit `nemoclaw-blueprint/router/pool-config.yaml` to define which models the router can choose from:
+
+```yaml
+routing:
+  method: prefill
+  checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
+  tolerance: 0.20
+  encoder: Qwen/Qwen3.5-0.8B
+
+models:
+  - name: nano
+    litellm_model: "openai/nvidia/nvidia/Nemotron-3-Nano-30B-A3B"
+    cost_per_m_input_tokens: 0.05
+    api_base: "https://inference-api.nvidia.com"
+
+  - name: super
+    litellm_model: "openai/nvidia/nvidia/nemotron-3-super-v3"
+    cost_per_m_input_tokens: 0.10
+    api_base: "https://inference-api.nvidia.com"
+```
+
+The `tolerance` parameter controls the accuracy-cost tradeoff: 0.0 always picks the most accurate model, 1.0 always picks the cheapest, and 0.20 (default) allows up to 20 percentage points below the best for a cheaper model.
+
+#### Architecture
+
+The router runs on the host, not inside the sandbox:
+
+```text
+Sandbox (OpenClaw) ──> OpenShell Gateway (L7 proxy) ──> Model Router (:4000) ──> NVIDIA API
+                                                         └── PrefillRouter selects model
+```
+
+Credentials flow through the OpenShell provider system. The sandbox never sees raw API keys.
 
 ### Uninstall
 
@@ -190,6 +249,9 @@ NemoClaw/
 │       ├── commands/     # Slash commands, migration state
 │       └── onboard/      # Onboarding config
 ├── nemoclaw-blueprint/   # Blueprint YAML and network policies
+│   └── router/
+│       ├── pool-config.yaml  # Model pool and routing config
+│       └── llm-router/      # LLM Router v3 submodule (prefill routing engine)
 ├── scripts/          # Install helpers, setup, automation
 ├── test/             # Integration and E2E tests
 └── docs/             # User-facing docs (Sphinx/MyST)

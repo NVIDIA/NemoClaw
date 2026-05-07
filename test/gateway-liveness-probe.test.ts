@@ -72,16 +72,16 @@ describe("gateway liveness probe (#2020)", () => {
     expect(cleanupAfterProbe).toBeTruthy();
   });
 
-  it("does not modify isGatewayHealthy() in gateway-state.ts", () => {
+  it("does not modify isGatewayHealthy() in src/lib/state/gateway.ts", () => {
     // isGatewayHealthy() must remain a pure function — no I/O.
     // Scope the check to the function body so unrelated helpers don't cause false failures.
-    const gsContent = fs.readFileSync(path.join(ROOT, "src/lib/gateway-state.ts"), "utf-8");
+    const gsContent = fs.readFileSync(path.join(ROOT, "src/lib/state/gateway.ts"), "utf-8");
     const fnMatch = gsContent.match(
       /(?:function isGatewayHealthy|const isGatewayHealthy\b)[\s\S]*?\n\}/,
     );
     expect(fnMatch).toBeTruthy();
     if (!fnMatch) {
-      throw new Error("Expected isGatewayHealthy() in src/lib/gateway-state.ts");
+      throw new Error("Expected isGatewayHealthy() in src/lib/state/gateway.ts");
     }
     const fnBody = fnMatch[0];
     expect(fnBody).not.toContain("docker");

@@ -670,7 +670,7 @@ For advanced live edits, use the host-side config command instead of running `op
 $ nemoclaw <sandbox> config set --key <dotpath> --value '<json-or-string>' --restart
 ```
 
-Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with `nemoclaw <sandbox> config rotate-token` instead.
+Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with the credential-management commands instead.
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 

@@ -10,12 +10,15 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  getSandboxDeleteOutcome,
   removeSandboxImage,
   removeSandboxRegistryEntry,
   removeShieldsState,
-} from "../src/lib/sandbox-destroy-action";
-import { help as renderRootHelp } from "../src/lib/root-help-action";
+} from "../src/lib/actions/sandbox/destroy";
+import { getSandboxDeleteOutcome } from "../src/lib/domain/sandbox/destroy";
+import { normalizeGarbageCollectImagesOptions } from "../src/lib/domain/lifecycle/options";
+import { help as renderRootHelp } from "../src/lib/actions/root-help";
+import { COMMANDS, globalCommandTokens } from "../src/lib/command-registry";
+import { getRegisteredOclifCommandMetadata } from "../src/lib/cli/oclif-metadata";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -99,7 +102,7 @@ describe("image cleanup: onboard records imageTag in registry (#2086)", () => {
 });
 
 describe("image cleanup: registry stores imageTag (#2086)", () => {
-  const registrySrc = fs.readFileSync(path.join(ROOT, "src/lib/registry.ts"), "utf-8");
+  const registrySrc = fs.readFileSync(path.join(ROOT, "src/lib/state/registry.ts"), "utf-8");
 
   it("SandboxEntry interface includes imageTag field", () => {
     expect(registrySrc).toMatch(/imageTag\?:\s*string\s*\|\s*null/);
@@ -110,7 +113,7 @@ describe("image cleanup: registry stores imageTag (#2086)", () => {
     const registerMatch = registrySrc.match(/function registerSandbox[\s\S]*?^}/m);
     expect(registerMatch).toBeTruthy();
     if (!registerMatch) {
-      throw new Error("Expected registerSandbox() in src/lib/registry.ts");
+      throw new Error("Expected registerSandbox() in src/lib/state/registry.ts");
     }
     expect(registerMatch[0]).toContain("imageTag");
   });
@@ -160,40 +163,27 @@ describe("shields state cleanup on destroy (#3114)", () => {
 });
 
 describe("image cleanup: gc command exists (#2086)", () => {
-  const nemoclawSrc = fs.readFileSync(path.join(ROOT, "src/nemoclaw.ts"), "utf-8");
-  const registrySrc = fs.readFileSync(path.join(ROOT, "src/lib/command-registry.ts"), "utf-8");
-
   it("gc is a global command", () => {
-    // GLOBAL_COMMANDS is now derived from the command registry.
-    expect(registrySrc).toContain('"nemoclaw gc"');
-    expect(nemoclawSrc).toContain("globalCommandTokens()");
-  });
-
-  it("gc command is dispatched through the oclif bridge", () => {
-    expect(nemoclawSrc).toContain("resolveGlobalOclifDispatch");
-    expect(registrySrc).toContain('"nemoclaw gc"');
-  });
-
-  it("garbageCollectImages lists sandbox-from images and cross-references registry", () => {
-    const maintenanceSrc = fs.readFileSync(
-      path.join(ROOT, "src/lib/maintenance-actions.ts"),
-      "utf-8",
+    expect(COMMANDS).toContainEqual(
+      expect.objectContaining({ commandId: "gc", scope: "global", usage: "nemoclaw gc" }),
     );
-    const gcMatch = maintenanceSrc.match(/async function garbageCollectImages[\s\S]*?^}/m);
-    expect(gcMatch).toBeTruthy();
-    if (!gcMatch) {
-      throw new Error("Expected garbageCollectImages() in src/lib/maintenance-actions.ts");
-    }
-    const gcBody = gcMatch[0];
+    expect(globalCommandTokens()).toContain("gc");
+  });
 
-    // Must query docker for sandbox-from images
-    expect(gcBody).toContain("openshell/sandbox-from");
-    // Must consult the registry for in-use tags
-    expect(gcBody).toContain("registry.listSandboxes");
-    // Must support --dry-run
-    expect(gcBody).toContain("dry-run");
-    // Must support --yes
-    expect(gcBody).toContain("--yes");
+  it("gc command is discovered by oclif", () => {
+    expect(getRegisteredOclifCommandMetadata("gc")).toBeTruthy();
+  });
+
+  it("gc option normalization supports dry-run and confirmation aliases", () => {
+    expect(normalizeGarbageCollectImagesOptions(["--dry-run", "--yes"])).toEqual({
+      dryRun: true,
+      force: false,
+      yes: true,
+    });
+    expect(normalizeGarbageCollectImagesOptions({ dryRun: true, force: true })).toEqual({
+      dryRun: true,
+      force: true,
+    });
   });
 
   it("gc appears in rendered help text", () => {

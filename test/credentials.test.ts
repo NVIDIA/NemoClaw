@@ -20,7 +20,8 @@ function isCredentialsModule(value: object | null): value is CredentialsModule {
     typeof Reflect.get(value, "getCredential") === "function" &&
     typeof Reflect.get(value, "saveCredential") === "function" &&
     typeof Reflect.get(value, "stageLegacyCredentialsToEnv") === "function" &&
-    typeof Reflect.get(value, "removeLegacyCredentialsFile") === "function"
+    typeof Reflect.get(value, "removeLegacyCredentialsFile") === "function" &&
+    typeof Reflect.get(value, "removeLegacyCredentialsFileIfEmpty") === "function"
   );
 }
 
@@ -64,6 +65,15 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
   vi.unstubAllEnvs();
+});
+
+describe("messaging legacy bridge credentials", () => {
+  it("keeps the legacy ALLOWED_CHAT_IDS entry for the deploy-time bridge", () => {
+    // The Telegram bridge runtime injected by deploy.ts still expects the
+    // legacy env name. Channel config values are persisted separately from
+    // provider credentials, but this credential key stays for deploy.ts.
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("ALLOWED_CHAT_IDS");
+  });
 });
 
 describe("host-side credential staging", () => {
@@ -429,6 +439,182 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     expect(fs.existsSync(legacyFile)).toBe(false);
     expect(fs.existsSync(victimFile)).toBe(true);
     expect(fs.readFileSync(victimFile, "utf-8")).toBe(victimPayload);
+  });
+});
+
+describe("removeLegacyCredentialsFileIfEmpty (post-upgrade cleanup, #3105)", () => {
+  it("removes an empty {} legacy file (regression #3105)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "{}", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("removes a file containing only unknown keys", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(
+      legacyFile,
+      JSON.stringify({ FOO: "bar", PATH: "/etc/passwd" }),
+      { mode: 0o600 },
+    );
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("removes a file where every allowlisted value is blank/whitespace", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(
+      legacyFile,
+      JSON.stringify({ NVIDIA_API_KEY: "", OPENAI_API_KEY: "   \r\n\t  " }),
+      { mode: 0o600 },
+    );
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("keeps a file with at least one non-empty allowlisted credential", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    const payload = JSON.stringify({ NVIDIA_API_KEY: "nvapi-real-secret", FOO: "bar" });
+    fs.writeFileSync(legacyFile, payload, { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    expect(fs.existsSync(legacyFile)).toBe(true);
+    expect(fs.readFileSync(legacyFile, "utf-8")).toBe(payload);
+  });
+
+  it("returns false when no legacy file exists", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+  });
+
+  it("refuses to act on a symlinked legacy path (target untouched)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+
+    const victimFile = path.join(home, "victim.json");
+    fs.writeFileSync(victimFile, "{}", { mode: 0o600 });
+    fs.symlinkSync(victimFile, legacyFile);
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    expect(fs.existsSync(legacyFile)).toBe(true);
+    expect(fs.existsSync(victimFile)).toBe(true);
+  });
+
+  it("leaves a corrupt legacy file in place for inspection", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "{not-json", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    expect(fs.existsSync(legacyFile)).toBe(true);
+  });
+
+  it("removes a 0-byte legacy file (CodeRabbit nit: whitespace-only doesn't throw)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("removes a whitespace-only legacy file", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "   \n\t\r\n  ", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("returns false when the secure unlink silently fails (CodeRabbit nit)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "{}", { mode: 0o600 });
+
+    // Simulate a swallowed unlink failure: secureUnlink internally calls
+    // fs.unlinkSync with try/catch, so a no-op stub leaves the file intact.
+    // The helper must detect this and return false rather than lying.
+    const spy = vi.spyOn(fs, "unlinkSync").mockImplementation(() => undefined);
+    try {
+      const credentials = await importCredentialsModule(home);
+      expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(fs.existsSync(legacyFile)).toBe(true);
+  });
+
+  it("zero-fills an empty file before unlinking (defence in depth)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    const cleartext = "{}";
+    fs.writeFileSync(legacyFile, cleartext, { mode: 0o600 });
+
+    const originalUnlink = fs.unlinkSync;
+    const captured: { bytes: Buffer | null } = { bytes: null };
+    const spy = vi.spyOn(fs, "unlinkSync").mockImplementation((p) => {
+      if (typeof p === "string" && p === legacyFile && captured.bytes === null) {
+        try {
+          captured.bytes = fs.readFileSync(p);
+        } catch {
+          /* file already gone */
+        }
+      }
+      return originalUnlink(p);
+    });
+
+    try {
+      const credentials = await importCredentialsModule(home);
+      expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const bytesAtUnlink = captured.bytes;
+    expect(bytesAtUnlink).not.toBeNull();
+    if (bytesAtUnlink !== null) {
+      expect(bytesAtUnlink.length).toBe(Buffer.byteLength(cleartext));
+      expect(bytesAtUnlink.every((b) => b === 0)).toBe(true);
+    }
+    expect(fs.existsSync(legacyFile)).toBe(false);
   });
 });
 
