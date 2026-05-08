@@ -31,6 +31,11 @@ const CHECKS: readonly CheckCommand[] = [
     command: TSX,
     args: ["scripts/checks/layer-import-boundaries.ts"],
   },
+  {
+    name: "e2e-advisor-config",
+    command: TSX,
+    args: ["scripts/check-e2e-advisor-config.ts"],
+  },
 ];
 
 function main(): void {
