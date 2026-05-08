@@ -45,7 +45,7 @@ vi.mock("./adapters/openshell/runtime.js", () => ({
   captureOpenshell: vi.fn(),
 }));
 
-vi.mock("./onboard-session.js", () => ({
+vi.mock("./state/onboard-session.js", () => ({
   loadSession: vi.fn(),
 }));
 
@@ -63,7 +63,7 @@ vi.mock("./runner.js", () => ({
 }));
 
 import { recoverRegistryEntries } from "./registry-recovery-action.js";
-import { loadSession } from "./onboard-session.js";
+import { loadSession } from "./state/onboard-session.js";
 
 describe("recoverRegistryEntries (#2753 seed-time guard)", () => {
   beforeEach(() => {

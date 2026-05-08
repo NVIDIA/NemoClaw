@@ -3,7 +3,7 @@
 
 import { Args, Command, Flags } from "@oclif/core";
 
-import { CLI_NAME } from "../../branding";
+import { CLI_NAME } from "../../cli/branding";
 import { connectSandbox } from "../../actions/sandbox/runtime";
 
 export default class ConnectCliCommand extends Command {

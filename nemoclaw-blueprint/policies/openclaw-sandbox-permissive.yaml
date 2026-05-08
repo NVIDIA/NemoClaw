@@ -78,6 +78,29 @@ network_policies:
     binaries:
       - { path: "/**" }
 
+  # ── Managed inference route ──────────────────────────────────────────
+  # Mirror of the `managed_inference` block in openclaw-sandbox.yaml.
+  # `inference.local` is the OpenShell gateway's internal virtual hostname;
+  # the gateway proxies it to the configured provider. OpenShell currently
+  # applies an implicit allow for this route when a managed inference
+  # binding exists, so inference functionally works under permissive mode
+  # even without this entry. We list it explicitly anyway for:
+  #   1. Consistency with the base policy (easier mental model).
+  #   2. Defense-in-depth if the implicit allow is ever tightened.
+  #   3. Self-documentation — readers of this file should not need to
+  #      discover the implicit behaviour empirically.
+  # Ref: https://github.com/NVIDIA/NemoClaw/issues/2663, #2513
+  managed_inference:
+    name: managed_inference
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
   github:
     name: github
     endpoints:

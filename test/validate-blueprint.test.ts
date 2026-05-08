@@ -17,6 +17,10 @@ const BASE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
 );
+const PERMISSIVE_POLICY_PATH = new URL(
+  "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+  import.meta.url,
+);
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
   "provider_type",
   "endpoint",
@@ -309,6 +313,59 @@ describe("base sandbox policy", () => {
     expect(serialized).not.toContain("/usr/local/bin/claude");
   });
 
+  it("regression #2180: base policy does not silently grant Telegram access", () => {
+    // Until #1705 (later regressed by #1700 and re-surfaced in #2180),
+    // `api.telegram.org` plus a /usr/local/bin/node binary lived in the
+    // base network_policies, so every sandbox could call the Telegram
+    // Bot API regardless of whether the user selected the telegram
+    // messaging channel or policy preset. The fix keeps Telegram access
+    // inside `presets/telegram.yaml`. This assertion blocks a regression
+    // where someone re-adds a telegram entry to the base policy and
+    // silently re-grants every sandbox unscoped Telegram access.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "telegram" in np).toBe(false);
+
+    const telegramHosts = findEndpoints((h) => h === "api.telegram.org");
+    expect(telegramHosts).toEqual([]);
+  });
+
+  it("regression #2180: base policy does not silently grant Discord access", () => {
+    // Parallel to the Telegram regression above. Discord (discord.com,
+    // gateway.discord.gg, cdn.discordapp.com, media.discordapp.net) is
+    // the opt-in preset path, not baseline. Re-adding these endpoints
+    // to the base policy lets any sandbox reach Discord without the
+    // user having selected the discord messaging channel or preset.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "discord" in np).toBe(false);
+
+    const discordHosts = findEndpoints(
+      (h) =>
+        h === "discord.com" ||
+        h === "gateway.discord.gg" ||
+        h === "cdn.discordapp.com" ||
+        h === "media.discordapp.net",
+    );
+    expect(discordHosts).toEqual([]);
+  });
+
+  it("regression #2180: base policy does not silently grant Slack access", () => {
+    // Slack was never in the baseline, but guard against it being added
+    // in the same merge-conflict-resolution pattern that re-added
+    // Telegram and Discord after #1705. Slack access is in
+    // presets/slack.yaml only.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "slack" in np).toBe(false);
+
+    const slackHosts = findEndpoints(
+      (h) =>
+        h === "slack.com" ||
+        h.endsWith(".slack.com") ||
+        h === "wss-primary.slack.com" ||
+        h === "wss-backup.slack.com",
+    );
+    expect(slackHosts).toEqual([]);
+  });
+
   it("regression #1458: baseline npm_registry must not include npm or node binaries", () => {
     const np = policy.network_policies ?? {};
     const npmRegistry = np.npm_registry;
@@ -320,6 +377,42 @@ describe("base sandbox policy", () => {
     // npm/node being in this list lets the agent bypass 'none' policy preset.
     // Exact allowlist — adding any binary here requires a deliberate review.
     expect(paths).toEqual(["/usr/local/bin/openclaw"]);
+  });
+});
+
+describe("permissive sandbox policy", () => {
+  // openclaw-sandbox-permissive.yaml is applied by `shields down --policy
+  // permissive`. It must carry forward the gateway-managed inference route
+  // so the mental model stays consistent with the base policy and so we
+  // don't silently depend on OpenShell's implicit allow for
+  // gateway-bound virtual hostnames.
+  // Ref: https://github.com/NVIDIA/NemoClaw/issues/2513, #2663
+  const policy = loadYaml<SandboxPolicy>(PERMISSIVE_POLICY_PATH);
+
+  it("parses and declares network_policies", () => {
+    expect(policy.network_policies).toBeDefined();
+  });
+
+  it("regression #2513: managed_inference block allows inference.local:443", () => {
+    const np = policy.network_policies ?? {};
+    expect(np.managed_inference).toBeDefined();
+    const endpoints = np.managed_inference?.endpoints ?? [];
+    const inferenceEp = endpoints.find((ep) => ep.host === "inference.local");
+    expect(inferenceEp).toBeDefined();
+    expect(inferenceEp?.port).toBe(443);
+    // Permissive policy uses the `access: full` convention (any method, any
+    // path) rather than explicit per-method rules. That is consistent with
+    // every other host in this file.
+    expect(inferenceEp?.access).toBe("full");
+    expect(inferenceEp?.enforcement).toBe("enforce");
+  });
+
+  it("regression #2513: managed_inference uses permissive '/**' binary allowlist", () => {
+    const np = policy.network_policies ?? {};
+    const binaries = (np.managed_inference?.binaries ?? []).map((b) => b.path);
+    // Matches the permissive-file convention used by every other block
+    // (e.g. `nvidia`, `github`, `huggingface`, etc.).
+    expect(binaries).toEqual(["/**"]);
   });
 });
 

@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { parseSandboxPhase } from "../../state/gateway";
 import {
   getNamedGatewayLifecycleState,
@@ -16,8 +16,8 @@ import {
 const { pruneKnownHostsEntries } = require("../../onboard") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
-import * as onboardSession from "../../onboard-session";
-import type { Session } from "../../onboard-session";
+import * as onboardSession from "../../state/onboard-session";
+import type { Session } from "../../state/onboard-session";
 import { stripAnsi } from "../../adapters/openshell/client";
 import {
   captureOpenshell,
@@ -55,18 +55,26 @@ export function mergeLivePolicyIntoSandboxOutput(
   if (policyLineIdx === -1) return output;
 
   const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
-  const delimIdx = livePolicyOutput.search(/^---\s*$/m);
+  const cleanLivePolicy = stripAnsi(String(livePolicyOutput));
+  const delimIdx = cleanLivePolicy.search(/^---\s*$/m);
+  const metadataPart = delimIdx !== -1 ? cleanLivePolicy.slice(0, delimIdx) : "";
   const yamlPart =
     delimIdx !== -1
-      ? livePolicyOutput.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
-      : livePolicyOutput;
+      ? cleanLivePolicy.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
+      : cleanLivePolicy;
   const trimmedYaml = yamlPart.trim();
   const looksLikeError = /^(error|failed|invalid|warning|status)\b/i.test(trimmedYaml);
   if (!trimmedYaml || looksLikeError || !/^[a-z_][a-z0-9_]*\s*:/m.test(trimmedYaml)) {
     return output;
   }
 
-  const indented = trimmedYaml
+  const activeMatch = metadataPart.match(/^Active:\s*(\d+)\s*$/m);
+  const rewrittenYaml =
+    activeMatch && /^version:\s*\d+/m.test(trimmedYaml)
+      ? trimmedYaml.replace(/^version:\s*\d+/m, `version: ${activeMatch[1]}`)
+      : trimmedYaml;
+
+  const indented = rewrittenYaml
     .split("\n")
     .map((line: string) => (line ? `  ${line}` : line))
     .join("\n");

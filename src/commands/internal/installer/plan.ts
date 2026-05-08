@@ -3,7 +3,7 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { buildInstallerPlan } from "../../../lib/actions/installer-plan";
+import { buildInstallerPlan } from "../../../lib/actions/installer/plan";
 
 export default class InternalInstallerPlanCommand extends Command {
   static hidden = true;

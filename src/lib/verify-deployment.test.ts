@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import { verifyDeployment, formatVerificationDiagnostics } from "../../dist/lib/verify-deployment.js";
-import { buildChain } from "../../dist/lib/dashboard-contract.js";
+import { buildChain } from "../../dist/lib/dashboard/contract.js";
 
 const chain = buildChain();
 

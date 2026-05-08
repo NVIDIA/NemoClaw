@@ -22,6 +22,8 @@ Environment variables:
     NEMOCLAW_MAX_TOKENS                 Max tokens (default: 4096)
     NEMOCLAW_REASONING                  Enable reasoning (default: false)
     NEMOCLAW_AGENT_TIMEOUT              Per-request timeout seconds (default: 600)
+    NEMOCLAW_AGENT_HEARTBEAT_EVERY      OpenClaw agent heartbeat cadence (e.g. "30m", "0m" to
+                                        disable). Empty/unset preserves the OpenClaw default.
     NEMOCLAW_INFERENCE_COMPAT_B64       Base64-encoded inference compat JSON
     NEMOCLAW_MESSAGING_CHANNELS_B64     Base64-encoded channel list
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map
@@ -69,7 +71,7 @@ def _coerce_positive_int(env: dict, name: str, default: int) -> int:
 def is_loopback(hostname: str) -> bool:
     """Check if a hostname is a loopback address.
 
-    Mirrors isLoopbackHostname() from src/lib/url-utils.ts.
+    Mirrors isLoopbackHostname() from src/lib/core/url-utils.ts.
     Returns True for localhost, ::1, and 127.x.x.x addresses.
     """
     normalized = (hostname or "").strip().lower().strip("[]")
@@ -336,6 +338,21 @@ def build_config(env: dict | None = None) -> dict:
         raise ValueError("NEMOCLAW_AGENT_TIMEOUT must be a positive integer")
     agent_timeout = int(_raw_agent_timeout)
 
+    # NemoClaw#2880: expose OpenClaw's agents.defaults.heartbeat.every so users
+    # can disable the periodic heartbeat (e.g. "0m") without editing
+    # openclaw.json by hand. Accept a Go-style duration string (digits + a
+    # required s/m/h suffix — OpenClaw docs always show the suffixed form).
+    # Empty/unset preserves the OpenClaw default.
+    _raw_heartbeat = (env.get("NEMOCLAW_AGENT_HEARTBEAT_EVERY") or "").strip()
+    if _raw_heartbeat and not re.match(r"^\d+(s|m|h)$", _raw_heartbeat):
+        print(
+            f'[SECURITY] NEMOCLAW_AGENT_HEARTBEAT_EVERY must match ^\\d+(s|m|h)$, '
+            f'got "{_raw_heartbeat}" — skipping override, preserving OpenClaw default',
+            file=sys.stderr,
+        )
+        _raw_heartbeat = ""
+    agent_heartbeat = _raw_heartbeat
+
     model_specific_setups = _matching_model_specific_setups(
         "openclaw",
         {
@@ -534,6 +551,11 @@ def build_config(env: dict | None = None) -> dict:
             "defaults": {
                 "model": {"primary": primary_model_ref},
                 "timeoutSeconds": agent_timeout,
+                **(
+                    {"heartbeat": {"every": agent_heartbeat}}
+                    if agent_heartbeat
+                    else {}
+                ),
                 # NemoClaw sandboxes are provisioned non-interactively and the
                 # E2E CLI contract expects the first agent turn to answer the
                 # caller's prompt. OpenClaw 2026.4.24 seeds BOOTSTRAP.md by

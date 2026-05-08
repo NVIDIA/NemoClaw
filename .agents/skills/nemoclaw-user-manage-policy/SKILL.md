@@ -168,7 +168,7 @@ Available presets:
 |--------|-----------|
 | `brave` | Brave Search API |
 | `brew` | Homebrew (Linuxbrew) package manager |
-| `discord` | Discord webhook API |
+| `discord` | Discord API, gateway, and CDN access |
 | `github` | GitHub and GitHub REST API |
 | `huggingface` | Hugging Face Hub (download-only) and inference router |
 | `jira` | Atlassian Jira API |

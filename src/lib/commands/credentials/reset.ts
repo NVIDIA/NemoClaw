@@ -3,8 +3,8 @@
 
 import { Args, Command, Flags } from "@oclif/core";
 
-import { CLI_NAME } from "../../branding";
-import { prompt as askPrompt } from "../../credentials";
+import { CLI_NAME } from "../../cli/branding";
+import { prompt as askPrompt } from "../../credentials/store";
 import { runOpenshellProviderCommand } from "../../actions/global";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { isBridgeProviderName, recoverGatewayOrExit } from "./common";

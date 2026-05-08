@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { CLI_NAME } from "./branding";
-import type { GatewayInference } from "./inference-config";
-import { redactFull } from "./redact";
+import { CLI_NAME } from "./cli/branding";
+import type { GatewayInference } from "./inference/config";
+import { redactFull } from "./security/redact";
 
 export interface SandboxEntry {
   name: string;

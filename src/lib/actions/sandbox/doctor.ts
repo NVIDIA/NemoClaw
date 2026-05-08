@@ -7,15 +7,15 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
-import { isErrnoException } from "../../errno";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
+import { isErrnoException } from "../../core/errno";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
-import { probeProviderHealth } from "../../inference-health";
-import { parseGatewayInference } from "../../inference-config";
+import { probeProviderHealth } from "../../inference/health";
+import { parseGatewayInference } from "../../inference/config";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import { GATEWAY_PORT, OLLAMA_PORT } from "../../ports";
+import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
 import * as registry from "../../state/registry";
 import type { SandboxEntry } from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
@@ -24,7 +24,7 @@ import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox-version";
 import * as shields from "../../shields";
 import { buildStatusCommandDeps } from "../../status-command-deps";
-import { B, D, G, R, RD, YW } from "../../terminal-style";
+import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
 
 const agentRuntime = require("../../../../bin/lib/agent-runtime");
 

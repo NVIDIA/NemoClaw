@@ -4,7 +4,7 @@
 const { execFileSync, spawn, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
-const { DASHBOARD_PORT, GATEWAY_PORT, OLLAMA_PORT } = require("./lib/ports");
+const { DASHBOARD_PORT, GATEWAY_PORT, OLLAMA_PORT } = require("./lib/core/ports");
 
 // ---------------------------------------------------------------------------
 // Color / style — respects NO_COLOR and non-TTY environments.
@@ -26,7 +26,7 @@ const { ROOT, run, runInteractive, validateName } = require("./lib/runner");
 // Agent branding — derived from NEMOCLAW_AGENT when an alias launcher sets it;
 // otherwise the branding module falls back to the OpenClaw defaults.
 // ---------------------------------------------------------------------------
-const { CLI_NAME, CLI_DISPLAY_NAME } = require("./lib/branding");
+const { CLI_NAME, CLI_DISPLAY_NAME } = require("./lib/cli/branding");
 
 const {
   dockerCapture,
@@ -38,15 +38,15 @@ const { resolveOpenshell } = require("./lib/adapters/openshell/resolve");
 const { hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
 const registry = require("./lib/state/registry");
 import type { SandboxEntry } from "./lib/state/registry";
-const nim = require("./lib/nim");
+const nim = require("./lib/inference/nim");
 const shields = require("./lib/shields");
-const { parseGatewayInference } = require("./lib/inference-config");
+const { parseGatewayInference } = require("./lib/inference/config");
 const policies = require("./lib/policies");
-const { probeProviderHealth } = require("./lib/inference-health");
+const { probeProviderHealth } = require("./lib/inference/health");
 const { buildStatusCommandDeps } = require("./lib/status-command-deps");
 const { help, version } = require("./lib/actions/root-help");
-const onboardSession = require("./lib/onboard-session");
-import type { Session } from "./lib/onboard-session";
+const onboardSession = require("./lib/state/onboard-session");
+import type { Session } from "./lib/state/onboard-session";
 const { stripAnsi } = require("./lib/adapters/openshell/client");
 const {
   getInstalledOpenshellVersionOrNull,
@@ -68,7 +68,7 @@ const {
   getSandboxDeleteOutcome,
 } = require("./lib/actions/sandbox/destroy");
 const { runOclifArgv, runRegisteredOclifCommand } = require("./lib/cli/oclif-runner");
-const { isErrnoException }: typeof import("./lib/errno") = require("./lib/errno");
+const { isErrnoException }: typeof import("./lib/core/errno") = require("./lib/core/errno");
 const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxState = require("./lib/state/sandbox");
 const { parseRestoreArgs } = sandboxState;
@@ -81,7 +81,7 @@ const {
   canonicalUsageList,
   globalCommandTokens,
   sandboxActionTokens,
-} = require("./lib/command-registry");
+} = require("./lib/cli/command-registry");
 import { normalizeArgv, suggestCommand } from "./lib/cli/argv-normalizer";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./lib/adapters/openshell/timeouts";
 import { renderPublicOclifHelp } from "./lib/cli/public-oclif-help";

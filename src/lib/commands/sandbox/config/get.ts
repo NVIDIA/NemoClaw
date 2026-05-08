@@ -3,7 +3,7 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { CLI_NAME } from "../../../branding";
+import { CLI_NAME } from "../../../cli/branding";
 import * as sandboxConfig from "../../../sandbox-config";
 import { sandboxNameArg } from "../common";
 

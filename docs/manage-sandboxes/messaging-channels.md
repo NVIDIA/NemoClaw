@@ -69,6 +69,7 @@ Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_T
 When the wizard reaches **Messaging channels**, it lists Telegram, Discord, and Slack.
 Press a channel number to toggle it on or off, then press **Enter** when done.
 If a token is not already in the environment or credential store, the wizard prompts for it and saves it.
+NemoClaw also selects the matching network policy preset during policy setup so the channel can reach its provider API.
 
 For scripted setup, export the credentials and optional settings for the channels you want to enable before you run onboarding:
 

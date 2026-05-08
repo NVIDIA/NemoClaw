@@ -75,7 +75,7 @@ The inference provider prompt presents a numbered list.
   5) Anthropic
   6) Other Anthropic-compatible endpoint
   7) Google Gemini
-  8) Model Router (complexity-based routing)
+  8) Model Router (experimental)
   Choose [1]:
 ```
 
@@ -90,7 +90,7 @@ For example, run `export NVIDIA_API_KEY=<your-key>` before `curl ... | bash`.
 If you entered a key incorrectly, refer to [Reset a Stored Credential](../manage-sandboxes/lifecycle.md#reset-a-stored-credential) to clear and re-enter it.
 :::
 
-:::{dropdown} Option 1: NVIDIA Endpoints
+:::{dropdown} NVIDIA Endpoints
 :icon: server
 
 Routes inference to models hosted on [build.nvidia.com](https://build.nvidia.com).
@@ -110,7 +110,7 @@ Use this option for Nemotron and other models hosted on `build.nvidia.com`. If y
 :::
 :::
 
-:::{dropdown} Option 2: OpenAI
+:::{dropdown} OpenAI
 :icon: server
 
 Routes inference to the OpenAI API at `https://api.openai.com/v1`.
@@ -124,7 +124,7 @@ Respond to the wizard as follows.
 3. At the `Choose model [1]:` prompt, pick a curated model (for example, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, or `gpt-5.4-pro-2026-03-05`), or pick **Other...** to enter any OpenAI model ID.
 :::
 
-:::{dropdown} Option 3: Other OpenAI-Compatible Endpoint
+:::{dropdown} Other OpenAI-Compatible Endpoint
 :icon: link-external
 
 Routes inference to any server that implements `/v1/chat/completions`, including OpenRouter, LocalAI, llama.cpp, vLLM behind a proxy, and any compatible gateway.
@@ -148,7 +148,7 @@ NVIDIA Nemotron models expose OpenAI-compatible APIs, so this option is the righ
 :::
 :::
 
-:::{dropdown} Option 4: Ollama
+:::{dropdown} Ollama
 :icon: cpu
 
 Routes inference to Ollama.
@@ -188,7 +188,7 @@ For local scripted setup, set `NEMOCLAW_PROVIDER=ollama`.
 
 :::
 
-:::{dropdown} Option 5: Anthropic
+:::{dropdown} Anthropic
 :icon: server
 
 Routes inference to the Anthropic Messages API at `https://api.anthropic.com`.
@@ -202,7 +202,7 @@ Respond to the wizard as follows.
 3. At the `Choose model [1]:` prompt, pick a curated model (for example, `claude-sonnet-4-6`, `claude-haiku-4-5`, or `claude-opus-4-6`), or pick **Other...** to enter any Claude model ID.
 :::
 
-:::{dropdown} Option 6: Other Anthropic-Compatible Endpoint
+:::{dropdown} Other Anthropic-Compatible Endpoint
 :icon: link-external
 
 Routes inference to any server that implements the Anthropic Messages API at `/v1/messages`, including Claude proxies, Bedrock-compatible gateways, and self-hosted Anthropic-compatible servers.
@@ -217,7 +217,7 @@ Respond to the wizard as follows.
 4. At the `Other Anthropic-compatible endpoint model []:` prompt, enter the model ID exactly as it appears in your gateway's model catalog.
 :::
 
-:::{dropdown} Option 7: Google Gemini
+:::{dropdown} Google Gemini
 :icon: server
 
 Routes inference to Google's OpenAI-compatible Gemini endpoint at `https://generativelanguage.googleapis.com/v1beta/openai/`.
@@ -231,7 +231,7 @@ Respond to the wizard as follows.
 3. At the `Choose model [5]:` prompt, pick a curated model (for example, `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, or `gemini-2.5-flash-lite`), or pick **Other...** to enter any Gemini model ID.
 :::
 
-:::{dropdown} Option 8: Model Router
+:::{dropdown} Model Router
 :icon: git-compare
 
 Starts a host-side model router and routes sandbox inference through OpenShell to that router.
@@ -241,7 +241,7 @@ Use `NVIDIA_API_KEY` for the model pool credentials.
 
 Respond to the wizard as follows.
 
-1. At the `Choose [1]:` prompt, type `8` to select **Model Router (complexity-based routing)**.
+1. At the `Choose [1]:` prompt, type `8` to select **Model Router (experimental)**.
 2. At the `NVIDIA_API_KEY:` prompt, paste your key if it is not already exported.
 3. Review the configuration summary and continue with the sandbox build.
 
@@ -256,7 +256,7 @@ The sandbox still calls `https://inference.local/v1`, so do not point in-sandbox
 
 :::
 
-:::{dropdown} Experimental: Local NIM and Local vLLM
+:::{dropdown} Local NIM and Local vLLM
 :icon: beaker
 
 These options appear when `NEMOCLAW_EXPERIMENTAL=1` is set and the prerequisites are met.

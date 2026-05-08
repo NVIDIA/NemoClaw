@@ -5,7 +5,7 @@
 
 import { spawnSync } from "node:child_process";
 
-import { parseGatewayInference } from "./inference-config";
+import { parseGatewayInference } from "./inference/config";
 import type { MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory-commands";
 import { backfillMessagingChannels, findAllOverlaps } from "./messaging-conflict";
 import type { CaptureOpenshellResult } from "./adapters/openshell/client";

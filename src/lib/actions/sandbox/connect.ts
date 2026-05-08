@@ -6,9 +6,9 @@
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 
-import { CLI_NAME } from "../../branding";
-import { parseGatewayInference } from "../../inference-config";
-import { ensureOllamaAuthProxy } from "../../onboard-ollama-proxy";
+import { CLI_NAME } from "../../cli/branding";
+import { parseGatewayInference } from "../../inference/config";
+import { ensureOllamaAuthProxy } from "../../inference/ollama/proxy";
 import {
   captureOpenshell,
   getOpenshellBinary,
@@ -24,7 +24,7 @@ import {
 } from "../../state/sandbox-session";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import * as sandboxVersion from "../../sandbox-version";
-import { D, G, R, YW } from "../../terminal-style";
+import { D, G, R, YW } from "../../cli/terminal-style";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 
 const agentRuntime = require("../../../../bin/lib/agent-runtime");

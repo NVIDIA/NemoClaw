@@ -6,12 +6,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
-import { hashCredential } from "../../credential-hash";
-import { getCredential, prompt as askPrompt } from "../../credentials";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
+import { hashCredential } from "../../security/credential-hash";
+import { getCredential, prompt as askPrompt } from "../../credentials/store";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
-const onboardProviders = require("../../onboard-providers");
+const onboardProviders = require("../../onboard/providers");
 import * as policies from "../../policies";
 import { parsePolicyAddArgs } from "../../domain/policy-channel";
 import * as registry from "../../state/registry";

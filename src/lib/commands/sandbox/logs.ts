@@ -3,7 +3,7 @@
 
 import { Args, Command, Flags } from "@oclif/core";
 
-import { logsSinceDurationFlag } from "../../duration-flags";
+import { logsSinceDurationFlag } from "../../cli/duration-flags";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import { DEFAULT_SANDBOX_LOG_LINES } from "../../domain/sandbox/log-options";
 import { showSandboxLogs } from "../../actions/sandbox/runtime";

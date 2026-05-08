@@ -3,7 +3,7 @@
 
 import { Args, Command, Flags } from "@oclif/core";
 
-import { classifyShimPath } from "../../../lib/actions/uninstall-plan";
+import { classifyShimPath } from "../../../lib/actions/uninstall/plan";
 
 export default class InternalUninstallClassifyShimCommand extends Command {
   static hidden = true;

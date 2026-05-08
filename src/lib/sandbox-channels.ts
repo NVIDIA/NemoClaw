@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { deleteCredential, saveCredential } from "./credentials";
+import { deleteCredential, saveCredential } from "./credentials/store";
 
 export interface ChannelDef {
   envKey: string;
