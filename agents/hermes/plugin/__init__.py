@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import yaml
+from urllib.parse import urlparse
 
 
 def _load_nemoclaw_config():
@@ -47,6 +48,22 @@ def _load_hermes_config():
     return None
 
 
+def _get_gateway_port():
+    """Return the sandbox-exposed Hermes API port."""
+    raw = os.environ.get("NEMOCLAW_DASHBOARD_PORT")
+    if raw and raw.isdigit():
+        return int(raw)
+    chat_url = os.environ.get("CHAT_UI_URL", "")
+    if chat_url:
+        try:
+            parsed = urlparse(chat_url)
+            if parsed.port:
+                return int(parsed.port)
+        except Exception:
+            pass
+    return 8642
+
+
 def _get_sandbox_info():
     """Gather sandbox status information."""
     hermes_cfg = _load_hermes_config()
@@ -67,10 +84,11 @@ def _get_sandbox_info():
         provider = nemoclaw_cfg.get("provider", provider)
 
     # Check gateway health
+    gateway_port = _get_gateway_port()
     gateway_ok = False
     try:
         result = subprocess.run(
-            ["curl", "-sf", "http://localhost:8642/health"],
+            ["curl", "-sf", f"http://localhost:{gateway_port}/health"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -86,7 +104,7 @@ def _get_sandbox_info():
         "provider": provider,
         "base_url": base_url,
         "gateway": "running" if gateway_ok else "stopped",
-        "port": 8642,
+        "port": gateway_port,
     }
 
 

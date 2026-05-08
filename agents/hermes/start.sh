@@ -109,7 +109,23 @@ case "${1:-}" in
 esac
 NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:8642}"
-PUBLIC_PORT=8642
+PUBLIC_PORT="${NEMOCLAW_DASHBOARD_PORT:-}"
+if [ -z "$PUBLIC_PORT" ]; then
+  _chat_port="${CHAT_UI_URL##*:}"
+  _chat_port="${_chat_port%%/*}"
+  _chat_port="${_chat_port%%\?*}"
+  _chat_port="${_chat_port%%#*}"
+  case "$_chat_port" in
+    '' | *[!0-9]*) PUBLIC_PORT=8642 ;;
+    *) PUBLIC_PORT="$_chat_port" ;;
+  esac
+fi
+case "$PUBLIC_PORT" in
+  '' | *[!0-9]*) PUBLIC_PORT=8642 ;;
+esac
+export NEMOCLAW_DASHBOARD_PORT="$PUBLIC_PORT"
+CHAT_UI_URL="http://127.0.0.1:${PUBLIC_PORT}"
+export CHAT_UI_URL
 # Hermes binds to 127.0.0.1 regardless of config (upstream bug).
 # Run it on an internal port and use socat to expose on PUBLIC_PORT.
 INTERNAL_PORT=18642

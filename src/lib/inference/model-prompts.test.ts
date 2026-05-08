@@ -118,6 +118,23 @@ describe("model prompt helpers", () => {
     expect(result).toBe("custom-model");
   });
 
+  it("opens the full model list from long curated remote catalogs", async () => {
+    const modelOptions = Array.from({ length: 12 }, (_, index) => `model-${index + 1}`);
+    const writeLine = vi.fn();
+    const result = await promptRemoteModel("Hermes Provider", "hermesProvider", "model-1", null, {
+      promptFn: promptSequence(["4", "11"]),
+      writeLine,
+      remoteModelOptions: { hermesProvider: modelOptions },
+      topLevelModelLimit: 3,
+      otherShowsFullList: true,
+    });
+
+    expect(result).toBe("model-11");
+    expect(writeLine).toHaveBeenCalledWith("    4) Other...");
+    expect(writeLine).toHaveBeenCalledWith("  Hermes Provider full model list:");
+    expect(writeLine).toHaveBeenCalledWith("    11) model-11");
+  });
+
   it("retries invalid input models until validation succeeds", async () => {
     const promptFn = promptSequence(["bad model", "other", "candidate"]);
     const errorLine = vi.fn();

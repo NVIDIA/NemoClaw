@@ -8,33 +8,22 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 describe("Hermes Provider onboarding selection", () => {
-  it("prompts for agent selection on bare interactive onboard setup", () => {
+  it("keeps bare interactive onboard on the OpenClaw default", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-agent-selection-"),
+      path.join(os.tmpdir(), "nemoclaw-agent-default-"),
     );
-    const scriptPath = path.join(tmpDir, "agent-selection-check.js");
+    const scriptPath = path.join(tmpDir, "agent-default-check.js");
     const onboardPath = JSON.stringify(
       path.join(repoRoot, "dist", "lib", "onboard.js"),
     );
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials.js"),
-    );
 
     const script = String.raw`
-const credentials = require(${credentialsPath});
-credentials.prompt = async () => "2";
 const { selectOnboardAgent } = require(${onboardPath});
 
 (async () => {
-  const originalLog = console.log.bind(console);
-  console.log = () => {};
-  try {
-    const agent = await selectOnboardAgent({ canPrompt: true });
-    originalLog(JSON.stringify({ agent: agent && agent.name }));
-  } finally {
-    console.log = originalLog;
-  }
+  const agent = await selectOnboardAgent({ canPrompt: true });
+  console.log(JSON.stringify({ agent: agent && agent.name }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -49,7 +38,7 @@ const { selectOnboardAgent } = require(${onboardPath});
     });
 
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout.trim())).toEqual({ agent: "hermes" });
+    expect(JSON.parse(result.stdout.trim())).toEqual({ agent: null });
   });
 
   it("rejects Hermes Provider when Hermes Agent was not selected", () => {
@@ -93,6 +82,9 @@ const { setupNim } = require(${onboardPath});
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(
       "Hermes Provider is only available when onboarding Hermes Agent",
+    );
+    expect(result.stderr).toContain(
+      "Re-run with `nemohermes onboard` or `nemoclaw onboard --agent hermes`.",
     );
   });
 

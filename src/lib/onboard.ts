@@ -1583,54 +1583,18 @@ function stageNousApiKeyProviderFallback(): void {
 async function selectOnboardAgent({
   agentFlag = null,
   session = null,
-  resume = false,
-  canPrompt = true,
 }: {
   agentFlag?: string | null;
   session?: { agent?: string | null } | null;
   resume?: boolean;
   canPrompt?: boolean;
 } = {}): Promise<AgentDefinition | null> {
-  const requestedAgent = agentFlag || process.env.NEMOCLAW_AGENT || null;
-  const shouldSkipPrompt =
-    Boolean(requestedAgent) ||
-    resume ||
-    Boolean(session?.agent) ||
-    isNonInteractive() ||
-    !canPrompt;
-
-  if (shouldSkipPrompt) {
-    const agent = agentOnboard.resolveAgent({ agentFlag, session });
-    if (isNonInteractive()) {
-      const displayName = agent?.displayName || agentDefs.loadAgent("openclaw").displayName;
-      note(`  [non-interactive] Agent: ${displayName}`);
-    }
-    return agent;
+  const agent = agentOnboard.resolveAgent({ agentFlag, session });
+  if (isNonInteractive()) {
+    const displayName = agent?.displayName || agentDefs.loadAgent("openclaw").displayName;
+    note(`  [non-interactive] Agent: ${displayName}`);
   }
-
-  const choices = agentDefs.getAgentChoices() as AgentChoice[];
-  if (choices.length === 0) {
-    console.error("  No agent manifests were found.");
-    process.exit(1);
-  }
-  const openclawIdx = choices.findIndex((choice) => choice.name === "openclaw");
-  const defaultIdx = (openclawIdx >= 0 ? openclawIdx : 0) + 1;
-
-  console.log("");
-  console.log("  Agent:");
-  choices.forEach((choice, index) => {
-    const description = choice.description ? ` - ${choice.description}` : "";
-    console.log(`    ${index + 1}) ${choice.displayName}${description}`);
-  });
-  console.log("");
-
-  const choice = await prompt(`  Choose [${defaultIdx}]: `);
-  const navigation = getNavigationChoice(choice);
-  if (navigation === "exit") exitOnboardFromPrompt();
-  const idx = parseInt(choice || String(defaultIdx), 10) - 1;
-  const selected = choices[idx] || choices[defaultIdx - 1] || choices[0];
-  if (!selected || selected.name === "openclaw") return null;
-  return agentDefs.loadAgent(selected.name);
+  return agent;
 }
 
 const { getTransportRecoveryMessage, getProbeRecovery } = validationRecovery;
@@ -4183,7 +4147,13 @@ async function preflight(
   const requiredPorts = [
     { port: GATEWAY_PORT, label: "OpenShell gateway", envVar: "NEMOCLAW_GATEWAY_PORT" },
     ...(dashboardPortToCheck !== null
-      ? [{ port: dashboardPortToCheck, label: `${cliDisplayName()} dashboard`, envVar: "NEMOCLAW_DASHBOARD_PORT" }]
+      ? [
+          {
+            port: dashboardPortToCheck,
+            label: `${cliDisplayName()} dashboard`,
+            envVar: "NEMOCLAW_DASHBOARD_PORT",
+          },
+        ]
       : []),
   ];
   for (const { port, label, envVar } of requiredPorts) {
@@ -6520,7 +6490,7 @@ async function setupNim(
             if (providerKey === "hermesProvider" && !hermesProviderAvailable) {
               console.error("  Hermes Provider is only available when onboarding Hermes Agent.");
               console.error(
-                "  Re-run with `nemoclaw onboard --agent hermes` or select Hermes Agent in the wizard.",
+                "  Re-run with `nemohermes onboard` or `nemoclaw onboard --agent hermes`.",
               );
               process.exit(1);
             }
@@ -6673,6 +6643,7 @@ async function setupNim(
               selected.key,
               defaultModel,
               null,
+              { topLevelModelLimit: 10, otherShowsFullList: true },
             );
           }
           if (model === BACK_TO_SELECTION) {
@@ -8111,7 +8082,7 @@ async function setupMessagingChannels(): Promise<string[]> {
         const userId = (await prompt(`  ${ch.userIdLabel}: `)).trim();
         if (userId) {
           process.env[ch.userIdEnvKey] = userId;
-          console.log(`  ✓ ${ch.name} user ID saved`);
+          console.log(`  ✓ ${ch.name} allowed IDs saved`);
         } else {
           const skippedReason =
             ch.allowIdsMode === "guild"
@@ -9078,7 +9049,8 @@ function findForwardEntry(
   port: string,
 ): { sandboxName: string; status: string } | null {
   if (!forwardListOutput) return null;
-  for (const line of forwardListOutput.split("\n")) {
+  for (const rawLine of forwardListOutput.split("\n")) {
+    const line = rawLine.replace(ANSI_RE, "");
     if (/^\s*SANDBOX\s/i.test(line)) continue;
     const parts = line.trim().split(/\s+/);
     if (parts.length < 3 || parts[2] !== port) continue;
@@ -9097,7 +9069,8 @@ function isLiveForwardStatus(status: string): boolean {
 function getRunningForwardPorts(forwardListOutput: string | null | undefined): string[] {
   const ports = new Set<string>();
   if (!forwardListOutput) return [];
-  for (const line of forwardListOutput.split("\n")) {
+  for (const rawLine of forwardListOutput.split("\n")) {
+    const line = rawLine.replace(ANSI_RE, "");
     if (/^\s*SANDBOX\s/i.test(line)) continue;
     const parts = line.trim().split(/\s+/);
     if (parts.length < 5 || !/^\d+$/.test(parts[2])) continue;
@@ -9127,7 +9100,8 @@ function stopAllDashboardForwards(): void {
 function getOccupiedPorts(forwardListOutput: string | null): Map<string, string> {
   const occupied = new Map();
   if (!forwardListOutput) return occupied;
-  for (const line of forwardListOutput.split("\n")) {
+  for (const rawLine of forwardListOutput.split("\n")) {
+    const line = rawLine.replace(ANSI_RE, "");
     if (/^\s*SANDBOX\s/i.test(line)) continue;
     const parts = line.trim().split(/\s+/);
     // parts: [sandbox, bind, port, pid, status...]
