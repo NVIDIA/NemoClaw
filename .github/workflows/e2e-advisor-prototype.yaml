@@ -45,6 +45,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  issues: write
 
 concurrency:
   group: e2e-advisor-prototype-${{ github.event.pull_request.number || github.ref }}
@@ -139,6 +140,18 @@ jobs:
           else
             printf '# Pi Semantic E2E Advisor\n\nPi analysis did not produce a summary. See raw artifacts/logs.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Post E2E advisor PR comment
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          node tools/e2e-advisor/comment.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" \
+            --summary artifacts/e2e-advisor/e2e-advisor-pi-summary.md \
+            --result artifacts/e2e-advisor/e2e-advisor-final-result.json
 
       - name: Upload advisor artifacts
         if: always()
