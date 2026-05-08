@@ -243,6 +243,39 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.agents.defaults.timeoutSeconds).toBe(300);
   });
 
+  it("omits heartbeat when NEMOCLAW_AGENT_HEARTBEAT_EVERY is unset", () => {
+    const config = runConfigScript();
+    expect(config.agents.defaults.heartbeat).toBeUndefined();
+  });
+
+  it("omits heartbeat when NEMOCLAW_AGENT_HEARTBEAT_EVERY is the empty string", () => {
+    // Docker promotes the unset ARG to an empty ENV value rather than dropping
+    // the variable, so the build path almost always sees "" rather than undefined.
+    const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "" });
+    expect(config.agents.defaults.heartbeat).toBeUndefined();
+  });
+
+  it("propagates heartbeat cadence into agents.defaults.heartbeat.every", () => {
+    const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m" });
+    expect(config.agents.defaults.heartbeat).toEqual({ every: "30m" });
+  });
+
+  it("disables heartbeat when set to 0m (NemoClaw#2880)", () => {
+    const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" });
+    expect(config.agents.defaults.heartbeat).toEqual({ every: "0m" });
+  });
+
+  it("rejects malformed heartbeat values, preserves OpenClaw default, and warns on stderr", () => {
+    const result = runConfigScriptRaw({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "5 minutes" });
+    expect(result.status).toBe(0);
+    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(config.agents.defaults.heartbeat).toBeUndefined();
+    expect(result.stderr).toMatch(
+      /\[SECURITY\] NEMOCLAW_AGENT_HEARTBEAT_EVERY must match \^\\d\+\(s\|m\|h\)\$, got "5 minutes"/,
+    );
+  });
+
   it("disables OpenClaw first-run workspace bootstrap", () => {
     const config = runConfigScript();
     expect(config.agents.defaults.skipBootstrap).toBe(true);

@@ -18,7 +18,7 @@
 const readline = require("readline");
 
 // ── Stubs ──────────────────────────────────────────────────────────────────
-const creds = require("../dist/lib/credentials.js");
+const creds = require("../dist/lib/credentials/store.js");
 const runner = require("../dist/lib/runner.js");
 const registry = require("../dist/lib/state/registry.js");
 

@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { CLI_NAME } from "../../branding";
+import { CLI_NAME } from "../../cli/branding";
 import { dockerCapture, dockerInspect } from "../../adapters/docker";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { ROOT, run, shellQuote, validateName } from "../../runner";

@@ -6,7 +6,7 @@ import { isSafeModelId } from "./validation";
 import { validateNvidiaEndpointModel } from "./provider-models";
 
 // credentials.ts still uses CommonJS-style exports.
-const { getCredential, prompt } = require("./credentials");
+const { getCredential, prompt } = require("./credentials/store");
 
 export const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
 

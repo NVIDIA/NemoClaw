@@ -3,7 +3,7 @@
 
 import { Config as OclifConfig, execute as executeOclif } from "@oclif/core";
 
-import { CLI_NAME } from "../branding";
+import { CLI_NAME } from "./branding";
 
 export interface OclifCommandRunOptions {
   rootDir: string;

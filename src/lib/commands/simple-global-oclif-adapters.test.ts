@@ -24,8 +24,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("node:child_process", () => ({ spawnSync: mocks.spawnSync }));
-vi.mock("../debug", () => ({ runDebug: vi.fn() }));
-vi.mock("../debug-command", () => ({
+vi.mock("../diagnostics/debug", () => ({ runDebug: vi.fn() }));
+vi.mock("../diagnostics/debug-command", () => ({
   runDebugCommandWithOptions: mocks.runDebugCommandWithOptions,
 }));
 vi.mock("../gateway-token-command", () => ({
@@ -48,7 +48,7 @@ vi.mock("../uninstall-command", () => ({
   buildVersionedUninstallUrl: mocks.buildVersionedUninstallUrl,
   runUninstallCommand: mocks.runUninstallCommand,
 }));
-vi.mock("../version", () => ({ getVersion: mocks.getVersion }));
+vi.mock("../core/version", () => ({ getVersion: mocks.getVersion }));
 
 import DebugCliCommand from "./debug";
 import DeployCliCommand from "./deploy";

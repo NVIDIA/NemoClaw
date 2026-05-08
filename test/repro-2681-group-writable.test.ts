@@ -46,7 +46,7 @@ function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
     dockerExecFileSync: (args: readonly string[]) => string;
   };
   const originalDockerExecFileSync = dockerExecModule.dockerExecFileSync;
-  const shieldsModulePath = require.resolve("../dist/lib/shields.js");
+  const shieldsModulePath = require.resolve("../dist/lib/shields/index.js");
   delete require.cache[shieldsModulePath];
 
   dockerExecModule.dockerExecFileSync = vi.fn((args: readonly string[]) => {
@@ -133,7 +133,7 @@ describe("Issue #2681 — mutable OpenClaw config permissions", () => {
     const commands: string[][] = [];
     withMockedDockerExecFileSync(commands, () => {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { unlockAgentConfig } = require("../dist/lib/shields.js") as {
+      const { unlockAgentConfig } = require("../dist/lib/shields/index.js") as {
         unlockAgentConfig: (
           sandboxName: string,
           target: {
@@ -173,7 +173,7 @@ const Module = require("node:module");
 const originalLoad = Module._load;
 const calls = [];
 Module._load = function patchedLoad(request, parent, isMain) {
-  if (request === "./adapters/docker/exec") {
+  if (request === "../adapters/docker/exec") {
     return {
       dockerExecFileSync(args) {
         const separator = args.indexOf("--");
@@ -193,7 +193,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
   }
   return originalLoad.call(this, request, parent, isMain);
 };
-const { lockAgentConfig } = require("./dist/lib/shields.js");
+const { lockAgentConfig } = require("./dist/lib/shields/index.js");
 lockAgentConfig("sandbox-pod", {
   agentName: "openclaw",
   configPath: "/sandbox/.openclaw/openclaw.json",
@@ -235,7 +235,7 @@ const Module = require("node:module");
 const originalLoad = Module._load;
 const calls = [];
 Module._load = function patchedLoad(request, parent, isMain) {
-  if (request === "./adapters/docker/exec") {
+  if (request === "../adapters/docker/exec") {
     return {
       dockerExecFileSync(args) {
         const separator = args.indexOf("--");
@@ -255,7 +255,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
   }
   return originalLoad.call(this, request, parent, isMain);
 };
-const { lockAgentConfig } = require("./dist/lib/shields.js");
+const { lockAgentConfig } = require("./dist/lib/shields/index.js");
 lockAgentConfig("sandbox-pod", {
   agentName: "openclaw",
   configPath: "/sandbox/.openclaw/openclaw.json",

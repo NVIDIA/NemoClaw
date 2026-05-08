@@ -17,7 +17,7 @@
  * "Health Offline" in the dashboard.
  */
 
-import type { DashboardDeliveryChain } from "./dashboard-contract";
+import type { DashboardDeliveryChain } from "./dashboard/contract";
 
 // ── Types ────────────────────────────────────────────────────────────
 

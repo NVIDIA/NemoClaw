@@ -23,6 +23,8 @@
 #                            probe → live inference. Validates the multi-agent architecture.
 #   hermes-discord-e2e       Hermes Discord onboarding — validates the top-level Hermes
 #                            Discord schema plus OpenShell placeholder/token isolation.
+#   hermes-slack-e2e         Hermes Slack onboarding — validates the Hermes Slack policy,
+#                            Slack providers, and Python placeholder egress path.
 #   credential-migration-e2e Validates legacy ~/.nemoclaw/credentials.json migration to the
 #                            OpenShell gateway, secure zero-fill on unlink, allowlist filter
 #                            on non-credential env keys, and symlink-safe deletion.
@@ -57,7 +59,7 @@ on:
           kimi-inference-compat-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e, hermes-discord-e2e,
-          sandbox-operations-e2e, inference-routing-e2e,
+          hermes-slack-e2e, sandbox-operations-e2e, inference-routing-e2e,
           network-policy-e2e, deployment-services-e2e, diagnostics-e2e,
           credential-migration-e2e,
           snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
@@ -543,6 +545,44 @@ jobs:
         with:
           name: hermes-discord-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-discord-install.log
+          if-no-files-found: ignore
+
+  # ── Hermes Slack E2E ─────────────────────────────────────────
+  # Validates Hermes onboarding with Slack enabled. Proves the Hermes sandbox
+  # keeps the Hermes-specific Slack policy and that Python Slack API requests
+  # reach Slack through OpenShell placeholder substitution.
+  hermes-slack-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',hermes-slack-e2e,'))
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Hermes Slack E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+          NEMOCLAW_SANDBOX_NAME: "e2e-hermes-slack"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_AGENT: "hermes"
+          GITHUB_TOKEN: ${{ github.token }}
+          SLACK_BOT_TOKEN: "xoxb-test-hermes-slack-token"
+          SLACK_APP_TOKEN: "xapp-test-hermes-slack-app-token"
+        run: bash test/e2e/test-hermes-slack-e2e.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-slack-e2e-install-log
+          path: /tmp/nemoclaw-e2e-hermes-slack-install.log
           if-no-files-found: ignore
 
   # ── Sandbox operations (recovery + multi-sandbox isolation) ──
@@ -1635,8 +1675,10 @@ jobs:
         kimi-inference-compat-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
+        issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
         hermes-discord-e2e,
+        hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         network-policy-e2e,
@@ -1720,22 +1762,33 @@ jobs:
         kimi-inference-compat-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
+        issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
         hermes-discord-e2e,
+        hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         network-policy-e2e,
         deployment-services-e2e,
         diagnostics-e2e,
+        credential-migration-e2e,
         snapshot-commands-e2e,
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
+        double-onboard-e2e,
+        onboard-repair-e2e,
+        onboard-resume-e2e,
+        runtime-overrides-e2e,
+        credential-sanitization-e2e,
+        telegram-injection-e2e,
         overlayfs-autofix-e2e,
         device-auth-health-e2e,
+        launchable-smoke-e2e,
         gpu-e2e,
+        gpu-double-onboard-e2e,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:
@@ -1765,17 +1818,38 @@ jobs:
 
             const pr = prs[0];
 
-            // Build results table
+            const requested = requestedJobs
+              .split(',')
+              .map((job) => job.trim())
+              .filter(Boolean);
+            const requestedSet = new Set(requested);
+
+            // Build results table. For selective dispatches, report only the
+            // requested jobs; otherwise the comment is dominated by expected skips.
             const emoji = { success: '✅', failure: '❌', cancelled: '⚠️', skipped: '⏭️' };
-            const rows = Object.entries(needs)
+            const allEntries = Object.entries(needs).sort(([a], [b]) => a.localeCompare(b));
+            const missingRequested = requested.filter((job) => !(job in needs));
+            const reportedEntries = requested.length
+              ? allEntries.filter(([name]) => requestedSet.has(name))
+              : allEntries;
+            const rows = reportedEntries
               .sort(([a], [b]) => a.localeCompare(b))
               .map(([name, { result }]) => `| ${name} | ${emoji[result] || '❓'} ${result} |`);
+            for (const name of missingRequested) {
+              rows.push(`| ${name} | ❓ not reported |`);
+            }
 
-            const ran = Object.entries(needs).filter(([, v]) => v.result !== 'skipped');
+            const ran = reportedEntries.filter(([, v]) => v.result !== 'skipped');
             const passed = ran.filter(([, v]) => v.result === 'success');
             const failed = ran.filter(([, v]) => v.result === 'failure');
+            const skipped = reportedEntries.filter(([, v]) => v.result === 'skipped');
 
-            const status = failed.length > 0 ? '❌ Some jobs failed' : '✅ All requested jobs passed';
+            const status =
+              failed.length > 0 || missingRequested.length > 0
+                ? '❌ Some jobs failed'
+                : skipped.length > 0 && passed.length === 0
+                  ? '⚠️ No requested jobs ran'
+                  : '✅ All requested jobs passed';
 
             const body = [
               `### Selective E2E Results — ${status}`,
@@ -1783,7 +1857,7 @@ jobs:
               `**Run:** [${context.runId}](${runUrl})`,
               `**Branch:** \`${branch}\``,
               requestedJobs ? `**Requested jobs:** \`${requestedJobs}\`` : '**Requested jobs:** all (no filter)',
-              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${Object.entries(needs).filter(([, v]) => v.result === 'skipped').length} skipped`,
+              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
               '|-----|--------|',
@@ -1791,6 +1865,9 @@ jobs:
               '',
               failed.length > 0
                 ? `> **Failed jobs:** ${failed.map(([k]) => k).join(', ')}. Check [run artifacts](${runUrl}) for logs.`
+                : '',
+              missingRequested.length > 0
+                ? `> **Missing requested jobs:** ${missingRequested.join(', ')}. The reporting workflow needs to include these jobs.`
                 : '',
             ].filter((line) => line !== undefined).join('\n');
 
@@ -1820,8 +1897,10 @@ jobs:
         kimi-inference-compat-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
+        issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
         hermes-discord-e2e,
+        hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         network-policy-e2e,
@@ -1842,6 +1921,7 @@ jobs:
         telegram-injection-e2e,
         overlayfs-autofix-e2e,
         device-auth-health-e2e,
+        launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
       ]

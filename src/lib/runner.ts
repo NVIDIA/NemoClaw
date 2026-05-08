@@ -246,7 +246,7 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
 }
 
 // Unified redaction — see redact.ts (#2381).
-const { redact, redactError, writeRedactedResult } = require("./redact");
+const { redact, redactError, writeRedactedResult } = require("./security/redact");
 
 /**
  * Shell-quote a value for safe interpolation into bash -c strings.

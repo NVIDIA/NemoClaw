@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 
-import { DEV_SHIM_MARKER } from "../src/lib/domain/dev-shim";
+import { DEV_SHIM_MARKER } from "../src/lib/domain/dev/npm-link-or-shim";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const scriptUnderTest = path.join(repoRoot, "scripts", "npm-link-or-shim.sh");

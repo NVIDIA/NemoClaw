@@ -3,7 +3,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 
-import { getCredential } from "../credentials";
+import { getCredential } from "../credentials/store";
 import { executeDeploy } from "../deploy";
 import { ROOT, run, runInteractive, shellQuote, validateName } from "../runner";
 

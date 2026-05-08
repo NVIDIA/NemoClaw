@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { NAME_ALLOWED_FORMAT, getNameValidationGuidance } from "./name-validation";
-import { sleepSeconds } from "./wait";
+import { sleepSeconds } from "./core/wait";
 
 type ExecLikeValue =
   | string

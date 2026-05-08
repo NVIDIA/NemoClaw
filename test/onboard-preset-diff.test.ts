@@ -47,7 +47,7 @@ function buildPreamble({
   policyPresets = "npm",
   alreadyApplied = ["npm", "pypi", "huggingface", "brew", "brave"],
 } = {}): string {
-  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
   const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
   const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
   const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));

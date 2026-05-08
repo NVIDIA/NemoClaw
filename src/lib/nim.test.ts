@@ -154,6 +154,21 @@ describe("nim", () => {
   });
 
   describe("detectGpu", () => {
+    function withGenericLinuxFirmware(fn: () => void): void {
+      const fs = require("fs");
+      const origReadFileSync = fs.readFileSync;
+      fs.readFileSync = (p: string, ...args: unknown[]) => {
+        if (p === "/sys/class/dmi/id/product_name") return "Generic Linux Workstation";
+        if (p === "/sys/firmware/devicetree/base/model") return "";
+        return origReadFileSync(p, ...args);
+      };
+      try {
+        fn();
+      } finally {
+        fs.readFileSync = origReadFileSync;
+      }
+    }
+
     it("returns object or null", () => {
       const gpu = nim.detectGpu();
       if (gpu !== null) {
@@ -330,15 +345,17 @@ describe("nim", () => {
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        expect(nimModule.detectGpu()).toMatchObject({
-          type: "nvidia",
-          name: "NVIDIA Jetson AGX Orin",
-          count: 1,
-          totalMemoryMB: 32768,
-          perGpuMB: 32768,
-          nimCapable: true,
-          unifiedMemory: true,
-          spark: false,
+        withGenericLinuxFirmware(() => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "NVIDIA Jetson AGX Orin",
+            count: 1,
+            totalMemoryMB: 32768,
+            perGpuMB: 32768,
+            nimCapable: true,
+            unifiedMemory: true,
+            spark: false,
+          });
         });
       } finally {
         restore();
@@ -356,13 +373,15 @@ describe("nim", () => {
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        expect(nimModule.detectGpu()).toMatchObject({
-          type: "nvidia",
-          name: "NVIDIA Xavier",
-          totalMemoryMB: 4096,
-          nimCapable: false,
-          unifiedMemory: true,
-          spark: false,
+        withGenericLinuxFirmware(() => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "NVIDIA Xavier",
+            totalMemoryMB: 4096,
+            nimCapable: false,
+            unifiedMemory: true,
+            spark: false,
+          });
         });
       } finally {
         restore();
@@ -456,6 +475,9 @@ describe("nim", () => {
 
           expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
           expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(true);
+          expect(commands.some((c) => c.includes("http://127.0.0.1:9000/v1/models"))).toBe(
+            true,
+          );
           expect(
             timeoutForCommand(
               runCapture,
@@ -486,7 +508,13 @@ describe("nim", () => {
 
       try {
         const st = nimModule.nimStatusByName("foo");
+        const commands = runCapture.mock.calls.map(([c]: [string | string[]]) => c);
+
         expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
+        expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(true);
+        expect(commands.some((c) => c.includes("http://127.0.0.1:8000/v1/models"))).toBe(
+          true,
+        );
       } finally {
         restore();
       }

@@ -3,7 +3,7 @@
 
 import { CommandHelp } from "@oclif/core";
 
-import { CLI_NAME } from "../branding";
+import { CLI_NAME } from "./branding";
 import { getRegisteredOclifCommandMetadata, type OclifCommandMetadata } from "./oclif-metadata";
 
 type PublicHelpCommand = OclifCommandMetadata & {

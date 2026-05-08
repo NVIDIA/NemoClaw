@@ -15,10 +15,10 @@ const {
   dockerRunDetached,
   dockerStop,
 } = require("./adapters/docker");
-const { sleepSeconds } = require("./wait");
+const { sleepSeconds } = require("./core/wait");
 const nimImages = require("../../bin/lib/nim-images.json");
 
-import { VLLM_PORT } from "./ports";
+import { VLLM_PORT } from "./core/ports";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;

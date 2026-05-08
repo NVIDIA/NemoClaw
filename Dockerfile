@@ -262,6 +262,12 @@ ARG NEMOCLAW_INFERENCE_INPUTS=text
 # immutable at runtime (Landlock read-only), so this can only be changed by
 # rebuilding via `nemoclaw onboard`. Ref: issue #2281
 ARG NEMOCLAW_AGENT_TIMEOUT=600
+# Cadence for OpenClaw's periodic heartbeat
+# (agents.defaults.heartbeat.every). Accepts Go-style durations like "30m",
+# "5m", "1h"; "0m" disables heartbeat. Empty default preserves the OpenClaw
+# built-in cadence. openclaw.json is immutable at runtime, so this can only
+# change at image build time. Ref: issue #2880
+ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Base64-encoded JSON list of messaging channel names to pre-configure
 # (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
@@ -314,6 +320,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
     NEMOCLAW_INFERENCE_INPUTS=${NEMOCLAW_INFERENCE_INPUTS} \
     NEMOCLAW_AGENT_TIMEOUT=${NEMOCLAW_AGENT_TIMEOUT} \
+    NEMOCLAW_AGENT_HEARTBEAT_EVERY=${NEMOCLAW_AGENT_HEARTBEAT_EVERY} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
