@@ -254,11 +254,13 @@ start_socat_forwarder() {
   echo "[gateway] socat forwarder 0.0.0.0:${PUBLIC_PORT} → 127.0.0.1:${INTERNAL_PORT} (pid $SOCAT_PID)" >&2
 }
 
-# ── URL-decode proxy ─────────────────────────────────────────────
+# ── Placeholder rewrite proxy ───────────────────────────────────
 # Python HTTP clients (httpx) URL-encode colons in paths, breaking
 # OpenShell's openshell:resolve:env: placeholder pattern. This proxy
 # sits between the Hermes process and the OpenShell proxy, URL-decoding
-# paths so the L7 proxy recognizes the placeholders.
+# paths so the L7 proxy recognizes the placeholders. It also rewrites
+# Slack SDK-shaped token placeholders (xoxb-/xapp-OPENSHELL-RESOLVE-ENV-*)
+# back to canonical openshell:resolve:env:SLACK_* values before egress.
 DECODE_PROXY_PID=""
 DECODE_PROXY_PORT=3129
 start_decode_proxy() {

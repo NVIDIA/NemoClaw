@@ -19,7 +19,7 @@ export function buildMessagingEnvLines(
   for (const channel of enabledChannels) {
     const envKeys = CHANNEL_TOKEN_ENVS[channel] ?? [];
     for (const envKey of envKeys) {
-      envLines.push(`${envKey}=openshell:resolve:env:${envKey}`);
+      envLines.push(`${envKey}=${buildTokenPlaceholder(channel, envKey)}`);
     }
   }
 
@@ -32,6 +32,16 @@ export function buildMessagingEnvLines(
   }
 
   return envLines;
+}
+
+function buildTokenPlaceholder(channel: string, envKey: string): string {
+  if (channel === "slack" && envKey === "SLACK_BOT_TOKEN") {
+    return "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+  }
+  if (channel === "slack" && envKey === "SLACK_APP_TOKEN") {
+    return "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN";
+  }
+  return `openshell:resolve:env:${envKey}`;
 }
 
 export function buildDiscordConfig(discordGuilds: DiscordGuilds): Record<string, unknown> {
