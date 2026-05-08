@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { describe, it, expect } from "vitest";
 
 // Import from compiled dist/ for correct coverage attribution.
@@ -200,11 +202,16 @@ describe("inference health", () => {
 
     it("uses Kimi chat completions for NVIDIA managed inference when a credential is available", () => {
       let capturedArgv: string[] = [];
+      let authConfigPath = "";
+      let authConfigContent = "";
       const result = probeRemoteProviderHealth("nvidia-prod", {
         model: "moonshotai/kimi-k2.6",
         getCredentialImpl: (envName) => (envName === "NVIDIA_API_KEY" ? "nvapi-test" : null),
         runCurlProbeImpl: (argv) => {
           capturedArgv = argv;
+          const configIndex = argv.indexOf("--config");
+          authConfigPath = configIndex >= 0 ? argv[configIndex + 1] : "";
+          authConfigContent = authConfigPath ? fs.readFileSync(authConfigPath, "utf8") : "";
           return {
             ok: true,
             httpStatus: 200,
@@ -219,9 +226,15 @@ describe("inference health", () => {
       expect(result?.ok).toBe(true);
       expect(result?.probed).toBe(true);
       expect(result?.endpoint).toBe(`${BUILD_ENDPOINT_URL}/chat/completions`);
-      expect(capturedArgv).toContain("Authorization: Bearer nvapi-test");
+      expect(capturedArgv.join(" ")).not.toContain("nvapi-test");
+      expect(capturedArgv.join(" ")).not.toContain("Authorization: Bearer");
+      expect(capturedArgv).toContain("--config");
+      expect(authConfigContent).toContain("Authorization: Bearer nvapi-test");
+      expect(fs.existsSync(authConfigPath)).toBe(false);
+      expect(capturedArgv).toContain("--connect-timeout");
+      expect(capturedArgv[capturedArgv.indexOf("--connect-timeout") + 1]).toBe("3");
       expect(capturedArgv).toContain("--max-time");
-      expect(capturedArgv[capturedArgv.indexOf("--max-time") + 1]).toBe("60");
+      expect(capturedArgv[capturedArgv.indexOf("--max-time") + 1]).toBe("5");
       expect(capturedArgv.at(-1)).toBe(`${BUILD_ENDPOINT_URL}/chat/completions`);
 
       const payload = JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1]);
