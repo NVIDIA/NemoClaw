@@ -8,6 +8,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import yaml from "yaml";
 
 const root = process.cwd();
+const advisorRoot = process.env.GITHUB_WORKSPACE || root;
 const args = parseArgs(process.argv.slice(2));
 const outDir = args.outDir || "artifacts/e2e-advisor";
 const baselinePath = args.baseline || path.join(outDir, "e2e-advisor-result.json");
@@ -346,7 +347,9 @@ function preparePiConfig(env, provider) {
     env[envName] = env.PI_E2E_ADVISOR_API_KEY;
   }
 
-  const templatePath = path.resolve(root, modelsTemplatePath);
+  const templatePath = path.isAbsolute(modelsTemplatePath)
+    ? modelsTemplatePath
+    : path.resolve(advisorRoot, modelsTemplatePath);
   if (fs.existsSync(templatePath)) {
     fs.mkdirSync(piConfigDir, { recursive: true });
     fs.writeFileSync(path.join(piConfigDir, "auth.json"), "{}\n", { mode: 0o600 });
