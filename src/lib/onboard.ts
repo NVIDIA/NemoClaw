@@ -771,6 +771,25 @@ const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
 const selectOnboardAgent = createOnboardAgentSelector({ isNonInteractive, note, prompt });
 
+function normalizeReasoningFlag(value: string | null | undefined): "true" | "false" | null {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "y") {
+    return "true";
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "n") {
+    return "false";
+  }
+  return null;
+}
+
+async function configureCompatibleEndpointReasoning(): Promise<"true" | "false"> {
+  const configured = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING);
+  process.env.NEMOCLAW_REASONING = configured ?? "false";
+  return process.env.NEMOCLAW_REASONING as "true" | "false";
+}
+
 const { getTransportRecoveryMessage } = validationRecovery;
 
 // Validation functions — delegated to src/lib/validation.ts
@@ -5358,6 +5377,8 @@ module.exports = {
   printSandboxCreateRecoveryHints,
   promptYesNoOrDefault,
   providerExistsInGateway,
+  normalizeReasoningFlag,
+  configureCompatibleEndpointReasoning,
   parsePolicyPresetEnv,
   parseSandboxStatus,
   pruneStaleSandboxEntry,

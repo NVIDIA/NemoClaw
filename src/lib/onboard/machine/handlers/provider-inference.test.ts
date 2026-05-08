@@ -156,6 +156,13 @@ describe("handleProviderInferenceState", () => {
 
     expect(calls.startStep).toHaveBeenNthCalledWith(1, "provider_selection");
     expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, null, null, true);
+    expect(calls.complete).toHaveBeenCalledWith(
+      "provider_selection",
+      expect.objectContaining({
+        compatibleEndpointReasoning: null,
+        provider: "nvidia-prod",
+      }),
+    );
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
     expect(calls.startStep).toHaveBeenNthCalledWith(2, "inference", {
