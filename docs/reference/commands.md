@@ -354,6 +354,24 @@ The command also tails `/tmp/gateway.log` inside the default sandbox and flags T
 $ nemoclaw my-assistant status
 ```
 
+#### Checking the OpenClaw version
+
+NemoClaw pins the OpenClaw version inside the sandbox at build time, not at runtime.
+The minimum version comes from `min_openclaw_version` in `nemoclaw-blueprint/blueprint.yaml`, and the sandbox image upgrades OpenClaw to that version during `docker build` if the cached base image is older.
+Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer pin — you upgrade by rebuilding the sandbox.
+
+`nemoclaw <name> status` prints the running OpenClaw version on the `Agent` line:
+
+```console
+$ nemoclaw my-assistant status
+...
+    Agent:    OpenClaw v2026.4.24
+...
+```
+
+If the sandbox is running an OpenClaw older than the version this NemoClaw release pins, `status` and `connect` add an `Update` line pointing at `nemoclaw <name> rebuild` to pick up the newer version.
+The rebuild reuses the existing sandbox name and persisted credentials, so messaging tokens and provider keys carry over.
+
 ### `nemoclaw <name> doctor`
 
 Run a focused health check for one sandbox and the host services it depends on.
