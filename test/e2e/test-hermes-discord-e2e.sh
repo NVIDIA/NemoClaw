@@ -369,17 +369,18 @@ fi
 env_probe=$(
   sandbox_exec_stdin "EXPECTED_ALLOWED_USERS=$expected_allowed_users python3 -" <<'PY'
 import os
+import re
 from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
+lines = set(text.splitlines())
 errors = []
-required = [
-    "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
-    f"DISCORD_ALLOWED_USERS={os.environ['EXPECTED_ALLOWED_USERS']}",
-]
-for line in required:
-    if line not in text.splitlines():
-        errors.append(f"missing {line}")
-if "API_SERVER_PORT=18642" not in text.splitlines():
+token_pattern = re.compile(r"^DISCORD_BOT_TOKEN=openshell:resolve:env:(?:v[0-9]+_)?DISCORD_BOT_TOKEN$")
+if not any(token_pattern.match(line) for line in lines):
+    errors.append("missing DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN")
+allowed_users = f"DISCORD_ALLOWED_USERS={os.environ['EXPECTED_ALLOWED_USERS']}"
+if allowed_users not in lines:
+    errors.append(f"missing {allowed_users}")
+if "API_SERVER_PORT=18642" not in lines:
     errors.append("missing API_SERVER_PORT")
 if errors:
     print("FAIL " + "; ".join(errors))

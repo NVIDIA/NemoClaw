@@ -346,15 +346,17 @@ fi
 
 env_probe=$(
   sandbox_exec_stdin "python3 -" <<'PY'
+import re
 from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
 lines = set(text.splitlines())
-required = {
-    "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN",
-    "API_SERVER_PORT=18642",
-}
-missing = sorted(required - lines)
+missing = []
+for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"):
+    pattern = re.compile(rf"^{key}=openshell:resolve:env:(?:v[0-9]+_)?{key}$")
+    if not any(pattern.match(line) for line in lines):
+        missing.append(f"{key}=openshell:resolve:env:{key}")
+if "API_SERVER_PORT=18642" not in lines:
+    missing.append("API_SERVER_PORT=18642")
 if missing:
     print("FAIL missing " + ", ".join(missing))
 else:
@@ -436,6 +438,15 @@ import urllib.request
 
 def call(label, path, env_key, allowed_errors):
     token = f"openshell:resolve:env:{env_key}"
+    try:
+        for line in open("/sandbox/.hermes/.env", encoding="utf-8"):
+            if line.startswith(f"{env_key}="):
+                candidate = line.split("=", 1)[1].strip()
+                if candidate.startswith("openshell:resolve:env:"):
+                    token = candidate
+                break
+    except OSError:
+        pass
     req = urllib.request.Request(
         f"https://slack.com/api/{path}",
         data=b"",
