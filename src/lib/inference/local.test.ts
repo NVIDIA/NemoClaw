@@ -9,6 +9,7 @@ import path from "node:path";
 import {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
+  DGX_SPARK_OLLAMA_MODEL,
   LARGE_OLLAMA_MIN_MEMORY_MB,
   OLLAMA_CONTAINER_PORT,
   getDefaultOllamaModel,
@@ -402,9 +403,13 @@ describe("local inference helpers", () => {
     ).toEqual(["qwen2.5:7b"]);
     expect(getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB })).toEqual([
       "qwen2.5:7b",
+      DGX_SPARK_OLLAMA_MODEL,
       DEFAULT_OLLAMA_MODEL,
     ]);
     expect(getDefaultOllamaModel({ totalMemoryMB: 16384 }, () => "")).toBe("qwen2.5:7b");
+    expect(getDefaultOllamaModel({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB }, () => "")).toBe(
+      DGX_SPARK_OLLAMA_MODEL,
+    );
   });
 
   it("builds a background warmup command for ollama models", () => {
