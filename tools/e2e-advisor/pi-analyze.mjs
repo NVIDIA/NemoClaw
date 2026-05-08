@@ -15,7 +15,8 @@ const manifestPath = args.manifest || "test/e2e/e2e-manifest.yaml";
 const schemaPath = args.schema || "tools/e2e-advisor/schema.json";
 const promptPath = path.join(outDir, "e2e-advisor-pi-prompt.md");
 const rawPath = path.join(outDir, "e2e-advisor-pi-raw-output.txt");
-const piConfigDir = path.join(outDir, "pi-config");
+// Keep generated Pi credential config outside uploaded artifacts.
+const piConfigDir = process.env.PI_E2E_ADVISOR_CONFIG_DIR || path.join("/tmp", `nemoclaw-e2e-advisor-pi-config-${process.pid}`);
 const piResultPath = path.join(outDir, "e2e-advisor-pi-result.json");
 const finalResultPath = path.join(outDir, "e2e-advisor-final-result.json");
 const piSummaryPath = path.join(outDir, "e2e-advisor-pi-summary.md");
