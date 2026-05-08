@@ -247,6 +247,7 @@ function getChatCompletionsProbePayload(model) {
     return {
       ...payload,
       max_tokens: 8,
+      chat_template_kwargs: { thinking: false },
     };
   }
 

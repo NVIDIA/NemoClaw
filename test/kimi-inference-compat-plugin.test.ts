@@ -54,6 +54,39 @@ function toolMessage(command: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
+function failedToolContext() {
+  return {
+    messages: [
+      {
+        role: "toolResult",
+        content: [
+          {
+            type: "toolResult",
+            toolCallId: "call_kimi_exec",
+            isError: true,
+            text: "exec failed: command not found",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function failedToolAssistantMessage() {
+  return {
+    role: "assistant",
+    stopReason: "stop",
+    reasoning: "PRIVATE reasoning after the exec tool failed",
+    reasoning_content: "PRIVATE chain-of-thought after the tool failure",
+    reasoningDetails: [{ text: "PRIVATE detailed reasoning" }],
+    thinking: "PRIVATE thinking content",
+    content: [
+      { type: "thinking", text: "PRIVATE streamed thinking block" },
+      { type: "text", text: "The exec tool failed: command not found." },
+    ],
+  };
+}
+
 describe("nemoclaw Kimi inference compat plugin", () => {
   it("splits the safe combined exec diagnostics into separate tool calls", () => {
     const message = toolMessage("hostname; date; uptime");
@@ -184,6 +217,84 @@ describe("nemoclaw Kimi inference compat plugin", () => {
       expect(plugin.__testing.rewriteSafeCombinedExecToolCallInMessage(message)).toBe(false);
       expect(message).toEqual(before);
     }
+  });
+
+  it("filters Kimi reasoning fields from final assistant messages after tool failures", async () => {
+    const provider = makeProvider();
+    const wrapper = provider.wrapStreamFn(
+      managedKimiCtx(() => ({
+        async result() {
+          return failedToolAssistantMessage();
+        },
+      })),
+    );
+
+    expect(wrapper).toEqual(expect.any(Function));
+
+    const stream = wrapper({}, failedToolContext(), {});
+    const result = await stream.result();
+
+    expect(result).toEqual({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "The exec tool failed: command not found." }],
+    });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+  });
+
+  it("drops Kimi reasoning stream events while preserving content and tool-call deltas", async () => {
+    const provider = makeProvider();
+    const finalMessage = failedToolAssistantMessage();
+    const wrapper = provider.wrapStreamFn(
+      managedKimiCtx(() => ({
+        async result() {
+          return finalMessage;
+        },
+        async *[Symbol.asyncIterator]() {
+          yield { type: "reasoning_delta", delta: "PRIVATE stream reasoning after tool failure" };
+          yield {
+            type: "content_delta",
+            delta: "The exec tool failed: command not found.",
+            reasoning_content: "PRIVATE event reasoning",
+            partial: failedToolAssistantMessage(),
+          };
+          yield {
+            type: "toolcall_delta",
+            contentIndex: 0,
+            delta: JSON.stringify({ command: "hostname" }),
+            reasoning: "PRIVATE tool-call event reasoning",
+            partial: toolMessage("hostname"),
+          };
+          yield { type: "done", message: finalMessage };
+        },
+      })),
+    );
+
+    expect(wrapper).toEqual(expect.any(Function));
+
+    const stream = wrapper({}, failedToolContext(), {});
+    const events = [];
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+
+    expect(events.map((event: any) => event.type)).toEqual([
+      "content_delta",
+      "toolcall_delta",
+      "done",
+    ]);
+    expect(events[0].partial.content).toEqual([
+      { type: "text", text: "The exec tool failed: command not found." },
+    ]);
+    expect(events[0].delta).toBe("The exec tool failed: command not found.");
+    expect(events[1].delta).toBe(JSON.stringify({ command: "hostname" }));
+    expect(events[1].partial.content[0].arguments.command).toBe("hostname");
+    expect(events[2].message.content).toEqual([
+      { type: "text", text: "The exec tool failed: command not found." },
+    ]);
+    expect(result.content).toEqual([
+      { type: "text", text: "The exec tool failed: command not found." },
+    ]);
+    expect(JSON.stringify({ events, result })).not.toContain("PRIVATE");
   });
 
   it("wraps managed Kimi streams and rewrites partial and final assistant messages", async () => {

@@ -978,8 +978,9 @@ fi
 # kwarg `force_nonempty_content` prevents this by ensuring the template
 # always emits a non-empty content field.
 #
-# DeepSeek V4 Pro on NVIDIA Build expects its chat template thinking mode
-# disabled for NemoClaw's OpenAI-compatible chat-completions path.
+# DeepSeek V4 Pro and Kimi K2.6 on NVIDIA Build expect chat template
+# thinking mode disabled for NemoClaw's OpenAI-compatible
+# chat-completions path.
 #
 # The preload wraps http.request() — the lowest common denominator every
 # HTTP client bottoms out at — buffers the JSON body for POST requests

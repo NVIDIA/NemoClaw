@@ -41,6 +41,7 @@ describe("OpenAI-compatible inference probes", () => {
       model: "moonshotai/kimi-k2.6",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
       max_tokens: 8,
+      chat_template_kwargs: { thinking: false },
     });
 
     expect(getKimiK26ValidationProbeCurlArgs({ isWsl: false })).toEqual([
