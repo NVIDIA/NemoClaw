@@ -620,11 +620,21 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-    const answers = ["6", "7", "gemini-custom"];
+const answers = ["7", "gemini-custom"];
 const messages = [];
+const lines = [];
+
+function chooseProviderByLabel(label) {
+  const option = lines.find((line) => line.includes(label));
+  if (!option) throw new Error("Provider option not found for " + label + ":\\n" + lines.join("\\n"));
+  return option.match(/^\s*(\d+)\)/)[1];
+}
 
 credentials.prompt = async (message) => {
   messages.push(message);
+  if (/Choose \[/.test(message)) {
+    return chooseProviderByLabel("Google Gemini");
+  }
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -634,7 +644,6 @@ const { setupNim } = require(${onboardPath});
 (async () => {
   process.env.GEMINI_API_KEY = "gemini-secret";
   const originalLog = console.log;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
@@ -1610,11 +1619,21 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["4", "4", "claude-bad", "claude-haiku-4-5"];
+const answers = ["4", "claude-bad", "claude-haiku-4-5"];
 const messages = [];
+const lines = [];
+
+function chooseProviderByLabel(label) {
+  const option = lines.find((line) => line.includes(label));
+  if (!option) throw new Error("Provider option not found for " + label + ":\\n" + lines.join("\\n"));
+  return option.match(/^\s*(\d+)\)/)[1];
+}
 
 credentials.prompt = async (message) => {
   messages.push(message);
+  if (/Choose \[/.test(message)) {
+    return chooseProviderByLabel("Anthropic");
+  }
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -1625,7 +1644,6 @@ const { setupNim } = require(${onboardPath});
   process.env.ANTHROPIC_API_KEY = "anthropic-test";
   const originalLog = console.log;
   const originalError = console.error;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
   try {
@@ -1707,11 +1725,21 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["4", "", "4", "2"];
+const answers = ["", "2"];
 const messages = [];
+const lines = [];
+
+function chooseProviderByLabel(label) {
+  const option = lines.find((line) => line.includes(label));
+  if (!option) throw new Error("Provider option not found for " + label + ":\\n" + lines.join("\\n"));
+  return option.match(/^\s*(\d+)\)/)[1];
+}
 
 credentials.prompt = async (message) => {
   messages.push(message);
+  if (/Choose \[/.test(message)) {
+    return chooseProviderByLabel("Anthropic");
+  }
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -1722,7 +1750,6 @@ const { setupNim } = require(${onboardPath});
   process.env.ANTHROPIC_API_KEY = "anthropic-test";
   const originalLog = console.log;
   const originalError = console.error;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
   try {
@@ -1794,11 +1821,21 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-sonnet-proxy"];
+const answers = ["https://proxy.example.com/v1/messages?token=secret#frag", "claude-sonnet-proxy"];
 const messages = [];
+const lines = [];
+
+function chooseProviderByLabel(label) {
+  const option = lines.find((line) => line.includes(label));
+  if (!option) throw new Error("Provider option not found for " + label + ":\\n" + lines.join("\\n"));
+  return option.match(/^\s*(\d+)\)/)[1];
+}
 
 credentials.prompt = async (message) => {
   messages.push(message);
+  if (/Choose \[/.test(message)) {
+    return chooseProviderByLabel("Other Anthropic-compatible endpoint");
+  }
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -1809,7 +1846,6 @@ const { setupNim } = require(${onboardPath});
   process.env.COMPATIBLE_ANTHROPIC_API_KEY = "proxy-key";
   const originalLog = console.log;
   const originalError = console.error;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
   try {
@@ -2678,11 +2714,21 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "bad-claude", "good-claude"];
+const answers = ["https://proxy.example.com/v1/messages?token=secret#frag", "bad-claude", "good-claude"];
 const messages = [];
+const lines = [];
+
+function chooseProviderByLabel(label) {
+  const option = lines.find((line) => line.includes(label));
+  if (!option) throw new Error("Provider option not found for " + label + ":\\n" + lines.join("\\n"));
+  return option.match(/^\s*(\d+)\)/)[1];
+}
 
 credentials.prompt = async (message) => {
   messages.push(message);
+  if (/Choose \[/.test(message)) {
+    return chooseProviderByLabel("Other Anthropic-compatible endpoint");
+  }
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -2693,7 +2739,6 @@ const { setupNim } = require(${onboardPath});
   process.env.COMPATIBLE_ANTHROPIC_API_KEY = "proxy-key";
   const originalLog = console.log;
   const originalError = console.error;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
   try {
@@ -3431,11 +3476,21 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["4", "", "retry", "anthropic-good", ""];
+const answers = ["", "retry", "anthropic-good", ""];
 const messages = [];
+const lines = [];
+
+function chooseProviderByLabel(label) {
+  const option = lines.find((line) => line.includes(label));
+  if (!option) throw new Error("Provider option not found for " + label + ":\\n" + lines.join("\\n"));
+  return option.match(/^\s*(\d+)\)/)[1];
+}
 
 credentials.prompt = async (message) => {
   messages.push(message);
+  if (/Choose \[/.test(message)) {
+    return chooseProviderByLabel("Anthropic");
+  }
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -3446,7 +3501,6 @@ const { setupNim } = require(${onboardPath});
   process.env.ANTHROPIC_API_KEY = "anthropic-bad";
   const originalLog = console.log;
   const originalError = console.error;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
   try {
@@ -3507,11 +3561,21 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["6", "", "retry", "gemini-good", ""];
+const answers = ["", "retry", "gemini-good", ""];
 const messages = [];
+const lines = [];
+
+function chooseProviderByLabel(label) {
+  const option = lines.find((line) => line.includes(label));
+  if (!option) throw new Error("Provider option not found for " + label + ":\\n" + lines.join("\\n"));
+  return option.match(/^\s*(\d+)\)/)[1];
+}
 
 credentials.prompt = async (message) => {
   messages.push(message);
+  if (/Choose \[/.test(message)) {
+    return chooseProviderByLabel("Google Gemini");
+  }
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -3522,7 +3586,6 @@ const { setupNim } = require(${onboardPath});
   process.env.GEMINI_API_KEY = "gemini-bad";
   const originalLog = console.log;
   const originalError = console.error;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
   try {
@@ -3677,11 +3740,21 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
+const answers = ["https://proxy.example.com/v1/messages?token=secret#frag", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
 const messages = [];
+const lines = [];
+
+function chooseProviderByLabel(label) {
+  const option = lines.find((line) => line.includes(label));
+  if (!option) throw new Error("Provider option not found for " + label + ":\\n" + lines.join("\\n"));
+  return option.match(/^\s*(\d+)\)/)[1];
+}
 
 credentials.prompt = async (message) => {
   messages.push(message);
+  if (/Choose \[/.test(message)) {
+    return chooseProviderByLabel("Other Anthropic-compatible endpoint");
+  }
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -3692,7 +3765,6 @@ const { setupNim } = require(${onboardPath});
   process.env.COMPATIBLE_ANTHROPIC_API_KEY = "anthropic-proxy-bad";
   const originalLog = console.log;
   const originalError = console.error;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
   try {

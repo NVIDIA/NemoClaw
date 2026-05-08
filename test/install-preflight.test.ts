@@ -488,8 +488,10 @@ exit 98
     expect(output).toMatch(/--version/);
     expect(output).toMatch(/NEMOCLAW_PROVIDER/);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
-    expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
+    expect(output).toMatch(/gemini \| ollama \| ollama-remote \| custom \| nim-local \| vllm \| routed/);
+    expect(output).toMatch(
+      /aliases: anthropiccompatible -> anthropicCompatible, cloud -> build, nim -> nim-local, ollamaremote -> ollama-remote, remote-ollama -> ollama-remote/,
+    );
     expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
     expect(output).toMatch(/nvidia\.com\/nemoclaw\.sh/);
@@ -504,8 +506,10 @@ exit 98
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
-    expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
+    expect(output).toMatch(/gemini \| ollama \| ollama-remote \| custom \| nim-local \| vllm \| routed/);
+    expect(output).toMatch(
+      /aliases: anthropiccompatible -> anthropicCompatible, cloud -> build, nim -> nim-local, ollamaremote -> ollama-remote, remote-ollama -> ollama-remote/,
+    );
   });
 
   it("--version exits 0 and prints the version number", () => {
