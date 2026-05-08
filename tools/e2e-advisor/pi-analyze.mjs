@@ -87,13 +87,21 @@ const combinedOutput = [
 fs.writeFileSync(rawPath, combinedOutput);
 
 if (child.error) {
-  throw new Error(`pi execution failed: ${child.error.message}`);
+  writeFailure(`pi execution failed: ${child.error.message}`);
+  process.exit(1);
 }
 if (child.status !== 0) {
-  throw new Error(`pi exited with status ${child.status}; see ${rawPath}`);
+  writeFailure(`pi exited with status ${child.status}; see ${rawPath}`);
+  process.exit(1);
 }
 
-const piResult = normalizePiResult(extractJson(child.stdout || combinedOutput), baseline);
+let piResult;
+try {
+  piResult = normalizePiResult(extractJson(child.stdout || combinedOutput), baseline);
+} catch (error) {
+  writeFailure(error.message);
+  process.exit(1);
+}
 fs.writeFileSync(piResultPath, `${JSON.stringify(piResult, null, 2)}\n`);
 fs.writeFileSync(finalResultPath, `${JSON.stringify(piResult, null, 2)}\n`);
 fs.writeFileSync(piSummaryPath, renderPiSummary(piResult));
@@ -354,6 +362,20 @@ function providerEnvName(provider) {
   if (normalized.includes("opencode")) return "OPENCODE_API_KEY";
   if (normalized.includes("kimi")) return "KIMI_API_KEY";
   return "OPENAI_API_KEY";
+}
+
+function writeFailure(reason) {
+  const failure = {
+    failed: true,
+    reason,
+    promptPath,
+    baselinePath,
+    rawPath,
+  };
+  fs.writeFileSync(piResultPath, `${JSON.stringify(failure, null, 2)}\n`);
+  fs.copyFileSync(path.resolve(root, baselinePath), finalResultPath);
+  fs.writeFileSync(piSummaryPath, `# Pi Semantic E2E Advisor\n\nFailed: ${reason}\n\nFalling back to deterministic baseline in \`e2e-advisor-final-result.json\`.\n`);
+  console.error(`Pi semantic analysis failed: ${reason}`);
 }
 
 function writeSkipped(reason) {
