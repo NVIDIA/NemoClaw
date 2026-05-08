@@ -26,10 +26,41 @@ import { DASHBOARD_PORT } from "../lib/ports.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
-type BlueprintDataScalar = string | number | boolean | null;
-type BlueprintDataValue = BlueprintDataScalar | PolicyAdditions | BlueprintDataValue[];
 type RollbackPlanSource = { sandbox_name?: string };
 type UnknownRecord = { [key: string]: unknown };
+type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+type RestProtocol = "rest";
+type EndpointEnforcement = "enforce" | "audit";
+type EndpointTls = "terminate" | "passthrough" | "skip";
+
+interface PolicyRule {
+  allow: {
+    method: HttpMethod;
+    path: string;
+  };
+}
+
+interface PolicyEndpoint {
+  host: string;
+  port: number;
+  protocol?: RestProtocol;
+  enforcement?: EndpointEnforcement;
+  tls?: EndpointTls;
+  access?: "full";
+  rules?: PolicyRule[];
+}
+
+interface PolicyAddition {
+  name: string;
+  endpoints: PolicyEndpoint[];
+}
+
+type PolicyAdditions = { [name: string]: PolicyAddition };
+
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+const REST_PROTOCOLS = new Set(["rest"]);
+const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
+const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
 
 function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
@@ -64,22 +95,68 @@ function isOptionalPortList(value: unknown): value is number[] | undefined {
   );
 }
 
-function isBlueprintDataValue(value: unknown): value is BlueprintDataValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return true;
-  }
-  if (Array.isArray(value)) {
-    return value.every((entry) => isBlueprintDataValue(entry));
-  }
-  if (!isObjectLike(value)) {
+function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function isPolicyRule(value: unknown): value is PolicyRule {
+  if (!isObjectLike(value) || !hasOnlyKeys(value, ["allow"])) {
     return false;
   }
-  return Object.values(value).every((entry) => isBlueprintDataValue(entry));
+  const allow = value.allow;
+  if (!isObjectLike(allow) || !hasOnlyKeys(allow, ["method", "path"])) {
+    return false;
+  }
+  return (
+    typeof allow.method === "string" &&
+    HTTP_METHODS.has(allow.method) &&
+    typeof allow.path === "string" &&
+    allow.path.startsWith("/")
+  );
+}
+
+function isPolicyEndpoint(value: unknown): value is PolicyEndpoint {
+  if (
+    !isObjectLike(value) ||
+    !hasOnlyKeys(value, ["host", "port", "protocol", "enforcement", "tls", "access", "rules"])
+  ) {
+    return false;
+  }
+
+  const protocol = value.protocol;
+  const enforcement = value.enforcement;
+  const tls = value.tls;
+  const access = value.access;
+  const rules = value.rules;
+
+  return (
+    typeof value.host === "string" &&
+    isValidPort(value.port) &&
+    (protocol === undefined || (typeof protocol === "string" && REST_PROTOCOLS.has(protocol))) &&
+    (enforcement === undefined ||
+      (typeof enforcement === "string" && ENDPOINT_ENFORCEMENT_MODES.has(enforcement))) &&
+    (tls === undefined || (typeof tls === "string" && ENDPOINT_TLS_MODES.has(tls))) &&
+    (access === undefined || access === "full") &&
+    (rules === undefined ||
+      (Array.isArray(rules) && rules.length > 0 && rules.every((entry) => isPolicyRule(entry)))) &&
+    (protocol !== "rest" || rules !== undefined)
+  );
+}
+
+function isPolicyAddition(value: unknown): value is PolicyAddition {
+  if (!isObjectLike(value) || !hasOnlyKeys(value, ["name", "endpoints"])) {
+    return false;
+  }
+  return (
+    typeof value.name === "string" &&
+    Array.isArray(value.endpoints) &&
+    value.endpoints.length > 0 &&
+    value.endpoints.every((entry) => isPolicyEndpoint(entry))
+  );
+}
+
+function isPolicyAdditions(value: unknown): value is PolicyAdditions {
+  return isObjectLike(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
 }
 
 function isInferenceProfile(value: unknown): value is InferenceProfile {
@@ -167,10 +244,7 @@ function isBlueprint(value: unknown): value is Blueprint {
     }
     const additions = policy.additions;
     if (additions !== undefined) {
-      if (
-        !isObjectLike(additions) ||
-        !Object.values(additions).every((entry) => isBlueprintDataValue(entry))
-      ) {
+      if (!isPolicyAdditions(additions)) {
         return false;
       }
     }
@@ -208,7 +282,6 @@ export function emitRunId(): string {
 }
 
 type InferenceProfileMap = { [profileName: string]: InferenceProfile };
-type PolicyAdditions = { [name: string]: BlueprintDataValue };
 
 interface Blueprint {
   version?: string;
@@ -247,6 +320,52 @@ interface RouterConfig {
 }
 
 const DEFAULT_ROUTER_PORT = 4000;
+
+function parseCurrentPolicy(raw: string): UnknownRecord {
+  const sepIndex = raw.indexOf("---");
+  const yaml = (sepIndex >= 0 ? raw.slice(sepIndex + 3) : raw).trim();
+  if (!yaml) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(yaml);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Current policy from openshell policy get --full is not valid YAML: ${detail}`);
+  }
+
+  if (!isObjectLike(parsed)) {
+    throw new Error("Current policy from openshell policy get --full must be a YAML mapping");
+  }
+  if (sepIndex < 0 && !("version" in parsed) && !("network_policies" in parsed)) {
+    throw new Error(
+      "Current policy from openshell policy get --full does not contain a policy YAML document",
+    );
+  }
+  return parsed;
+}
+
+function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
+  const current = parseCurrentPolicy(currentPolicyRaw);
+  if (current.network_policies !== undefined && !isObjectLike(current.network_policies)) {
+    throw new Error("Current policy network_policies must be a YAML mapping");
+  }
+  const existingNetworkPolicies = isObjectLike(current.network_policies)
+    ? current.network_policies
+    : {};
+  const output: UnknownRecord = {};
+
+  for (const [key, value] of Object.entries(current)) {
+    if (key !== "version" && key !== "network_policies") {
+      output[key] = value;
+    }
+  }
+
+  output.version =
+    typeof current.version === "number" && Number.isFinite(current.version) ? current.version : 1;
+  output.network_policies = { ...existingNetworkPolicies, ...additions };
+  return YAML.stringify(output);
+}
 
 export function loadBlueprint(): Blueprint {
   const blueprintPath = process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".";
@@ -430,6 +549,9 @@ export async function actionApply(
   const sandboxName = sandboxCfg.name ?? "openclaw";
   const sandboxImage = sandboxCfg.image ?? "openclaw";
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
+  const policyAdditions = blueprint.components?.policy?.additions ?? {};
+  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
+  mkdirSync(stateDir, { recursive: true });
 
   progress(20, "Creating OpenClaw sandbox");
   const createArgs = [
@@ -509,9 +631,33 @@ export async function actionApply(
   }
   await runCmd(inferenceArgs, { reject: false });
 
+  if (Object.keys(policyAdditions).length > 0) {
+    progress(78, "Applying policy additions");
+    const currentPolicy = await runCmd(["openshell", "policy", "get", "--full", sandboxName], {
+      reject: false,
+    });
+    if (currentPolicy.exitCode !== 0) {
+      throw new Error(
+        `Failed to read current policy before applying additions: ${currentPolicy.stderr}`,
+      );
+    }
+
+    const mergedPolicyFile = join(stateDir, "merged-policy.yaml");
+    writeFileSync(mergedPolicyFile, mergePolicyAdditions(currentPolicy.stdout, policyAdditions), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+
+    const policySet = await runCmd(
+      ["openshell", "policy", "set", "--policy", mergedPolicyFile, "--wait", sandboxName],
+      { reject: false },
+    );
+    if (policySet.exitCode !== 0) {
+      throw new Error(`Failed to apply policy additions: ${policySet.stderr}`);
+    }
+  }
+
   progress(85, "Saving run state");
-  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
-  mkdirSync(stateDir, { recursive: true });
   writeFileSync(
     join(stateDir, "plan.json"),
     JSON.stringify(
@@ -519,6 +665,7 @@ export async function actionApply(
         run_id: rid,
         profile,
         sandbox_name: sandboxName,
+        policy_additions: policyAdditions,
         inference: {
           provider_type: inferenceCfg.provider_type,
           provider_name: inferenceCfg.provider_name,
