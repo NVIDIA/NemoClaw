@@ -985,7 +985,7 @@ These variables seed the onboarding inference selection and let non-interactive 
 
 ### Local inference
 
-For onboards that route through a host-side Ollama, vLLM, or NIM instance.
+Use these variables for onboards that route through a host-side Ollama, vLLM, or NIM instance.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
