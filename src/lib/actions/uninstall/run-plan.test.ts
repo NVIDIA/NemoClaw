@@ -240,7 +240,7 @@ describe("uninstall run plan", () => {
   it("escalates to SIGKILL and reports failure when SIGTERM is ignored", () => {
     const logs: string[] = [];
     const warnings: string[] = [];
-    const signals: Array<NodeJS.Signals | number> = [];
+    const signals: NodeJS.Signals[] = [];
     const tmpHome = "/tmp/nemoclaw-uninstall-test-2759-stuck";
     const pidFile = `${tmpHome}/.nemoclaw/ollama-auth-proxy.pid`;
     fs.mkdirSync(`${tmpHome}/.nemoclaw`, { recursive: true });
@@ -256,7 +256,7 @@ describe("uninstall run plan", () => {
           isTty: false,
           kill: (_pid, signal) => {
             if (signal === 0) return true;
-            if (signal !== undefined) signals.push(signal);
+            if (typeof signal === "string") signals.push(signal);
             return true;
           },
           log: (line: string) => logs.push(line),
