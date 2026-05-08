@@ -1,0 +1,368 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Static inventory consumed by the E2E advisor prototype. Keep this file close to
+# E2E scripts so test-selection policy can follow renamed files and workflows.
+# The advisor treats changed_files as hints, not as the only source of truth.
+
+version: 1
+workflows:
+  nightly-e2e:
+    path: .github/workflows/nightly-e2e.yaml
+    dispatch_input: jobs
+  sandbox-images-and-e2e:
+    path: .github/workflows/sandbox-images-and-e2e.yaml
+  ollama-proxy-e2e:
+    path: .github/workflows/ollama-proxy-e2e.yaml
+  e2e-branch-validation:
+    path: .github/workflows/e2e-branch-validation.yaml
+
+tests:
+  - id: cloud-e2e
+    workflow: nightly-e2e
+    job: cloud-e2e
+    script: test/e2e/test-full-e2e.sh
+    runner: ubuntu-latest
+    cost: high
+    requires_secrets: [NVIDIA_API_KEY]
+    domains: [install, onboard, gateway, cloud-inference, sandbox-startup]
+    risk_areas: [installer, credentials, inference-local, end-to-end-smoke]
+
+  - id: cloud-onboard-e2e
+    workflow: nightly-e2e
+    job: cloud-onboard-e2e
+    script: test/e2e/test-cloud-onboard-e2e.sh
+    runner: ubuntu-latest
+    cost: high
+    requires_secrets: [NVIDIA_API_KEY]
+    domains: [install, onboard, landlock, security, policy, sandbox-startup]
+    risk_areas: [public-installer, non-root, credential-leak, policy-presets]
+
+  - id: cloud-inference-e2e
+    workflow: nightly-e2e
+    job: cloud-inference-e2e
+    script: test/e2e/test-cloud-inference-e2e.sh
+    runner: ubuntu-latest
+    cost: medium
+    requires_secrets: [NVIDIA_API_KEY]
+    domains: [cloud-inference, inference-local, skills, sandbox]
+    risk_areas: [gateway-routing, live-chat, skill-filesystem]
+
+  - id: skill-agent-e2e
+    workflow: nightly-e2e
+    job: skill-agent-e2e
+    script: test/e2e/test-skill-agent-e2e.sh
+    runner: ubuntu-latest
+    cost: medium
+    requires_secrets: [NVIDIA_API_KEY]
+    domains: [skills, agents, sandbox, cloud-inference]
+    risk_areas: [skill-injection, agent-verification]
+
+  - id: docs-validation-e2e
+    workflow: nightly-e2e
+    job: docs-validation-e2e
+    script: test/e2e/test-docs-validation.sh
+    runner: ubuntu-latest
+    cost: low
+    domains: [docs, cli-help]
+    risk_areas: [docs-parity, markdown-links]
+
+  - id: messaging-providers-e2e
+    workflow: nightly-e2e
+    job: messaging-providers-e2e
+    script: test/e2e/test-messaging-providers.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [messaging, providers, proxy, credentials]
+    risk_areas: [telegram, discord, slack, placeholders, token-rewrite]
+
+  - id: messaging-compatible-endpoint-e2e
+    workflow: nightly-e2e
+    job: messaging-compatible-endpoint-e2e
+    script: test/e2e/test-messaging-compatible-endpoint.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [messaging, compatible-endpoint, proxy, inference-local]
+    risk_areas: [openai-compatible, forward-mode, telegram, mock-upstream]
+
+  - id: kimi-inference-compat-e2e
+    workflow: nightly-e2e
+    job: kimi-inference-compat-e2e
+    script: test/e2e/test-kimi-inference-compat.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [inference, compatible-endpoint, openclaw]
+    risk_areas: [safe-exec-splitting, openai-compatible]
+
+  - id: token-rotation-e2e
+    workflow: nightly-e2e
+    job: token-rotation-e2e
+    script: test/e2e/test-token-rotation.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [messaging, credentials, onboard, token-rotation]
+    risk_areas: [credential-propagation, provider-isolation]
+
+  - id: sandbox-survival-e2e
+    workflow: nightly-e2e
+    job: sandbox-survival-e2e
+    script: test/e2e/test-sandbox-survival.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [sandbox, gateway, lifecycle, cloud-inference]
+    risk_areas: [gateway-restart, workspace-persistence]
+
+  - id: issue-2478-crash-loop-recovery-e2e
+    workflow: nightly-e2e
+    job: issue-2478-crash-loop-recovery-e2e
+    script: test/e2e/test-issue-2478-crash-loop-recovery.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [sandbox, recovery, gateway, non-root]
+    risk_areas: [crash-loop, startup-recovery]
+
+  - id: hermes-e2e
+    workflow: nightly-e2e
+    job: hermes-e2e
+    script: test/e2e/test-hermes-e2e.sh
+    runner: ubuntu-latest
+    cost: high
+    requires_secrets: [NVIDIA_API_KEY]
+    domains: [hermes, agents, onboard, cloud-inference]
+    risk_areas: [multi-agent, hermes-health]
+
+  - id: hermes-discord-e2e
+    workflow: nightly-e2e
+    job: hermes-discord-e2e
+    script: test/e2e/test-hermes-discord-e2e.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [hermes, messaging, discord, credentials]
+    risk_areas: [hermes-schema, placeholder-isolation]
+
+  - id: hermes-slack-e2e
+    workflow: nightly-e2e
+    job: hermes-slack-e2e
+    script: test/e2e/test-hermes-slack-e2e.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [hermes, messaging, slack, credentials]
+    risk_areas: [slack-providers, python-placeholder-egress]
+
+  - id: sandbox-operations-e2e
+    workflow: nightly-e2e
+    job: sandbox-operations-e2e
+    script: test/e2e/test-sandbox-operations.sh
+    runner: ubuntu-latest
+    cost: high
+    domains: [sandbox, lifecycle, gateway, cli]
+    risk_areas: [list, connect, status, logs, destroy, multi-sandbox, gateway-recovery]
+
+  - id: inference-routing-e2e
+    workflow: nightly-e2e
+    job: inference-routing-e2e
+    script: test/e2e/test-inference-routing.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [inference, routing, credentials, proxy]
+    risk_areas: [credential-isolation, error-classification, provider-routing]
+
+  - id: network-policy-e2e
+    workflow: nightly-e2e
+    job: network-policy-e2e
+    script: test/e2e/test-network-policy.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [network-policy, security, proxy, sandbox]
+    risk_areas: [deny-by-default, whitelist, policy-add, dry-run, hot-reload, ssrf]
+
+  - id: deployment-services-e2e
+    workflow: nightly-e2e
+    job: deployment-services-e2e
+    script: test/e2e/test-deployment-services.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [deployment, services, lifecycle]
+    risk_areas: [deployment-lifecycle]
+
+  - id: diagnostics-e2e
+    workflow: nightly-e2e
+    job: diagnostics-e2e
+    script: test/e2e/test-diagnostics.sh
+    runner: ubuntu-latest
+    cost: low
+    domains: [diagnostics, support]
+    risk_areas: [diagnostic-collection, redaction]
+
+  - id: credential-migration-e2e
+    workflow: nightly-e2e
+    job: credential-migration-e2e
+    script: test/e2e/test-credential-migration.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [credentials, migration, gateway]
+    risk_areas: [legacy-credentials, secure-delete, allowlist, symlink-safety]
+
+  - id: snapshot-commands-e2e
+    workflow: nightly-e2e
+    job: snapshot-commands-e2e
+    script: test/e2e/test-snapshot-commands.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [snapshot, lifecycle, sandbox]
+    risk_areas: [create, list, restore]
+
+  - id: shields-config-e2e
+    workflow: nightly-e2e
+    job: shields-config-e2e
+    script: test/e2e/test-shields-config.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [shields, config, security, credentials]
+    risk_areas: [shields-up-down, config-rotate-token, audit-trail]
+
+  - id: rebuild-openclaw-e2e
+    workflow: nightly-e2e
+    job: rebuild-openclaw-e2e
+    script: test/e2e/test-rebuild-openclaw.sh
+    runner: ubuntu-latest
+    cost: high
+    domains: [rebuild, upgrade, lifecycle, openclaw, sandbox]
+    risk_areas: [rebuild-upgrade, workspace-preservation]
+
+  - id: upgrade-stale-sandbox-e2e
+    workflow: nightly-e2e
+    job: upgrade-stale-sandbox-e2e
+    script: test/e2e/test-upgrade-stale-sandbox.sh
+    runner: ubuntu-latest
+    cost: high
+    domains: [upgrade, rebuild, lifecycle, sandbox]
+    risk_areas: [stale-sandbox-detection, auto-rebuild]
+
+  - id: rebuild-hermes-e2e
+    workflow: nightly-e2e
+    job: rebuild-hermes-e2e
+    script: test/e2e/test-rebuild-hermes.sh
+    runner: ubuntu-latest
+    cost: high
+    domains: [rebuild, upgrade, lifecycle, hermes]
+    risk_areas: [hermes-rebuild, workspace-preservation]
+
+  - id: rebuild-hermes-stale-base-e2e
+    workflow: nightly-e2e
+    job: rebuild-hermes-stale-base-e2e
+    script: test/e2e/test-rebuild-hermes.sh
+    runner: ubuntu-latest
+    cost: high
+    domains: [rebuild, upgrade, lifecycle, hermes]
+    risk_areas: [stale-base, hermes-rebuild]
+
+  - id: double-onboard-e2e
+    workflow: nightly-e2e
+    job: double-onboard-e2e
+    script: test/e2e/test-double-onboard.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [onboard, lifecycle, idempotency]
+    risk_areas: [double-onboard, port-conflict, repeatability]
+
+  - id: onboard-repair-e2e
+    workflow: nightly-e2e
+    job: onboard-repair-e2e
+    script: test/e2e/test-onboard-repair.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [onboard, repair, recovery]
+    risk_areas: [partial-failure, repair-flow]
+
+  - id: onboard-resume-e2e
+    workflow: nightly-e2e
+    job: onboard-resume-e2e
+    script: test/e2e/test-onboard-resume.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [onboard, resume, recovery]
+    risk_areas: [interrupted-onboard, resume-flow]
+
+  - id: runtime-overrides-e2e
+    workflow: nightly-e2e
+    job: runtime-overrides-e2e
+    script: test/e2e/test-runtime-overrides.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [runtime-overrides, config, sandbox]
+    risk_areas: [environment-overrides, runtime-config]
+
+  - id: credential-sanitization-e2e
+    workflow: nightly-e2e
+    job: credential-sanitization-e2e
+    script: test/e2e/test-credential-sanitization.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [credentials, security, logging]
+    risk_areas: [redaction, env-sanitization, credential-leak]
+
+  - id: telegram-injection-e2e
+    workflow: nightly-e2e
+    job: telegram-injection-e2e
+    script: test/e2e/test-telegram-injection.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [messaging, telegram, credentials, security]
+    risk_areas: [token-injection, placeholder-isolation]
+
+  - id: overlayfs-autofix-e2e
+    workflow: nightly-e2e
+    job: overlayfs-autofix-e2e
+    script: test/e2e/test-overlayfs-autofix.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [docker, platform, install, recovery]
+    risk_areas: [overlayfs, docker-storage-driver, autofix]
+
+  - id: device-auth-health-e2e
+    workflow: nightly-e2e
+    job: device-auth-health-e2e
+    script: test/e2e/test-device-auth-health.sh
+    runner: ubuntu-latest
+    cost: low
+    domains: [auth, device-auth, diagnostics]
+    risk_areas: [health-check, auth-state]
+
+  - id: launchable-smoke-e2e
+    workflow: nightly-e2e
+    job: launchable-smoke-e2e
+    script: test/e2e/test-launchable-smoke.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [launchable, install, brev, community]
+    risk_areas: [public-install-path, plugin-ref-main]
+
+  - id: gpu-e2e
+    workflow: nightly-e2e
+    job: gpu-e2e
+    script: test/e2e/test-gpu-e2e.sh
+    runner: self-hosted-gpu
+    cost: very-high
+    requires_runner: gpu
+    domains: [gpu, ollama, local-inference, sandbox]
+    risk_areas: [nvks, local-model, gpu-runtime]
+
+  - id: gpu-double-onboard-e2e
+    workflow: nightly-e2e
+    job: gpu-double-onboard-e2e
+    script: test/e2e/test-gpu-double-onboard.sh
+    runner: self-hosted-gpu
+    cost: very-high
+    requires_runner: gpu
+    domains: [gpu, ollama, onboard, token-rotation]
+    risk_areas: [ollama-proxy-token, double-onboard]
+
+  - id: ollama-proxy-e2e
+    workflow: ollama-proxy-e2e
+    job: ollama-proxy-e2e
+    script: test/e2e/test-ollama-auth-proxy-e2e.sh
+    runner: ubuntu-latest
+    cost: medium
+    domains: [ollama, proxy, auth, local-inference]
+    risk_areas: [auth-proxy, token-injection]

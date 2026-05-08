@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: e2e-advisor-prototype
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Base ref to diff against
+        required: false
+        default: origin/main
+      head_ref:
+        description: Head ref to diff
+        required: false
+        default: HEAD
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: e2e-advisor-prototype-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  advise:
+    name: Static E2E recommendation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install advisor dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run E2E advisor prototype
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || inputs.base_ref }}
+          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || inputs.head_ref }}
+        run: |
+          node tools/e2e-advisor/advisor.mjs \
+            --base "$BASE_REF" \
+            --head "$HEAD_REF" \
+            --out-dir artifacts/e2e-advisor
+
+      - name: Publish job summary
+        run: cat artifacts/e2e-advisor/e2e-advisor-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload advisor artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-advisor-prototype
+          path: artifacts/e2e-advisor/
+          if-no-files-found: error
