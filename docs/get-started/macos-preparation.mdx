@@ -1,0 +1,145 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Prepare macOS for NemoClaw"
+sidebar-title: "(macOS Only) macOS Prerequisites"
+description: "Prepare a macOS machine for NemoClaw before running the Quickstart: install developer tools, set up a container runtime, and configure Node.js."
+description-agent: "Covers macOS-only preparation steps required before the Quickstart. Use when preparing a macOS machine for NemoClaw, choosing between Docker Desktop and Colima, installing Xcode Command Line Tools, or troubleshooting a macOS-specific install error."
+keywords: ["nemoclaw macos setup", "nemoclaw install macos docker colima"]
+content:
+  type: "reference"
+---
+Complete these steps before following the [Quickstart](/get-started/quickstart).
+Windows users should see [Prepare Windows for NemoClaw](/get-started/windows-preparation) instead.
+Linux users can go directly to the Quickstart.
+
+<Note>
+This guide covers both Apple Silicon (M1/M2/M3/M4) and Intel Macs.
+</Note>
+
+## Prerequisites
+
+Verify the following before you begin:
+
+- macOS Ventura (13) or later.
+- Hardware requirements are the same as the [Quickstart](/get-started/quickstart).
+
+## Install Xcode Command Line Tools
+
+NemoClaw requires Git, which is included in the Xcode Command Line Tools.
+Open Terminal and run:
+
+```console
+$ xcode-select --install
+```
+
+A dialog appears asking you to install the tools.
+Click **Install** and wait for the download to complete.
+
+If the tools are already installed, the command prints a message saying so and you can continue to the next step.
+
+## Install a Container Runtime
+
+NemoClaw requires a container runtime that provides the Docker CLI.
+Choose one of the following options.
+
+### Option A: Docker Desktop (Recommended)
+
+Install [Docker Desktop for Mac](https://www.docker.com/products/docker-desktop/).
+The installer detects your chip (Apple Silicon or Intel) automatically.
+
+After installation, open Docker Desktop and wait for the engine to start.
+Verify from Terminal:
+
+```console
+$ docker info
+```
+
+`docker info` prints server information.
+If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is running.
+
+### Option B: Colima
+
+Colima is a lightweight alternative to Docker Desktop.
+Install it with Homebrew:
+
+```console
+$ brew install colima docker
+```
+
+Start Colima with enough resources for NemoClaw:
+
+```console
+$ colima start --cpu 6 --memory 12 --disk 100
+```
+
+<Warning>
+Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough for the sandbox image build.
+On Apple Silicon, the build can stall with no progress and no error if resources are too low.
+Always specify `--cpu`, `--memory`, and `--disk` when starting Colima for NemoClaw.
+</Warning>
+
+Verify from Terminal:
+
+```console
+$ docker info
+```
+
+If `docker info` fails, check that the Colima socket path is detected.
+Newer Colima versions use `~/.config/colima/default/docker.sock` instead of `~/.colima/default/docker.sock`.
+See the [Colima socket troubleshooting section](/reference/troubleshooting#colima-socket-not-detected-macos) for details.
+
+## Install Node.js
+
+NemoClaw requires Node.js 22.16 or later.
+Install it with Homebrew or nvm.
+
+### With Homebrew
+
+```console
+$ brew install node@22
+```
+
+### With nvm
+
+If you use nvm to manage Node.js versions, install version 22:
+
+```console
+$ nvm install 22
+```
+
+Verify the version:
+
+```console
+$ node --version
+```
+
+The output should show v22.16.0 or later.
+
+## Set Up Local Inference with Ollama (Optional)
+
+If you plan to select Ollama as your inference provider during onboarding, install it with Homebrew:
+
+```console
+$ brew install ollama
+```
+
+Start the Ollama server:
+
+```console
+$ ollama serve
+```
+
+If Ollama is installed but not already running, the onboarding process can start it for you.
+
+## Next Step
+
+Your macOS environment is ready.
+Continue with the [Quickstart](/get-started/quickstart) to install NemoClaw and launch your first sandbox.
+
+## Troubleshooting
+
+For macOS-specific troubleshooting, refer to the following sections in the [Troubleshooting](/reference/troubleshooting) guide:
+
+- [macOS first-run failures](/reference/troubleshooting#macos-first-run-failures)
+- [Colima socket not detected](/reference/troubleshooting#colima-socket-not-detected-macos)
