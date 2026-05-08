@@ -937,6 +937,12 @@ Use the hosted `curl … | bash` form only when the CLI is broken or already par
 
 ## Environment Variables
 
+NemoClaw reads environment variables to override interactive prompts, route to alternate inference or storage backends, and expose runtime knobs that the CLI does not surface as flags.
+This section covers the user-tunable variables grouped by topic.
+Internal scaffolding, installer-handoff, and test-only variables are intentionally omitted; additional advanced overrides exist in the source.
+
+### Service ports
+
 NemoClaw reads the following environment variables to configure service ports.
 Set them before running `nemoclaw onboard` or any command that starts services.
 All ports must be non-privileged integers between 1024 and 65535.
@@ -965,7 +971,8 @@ Pass `--control-ui-port <N>` to require a specific port.
 
 ### Onboard timeouts
 
-The following environment variables tune onboard-time wall-clock limits. Set them before running `nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
+The following environment variables tune onboard-time wall-clock limits.
+Set them before running `nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -977,6 +984,105 @@ $ nemoclaw onboard
 ```
 
 If the pull exceeds the limit, onboarding emits the timeout in minutes plus a hint to raise this variable, and the partial download is preserved for the next attempt.
+
+### Onboarding control
+
+These variables let scripted (CI/CD) and headless onboards skip prompts that an interactive user would normally answer.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_NON_INTERACTIVE` | unset | Run onboarding without interactive prompts; missing required inputs fail fast. Equivalent to passing `--non-interactive`. |
+| `NEMOCLAW_YES` | unset | Auto-answer "yes" to confirmation prompts. Equivalent to passing `--yes`. |
+| `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE` | unset | Auto-accept the third-party software notice without prompting. Equivalent to passing `--yes-i-accept-third-party-software`. |
+| `NEMOCLAW_FRESH` | unset | Discard any existing onboard state and start over. Equivalent to passing `--fresh`. |
+| `NEMOCLAW_RECREATE_SANDBOX` | unset | Force the sandbox to be recreated even when no drift is detected. |
+| `NEMOCLAW_SANDBOX_NAME` | `my-assistant` (or `hermes` for the Hermes agent) | Name of the sandbox to create or reuse. |
+| `NEMOCLAW_AGENT` | unset | Agent type to onboard, e.g. `openclaw` or `hermes`. Equivalent to passing `--agent`. |
+| `NEMOCLAW_FROM_DOCKERFILE` | unset | Path to a custom Dockerfile when building from `--from` in non-interactive mode. |
+| `NEMOCLAW_INSTALL_REF` | `latest` | Git ref the installer fetches when bootstrapping NemoClaw. |
+| `NEMOCLAW_INSTALL_TAG` | `latest` | Git tag the installer fetches when `NEMOCLAW_INSTALL_REF` is unset. |
+
+### Inference and provider
+
+These variables seed the onboarding inference selection and let non-interactive runs skip the provider/model picker.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_PROVIDER` | unset | Inference provider, e.g. `openai-api`, `nvidia-prod`, or `ollama-local`. |
+| `NEMOCLAW_PROVIDER_KEY` | unset | Name of the environment variable that holds the provider's API key. |
+| `NEMOCLAW_MODEL` | unset | Inference model id, e.g. `nvidia/nemotron-3-super-120b-a12b`. |
+| `NEMOCLAW_INFERENCE_API` | unset | Inference API variant, e.g. `openai-completions`, `openai-chat-completions`, or `anthropic-messages`. |
+| `NEMOCLAW_INFERENCE_BASE_URL` | unset | Custom base URL for inference calls. |
+| `NEMOCLAW_INFERENCE_INPUTS` | unset | JSON-formatted inference parameters to pass to the model. |
+| `NEMOCLAW_CONTEXT_WINDOW` | unset | Override the model's context window in tokens without rebuilding. |
+| `NEMOCLAW_MAX_TOKENS` | unset | Override the model's max output tokens without rebuilding. |
+| `NEMOCLAW_REASONING` | unset | Enable reasoning/thinking mode for supported models, e.g. o1 or Claude with extended thinking. |
+| `NEMOCLAW_ENDPOINT_URL` | unset | Custom inference endpoint URL for self-hosted or non-standard providers. |
+
+### Local inference
+
+For onboards that route through a host-side Ollama, vLLM, or NIM instance.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` (seconds) | How long to wait for a local inference provider to become ready before failing onboard. |
+| `NEMOCLAW_OLLAMA_REQUIRE_TOOLS` | unset | Reject Ollama models that lack tool/function calling support. |
+| `NEMOCLAW_OLLAMA_PROXY_TOKEN` | unset | Auth token for the local Ollama auth proxy. |
+| `NEMOCLAW_VLLM_LOCAL_TOKEN` | unset | Auth token for the local vLLM instance. |
+
+### Runtime overrides
+
+These variables are read inside the sandbox at sandbox-start time and let users switch model or API at runtime without rebuilding.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_MODEL_OVERRIDE` | unset | Override the primary model at sandbox runtime. Must match a model the gateway is configured to route to. |
+| `NEMOCLAW_INFERENCE_API_OVERRIDE` | unset | Override the inference API variant at sandbox runtime. |
+
+### Security policy
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_POLICY_TIER` | `balanced` | Default sandbox security tier. One of `permissive`, `balanced`, or `strict`. |
+| `NEMOCLAW_POLICY_MODE` | `suggested` | How non-interactive onboarding reconciles tier-derived suggestions against the sandbox's currently-applied presets. One of `suggested`, `additive`, or `custom`. |
+| `NEMOCLAW_POLICY_PRESETS` | unset | Comma-separated list of preset names. Required when `NEMOCLAW_POLICY_MODE=custom`. |
+
+### Sandbox lifecycle
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_REBUILD_VERBOSE` | unset | Enable verbose output during `nemoclaw <name> rebuild`. |
+
+### Remote deployment
+
+These variables apply to the `nemoclaw deploy` and `nemoclaw onboard --remote` flows that provision a Brev instance.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_BREV_PROVIDER` | `gcp` | Cloud provider for Brev instance creation. |
+| `NEMOCLAW_GPU` | `a2-highgpu-1g:nvidia-tesla-a100:1` | GPU specification (instance type and GPU model) for Brev instance creation. |
+| `NEMOCLAW_DEPLOY_NO_CONNECT` | unset | Skip the automatic `connect` step after the remote deploy completes. |
+| `NEMOCLAW_DEPLOY_NO_START_SERVICES` | unset | Skip starting services automatically after the remote deploy. |
+
+### HTTP proxy
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_PROXY_HOST` | unset | HTTP proxy host for outbound requests from the sandbox. |
+| `NEMOCLAW_PROXY_PORT` | unset | HTTP proxy port paired with `NEMOCLAW_PROXY_HOST`. |
+
+### Channel integrations
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY` | unset | Skip the Telegram API reachability test during onboard, for environments without internet egress to `api.telegram.org`. |
+
+### Advanced
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_EXPERIMENTAL` | unset | Enable experimental features and behaviors that are subject to change between releases. |
+| `NEMOCLAW_DISABLE_DEVICE_AUTH` | unset | Skip device-pairing authentication during sandbox build. Intended for headless or development hosts; do not use in production. |
 
 ## NemoHermes Alias
 
