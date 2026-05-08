@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# E2E scenario runner entrypoint.
+#
+# Usage:
+#   bash test/e2e/run-scenario.sh <scenario-id> [--plan-only] [--dry-run]
+#
+# Flags:
+#   --plan-only   Resolve metadata and print the plan only. Writes
+#                 ${E2E_CONTEXT_DIR:-.e2e}/plan.json for artifact upload.
+#   --dry-run     (reserved) Run orchestration with real side effects
+#                 replaced by trace-logged stubs. Sets E2E_DRY_RUN=1 for
+#                 helpers. Full dry-run orchestration lands in later phases.
+#
+# Environment:
+#   E2E_CONTEXT_DIR  Override the scenario artifact directory
+#                    (default: <repo-root>/.e2e/).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+SCENARIO_ID=""
+PLAN_ONLY=0
+DRY_RUN=0
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage: bash test/e2e/run-scenario.sh <scenario-id> [--plan-only] [--dry-run]
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --plan-only)
+      PLAN_ONLY=1
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --*)
+      echo "run-scenario: unknown flag: $1" >&2
+      usage
+      exit 2
+      ;;
+    *)
+      if [[ -z "${SCENARIO_ID}" ]]; then
+        SCENARIO_ID="$1"
+      else
+        echo "run-scenario: unexpected positional argument: $1" >&2
+        usage
+        exit 2
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "${SCENARIO_ID}" ]]; then
+  echo "run-scenario: missing scenario id" >&2
+  usage
+  exit 2
+fi
+
+export E2E_CONTEXT_DIR="${E2E_CONTEXT_DIR:-${REPO_ROOT}/.e2e}"
+mkdir -p "${E2E_CONTEXT_DIR}"
+
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  export E2E_DRY_RUN=1
+fi
+
+# Prefer the locally-installed tsx if present, otherwise fall back to npx.
+TSX_BIN="${REPO_ROOT}/node_modules/.bin/tsx"
+if [[ ! -x "${TSX_BIN}" ]]; then
+  TSX_BIN=""
+fi
+
+run_resolver() {
+  if [[ -n "${TSX_BIN}" ]]; then
+    "${TSX_BIN}" "${SCRIPT_DIR}/resolver/index.ts" "$@"
+  else
+    (cd "${REPO_ROOT}" && npx --yes tsx "${SCRIPT_DIR}/resolver/index.ts" "$@")
+  fi
+}
+
+run_resolver plan "${SCENARIO_ID}" --context-dir "${E2E_CONTEXT_DIR}"
+
+if [[ "${PLAN_ONLY}" -eq 1 ]]; then
+  exit 0
+fi
+
+# Source the shared helper library so we can exercise the full
+# setup → install → onboard → gateway/sandbox check sequence. In dry-run
+# mode each helper short-circuits (and writes to E2E_TRACE_FILE if set).
+# shellcheck source=lib/env.sh
+. "${SCRIPT_DIR}/lib/env.sh"
+# shellcheck source=lib/context.sh
+. "${SCRIPT_DIR}/lib/context.sh"
+# shellcheck source=lib/install.sh
+. "${SCRIPT_DIR}/lib/install.sh"
+# shellcheck source=lib/onboard.sh
+. "${SCRIPT_DIR}/lib/onboard.sh"
+# shellcheck source=lib/gateway.sh
+. "${SCRIPT_DIR}/lib/gateway.sh"
+# shellcheck source=lib/sandbox.sh
+. "${SCRIPT_DIR}/lib/sandbox.sh"
+
+# Apply standard non-interactive env (and trace it).
+e2e_env_apply_noninteractive
+e2e_env_trace "env:noninteractive"
+
+# Emit normalized context from the resolved plan.
+e2e_context_init
+"${SCRIPT_DIR}/lib/emit-context-from-plan.sh" "${E2E_CONTEXT_DIR}/plan.json"
+
+# Extract the install method and onboarding profile from the plan so we can
+# dispatch to the right helpers.
+read_plan_string() {
+  local key="$1"
+  node -e "
+    const p = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+    const parts = process.argv[2].split('.');
+    let cur = p;
+    for (const part of parts) { if (cur == null) { cur = ''; break; } cur = cur[part]; }
+    process.stdout.write(cur == null ? '' : String(cur));
+  " "${E2E_CONTEXT_DIR}/plan.json" "${key}"
+}
+
+INSTALL_ID="$(read_plan_string dimensions.install.id)"
+INSTALL_METHOD="$(read_plan_string dimensions.install.profile.method)"
+ONBOARDING_ID="$(read_plan_string dimensions.onboarding.id)"
+
+# Trace the dimension id so scenario-level assertions can identify the
+# configured install (e.g. repo-current); e2e_install internally traces
+# the resolved method.
+e2e_env_trace "install:${INSTALL_ID}"
+e2e_install "${INSTALL_METHOD}"
+e2e_onboard "${ONBOARDING_ID}"
+e2e_gateway_assert_healthy
+e2e_sandbox_assert_running
+
+# Expected state validation. The validator reads E2E_PROBE_OVERRIDE_* env
+# variables to simulate real probe outputs in dry-run/test contexts.
+# In non-dry-run mode the validator currently also relies on those
+# overrides; wiring real probes through the validator happens as
+# scenarios migrate.
+if [[ "${E2E_VALIDATE_EXPECTED_STATE:-0}" == "1" || "${DRY_RUN}" -ne 1 ]]; then
+  if ! run_resolver validate-state "${SCENARIO_ID}" --context-dir "${E2E_CONTEXT_DIR}"; then
+    echo "run-scenario: expected-state validation failed; suites will NOT run" >&2
+    exit 3
+  fi
+fi
+
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  echo "run-scenario: dry-run complete; context.env emitted under ${E2E_CONTEXT_DIR}"
+  exit 0
+fi
+
+echo "run-scenario: full suite execution is not implemented yet (Phase 9 migrates additional scenarios)" >&2
+exit 0

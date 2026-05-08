@@ -27,7 +27,7 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | `nemoclaw-blueprint/model-specific-setup/` | JSON | Agent-scoped model/provider compatibility registry |
 | `scripts/` | Bash/JS/TS | Install helpers, setup, automation, E2E tooling |
 | `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
-| `test/e2e/` | Bash/JS | End-to-end tests (Brev cloud instances) |
+| `test/e2e/` | Bash/JS/TS | End-to-end tests, scenario-based runner (see `test/e2e/README.md`) |
 | `docs/` | Markdown (MyST) | User-facing docs (Sphinx) |
 
 ## Quick Reference
