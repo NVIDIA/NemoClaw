@@ -240,7 +240,7 @@ describe("uninstall run plan", () => {
   it("escalates to SIGKILL and reports failure when SIGTERM is ignored", () => {
     const logs: string[] = [];
     const warnings: string[] = [];
-    const signals: NodeJS.Signals[] = [];
+    const signals: Array<NodeJS.Signals | number> = [];
     const tmpHome = "/tmp/nemoclaw-uninstall-test-2759-stuck";
     const pidFile = `${tmpHome}/.nemoclaw/ollama-auth-proxy.pid`;
     fs.mkdirSync(`${tmpHome}/.nemoclaw`, { recursive: true });
@@ -256,12 +256,11 @@ describe("uninstall run plan", () => {
           isTty: false,
           kill: (_pid, signal) => {
             if (signal === 0) return true;
-            if (signal) signals.push(signal);
+            if (signal !== undefined) signals.push(signal);
             return true;
           },
-          log: (line) => logs.push(line),
-          warn: (line) => warnings.push(line),
-          error: (line) => warnings.push(line),
+          log: (line: string) => logs.push(line),
+          error: (line: string) => warnings.push(line),
           rmSync: vi.fn(),
           run: (command, args) => {
             if (command === "ps" && args.includes("44322")) {
@@ -296,9 +295,8 @@ describe("uninstall run plan", () => {
         existsSync: () => false,
         isTty: false,
         kill: () => true,
-        log: (line) => logs.push(line),
-        warn: (line) => warnings.push(line),
-        error: (line) => warnings.push(line),
+        log: (line: string) => logs.push(line),
+        error: (line: string) => warnings.push(line),
         rmSync: vi.fn(),
         run: (_command, args) => {
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
