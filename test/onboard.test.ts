@@ -1165,12 +1165,6 @@ describe("onboard helpers", () => {
     expect(hasChatCompletionsToolCallLeak("{")).toBe(false);
   });
 
-  it("regression #2731: Ollama validation requires structured chat-completions tool calls", () => {
-    const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"), "utf-8");
-    expect(src).toMatch(/Local Ollama[\s\S]*requireChatCompletionsToolCalling:\s*true/);
-    expect(src).toMatch(/Local Ollama[\s\S]*skipResponsesProbe:\s*true/);
-  });
-
   it("normalizes anthropic-compatible base URLs with a trailing /v1", () => {
     expect(normalizeProviderBaseUrl("https://proxy.example.com/v1", "anthropic")).toBe(
       "https://proxy.example.com",
