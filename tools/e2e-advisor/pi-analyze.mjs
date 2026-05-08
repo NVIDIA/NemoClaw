@@ -34,6 +34,11 @@ if (process.env.PI_E2E_ADVISOR_RUN_PI === "0") {
   process.exit(0);
 }
 
+if (!hasLikelyPiCredential()) {
+  writeSkipped("No Pi provider credential was available in this workflow environment");
+  process.exit(0);
+}
+
 const piBin = process.env.PI_BIN || "pi";
 const piArgs = [
   "--no-session",
@@ -285,6 +290,34 @@ function truncate(text, maxChars) {
     return text;
   }
   return `${text.slice(0, maxChars)}\n\n<diff truncated at ${maxChars} characters>`;
+}
+
+function hasLikelyPiCredential() {
+  const credentialEnv = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_OAUTH_TOKEN",
+    "OPENAI_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+    "GOOGLE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GROQ_API_KEY",
+    "CEREBRAS_API_KEY",
+    "XAI_API_KEY",
+    "FIREWORKS_API_KEY",
+    "OPENROUTER_API_KEY",
+    "AI_GATEWAY_API_KEY",
+    "ZAI_API_KEY",
+    "MISTRAL_API_KEY",
+    "MINIMAX_API_KEY",
+    "MOONSHOT_API_KEY",
+    "OPENCODE_API_KEY",
+    "KIMI_API_KEY",
+    "CLOUDFLARE_API_KEY",
+    "AWS_BEARER_TOKEN_BEDROCK",
+  ];
+  return credentialEnv.some((name) => Boolean(process.env[name])) || Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
 }
 
 function writeSkipped(reason) {
