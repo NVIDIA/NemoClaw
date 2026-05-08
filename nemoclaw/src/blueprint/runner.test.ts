@@ -337,7 +337,10 @@ describe("runner", () => {
           rules: [{ allow: { method: "GET", path: "relative" } }],
         },
       ],
-      ["invalid enforcement", { host: "api.internal.example.com", port: 443, enforcement: "block" }],
+      [
+        "invalid enforcement",
+        { host: "api.internal.example.com", port: 443, enforcement: "block" },
+      ],
       ["invalid TLS mode", { host: "api.internal.example.com", port: 443, tls: "off" }],
       ["invalid access mode", { host: "api.internal.example.com", port: 443, access: "read" }],
       ["unknown endpoint field", { host: "api.internal.example.com", port: 443, extra: true }],
@@ -682,7 +685,9 @@ describe("runner", () => {
         },
       });
 
-      mockCurrentPolicy(["Version: 1", "Hash: sha256:test", "---", "network_policies: ["].join("\n"));
+      mockCurrentPolicy(
+        ["Version: 1", "Hash: sha256:test", "---", "network_policies: ["].join("\n"),
+      );
 
       await expect(actionApply("default", bp)).rejects.toThrow(/current policy.*not valid YAML/i);
       const policySetCalls = mockExeca.mock.calls.filter(
@@ -698,7 +703,9 @@ describe("runner", () => {
           endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
         },
       });
-      mockCurrentPolicy(["Version: 1", "Hash: sha256:test", "---", "network_policies: []"].join("\n"));
+      mockCurrentPolicy(
+        ["Version: 1", "Hash: sha256:test", "---", "network_policies: []"].join("\n"),
+      );
 
       await expect(actionApply("default", bp)).rejects.toThrow(
         /network_policies must be a YAML mapping/i,
