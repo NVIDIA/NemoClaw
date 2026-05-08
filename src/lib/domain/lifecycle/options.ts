@@ -48,11 +48,10 @@ export function normalizeDestroySandboxOptions(
 ): DestroySandboxOptions {
   const envCleanupGateway = readCleanupGatewayEnv();
   if (Array.isArray(options)) {
-    const cleanupGateway = options.includes("--cleanup-gateway")
-      ? true
-      : options.includes("--no-cleanup-gateway")
-        ? false
-        : envCleanupGateway;
+    const yesIdx = options.lastIndexOf("--cleanup-gateway");
+    const noIdx = options.lastIndexOf("--no-cleanup-gateway");
+    const cleanupGateway: boolean | undefined =
+      yesIdx === -1 && noIdx === -1 ? envCleanupGateway : yesIdx > noIdx;
     return {
       force: options.includes("--force"),
       yes: options.includes("--yes"),

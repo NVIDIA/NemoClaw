@@ -76,6 +76,23 @@ describe("lifecycle option normalization", () => {
       });
     });
 
+    it("last cleanup-gateway flag wins when both forms appear", () => {
+      expect(
+        normalizeDestroySandboxOptions(["--yes", "--cleanup-gateway", "--no-cleanup-gateway"]),
+      ).toEqual({
+        force: false,
+        yes: true,
+        cleanupGateway: false,
+      });
+      expect(
+        normalizeDestroySandboxOptions(["--yes", "--no-cleanup-gateway", "--cleanup-gateway"]),
+      ).toEqual({
+        force: false,
+        yes: true,
+        cleanupGateway: true,
+      });
+    });
+
     it("explicit option object wins over env var", () => {
       process.env[ENV_KEY] = "0";
       expect(normalizeDestroySandboxOptions({ yes: true, cleanupGateway: true })).toEqual({

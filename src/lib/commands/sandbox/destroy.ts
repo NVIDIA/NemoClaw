@@ -11,7 +11,7 @@ export default class DestroyCliCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Stop NIM and delete sandbox";
   static description = "Destroy a sandbox and remove its local registry entry.";
-  static usage = ["<name> [--yes|-y|--force] [--cleanup-gateway]"];
+  static usage = ["<name> [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]"];
   static examples = [
     "<%= config.bin %> sandbox destroy alpha",
     "<%= config.bin %> sandbox destroy alpha --yes",

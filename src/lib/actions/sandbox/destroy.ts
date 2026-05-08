@@ -63,6 +63,10 @@ function cleanupGatewayAfterLastSandbox(): void {
   });
 }
 
+// Mirrors the body of `isNonInteractive()` in src/lib/onboard.ts. Duplicated
+// here to avoid an awkward sibling-action -> onboard import; the canonical
+// helper should be lifted to src/lib/core/ so this and the lazy requires in
+// policy-channel.ts and inference/ollama/proxy.ts can all share one source.
 function isNonInteractive(): boolean {
   return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 }
