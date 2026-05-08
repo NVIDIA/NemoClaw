@@ -492,17 +492,21 @@ def build_config(env: dict | None = None) -> dict:
             account["allowFrom"] = _allowed_ids[ch]
         _ch_cfg[ch] = {"accounts": {"default": account}}
 
-    # WeChat (openclaw-weixin) is intentionally NOT added to channels.* here.
-    # The upstream @tencent-weixin/openclaw-weixin plugin gets registered with
-    # OpenClaw later in the Dockerfile, AFTER this script runs — writing
+    # WeChat (openclaw-weixin) is NOT added to channels.* here — writing
     # channels.openclaw-weixin upfront makes `openclaw plugins install` fail
     # with "unknown channel id: openclaw-weixin" because the plugin registry
-    # hasn't seen the channel yet (chicken-and-egg).
+    # hasn't seen the channel yet (chicken-and-egg). The block is written
+    # AFTER `openclaw plugins install` runs, by scripts/seed-wechat-accounts.py,
+    # which adds:
+    #   channels.openclaw-weixin.channelConfigUpdatedAt = <ISO timestamp>
+    #   channels.openclaw-weixin.accounts.<accountId>.enabled = true
+    # The upstream plugin's auth/accounts.ts reads that block at boot to
+    # decide which accounts to start; without enabled=true the bridge no-ops.
     #
-    # The plugin doesn't need anything in openclaw.json to start: its bot
-    # token, baseUrl, and userId live in <stateDir>/openclaw-weixin/accounts/
-    # (seeded by scripts/seed-wechat-accounts.py), and the DM allowlist uses
-    # the framework allowFrom file at credentials/openclaw-weixin-{accountId}-
+    # Per-account secrets (token, baseUrl, userId) still live in the plugin's
+    # own state dir at <stateDir>/openclaw-weixin/accounts/<accountId>.json
+    # (also seeded by seed-wechat-accounts.py). DM allowlist uses the
+    # framework allowFrom file at credentials/openclaw-weixin-{accountId}-
     # allowFrom.json — not the openclaw.json accounts.<id>.allowFrom mechanism
     # that telegram/discord/slack use.
 

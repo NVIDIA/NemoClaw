@@ -3,12 +3,14 @@
 
 # WeChat (personal) channel egress, via @tencent-weixin/openclaw-weixin.
 #
-# The upstream plugin uses per-account dynamic baseUrls behind WeChat's iLink
-# gateway and rotates them through IDC redirects, so we cannot safely pin a
-# single subdomain. The wildcard intentionally widens egress vs. the
-# Telegram/Discord/Slack presets — operators who need a tighter boundary
-# should pin a narrower subdomain set after observing their own accounts'
-# baseUrls and accept the breakage risk on rotation.
+# The upstream plugin reaches the iLink gateway under *.wechat.com (e.g.
+# ilinkai.wechat.com) and may also call into *.weixin.qq.com for account
+# flows; per-account baseUrls rotate behind WeChat's IDC redirects, so we
+# cannot safely pin a single subdomain on either TLD. Both wildcards
+# intentionally widen egress vs. the Telegram/Discord/Slack presets —
+# operators who need a tighter boundary should pin a narrower subdomain set
+# after observing their own accounts' baseUrls and accept the breakage risk
+# on rotation.
 preset:
   name: wechat
   description: "WeChat (personal) iLink API access via @tencent-weixin/openclaw-weixin"
@@ -17,6 +19,13 @@ network_policies:
   wechat_bridge:
     name: wechat_bridge
     endpoints:
+      - host: "*.wechat.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
       - host: "*.weixin.qq.com"
         port: 443
         protocol: rest

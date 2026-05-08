@@ -20,6 +20,24 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelDef("telegram")?.envKey).toBe("TELEGRAM_BOT_TOKEN");
     expect(getChannelDef("discord")?.envKey).toBe("DISCORD_BOT_TOKEN");
     expect(getChannelDef("slack")?.envKey).toBe("SLACK_BOT_TOKEN");
+    expect(getChannelDef("wechat")?.envKey).toBe("WECHAT_BOT_TOKEN");
+  });
+
+  it("only wechat declares loginMethod=host-qr", () => {
+    // Other channels paste a token; WeChat captures it via a host-side QR
+    // handshake (src/lib/wechat/login.ts). Onboarding branches on this flag,
+    // so flipping it accidentally would silently route WeChat through the
+    // paste prompt and break the QR flow.
+    expect(getChannelDef("wechat")?.loginMethod).toBe("host-qr");
+    expect(getChannelDef("telegram")?.loginMethod).toBeUndefined();
+    expect(getChannelDef("discord")?.loginMethod).toBeUndefined();
+    expect(getChannelDef("slack")?.loginMethod).toBeUndefined();
+  });
+
+  it("declares wechat as DM-only with the WECHAT_ALLOWED_IDS env key", () => {
+    const wechat = getChannelDef("wechat");
+    expect(wechat?.allowIdsMode).toBe("dm");
+    expect(wechat?.userIdEnvKey).toBe("WECHAT_ALLOWED_IDS");
   });
 
   it("only slack declares a secondary app-token env var", () => {

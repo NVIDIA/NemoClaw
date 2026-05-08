@@ -13,6 +13,17 @@
 # Files written (matching auth/accounts.ts in @tencent-weixin/openclaw-weixin@2.4.2):
 #   <stateDir>/openclaw-weixin/accounts.json                  — JSON array of accountIds
 #   <stateDir>/openclaw-weixin/accounts/<accountId>.json      — { token, savedAt, baseUrl, userId }
+#   <stateDir>/openclaw.json (channels.openclaw-weixin)       — registered channel + accounts.<id>.enabled
+#
+# The third file is the one OpenClaw consults at startup to know the channel
+# is registered. Without channels.openclaw-weixin.accounts.<id>.enabled=true
+# in openclaw.json, the plugin's auth/accounts.ts considers the account
+# disabled and the bridge won't start, even if the per-account state files
+# above exist. We mutate openclaw.json HERE (post-install) rather than in
+# generate-openclaw-config.py because writing channels.openclaw-weixin
+# upfront races with `openclaw plugins install`, which fails with "unknown
+# channel id: openclaw-weixin" if the channel block exists before the plugin
+# has registered it.
 #
 # State dir resolution mirrors the upstream's resolveStateDir():
 #   $OPENCLAW_STATE_DIR || $CLAWDBOT_STATE_DIR || ~/.openclaw
@@ -70,6 +81,50 @@ def _atomic_write(path: pathlib.Path, payload: str, mode: int) -> None:
     os.replace(tmp, path)
 
 
+def _js_iso_utc() -> str:
+    """ISO-8601 UTC with millisecond precision and trailing 'Z' — the format
+    JavaScript's Date.toISOString() emits, which is what the upstream plugin
+    writes to channelConfigUpdatedAt."""
+    now = _dt.datetime.now(_dt.timezone.utc)
+    return f"{now.strftime('%Y-%m-%dT%H:%M:%S')}.{now.microsecond // 1000:03d}Z"
+
+
+def _patch_openclaw_config(account_id: str) -> None:
+    """Register channels.openclaw-weixin.accounts.<accountId>.enabled=true in
+    openclaw.json. The upstream plugin's auth/accounts.ts reads this block to
+    decide which accounts to start at boot."""
+    cfg_path = _state_dir() / "openclaw.json"
+    if not cfg_path.exists():
+        # generate-openclaw-config.py runs before us and is responsible for
+        # producing openclaw.json. If it's missing, something else broke; bail
+        # without inventing a config.
+        print(
+            f"[seed-wechat-accounts] {cfg_path} not found; cannot register channel",
+            file=sys.stderr,
+        )
+        return
+
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as err:
+        print(
+            f"[seed-wechat-accounts] could not parse {cfg_path}: {err}",
+            file=sys.stderr,
+        )
+        return
+
+    channels = cfg.setdefault("channels", {})
+    weixin = channels.setdefault("openclaw-weixin", {})
+    weixin["channelConfigUpdatedAt"] = _js_iso_utc()
+    accounts = weixin.setdefault("accounts", {})
+    accounts[account_id] = {"enabled": True}
+
+    _atomic_write(cfg_path, json.dumps(cfg, indent=2) + "\n", 0o600)
+    print(
+        f"[seed-wechat-accounts] registered channels.openclaw-weixin.accounts.{account_id} in {cfg_path}"
+    )
+
+
 def main() -> int:
     if os.environ.get("NEMOCLAW_WECHAT_ENABLED") != "1":
         return 0
@@ -125,6 +180,8 @@ def main() -> int:
     print(
         f"[seed-wechat-accounts] seeded {account_file} and registered {account_id} in {accounts_index}"
     )
+
+    _patch_openclaw_config(account_id)
     return 0
 
 

@@ -396,6 +396,54 @@ describe("onboard session", () => {
     expect(fresh.telegramConfig).toBeNull();
   });
 
+  it("persists wechatConfig across save/load roundtrips", () => {
+    // wechatConfig captures the host-side QR handshake result. Persisting it
+    // is what lets a later `nemoclaw onboard` resume detect IDC-baseUrl
+    // drift and force a sandbox recreate (see onboard.ts wechatConfigChanged).
+    const created = session.createSession();
+    created.wechatConfig = {
+      accountId: "ilink-bot-42",
+      baseUrl: "https://ilinkai.wechat.com",
+      userId: "user-42",
+    };
+    session.saveSession(created);
+
+    const loaded = session.loadSession()!;
+    expect(loaded.wechatConfig).toEqual({
+      accountId: "ilink-bot-42",
+      baseUrl: "https://ilinkai.wechat.com",
+      userId: "user-42",
+    });
+  });
+
+  it("rejects malformed wechatConfig on load and falls back to null", () => {
+    // Hand-edited session — non-string fields should be discarded rather than
+    // round-tripped through to consumers that expect strings.
+    const seed = session.createSession();
+    session.saveSession(seed);
+    const onDisk = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
+    onDisk.wechatConfig = { accountId: 7, baseUrl: { nested: true }, userId: null };
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(onDisk));
+
+    const loaded = session.loadSession()!;
+    expect(loaded.wechatConfig).toBeNull();
+  });
+
+  it("keeps wechatConfig partial when only some fields are present", () => {
+    // The QR handshake currently always produces all three fields, but the
+    // type allows partial — e.g. a future flow where userId is opted-out.
+    const created = session.createSession();
+    created.wechatConfig = { accountId: "primary" };
+    session.saveSession(created);
+    const loaded = session.loadSession()!;
+    expect(loaded.wechatConfig).toEqual({ accountId: "primary" });
+  });
+
+  it("defaults wechatConfig to null for fresh sessions", () => {
+    const fresh = session.createSession();
+    expect(fresh.wechatConfig).toBeNull();
+  });
+
   it("persists and clears web search config through safe session updates", () => {
     session.saveSession(session.createSession());
     session.markStepComplete("provider_selection", {
@@ -763,6 +811,36 @@ describe("onboard session", () => {
 
     const loaded = session.loadSession()!;
     expect(loaded.telegramConfig).toBeNull();
+  });
+
+  it("filterSafeUpdates routes wechatConfig through markStepComplete", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      wechatConfig: { accountId: "primary", baseUrl: "https://x", userId: "u" },
+    });
+
+    const loaded = session.loadSession()!;
+    expect(loaded.wechatConfig).toEqual({
+      accountId: "primary",
+      baseUrl: "https://x",
+      userId: "u",
+    });
+
+    // Explicit null clears the field (used when WeChat is removed from the
+    // enabled channels on a subsequent onboard).
+    session.markStepComplete("provider_selection", { wechatConfig: null });
+    const cleared = session.loadSession()!;
+    expect(cleared.wechatConfig).toBeNull();
+  });
+
+  it("filterSafeUpdates drops malformed wechatConfig values", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      wechatConfig: { accountId: 9000 } as unknown as { accountId: string },
+    });
+
+    const loaded = session.loadSession()!;
+    expect(loaded.wechatConfig).toBeNull();
   });
 
   it("createSession with messagingChannels override", () => {

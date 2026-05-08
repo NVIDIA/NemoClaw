@@ -226,6 +226,33 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.telegram.groups).toBeUndefined();
   });
 
+  it("does NOT add channels.openclaw-weixin even when WeChat is enabled", () => {
+    // Chicken-and-egg: the upstream @tencent-weixin/openclaw-weixin plugin
+    // is registered AFTER this script runs, so writing channels.openclaw-weixin
+    // here would make `openclaw plugins install` fail with "unknown channel
+    // id: openclaw-weixin". The block is instead added post-install by
+    // scripts/seed-wechat-accounts.py (see _patch_openclaw_config).
+    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
+    const wechatConfig = Buffer.from(
+      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+    ).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
+    });
+    expect(config.channels?.["openclaw-weixin"]).toBeUndefined();
+    expect(config.channels?.wechat).toBeUndefined();
+  });
+
+  it("does not crash when other channels are alongside wechat", () => {
+    // Regression guard: the wechat branch must not poison the channels dict
+    // for sibling channels that ARE emitted upfront.
+    const channels = Buffer.from(JSON.stringify(["telegram", "wechat"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram).toBeDefined();
+    expect(config.channels?.["openclaw-weixin"]).toBeUndefined();
+  });
+
   it("emits canonical openshell:resolve:env: placeholders for non-Slack channels", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });

@@ -21,28 +21,6 @@ COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
 RUN npm ci && npm run build
 
-# Prepare the upstream WeChat plugin (@tencent-weixin/openclaw-weixin@2.4.2)
-# here in the builder stage — which has unrestricted network — so the runtime
-# stage can register it from a local path without ever calling the npm
-# registry. `npm pack` downloads + extracts the published tarball; `npm
-# install --omit=dev` populates the package's own node_modules. The whole
-# directory is self-contained and gets COPYed into the runtime stage as
-# transient build state (cleaned up after `openclaw plugins install`).
-RUN mkdir -p /tmp/openclaw-weixin \
-    && cd /tmp \
-    && npm pack --silent '@tencent-weixin/openclaw-weixin@2.4.2' \
-    && tar xzf tencent-weixin-openclaw-weixin-*.tgz \
-        -C /tmp/openclaw-weixin --strip-components=1 \
-    && rm tencent-weixin-openclaw-weixin-*.tgz \
-    && cd /tmp/openclaw-weixin \
-    && node -e 'const fs=require("fs"); \
-        const p=JSON.parse(fs.readFileSync("package.json","utf8")); \
-        p.bundleDependencies=Object.keys(p.dependencies||{}); \
-        fs.writeFileSync("package.json",JSON.stringify(p,null,2));' \
-    && npm install --omit=dev --no-audit --no-fund --package-lock=false \
-    && npm pack --silent --pack-destination=/tmp \
-    && mv /tmp/tencent-weixin-openclaw-weixin-*.tgz /tmp/openclaw-weixin-bundle.tgz
-
 # Stage 2: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
@@ -383,19 +361,8 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
     NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED}
 
-# Pull a self-contained tarball of the upstream WeChat plugin (with its
-# node_modules already bundled inside, prepared in the builder stage) into
-# a transient /tmp path. `openclaw plugins install <tgz>` extracts it and
-# any internal `npm install` becomes a no-op because every dep is already
-# present — so the runtime stage never needs network. NPM_CONFIG_OFFLINE
-# is set as a safety net in case openclaw triggers npm in offline mode.
-COPY --from=builder /tmp/openclaw-weixin-bundle.tgz /tmp/openclaw-weixin-bundle.tgz
-
 WORKDIR /sandbox
 USER sandbox
-ENV NPM_CONFIG_OFFLINE=true \
-    NPM_CONFIG_AUDIT=false \
-    NPM_CONFIG_FUND=false
 
 # Write openclaw.json with gateway config but WITHOUT the real auth token.
 # The gateway auth token is generated at container startup by the entrypoint
@@ -424,40 +391,49 @@ ENV NPM_CONFIG_OFFLINE=true \
 # list of env vars and derivation rules.
 RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 
-# Install NemoClaw plugin into OpenClaw. Prune non-runtime metadata from
-# staged bundled plugin dependencies before this layer is committed; deleting
-# it in a later layer would not reduce the OCI image imported by k3s.
+# Install the upstream WeChat plugin from the npm registry while build-time
+# network access is still available. Must run BEFORE NPM_CONFIG_OFFLINE=true
+# below so openclaw's bundled npm can resolve @tencent-weixin/openclaw-weixin
+# and its runtime deps (qrcode-terminal, zod) directly. Runs as the sandbox
+# user (USER sandbox above), so the plugin lands in /sandbox/.openclaw/
+# extensions/ — the runtime HOME for the agent process.
 #
-# When the operator enabled WeChat in onboard, also install the upstream
-# @tencent-weixin/openclaw-weixin plugin (see
-# https://docs.openclaw.ai/channels/wechat — the package that actually
-# speaks iLink and delivers messages), enable it in openclaw config, and
-# seed its on-disk account store with the iLink session that nemoclaw
-# onboard already captured via the host-side QR login. Seeding the store
-# directly skips the upstream plugin's normal `openclaw channels login`
-# step, which would otherwise drive an in-sandbox QR scan with no terminal
-# and no WeChat-paired phone.
+# Then flip the plugin's enabled flag in openclaw.json (just generated above)
+# and seed its on-disk account store with the iLink session that nemoclaw
+# onboard captured via the host-side QR login. Seeding directly skips the
+# upstream plugin's normal `openclaw channels login`, which would otherwise
+# drive an in-sandbox QR scan with no terminal and no WeChat-paired phone.
+# The seeded `token` value is `openshell:resolve:env:WECHAT_BOT_TOKEN` (same
+# placeholder pattern Telegram and Discord use); the OpenShell L7 proxy
+# substitutes the real bot token at egress.
 #
-# The seeded `token` value is `openshell:resolve:env:WECHAT_BOT_TOKEN` —
-# same placeholder pattern Telegram and Discord use. The OpenShell L7
-# proxy substitutes the real bot token at egress, so nothing secret lands
-# inside the image.
-#
-# Pin the upstream version: bumping is a third-party Tencent dependency on a
-# sandbox-network critical path, so version bumps need explicit review.
+# Pin the upstream version — third-party Tencent dependency on a
+# sandbox-network critical path; bumps need explicit review.
 # hadolint ignore=DL3059,DL4006
 RUN (openclaw doctor --fix > /dev/null 2>&1 || true) \
-    && (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
     && if [ "${NEMOCLAW_WECHAT_ENABLED}" = "1" ]; then \
-           set -x; \
-           openclaw plugins install /tmp/openclaw-weixin-bundle.tgz; \
-           rm -f /tmp/openclaw-weixin-bundle.tgz; \
+           set -eux; \
+           openclaw plugins install \
+               '@tencent-weixin/openclaw-weixin@2.4.2' --pin; \
            openclaw config set plugins.entries.openclaw-weixin.enabled true; \
            openclaw plugins list; \
            python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py; \
            ls -la "$HOME/.openclaw/openclaw-weixin/" "$HOME/.openclaw/openclaw-weixin/accounts/"; \
            set +x; \
-       fi \
+       fi
+
+# Lock down npm: no further registry traffic in this image. Everything past
+# this point must resolve from local sources only.
+ENV NPM_CONFIG_OFFLINE=true \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false
+
+# Install NemoClaw plugin into OpenClaw (local /opt/nemoclaw, no network).
+# Prune non-runtime metadata from staged bundled plugin dependencies before
+# this layer is committed; deleting it in a later layer would not reduce the
+# OCI image imported by k3s.
+# hadolint ignore=DL3059,DL4006
+RUN (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \
             -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o \
