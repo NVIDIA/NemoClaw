@@ -771,6 +771,9 @@ const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
 const selectOnboardAgent = createOnboardAgentSelector({ isNonInteractive, note, prompt });
 
+/**
+ * Normalize user-provided truthy/falsy aliases for compatible endpoint reasoning mode.
+ */
 function normalizeReasoningFlag(value: string | null | undefined): "true" | "false" | null {
   const normalized = String(value ?? "")
     .trim()
@@ -784,10 +787,23 @@ function normalizeReasoningFlag(value: string | null | undefined): "true" | "fal
   return null;
 }
 
-async function configureCompatibleEndpointReasoning(): Promise<"true" | "false"> {
-  const configured = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING);
+/**
+ * Resolve compatible-endpoint reasoning mode and mirror it into process env for probes/builds.
+ */
+async function configureCompatibleEndpointReasoning(
+  storedValue?: string | null,
+): Promise<"true" | "false"> {
+  const configured = normalizeReasoningFlag(storedValue ?? process.env.NEMOCLAW_REASONING);
   process.env.NEMOCLAW_REASONING = configured ?? "false";
   return process.env.NEMOCLAW_REASONING as "true" | "false";
+}
+
+/**
+ * Drop compatible-endpoint reasoning state when the user switches providers.
+ */
+function clearCompatibleEndpointReasoning(): null {
+  delete process.env.NEMOCLAW_REASONING;
+  return null;
 }
 
 const { getTransportRecoveryMessage } = validationRecovery;
@@ -4107,6 +4123,7 @@ async function setupNim(
           hermesAuthMethod,
           hermesToolGateways,
           preferredInferenceApi,
+          compatibleEndpointReasoning,
           allowToolsIncompatible,
         } = state);
         compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;

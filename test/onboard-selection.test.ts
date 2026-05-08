@@ -3046,6 +3046,7 @@ const { setupNim } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-openai-reasoning-check.js");
+    const curlArgsLog = path.join(tmpDir, "custom-openai-reasoning-curl-args.log");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
@@ -3054,6 +3055,8 @@ const { setupNim } = require(${onboardPath});
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
+args_log=${JSON.stringify(curlArgsLog)}
+printf '%s\\n' "$*" >> "$args_log"
 body='{"error":{"message":"bad request"}}'
 status="400"
 outfile=""
@@ -3132,6 +3135,10 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "reasoning-model");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.reasoning, "true");
+    const curlInvocations = fs.readFileSync(curlArgsLog, "utf-8");
+    assert.match(curlInvocations, /chat\/completions/);
+    assert.doesNotMatch(curlInvocations, /\/responses/);
+    assert.doesNotMatch(curlInvocations, /(^|\s)-N(\s|$)/);
     assert.ok(
       payload.messages.every(
         (message: string) => !/Enable reasoning mode for this model/.test(message),
