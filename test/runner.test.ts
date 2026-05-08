@@ -589,10 +589,10 @@ describe("regression guards", () => {
         defs.push(path.relative(repoRoot, file));
       }
     }
-    // runner.ts (CJS consumers) and shell-quote.ts (ESM consumers like config-io.ts)
+    // runner.ts (CJS consumers) and core/shell-quote.ts (ESM consumers like config-io.ts)
     expect(defs.sort()).toEqual([
+      path.join("src", "lib", "core", "shell-quote.ts"),
       path.join("src", "lib", "runner.ts"),
-      path.join("src", "lib", "shell-quote.ts"),
     ]);
   });
 

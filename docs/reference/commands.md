@@ -65,7 +65,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes-i-accept-third-party-software]
 ```
 
 :::{warning}
@@ -133,6 +133,14 @@ or:
 $ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
 ```
 
+For scripted installer runs, pass explicit acceptance to the `bash` side of the installer pipe:
+
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```
+
+If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
+
 To enable Brave Search in non-interactive mode, set:
 
 ```console
@@ -145,7 +153,7 @@ If Brave Search key validation fails in non-interactive mode, onboarding prints 
 After fixing the key, re-enable web search with `nemoclaw config web-search`.
 
 The wizard prompts for a sandbox name.
-Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
+Names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Uppercase letters are automatically lowercased.
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 Use `--agent <name>` to target a specific installed agent profile during onboarding.
@@ -217,13 +225,15 @@ If a `--resume` is attempted with a different `--from` path than the original se
 #### `--name <sandbox>`
 
 Set the sandbox name without going through the interactive prompt.
-The same RFC 1123 and reserved-name rules that the wizard enforces apply here too — names that match a NemoClaw CLI command (`status`, `list`, `debug`, etc.) are rejected up front.
+The same name format and reserved-name rules that the wizard enforces apply here too. Names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+Names that match a NemoClaw CLI command (`status`, `list`, `debug`, etc.) are rejected up front.
 
 ```console
 $ nemoclaw onboard --non-interactive --name my-build --from path/to/Dockerfile
 ```
 
 The flag wins over `NEMOCLAW_SANDBOX_NAME`.
+When prompting is possible, `NEMOCLAW_SANDBOX_NAME` fills the interactive default so you can press Enter to accept it.
 When prompting is impossible (no TTY or `--non-interactive`), the env var is also honoured so existing CI scripts keep working.
 Combining `--from <Dockerfile>` with non-interactive onboarding requires one of `--name` or `NEMOCLAW_SANDBOX_NAME`; otherwise onboarding exits rather than silently defaulting to `my-assistant` and clobbering the default sandbox.
 
@@ -235,6 +245,20 @@ This variant of `nemoclaw onboard` accepts a `--from <Dockerfile>` argument to b
 ```console
 $ nemoclaw onboard --from ./Dockerfile.custom
 ```
+
+### GPU passthrough
+
+When `nemoclaw onboard` detects an NVIDIA GPU on the host (`nvidia-smi` succeeds), it enables OpenShell GPU passthrough at both the gateway and sandbox level by default.
+Use `--no-gpu` to opt out when you want host-side inference providers only and do not need direct GPU access inside the sandbox.
+Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not detected.
+
+Prerequisites:
+
+- NVIDIA GPU drivers installed and working (`nvidia-smi` must succeed).
+- NVIDIA Container Toolkit configured for Docker.
+
+When GPU passthrough is enabled and a gateway already exists without it, onboarding exits with guidance to destroy and re-onboard.
+To add GPU to an existing sandbox, rerun with `--recreate-sandbox`.
 
 ### `nemoclaw list`
 
@@ -257,6 +281,8 @@ Prefer provisioning the remote host separately, then running the standard NemoCl
 
 Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
 This command remains as a compatibility wrapper for the older Brev-specific bootstrap flow.
+The Brev instance name is the positional argument.
+The sandbox name comes from `NEMOCLAW_SANDBOX_NAME` and defaults to `my-assistant`; invalid sandbox names fail before Brev provisioning starts.
 
 ```console
 $ nemoclaw deploy <instance-name>
@@ -306,11 +332,14 @@ The command probes every inference provider and reports one of three states on t
 | `healthy` | The provider endpoint returned a reachable response. |
 | `unreachable` | The probe failed. The output includes the endpoint URL and a remediation hint. |
 | `not probed` | The endpoint URL is not known (for example, `compatible-*` providers). |
+| `not verified` | NemoClaw could not verify the sandbox or gateway state, so it skips inference probing. |
 
 Local providers (Ollama, vLLM) probe the host-side health endpoint.
 Remote providers (NVIDIA Endpoints, OpenAI, Anthropic, Gemini) use a lightweight reachability check; any HTTP response, including `401` or `403`, counts as reachable.
 No API keys are sent.
 For cloud-only providers, the output omits the NIM status line unless a NIM container is registered or an unexpected NIM container is running.
+If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
+Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
 
 A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.
@@ -342,11 +371,13 @@ $ nemoclaw my-assistant doctor [--json]
 
 View sandbox logs.
 Use `--follow` to stream output in real time.
+Use `--tail <lines>` or `-n <lines>` to limit the number of returned lines.
+Use `--since <duration>` to show recent logs only, such as `5m`, `1h`, or `30s`.
 The command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream.
 If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source.
 
 ```console
-$ nemoclaw my-assistant logs [--follow]
+$ nemoclaw my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]
 ```
 
 ### `nemoclaw <name> gateway-token`
@@ -383,7 +414,7 @@ If you want to upgrade the sandbox while preserving state, use `nemoclaw <name> 
 :::
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
-Pass `--yes` or `--force` to skip the prompt in scripted workflows.
+Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
 ```console
 $ nemoclaw my-assistant destroy
@@ -572,18 +603,19 @@ Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 
 ```console
-$ nemoclaw my-assistant rebuild [--yes] [--verbose]
+$ nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--yes`, `--force` | Skip the confirmation prompt |
-| `--verbose` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
+| `--yes`, `-y`, `--force` | Skip the confirmation prompt |
+| `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 
 If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox.
-Pass `--yes` or `--force` to skip the prompt in scripted workflows.
+Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
 The sandbox must be running for the backup step to succeed.
+If any manifest-defined state path cannot be archived, `rebuild` reports the failed paths and exits before destroying the original sandbox.
 After restore, the command runs `openclaw doctor --fix` for cross-version structure repair.
 
 ### `nemoclaw upgrade-sandboxes`
@@ -593,14 +625,14 @@ NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` fr
 Sandboxes that match the current digest are left alone.
 
 ```console
-$ nemoclaw upgrade-sandboxes [--check] [--auto] [--yes]
+$ nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--check` | List stale sandboxes without rebuilding any of them. Exits non-zero if any are stale. |
 | `--auto` | Rebuild every stale sandbox without prompting. Used by the installer to upgrade in place. |
-| `--yes` | Skip the confirmation prompt for the rebuild plan. |
+| `--yes`, `-y` | Skip the confirmation prompt for the rebuild plan. |
 
 Each rebuild reuses the same workspace backup-and-restore flow as `nemoclaw <name> rebuild`, so workspace files survive the upgrade.
 If the registry is unreachable (offline or firewalled hosts), NemoClaw falls back to the unpinned `:latest` tag and reports that the digest could not be resolved instead of failing.
@@ -779,9 +811,11 @@ This command remains as a compatibility alias to `nemoclaw tunnel stop`.
 ### `nemoclaw status`
 
 Show the sandbox list and the status of host auxiliary services (for example cloudflared).
+Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and messaging health.
 
 ```console
 $ nemoclaw status
+$ nemoclaw status --json
 ```
 
 ### `nemoclaw setup`
@@ -817,14 +851,14 @@ Gathers system info, Docker state, gateway logs, and sandbox status into a summa
 Use `--sandbox <name>` to target a specific sandbox, `--quick` for a smaller snapshot, or `--output <path>` to save a tarball that you can attach to an issue.
 
 ```console
-$ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
+$ nemoclaw debug [--quick|-q] [--sandbox NAME] [--output PATH|-o PATH]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--quick` | Collect minimal diagnostics only |
+| `--quick`, `-q` | Collect minimal diagnostics only |
 | `--sandbox NAME` | Target a specific sandbox (default: auto-detect) |
-| `--output PATH` | Write diagnostics tarball to the given path |
+| `--output PATH`, `-o PATH` | Write diagnostics tarball to the given path |
 
 If `--output` is set and the tarball cannot be written (for example, the destination directory is missing or read-only), the command exits non-zero so scripts can detect the failure.
 
@@ -859,13 +893,13 @@ The `destroy` and `rebuild` commands clean up the image automatically, but image
 This command lists all `openshell/sandbox-from:*` images, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
 
 ```console
-$ nemoclaw gc [--dry-run] [--yes|--force]
+$ nemoclaw gc [--dry-run] [--yes|-y|--force]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | List orphaned images without removing them |
-| `--yes`, `--force` | Skip the confirmation prompt |
+| `--yes`, `-y`, `--force` | Skip the confirmation prompt |
 
 ### `nemoclaw uninstall`
 
@@ -928,6 +962,21 @@ These overrides apply to onboarding, status checks, health probes, and the unins
 Defaults are unchanged when no variable is set.
 If `NEMOCLAW_DASHBOARD_PORT` or the port from `CHAT_UI_URL` is already occupied by another sandbox, onboarding scans `18789` through `18799` and uses the next free dashboard port.
 Pass `--control-ui-port <N>` to require a specific port.
+
+### Onboard timeouts
+
+The following environment variables tune onboard-time wall-clock limits. Set them before running `nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
+
+```console
+$ export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600
+$ nemoclaw onboard
+```
+
+If the pull exceeds the limit, onboarding emits the timeout in minutes plus a hint to raise this variable, and the partial download is preserved for the next attempt.
 
 ## NemoHermes Alias
 

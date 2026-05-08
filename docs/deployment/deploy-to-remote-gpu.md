@@ -62,6 +62,9 @@ $ nemoclaw deploy <instance-name>
 ```
 
 Replace `<instance-name>` with a name for your remote instance, for example `my-gpu-box`.
+The sandbox created on the remote VM uses `NEMOCLAW_SANDBOX_NAME`, or `my-assistant` when the variable is unset.
+Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+The deploy wrapper validates the sandbox name before it provisions the Brev instance, opens SSH, or starts the remote installer.
 
 The legacy compatibility flow performs the following steps on the VM:
 

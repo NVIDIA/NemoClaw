@@ -15,6 +15,15 @@
 export interface GatewayTokenCommandDeps {
   /** Pull gateway.auth.token from the sandbox config (host-side helper). */
   fetchToken: (sandboxName: string) => string | null;
+  /**
+   * Resolve the agent name registered for the sandbox (e.g. "openclaw",
+   * "hermes"). When omitted -- or when the lookup throws -- the OpenClaw
+   * code path is used unchanged so callers without registry access keep
+   * working. Returning null is treated the same as "openclaw" since the
+   * registry stored that as the implicit default before the agent field
+   * existed.
+   */
+  getSandboxAgent?: (sandboxName: string) => string | null;
   /** Optional stdout sink -- defaults to console.log. */
   log?: (message: string) => void;
   /** Optional stderr sink -- defaults to console.error. */
@@ -41,6 +50,25 @@ export function runGatewayTokenCommand(
 ): number {
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
+
+  // NCQ #3180: gateway-token only applies to the OpenClaw agent. Hermes (and
+  // any other non-OpenClaw agent) does not store a gateway auth token, so
+  // skip the OpenClaw lookup entirely and surface an agent-aware message
+  // instead of the misleading "make sure the sandbox is running" hint.
+  let resolvedAgent: string | null = null;
+  if (deps.getSandboxAgent) {
+    try {
+      resolvedAgent = deps.getSandboxAgent(sandboxName);
+    } catch {
+      resolvedAgent = null;
+    }
+  }
+  if (resolvedAgent && resolvedAgent !== "openclaw") {
+    error(
+      `  gateway-token is not applicable for sandbox '${sandboxName}': it uses the '${resolvedAgent}' agent, which does not expose a gateway auth token. This command only supports the OpenClaw agent.`,
+    );
+    return 1;
+  }
 
   let token: string | null;
   try {

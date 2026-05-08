@@ -122,6 +122,38 @@ function minimalBlueprint(overrides?: Record<string, unknown>): Record<string, u
   };
 }
 
+function routedBlueprint(): Record<string, unknown> {
+  return {
+    version: "1.0",
+    components: {
+      inference: {
+        profiles: {
+          routed: {
+            provider_type: "openai",
+            provider_name: "nvidia-router",
+            endpoint: "http://localhost:4000/v1",
+            model: "routed",
+            credential_env: "NVIDIA_API_KEY",
+            credential_default: "router-local",
+            timeout_secs: 180,
+          },
+        },
+      },
+      sandbox: {
+        image: "openclaw",
+        name: "test-sandbox",
+        forward_ports: [18789],
+      },
+      router: {
+        enabled: true,
+        port: 4000,
+        pool_config_path: "router/pool-config.yaml",
+      },
+      policy: { additions: {} },
+    },
+  };
+}
+
 function seedBlueprintFile(bp?: Record<string, unknown>): void {
   addFile("blueprint.yaml", YAML.stringify(bp ?? minimalBlueprint()));
 }
@@ -377,6 +409,25 @@ describe("runner", () => {
       expect(out).toContain("RUN_ID:");
       expect(out).toContain("PROGRESS:10:Validating blueprint");
       expect(out).toContain("PROGRESS:100:Plan complete");
+    });
+
+    it("includes router info when router is enabled", async () => {
+      captureStdout();
+      mockExeca.mockResolvedValue({ exitCode: 0 });
+
+      const plan = await actionPlan("routed", routedBlueprint());
+      expect(plan.router.enabled).toBe(true);
+      expect(plan.router.port).toBe(4000);
+      expect(plan.router.pool_config_path).toBe("router/pool-config.yaml");
+    });
+
+    it("defaults router to disabled when not in blueprint", async () => {
+      captureStdout();
+      mockExeca.mockResolvedValue({ exitCode: 0 });
+
+      const plan = await actionPlan("default", minimalBlueprint());
+      expect(plan.router.enabled).toBe(false);
+      expect(plan.router.port).toBe(4000);
     });
   });
 
@@ -678,6 +729,24 @@ describe("runner", () => {
       );
       if (!inferenceCall) throw new Error("inference set call not found");
       expect(inferenceCall[1]).not.toContain("--timeout");
+    });
+
+    it("passes endpoint as-is from blueprint (no rewriting)", async () => {
+      process.env.NVIDIA_API_KEY = "test-key";
+      try {
+        await actionApply("routed", routedBlueprint());
+
+        const providerCall = mockExeca.mock.calls.find(
+          (c) => Array.isArray(c[1]) && c[1].includes("provider"),
+        );
+        if (!providerCall) throw new Error("provider create call not found");
+        const configArg = (providerCall[1] as string[]).find((a: string) =>
+          a.startsWith("OPENAI_BASE_URL="),
+        );
+        expect(configArg).toBe("OPENAI_BASE_URL=http://localhost:4000/v1");
+      } finally {
+        delete process.env.NVIDIA_API_KEY;
+      }
     });
   });
 

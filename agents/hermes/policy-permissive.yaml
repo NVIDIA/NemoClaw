@@ -106,7 +106,42 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
-      - host: api.nousresearch.com
+      - host: inference-api.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: portal.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: browser-use-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: modal-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: openai-audio-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: fal-queue-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: firecrawl-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: tool-gateway.nousresearch.com
         port: 443
         protocol: rest
         enforcement: enforce

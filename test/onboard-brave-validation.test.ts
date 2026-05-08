@@ -153,6 +153,6 @@ describe("configureWebSearch (non-interactive)", () => {
 
     expect(exitCode).toBe(0);
     expect(payload.exitCalls).toEqual([]);
-    expect(payload.result).toEqual({ fetchEnabled: true });
+    expect(payload.result).toEqual({ fetchEnabled: true, provider: "brave" });
   });
 });

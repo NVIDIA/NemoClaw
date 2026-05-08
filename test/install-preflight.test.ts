@@ -488,7 +488,7 @@ exit 98
     expect(output).toMatch(/--version/);
     expect(output).toMatch(/NEMOCLAW_PROVIDER/);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
     expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
@@ -504,7 +504,7 @@ exit 98
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
   });
 
@@ -563,11 +563,34 @@ exit 98
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
     const npmLog = path.join(tmp, "npm.log");
+    const pythonLog = path.join(tmp, "python.log");
+    const gitLog = path.join(tmp, "git.log");
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(path.join(tmp, ".git"));
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "$GIT_LOG_PATH"
+exit 90
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "python3"),
+      `#!/usr/bin/env bash
+printf 'python3 %s\\n' "$*" >> "$PYTHON_LOG_PATH"
+exit 88
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "pip3"),
+      `#!/usr/bin/env bash
+printf 'pip3 %s\\n' "$*" >> "$PYTHON_LOG_PATH"
+exit 89
+`,
+    );
     writeNpmStub(
       fakeBin,
       `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
@@ -602,6 +625,13 @@ fi`,
       path.join(tmp, "nemoclaw", "package.json"),
       JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
     );
+    fs.mkdirSync(path.join(tmp, "nemoclaw-blueprint", "router", "llm-router"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw-blueprint", "router", "llm-router", "pyproject.toml"),
+      "[project]\nname = 'llm-router'\n",
+    );
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
@@ -614,6 +644,8 @@ fi`,
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         NPM_LOG_PATH: npmLog,
+        PYTHON_LOG_PATH: pythonLog,
+        GIT_LOG_PATH: gitLog,
       },
     });
 
@@ -624,6 +656,10 @@ fi`,
     expect(log).toMatch(/^link/m);
     // the GitHub URL must NOT appear — this is a local install
     expect(log).not.toMatch(new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    // Model Router must not run provider-specific dependency setup from the generic installer.
+    expect(fs.existsSync(pythonLog)).toBe(false);
+    const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
+    expect(gitCalls).not.toMatch(/submodule/);
   });
 
   it("auto-resumes an interrupted onboarding session during install", () => {
@@ -1415,7 +1451,7 @@ exit 0
     expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
   });
 
-  it("shows source hint even when bin dir is already in PATH (stale hash protection)", () => {
+  it("preserves ready output when nemoclaw is already resolvable after install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-ready-shell-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -1529,6 +1565,7 @@ exit 0
         PATH: `${fakeBin}:${prefixBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_SANDBOX_NAME: "my-assistant",
         NPM_PREFIX: prefix,
         NVM_DIR: nvmDir,
       },
@@ -1537,12 +1574,12 @@ exit 0
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
-    // Always show source hint — the parent shell may have stale hash-table
-    // entries after an upgrade/reinstall even when the dir is in PATH.
+    expect(output).not.toMatch(/this shell needs PATH refresh/);
     expect(output).toMatch(/\$ source /);
+    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
   });
 
-  it("shows shell reload hint when PATH was extended by the installer", () => {
+  it("makes current-shell PATH refresh obvious when the installer added the bin dir", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-reload-hint-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -1608,14 +1645,24 @@ fi`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_SANDBOX_NAME: "my-assistant",
         NPM_PREFIX: prefix,
         NVM_DIR: nvmDir,
+        SHELL: "/bin/bash",
       },
     });
 
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
-    expect(output).toMatch(/\$ source /);
+    expect(output).toContain(
+      "NemoClaw installed, but this shell needs PATH refresh before 'nemoclaw' will run.",
+    );
+    expect(output).toContain(`$ source ${path.join(tmp, ".bashrc")}`);
+    expect(output).toContain(`$ export PATH="${path.join(tmp, ".local", "bin")}:$PATH"`);
+    expect(fs.readFileSync(path.join(tmp, ".bashrc"), "utf-8")).toContain(
+      "# NemoClaw PATH setup",
+    );
+    expect(output).not.toContain("Your OpenClaw Sandbox is live.");
     expect(output).not.toContain("Onboarding has not run yet.");
     expect(output).not.toContain(
       "Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.",
@@ -3038,16 +3085,19 @@ echo "docker $*" >> ${JSON.stringify(phaseLog)}
 exit 0`,
     );
 
-    // Run main() directly via the bash entrypoint check. We force stdin to
-    // /dev/null when stdinIsTty is false (default — simulates curl|bash).
+    // Run main() directly via the bash entrypoint check. We force stdin to a
+    // non-TTY pipe when stdinIsTty is false (default — simulates curl|bash).
+    // On Linux/WSL, spawnSync children can still inherit a controlling terminal
+    // even with pipe stdin, which leaves /dev/tty openable and correctly lets
+    // the installer prompt instead of fail fast. Use setsid to exercise the
+    // headless curl-pipe path where both stdin and /dev/tty are unavailable.
+    const useSetsid = !options.stdinIsTty && process.platform !== "darwin";
     const result = spawnSync(
-      "bash",
-      [INSTALLER_PAYLOAD],
+      useSetsid ? "setsid" : "bash",
+      useSetsid ? ["bash", INSTALLER_PAYLOAD] : [INSTALLER_PAYLOAD],
       {
         cwd: tmp,
         encoding: "utf-8",
-        // input: "" makes spawnSync attach a non-TTY stdin pipe — equivalent
-        // to curl|bash for the purposes of [ -t 0 ] and /dev/tty in CI.
         input: options.stdinIsTty ? undefined : "",
         env: {
           HOME: tmp,
@@ -3060,7 +3110,171 @@ exit 0`,
     return { result, phases, tmp };
   }
 
-  it("#2671: curl|bash with no flags exits 1 BEFORE phase 1 (atomic — no Node/CLI install)", () => {
+  function runInstallerWithTty(
+    answer: string,
+    stdinMode: "pipe" | "tty" = "pipe",
+    env: Record<string, string | undefined> = {},
+  ) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-tty-pipe-"));
+    const fakeBin = path.join(tmp, "bin");
+    const phaseLog = path.join(tmp, "phases.log");
+    fs.mkdirSync(fakeBin);
+
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+echo "node $*" >> ${JSON.stringify(phaseLog)}
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
+if [ -n "\${1:-}" ] && [ -f "$1" ]; then exit 0; fi
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+echo "npm $*" >> ${JSON.stringify(phaseLog)}
+if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "${path.join(tmp, "prefix")}"; exit 0; fi
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+echo "docker $*" >> ${JSON.stringify(phaseLog)}
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+echo "openshell $*" >> ${JSON.stringify(phaseLog)}
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "openshell 0.0.36"; fi
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+echo "nemoclaw $*" >> ${JSON.stringify(phaseLog)}
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "nemoclaw v0.5.0"; fi
+exit 0`,
+    );
+
+    const python =
+      spawnSync("bash", ["-lc", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
+      "python3";
+    const ptyRunner = `
+import os
+import pty
+import select
+import signal
+import sys
+import time
+
+installer = sys.argv[1]
+answer = sys.argv[2].encode()
+stdin_mode = sys.argv[3]
+pid, fd = pty.fork()
+if pid == 0:
+    if stdin_mode == "pipe":
+        devnull = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(devnull, 0)
+        os.close(devnull)
+    os.execvpe("bash", ["bash", installer], os.environ)
+
+output = bytearray()
+os.set_blocking(fd, False)
+deadline = time.time() + 20
+sent = False
+exit_code = 124
+timed_out = False
+while True:
+    if not sent:
+        os.write(fd, answer)
+        sent = True
+    ready, _, _ = select.select([fd], [], [], 0.1)
+    if ready:
+        try:
+            chunk = os.read(fd, 4096)
+        except BlockingIOError:
+            chunk = b""
+        except OSError:
+            chunk = b""
+        if chunk:
+            output.extend(chunk)
+    waited = os.waitpid(pid, os.WNOHANG)
+    if waited[0] == pid:
+        status = waited[1]
+        exit_code = os.waitstatus_to_exitcode(status)
+        break
+    if time.time() > deadline:
+        timed_out = True
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        break
+
+try:
+    if timed_out:
+        for _ in range(20):
+            waited = os.waitpid(pid, os.WNOHANG)
+            if waited[0] == pid:
+                exit_code = os.waitstatus_to_exitcode(waited[1])
+                break
+            time.sleep(0.05)
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass
+            exit_code = 124
+
+    for _ in range(100):
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        output.extend(chunk)
+except BlockingIOError:
+    pass
+except OSError:
+    pass
+finally:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+sys.stdout.buffer.write(output)
+sys.exit(exit_code)
+`;
+    const result = spawnSync(python, ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode], {
+      cwd: tmp,
+      encoding: "utf-8",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+      env: {
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        ...env,
+      },
+    });
+    const phases = fs.existsSync(phaseLog) ? fs.readFileSync(phaseLog, "utf-8") : "";
+    const stateFile = path.join(tmp, ".nemoclaw", "usage-notice.json");
+    const state = fs.existsSync(stateFile) ? fs.readFileSync(stateFile, "utf-8") : "";
+    return { result, phases, state };
+  }
+
+  function runInstallerWithPipedStdinAndTty(answer: string) {
+    return runInstallerWithTty(answer, "pipe");
+  }
+
+  function runInstallerWithInteractiveStdin(answer: string) {
+    return runInstallerWithTty(answer, "tty");
+  }
+
+  it("#2671: headless curl|bash with no flags exits 1 BEFORE phase 1 (atomic — no Node/CLI install)", () => {
     const { result, phases } = runInstaller({});
     expect(result.status).not.toBe(0);
     const output = `${result.stdout}${result.stderr}`;
@@ -3075,6 +3289,80 @@ exit 0`,
     expect(phases).toBe("");
   });
 
+  it("piped installs with a controlling TTY prompt before phase 1 and continue after acceptance", () => {
+    const { result, phases, state } = runInstallerWithPipedStdinAndTty("yes\n");
+    const output = `${result.stdout}${result.stderr}`;
+    const noticeVersion = JSON.parse(
+      fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "lib", "usage-notice.json"), "utf-8"),
+    ).version;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/prompting for the third-party software notice on \/dev\/tty/);
+    expect(output).toMatch(/Third-Party Software Notice - NemoClaw Installer/);
+    expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(output.indexOf("Third-Party Software Notice - NemoClaw Installer")).toBeGreaterThanOrEqual(0);
+    expect(output.indexOf("Node.js")).toBeGreaterThan(
+      output.indexOf("Third-Party Software Notice - NemoClaw Installer"),
+    );
+    expect(phases).not.toBe("");
+    expect(state).toContain(`"acceptedVersion": "${noticeVersion}"`);
+  }, 15_000);
+
+  it("interactive installs with stdin on a TTY prompt before phase 1 and continue after acceptance", () => {
+    const { result, phases, state } = runInstallerWithInteractiveStdin("yes\n");
+    const output = `${result.stdout}${result.stderr}`;
+    const noticeVersion = JSON.parse(
+      fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "lib", "usage-notice.json"), "utf-8"),
+    ).version;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Third-Party Software Notice - NemoClaw Installer/);
+    expect(output).toMatch(/Type 'yes'/);
+    expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
+    expect(output.indexOf("Third-Party Software Notice - NemoClaw Installer")).toBeGreaterThanOrEqual(0);
+    expect(output.indexOf("Node.js")).toBeGreaterThan(
+      output.indexOf("Third-Party Software Notice - NemoClaw Installer"),
+    );
+    expect(phases).not.toBe("");
+    expect(state).toContain(`"acceptedVersion": "${noticeVersion}"`);
+  }, 15_000);
+
+  it("piped installs with a controlling TTY still stop before phase 1 when acceptance is declined", () => {
+    const { result, phases, state } = runInstallerWithPipedStdinAndTty("\n");
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/Third-Party Software Notice - NemoClaw Installer/);
+    expect(output).toMatch(/Installation cancelled/);
+    expect(output).not.toMatch(/\[1\/3\] Node\.js/);
+    expect(phases).toBe("");
+    expect(state).toBe("");
+  });
+
+  it("interactive installs with stdin on a TTY still stop before phase 1 when acceptance is declined", () => {
+    const { result, phases, state } = runInstallerWithInteractiveStdin("\n");
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/Third-Party Software Notice - NemoClaw Installer/);
+    expect(output).toMatch(/Installation cancelled/);
+    expect(output).not.toMatch(/\[1\/3\] Node\.js/);
+    expect(phases).toBe("");
+    expect(state).toBe("");
+  });
+
+  it("--non-interactive alone with a controlling TTY still stops before phase 1", () => {
+    const { result, phases, state } = runInstallerWithTty("yes\n", "pipe", {
+      NEMOCLAW_NON_INTERACTIVE: "1",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(
+      /Non-interactive installation requires explicit third-party software acceptance/,
+    );
+    expect(output).toMatch(/--yes-i-accept-third-party-software/);
+    expect(output).not.toMatch(/Third-Party Software Notice - NemoClaw Installer/);
+    expect(output).not.toMatch(/\[1\/3\] Node\.js/);
+    expect(phases).toBe("");
+    expect(state).toBe("");
+  });
+
   it("--yes-i-accept-third-party-software alone is sufficient to clear the fail-fast gate", () => {
     // The flag implies non-interactive intent (set by main() before the
     // preflight check), so it must clear the gate AND let the install
@@ -3087,10 +3375,14 @@ exit 0`,
     expect(phases).not.toBe("");
   });
 
-  it("--non-interactive alone is sufficient to clear the fail-fast gate", () => {
+  it("--non-interactive alone does not clear the fail-fast gate", () => {
     const { result, phases } = runInstaller({ NEMOCLAW_NON_INTERACTIVE: "1" });
     const output = `${result.stdout}${result.stderr}`;
-    expect(output).not.toMatch(/Interactive third-party software acceptance requires a TTY/);
-    expect(phases).not.toBe("");
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(
+      /Non-interactive installation requires explicit third-party software acceptance/,
+    );
+    expect(output).toMatch(/--yes-i-accept-third-party-software/);
+    expect(phases).toBe("");
   });
 });

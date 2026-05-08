@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SandboxEntry } from "./registry.js";
+import type { SandboxEntry } from "./state/registry.js";
 
 interface MockRegistryState {
   sandboxes: Record<string, SandboxEntry>;
@@ -12,7 +12,7 @@ interface MockRegistryState {
 
 const mockRegistryState: MockRegistryState = { sandboxes: {}, defaultSandbox: null };
 
-vi.mock("./registry.js", () => ({
+vi.mock("./state/registry.js", () => ({
   listSandboxes: () => ({
     sandboxes: Object.values(mockRegistryState.sandboxes),
     defaultSandbox: mockRegistryState.defaultSandbox,
@@ -33,7 +33,7 @@ vi.mock("./registry.js", () => ({
   },
 }));
 
-vi.mock("./resolve-openshell.js", () => ({
+vi.mock("./adapters/openshell/resolve.js", () => ({
   resolveOpenshell: vi.fn(() => null),
 }));
 
@@ -41,11 +41,11 @@ vi.mock("./gateway-runtime-action.js", () => ({
   recoverNamedGatewayRuntime: vi.fn(),
 }));
 
-vi.mock("./openshell-runtime.js", () => ({
+vi.mock("./adapters/openshell/runtime.js", () => ({
   captureOpenshell: vi.fn(),
 }));
 
-vi.mock("./onboard-session.js", () => ({
+vi.mock("./state/onboard-session.js", () => ({
   loadSession: vi.fn(),
 }));
 
@@ -63,7 +63,7 @@ vi.mock("./runner.js", () => ({
 }));
 
 import { recoverRegistryEntries } from "./registry-recovery-action.js";
-import { loadSession } from "./onboard-session.js";
+import { loadSession } from "./state/onboard-session.js";
 
 describe("recoverRegistryEntries (#2753 seed-time guard)", () => {
   beforeEach(() => {

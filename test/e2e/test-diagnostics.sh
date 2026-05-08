@@ -80,6 +80,9 @@ skip() {
 # ── Resolve repo root ────────────────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# shellcheck source=test/e2e/lib/install-path-refresh.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/install-path-refresh.sh"
+
 # ── Install NemoClaw if not present ──────────────────────────────────────────
 install_nemoclaw() {
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -87,9 +90,7 @@ install_nemoclaw() {
     # shellcheck source=/dev/null
     . "$NVM_DIR/nvm.sh"
   fi
-  if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-    export PATH="$HOME/.local/bin:$PATH"
-  fi
+  nemoclaw_ensure_local_bin_on_path
 
   if command -v nemoclaw >/dev/null 2>&1; then
     log "nemoclaw already installed: $(nemoclaw --version 2>/dev/null || echo unknown)"
@@ -102,10 +103,7 @@ install_nemoclaw() {
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     bash "$REPO_ROOT/install.sh" --non-interactive --yes-i-accept-third-party-software \
     2>&1 | tee -a "$LOG_FILE"
-  if [ -f "$HOME/.bashrc" ]; then
-    # shellcheck source=/dev/null
-    source "$HOME/.bashrc" 2>/dev/null || true
-  fi
+  nemoclaw_refresh_install_env
   if ! command -v nemoclaw >/dev/null 2>&1; then
     log "ERROR: install.sh failed — nemoclaw not found"
     exit 1

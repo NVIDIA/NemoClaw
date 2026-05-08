@@ -6,7 +6,7 @@
  * creation failures.
  */
 
-import { CLI_NAME } from "./branding";
+import { CLI_NAME } from "./cli/branding";
 import fs from "node:fs";
 import path from "node:path";
 

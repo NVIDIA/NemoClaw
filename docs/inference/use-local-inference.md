@@ -25,7 +25,7 @@ status: published
 # Use a Local Inference Server
 
 NemoClaw can route inference to a model server running on your machine instead of a cloud API.
-This page covers Ollama, compatible-endpoint paths for other servers, and two experimental options for vLLM and NVIDIA NIM.
+This page covers Ollama, compatible-endpoint paths for other servers, and experimental managed options for vLLM and NVIDIA NIM.
 
 All approaches use the same `inference.local` routing model.
 The agent inside the sandbox never connects to your model server directly.
@@ -35,15 +35,16 @@ OpenShell intercepts inference traffic and forwards it to the local endpoint you
 
 - NemoClaw installed.
   Refer to the [Quickstart](../get-started/quickstart.md) if you have not installed yet.
-- A local model server running, or Ollama installed. The NemoClaw onboard wizard can also start Ollama for you.
+- A local model server running, or a supported Ollama, vLLM, or NIM setup that the NemoClaw onboard wizard can use, start, or install.
 
 ## Ollama
 
 Ollama is the default local inference option.
 The onboard wizard detects Ollama automatically when it is installed or running on the host.
 
-If Ollama is not running, NemoClaw starts it for you.
-On macOS, the wizard also offers to install Ollama through Homebrew if it is not present.
+If Ollama is installed but not running, NemoClaw starts it for you.
+On macOS and Linux, the wizard can also offer to install Ollama when it is not present.
+On WSL, the wizard can use, start, restart, or install Ollama on the Windows host through PowerShell interop.
 
 Run the onboard wizard.
 
@@ -54,17 +55,34 @@ $ nemoclaw onboard
 Select **Local Ollama** from the provider list.
 NemoClaw lists installed models or offers starter models if none are installed.
 It pulls the selected model, loads it into memory, and validates it before continuing.
-On WSL, if Ollama is running on the Windows host, NemoClaw pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
+If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
+On WSL, if you choose the Windows-host Ollama path, NemoClaw uses `host.docker.internal:11434` and pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
+
+### WSL with Windows-Host Ollama
+
+When NemoClaw runs inside WSL, the provider menu can include Windows-host Ollama actions:
+
+- **Use Ollama on Windows host** when the Windows daemon is already reachable.
+- **Restart Ollama on Windows host** when the daemon is installed but only bound to Windows loopback.
+- **Start Ollama on Windows host** when Ollama is installed but not running.
+- **Install Ollama on Windows host** when Windows does not have Ollama installed.
+
+The install and restart paths set `OLLAMA_HOST=0.0.0.0:11434` on the Windows side so Docker and WSL can reach the daemon through `host.docker.internal`.
+Use one Ollama instance on port `11434` at a time.
+If both WSL and Windows-host Ollama are running, pick the intended menu entry during onboarding so NemoClaw validates and pulls models against the right daemon.
 
 ### Authenticated Reverse Proxy
 
-NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated
-reverse proxy on `0.0.0.0:11435`.
+On non-WSL hosts, NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated reverse proxy on `0.0.0.0:11435`.
+The native install/start paths also reset NemoClaw-managed systemd launches to the loopback binding.
 Containers and other hosts on the local network reach Ollama only through the
 proxy, which validates a Bearer token before forwarding requests.
-Ollama itself is never exposed without authentication.
+On that native path, NemoClaw never exposes Ollama without authentication.
 
-The onboard wizard manages the proxy automatically:
+WSL Ollama paths do not use this proxy.
+Windows-host Ollama uses the Windows daemon through `host.docker.internal`.
+
+For non-WSL Ollama setups, the onboard wizard manages the proxy automatically:
 
 - Generates a random 24-byte token on first run and stores it in
   `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
@@ -207,9 +225,10 @@ $ NEMOCLAW_PROVIDER=anthropicCompatible \
   nemoclaw onboard --non-interactive
 ```
 
-## vLLM Auto-Detection (Experimental)
+## vLLM (Experimental)
 
 When vLLM is already running on `localhost:8000`, NemoClaw can detect it automatically and query the `/v1/models` endpoint to determine the loaded model.
+On supported Linux hosts with NVIDIA GPUs, the onboard wizard can also install or start a managed vLLM container for you.
 
 Set the experimental flag and run onboard.
 
@@ -218,7 +237,19 @@ $ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
 ```
 
 Select **Local vLLM [experimental]** from the provider list.
-NemoClaw detects the running model and validates the endpoint.
+If vLLM is already running, NemoClaw detects the running model and validates the endpoint.
+If vLLM is not running and your host matches a managed profile, select the **Install vLLM** or **Start vLLM** entry.
+NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, and prints progress markers while the model loads.
+The first run can take 10 to 30 minutes.
+Later runs reuse the cached image and model weights.
+
+Managed vLLM uses these profiles:
+
+| Host profile | Default model |
+|---|---|
+| DGX Spark | `Qwen/Qwen3.6-27B-FP8` |
+| DGX Station | `Qwen/Qwen3.6-27B-FP8` |
+| Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 :::{note}
 NemoClaw forces the `chat/completions` API path for vLLM.
@@ -227,14 +258,24 @@ The vLLM `/v1/responses` endpoint does not run the `--tool-call-parser`, so tool
 
 ### Non-Interactive Setup
 
+Use an already-running vLLM server:
+
 ```console
 $ NEMOCLAW_EXPERIMENTAL=1 \
   NEMOCLAW_PROVIDER=vllm \
   nemoclaw onboard --non-interactive
 ```
 
-NemoClaw auto-detects the model from the running vLLM instance.
-To override the model, set `NEMOCLAW_MODEL`.
+Install or start managed vLLM when a supported profile is detected:
+
+```console
+$ NEMOCLAW_EXPERIMENTAL=1 \
+  NEMOCLAW_PROVIDER=install-vllm \
+  nemoclaw onboard --non-interactive
+```
+
+NemoClaw records the model returned by vLLM's `/v1/models` endpoint.
+Start vLLM with the model you want before onboarding if you manage the server yourself.
 
 ## NVIDIA NIM (Experimental)
 

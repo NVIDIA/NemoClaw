@@ -47,12 +47,12 @@ function buildPreamble({
   policyPresets = "npm",
   alreadyApplied = ["npm", "pypi", "huggingface", "brew", "brave"],
 } = {}): string {
-  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
   const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
   const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
   const resolveOpenshellPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "resolve-openshell.js"),
+    path.join(repoRoot, "dist", "lib", "adapters", "openshell", "resolve.js"),
   );
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
 
@@ -159,7 +159,15 @@ console.log = () => {};
         policyMode: "suggested",
         policyPresets: "",
         // Balanced defaults plus a manually-added preset.
-        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "local-inference"],
+        alreadyApplied: [
+          "npm",
+          "pypi",
+          "huggingface",
+          "brew",
+          "brave",
+          "tavily",
+          "local-inference",
+        ],
       }) +
       String.raw`
 console.log = () => {};
@@ -193,7 +201,15 @@ console.log = () => {};
 
     // Final state should still contain every previously-applied preset.
     const finalSorted = payload.finalApplied.slice().sort();
-    assert.deepEqual(finalSorted, ["brave", "brew", "huggingface", "local-inference", "npm", "pypi"]);
+    assert.deepEqual(finalSorted, [
+      "brave",
+      "brew",
+      "huggingface",
+      "local-inference",
+      "npm",
+      "pypi",
+      "tavily",
+    ]);
   });
 
   // Custom presets loaded via `policy-add --from-file` / `--from-dir` are
