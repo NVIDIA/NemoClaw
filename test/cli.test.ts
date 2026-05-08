@@ -2473,9 +2473,9 @@ describe("CLI dispatch", () => {
     );
     expect(registryAfter.sandboxes.alpha).toBeFalsy();
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
-    expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
   });
 
   it("deletes messaging providers when destroying a sandbox", () => {
