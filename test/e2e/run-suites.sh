@@ -122,10 +122,12 @@ done
 
 echo
 echo "== suite summary =="
-for p in "${PASSED_STEPS[@]}"; do
+# bash 3.2 (macOS) fails on "${arr[@]}" when the array is empty under `set -u`;
+# use the `${arr[@]+...}` guard to expand to nothing when empty.
+for p in ${PASSED_STEPS[@]+"${PASSED_STEPS[@]}"}; do
   echo "  PASS ${p}"
 done
-for f in "${FAILED_STEPS[@]}"; do
+for f in ${FAILED_STEPS[@]+"${FAILED_STEPS[@]}"}; do
   echo "  FAIL ${f}"
 done
 
