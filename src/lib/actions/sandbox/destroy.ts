@@ -42,6 +42,19 @@ type RemoveSandboxRegistryEntryDeps = {
   removeSandbox?: typeof registry.removeSandbox;
 };
 
+type RunOpenshell = (
+  args: string[],
+  opts?: Record<string, unknown>,
+) => { status: number | null };
+
+export type CleanupSandboxServicesDeps = {
+  getSandbox?: typeof registry.getSandbox;
+  stopAll?: (opts: { sandboxName: string }) => void;
+  unloadOllamaModels?: () => void;
+  runOpenshell?: RunOpenshell;
+  rmSync?: typeof fs.rmSync;
+};
+
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
@@ -80,37 +93,60 @@ function hasNoLiveSandboxes(): boolean {
   return parseLiveSandboxNames(liveList.output).size === 0;
 }
 
-function cleanupSandboxServices(
+export function cleanupSandboxServices(
   sandboxName: string,
   { stopHostServices = false }: { stopHostServices?: boolean } = {},
+  deps: CleanupSandboxServicesDeps = {},
 ): void {
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const stopAll =
+    deps.stopAll ??
+    ((opts: { sandboxName: string }) => {
+      const services = require("../../services") as {
+        stopAll: (opts: { sandboxName: string }) => void;
+      };
+      services.stopAll(opts);
+    });
+  const unloadOllamaModels =
+    deps.unloadOllamaModels ??
+    (() => {
+      const { unloadOllamaModels: unload } = require("../../onboard-ollama-proxy") as {
+        unloadOllamaModels: () => void;
+      };
+      unload();
+    });
+  const runOpenshell =
+    deps.runOpenshell ??
+    ((args: string[], opts?: Record<string, unknown>) => {
+      const runtime = require("../../adapters/openshell/runtime") as {
+        runOpenshell: RunOpenshell;
+      };
+      return runtime.runOpenshell(args, opts);
+    });
+  const rmSync = deps.rmSync ?? fs.rmSync;
+
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
     // see src/lib/services.ts. Don't double-call here.
-    const { stopAll } = require("../../services");
     stopAll({ sandboxName });
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this
     // branch a single-sandbox destroy would leave models loaded on the GPU.
-    const sb = registry.getSandbox(sandboxName);
+    const sb = getSandbox(sandboxName);
     if (sb?.provider?.includes("ollama")) {
-      const { unloadOllamaModels } = require("../../onboard-ollama-proxy");
       unloadOllamaModels();
     }
   }
 
   try {
-    fs.rmSync(`/tmp/nemoclaw-services-${sandboxName}`, { recursive: true, force: true });
+    rmSync(`/tmp/nemoclaw-services-${sandboxName}`, { recursive: true, force: true });
   } catch {
     // PID directory may not exist — ignore.
   }
 
   // Delete messaging providers created during onboard. Suppress stderr so
   // "! Provider not found" noise doesn't appear when messaging was never configured.
-  const { runOpenshell } = require("../../adapters/openshell/runtime") as {
-    runOpenshell: (args: string[], opts?: Record<string, unknown>) => { status: number | null };
-  };
   for (const suffix of ["telegram-bridge", "discord-bridge", "slack-bridge", "slack-app"]) {
     runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
       ignoreError: true,
