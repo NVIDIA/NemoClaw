@@ -576,7 +576,7 @@ fi
 # listener sees the canonical openshell:resolve:env:VAR form. If the rewriter
 # is a no-op, the listener sees the raw Bolt-shape placeholder.
 info "Probing rewriter via loopback listener (proves http.request is wrapped)..."
-sl_loopback=$(sandbox_exec 'node -e "
+sl_loopback=$(sandbox_exec 'NODE_NO_WARNINGS=1 node -e "
 const http = require(\"http\");
 const server = http.createServer((req, res) => {
   let body = \"\";
