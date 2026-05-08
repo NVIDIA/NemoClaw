@@ -52,13 +52,19 @@ if (process.env.PI_E2E_ADVISOR_PROVIDER) {
 if (process.env.PI_E2E_ADVISOR_MODEL) {
   piArgs.unshift("--model", process.env.PI_E2E_ADVISOR_MODEL);
 }
-piArgs.push(prompt);
+const promptStdin = process.env.PI_E2E_ADVISOR_PROMPT_STDIN !== "0";
+if (promptStdin) {
+  piArgs.push("Analyze the E2E advisor prompt from stdin and return JSON only.");
+} else {
+  piArgs.push(prompt);
+}
 
 const child = spawnSync(piBin, piArgs, {
   cwd: root,
   encoding: "utf8",
   timeout: timeoutMs,
   maxBuffer: 20 * 1024 * 1024,
+  input: promptStdin ? prompt : undefined,
   env: {
     ...process.env,
     PI_SKIP_VERSION_CHECK: process.env.PI_SKIP_VERSION_CHECK || "1",
