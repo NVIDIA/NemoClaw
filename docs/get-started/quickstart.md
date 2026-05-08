@@ -345,8 +345,8 @@ nemoclaw my-assistant connect
 
 In the sandbox shell, send a single message and print the response.
 
-```bash
-openclaw agent --agent main -m "hello" --session-id test
+```console
+$ openclaw agent --agent main -m "hello" --session-id test
 ```
 
 ## Next Steps
