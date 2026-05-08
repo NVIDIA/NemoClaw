@@ -92,7 +92,7 @@ jobs:
           BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/main' || inputs.base_ref) }}
           HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
         run: |
-          node /tmp/e2e-advisor-assets/tools/e2e-advisor/advisor.mjs \
+          NODE_PATH="$GITHUB_WORKSPACE/node_modules" node /tmp/e2e-advisor-assets/tools/e2e-advisor/advisor.mjs \
             --base "$BASE_REF" \
             --head "$HEAD_REF" \
             --manifest /tmp/e2e-advisor-assets/test/e2e/e2e-manifest.yaml \
@@ -117,7 +117,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          node /tmp/e2e-advisor-assets/tools/e2e-advisor/pi-analyze.mjs \
+          NODE_PATH="$GITHUB_WORKSPACE/node_modules" node /tmp/e2e-advisor-assets/tools/e2e-advisor/pi-analyze.mjs \
             --manifest /tmp/e2e-advisor-assets/test/e2e/e2e-manifest.yaml \
             --schema /tmp/e2e-advisor-assets/tools/e2e-advisor/schema.json \
             --out-dir artifacts/e2e-advisor
