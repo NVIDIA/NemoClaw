@@ -7,12 +7,28 @@ import { runGatewayTokenCommand } from "../gateway-token-command";
 
 type GatewayTokenRuntimeBridge = {
   fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => string | null;
+  getSandboxAgent: (sandboxName: string) => string | null;
 };
 
 /* v8 ignore next -- source tests inject this bridge; CLI subprocess tests cover the real onboard module. */
 let runtimeBridgeFactory = (): GatewayTokenRuntimeBridge => {
-  const onboard = require("../onboard") as GatewayTokenRuntimeBridge;
-  return { fetchGatewayAuthTokenFromSandbox: onboard.fetchGatewayAuthTokenFromSandbox };
+  const onboard = require("../onboard") as Pick<
+    GatewayTokenRuntimeBridge,
+    "fetchGatewayAuthTokenFromSandbox"
+  >;
+  const registry = require("../state/registry") as {
+    getSandbox: (name: string) => { agent?: string | null } | null;
+  };
+  return {
+    fetchGatewayAuthTokenFromSandbox: onboard.fetchGatewayAuthTokenFromSandbox,
+    getSandboxAgent: (sandboxName: string) => {
+      try {
+        return registry.getSandbox(sandboxName)?.agent ?? null;
+      } catch {
+        return null;
+      }
+    },
+  };
 };
 
 export function setGatewayTokenRuntimeBridgeFactoryForTest(
@@ -59,8 +75,17 @@ export default class GatewayTokenCliCommand extends Command {
     const exitCode = runGatewayTokenCommand(
       args.sandboxName,
       { quiet: flags.quiet === true },
-      { fetchToken: runtime.fetchGatewayAuthTokenFromSandbox },
+      {
+        fetchToken: runtime.fetchGatewayAuthTokenFromSandbox,
+        getSandboxAgent: runtime.getSandboxAgent,
+      },
     );
-    if (exitCode !== 0) this.exit(exitCode);
+    // NCQ #3180: avoid this.exit(code), which throws @oclif/core ExitError.
+    // The legacy `nemoclaw <name> gateway-token` dispatch did not catch the
+    // throw, leaking a raw JS stack trace to the user. Always assigning
+    // process.exitCode keeps the diagnostic output clean and prevents a
+    // stale non-zero code from a prior run() in the same process from
+    // bleeding through on a successful invocation.
+    process.exitCode = exitCode;
   }
 }

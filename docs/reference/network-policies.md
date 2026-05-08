@@ -90,6 +90,9 @@ All endpoints use TLS termination and are enforced at port 443.
 GitHub access (`github.com`, `api.github.com`) is not included in the baseline policy.
 Apply the `github` preset during onboarding if your agent needs GitHub access.
 See [Customize the Network Policy](../network-policy/customize-network-policy.md).
+
+Messaging endpoints for Telegram, Discord, and Slack are not included in the baseline policy.
+Enable the channel during onboarding or apply the matching messaging preset so the sandbox can reach that platform.
 :::
 
 (policy-tiers)=

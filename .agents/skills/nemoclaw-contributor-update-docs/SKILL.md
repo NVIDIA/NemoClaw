@@ -162,7 +162,8 @@ Skip this step when the user only asked for ordinary doc catch-up and no release
 If the user invoked this skill for release prep, finish the release-specific doc work before verification:
 
 1. Make any requested doc version bumps in `versions1.json` and `project.json` in the `docs/` directory.
-2. Refresh the NemoClaw user skills:
+2. Determine the release label from the release version. Release labels use `vX.Y.Z` format. For example, if `docs/project.json` has `"version": "0.0.37"`, the release label is `v0.0.37`. Use the version requested by the user if one was provided; otherwise use the version in `docs/project.json` after the bump.
+3. Refresh the NemoClaw user skills:
 
    ```bash
    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
@@ -191,7 +192,9 @@ Commit changes and open a pull request with a concise summary of the doc updates
 - #<doc-impacting-PR-number> -> `docs/path.md`: Description of the doc change reflecting the source code changes in the PR.
 ```
 
-Apply the `documentation` label so reviewers can identify doc-only changes.
+Apply the `documentation` label and the corresponding release label so reviewers can identify doc-only changes for the target release.
+When creating the PR with `gh pr create`, pass both labels, for example `--label documentation --label v0.0.37`.
+If the release label does not exist, report that instead of substituting another label.
 
 ## Tips
 
@@ -201,7 +204,7 @@ Apply the `documentation` label so reviewers can identify doc-only changes.
 - PRs that are purely internal refactors with no behavior change do not need doc updates, even if they touch high-signal directories.
 - To suppress documentation for a merged feature that is not ready for public docs, add it to `docs/.docs-skip`. Remove the entry once the feature is ready to document.
 
-## Example Usage
+## Summary of Steps
 
 User says: "Catch up the docs for everything merged since v0.1.0."
 
@@ -214,10 +217,10 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user`.
 8. Present the summary.
 9. Build with `make docs` to verify.
-10. **Release prep only:** Commit changes and open a pull request with a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
+10. **Release prep only:** Commit changes and open a pull request with the `documentation` label and the corresponding `vX.Y.Z` release label. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
    ```markdown
    - #<doc-impacting-PR-number> -> `docs/path.md`: Description of the doc change reflecting the source code changes in the PR.
    ```
 
-11.Apply the `documentation` label so reviewers can identify doc-only changes.
+   If the release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.

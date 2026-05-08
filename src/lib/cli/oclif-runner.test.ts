@@ -113,4 +113,44 @@ describe("runRegisteredOclifCommand", () => {
 
     await expect(runRegisteredOclifCommand("list", [], { rootDir: "/repo" })).rejects.toBe(error);
   });
+
+  it("exits cleanly without rethrowing when oclif Command.exit(code) bubbles up", async () => {
+    // NCQ #3180: throwing an ExitError out of the runner leaks a raw
+    // @oclif/core stack trace to the user. Treat any non-zero ExitError
+    // (carrying `oclif.exit`) as a graceful exit with that code.
+    class ExitError extends Error {
+      oclif = { exit: 1 };
+    }
+    runCommandMock.mockRejectedValue(new ExitError("EEXIT: 1"));
+    const errorLine = vi.fn();
+    const exit = vi.fn((code: number): never => {
+      throw new Error(`exit:${code}`);
+    });
+
+    await expect(
+      runRegisteredOclifCommand("sandbox:gateway:token", ["hermes"], {
+        rootDir: "/repo",
+        error: errorLine,
+        exit,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(errorLine).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("rethrows other oclif error classes that carry oclif.exit", async () => {
+    // RequiredArgsError and friends ride the same `oclif.exit` channel as
+    // ExitError but carry a user-visible message that oclif's own handler
+    // is responsible for printing. Don't swallow those.
+    class RequiredArgsError extends Error {
+      oclif = { exit: 2 };
+    }
+    const error = new RequiredArgsError("Missing 1 required arg: path");
+    runCommandMock.mockRejectedValue(error);
+
+    await expect(runRegisteredOclifCommand("skill:install", [], { rootDir: "/repo" })).rejects.toBe(
+      error,
+    );
+  });
 });

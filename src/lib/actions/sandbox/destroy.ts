@@ -4,6 +4,7 @@
 /* v8 ignore start -- exercised through CLI subprocess destroy/rebuild tests. */
 
 import fs from "node:fs";
+import path from "node:path";
 
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
@@ -115,6 +116,38 @@ function cleanupSandboxServices(
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
     });
+  }
+}
+
+/**
+ * Remove host-side shields state files for a sandbox.
+ *
+ * Without this cleanup a stale shields-<name>.json from a previous
+ * `shields up` survives destroy → re-onboard and causes
+ * `deriveShieldsMode` to report "locked" on a fresh sandbox.
+ *
+ * See: https://github.com/NVIDIA/NemoClaw/issues/3114
+ */
+export function removeShieldsState(
+  sandboxName: string,
+  stateDir = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state"),
+): void {
+  const resolvedStateDir = path.resolve(stateDir);
+  for (const prefix of ["shields-", "shields-timer-"]) {
+    const filePath = path.resolve(resolvedStateDir, `${prefix}${sandboxName}.json`);
+    if (!filePath.startsWith(`${resolvedStateDir}${path.sep}`)) {
+      // Defense-in-depth: sandbox names are validated to [a-z0-9-] at
+      // all entry points, but reject traversal attempts just in case.
+      continue;
+    }
+    try {
+      fs.rmSync(filePath, { force: true });
+    } catch (error) {
+      // force: true already suppresses ENOENT; warn on real failures
+      // (e.g. EPERM) so stale state doesn't silently survive.
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`  ${YW}⚠${R} Failed to remove shields state '${filePath}': ${message}`);
+    }
   }
 }
 
@@ -246,6 +279,7 @@ export async function destroySandbox(
   });
 
   cleanupSandboxServices(sandboxName, { stopHostServices: shouldStopHostServices });
+  removeShieldsState(sandboxName);
   const removed = removeSandboxRegistryEntry(sandboxName);
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {

@@ -963,6 +963,21 @@ Defaults are unchanged when no variable is set.
 If `NEMOCLAW_DASHBOARD_PORT` or the port from `CHAT_UI_URL` is already occupied by another sandbox, onboarding scans `18789` through `18799` and uses the next free dashboard port.
 Pass `--control-ui-port <N>` to require a specific port.
 
+### Onboard timeouts
+
+The following environment variables tune onboard-time wall-clock limits. Set them before running `nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
+
+```console
+$ export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600
+$ nemoclaw onboard
+```
+
+If the pull exceeds the limit, onboarding emits the timeout in minutes plus a hint to raise this variable, and the partial download is preserved for the next attempt.
+
 ## NemoHermes Alias
 
 `nemohermes` is a convenience alias that pre-selects the Hermes agent.
