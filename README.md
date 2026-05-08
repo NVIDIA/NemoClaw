@@ -138,7 +138,7 @@ Alternatively, send a single message and print the response:
 openclaw agent --agent main --local -m "hello" --session-id test
 ```
 
-### Model Router (Complexity-Based Routing)
+### Model Router (Experimental)
 
 NemoClaw includes an optional model router that automatically picks the most efficient model for each query. Instead of sending every request to a single large model, the router uses a lightweight encoder to predict which model in a pool can handle each query correctly, then routes to the cheapest one that meets an accuracy threshold.
 
@@ -146,7 +146,7 @@ The router uses the [NVIDIA LLM Router v3](https://github.com/NVIDIA-AI-Blueprin
 
 #### Enable during onboard
 
-Select **Model Router (complexity-based routing)** during the onboard wizard, or set `NEMOCLAW_PROVIDER=routed` for non-interactive mode:
+Select **Model Router (experimental)** during the onboard wizard, or set `NEMOCLAW_PROVIDER=routed` for non-interactive mode:
 
 ```bash
 NEMOCLAW_PROVIDER=routed nemoclaw onboard --non-interactive

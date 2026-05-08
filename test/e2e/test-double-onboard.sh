@@ -77,6 +77,7 @@ registry_has() {
 
 SANDBOX_A="e2e-double-a"
 SANDBOX_B="e2e-double-b"
+ALT_GATEWAY_NAME="e2e-double-alt"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -204,6 +205,13 @@ run_nemoclaw() {
   "${NEMOCLAW_CMD[@]}" "$@"
 }
 
+stop_forward_if_set() {
+  local port="${1:-}"
+  if [ -n "$port" ]; then
+    openshell forward stop "$port" 2>/dev/null || true
+  fi
+}
+
 dashboard_port_from_list() {
   local sandbox_name="$1"
 
@@ -231,6 +239,47 @@ sys.exit(1)
 PY
 }
 
+gateway_name_from_output() {
+  local output="$1"
+
+  GATEWAY_OUTPUT="$output" python3 <<'PY'
+import os
+import re
+import sys
+
+clean = re.sub(r"\x1b\[[0-9;]*m", "", os.environ.get("GATEWAY_OUTPUT", ""))
+match = re.search(r"^\s*Gateway:\s+([^\s]+)", clean, re.MULTILINE)
+if match:
+    print(match.group(1))
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
+forward_owner_for_port() {
+  local port="$1"
+
+  FORWARD_OUTPUT="$forward_output" python3 - "$port" <<'PY'
+import os
+import re
+import sys
+
+target = sys.argv[1]
+clean = re.sub(r"\x1b\[[0-9;]*m", "", os.environ.get("FORWARD_OUTPUT", ""))
+
+for line in clean.splitlines():
+    parts = line.strip().split()
+    if len(parts) < 5 or parts[0].lower() == "sandbox":
+        continue
+    status = " ".join(parts[4:]).lower()
+    if parts[2] == target and "running" in status:
+        print(parts[0])
+        sys.exit(0)
+
+sys.exit(1)
+PY
+}
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
 # ══════════════════════════════════════════════════════════════════
@@ -244,6 +293,7 @@ openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
 openshell forward stop 18789 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
+openshell gateway destroy -g "$ALT_GATEWAY_NAME" 2>/dev/null || true
 pass "Pre-cleanup complete"
 
 # ══════════════════════════════════════════════════════════════════
@@ -388,6 +438,23 @@ fi
 section "Phase 4: Third onboard ($SANDBOX_B — different name)"
 info "Running nemoclaw onboard with new sandbox name..."
 
+ALT_GATEWAY_ENDPOINT="https://127.0.0.1:${NEMOCLAW_GATEWAY_PORT:-8080}"
+openshell gateway add --local --name "$ALT_GATEWAY_NAME" "$ALT_GATEWAY_ENDPOINT" >/dev/null 2>&1 || true
+if openshell gateway select "$ALT_GATEWAY_NAME" >/dev/null 2>&1; then
+  selected_gateway_output="$(
+    openshell status 2>&1 || true
+    openshell gateway info 2>&1 || true
+  )"
+  selected_gateway="$(gateway_name_from_output "$selected_gateway_output" 2>/dev/null || true)"
+  if [ "$selected_gateway" = "$ALT_GATEWAY_NAME" ]; then
+    pass "Alternate gateway alias selected before third onboard"
+  else
+    fail "Alternate gateway alias was not selected before third onboard (selected=${selected_gateway:-unknown})"
+  fi
+else
+  fail "Could not select alternate gateway alias before third onboard"
+fi
+
 GATEWAY_ID_BEFORE3=$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)
 PHASE4_START="$(phase_start_time)"
 run_onboard "$SANDBOX_B"
@@ -422,6 +489,17 @@ if grep -q "Port 18789 is not available" <<<"$output3"; then
   fail "Port 18789 conflict on third onboard"
 else
   pass "No port 18789 conflict on third onboard"
+fi
+
+selected_gateway_output="$(
+  openshell status 2>&1 || true
+  openshell gateway info 2>&1 || true
+)"
+selected_gateway="$(gateway_name_from_output "$selected_gateway_output" 2>/dev/null || true)"
+if [ "$selected_gateway" = "nemoclaw" ]; then
+  pass "Named gateway reselected during third onboard"
+else
+  fail "Named gateway was not reselected during third onboard (selected=${selected_gateway:-unknown})"
 fi
 
 if openshell sandbox get "$SANDBOX_B" >/dev/null 2>&1; then
@@ -464,6 +542,45 @@ if [ -n "$port_a" ] && [ -n "$port_b" ] && [ "$port_a" != "$port_b" ]; then
   pass "nemoclaw list shows distinct dashboard ports for test sandboxes (#2174)"
 else
   fail "test sandboxes did not have distinct dashboard ports (#2174): ${SANDBOX_A}=${port_a:-missing} ${SANDBOX_B}=${port_b:-missing}"
+fi
+
+if [ -n "$port_a" ] && [ -n "$port_b" ] && [ "$port_a" != "$port_b" ]; then
+  info "Stopping '$SANDBOX_B' dashboard forward to verify stored-port recovery..."
+  openshell forward stop "$port_b" 2>/dev/null || true
+
+  PROBE_LOG="$(mktemp)"
+  run_nemoclaw "$SANDBOX_B" connect --probe-only >"$PROBE_LOG" 2>&1
+  probe_exit=$?
+  probe_output="$(cat "$PROBE_LOG")"
+  rm -f "$PROBE_LOG"
+
+  if [ "$probe_exit" -eq 0 ]; then
+    pass "Probe-only connect recovered '$SANDBOX_B' dashboard forward"
+  else
+    fail "Probe-only connect exited $probe_exit after stopping '$SANDBOX_B' dashboard forward"
+    info "Observed probe output:"
+    printf '%s\n' "$probe_output" | sed 's/^/    /'
+  fi
+
+  forward_output="$(openshell forward list 2>&1 || true)"
+  owner_a="$(forward_owner_for_port "$port_a" 2>/dev/null || true)"
+  owner_b="$(forward_owner_for_port "$port_b" 2>/dev/null || true)"
+
+  if [ "$owner_b" = "$SANDBOX_B" ]; then
+    pass "Second sandbox dashboard forward restored on its recorded port"
+  else
+    fail "Second sandbox dashboard forward owner mismatch on port $port_b (owner=${owner_b:-missing})"
+    info "Observed forward list:"
+    printf '%s\n' "$forward_output" | sed 's/^/    /'
+  fi
+
+  if [ "$owner_a" = "$SANDBOX_A" ]; then
+    pass "First sandbox dashboard forward kept its recorded port"
+  else
+    fail "First sandbox dashboard forward owner mismatch on port $port_a (owner=${owner_a:-missing})"
+    info "Observed forward list:"
+    printf '%s\n' "$forward_output" | sed 's/^/    /'
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -550,8 +667,11 @@ run_nemoclaw "$SANDBOX_A" destroy --yes 2>/dev/null || true
 run_nemoclaw "$SANDBOX_B" destroy --yes 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
+stop_forward_if_set "${port_a:-}"
+stop_forward_if_set "${port_b:-}"
 openshell forward stop 18789 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
+openshell gateway destroy -g "$ALT_GATEWAY_NAME" 2>/dev/null || true
 
 # Force registry reconciliation: when the gateway is in a degraded state
 # (stopped in Phase 6), `nemoclaw destroy` may delete the sandbox from

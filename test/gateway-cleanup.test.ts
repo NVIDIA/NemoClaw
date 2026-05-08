@@ -35,7 +35,7 @@ describe("gateway cleanup: Docker volumes removed on failure (#17)", () => {
     // 1. stale gateway is detected but NOT destroyed upfront — gateway start
     //    can recover the container without wiping metadata/certs
     // 2. destroyGateway() runs inside the retry loop only on genuine failure
-    expect(startGwBlock[0].includes("if (hasStaleGateway(gwInfo))")).toBe(true);
+    expect(startGwBlock[0].includes("if (hasStaleGateway(gatewaySnapshot.gwInfo))")).toBe(true);
     expect(startGwBlock[0]).toContain("destroyGateway()");
   });
 

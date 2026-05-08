@@ -11,7 +11,7 @@ const {
   VLLM_LOCAL_CREDENTIAL_ENV,
 } = require("./inference-config");
 const { isSafeModelId } = require("./validation");
-const { compactText } = require("./url-utils");
+const { compactText } = require("./core/url-utils");
 
 // ── Constants ────────────────────────────────────────────────────
 

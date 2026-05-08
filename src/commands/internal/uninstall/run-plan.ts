@@ -3,7 +3,7 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { runUninstallPlan } from "../../../lib/actions/uninstall-run-plan";
+import { runUninstallPlan } from "../../../lib/actions/uninstall/run-plan";
 
 export default class InternalUninstallRunPlanCommand extends Command {
   static hidden = true;

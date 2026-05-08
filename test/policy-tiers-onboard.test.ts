@@ -49,7 +49,7 @@ function buildPreamble({
   stubOpenshellBin = false,
   runCaptureReturn = "",
 } = {}): string {
-  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
   const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
   const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
@@ -378,7 +378,7 @@ describe("selectTierPresetsAndAccess", () => {
   const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
 
   function buildPresetsScript(body: string): string {
-    const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));

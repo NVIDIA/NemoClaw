@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 
-type CredentialsModule = typeof import("../dist/lib/credentials.js");
+type CredentialsModule = typeof import("../dist/lib/credentials/store.js");
 
 function isCredentialsModule(value: object | null): value is CredentialsModule {
   return (
@@ -28,7 +28,7 @@ function isCredentialsModule(value: object | null): value is CredentialsModule {
 // Pull the credential-env-key allowlist from the production module so
 // future additions only need to be made in one place. Plus a few
 // fixture-only names this suite mutates directly.
-import { KNOWN_CREDENTIAL_ENV_KEYS } from "../dist/lib/credentials.js";
+import { KNOWN_CREDENTIAL_ENV_KEYS } from "../dist/lib/credentials/store.js";
 const TEST_FIXTURE_ENV_KEYS = ["TEST_API_KEY", "OTHER_KEY", "EMPTY_VALUE", "ZETA", "ALPHA"];
 const TRACKED_ENV_KEYS = [...KNOWN_CREDENTIAL_ENV_KEYS, ...TEST_FIXTURE_ENV_KEYS];
 
@@ -44,7 +44,7 @@ async function importCredentialsModule(home: string): Promise<CredentialsModule>
   vi.doUnmock("child_process");
   vi.doUnmock("readline");
   vi.stubEnv("HOME", home);
-  const module = await import("../dist/lib/credentials.js");
+  const module = await import("../dist/lib/credentials/store.js");
   const loaded = "default" in module ? module.default : module;
   const moduleObject = typeof loaded === "object" && loaded !== null ? loaded : null;
   if (!isCredentialsModule(moduleObject)) {
@@ -644,7 +644,7 @@ describe("prompt machinery (unchanged)", () => {
 
   it("settles the outer prompt promise on secret prompt errors", () => {
     const script = `
-const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials.js"))});
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
 process.stdin.ref = () => process.stdin;
@@ -681,7 +681,7 @@ prompt('secret: ', { secret: true })
     const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
 
     try {
-      const credentials = await import("../dist/lib/credentials.js");
+      const credentials = await import("../dist/lib/credentials/store.js");
       const pending = credentials.prompt("question: ");
       rl.emit("SIGINT");
       await expect(pending).rejects.toMatchObject({
@@ -704,7 +704,7 @@ prompt('secret: ', { secret: true })
     expect(credentials.normalizeCredentialValue("  nvapi-good-key\r\n")).toBe("nvapi-good-key");
 
     const script = `
-const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials.js"))});
+const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
 delete process.env.NVIDIA_API_KEY;
 ensureApiKey()
   .then(() => console.log('STAGED=' + process.env.NVIDIA_API_KEY))
@@ -743,7 +743,7 @@ ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptFile)} < "$pipe"
 
   it("normal and secret prompts re-ref, cleanup stdin, and preserve masked input", () => {
     const script = `
-const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials.js"))});
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
 const counts = { ref: 0, resume: 0, pause: 0, unref: 0, raw: [] };
 process.stdin.ref = () => { counts.ref += 1; return process.stdin; };
 process.stdin.resume = () => { counts.resume += 1; return process.stdin; };

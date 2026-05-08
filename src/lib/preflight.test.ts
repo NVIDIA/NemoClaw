@@ -14,6 +14,7 @@ import {
   isDockerUnderProvisioned,
   MIN_RECOMMENDED_DOCKER_CPUS,
   MIN_RECOMMENDED_DOCKER_MEM_GIB,
+  parseDockerCdiSpecDirs,
   parseDockerInfoCpus,
   parseDockerInfoMemTotalBytes,
   parseDockerStorageDriver,
@@ -499,6 +500,200 @@ describe("parseDockerUsesContainerdSnapshotter", () => {
   });
 });
 
+describe("parseDockerCdiSpecDirs", () => {
+  it("extracts the dirs from `docker info --format '{{json .}}'` output", () => {
+    const fixture = JSON.stringify({ CDISpecDirs: ["/etc/cdi", "/var/run/cdi"] });
+    expect(parseDockerCdiSpecDirs(fixture)).toEqual(["/etc/cdi", "/var/run/cdi"]);
+  });
+
+  it("returns an empty array when CDISpecDirs is absent", () => {
+    expect(parseDockerCdiSpecDirs(JSON.stringify({ ServerVersion: "27.0" }))).toEqual([]);
+  });
+
+  it("returns an empty array when CDISpecDirs is the empty list", () => {
+    expect(parseDockerCdiSpecDirs(JSON.stringify({ CDISpecDirs: [] }))).toEqual([]);
+  });
+
+  it("returns an empty array on empty input", () => {
+    expect(parseDockerCdiSpecDirs("")).toEqual([]);
+  });
+});
+
+describe("assessHost — CDI device-spec gap (#3152)", () => {
+  it("flags missing nvidia.com/gpu specs on an NVIDIA Linux host with CDI dirs configured", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: () => "Linux version 6.8.0-58-generic",
+      readdirImpl: () => [],
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0",
+        OperatingSystem: "Ubuntu 24.04",
+        CDISpecDirs: ["/etc/cdi", "/var/run/cdi"],
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.dockerCdiSpecDirs).toEqual(["/etc/cdi", "/var/run/cdi"]);
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(true);
+  });
+
+  it("does not flag the host when an nvidia.com/gpu YAML spec is present", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: (filePath: string) =>
+        filePath.endsWith("nvidia.yaml")
+          ? "cdiVersion: 0.5.0\nkind: nvidia.com/gpu\ndevices: []\n"
+          : "Linux version 6.8.0-58-generic",
+      readdirImpl: (dir: string) => (dir === "/etc/cdi" ? ["nvidia.yaml"] : []),
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0",
+        CDISpecDirs: ["/etc/cdi", "/var/run/cdi"],
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(false);
+  });
+
+  it("accepts a JSON-serialised CDI spec as well", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: (filePath: string) =>
+        filePath.endsWith("nvidia.json")
+          ? '{"cdiVersion":"0.5.0","kind":"nvidia.com/gpu","devices":[]}'
+          : "Linux version 6.8.0-58-generic",
+      readdirImpl: (dir: string) => (dir === "/etc/cdi" ? ["nvidia.json"] : []),
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0",
+        CDISpecDirs: ["/etc/cdi"],
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(false);
+  });
+
+  it("does not flag a non-NVIDIA Linux host even with CDI dirs configured", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: () => "Linux version 6.8.0-58-generic",
+      readdirImpl: () => [],
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0",
+        CDISpecDirs: ["/etc/cdi"],
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+      gpuProbeImpl: () => false,
+    });
+
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(false);
+  });
+
+  it("does not flag a host that does not advertise CDISpecDirs", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: () => "Linux version 6.8.0-58-generic",
+      readdirImpl: () => [],
+      dockerInfoOutput: JSON.stringify({ ServerVersion: "24.0" }),
+      commandExistsImpl: (name: string) => name === "docker",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.dockerCdiSpecDirs).toEqual([]);
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(false);
+  });
+
+  it("does not flag macOS even when the docker info shape would otherwise match", () => {
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      readFileImpl: () => "",
+      readdirImpl: () => [],
+      dockerInfoOutput: JSON.stringify({ CDISpecDirs: ["/etc/cdi"] }),
+      commandExistsImpl: (name: string) => name === "docker",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(false);
+  });
+
+  it("does not accept a sibling device class such as nvidia.com/gpu-extra as a satisfying spec", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: (filePath: string) =>
+        filePath.endsWith("nvidia-extra.yaml")
+          ? "cdiVersion: 0.5.0\nkind: nvidia.com/gpu-extra\ndevices: []\n"
+          : "Linux version 6.8.0-58-generic",
+      readdirImpl: (dir: string) => (dir === "/etc/cdi" ? ["nvidia-extra.yaml"] : []),
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0",
+        CDISpecDirs: ["/etc/cdi"],
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(true);
+  });
+
+  it("does not accept a sibling device class in JSON form either", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: (filePath: string) =>
+        filePath.endsWith("nvidia-extra.json")
+          ? '{"cdiVersion":"0.5.0","kind":"nvidia.com/gpu-extra","devices":[]}'
+          : "Linux version 6.8.0-58-generic",
+      readdirImpl: (dir: string) => (dir === "/etc/cdi" ? ["nvidia-extra.json"] : []),
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0",
+        CDISpecDirs: ["/etc/cdi"],
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(true);
+  });
+
+  it("ignores spec files whose `kind` only mentions nvidia.com/gpu in a comment", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: (filePath: string) =>
+        filePath.endsWith("notes.yaml")
+          ? "# this used to declare nvidia.com/gpu; now stripped\nkind: example.com/cpu\n"
+          : "Linux version 6.8.0-58-generic",
+      readdirImpl: (dir: string) => (dir === "/etc/cdi" ? ["notes.yaml"] : []),
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0",
+        CDISpecDirs: ["/etc/cdi"],
+      }),
+      commandExistsImpl: (name: string) => name === "docker",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(true);
+  });
+});
+
 describe("planHostRemediation", () => {
   it("recommends starting docker when installed but unreachable and service inactive", () => {
     const actions = planHostRemediation({
@@ -522,6 +717,8 @@ describe("planHostRemediation", () => {
       isUnsupportedRuntime: false,
       isHeadlessLikely: false,
       hasNvidiaGpu: false,
+      dockerCdiSpecDirs: [],
+      cdiNvidiaGpuSpecMissing: false,
       notes: [],
     });
 
@@ -552,6 +749,8 @@ describe("planHostRemediation", () => {
       isUnsupportedRuntime: false,
       isHeadlessLikely: false,
       hasNvidiaGpu: false,
+      dockerCdiSpecDirs: [],
+      cdiNvidiaGpuSpecMissing: false,
       notes: [],
     });
 
@@ -586,6 +785,8 @@ describe("planHostRemediation", () => {
       isUnsupportedRuntime: true,
       isHeadlessLikely: false,
       hasNvidiaGpu: false,
+      dockerCdiSpecDirs: [],
+      cdiNvidiaGpuSpecMissing: false,
       notes: [],
     });
 
@@ -618,6 +819,8 @@ describe("planHostRemediation", () => {
       isUnsupportedRuntime: false,
       isHeadlessLikely: false,
       hasNvidiaGpu: false,
+      dockerCdiSpecDirs: [],
+      cdiNvidiaGpuSpecMissing: false,
       notes: [],
     });
 
@@ -647,10 +850,53 @@ describe("planHostRemediation", () => {
       isUnsupportedRuntime: false,
       isHeadlessLikely: false,
       hasNvidiaGpu: false,
+      dockerCdiSpecDirs: [],
+      cdiNvidiaGpuSpecMissing: false,
       notes: [],
     });
 
     expect(actions.some((action: { id: string }) => action.id === "install_openshell")).toBe(true);
+  });
+
+  it("emits a blocking generate_nvidia_cdi_spec action when CDI dirs are configured but no nvidia.com/gpu spec exists", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "docker",
+      packageManager: "apt",
+      systemctlAvailable: true,
+      dockerServiceActive: true,
+      dockerServiceEnabled: true,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "v2",
+      dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
+      hasNestedOverlayConflict: false,
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: true,
+      dockerCdiSpecDirs: ["/etc/cdi", "/var/run/cdi"],
+      cdiNvidiaGpuSpecMissing: true,
+      notes: [],
+    });
+
+    const action = actions.find(
+      (entry: { id: string }) => entry.id === "generate_nvidia_cdi_spec",
+    );
+    expect(action).toBeTruthy();
+    expect(action?.kind).toBe("sudo");
+    expect(action?.blocking).toBe(true);
+    expect(action?.commands[0]).toBe(
+      "sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml",
+    );
+    expect(action?.commands[1]).toContain("nvidia-ctk cdi list");
+    expect(action?.commands[2]).toContain("nemoclaw onboard");
+    expect(action?.reason).toContain("nvidia.com/gpu");
   });
 });
 

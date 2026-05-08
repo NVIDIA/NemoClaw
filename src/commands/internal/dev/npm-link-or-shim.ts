@@ -3,7 +3,7 @@
 
 import { Flags } from "@oclif/core";
 
-import { runNpmLinkOrShim } from "../../../lib/actions/dev-shim";
+import { runNpmLinkOrShim } from "../../../lib/actions/dev/npm-link-or-shim";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 export default class InternalDevNpmLinkOrShimCommand extends NemoClawCommand {

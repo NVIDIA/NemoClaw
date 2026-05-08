@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { parseSandboxPhase } from "../../state/gateway";
 import {
   getNamedGatewayLifecycleState,

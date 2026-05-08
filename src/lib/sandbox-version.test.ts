@@ -31,7 +31,7 @@ vi.mock("./adapters/openshell/client.js", () => ({
   captureOpenshellCommand: vi.fn(),
 }));
 
-vi.mock("./agent-defs.js", () => ({
+vi.mock("./agent/defs.js", () => ({
   loadAgent: vi.fn((name: string) => ({
     name,
     displayName: name === "openclaw" ? "OpenClaw" : "Hermes Agent",

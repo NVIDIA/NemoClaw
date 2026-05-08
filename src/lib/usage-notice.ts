@@ -212,7 +212,7 @@ export async function ensureUsageNoticeConsent({
   }
 
   // credentials is still CJS
-  const ask: PromptFn = promptFn ?? (require("./credentials") as { prompt: PromptFn }).prompt;
+  const ask: PromptFn = promptFn ?? (require("./credentials/store") as { prompt: PromptFn }).prompt;
   let answer: string;
   try {
     answer = String(await ask(`  ${config.interactivePrompt}`))

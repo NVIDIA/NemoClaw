@@ -3,7 +3,7 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { normalizeInstallerEnv } from "../../../lib/actions/installer-plan";
+import { normalizeInstallerEnv } from "../../../lib/actions/installer/plan";
 
 export default class InternalInstallerNormalizeEnvCommand extends Command {
   static hidden = true;

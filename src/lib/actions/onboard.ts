@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { listAgents } from "../agent-defs";
+import { listAgents } from "../agent/defs";
 import { runDeprecatedOnboardAliasCommand, runOnboardCommand } from "../onboard-command";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } from "../usage-notice";
 

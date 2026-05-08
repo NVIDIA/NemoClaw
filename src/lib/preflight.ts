@@ -14,7 +14,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { DASHBOARD_PORT } from "./ports";
+import { DASHBOARD_PORT } from "./core/ports";
 
 // runner.ts still uses CommonJS-style exports — use require here.
 const { runCapture } = require("./runner");
@@ -112,6 +112,8 @@ export interface HostAssessment {
   isUnsupportedRuntime: boolean;
   isHeadlessLikely: boolean;
   hasNvidiaGpu: boolean;
+  dockerCdiSpecDirs: string[];
+  cdiNvidiaGpuSpecMissing: boolean;
   notes: string[];
 }
 
@@ -132,6 +134,7 @@ export interface AssessHostOpts {
   dockerInfoOutput?: string;
   dockerInfoError?: string;
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
+  readdirImpl?: (dir: string) => string[];
   runCaptureImpl?: RunCaptureFn;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
@@ -210,6 +213,61 @@ export function parseDockerUsesContainerdSnapshotter(info = ""): boolean {
   // v1 plugin. Match either JSON or text form so we handle `--format '{{json
   // .}}'` output and plain `docker info` alike.
   return /io\.containerd\.snapshotter\.v1/.test(info);
+}
+
+// Parses the Docker daemon's configured CDI spec directories from `docker
+// info --format '{{json .}}'` output. Docker 25+ surfaces these as
+// `"CDISpecDirs": ["/etc/cdi", "/var/run/cdi"]` whenever the daemon is built
+// with CDI support and `features.cdi=true` (the default on recent installs).
+// An empty list means CDI device injection is not enabled, so OpenShell will
+// fall back to the legacy `nvidia` runtime path and there is no spec gap to
+// worry about.
+export function parseDockerCdiSpecDirs(info = ""): string[] {
+  const match = info.match(/"CDISpecDirs"\s*:\s*\[([^\]]*)\]/);
+  if (!match) return [];
+  return Array.from(match[1].matchAll(/"([^"]+)"/g), (m) => m[1]).filter(Boolean);
+}
+
+// True when at least one CDI spec under the configured directories declares
+// `kind: nvidia.com/gpu` (the device class OpenShell injects with `--gpu`).
+// Specs are typically YAML, but the JSON shape is also accepted because
+// `nvidia-ctk cdi generate --format=json` is supported. Errors reading any
+// individual file or directory are tolerated — a missing dir is the same
+// shape as "no spec found there".
+function hasNvidiaCdiSpec(
+  specDirs: readonly string[],
+  readdirImpl: (dir: string) => string[],
+  readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
+): boolean {
+  // YAML keys are unquoted; JSON quotes the kind value. Anchor both patterns
+  // to the *exact* device-class string `nvidia.com/gpu` and require a value
+  // terminator (end of line, whitespace + comment, or whitespace + EOL) so a
+  // sibling spec like `nvidia.com/gpu-extra` does not silently satisfy the
+  // check and suppress the preflight warning. A comment that merely mentions
+  // `nvidia.com/gpu` is also rejected because `kindRe` only matches when the
+  // *whole* scalar value is the device class.
+  const kindRe =
+    /^[ \t]*kind[ \t]*:[ \t]*(?:"nvidia\.com\/gpu"|'nvidia\.com\/gpu'|nvidia\.com\/gpu)[ \t]*(?:#.*)?$/im;
+  const jsonRe = /"kind"\s*:\s*"nvidia\.com\/gpu"/;
+  for (const dir of specDirs) {
+    let entries: string[];
+    try {
+      entries = readdirImpl(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!/\.(ya?ml|json)$/i.test(entry)) continue;
+      let raw: string;
+      try {
+        raw = readFileImpl(path.join(dir, entry), "utf-8");
+      } catch {
+        continue;
+      }
+      if (kindRe.test(raw) || jsonRe.test(raw)) return true;
+    }
+  }
+  return false;
 }
 
 export function parseDockerInfoCpus(info = ""): number | undefined {
@@ -334,6 +392,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     ((command: readonly string[], options?: { ignoreError?: boolean }) =>
       runCapture(command, { ignoreError: options?.ignoreError ?? false }));
   const readFileImpl = opts.readFileImpl ?? fs.readFileSync;
+  const readdirImpl = opts.readdirImpl ?? ((dir: string) => fs.readdirSync(dir));
   const dockerInstalled =
     opts.commandExistsImpl?.("docker") ?? commandExists("docker", runCaptureImpl);
   const nodeInstalled = opts.commandExistsImpl?.("node") ?? commandExists("node", runCaptureImpl);
@@ -383,6 +442,20 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerMemTotalBytes = dockerReachable
     ? parseDockerInfoMemTotalBytes(dockerInfoOutput)
     : undefined;
+  // CDI spec gap: Docker 25+ on hosts with `nvidia-container-toolkit` installed
+  // typically advertises `"CDISpecDirs": ["/etc/cdi", "/var/run/cdi"]` in its
+  // info output. OpenShell's `gateway start --gpu` then opportunistically
+  // selects CDI mode and tries to inject `nvidia.com/gpu=all`. If no spec has
+  // been generated yet (`/etc/cdi/nvidia.yaml` is missing), the gateway start
+  // fails with `unresolvable CDI devices nvidia.com/gpu=all`. Detect this up
+  // front so preflight can point the user at `nvidia-ctk cdi generate` before
+  // we waste minutes downloading the gateway image. See issue #3152.
+  const dockerCdiSpecDirs = dockerReachable ? parseDockerCdiSpecDirs(dockerInfoOutput) : [];
+  const cdiNvidiaGpuSpecMissing =
+    platform === "linux" &&
+    hasNvidiaGpu &&
+    dockerCdiSpecDirs.length > 0 &&
+    !hasNvidiaCdiSpec(dockerCdiSpecDirs, readdirImpl, readFileImpl);
   const isContainerRuntimeUnderProvisioned = isDockerUnderProvisioned(
     dockerCpus,
     dockerMemTotalBytes,
@@ -448,6 +521,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     isUnsupportedRuntime: runtime === "podman",
     isHeadlessLikely: isHeadlessLikely(env),
     hasNvidiaGpu,
+    dockerCdiSpecDirs,
+    cdiNvidiaGpuSpecMissing,
     notes: [],
   };
 
@@ -613,6 +688,25 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
         "Headless Linux hosts often need explicit remote UI handling if you want browser access.",
       commands: ["Set `CHAT_UI_URL` when remote browser access matters."],
       blocking: false,
+    });
+  }
+
+  if (assessment.cdiNvidiaGpuSpecMissing) {
+    const specDir = assessment.dockerCdiSpecDirs[0] ?? "/etc/cdi";
+    actions.push({
+      id: "generate_nvidia_cdi_spec",
+      title: "Generate NVIDIA CDI device specs",
+      kind: "sudo",
+      reason:
+        "Docker is configured for CDI device injection (CDISpecDirs is set) but no " +
+        "nvidia.com/gpu CDI spec is present on the host. OpenShell's `gateway start --gpu` " +
+        "will fail with `unresolvable CDI devices nvidia.com/gpu=all` until a spec is generated.",
+      commands: [
+        `sudo nvidia-ctk cdi generate --output=${specDir.replace(/\/+$/, "")}/nvidia.yaml`,
+        "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
+        "nemoclaw onboard      # or rerun with --no-gpu to skip GPU passthrough",
+      ],
+      blocking: true,
     });
   }
 

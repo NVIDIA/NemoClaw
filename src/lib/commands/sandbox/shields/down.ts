@@ -3,7 +3,7 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { shieldsTimeoutDurationFlag } from "../../../duration-flags";
+import { shieldsTimeoutDurationFlag } from "../../../cli/duration-flags";
 import * as shields from "../../../shields";
 import { sandboxNameArg } from "../common";
 
