@@ -11,6 +11,21 @@ import * as nim from "../../../dist/lib/inference/nim";
 const require = createRequire(import.meta.url);
 const NIM_DIST_PATH = require.resolve("../../../dist/lib/inference/nim");
 const RUNNER_PATH = require.resolve("../../../dist/lib/runner");
+const fs = require("fs");
+
+function withFirmwareModel(model: string, fn: () => void): void {
+  const origReadFileSync = fs.readFileSync;
+  fs.readFileSync = (p: string, ...args: unknown[]) => {
+    if (p === "/sys/class/dmi/id/product_name") return model;
+    if (p === "/sys/firmware/devicetree/base/model") return "";
+    return origReadFileSync(p, ...args);
+  };
+  try {
+    fn();
+  } finally {
+    fs.readFileSync = origReadFileSync;
+  }
+}
 
 function loadNimWithMockedRunner(runCapture: Mock) {
   const runner = require(RUNNER_PATH);
@@ -96,22 +111,6 @@ describe("nim", () => {
   });
 
   describe("detectNvidiaPlatform", () => {
-    const fs = require("fs");
-
-    function withFirmwareModel(model: string, fn: () => void): void {
-      const origReadFileSync = fs.readFileSync;
-      fs.readFileSync = (p: string, ...args: unknown[]) => {
-        if (p === "/sys/class/dmi/id/product_name") return model;
-        if (p === "/sys/firmware/devicetree/base/model") return "";
-        return origReadFileSync(p, ...args);
-      };
-      try {
-        fn();
-      } finally {
-        fs.readFileSync = origReadFileSync;
-      }
-    }
-
     function withDmiUnavailableAndDevicetreeModel(model: string, fn: () => void): void {
       const origReadFileSync = fs.readFileSync;
       fs.readFileSync = (p: string, ...args: unknown[]) => {

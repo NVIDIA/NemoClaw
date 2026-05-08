@@ -84,9 +84,7 @@ describe("preinstall node-version guard (#2399)", () => {
     // pointed at it via a sibling tmp dir. The script reads
     // path.join(__dirname, '..', 'package.json'), so we copy the
     // script next to a custom package.json.
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "preinstall-guard-no-engines-"),
-    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "preinstall-guard-no-engines-"));
     try {
       const scriptsDir = path.join(tmpDir, "scripts");
       fs.mkdirSync(scriptsDir);

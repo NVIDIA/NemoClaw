@@ -227,7 +227,7 @@ function scriptKindForPath(filePath: string): ts.ScriptKind {
 function main(): void {
   const filePaths = process.argv.slice(2).filter((arg) => arg !== "--");
   if (filePaths.length === 0) {
-    console.error("Usage: tsx scripts/check-direct-credential-env.ts FILE...");
+    console.error("Usage: tsx scripts/checks/direct-credential-env.ts FILE...");
     process.exitCode = 2;
     return;
   }

@@ -149,12 +149,12 @@ repos:
         files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
         priority: 10
 
-      - id: direct-credential-env
-        name: Direct credential env guard
-        entry: npx tsx scripts/check-direct-credential-env.ts
+      - id: repository-checks
+        name: Repository checks
+        entry: npm run checks
         language: system
-        files: ^src/lib/onboard\.ts$
-        pass_filenames: true
+        files: ^(bin/.*\.(cjs|js|mjs)$|src/.*\.tsx?$|scripts/.*\.(cjs|js|mjs|ts|tsx)$|test/.*\.(cjs|js|mjs|ts|tsx)$|nemoclaw/src/.*\.tsx?$)
+        pass_filenames: false
         priority: 10
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
@@ -266,7 +266,8 @@ repos:
     hooks:
       - id: test-cli
         name: Test (CLI)
-        entry: bash -c 'npm run clean:cli && npm run build:cli && npm run dist:sourcemaps:check && npx vitest run --project cli --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.include="dist/lib/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
+        entry: >-
+          bash -c 'node -e "require(\"node:fs\").rmSync(\"dist\", { recursive: true, force: true })" && npm run build:cli && npx tsx scripts/check-dist-sourcemaps.ts dist && npx vitest run --project cli --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.include="dist/lib/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
         language: system
         pass_filenames: false
         files: ^(bin/|src/|test/)

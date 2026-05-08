@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- covered by source-level unit tests; CLI coverage tracks dist integration. */
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -481,4 +480,3 @@ export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRu
   printBye(runtime);
   return { exitCode: 0, plan };
 }
-/* v8 ignore stop */
