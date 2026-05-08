@@ -14,12 +14,12 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { DASHBOARD_PORT } from "./core/ports";
+import { DASHBOARD_PORT } from "../core/ports";
 
 // runner.ts still uses CommonJS-style exports — use require here.
-const { runCapture } = require("./runner");
+const { runCapture } = require("../runner");
 
-type RunCaptureFn = typeof import("./runner").runCapture;
+type RunCaptureFn = typeof import("../runner").runCapture;
 type RunCaptureOpts = Parameters<RunCaptureFn>[1];
 type NullableRunCaptureFn = (
   command: Parameters<RunCaptureFn>[0],

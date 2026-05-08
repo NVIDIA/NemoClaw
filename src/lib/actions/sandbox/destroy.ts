@@ -12,8 +12,8 @@ import {
   type DestroySandboxOptions,
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
-import * as onboardSession from "../../onboard-session";
-import type { Session } from "../../onboard-session";
+import * as onboardSession from "../../state/onboard-session";
+import type { Session } from "../../state/onboard-session";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../core/ports";
 import * as registry from "../../state/registry";
@@ -110,7 +110,7 @@ export function cleanupSandboxServices(
   const unloadOllamaModels =
     deps.unloadOllamaModels ??
     (() => {
-      const { unloadOllamaModels: unload } = require("../../onboard-ollama-proxy") as {
+      const { unloadOllamaModels: unload } = require("../../inference/ollama/proxy") as {
         unloadOllamaModels: () => void;
       };
       unload();
@@ -261,7 +261,7 @@ export async function destroySandbox(
     }
   }
 
-  const nim = require("../../nim") as {
+  const nim = require("../../inference/nim") as {
     stopNimContainer: (sandboxName: string, opts?: { silent?: boolean }) => void;
     stopNimContainerByName: (name: string) => void;
   };
@@ -282,7 +282,7 @@ export async function destroySandbox(
   // through `stopAll()` or directly into `unloadOllamaModels()` based on
   // whether host services are being torn down).
   if (sb?.provider?.includes("ollama")) {
-    const { killStaleProxy } = require("../../onboard-ollama-proxy");
+    const { killStaleProxy } = require("../../inference/ollama/proxy");
     killStaleProxy();
   }
 

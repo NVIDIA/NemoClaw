@@ -5,14 +5,14 @@
 // Inference endpoint probes — validate that a provider's API responds
 // before committing the onboard wizard to a model selection.
 
-const { normalizeCredentialValue } = require("./credentials/store");
-const { isWsl } = require("./platform");
-const httpProbe = require("./http-probe");
+const { normalizeCredentialValue } = require("../credentials/store");
+const { isWsl } = require("../platform");
+const httpProbe = require("../http-probe");
 const {
   isNvcfFunctionNotFoundForAccount,
   nvcfFunctionNotFoundMessage,
   shouldForceCompletionsApi,
-} = require("./validation");
+} = require("../validation");
 
 const {
   getCurlTimingArgs,

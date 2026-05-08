@@ -7,8 +7,8 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 
 import { CLI_NAME } from "../../cli/branding";
-import { parseGatewayInference } from "../../inference-config";
-import { ensureOllamaAuthProxy } from "../../onboard-ollama-proxy";
+import { parseGatewayInference } from "../../inference/config";
+import { ensureOllamaAuthProxy } from "../../inference/ollama/proxy";
 import {
   captureOpenshell,
   getOpenshellBinary,

@@ -4,19 +4,20 @@
 import { Command, Flags } from "@oclif/core";
 
 import { buildHostUninstallPlan } from "../../../lib/actions/uninstall/plan";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../../lib/cli/branding";
 
 export default class InternalUninstallPlanCommand extends Command {
   static hidden = true;
   static strict = true;
-  static summary = "Internal: build the NemoClaw uninstall plan";
+  static summary = `Internal: build the ${CLI_DISPLAY_NAME} uninstall plan`;
   static description = "Build a deterministic uninstall plan without applying it.";
   static usage = ["internal uninstall plan [--json] [--delete-models] [--keep-openshell]"];
-  static examples = ["<%= config.bin %> internal uninstall plan --json --yes"];
+  static examples = [`${CLI_NAME} internal uninstall plan --json --yes`];
   static flags = {
     help: Flags.help({ char: "h" }),
     json: Flags.boolean({ description: "Print the uninstall plan as JSON" }),
     yes: Flags.boolean({ description: "Accepted for parity with run-plan; ignored while planning" }),
-    "delete-models": Flags.boolean({ description: "Plan removal of NemoClaw-pulled Ollama models" }),
+    "delete-models": Flags.boolean({ description: `Plan removal of ${CLI_DISPLAY_NAME}-pulled Ollama models` }),
     "keep-openshell": Flags.boolean({ description: "Keep the openshell binary installed" }),
     gateway: Flags.string({ description: "Gateway name", default: "nemoclaw" }),
   };

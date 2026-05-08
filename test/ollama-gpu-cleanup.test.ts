@@ -10,7 +10,9 @@ const modulePath = path.join(
   "..",
   "dist",
   "lib",
-  "onboard-ollama-proxy.js",
+  "inference",
+  "ollama",
+  "proxy.js",
 );
 
 type SpawnCall = { command: string; args: readonly string[] };

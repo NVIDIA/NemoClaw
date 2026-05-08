@@ -14,7 +14,7 @@ const {
   isSandboxInternalUrl,
   probeOpenAiLikeEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
-} = require("../../dist/lib/onboard-inference-probes");
+} = require("../../../dist/lib/inference/onboard-probes");
 
 describe("OpenAI-compatible inference probes", () => {
   it("uses the NVIDIA Build request shape for DeepSeek V4 Pro", () => {

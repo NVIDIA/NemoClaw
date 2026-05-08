@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { getAgentBranding, type AgentBranding } from "../../cli/branding";
 import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
@@ -169,23 +170,34 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
   };
 }
 
-function printBanner(log: (message: string) => void): void {
-  log("NemoClaw Uninstaller");
-  log("This will remove all NemoClaw resources.");
+function runtimeBranding(runtime: UninstallRuntime): AgentBranding {
+  return getAgentBranding(runtime.env.NEMOCLAW_AGENT);
 }
 
-function printBye(log: (message: string) => void): void {
-  log("NemoClaw");
-  log("Claws retracted. Until next time.");
+function planStepDisplayName(stepName: string, branding: AgentBranding): string {
+  return stepName === "NemoClaw CLI" ? `${branding.display} CLI` : stepName;
+}
+
+function printBanner(runtime: UninstallRuntime): void {
+  const branding = runtimeBranding(runtime);
+  runtime.log(`${branding.display} Uninstaller`);
+  runtime.log(`This will remove all ${branding.display} resources.`);
+}
+
+function printBye(runtime: UninstallRuntime): void {
+  const branding = runtimeBranding(runtime);
+  runtime.log(branding.display);
+  runtime.log(branding.uninstallGoodbye);
 }
 
 function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boolean {
+  const branding = runtimeBranding(runtime);
   if (options.assumeYes) return true;
   runtime.log("What will be removed:");
-  runtime.log("  · All OpenShell sandboxes, gateway, and NemoClaw providers");
+  runtime.log(`  · All OpenShell sandboxes, gateway, and ${branding.display} providers`);
   runtime.log("  · Related Docker containers, images, and volumes");
   runtime.log("  · ~/.nemoclaw  ~/.config/openshell  ~/.config/nemoclaw");
-  runtime.log("  · Global nemoclaw npm package");
+  runtime.log(`  · Global ${branding.display} CLI (npm package: nemoclaw)`);
   runtime.log(options.deleteModels ? `  · Ollama models: ${NEMOCLAW_OLLAMA_MODELS.join(" ")}` : "  · Ollama models: kept");
   runtime.log("Proceed? [y/N]");
   const reply = runtime.readLine();
@@ -202,7 +214,7 @@ function runOptional(runtime: UninstallRuntime, description: string, command: st
 
 function stopHelperServices(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const startServices = path.join(paths.repoRoot, "scripts", "start-services.sh");
-  if (runtime.existsSync(startServices)) runOptional(runtime, "Stopped NemoClaw helper services", startServices, ["--stop"]);
+  if (runtime.existsSync(startServices)) runOptional(runtime, `Stopped ${runtimeBranding(runtime).display} helper services`, startServices, ["--stop"]);
 }
 
 function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: string): void {
@@ -268,7 +280,7 @@ function removeAliases(paths: UninstallPaths, runtime: UninstallRuntime): void {
         .replace(/^# NemoClaw CLI alias\n.*\n?/gm, "");
       if (updated !== original) {
         fs.writeFileSync(profile, updated);
-        runtime.log(`Removed NemoClaw PATH entries from ${profile}`);
+        runtime.log(`Removed ${runtimeBranding(runtime).display} PATH entries from ${profile}`);
       }
     } catch {
       runtime.warn(`Failed to update ${profile}`);
@@ -301,16 +313,17 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
 }
 
 function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): void {
+  const branding = runtimeBranding(runtime);
   if (runtime.commandExists("npm")) {
     runtime.run("npm", ["unlink", "-g", "nemoclaw"], { env: runtime.env, stdio: "ignore" });
     const result = runtime.run("npm", ["uninstall", "-g", "--loglevel=error", "nemoclaw"], {
       env: runtime.env,
       stdio: "ignore",
     });
-    if (result.status === 0) runtime.log("Removed global nemoclaw npm package");
-    else runtime.warn("Global nemoclaw npm package not found or already removed");
+    if (result.status === 0) runtime.log(`Removed global ${branding.display} CLI package`);
+    else runtime.warn(`Global ${branding.display} CLI package not found or already removed`);
   } else {
-    runtime.warn("npm not found; skipping nemoclaw npm uninstall.");
+    runtime.warn(`npm not found; skipping ${branding.display} CLI uninstall.`);
   }
 
   const shim = classifyShimPath(paths.nemoclawShimPath);
@@ -340,7 +353,7 @@ function removeDockerContainers(runtime: UninstallRuntime): void {
     .filter((line) => /openshell-cluster|openshell|openclaw|nemoclaw/i.test(line))
     .map((line) => line.split(/\s+/)[0]);
   if (ids.length === 0) {
-    runtime.log("No NemoClaw/OpenShell Docker containers found");
+    runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker containers found`);
     return;
   }
   for (const id of [...new Set(ids)]) {
@@ -355,7 +368,7 @@ function removeDockerImages(runtime: UninstallRuntime): void {
     .filter((line) => /openshell|openclaw|nemoclaw/i.test(line))
     .map((line) => line.split(/\s+/)[0]);
   if (ids.length === 0) {
-    runtime.log("No NemoClaw/OpenShell Docker images found");
+    runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker images found`);
     return;
   }
   for (const id of [...new Set(ids)]) {
@@ -391,7 +404,7 @@ function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): vo
     return;
   }
   if (!runtime.existsSync(paths.managedSwapMarkerPath)) {
-    runtime.warn("No NemoClaw-managed swap marker found, skipping swap cleanup.");
+    runtime.warn(`No ${runtimeBranding(runtime).display}-managed swap marker found, skipping swap cleanup.`);
     return;
   }
   if (runtime.env.NEMOCLAW_NON_INTERACTIVE === "1" || !runtime.isTty) {
@@ -409,8 +422,9 @@ function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): vo
 }
 
 function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: UninstallRunOptions, runtime: UninstallRuntime): void {
+  const branding = runtimeBranding(runtime);
   for (const [index, step] of plan.steps.entries()) {
-    runtime.log(`[${index + 1}/${plan.steps.length}] ${step.name}`);
+    runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
     if (step.name === "Stopping services") {
       stopHelperServices(paths, runtime);
       removeGlob(paths.helperServiceGlob, runtime);
@@ -461,10 +475,10 @@ export function buildRunPlan(options: UninstallRunOptions, deps: UninstallRunDep
 export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): UninstallRunOutcome {
   const runtime = buildRuntime(deps);
   const { paths, plan } = buildRunPlan(options, { ...deps, env: runtime.env });
-  printBanner(runtime.log);
+  printBanner(runtime);
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
   executePlan(plan, paths, options, runtime);
-  printBye(runtime.log);
+  printBye(runtime);
   return { exitCode: 0, plan };
 }
 /* v8 ignore stop */

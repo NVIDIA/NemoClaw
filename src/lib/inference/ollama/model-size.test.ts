@@ -9,7 +9,7 @@ import {
   formatModelSize,
   getOllamaModelSize,
   probeRegistrySize,
-} from "../../dist/lib/ollama-model-size";
+} from "../../../../dist/lib/inference/ollama/model-size";
 
 const MANIFEST = JSON.stringify({
   layers: [{ size: 1_000_000_000 }, { size: 200_000_000 }, { size: 25_000 }],

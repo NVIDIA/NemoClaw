@@ -16,7 +16,7 @@ import {
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
   parseGatewayInference,
-} from "../../dist/lib/inference-config";
+} from "../../../dist/lib/inference/config";
 
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {

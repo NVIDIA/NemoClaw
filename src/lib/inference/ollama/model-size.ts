@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runCapture } from "./runner";
+import { runCapture } from "../../runner";
 
 const MANIFEST_HOST = "https://registry.ollama.ai";
 const PROBE_TIMEOUT_SECONDS = 3;

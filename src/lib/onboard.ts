@@ -106,7 +106,7 @@ const {
   DASHBOARD_PORT_RANGE_START,
   DASHBOARD_PORT_RANGE_END,
 } = require("./core/ports");
-const localInference: typeof import("./local-inference") = require("./local-inference");
+const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
   findReachableOllamaHost,
   resetOllamaHostCache,
@@ -130,15 +130,15 @@ const {
   killStaleProxy,
   persistProxyToken,
   startOllamaAuthProxy,
-} = require("./onboard-ollama-proxy");
+} = require("./inference/ollama/proxy");
 const {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
   setupWindowsOllamaWith0000Binding,
   switchToWindowsOllamaHost,
-} = require("./onboard-windows-ollama");
-const { detectVllmProfile, installVllm } = require("./onboard-vllm");
-const inferenceConfig: typeof import("./inference-config") = require("./inference-config");
+} = require("./inference/ollama/windows");
+const { detectVllmProfile, installVllm } = require("./inference/vllm");
+const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
 const {
   DEFAULT_CLOUD_MODEL,
   INFERENCE_ROUTE_URL,
@@ -147,7 +147,7 @@ const {
   parseGatewayInference,
 } = inferenceConfig;
 
-const onboardProviders = require("./onboard-providers");
+const onboardProviders = require("./onboard/providers");
 
 const CUSTOM_BUILD_CONTEXT_WARN_BYTES = 100_000_000;
 const CUSTOM_BUILD_CONTEXT_IGNORES = new Set([
@@ -276,13 +276,13 @@ const {
   cleanupStaleHostFiles,
 }: typeof import("./host-artifact-cleanup") = require("./host-artifact-cleanup");
 const registry: typeof import("./state/registry") = require("./state/registry");
-const nim: typeof import("./nim") = require("./nim");
-const onboardSession: typeof import("./onboard-session") = require("./onboard-session");
+const nim: typeof import("./inference/nim") = require("./inference/nim");
+const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const policies: typeof import("./policies") = require("./policies");
 const shields = require("./shields");
 const tiers: typeof import("./tiers") = require("./tiers");
-const { ensureUsageNoticeConsent } = require("./usage-notice");
-const preflightUtils: typeof import("./preflight") = require("./preflight");
+const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
+const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const {
   assessHost,
@@ -303,16 +303,16 @@ const urlUtils: typeof import("./core/url-utils") = require("./core/url-utils");
 const buildContext = require("./build-context");
 const dashboardContract: typeof import("./dashboard/contract") = require("./dashboard/contract");
 const httpProbe: typeof import("./http-probe") = require("./http-probe");
-const modelPrompts: typeof import("./model-prompts") = require("./model-prompts");
-const providerModels: typeof import("./provider-models") = require("./provider-models");
+const modelPrompts: typeof import("./inference/model-prompts") = require("./inference/model-prompts");
+const providerModels: typeof import("./inference/provider-models") = require("./inference/provider-models");
 const sandboxCreateStream: typeof import("./sandbox-create-stream") = require("./sandbox-create-stream");
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
-const webSearch: typeof import("./web-search") = require("./web-search");
+const webSearch: typeof import("./inference/web-search") = require("./inference/web-search");
 
 import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./http-probe";
-import type { GatewayInference, ProviderSelectionConfig } from "./inference-config";
-import type { GpuInfo, ValidationResult } from "./local-inference";
+import type { GatewayInference, ProviderSelectionConfig } from "./inference/config";
+import type { GpuInfo, ValidationResult } from "./inference/local";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
@@ -321,14 +321,14 @@ import {
   readMessagingChannelConfigFromEnv,
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
-import type { Session, SessionUpdates } from "./onboard-session";
+import type { ContainerRuntime } from "./platform";
+import type { Session, SessionUpdates } from "./state/onboard-session";
 import type {
   ModelCatalogFetchResult,
   ModelValidationResult,
   ProbeResult,
   ValidationFailureLike,
-} from "./onboard-types";
-import type { ContainerRuntime } from "./platform";
+} from "./onboard/types";
 import { listChannels } from "./sandbox-channels";
 import type { StreamSandboxCreateResult } from "./sandbox-create-stream";
 import type { SandboxEntry } from "./state/registry";
@@ -336,7 +336,7 @@ import type { BackupResult } from "./state/sandbox";
 import type { TierDefinition, TierPreset } from "./tiers";
 import type { SandboxCreateFailure, ValidationClassification } from "./validation";
 import type { ProbeRecovery } from "./validation-recovery";
-import type { WebSearchConfig } from "./web-search";
+import type { WebSearchConfig } from "./inference/web-search";
 
 /**
  * Create a temp file inside a directory with a cryptographically random name.
@@ -2846,7 +2846,7 @@ function patchStagedDockerfile(
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
 
-// Inference probes — moved to onboard-inference-probes.ts
+// Inference probes — moved to inference/onboard-probes.ts
 const {
   hasResponsesToolCall,
   shouldRequireResponsesToolCalling,
@@ -2854,7 +2854,7 @@ const {
   getValidationProbeCurlArgs,
   probeOpenAiLikeEndpoint,
   probeAnthropicEndpoint,
-} = require("./onboard-inference-probes");
+} = require("./inference/onboard-probes");
 
 // shouldSkipResponsesProbe and isNvcfFunctionNotFoundForAccount /
 // nvcfFunctionNotFoundMessage — see validation import above. They live in
@@ -3013,16 +3013,16 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
 // classifySandboxCreateFailure — see validation import above
 
 // ---------------------------------------------------------------------------
-// Ollama model prompt/pull/prepare functions — from onboard-ollama-proxy.ts
+// Ollama model prompt/pull/prepare functions — from inference/ollama/proxy.ts
 // (proxy lifecycle functions already imported at the top of this file)
 const {
   promptOllamaModel,
   printOllamaExposureWarning,
   pullOllamaModel,
   prepareOllamaModel,
-} = require("./onboard-ollama-proxy");
+} = require("./inference/ollama/proxy");
 
-const ollamaModelSize: typeof import("./ollama-model-size") = require("./ollama-model-size");
+const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
 
 function getRequestedSandboxNameHint(opts: { sandboxName?: string | null } = {}): string | null {
   const raw =
@@ -6082,14 +6082,14 @@ async function setupNim(
   // (#2674).
   const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
   const hasOllama = hostCommandExists("ollama");
-  // run and consumed by the Ollama lifecycle helpers in local-inference.ts.
+  // run and consumed by the Ollama lifecycle helpers in inference/local.ts.
   const ollamaHost = findReachableOllamaHost();
   const ollamaRunning = ollamaHost !== null;
   const vllmRunning = !!runCapture(
     ["curl", "-sf", ...localProbeCurlArgs, `http://127.0.0.1:${VLLM_PORT}/v1/models`],
     { ignoreError: true },
   );
-  // Pick a vLLM install recipe for this host. Profiles live in onboard-vllm.ts;
+  // Pick a vLLM install recipe for this host. Profiles live in inference/vllm.ts;
   // null means "no supported platform" (vLLM stays behind EXPERIMENTAL).
   const vllmProfile = detectVllmProfile(gpu);
   // If the profile's image is already cached, the install path is really a
@@ -6195,7 +6195,7 @@ async function setupNim(
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
     options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
   }
-  // vLLM: profiles in onboard-vllm.ts surface as menu entries only when
+  // vLLM: profiles in inference/vllm.ts surface as menu entries only when
   // the user explicitly opts in via NEMOCLAW_PROVIDER, or when
   // NEMOCLAW_EXPERIMENTAL=1 is set.
   // Read NEMOCLAW_PROVIDER directly so interactive runs with an explicit
@@ -7189,7 +7189,7 @@ async function setupNim(
         }
         provider = bp.provider_name || "nvidia-router";
         model = bp.model;
-        const { HOST_GATEWAY_URL } = require("./local-inference");
+        const { HOST_GATEWAY_URL } = require("./inference/local");
         const routerEndpointUrl = bp.endpoint || "";
         endpointUrl = routerEndpointUrl;
         if (routerEndpointUrl.match(/localhost|127\.0\.0\.1/)) {

@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { CLI_NAME } from "./cli/branding";
+import { CLI_NAME } from "../cli/branding";
 
 export interface OnboardCommandOptions {
   nonInteractive: boolean;

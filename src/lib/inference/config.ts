@@ -6,7 +6,7 @@
  * inference output parsing. All functions are pure.
  */
 
-import { DEFAULT_OLLAMA_MODEL } from "./local-inference";
+import { DEFAULT_OLLAMA_MODEL } from "./local";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";

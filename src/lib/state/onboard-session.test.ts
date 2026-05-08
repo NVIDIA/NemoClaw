@@ -8,9 +8,9 @@ import path from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const distPath = require.resolve("../../dist/lib/onboard-session");
+const distPath = require.resolve("../../../dist/lib/state/onboard-session");
 const originalHome = process.env.HOME;
-type OnboardSessionModule = typeof import("../../dist/lib/onboard-session");
+type OnboardSessionModule = typeof import("../../../dist/lib/state/onboard-session");
 type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
 type DebugSummary = NonNullable<ReturnType<OnboardSessionModule["summarizeForDebug"]>>;
 let session: OnboardSessionModule;
@@ -44,7 +44,7 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-session-"));
   process.env.HOME = tmpDir;
   delete require.cache[distPath];
-  session = require("../../dist/lib/onboard-session");
+  session = require("../../../dist/lib/state/onboard-session");
   session.clearSession();
   session.releaseOnboardLock();
 });

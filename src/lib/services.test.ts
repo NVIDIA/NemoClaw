@@ -16,7 +16,9 @@ const ollamaProxyDistPath = resolve(
   "..",
   "dist",
   "lib",
-  "onboard-ollama-proxy.js",
+  "inference",
+  "ollama",
+  "proxy.js",
 );
 
 describe("getServiceStatuses", () => {
@@ -150,7 +152,7 @@ describe("stopAll", () => {
       }
       return reply;
     };
-    // The dist `onboard-ollama-proxy` module destructures `spawnSync` at
+    // The dist Ollama proxy module destructures `spawnSync` at
     // require time, so to make `stopAll` pick up the patched function we
     // bust its cache. `services.ts` requires the proxy lazily, so the
     // next call sees the freshly-loaded module.

@@ -6,11 +6,11 @@ import type { Mock } from "vitest";
 import { describe, expect, it, vi } from "vitest";
 
 // Import from compiled dist/ for coverage attribution.
-import * as nim from "../../dist/lib/nim";
+import * as nim from "../../../dist/lib/inference/nim";
 
 const require = createRequire(import.meta.url);
-const NIM_DIST_PATH = require.resolve("../../dist/lib/nim");
-const RUNNER_PATH = require.resolve("../../dist/lib/runner");
+const NIM_DIST_PATH = require.resolve("../../../dist/lib/inference/nim");
+const RUNNER_PATH = require.resolve("../../../dist/lib/runner");
 
 function loadNimWithMockedRunner(runCapture: Mock) {
   const runner = require(RUNNER_PATH);

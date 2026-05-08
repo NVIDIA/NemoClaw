@@ -10,7 +10,7 @@ import {
   type SpawnSyncReturns,
 } from "node:child_process";
 
-import type { ProbeResult } from "./onboard-types";
+import type { ProbeResult } from "./onboard/types";
 import { ROOT } from "./state/paths";
 import { compactText } from "./core/url-utils";
 

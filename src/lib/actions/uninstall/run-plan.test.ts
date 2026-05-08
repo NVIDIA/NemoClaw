@@ -59,9 +59,51 @@ describe("uninstall run plan", () => {
     );
 
     expect(result.exitCode).toBe(0);
+    expect(logs).toContain("NemoClaw Uninstaller");
+    expect(logs).toContain("This will remove all NemoClaw resources.");
+    expect(logs).toContain("[3/6] NemoClaw CLI");
+    expect(logs).toContain("Removed global NemoClaw CLI package");
     expect(logs).toContain("Claws retracted. Until next time.");
     expect(dockerCalls).toEqual(expect.arrayContaining([["rm", "-f", "abc"], ["rmi", "-f", "img1"]]));
     expect(dockerCalls.some((args) => args.join(" ") === "volume rm -f openshell-cluster-nemoclaw")).toBe(true);
+  });
+
+  it("uses NemoHermes uninstall copy when Hermes is the active agent", () => {
+    const logs: string[] = [];
+    const warnings: string[] = [];
+
+    const result = runUninstallPlan(
+      { assumeYes: false, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => false,
+        env: {
+          HOME: "/tmp/nemohermes-uninstall-test",
+          NEMOCLAW_AGENT: "hermes",
+          TMPDIR: "/tmp/nemohermes-uninstall-test",
+        } as NodeJS.ProcessEnv,
+        error: (line) => warnings.push(line),
+        existsSync: () => false,
+        isTty: true,
+        log: (line) => logs.push(line),
+        readLine: () => "yes",
+        rmSync: vi.fn(),
+        run: vi.fn(),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(logs).toContain("NemoHermes Uninstaller");
+    expect(logs).toContain("This will remove all NemoHermes resources.");
+    expect(logs).toContain("  · All OpenShell sandboxes, gateway, and NemoHermes providers");
+    expect(logs).toContain("  · Global NemoHermes CLI (npm package: nemoclaw)");
+    expect(logs).toContain("[3/6] NemoHermes CLI");
+    expect(warnings).toContain("npm not found; skipping NemoHermes CLI uninstall.");
+    expect(logs).toContain("NemoHermes");
+    expect(logs).toContain("Hermes has left the tidepool.");
+    expect(logs).not.toContain("NemoClaw Uninstaller");
+    expect(logs).not.toContain("[3/6] NemoClaw CLI");
+    expect(logs).not.toContain("Claws retracted. Until next time.");
   });
 
   it("accepts typed interactive confirmation", () => {
@@ -87,6 +129,8 @@ describe("uninstall run plan", () => {
 
     expect(result.exitCode).toBe(0);
     expect(logs).toContain("Proceed? [y/N]");
+    expect(logs).toContain("  · All OpenShell sandboxes, gateway, and NemoClaw providers");
+    expect(logs).toContain("  · Global NemoClaw CLI (npm package: nemoclaw)");
     expect(logs).toContain("Claws retracted. Until next time.");
   });
 
