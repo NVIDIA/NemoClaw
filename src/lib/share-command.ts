@@ -83,8 +83,11 @@ export function checkLocalMountWritable(localMount: string): { writable: boolean
   }
   try {
     fs.accessSync(localMount, fs.constants.W_OK);
-  } catch {
-    return { writable: false, reason: "directory is not writable" };
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "EROFS") return { writable: false, reason: "filesystem is read-only" };
+    if (code === "EACCES") return { writable: false, reason: "directory is not writable" };
+    return { writable: false, reason: err instanceof Error ? err.message : String(err) };
   }
   return { writable: true };
 }

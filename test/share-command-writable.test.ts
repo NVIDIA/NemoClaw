@@ -61,13 +61,31 @@ describe("checkLocalMountWritable (#3192)", () => {
     });
   });
 
-  it("catches a pre-existing directory on a read-only filesystem (mkdir succeeds, access fails)", () => {
+  it("preserves EROFS on a pre-existing directory whose filesystem is read-only", () => {
+    const err = new Error(
+      "EROFS: read-only file system, access '/preexisting/ro/mount'",
+    ) as NodeJS.ErrnoException;
+    err.code = "EROFS";
     vi.spyOn(fs, "mkdirSync").mockReturnValue(undefined);
     vi.spyOn(fs, "accessSync").mockImplementation(() => {
-      throw new Error("EACCES");
+      throw err;
     });
 
     expect(checkLocalMountWritable("/preexisting/ro/mount")).toEqual({
+      writable: false,
+      reason: "filesystem is read-only",
+    });
+  });
+
+  it("reports a generic permission failure on EACCES from accessSync", () => {
+    const err = new Error("EACCES: permission denied") as NodeJS.ErrnoException;
+    err.code = "EACCES";
+    vi.spyOn(fs, "mkdirSync").mockReturnValue(undefined);
+    vi.spyOn(fs, "accessSync").mockImplementation(() => {
+      throw err;
+    });
+
+    expect(checkLocalMountWritable("/preexisting/no-write")).toEqual({
       writable: false,
       reason: "directory is not writable",
     });
