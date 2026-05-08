@@ -16,6 +16,16 @@ on:
         description: Head ref to diff
         required: false
         default: HEAD
+      run_pi:
+        description: Run Pi semantic analysis after deterministic baseline
+        required: false
+        type: boolean
+        default: true
+      pi_model:
+        description: Optional Pi model pattern, for example anthropic/claude-sonnet-4-5
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -27,7 +37,7 @@ concurrency:
 
 jobs:
   advise:
-    name: Static E2E recommendation
+    name: Pi semantic E2E recommendation
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -44,7 +54,7 @@ jobs:
       - name: Install advisor dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Run E2E advisor prototype
+      - name: Run deterministic E2E advisor baseline
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || inputs.base_ref }}
           HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || inputs.head_ref }}
@@ -54,8 +64,27 @@ jobs:
             --head "$HEAD_REF" \
             --out-dir artifacts/e2e-advisor
 
+      - name: Install Pi
+        run: npm install -g @mariozechner/pi-coding-agent
+
+      - name: Run Pi semantic analysis
+        env:
+          PI_E2E_ADVISOR_RUN_PI: ${{ github.event_name == 'workflow_dispatch' && inputs.run_pi == false && '0' || '1' }}
+          PI_E2E_ADVISOR_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_model || '' }}
+          # For fork Phase 1, provide one of Pi's supported provider credentials as a repository secret.
+          # Examples: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or provider-specific env vars.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          node tools/e2e-advisor/pi-analyze.mjs \
+            --out-dir artifacts/e2e-advisor
+
       - name: Publish job summary
-        run: cat artifacts/e2e-advisor/e2e-advisor-summary.md >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          cat artifacts/e2e-advisor/e2e-advisor-summary.md >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/e2e-advisor/e2e-advisor-pi-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload advisor artifacts
         uses: actions/upload-artifact@v4
