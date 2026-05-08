@@ -56,7 +56,9 @@ if (schema.title !== "NemoClaw E2E Advisor Result") {
   failures.push("schema title must be 'NemoClaw E2E Advisor Result'");
 }
 
-for (const [providerName, provider] of Object.entries(modelsTemplate.providers ?? {}) as Array<[string, { apiKey?: string; models?: Array<{ id?: string }> }]>) {
+for (const [providerName, provider] of Object.entries(modelsTemplate.providers ?? {}) as Array<
+  [string, { apiKey?: string; models?: Array<{ id?: string }> }]
+>) {
   if (provider.apiKey !== "__PI_E2E_ADVISOR_API_KEY__") {
     failures.push(`provider ${providerName} must use __PI_E2E_ADVISOR_API_KEY__ placeholder`);
   }
@@ -78,7 +80,9 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`E2E Advisor config check passed (${testIds.size} manifest tests, ${(rules.rules ?? []).length} rules)`);
+console.log(
+  `E2E Advisor config check passed (${testIds.size} manifest tests, ${(rules.rules ?? []).length} rules)`,
+);
 
 function readYaml(filePath: string): any {
   return yaml.parse(fs.readFileSync(filePath, "utf8"));

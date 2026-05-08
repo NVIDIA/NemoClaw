@@ -88,7 +88,7 @@ function buildComment({ summary, result, runUrl, marker }) {
   return `${marker}
 ## E2E Advisor Recommendation
 
-**Required E2E:** ${requiredLine}  
+**Required E2E:** ${requiredLine}
 **Optional E2E:** ${optionalLine}${dispatch}${run}
 
 <details>
