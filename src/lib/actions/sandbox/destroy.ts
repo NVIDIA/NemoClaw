@@ -63,6 +63,40 @@ function cleanupGatewayAfterLastSandbox(): void {
   });
 }
 
+function isNonInteractive(): boolean {
+  return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+}
+
+/**
+ * Decide whether to tear down the shared NemoClaw gateway after destroying
+ * the last sandbox. Default is to preserve it (#2166); explicit opt-in via
+ * `cleanupGateway: true` (which `normalizeDestroySandboxOptions` also reads
+ * from `--cleanup-gateway` / `NEMOCLAW_CLEANUP_GATEWAY`).
+ *
+ * Prompt rules:
+ *   - explicit `cleanupGateway` set         → honour it without prompting
+ *   - non-interactive or `--yes` / `--force` → preserve gateway (safe default)
+ *   - interactive without `--yes`           → prompt the user
+ */
+async function resolveCleanupGatewayDecision(
+  options: DestroySandboxOptions,
+): Promise<boolean> {
+  if (options.cleanupGateway === true) return true;
+  if (options.cleanupGateway === false) return false;
+  if (options.yes === true || options.force === true) return false;
+  if (isNonInteractive()) return false;
+  console.log(`  ${YW}This was the last sandbox.${R}`);
+  console.log(
+    "  Also destroy the shared NemoClaw gateway (port forward, gateway pod, cluster volumes)?",
+  );
+  console.log("  Saying 'no' keeps the gateway so the next 'nemoclaw onboard' is faster.");
+  const answer = await askPrompt(
+    "  Type 'yes' to destroy the gateway, or press Enter to keep it [y/N]: ",
+  );
+  const trimmed = answer.trim().toLowerCase();
+  return trimmed === "y" || trimmed === "yes";
+}
+
 function hasNoLiveSandboxes(): boolean {
   const { captureOpenshell } = require("../../adapters/openshell/runtime") as {
     captureOpenshell: (
@@ -296,7 +330,17 @@ export async function destroySandbox(
       noLiveSandboxes: hasNoLiveSandboxes(),
     })
   ) {
-    cleanupGatewayAfterLastSandbox();
+    const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
+    if (shouldCleanupGateway) {
+      cleanupGatewayAfterLastSandbox();
+    } else {
+      console.log(
+        `  Shared NemoClaw gateway preserved. Re-run 'openshell gateway destroy --name ${NEMOCLAW_GATEWAY_NAME}' to remove it,`,
+      );
+      console.log(
+        `  or pass '--cleanup-gateway' / set NEMOCLAW_CLEANUP_GATEWAY=1 next time. (#2166)`,
+      );
+    }
   }
   if (alreadyGone) {
     console.log(`  Sandbox '${sandboxName}' was already absent from the live gateway.`);
