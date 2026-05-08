@@ -11,6 +11,28 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
+function notFound(): RunResult {
+  return { status: 1, stdout: "", stderr: "" };
+}
+
+const PROXY_CMDLINE = "/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.js\n";
+
+function psStub(
+  pidStr: string,
+  opts: { exited: Set<number>; cmdline?: string; owner?: string },
+) {
+  return (args: readonly string[]): RunResult | null => {
+    if (args[0] !== "-p" || args[1] !== pidStr || args[2] !== "-o") return null;
+    const pid = Number(pidStr);
+    if (args[3] === "pid=") {
+      return opts.exited.has(pid) ? notFound() : ok(`${pidStr}\n`);
+    }
+    if (args[3] === "user=") return ok(`${opts.owner ?? "testuser"}\n`);
+    if (args[3] === "args=") return ok(opts.cmdline ?? PROXY_CMDLINE);
+    return null;
+  };
+}
+
 describe("uninstall run plan", () => {
   it("builds a plan using host paths and shim classification", () => {
     const { paths, plan } = buildRunPlan(
@@ -165,17 +187,15 @@ describe("uninstall run plan", () => {
     fs.writeFileSync(pidFile, "44321\n");
 
     try {
+      const stub = psStub("44321", { exited });
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
-          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
           existsSync: (target) => target === pidFile,
           isTty: false,
-          kill: (pid, signal) => {
-            // Signal 0 is the existence probe; return false once SIGTERM has
-            // been delivered to simulate the proxy exiting cleanly.
-            if (signal === 0) return !exited.has(pid);
+          kill: (pid, _signal) => {
             killed.push(pid);
             exited.add(pid);
             return true;
@@ -183,9 +203,9 @@ describe("uninstall run plan", () => {
           log: (line) => logs.push(line),
           rmSync: vi.fn(),
           run: (command, args) => {
-            // ps -p 44321 -o args= confirms the proxy cmdline.
-            if (command === "ps" && args.includes("44321")) {
-              return ok("/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.js\n");
+            if (command === "ps") {
+              const result = stub(args);
+              if (result) return result;
             }
             // lsof fallback returns nothing — PID-file branch should win.
             if (command === "lsof") return ok("");
@@ -209,15 +229,18 @@ describe("uninstall run plan", () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
+    const stub = psStub("55678", { exited });
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
-        env: { HOME: "/tmp/nemoclaw-uninstall-test-2759-lsof" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-2759-lsof",
+          LOGNAME: "testuser",
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
-        kill: (pid, signal) => {
-          if (signal === 0) return !exited.has(pid);
+        kill: (pid, _signal) => {
           killed.push(pid);
           exited.add(pid);
           return true;
@@ -228,8 +251,9 @@ describe("uninstall run plan", () => {
           if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
             return ok("55678\n");
           }
-          if (command === "ps" && args.includes("55678")) {
-            return ok("/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.js\n");
+          if (command === "ps") {
+            const result = stub(args);
+            if (result) return result;
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
@@ -244,14 +268,113 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("Stopped Ollama auth proxy 55678");
   });
 
-  it("never kills a process on :11435 whose cmdline is not the auth proxy", () => {
+  it("never stops a foreign-owned auth proxy on :11435 even if cmdline matches", () => {
     const logs: string[] = [];
     const killed: number[] = [];
+    const stub = psStub("77777", { exited: new Set(), owner: "someone-else" });
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
-        env: { HOME: "/tmp/nemoclaw-uninstall-test-2759-foreign" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-2759-foreign-owner",
+          LOGNAME: "testuser",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid) => {
+          killed.push(pid);
+          return true;
+        },
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
+            return ok("77777\n");
+          }
+          if (command === "ps") {
+            const result = stub(args);
+            if (result) return result;
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          if (args[0] === "-f") return ok("");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(killed).not.toContain(77777);
+    expect(logs).toContain("No Ollama auth proxy processes found");
+  });
+
+  it("scans the custom NEMOCLAW_OLLAMA_PROXY_PORT for orphan auth proxies", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const exited = new Set<number>();
+    const stub = psStub("33333", { exited });
+    const lsofPorts: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-2759-custom-port",
+          LOGNAME: "testuser",
+          NEMOCLAW_OLLAMA_PROXY_PORT: "12000",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid, _signal) => {
+          killed.push(pid);
+          exited.add(pid);
+          return true;
+        },
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          if (command === "lsof" && args[0] === "-ti") {
+            lsofPorts.push(args[1] ?? "");
+            // Only return a hit when the scan is asking about the custom port.
+            if (args[1] === ":12000") return ok("33333\n");
+            return ok("");
+          }
+          if (command === "ps") {
+            const result = stub(args);
+            if (result) return result;
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          if (args[0] === "-f") return ok("");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(lsofPorts).toContain(":12000");
+    expect(lsofPorts).not.toContain(":11435");
+    expect(killed).toContain(33333);
+    expect(logs).toContain("Stopped Ollama auth proxy 33333");
+  });
+
+  it("never kills a process on :11435 whose cmdline is not the auth proxy", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    // Same owner, different cmdline — exercises the cmdline gate specifically.
+    const stub = psStub("99999", {
+      exited: new Set(),
+      cmdline: "/usr/sbin/nginx -g daemon off;\n",
+    });
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-2759-foreign",
+          LOGNAME: "testuser",
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         kill: (pid) => {
@@ -264,9 +387,9 @@ describe("uninstall run plan", () => {
           if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
             return ok("99999\n");
           }
-          // PID 99999 is some unrelated service the user happens to run.
-          if (command === "ps" && args.includes("99999")) {
-            return ok("/usr/sbin/nginx -g daemon off;\n");
+          if (command === "ps") {
+            const result = stub(args);
+            if (result) return result;
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
@@ -291,15 +414,17 @@ describe("uninstall run plan", () => {
     fs.writeFileSync(pidFile, "44322\n");
 
     try {
+      // exited stays empty — pidExists() always reports alive, simulating a
+      // process that ignores SIGTERM and survives SIGKILL.
+      const stub = psStub("44322", { exited: new Set() });
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
-          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
           existsSync: (target) => target === pidFile,
           isTty: false,
           kill: (_pid, signal) => {
-            if (signal === 0) return true;
             if (typeof signal === "string") signals.push(signal);
             return true;
           },
@@ -307,8 +432,9 @@ describe("uninstall run plan", () => {
           error: (line: string) => warnings.push(line),
           rmSync: vi.fn(),
           run: (command, args) => {
-            if (command === "ps" && args.includes("44322")) {
-              return ok("/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.js\n");
+            if (command === "ps") {
+              const result = stub(args);
+              if (result) return result;
             }
             if (command === "lsof") return ok("");
             if (args[0] === "-c") return ok("/fake/bin/tool\n");
