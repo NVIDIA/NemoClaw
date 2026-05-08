@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { getAgentBranding } from "../../cli/branding";
 import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
@@ -174,9 +175,10 @@ function printBanner(log: (message: string) => void): void {
   log("This will remove all NemoClaw resources.");
 }
 
-function printBye(log: (message: string) => void): void {
-  log("NemoClaw");
-  log("Claws retracted. Until next time.");
+function printBye(runtime: UninstallRuntime): void {
+  const branding = getAgentBranding(runtime.env.NEMOCLAW_AGENT);
+  runtime.log(branding.display);
+  runtime.log(branding.product === "Hermes" ? "Hermes has left the tidepool." : "Claws retracted. Until next time.");
 }
 
 function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boolean {
@@ -464,7 +466,7 @@ export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRu
   printBanner(runtime.log);
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
   executePlan(plan, paths, options, runtime);
-  printBye(runtime.log);
+  printBye(runtime);
   return { exitCode: 0, plan };
 }
 /* v8 ignore stop */

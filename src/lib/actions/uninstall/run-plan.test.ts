@@ -64,6 +64,33 @@ describe("uninstall run plan", () => {
     expect(dockerCalls.some((args) => args.join(" ") === "volume rm -f openshell-cluster-nemoclaw")).toBe(true);
   });
 
+  it("uses NemoHermes completion copy when Hermes is the active agent", () => {
+    const logs: string[] = [];
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => false,
+        env: {
+          HOME: "/tmp/nemohermes-uninstall-test",
+          NEMOCLAW_AGENT: "hermes",
+          TMPDIR: "/tmp/nemohermes-uninstall-test",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: vi.fn(),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(logs).toContain("NemoHermes");
+    expect(logs).toContain("Hermes has left the tidepool.");
+    expect(logs).not.toContain("Claws retracted. Until next time.");
+  });
+
   it("accepts typed interactive confirmation", () => {
     const logs: string[] = [];
     const run = vi.fn((_command: string, args: string[]) => {
