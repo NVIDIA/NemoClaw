@@ -74,7 +74,7 @@ Run a test inference request to verify that the provider is responding:
 
 ```console
 $ nemoclaw my-assistant connect
-$ openclaw agent --agent main --local -m "Test inference" --session-id debug
+$ openclaw agent --agent main -m "Test inference" --session-id debug
 ```
 
 If the request fails, check the following:
