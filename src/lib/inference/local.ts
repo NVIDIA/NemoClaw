@@ -22,6 +22,7 @@ export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 export const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
+/** Preferred Ollama starter model for DGX Spark-class GPUs. */
 export const DGX_SPARK_OLLAMA_MODEL = "qwen3.6:35b";
 export const SMALL_OLLAMA_MODEL = "qwen2.5:7b";
 export const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
@@ -461,6 +462,9 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   return parseOllamaList(listOutput);
 }
 
+/**
+ * Return Ollama models NemoClaw should offer/pull before the daemon has local models.
+ */
 export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
   const options = [SMALL_OLLAMA_MODEL];
   if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
@@ -470,6 +474,9 @@ export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
   return options;
 }
 
+/**
+ * Pick the default Ollama model, preferring installed models over bootstrap fallbacks.
+ */
 export function getDefaultOllamaModel(
   gpu: GpuInfo | null = null,
   runCaptureImpl?: RunCaptureFn,
