@@ -15,6 +15,7 @@ const manifestPath = args.manifest || "test/e2e/e2e-manifest.yaml";
 const schemaPath = args.schema || "tools/e2e-advisor/schema.json";
 const promptPath = path.join(outDir, "e2e-advisor-pi-prompt.md");
 const rawPath = path.join(outDir, "e2e-advisor-pi-raw-output.txt");
+const piConfigDir = path.join(outDir, "pi-config");
 const piResultPath = path.join(outDir, "e2e-advisor-pi-result.json");
 const finalResultPath = path.join(outDir, "e2e-advisor-final-result.json");
 const piSummaryPath = path.join(outDir, "e2e-advisor-pi-summary.md");
@@ -40,7 +41,8 @@ if (!hasLikelyPiCredential()) {
 }
 
 const piBin = process.env.PI_BIN || "pi";
-const provider = process.env.PI_E2E_ADVISOR_PROVIDER || (process.env.PI_E2E_ADVISOR_API_KEY ? "openai" : "");
+const provider = process.env.PI_E2E_ADVISOR_PROVIDER || (process.env.PI_E2E_ADVISOR_API_KEY ? "anthropic" : "");
+const model = process.env.PI_E2E_ADVISOR_MODEL || defaultModelForProvider(provider);
 const piArgs = [
   "--no-session",
   "--no-extensions",
@@ -55,8 +57,8 @@ const piArgs = [
 if (provider) {
   piArgs.unshift("--provider", provider);
 }
-if (process.env.PI_E2E_ADVISOR_MODEL) {
-  piArgs.unshift("--model", process.env.PI_E2E_ADVISOR_MODEL);
+if (model) {
+  piArgs.unshift("--model", model);
 }
 const promptStdin = process.env.PI_E2E_ADVISOR_PROMPT_STDIN !== "0";
 if (promptStdin) {
@@ -69,7 +71,7 @@ const childEnv = {
   ...process.env,
   PI_SKIP_VERSION_CHECK: process.env.PI_SKIP_VERSION_CHECK || "1",
 };
-applyGenericApiKey(childEnv, provider);
+preparePiConfig(childEnv, provider);
 
 const child = spawnSync(piBin, piArgs, {
   cwd: root,
@@ -332,13 +334,28 @@ function hasLikelyPiCredential() {
   return Boolean(process.env.PI_E2E_ADVISOR_API_KEY) || credentialEnv.some((name) => Boolean(process.env[name])) || Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
 }
 
-function applyGenericApiKey(env, provider) {
+function preparePiConfig(env, provider) {
   if (!env.PI_E2E_ADVISOR_API_KEY) {
     return;
   }
-  const envName = providerEnvName(provider || "openai");
+  const envName = providerEnvName(provider || "anthropic");
   if (envName && !env[envName]) {
     env[envName] = env.PI_E2E_ADVISOR_API_KEY;
+  }
+
+  const templatePath = path.resolve(root, "tools/e2e-advisor/pi-models.template.json");
+  if (fs.existsSync(templatePath)) {
+    fs.mkdirSync(piConfigDir, { recursive: true });
+    fs.writeFileSync(path.join(piConfigDir, "auth.json"), "{}\n", { mode: 0o600 });
+    const settings = {
+      defaultProvider: provider || "anthropic",
+      defaultModel: model || defaultModelForProvider(provider),
+      defaultThinkingLevel: "medium",
+    };
+    fs.writeFileSync(path.join(piConfigDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
+    const models = fs.readFileSync(templatePath, "utf8").replaceAll("__PI_E2E_ADVISOR_API_KEY__", env.PI_E2E_ADVISOR_API_KEY);
+    fs.writeFileSync(path.join(piConfigDir, "models.json"), models, { mode: 0o600 });
+    env.PI_CODING_AGENT_DIR = path.resolve(root, piConfigDir);
   }
 }
 
@@ -362,6 +379,13 @@ function providerEnvName(provider) {
   if (normalized.includes("opencode")) return "OPENCODE_API_KEY";
   if (normalized.includes("kimi")) return "KIMI_API_KEY";
   return "OPENAI_API_KEY";
+}
+
+function defaultModelForProvider(provider) {
+  const normalized = (provider || "").toLowerCase();
+  if (normalized.includes("anthropic")) return "aws/anthropic/bedrock-claude-opus-4-7";
+  if (normalized.includes("openai")) return "openai/openai/gpt-5.5";
+  return "";
 }
 
 function writeFailure(reason) {

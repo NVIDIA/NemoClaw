@@ -25,9 +25,9 @@ on:
         description: Pi provider name for PI_E2E_ADVISOR_API_KEY
         required: false
         type: string
-        default: openai
+        default: anthropic
       pi_model:
-        description: Optional Pi model pattern, for example openai/gpt-5 or anthropic/claude-sonnet-4-5
+        description: Optional Pi model pattern, for example aws/anthropic/bedrock-claude-opus-4-7 or openai/openai/gpt-5.5
         required: false
         type: string
         default: ""
@@ -77,7 +77,7 @@ jobs:
         continue-on-error: true
         env:
           PI_E2E_ADVISOR_RUN_PI: ${{ github.event_name == 'workflow_dispatch' && inputs.run_pi == false && '0' || '1' }}
-          PI_E2E_ADVISOR_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_provider || 'openrouter' }}
+          PI_E2E_ADVISOR_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_provider || 'anthropic' }}
           PI_E2E_ADVISOR_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_model || '' }}
           # Preferred fork Phase 1 secret. The script maps this generic key to the selected provider's
           # expected env var before invoking pi, matching how local pi can be run with --api-key.
