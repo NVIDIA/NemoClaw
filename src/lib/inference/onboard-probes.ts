@@ -23,9 +23,11 @@ const {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-// Hostnames that only resolve from inside the OpenShell sandbox network.
-// Probing them from the host always fails with curl exit 6 ("Could not
-// resolve host"), so we skip host-side validation for these URLs. See #893.
+// Hostnames that are normally meant for the sandbox/container host boundary.
+// host.openshell.internal only resolves inside the OpenShell sandbox network,
+// so host-side validation cannot prove reachability for that URL. For ordinary
+// verification we still skip these endpoints, but strict tool-call validation
+// must fail closed unless the host is probeable from the onboard process.
 const SANDBOX_INTERNAL_HOSTS = ["host.openshell.internal", "host.docker.internal"];
 
 function isSandboxInternalUrl(url) {
@@ -445,12 +447,29 @@ function runChatCompletionsProbe({ authHeader, model, url, isWsl: isWslOverride 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   if (isSandboxInternalUrl(endpointUrl)) {
     const { hostname } = new URL(String(endpointUrl));
-    return {
-      ok: true,
-      api: null,
-      label: null,
-      note: `${hostname} only resolves inside the sandbox — validation skipped. If the endpoint is unreachable at runtime, re-run onboard with a routable URL.`,
-    };
+    if (options.requireChatCompletionsToolCalling !== true) {
+      return {
+        ok: true,
+        api: null,
+        label: null,
+        note: `${hostname} only resolves inside the sandbox — validation skipped. If the endpoint is unreachable at runtime, re-run onboard with a routable URL.`,
+      };
+    }
+    if (hostname !== "host.docker.internal") {
+      return {
+        ok: false,
+        message: `${hostname} only resolves inside the sandbox and cannot be validated for required structured Chat Completions tool calls from the host. Use a routable endpoint URL and retry onboard.`,
+        failures: [
+          {
+            name: "Chat Completions API with tool calling",
+            httpStatus: 0,
+            curlStatus: 0,
+            message: "sandbox-internal endpoint cannot be strictly validated from host",
+            body: "",
+          },
+        ],
+      };
+    }
   }
 
   const useQueryParam = options.authMode === "query-param";

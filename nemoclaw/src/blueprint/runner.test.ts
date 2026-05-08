@@ -196,7 +196,7 @@ describe("runner", () => {
       expect(loadBlueprint()).toEqual({ version: "2.0" });
     });
 
-    it("parses nested policy additions with object and array values", () => {
+    it("parses schema-valid policy additions", () => {
       addFile(
         "blueprint.yaml",
         YAML.stringify({
@@ -204,9 +204,15 @@ describe("runner", () => {
           components: {
             policy: {
               additions: {
-                extra: {
-                  enabled: true,
-                  paths: ["/tmp", "/var/tmp"],
+                internal_api: {
+                  name: "internal_api",
+                  endpoints: [
+                    {
+                      host: "api.internal.example.com",
+                      port: 443,
+                      access: "full",
+                    },
+                  ],
                 },
               },
             },
@@ -218,14 +224,40 @@ describe("runner", () => {
         components: {
           policy: {
             additions: {
-              extra: {
-                enabled: true,
-                paths: ["/tmp", "/var/tmp"],
+              internal_api: {
+                name: "internal_api",
+                endpoints: [
+                  {
+                    host: "api.internal.example.com",
+                    port: 443,
+                    access: "full",
+                  },
+                ],
               },
             },
           },
         },
       });
+    });
+
+    it("rejects policy additions that do not match the policy schema", () => {
+      addFile(
+        "blueprint.yaml",
+        YAML.stringify({
+          version: "2.0",
+          components: {
+            policy: {
+              additions: {
+                extra: {
+                  mode: "allow",
+                  endpoints: ["https://api.example.com"],
+                },
+              },
+            },
+          },
+        }),
+      );
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
     });
 
     it("respects NEMOCLAW_BLUEPRINT_PATH env var", () => {
@@ -470,8 +502,14 @@ describe("runner", () => {
           policy: {
             additions: {
               nim_service: {
-                mode: "allow",
-                endpoints: ["https://integrate.api.nvidia.com"],
+                name: "nim_service",
+                endpoints: [
+                  {
+                    host: "integrate.api.nvidia.com",
+                    port: 443,
+                    access: "full",
+                  },
+                ],
               },
             },
           },
@@ -531,6 +569,65 @@ describe("runner", () => {
       };
       expect(merged.network_policies).toHaveProperty("existing_service");
       expect(merged.network_policies).toHaveProperty("nim_service");
+    });
+
+    it("fails closed when the live policy cannot be parsed", async () => {
+      const bp = minimalBlueprint({
+        components: {
+          inference: {
+            profiles: {
+              default: {
+                provider_type: "openai",
+                provider_name: "my-provider",
+                endpoint: "https://api.example.com/v1",
+                model: "gpt-4",
+                credential_env: "MY_API_KEY",
+              },
+            },
+          },
+          sandbox: {
+            image: "openclaw",
+            name: "test-sandbox",
+            forward_ports: [18789],
+          },
+          policy: {
+            additions: {
+              nim_service: {
+                name: "nim_service",
+                endpoints: [
+                  {
+                    host: "integrate.api.nvidia.com",
+                    port: 443,
+                    access: "full",
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+        if (
+          args[0] === "policy" &&
+          args[1] === "get" &&
+          args[2] === "--full" &&
+          args[3] === "test-sandbox"
+        ) {
+          return {
+            exitCode: 0,
+            stdout: ["Version: 1", "Hash: sha256:test", "---", "network_policies: ["].join("\n"),
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+
+      await expect(actionApply("default", bp)).rejects.toThrow(/current policy.*not valid YAML/i);
+      const policySetCalls = mockExeca.mock.calls.filter(
+        (c) => Array.isArray(c[1]) && c[1][0] === "policy" && c[1][1] === "set",
+      );
+      expect(policySetCalls).toEqual([]);
     });
 
     it("skips policy commands when policy additions are empty", async () => {
