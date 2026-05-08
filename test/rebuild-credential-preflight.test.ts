@@ -49,6 +49,7 @@ function createFixture(opts: {
   /** If set, the onboard-session.json provider_selection step status */
   providerSelectionStatus?: string;
   agent?: string | null;
+  hermesAuthMethod?: string | null;
   messagingChannels?: string[] | null;
   providerCredentialHashes?: Record<string, string>;
   dockerBuildExitCode?: number;
@@ -60,6 +61,7 @@ function createFixture(opts: {
     savedCredential,
     providerSelectionStatus = "complete",
     agent = null,
+    hermesAuthMethod = null,
     messagingChannels = null,
     providerCredentialHashes,
     dockerBuildExitCode = 0,
@@ -110,6 +112,7 @@ function createFixture(opts: {
       model: "meta/llama-3.3-70b-instruct",
       endpointUrl: null,
       credentialEnv,
+      hermesAuthMethod,
       preferredInferenceApi: null,
       nimContainer: null,
       webSearchConfig: null,
@@ -264,6 +267,28 @@ process.exit(0);
   );
 
   return { tmpDir, nemoclawDir, sandboxName, fakeRoot };
+}
+
+function writeHermesProviderState(
+  fixture: ReturnType<typeof createFixture>,
+  state: Record<string, unknown>,
+) {
+  const dir = path.join(fixture.nemoclawDir, "hermes-oauth");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    path.join(dir, `${fixture.sandboxName}.json`),
+    JSON.stringify(
+      {
+        version: 1,
+        sandbox: fixture.sandboxName,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        ...state,
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
 }
 
 function runRebuild(
@@ -481,6 +506,79 @@ describe("Issue #2273: atomic rebuild", () => {
         expect(output).toContain("preflight failed");
         expect(output).toContain("OPENAI_API_KEY");
         expect(output).toContain("untouched");
+        expect(registryHasSandbox(f)).toBe(true);
+      },
+    );
+
+    it(
+      "uses Hermes OAuth host state instead of requiring OPENAI_API_KEY",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          provider: "hermes-provider",
+          credentialEnv: "OPENAI_API_KEY",
+          hermesAuthMethod: "oauth",
+        });
+        writeHermesProviderState(f, {
+          auth_method: "oauth",
+          access_token: "access-1",
+          refresh_token: "refresh-1",
+          expires_at: "2026-01-01T00:15:00.000Z",
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
+        expect(output).not.toContain("provider credential not found");
+        expect(output).toContain("Backing up sandbox state");
+      },
+    );
+
+    it(
+      "uses Hermes API-key host state instead of requiring NOUS_API_KEY",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          provider: "hermes-provider",
+          credentialEnv: "NOUS_API_KEY",
+          hermesAuthMethod: "api_key",
+        });
+        writeHermesProviderState(f, {
+          auth_method: "api_key",
+          api_key: "nous-key-from-host-state",
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(output).not.toContain("Missing credential: NOUS_API_KEY");
+        expect(output).not.toContain("provider credential not found");
+        expect(output).toContain("Backing up sandbox state");
+      },
+    );
+
+    it(
+      "aborts Hermes OAuth rebuild before backup when host auth state is missing",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          provider: "hermes-provider",
+          credentialEnv: "OPENAI_API_KEY",
+          hermesAuthMethod: "oauth",
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(result.status).not.toBe(0);
+        expect(output).toContain("Hermes Provider credentials not found");
+        expect(output).toContain("not OPENAI_API_KEY");
+        expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
+        expect(output).not.toContain("Backing up sandbox state");
         expect(registryHasSandbox(f)).toBe(true);
       },
     );

@@ -13,6 +13,16 @@ import {
 const { hydrateCredentialEnv } = require("../../onboard") as {
   hydrateCredentialEnv: (name: string) => string | null;
 };
+const hermesProviderAuth = require("../../hermes-provider-auth") as {
+  HERMES_PROVIDER_NAME: string;
+  HERMES_NOUS_API_KEY_CREDENTIAL_ENV: string;
+  loadHermesOAuthState: (sandboxName: string) => {
+    auth_method?: unknown;
+    api_key?: unknown;
+    access_token?: unknown;
+    refresh_token?: unknown;
+  } | null;
+};
 const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
   LOCAL_INFERENCE_PROVIDERS: string[];
   REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
@@ -60,6 +70,74 @@ function getRebuildCredentialEnvFromRegistry(provider: string | null | undefined
       ? REMOTE_PROVIDER_CONFIG.build
       : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
   return remoteConfig?.credentialEnv || null;
+}
+
+function normalizeHermesRebuildAuthMethod(value: unknown): "oauth" | "api_key" | null {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  if (!normalized) return null;
+  if (normalized === "oauth" || normalized === "nous_oauth" || normalized === "nous_portal_oauth") {
+    return "oauth";
+  }
+  if (
+    normalized === "api" ||
+    normalized === "key" ||
+    normalized === "api_key" ||
+    normalized === "apikey" ||
+    normalized === "nous_api_key"
+  ) {
+    return "api_key";
+  }
+  return null;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  const normalized = String(value || "").trim();
+  return normalized || null;
+}
+
+function preflightHermesProviderCredentials(
+  sandboxName: string,
+  session: Session | null,
+  credentialEnv: string | null,
+  log: (msg: string) => void,
+): boolean {
+  const state = hermesProviderAuth.loadHermesOAuthState(sandboxName);
+  const authMethod =
+    normalizeHermesRebuildAuthMethod(session?.hermesAuthMethod) ||
+    normalizeHermesRebuildAuthMethod(state?.auth_method) ||
+    (credentialEnv === hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV ? "api_key" : "oauth");
+
+  if (authMethod === "api_key") {
+    const hostStateKey = nonEmptyString(state?.api_key) || nonEmptyString(state?.access_token);
+    const envKey = hydrateCredentialEnv(hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV);
+    log(
+      `Hermes Provider rebuild preflight: api_key state=${hostStateKey ? "present" : "missing"} env=${envKey ? "present" : "missing"}`,
+    );
+    if (hostStateKey || envKey) return true;
+  } else {
+    const refreshToken = nonEmptyString(state?.refresh_token);
+    log(
+      `Hermes Provider rebuild preflight: oauth refresh_token=${refreshToken ? "present" : "missing"}`,
+    );
+    if (refreshToken) return true;
+  }
+
+  console.error("");
+  console.error(`  ${_RD}Rebuild preflight failed:${R} Hermes Provider credentials not found.`);
+  console.error("  Hermes Provider uses host-side Nous auth state, not OPENAI_API_KEY.");
+  if (authMethod === "api_key") {
+    console.error(
+      `  Re-run ${CLI_NAME} onboard to store a Nous API key, or export ${hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV} before rebuilding.`,
+    );
+  } else {
+    console.error(`  Re-run ${CLI_NAME} onboard to refresh Nous Portal OAuth for this sandbox.`);
+  }
+  console.error("");
+  console.error("  Sandbox is untouched — no data was lost.");
+  return false;
 }
 
 /**
@@ -161,8 +239,9 @@ export async function rebuildSandbox(
   // credential when onboard runs in non-interactive mode.  Checking now
   // lets us abort with the sandbox still intact.  See #2273.
   const session = onboardSession.loadSession();
+  const sessionMatchesTarget = !session?.sandboxName || session.sandboxName === sandboxName;
   let rebuildCredentialEnv: string | null = null;
-  if (session && session.sandboxName && session.sandboxName !== sandboxName) {
+  if (!sessionMatchesTarget) {
     // Session belongs to a different sandbox — its credentialEnv may be
     // wrong (e.g. hermes session while rebuilding openclaw). Resolve the
     // target sandbox provider from the registry instead so destructive
@@ -178,6 +257,7 @@ export async function rebuildSandbox(
   } else {
     rebuildCredentialEnv = session?.credentialEnv || null;
   }
+  const rebuildProvider = sessionMatchesTarget ? session?.provider || sb.provider : sb.provider;
   // Legacy migration: pre-fix local-inference sandboxes (GH #2519) recorded
   // credentialEnv="OPENAI_API_KEY" in onboard-session.json even though the
   // sandbox does not actually need a host OpenAI key (ollama-local uses an
@@ -195,6 +275,24 @@ export async function rebuildSandbox(
     log(
       `Preflight: legacy ${session.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
     );
+    rebuildCredentialEnv = null;
+  }
+  if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
+    if (
+      !preflightHermesProviderCredentials(
+        sandboxName,
+        sessionMatchesTarget ? session : null,
+        rebuildCredentialEnv,
+        log,
+      )
+    ) {
+      bail("Missing Hermes Provider credentials");
+      return;
+    }
+    // Hermes Provider credentials are host-managed in ~/.nemoclaw/hermes-oauth
+    // and re-registered by the provider setup path during recreate. Do not
+    // fall through to the generic env-var preflight, which would incorrectly
+    // demand OPENAI_API_KEY for OAuth or NOUS_API_KEY despite reusable state.
     rebuildCredentialEnv = null;
   }
   if (rebuildCredentialEnv) {
