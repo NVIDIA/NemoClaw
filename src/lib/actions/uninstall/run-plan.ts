@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { sleepMs } from "../../core/wait";
 import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
@@ -239,8 +240,29 @@ function isOllamaAuthProxyPid(pid: number, runtime: UninstallRuntime): boolean {
   return result.status === 0 && result.stdout.includes(OLLAMA_AUTH_PROXY_CMDLINE_MARK);
 }
 
+// `runtime.kill(pid, 0)` is the POSIX existence probe — it sends no signal
+// but returns true only while the process is still addressable by the caller.
+function waitForPidExit(pid: number, runtime: UninstallRuntime, timeoutMs: number): boolean {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!runtime.kill(pid, 0)) return true;
+    sleepMs(50);
+  }
+  return !runtime.kill(pid, 0);
+}
+
 function tryStopOllamaProxyPid(pid: number, runtime: UninstallRuntime): boolean {
-  if (runtime.kill(pid) || runtime.kill(pid, "SIGKILL")) {
+  // `runtime.kill()` only confirms the signal was sent; the proxy may ignore
+  // SIGTERM, take time to clean up, or linger as a zombie. Verify the PID is
+  // actually gone before claiming success — otherwise the next install fails
+  // with `Ollama auth proxy failed to start on :11435`.
+  runtime.kill(pid);
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped Ollama auth proxy ${pid}`);
+    return true;
+  }
+  runtime.kill(pid, "SIGKILL");
+  if (waitForPidExit(pid, runtime, 1000)) {
     runtime.log(`Stopped Ollama auth proxy ${pid}`);
     return true;
   }
@@ -280,7 +302,9 @@ function stopOllamaAuthProxy(paths: UninstallPaths, runtime: UninstallRuntime): 
   //    gone (e.g. a previous uninstall already wiped state but the process
   //    survived). Filter via cmdline so we never kill unrelated listeners.
   if (!runtime.commandExists("lsof")) {
-    if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
+    if (stopped.size === 0) {
+      runtime.warn("lsof not found; skipping orphan Ollama auth proxy scan.");
+    }
     return;
   }
   const lsof = runtime.run("lsof", ["-ti", `:${OLLAMA_PROXY_PORT}`], { env: runtime.env });

@@ -113,6 +113,7 @@ describe("uninstall run plan", () => {
   it("kills the Ollama auth proxy via the persisted PID file (#2759)", () => {
     const logs: string[] = [];
     const killed: number[] = [];
+    const exited = new Set<number>();
     // Simulate the persisted PID file under ~/.nemoclaw/.
     const tmpHome = "/tmp/nemoclaw-uninstall-test-2759-pidfile";
     const pidFile = `${tmpHome}/.nemoclaw/ollama-auth-proxy.pid`;
@@ -127,8 +128,12 @@ describe("uninstall run plan", () => {
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => target === pidFile,
           isTty: false,
-          kill: (pid) => {
+          kill: (pid, signal) => {
+            // Signal 0 is the existence probe; return false once SIGTERM has
+            // been delivered to simulate the proxy exiting cleanly.
+            if (signal === 0) return !exited.has(pid);
             killed.push(pid);
+            exited.add(pid);
             return true;
           },
           log: (line) => logs.push(line),
@@ -159,6 +164,7 @@ describe("uninstall run plan", () => {
   it("kills an orphan auth proxy via lsof :11435 when the PID file is gone", () => {
     const logs: string[] = [];
     const killed: number[] = [];
+    const exited = new Set<number>();
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
@@ -166,8 +172,10 @@ describe("uninstall run plan", () => {
         env: { HOME: "/tmp/nemoclaw-uninstall-test-2759-lsof" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
-        kill: (pid) => {
+        kill: (pid, signal) => {
+          if (signal === 0) return !exited.has(pid);
           killed.push(pid);
+          exited.add(pid);
           return true;
         },
         log: (line) => logs.push(line),
@@ -227,6 +235,83 @@ describe("uninstall run plan", () => {
     expect(result.exitCode).toBe(0);
     expect(killed).not.toContain(99999);
     expect(logs).toContain("No Ollama auth proxy processes found");
+  });
+
+  it("escalates to SIGKILL and reports failure when SIGTERM is ignored", () => {
+    const logs: string[] = [];
+    const warnings: string[] = [];
+    const signals: NodeJS.Signals[] = [];
+    const tmpHome = "/tmp/nemoclaw-uninstall-test-2759-stuck";
+    const pidFile = `${tmpHome}/.nemoclaw/ollama-auth-proxy.pid`;
+    fs.mkdirSync(`${tmpHome}/.nemoclaw`, { recursive: true });
+    fs.writeFileSync(pidFile, "44322\n");
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+          existsSync: (target) => target === pidFile,
+          isTty: false,
+          kill: (_pid, signal) => {
+            if (signal === 0) return true;
+            if (signal) signals.push(signal);
+            return true;
+          },
+          log: (line) => logs.push(line),
+          warn: (line) => warnings.push(line),
+          error: (line) => warnings.push(line),
+          rmSync: vi.fn(),
+          run: (command, args) => {
+            if (command === "ps" && args.includes("44322")) {
+              return ok("/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.js\n");
+            }
+            if (command === "lsof") return ok("");
+            if (args[0] === "-c") return ok("/fake/bin/tool\n");
+            if (args[0] === "-f") return ok("");
+            return ok();
+          },
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(signals).toContain("SIGKILL");
+      expect(warnings).toContain("Failed to stop Ollama auth proxy 44322");
+      expect(logs).not.toContain("Stopped Ollama auth proxy 44322");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("warns instead of claiming success when lsof is unavailable for orphan scan", () => {
+    const logs: string[] = [];
+    const warnings: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command !== "lsof",
+        env: { HOME: "/tmp/nemoclaw-uninstall-test-2759-no-lsof" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: () => true,
+        log: (line) => logs.push(line),
+        warn: (line) => warnings.push(line),
+        error: (line) => warnings.push(line),
+        rmSync: vi.fn(),
+        run: (_command, args) => {
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          if (args[0] === "-f") return ok("");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(warnings).toContain("lsof not found; skipping orphan Ollama auth proxy scan.");
+    expect(logs).not.toContain("No Ollama auth proxy processes found");
   });
 
   it("logs and continues when no Ollama auth proxy is running", () => {
