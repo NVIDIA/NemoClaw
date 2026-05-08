@@ -6214,7 +6214,7 @@ async function setupNim(
             : (await prompt(
                 _envUrl
                   ? `  Remote Ollama base URL [${_envUrl}]: `
-                  : `  Remote Ollama base URL (e.g., http://192.168.1.50:${OLLAMA_PORT}): `,
+                  : `  Remote Ollama base URL (e.g., http://192.168.1.50:${OLLAMA_PORT}/v1): `,
               )) || _envUrl;
           const navigation = getNavigationChoice(endpointInput);
           if (navigation === "back") {

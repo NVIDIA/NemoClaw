@@ -2268,7 +2268,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("configures remote Ollama from a LAN root URL without requiring a local daemon", () => {
+  it("configures remote Ollama from a LAN base URL without requiring a local daemon", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-ollama-"));
     const fakeBin = path.join(tmpDir, "bin");

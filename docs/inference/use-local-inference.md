@@ -143,7 +143,7 @@ $ nemoclaw onboard
 ```
 
 When the wizard asks you to choose an inference provider, select **Ollama**, then choose **Connect to existing remote Ollama URL**.
-At the base URL prompt, enter the Ollama root URL, for example `http://192.168.1.50:11434`.
+At the base URL prompt, enter the Ollama OpenAI-compatible base URL, for example `http://192.168.1.50:11434/v1`.
 NemoClaw also accepts common Ollama paths such as `/api`, `/api/tags`, `/v1`, or `/v1/chat/completions` and normalizes them to the OpenAI-compatible `/v1` base URL.
 
 No API key is required for a default Ollama daemon.
@@ -155,7 +155,7 @@ Remote Ollama always uses chat completions, because Ollama-compatible tool calls
 
 ```console
 $ NEMOCLAW_PROVIDER=ollama-remote \
-  NEMOCLAW_ENDPOINT_URL=http://192.168.1.50:11434 \
+  NEMOCLAW_ENDPOINT_URL=http://192.168.1.50:11434/v1 \
   NEMOCLAW_MODEL=gemma3:4b \
   nemoclaw onboard --non-interactive
 ```
@@ -163,7 +163,7 @@ $ NEMOCLAW_PROVIDER=ollama-remote \
 | Variable | Purpose |
 |---|---|
 | `NEMOCLAW_PROVIDER` | Set to `ollama-remote`. Aliases `remote-ollama` and `ollamaremote` are also accepted. |
-| `NEMOCLAW_ENDPOINT_URL` | Root URL or common API path for the remote Ollama daemon. |
+| `NEMOCLAW_ENDPOINT_URL` | OpenAI-compatible base URL or common API path for the remote Ollama daemon. |
 | `NEMOCLAW_MODEL` | Ollama model tag to use. Required if `/api/tags` does not list models. |
 | `NEMOCLAW_REMOTE_OLLAMA_TOKEN` | Bearer token for an authenticated reverse proxy. Optional. |
 

@@ -169,7 +169,7 @@ Respond to the wizard as follows.
 1. At the `Choose [1]:` prompt, type `4` to select **Ollama**.
 2. At the `Ollama setup` prompt, choose the matching setup path.
 3. For a local or installed Ollama daemon, pick from **Ollama models** or **Ollama starter models**.
-4. For a remote Ollama daemon, enter the Ollama root URL, for example `http://192.168.1.50:11434`. NemoClaw also accepts common paths such as `/api/tags` or `/v1/chat/completions` and normalizes them.
+4. For a remote Ollama daemon, enter the Ollama OpenAI-compatible base URL, for example `http://192.168.1.50:11434/v1`. NemoClaw also accepts common paths such as `/api/tags` or `/v1/chat/completions` and normalizes them.
 5. At the model prompt, choose a listed model or enter any Ollama model ID.
 
 No API key is required for a default Ollama daemon.
@@ -179,7 +179,7 @@ For scripted setup, set:
 
 ```console
 $ NEMOCLAW_PROVIDER=ollama-remote \
-  NEMOCLAW_ENDPOINT_URL=http://192.168.1.50:11434 \
+  NEMOCLAW_ENDPOINT_URL=http://192.168.1.50:11434/v1 \
   NEMOCLAW_MODEL=gemma3:4b \
   nemoclaw onboard --non-interactive
 ```
