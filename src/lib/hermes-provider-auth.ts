@@ -15,9 +15,9 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { getCredsDir } = require("./credentials");
+const { getCredsDir } = require("./credentials/store");
 const oauth = require("./oauth-device-code");
-const onboardProviders = require("./onboard-providers");
+const onboardProviders = require("./onboard/providers");
 const { validateName } = require("./runner");
 
 const HERMES_PROVIDER_NAME = "hermes-provider";
