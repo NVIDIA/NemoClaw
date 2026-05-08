@@ -992,6 +992,46 @@ describe("onboard helpers", () => {
         }),
       ),
     ).toBe(false);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: { name: "sessions_send" },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "text",
+                    function: { name: "sessions_send", arguments: '{"message":"hello"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
     expect(hasChatCompletionsToolCall("{")).toBe(false);
   });
 
@@ -1004,6 +1044,52 @@ describe("onboard helpers", () => {
               message: {
                 role: "assistant",
                 content: '{\n  "arguments":{"message":"hello?"},\n  "name":"sessions_send"\n}',
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "function",
+                  function: {
+                    name: "sessions_send",
+                    arguments: JSON.stringify({ message: "hello?" }),
+                  },
+                }),
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  tool_calls: [
+                    {
+                      type: "function",
+                      function: {
+                        name: "sessions_send",
+                        arguments: JSON.stringify({ message: "hello?" }),
+                      },
+                    },
+                  ],
+                }),
                 tool_calls: null,
               },
             },
@@ -1039,6 +1125,21 @@ describe("onboard helpers", () => {
               message: {
                 role: "assistant",
                 content: "Regular assistant text response.",
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: '{"type":"function","function":{"name":"sessions_send"}}',
                 tool_calls: null,
               },
             },

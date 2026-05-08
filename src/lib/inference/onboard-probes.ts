@@ -65,16 +65,52 @@ function hasResponsesToolCall(body) {
   return false;
 }
 
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function hasValidFunctionCallPayload(value) {
+  if (!value || typeof value !== "object") return false;
+  if (typeof value.name !== "string" || value.name.length === 0) return false;
+  if (!hasOwn(value, "arguments")) return false;
+  return (
+    typeof value.arguments === "string" ||
+    (typeof value.arguments === "object" &&
+      value.arguments !== null &&
+      !Array.isArray(value.arguments))
+  );
+}
+
+function isStructuredChatCompletionsToolCall(value) {
+  if (!value || typeof value !== "object") return false;
+  if (value.type !== "function") return false;
+  const fn = value.function;
+  return hasValidFunctionCallPayload(fn);
+}
+
+function containsToolCallLikeValue(value) {
+  if (!value || typeof value !== "object") return false;
+  if (hasValidFunctionCallPayload(value)) return true;
+  if (isStructuredChatCompletionsToolCall(value)) return true;
+  if (Array.isArray(value.tool_calls)) {
+    return value.tool_calls.some((call) => isStructuredChatCompletionsToolCall(call));
+  }
+  if (value.message && typeof value.message === "object") {
+    return containsToolCallLikeValue(value.message);
+  }
+  if (Array.isArray(value.choices)) {
+    return value.choices.some((choice) => choice && containsToolCallLikeValue(choice));
+  }
+  return false;
+}
+
 function parseStringifiedToolCall(content) {
   if (typeof content !== "string") return null;
   const trimmed = content.trim();
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
   try {
     const parsed = JSON.parse(trimmed);
-    if (!parsed || typeof parsed !== "object") return null;
-    if (typeof parsed.name !== "string" || parsed.name.length === 0) return null;
-    if (!Object.prototype.hasOwnProperty.call(parsed, "arguments")) return null;
-    return parsed;
+    return containsToolCallLikeValue(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -86,11 +122,7 @@ function hasChatCompletionsToolCall(body) {
   if (!message || typeof message !== "object") return false;
   const toolCalls = message.tool_calls;
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) return false;
-  return toolCalls.some((call) => {
-    if (!call || typeof call !== "object") return false;
-    const fn = call.function;
-    return Boolean(fn && typeof fn === "object" && typeof fn.name === "string" && fn.name.length > 0);
-  });
+  return toolCalls.some((call) => isStructuredChatCompletionsToolCall(call));
 }
 
 function hasChatCompletionsToolCallLeak(body) {
