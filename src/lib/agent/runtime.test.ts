@@ -7,7 +7,6 @@ import {
   buildManualRecoveryCommand,
   buildOpenClawRecoveryScript,
   buildRecoveryScript,
-  getHealthProbeUrlForPort,
 } from "../../../dist/lib/agent/runtime";
 import type { AgentDefinition } from "./defs";
 
@@ -94,21 +93,14 @@ describe("buildRecoveryScript", () => {
   });
 
   it("omits --port for Hermes so config.yaml controls the internal listen port (#2426)", () => {
-    const script = buildRecoveryScript(hermesAgent, 18790);
+    const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).toContain("export HERMES_HOME=/sandbox/.hermes");
     expect(script).toContain("HERMES_HOME=/sandbox/.hermes");
-    expect(script).toContain("NEMOCLAW_DASHBOARD_PORT=18790");
-    expect(script).toContain("CHAT_UI_URL=http://127.0.0.1:18790");
     expect(script).toContain("HTTPS_PROXY=http://127.0.0.1:3129");
-    expect(script).toContain("http://localhost:18790/health");
     expect(script).toContain("nemoclaw-decode-proxy");
     expect(script).toContain('"$AGENT_BIN" gateway run');
-    expect(script).not.toContain('"$AGENT_BIN" gateway run --port 18790');
-    expect(script).not.toContain("hermes gateway run --port 18790");
-  });
-
-  it("rewrites health probe URLs to the active forwarded port", () => {
-    expect(getHealthProbeUrlForPort(hermesAgent, 18790)).toBe("http://localhost:18790/health");
+    expect(script).not.toContain('"$AGENT_BIN" gateway run --port 8642');
+    expect(script).not.toContain("hermes gateway run --port 8642");
   });
 
   it("falls back to openclaw gateway run when gateway_command is absent", () => {
@@ -322,14 +314,12 @@ describe("buildManualRecoveryCommand (#2426)", () => {
   });
 
   it("omits --port for Hermes and uses the current Hermes home", () => {
-    const cmd = buildManualRecoveryCommand(hermesAgent, 18790);
+    const cmd = buildManualRecoveryCommand(hermesAgent, 8642);
     expect(cmd).toContain("HERMES_HOME=/sandbox/.hermes");
-    expect(cmd).toContain("NEMOCLAW_DASHBOARD_PORT=18790");
-    expect(cmd).toContain("CHAT_UI_URL=http://127.0.0.1:18790");
     expect(cmd).toContain("HTTPS_PROXY=http://127.0.0.1:3129");
     expect(cmd).toContain("nemoclaw-decode-proxy");
     expect(cmd).toContain("nohup hermes gateway run");
-    expect(cmd).not.toContain("--port 18790");
+    expect(cmd).not.toContain("--port 8642");
     expect(cmd).not.toContain("/sandbox/.hermes-data");
   });
 

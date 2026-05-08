@@ -549,14 +549,6 @@ EOF
       expect(src).toContain("sandbox-init.sh");
     });
 
-    it("hermes start.sh honors NemoClaw's selected forwarded port", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain('PUBLIC_PORT="${NEMOCLAW_DASHBOARD_PORT:-}"');
-      expect(src).toContain('export NEMOCLAW_DASHBOARD_PORT="$PUBLIC_PORT"');
-      expect(src).toContain('CHAT_UI_URL="http://127.0.0.1:${PUBLIC_PORT}"');
-      expect(src).toContain('TCP-LISTEN:"${PUBLIC_PORT}",bind=0.0.0.0');
-    });
-
     it("hermes start.sh calls lock_rc_files (vulnerability fix)", () => {
       const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain("lock_rc_files");

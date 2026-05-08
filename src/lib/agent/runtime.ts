@@ -52,18 +52,6 @@ export function getHealthProbeUrl(agent: AgentDefinition | null): string {
   return agent.healthProbe?.url || `http://127.0.0.1:${DASHBOARD_PORT}/health`;
 }
 
-export function getHealthProbeUrlForPort(agent: AgentDefinition | null, port: number): string {
-  const probeUrl = getHealthProbeUrl(agent);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return probeUrl;
-  try {
-    const parsed = new URL(probeUrl);
-    parsed.port = String(port);
-    return parsed.toString();
-  } catch {
-    return probeUrl.replace(/:(\d+)(?=\/|$)/, `:${String(port)}`);
-  }
-}
-
 function escapeEre(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 }
@@ -154,20 +142,15 @@ function gatewayLaunchCommand(command: string, runAsUser?: string): string {
   return `${logSelection} if [ "$(id -u)" = "0" ] && command -v gosu >/dev/null 2>&1 && id ${shellQuote(runAsUser)} >/dev/null 2>&1; then nohup gosu ${shellQuote(runAsUser)} ${command} >> "$_GATEWAY_LOG" 2>&1 & else ${userLaunch} fi;`;
 }
 
-function hermesGatewayEnvPrefix(port?: number): string {
+function hermesGatewayEnvPrefix(): string {
   const decodeProxy = "http://127.0.0.1:3129";
-  const envVars = [
+  return [
     "HERMES_HOME=/sandbox/.hermes",
     `HTTPS_PROXY=${decodeProxy}`,
     `HTTP_PROXY=${decodeProxy}`,
     `https_proxy=${decodeProxy}`,
     `http_proxy=${decodeProxy}`,
-  ];
-  if (typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535) {
-    envVars.push(`NEMOCLAW_DASHBOARD_PORT=${String(port)}`);
-    envVars.push(`CHAT_UI_URL=http://127.0.0.1:${String(port)}`);
-  }
-  return envVars.join(" ");
+  ].join(" ");
 }
 
 function hermesDecodeProxyRecoveryCommand(): string {
@@ -207,7 +190,7 @@ export function buildOpenClawRecoveryScript(port: number): string {
 export function buildRecoveryScript(agent: AgentDefinition | null, port: number): string | null {
   if (!agent) return null;
 
-  const probeUrl = getHealthProbeUrlForPort(agent, port);
+  const probeUrl = getHealthProbeUrl(agent);
   const binaryPath = agent.binary_path || "/usr/local/bin/openclaw";
   const binaryName = binaryPath.split("/").pop() ?? "openclaw";
   const defaultGatewayCommand = `${binaryName} gateway run`;
@@ -231,7 +214,7 @@ export function buildRecoveryScript(agent: AgentDefinition | null, port: number)
   // that's about to crash on a missing guard. (#2478)
   const isHermes = agent.name === "hermes";
   const hermesHome = isHermes ? "export HERMES_HOME=/sandbox/.hermes; " : "";
-  const hermesLaunchEnv = isHermes ? `env ${hermesGatewayEnvPrefix(port)} ` : "";
+  const hermesLaunchEnv = isHermes ? `env ${hermesGatewayEnvPrefix()} ` : "";
   const launchCommand = usesValidatedBinary
     ? gatewayLaunchCommand(`${hermesLaunchEnv}"$AGENT_BIN" gateway run${isHermes ? "" : ` --port ${port}`}`)
     : gatewayLaunchCommand(
@@ -279,10 +262,6 @@ export function getGatewayCommand(agent: AgentDefinition | null): string {
   return agent?.gateway_command || "openclaw gateway run";
 }
 
-export function getAgentForwardPort(agent: AgentDefinition | null): number {
-  return agent?.forwardPort ?? DASHBOARD_PORT;
-}
-
 /**
  * Build a single copy-pasteable command for the user to run when automatic
  * gateway recovery fails. Unlike the raw gateway command, this keeps the
@@ -293,7 +272,7 @@ export function buildManualRecoveryCommand(agent: AgentDefinition | null, port: 
   const defaultGatewayCommand = `${shellQuote(binaryPath)} gateway run`;
   const gatewayCmd = agent?.gateway_command?.trim() || defaultGatewayCommand;
   const isHermes = agent?.name === "hermes";
-  const envPrefix = isHermes ? `${hermesGatewayEnvPrefix(port)} ` : "";
+  const envPrefix = isHermes ? `${hermesGatewayEnvPrefix()} ` : "";
   const portFlag = isHermes ? "" : ` --port ${port}`;
   const decodeProxySetup = isHermes ? `${hermesDecodeProxyRecoveryCommand()} ` : "";
   return `${buildGatewayLogSelection()} ${decodeProxySetup}${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;

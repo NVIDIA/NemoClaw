@@ -58,21 +58,20 @@ export function resolveSandboxDashboardPort(
   sandboxName: string,
   deps: SandboxPortDeps = {},
 ): number {
-  const getSandbox = deps.getSandbox ?? registry.getSandbox;
-  const sandbox = getSandbox(sandboxName);
-  if (isValidPort(sandbox?.dashboardPort)) {
-    return sandbox.dashboardPort;
-  }
-
   const getSessionAgent = deps.getSessionAgent ?? agentRuntime.getSessionAgent;
   const agent = getSessionAgent(sandboxName);
-  return agent && isValidPort(agent.forwardPort) ? agent.forwardPort : DASHBOARD_PORT;
+  if (agent && isValidPort(agent.forwardPort)) {
+    return agent.forwardPort;
+  }
+
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const sandbox = getSandbox(sandboxName);
+  return isValidPort(sandbox?.dashboardPort) ? sandbox.dashboardPort : DASHBOARD_PORT;
 }
 
 function getSandboxHealthProbeUrl(sandboxName: string): string {
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const port = resolveSandboxDashboardPort(sandboxName);
-  if (agent) return agentRuntime.getHealthProbeUrlForPort(agent, port);
+  if (agent) return agentRuntime.getHealthProbeUrl(agent);
   return `http://127.0.0.1:${resolveSandboxDashboardPort(sandboxName)}/health`;
 }
 
@@ -302,10 +301,6 @@ function ensureSandboxPortForward(sandboxName: string): boolean {
   return isSandboxForwardHealthy(sandboxName) === true;
 }
 
-function getPortForwardLabel(agent: unknown): string {
-  return agent ? `${agentRuntime.getAgentDisplayName(agent)} port forward` : "Dashboard port forward";
-}
-
 /**
  * Probe `openshell forward list` for the sandbox's dashboard forward.
  * Returns true when an entry exists for the expected sandbox+port pair
@@ -336,7 +331,7 @@ export function classifySandboxForwardHealth(
   const match = entries.find((entry) => entry.port === port);
   if (!match) return false;
   if (match.sandboxName !== sandboxName) return "occupied";
-  return match.status.includes("running") || match.status.includes("active");
+  return match.status === "running";
 }
 
 /**
@@ -356,7 +351,6 @@ export function checkAndRecoverSandboxProcesses(
   }
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   const recoveryPort = resolveSandboxDashboardPort(sandboxName);
-  const forwardLabel = getPortForwardLabel(recoveryAgent);
   if (running) {
     // Gateway is alive but the host-side forward can still be dead or
     // owned by another sandbox. Probe and re-establish only when
@@ -365,15 +359,15 @@ export function checkAndRecoverSandboxProcesses(
     if (forwardHealthy === false) {
       if (!quiet) {
         console.log("");
-        console.log(`  ${forwardLabel} to '${sandboxName}' is missing or dead.`);
+        console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
         console.log("  Re-establishing...");
       }
       const forwardRecovered = ensureSandboxPortForward(sandboxName);
       if (!quiet) {
         if (forwardRecovered) {
-          console.log(`  ${G}✓${R} ${forwardLabel} re-established.`);
+          console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
         } else {
-          console.error(`  Failed to re-establish the ${forwardLabel.toLowerCase()}.`);
+          console.error("  Failed to re-establish the dashboard port forward.");
           console.error(
             `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
           );
@@ -422,9 +416,9 @@ export function checkAndRecoverSandboxProcesses(
         `  ${G}✓${R} ${agentRuntime.getAgentDisplayName(recoveryAgent)} gateway restarted inside sandbox.`,
       );
       if (forwardRecovered) {
-        console.log(`  ${G}✓${R} ${forwardLabel} re-established.`);
+        console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
       } else {
-        console.error(`  Failed to re-establish the ${forwardLabel.toLowerCase()}.`);
+        console.error("  Failed to re-establish the dashboard port forward.");
         console.error(
           `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
         );

@@ -31,7 +31,6 @@ function setupFixture(opts: {
    *  reporting the original dead/missing state — models a failed restart. */
   forwardStartHeals?: boolean;
   port?: string;
-  agentName?: string;
 }): Fixture {
   const sandboxName = opts.sandboxName;
   const port = opts.port ?? "18789";
@@ -56,7 +55,6 @@ function setupFixture(opts: {
           provider: "nvidia-prod",
           gpuEnabled: false,
           policies: [],
-          agent: opts.agentName,
           dashboardPort: Number(port),
         },
       },
@@ -240,28 +238,6 @@ describe("nemoclaw <name> recover", () => {
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
       expect(calls.some((l) => l.startsWith("forward stop "))).toBe(false);
       expect(calls.some((l) => l.startsWith("forward start "))).toBe(false);
-    },
-  );
-
-  it(
-    "uses the registry dashboard port for Hermes recovery instead of the manifest default",
-    testTimeoutOptions(20_000),
-    () => {
-      const fixture = setupFixture({
-        sandboxName: "hermes-sandbox",
-        gatewayProbe: "RUNNING",
-        forwardListStatus: "dead",
-        port: "18790",
-        agentName: "hermes",
-      });
-      const result = runRecover(fixture);
-      expect(result.status).toBe(0);
-
-      const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-      expect(calls.some((l) => l.startsWith("forward stop 18790"))).toBe(true);
-      expect(calls.some((l) => l.startsWith("forward start --background 18790"))).toBe(true);
-      expect(calls.some((l) => l.startsWith("forward stop 8642"))).toBe(false);
-      expect(calls.some((l) => l.startsWith("forward start --background 8642"))).toBe(false);
     },
   );
 });
