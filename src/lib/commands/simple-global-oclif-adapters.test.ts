@@ -96,8 +96,10 @@ describe("simple global oclif adapters", () => {
   });
 
   it("maps gateway-token flags to the gateway token action", async () => {
+    const getSandboxAgent = vi.fn(() => "openclaw");
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
       fetchGatewayAuthTokenFromSandbox: mocks.fetchGatewayAuthTokenFromSandbox,
+      getSandboxAgent,
     }));
 
     await GatewayTokenCliCommand.run(["alpha", "--quiet"], rootDir);
@@ -105,8 +107,45 @@ describe("simple global oclif adapters", () => {
     expect(mocks.runGatewayTokenCommand).toHaveBeenCalledWith(
       "alpha",
       { quiet: true },
-      { fetchToken: mocks.fetchGatewayAuthTokenFromSandbox },
+      { fetchToken: mocks.fetchGatewayAuthTokenFromSandbox, getSandboxAgent },
     );
+  });
+
+  it("uses process.exitCode (no @oclif/core ExitError) when the gateway-token action fails", async () => {
+    // NCQ #3180: legacy dispatch did not catch the @oclif/core ExitError
+    // thrown by this.exit(1), surfacing a raw JS stack trace to the user.
+    // The adapter must signal failure via process.exitCode instead.
+    mocks.runGatewayTokenCommand.mockReturnValueOnce(1);
+    setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
+      fetchGatewayAuthTokenFromSandbox: mocks.fetchGatewayAuthTokenFromSandbox,
+      getSandboxAgent: () => "hermes",
+    }));
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await expect(GatewayTokenCliCommand.run(["hermes"], rootDir)).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("clears a stale non-zero process.exitCode on a successful gateway-token run", async () => {
+    // CodeRabbit #3182: if a prior run() left process.exitCode = 1, a later
+    // successful invocation must still report success. Always overwrite.
+    mocks.runGatewayTokenCommand.mockReturnValueOnce(0);
+    setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
+      fetchGatewayAuthTokenFromSandbox: mocks.fetchGatewayAuthTokenFromSandbox,
+      getSandboxAgent: () => "openclaw",
+    }));
+    const previousExitCode = process.exitCode;
+    process.exitCode = 1;
+    try {
+      await GatewayTokenCliCommand.run(["alpha", "--quiet"], rootDir);
+      expect(process.exitCode).toBe(0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 
   it("runs hidden root help and version adapters", async () => {
