@@ -11,7 +11,7 @@ import {
   validateAnthropicModel,
   validateNvidiaEndpointModel,
   validateOpenAiLikeModel,
-} from "../../dist/lib/provider-models";
+} from "../../../dist/lib/inference/provider-models";
 
 describe("provider model helpers", () => {
   it("fetches NVIDIA endpoint model ids", () => {

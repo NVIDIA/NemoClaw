@@ -18,7 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import * as session from "../dist/lib/onboard-session";
+import * as session from "../dist/lib/state/onboard-session";
 
 const tmpHomes: string[] = [];
 

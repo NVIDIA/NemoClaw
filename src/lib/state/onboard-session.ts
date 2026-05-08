@@ -10,20 +10,19 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { isErrnoException } from "./core/errno";
-import { redactSensitiveText, redactUrl } from "./security/redact";
+import { isErrnoException } from "../core/errno";
+import type { JsonObject, JsonValue } from "../core/json-types";
+import type { WebSearchConfig } from "../inference/web-search";
 import {
   sanitizeMessagingChannelConfig,
   type MessagingChannelConfig,
-} from "./messaging-channel-config";
-import type { WebSearchConfig } from "./web-search";
+} from "../messaging-channel-config";
+import { redactSensitiveText, redactUrl } from "../security/redact";
 
 export const SESSION_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
-
-import type { JsonValue, JsonObject } from "./core/json-types";
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;

@@ -1,0 +1,537 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: assign-closed-items-to-sprint
+
+# pull_request_target runs in the base repo context, giving this workflow
+# access to the project automation secret for fork PRs. This workflow is safe
+# because it only reads GitHub metadata and edits ProjectV2 fields. Do NOT add a
+# checkout step or run PR-sourced code here.
+on:
+  issues:
+    types: [closed]
+  pull_request_target:
+    types: [closed]
+  schedule:
+    - cron: "43 * * * *"
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "Closed-item reconciliation window in days. Use 0 for full history."
+        required: false
+        default: "30"
+      dry_run:
+        description: "Report intended changes without mutating the project."
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  assign-closed-items-to-sprint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Generate project automation token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          client-id: ${{ vars.NEMOCLAW_PROJECT_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.NEMOCLAW_PROJECT_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-organization-projects: write
+          permission-issues: read
+          permission-pull-requests: read
+
+      - name: Assign missing Sprint to closed items
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+          PR_NODE_ID: ${{ github.event.pull_request.node_id }}
+          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '30' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          set -euo pipefail
+
+          PROJECT_OWNER="NVIDIA"
+          PROJECT_NUMBER="199"
+          SPRINT_FIELD_NAME="Sprint"
+          REPO="${GITHUB_REPOSITORY:?}"
+          REPO_OWNER="${GITHUB_REPOSITORY_OWNER:?}"
+          REPO_NAME="${REPO#*/}"
+
+          processed=0
+          skipped=0
+          added=0
+          updated=0
+          would_add=0
+          would_update=0
+
+          if [[ ! "${LOOKBACK_DAYS:-30}" =~ ^[0-9]+$ ]]; then
+            echo "::error::lookback_days must be a non-negative integer."
+            exit 1
+          fi
+
+          if [ "${DRY_RUN:-false}" != "true" ] && [ "${DRY_RUN:-false}" != "false" ]; then
+            echo "::error::dry_run must be true or false."
+            exit 1
+          fi
+
+          cutoff_iso=""
+          if [ "$LOOKBACK_DAYS" != "0" ]; then
+            if cutoff_iso="$(
+              date -u -d "$LOOKBACK_DAYS days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null
+            )"; then
+              :
+            else
+              cutoff_iso="$(date -u -v-"$LOOKBACK_DAYS"d +"%Y-%m-%dT%H:%M:%SZ")"
+            fi
+          fi
+
+          echo "Repository: $REPO"
+          echo "Project: $PROJECT_OWNER/$PROJECT_NUMBER"
+          echo "Dry run: $DRY_RUN"
+          if [ -n "$cutoff_iso" ]; then
+            echo "Reconciling items closed at or after $cutoff_iso"
+          else
+            echo "Reconciling full closed-item history"
+          fi
+
+          project_json="$(gh api graphql \
+            -f org="$PROJECT_OWNER" \
+            -F number="$PROJECT_NUMBER" \
+            -f query='
+              query($org: String!, $number: Int!) {
+                organization(login: $org) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 100) {
+                      nodes {
+                        __typename
+                        ... on ProjectV2FieldCommon {
+                          id
+                          name
+                          dataType
+                        }
+                        ... on ProjectV2IterationField {
+                          configuration {
+                            iterations {
+                              id
+                              title
+                              startDate
+                              duration
+                            }
+                            completedIterations {
+                              id
+                              title
+                              startDate
+                              duration
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }')"
+
+          project_id="$(jq -r '.data.organization.projectV2.id // empty' <<<"$project_json")"
+          if [ -z "$project_id" ]; then
+            echo "::error::Could not resolve project $PROJECT_OWNER/$PROJECT_NUMBER."
+            exit 1
+          fi
+
+          sprint_field_json="$(jq -c \
+            --arg name "$SPRINT_FIELD_NAME" \
+            '.data.organization.projectV2.fields.nodes[]? | select(.name == $name and .dataType == "ITERATION")' \
+            <<<"$project_json" | head -n 1)"
+          sprint_field_id="$(jq -r '.id // empty' <<<"$sprint_field_json")"
+          if [ -z "$sprint_field_id" ]; then
+            echo "::error::Could not resolve '$SPRINT_FIELD_NAME' iteration field in project $PROJECT_OWNER/$PROJECT_NUMBER."
+            exit 1
+          fi
+
+          iterations_json="$(jq -c \
+            --arg name "$SPRINT_FIELD_NAME" \
+            '[
+              .data.organization.projectV2.fields.nodes[]?
+              | select(.name == $name and .dataType == "ITERATION")
+              | (.configuration.completedIterations[]?, .configuration.iterations[]?)
+            ] | unique_by(.id) | sort_by(.startDate)' \
+            <<<"$project_json")"
+          iteration_count="$(jq -r 'length' <<<"$iterations_json")"
+          if [ "$iteration_count" = "0" ]; then
+            echo "::error::Project $PROJECT_OWNER/$PROJECT_NUMBER has no configured '$SPRINT_FIELD_NAME' iterations."
+            exit 1
+          fi
+
+          select_target_iteration() {
+            local closed_at="$1"
+
+            jq -c --arg closed "$closed_at" '
+              def epoch_date($d): (($d[0:10]) + "T00:00:00Z" | fromdateiso8601);
+
+              (epoch_date($closed)) as $closed_epoch
+              | (
+                  map(
+                    . + {
+                      startEpoch: epoch_date(.startDate),
+                      endEpoch: (epoch_date(.startDate) + ((.duration | tonumber) * 86400))
+                    }
+                  )
+                  | sort_by(.startEpoch)
+                ) as $sorted
+              | ($sorted | map(select(.startEpoch <= $closed_epoch and $closed_epoch < .endEpoch)) | last) as $active
+              | ($sorted | map(select(.startEpoch <= $closed_epoch)) | last) as $prior
+              | ($sorted | first) as $earliest
+              | if $active then
+                  $active + { selectionReason: "active" }
+                elif $prior then
+                  $prior + { selectionReason: "prior" }
+                else
+                  $earliest + { selectionReason: "earliest" }
+                end
+            ' <<<"$iterations_json"
+          }
+
+          fetch_content() {
+            local content_id="$1"
+
+            gh api graphql \
+              -f id="$content_id" \
+              -f query='
+                query($id: ID!) {
+                  node(id: $id) {
+                    __typename
+                    ... on Issue {
+                      id
+                      number
+                      closed
+                      closedAt
+                      repository {
+                        nameWithOwner
+                      }
+                      projectItems(first: 100) {
+                        nodes {
+                          ...ProjectItemFields
+                        }
+                      }
+                    }
+                    ... on PullRequest {
+                      id
+                      number
+                      closed
+                      closedAt
+                      mergedAt
+                      repository {
+                        nameWithOwner
+                      }
+                      projectItems(first: 100) {
+                        nodes {
+                          ...ProjectItemFields
+                        }
+                      }
+                    }
+                  }
+                }
+
+                fragment ProjectItemFields on ProjectV2Item {
+                  id
+                  project {
+                    id
+                    number
+                  }
+                  fieldValues(first: 100) {
+                    nodes {
+                      __typename
+                      ... on ProjectV2ItemFieldIterationValue {
+                        iterationId
+                        title
+                        field {
+                          ... on ProjectV2IterationField {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }'
+          }
+
+          add_to_project() {
+            local content_id="$1"
+
+            gh api graphql \
+              -f project="$project_id" \
+              -f content="$content_id" \
+              --jq '.data.addProjectV2ItemById.item.id' \
+              -f query='
+                mutation($project: ID!, $content: ID!) {
+                  addProjectV2ItemById(input: { projectId: $project, contentId: $content }) {
+                    item {
+                      id
+                    }
+                  }
+                }'
+          }
+
+          set_sprint() {
+            local item_id="$1"
+            local iteration_id="$2"
+
+            gh api graphql \
+              -f project="$project_id" \
+              -f item="$item_id" \
+              -f field="$sprint_field_id" \
+              -f iteration="$iteration_id" \
+              --silent \
+              -f query='
+                mutation($project: ID!, $item: ID!, $field: ID!, $iteration: String!) {
+                  updateProjectV2ItemFieldValue(
+                    input: {
+                      projectId: $project
+                      itemId: $item
+                      fieldId: $field
+                      value: { iterationId: $iteration }
+                    }
+                  ) {
+                    projectV2Item {
+                      id
+                    }
+                  }
+                }'
+          }
+
+          process_content() {
+            local content_id="$1"
+            local content_json
+            local content_type
+            local content_number
+            local closed
+            local closed_at
+            local repo_name
+            local project_item_json
+            local project_item_id
+            local existing_sprint
+            local target_json
+            local target_id
+            local target_title
+            local target_reason
+
+            content_json="$(fetch_content "$content_id")"
+            content_type="$(jq -r '.data.node.__typename // empty' <<<"$content_json")"
+            content_number="$(jq -r '.data.node.number // empty' <<<"$content_json")"
+            closed="$(jq -r '.data.node.closed // false' <<<"$content_json")"
+            repo_name="$(jq -r '.data.node.repository.nameWithOwner // empty' <<<"$content_json")"
+
+            if [ "$content_type" != "Issue" ] && [ "$content_type" != "PullRequest" ]; then
+              echo "::notice::Skipping unsupported content node $content_id ($content_type)."
+              skipped=$((skipped + 1))
+              return
+            fi
+
+            if [ "$repo_name" != "$REPO" ]; then
+              echo "::notice::Skipping $content_type #$content_number from $repo_name; expected $REPO."
+              skipped=$((skipped + 1))
+              return
+            fi
+
+            if [ "$closed" != "true" ]; then
+              echo "Skipping $content_type #$content_number because it is not closed."
+              skipped=$((skipped + 1))
+              return
+            fi
+
+            closed_at="$(jq -r '
+              if .data.node.__typename == "PullRequest" then
+                .data.node.mergedAt // .data.node.closedAt // empty
+              else
+                .data.node.closedAt // empty
+              end
+            ' <<<"$content_json")"
+
+            if [ -z "$closed_at" ]; then
+              echo "::notice::Skipping $content_type #$content_number because closedAt could not be resolved."
+              skipped=$((skipped + 1))
+              return
+            fi
+
+            target_json="$(select_target_iteration "$closed_at")"
+            target_id="$(jq -r '.id // empty' <<<"$target_json")"
+            target_title="$(jq -r '.title // empty' <<<"$target_json")"
+            target_reason="$(jq -r '.selectionReason // empty' <<<"$target_json")"
+
+            if [ -z "$target_id" ]; then
+              echo "::error::Could not select a target Sprint for $content_type #$content_number."
+              exit 1
+            fi
+
+            if [ "$target_reason" = "earliest" ]; then
+              echo "::warning::$content_type #$content_number closed before all configured Sprints; using earliest Sprint '$target_title'."
+            fi
+
+            project_item_json="$(jq -c \
+              --arg project "$project_id" \
+              '.data.node.projectItems.nodes[]? | select(.project.id == $project)' \
+              <<<"$content_json" | head -n 1)"
+
+            if [ -n "$project_item_json" ]; then
+              project_item_id="$(jq -r '.id // empty' <<<"$project_item_json")"
+              existing_sprint="$(jq -r \
+                --arg field "$sprint_field_id" \
+                --arg name "$SPRINT_FIELD_NAME" \
+                '.fieldValues.nodes[]?
+                  | select(.__typename == "ProjectV2ItemFieldIterationValue")
+                  | select((.field.id // "") == $field or (.field.name // "") == $name)
+                  | .iterationId // empty' \
+                <<<"$project_item_json" | head -n 1)"
+
+              if [ -n "$existing_sprint" ]; then
+                echo "Skipping $content_type #$content_number; Sprint is already set."
+                skipped=$((skipped + 1))
+                return
+              fi
+            elif [ "$DRY_RUN" = "true" ]; then
+              project_item_id=""
+              echo "::notice::Would add $content_type #$content_number to project $PROJECT_NUMBER."
+              would_add=$((would_add + 1))
+            else
+              project_item_id="$(add_to_project "$content_id")"
+              if [ -z "$project_item_id" ]; then
+                echo "::error::Failed to add $content_type #$content_number to project $PROJECT_NUMBER."
+                exit 1
+              fi
+              echo "Added $content_type #$content_number to project $PROJECT_NUMBER."
+              added=$((added + 1))
+            fi
+
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "::notice::Would set $content_type #$content_number Sprint to '$target_title' ($target_id)."
+              would_update=$((would_update + 1))
+            else
+              set_sprint "$project_item_id" "$target_id"
+              echo "Set $content_type #$content_number Sprint to '$target_title' ($target_id)."
+              updated=$((updated + 1))
+            fi
+          }
+
+          collect_closed_ids() {
+            local kind="$1"
+            local cursor=""
+            local connection
+            local query
+            local page_json
+            local has_next
+            local end_cursor
+            local oldest_updated
+
+            case "$kind" in
+              issues)
+                connection="issues"
+                query='
+                  query($owner: String!, $name: String!, $cursor: String) {
+                    repository(owner: $owner, name: $name) {
+                      issues(first: 100, states: CLOSED, after: $cursor, orderBy: { field: UPDATED_AT, direction: DESC }) {
+                        pageInfo {
+                          hasNextPage
+                          endCursor
+                        }
+                        nodes {
+                          id
+                          closedAt
+                          updatedAt
+                        }
+                      }
+                    }
+                  }'
+                ;;
+              pullRequests)
+                connection="pullRequests"
+                query='
+                  query($owner: String!, $name: String!, $cursor: String) {
+                    repository(owner: $owner, name: $name) {
+                      pullRequests(first: 100, states: CLOSED, after: $cursor, orderBy: { field: UPDATED_AT, direction: DESC }) {
+                        pageInfo {
+                          hasNextPage
+                          endCursor
+                        }
+                        nodes {
+                          id
+                          closedAt
+                          updatedAt
+                        }
+                      }
+                    }
+                  }'
+                ;;
+              *)
+                echo "::error::Unsupported collection kind '$kind'."
+                exit 1
+                ;;
+            esac
+
+            while :; do
+              args=(-f owner="$REPO_OWNER" -f name="$REPO_NAME" -f query="$query")
+              if [ -n "$cursor" ]; then
+                args+=(-f cursor="$cursor")
+              else
+                args+=(-F cursor=null)
+              fi
+
+              page_json="$(gh api graphql "${args[@]}")"
+
+              jq -r \
+                --arg connection "$connection" \
+                --arg cutoff "$cutoff_iso" \
+                '.data.repository[$connection].nodes[]?
+                  | select($cutoff == "" or ((.closedAt // "") >= $cutoff))
+                  | .id' \
+                <<<"$page_json"
+
+              has_next="$(jq -r --arg connection "$connection" '.data.repository[$connection].pageInfo.hasNextPage // false' <<<"$page_json")"
+              end_cursor="$(jq -r --arg connection "$connection" '.data.repository[$connection].pageInfo.endCursor // empty' <<<"$page_json")"
+              oldest_updated="$(jq -r --arg connection "$connection" '.data.repository[$connection].nodes[-1].updatedAt // empty' <<<"$page_json")"
+
+              if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
+                break
+              fi
+
+              if [ -n "$cutoff_iso" ] && [ -n "$oldest_updated" ] && [[ "$oldest_updated" < "$cutoff_iso" ]]; then
+                break
+              fi
+
+              cursor="$end_cursor"
+            done
+          }
+
+          if [ -n "${ISSUE_NODE_ID:-}" ]; then
+            process_content "$ISSUE_NODE_ID"
+            processed=$((processed + 1))
+          elif [ -n "${PR_NODE_ID:-}" ]; then
+            process_content "$PR_NODE_ID"
+            processed=$((processed + 1))
+          else
+            echo "Running scheduled/manual reconciliation."
+            while IFS= read -r content_id; do
+              [ -n "$content_id" ] || continue
+              process_content "$content_id"
+              processed=$((processed + 1))
+            done < <(collect_closed_ids issues)
+
+            while IFS= read -r content_id; do
+              [ -n "$content_id" ] || continue
+              process_content "$content_id"
+              processed=$((processed + 1))
+            done < <(collect_closed_ids pullRequests)
+          fi
+
+          echo "Processed: $processed"
+          echo "Skipped: $skipped"
+          echo "Added: $added"
+          echo "Updated: $updated"
+          echo "Would add: $would_add"
+          echo "Would update: $would_update"

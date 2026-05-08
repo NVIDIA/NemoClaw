@@ -3,7 +3,7 @@
 
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 import type { RecoveryResult } from "./inventory-commands";
-import * as onboardSession from "./onboard-session";
+import * as onboardSession from "./state/onboard-session";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { captureOpenshell } from "./adapters/openshell/runtime";
 import * as registry from "./state/registry";

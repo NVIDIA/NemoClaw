@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ValidationFailureLike } from "./onboard-types";
+import type { ValidationFailureLike } from "./onboard/types";
 import { compactText } from "./core/url-utils";
 import { classifyValidationFailure, type ValidationClassification } from "./validation";
 

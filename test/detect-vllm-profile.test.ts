@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import { detectVllmProfile } from "../dist/lib/onboard-vllm.js";
+import { detectVllmProfile } from "../dist/lib/inference/vllm.js";
 
 describe("detectVllmProfile", () => {
   it("returns the Spark profile when gpu.platform === 'spark'", () => {

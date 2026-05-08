@@ -4,14 +4,14 @@
 //
 // Provider metadata, lookup helpers, and gateway provider CRUD.
 
-const { redact } = require("./runner");
+const { redact } = require("../runner");
 const {
   DEFAULT_CLOUD_MODEL,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
-} = require("./inference-config");
-const { isSafeModelId } = require("./validation");
-const { compactText } = require("./core/url-utils");
+} = require("../inference/config");
+const { isSafeModelId } = require("../validation");
+const { compactText } = require("../core/url-utils");
 
 // ── Constants ────────────────────────────────────────────────────
 

@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 // Import through the compiled dist/ output (via the bin/lib shim) so
-// coverage is attributed to dist/lib/preflight.js, which is what the
+// coverage is attributed to dist/lib/onboard/preflight.js, which is what the
 // ratchet measures.
 import {
   assessHost,
@@ -21,7 +21,7 @@ import {
   parseDockerUsesContainerdSnapshotter,
   planHostRemediation,
   probeContainerDns,
-} from "../../dist/lib/preflight";
+} from "../../../dist/lib/onboard/preflight";
 
 function requireMemoryInfo(result: ReturnType<typeof getMemoryInfo>) {
   expect(result).not.toBeNull();
@@ -143,7 +143,7 @@ describe("checkPortAvailable", () => {
 
 describe("probePortAvailability", () => {
   // Import probePortAvailability directly for targeted testing
-  const { probePortAvailability } = require("../../dist/lib/preflight");
+  const { probePortAvailability } = require("../../../dist/lib/onboard/preflight");
 
   it("returns ok when port is free (real net probe)", async () => {
     // Use a high ephemeral port unlikely to be in use
