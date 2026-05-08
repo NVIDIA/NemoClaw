@@ -10,8 +10,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { redactSensitiveText, redactUrl } from "./redact";
-import { isErrnoException } from "./errno";
+import { isErrnoException } from "./core/errno";
+import { redactSensitiveText, redactUrl } from "./security/redact";
 import {
   sanitizeMessagingChannelConfig,
   type MessagingChannelConfig,
@@ -23,7 +23,7 @@ export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 
-import type { JsonValue, JsonObject } from "./json-types";
+import type { JsonValue, JsonObject } from "./core/json-types";
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;

@@ -45,6 +45,16 @@ function getNightlyJobNames(workflow: Record<string, unknown>): string[] {
   return Object.keys(jobs).filter((name) => !infra.has(name));
 }
 
+function getJobNeeds(job: unknown): string[] {
+  if (typeof job !== "object" || job === null) return [];
+  const needs = (job as Record<string, unknown>).needs;
+  if (typeof needs === "string") return [needs];
+  if (Array.isArray(needs)) {
+    return needs.filter((name): name is string => typeof name === "string");
+  }
+  return [];
+}
+
 /**
  * Extract the `if:` condition string from a workflow job object.
  */
@@ -160,6 +170,7 @@ describe("E2E coverage cross-validation", () => {
   const nightlyJobs = getNightlyJobNames(workflow);
   const referencedJobs = getReferencedJobNames(coderabbit);
   const e2ePathGlobs = getE2ePathGlobs(coderabbit);
+  const aggregateJobs = ["notify-on-failure", "report-to-pr", "scorecard"];
 
   it("every job name in CodeRabbit instructions exists in nightly-e2e.yaml", () => {
     const stale = [...referencedJobs].filter(
@@ -234,6 +245,27 @@ describe("E2E coverage cross-validation", () => {
         `  (github.event_name != 'workflow_dispatch' ||\n` +
         `   inputs.jobs == '' ||\n` +
         `   contains(format(',{0},', inputs.jobs), ',<job-name>,'))`,
+    ).toEqual([]);
+  });
+
+  it("every aggregate job depends on every nightly E2E job", () => {
+    const jobs = workflow.jobs as Record<string, unknown>;
+    const missing: string[] = [];
+
+    for (const aggregateJob of aggregateJobs) {
+      const needs = new Set(getJobNeeds(jobs[aggregateJob]));
+      for (const nightlyJob of nightlyJobs) {
+        if (!needs.has(nightlyJob)) {
+          missing.push(`${aggregateJob} -> ${nightlyJob}`);
+        }
+      }
+    }
+
+    expect(
+      missing,
+      `Nightly E2E aggregate jobs missing real E2E jobs in needs: ` +
+        `${missing.join(", ")}. Update notify-on-failure, report-to-pr, ` +
+        `and scorecard so their needs lists include every nightly E2E job.`,
     ).toEqual([]);
   });
 });

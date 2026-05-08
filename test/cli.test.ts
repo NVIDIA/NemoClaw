@@ -2410,6 +2410,7 @@ describe("CLI dispatch", () => {
     expect(log).toContain("provider delete alpha-telegram-bridge");
     expect(log).toContain("provider delete alpha-discord-bridge");
     expect(log).toContain("provider delete alpha-slack-bridge");
+    expect(log).toContain("provider delete alpha-slack-app");
   });
 
   it("passes plain logs through without the tail flag", () => {

@@ -11,6 +11,11 @@ Build toolchains (`gcc`, `g++`, `make`) and network probes (`netcat`) are
 explicitly purged from the runtime image. These tools are not needed at runtime
 and would unnecessarily widen the attack surface.
 
+The runtime image keeps a small set of operational utilities for normal sandbox
+workflows, including `vi`, `jq`, and `dos2unix`. Use these for lightweight
+inspection and file cleanup inside the sandbox, but make durable image or policy
+changes in the NemoClaw source tree and rebuild the sandbox.
+
 If you need a compiler during build, use the existing multi-stage build
 (the `builder` stage has full Node.js tooling) and copy only artifacts into the
 runtime stage.

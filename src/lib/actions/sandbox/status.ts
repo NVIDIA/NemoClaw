@@ -3,7 +3,7 @@
 
 /* v8 ignore start -- exercised through CLI subprocess status tests. */
 
-import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { parseSandboxPhase } from "../../state/gateway";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference-config";
@@ -30,7 +30,7 @@ import {
 } from "../../state/sandbox-session";
 import * as sandboxVersion from "../../sandbox-version";
 import * as shields from "../../shields";
-import { D, G, R, RD, YW } from "../../terminal-style";
+import { D, G, R, RD, YW } from "../../cli/terminal-style";
 
 const agentRuntime = require("../../../../bin/lib/agent-runtime");
 

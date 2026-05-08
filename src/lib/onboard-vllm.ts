@@ -7,7 +7,7 @@
 
 const { runCapture, runShell } = require("./runner");
 const { dockerCapture, dockerSpawn } = require("./adapters/docker");
-const { VLLM_PORT } = require("./ports");
+const { VLLM_PORT } = require("./core/ports");
 const { getGpuIndicesByName } = require("./nim");
 
 // Per-platform install recipe. Add new platforms by appending an entry to

@@ -12,9 +12,9 @@ import {
 
 import type { ProbeResult } from "./onboard-types";
 import { ROOT } from "./state/paths";
-import { compactText } from "./url-utils";
+import { compactText } from "./core/url-utils";
 
-import { isErrnoException } from "./errno";
+import { isErrnoException } from "./core/errno";
 
 export type CurlProbeResult = ProbeResult;
 

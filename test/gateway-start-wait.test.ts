@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const ORIGINAL_ENV = { ...process.env };
 const ONBOARD_MODULE = require.resolve("../dist/lib/onboard.js");
-const PORTS_MODULE = require.resolve("../dist/lib/ports.js");
+const PORTS_MODULE = require.resolve("../dist/lib/core/ports.js");
 
 function loadOnboard() {
   delete require.cache[ONBOARD_MODULE];

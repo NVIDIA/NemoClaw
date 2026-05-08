@@ -4,9 +4,10 @@
 /* v8 ignore start -- exercised through CLI subprocess destroy/rebuild tests. */
 
 import fs from "node:fs";
+import path from "node:path";
 
-import { CLI_NAME } from "../../branding";
-import { prompt as askPrompt } from "../../credentials";
+import { CLI_NAME } from "../../cli/branding";
+import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
   normalizeDestroySandboxOptions,
@@ -14,7 +15,7 @@ import {
 import * as onboardSession from "../../onboard-session";
 import type { Session } from "../../onboard-session";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import { DASHBOARD_PORT } from "../../ports";
+import { DASHBOARD_PORT } from "../../core/ports";
 import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -27,7 +28,7 @@ import {
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
-import { G, R, YW } from "../../terminal-style";
+import { G, R, YW } from "../../cli/terminal-style";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -105,11 +106,43 @@ function cleanupSandboxServices(
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
     runOpenshell: (args: string[], opts?: Record<string, unknown>) => { status: number | null };
   };
-  for (const suffix of ["telegram-bridge", "discord-bridge", "slack-bridge"]) {
+  for (const suffix of ["telegram-bridge", "discord-bridge", "slack-bridge", "slack-app"]) {
     runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
     });
+  }
+}
+
+/**
+ * Remove host-side shields state files for a sandbox.
+ *
+ * Without this cleanup a stale shields-<name>.json from a previous
+ * `shields up` survives destroy → re-onboard and causes
+ * `deriveShieldsMode` to report "locked" on a fresh sandbox.
+ *
+ * See: https://github.com/NVIDIA/NemoClaw/issues/3114
+ */
+export function removeShieldsState(
+  sandboxName: string,
+  stateDir = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state"),
+): void {
+  const resolvedStateDir = path.resolve(stateDir);
+  for (const prefix of ["shields-", "shields-timer-"]) {
+    const filePath = path.resolve(resolvedStateDir, `${prefix}${sandboxName}.json`);
+    if (!filePath.startsWith(`${resolvedStateDir}${path.sep}`)) {
+      // Defense-in-depth: sandbox names are validated to [a-z0-9-] at
+      // all entry points, but reject traversal attempts just in case.
+      continue;
+    }
+    try {
+      fs.rmSync(filePath, { force: true });
+    } catch (error) {
+      // force: true already suppresses ENOENT; warn on real failures
+      // (e.g. EPERM) so stale state doesn't silently survive.
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`  ${YW}⚠${R} Failed to remove shields state '${filePath}': ${message}`);
+    }
   }
 }
 
@@ -237,6 +270,7 @@ export async function destroySandbox(
   });
 
   cleanupSandboxServices(sandboxName, { stopHostServices: shouldStopHostServices });
+  removeShieldsState(sandboxName);
   const removed = removeSandboxRegistryEntry(sandboxName);
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {

@@ -7,8 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { shellQuote } from "../shell-quote";
-import { isErrnoException, isPermissionError } from "../errno";
+import { shellQuote } from "../core/shell-quote";
+import { isErrnoException, isPermissionError } from "../core/errno";
 
 // Strict JSON types for file serialization — unlike json-types.ts,
 // these exclude undefined since actual JSON cannot contain it.
