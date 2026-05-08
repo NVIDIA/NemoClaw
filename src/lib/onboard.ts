@@ -117,6 +117,8 @@ const {
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
+  getRemoteOllamaModelOptions,
+  normalizeRemoteOllamaBaseUrl,
   getResolvedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   validateOllamaPortConfiguration,
@@ -5704,6 +5706,47 @@ async function selectAndValidateOllamaModel(
   }
 }
 
+async function promptRemoteOllamaModel(
+  defaultModel: string,
+  modelOptions: string[],
+): Promise<string> {
+  if (modelOptions.length === 0) {
+    return promptManualModelId("  Remote Ollama model id: ", "Remote Ollama");
+  }
+
+  const defaultIndex = Math.max(0, modelOptions.indexOf(defaultModel));
+  console.log("");
+  console.log("  Remote Ollama models:");
+  modelOptions.forEach((option, index) => {
+    console.log(`    ${index + 1}) ${option}`);
+  });
+  console.log(`    ${modelOptions.length + 1}) Other...`);
+  console.log("");
+
+  const choice = await prompt(`  Choose model [${defaultIndex + 1}]: `);
+  const navigation = getNavigationChoice(choice);
+  if (navigation === "back") {
+    return BACK_TO_SELECTION;
+  }
+  if (navigation === "exit") {
+    exitOnboardFromPrompt();
+  }
+  const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
+  if (Number.isFinite(index) && index >= 0 && index < modelOptions.length) {
+    return modelOptions[index];
+  }
+
+  return promptManualModelId("  Remote Ollama model id: ", "Remote Ollama");
+}
+
+function stageRemoteOllamaCredential(credentialEnv: string): string {
+  const existing = getCredential(credentialEnv) || "";
+  const providerKeyHint = normalizeCredentialValue(process.env.NEMOCLAW_PROVIDER_KEY ?? "");
+  const token = existing || providerKeyHint || "ollama";
+  saveCredential(credentialEnv, token);
+  return token;
+}
+
 async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
@@ -5816,6 +5859,7 @@ async function setupNim(
   options.push({ key: "build", label: "NVIDIA Endpoints" });
   options.push({ key: "openai", label: "OpenAI" });
   options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
+  options.push({ key: "ollama-remote", label: "Remote Ollama (LAN/self-hosted)" });
   options.push({ key: "anthropic", label: "Anthropic" });
   options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
   options.push({ key: "gemini", label: "Google Gemini" });
@@ -6087,6 +6131,34 @@ async function setupNim(
             console.log("");
             continue selectionLoop;
           }
+        } else if (selected.key === "ollama-remote") {
+          const _envUrl = (process.env.NEMOCLAW_ENDPOINT_URL || "").trim();
+          const endpointInput = isNonInteractive()
+            ? _envUrl
+            : (await prompt(
+                _envUrl
+                  ? `  Remote Ollama base URL [${_envUrl}]: `
+                  : `  Remote Ollama base URL (e.g., http://192.168.1.50:${OLLAMA_PORT}): `,
+              )) || _envUrl;
+          const navigation = getNavigationChoice(endpointInput);
+          if (navigation === "back") {
+            console.log("  Returning to provider selection.");
+            console.log("");
+            continue selectionLoop;
+          }
+          if (navigation === "exit") {
+            exitOnboardFromPrompt();
+          }
+          const ollamaUrls = normalizeRemoteOllamaBaseUrl(endpointInput);
+          if (!ollamaUrls) {
+            console.error("  Endpoint URL is required for Remote Ollama (LAN).");
+            if (isNonInteractive()) {
+              process.exit(1);
+            }
+            console.log("");
+            continue selectionLoop;
+          }
+          endpointUrl = ollamaUrls.openAiBaseUrl;
         } else if (selected.key === "anthropicCompatible") {
           const _envUrl = (process.env.NEMOCLAW_ENDPOINT_URL || "").trim();
           const endpointInput = isNonInteractive()
@@ -6114,6 +6186,72 @@ async function setupNim(
             console.log("");
             continue selectionLoop;
           }
+        }
+
+        if (selected.key === "ollama-remote") {
+          const selectedCredentialEnv = requireValue(
+            credentialEnv,
+            `Missing credential env for ${remoteConfig.label}`,
+          );
+          const token = stageRemoteOllamaCredential(selectedCredentialEnv);
+          const ollamaUrls = requireValue(
+            normalizeRemoteOllamaBaseUrl(endpointUrl),
+            "Expected normalized Remote Ollama URL",
+          );
+          const remoteModels = getRemoteOllamaModelOptions(ollamaUrls.rootUrl, token);
+          const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
+          const defaultModel =
+            requestedModel ||
+            _envModelRemote ||
+            (recoveredFromSandbox && recoveredModel) ||
+            remoteModels[0] ||
+            remoteConfig.defaultModel;
+
+          if (isNonInteractive()) {
+            if (!defaultModel) {
+              console.error(
+                "  NEMOCLAW_MODEL is required for Remote Ollama when /api/tags does not list models.",
+              );
+              process.exit(1);
+            }
+            model = defaultModel;
+          } else {
+            model = await promptRemoteOllamaModel(defaultModel, remoteModels);
+          }
+          if (model === BACK_TO_SELECTION) {
+            console.log("  Returning to provider selection.");
+            console.log("");
+            continue selectionLoop;
+          }
+
+          while (true) {
+            const validation = await validateOpenAiLikeSelection(
+              remoteConfig.label,
+              requireValue(endpointUrl, "Expected Remote Ollama endpoint URL"),
+              requireValue(model, "Expected Remote Ollama model"),
+              selectedCredentialEnv,
+              "Please choose a provider/model again.",
+              remoteConfig.helpUrl,
+              { skipResponsesProbe: true },
+            );
+            if (validation.ok) {
+              preferredInferenceApi = "openai-completions";
+              break;
+            }
+            if (validation.retry === "credential" || validation.retry === "retry") {
+              continue;
+            }
+            if (validation.retry === "model") {
+              if (isNonInteractive()) process.exit(1);
+              model = await promptRemoteOllamaModel(defaultModel, remoteModels);
+              if (model === BACK_TO_SELECTION) continue selectionLoop;
+              continue;
+            }
+            continue selectionLoop;
+          }
+
+          console.log(`  Using ${remoteConfig.label} with model: ${model}`);
+          break;
         }
 
         // Hydrate from credential env vars set earlier in this process
@@ -6871,7 +7009,8 @@ async function setupInference(
     provider === "anthropic-prod" ||
     provider === "compatible-anthropic-endpoint" ||
     provider === "gemini-api" ||
-    provider === "compatible-endpoint"
+    provider === "compatible-endpoint" ||
+    provider === "ollama-remote"
   ) {
     const config =
       provider === "nvidia-nim"
@@ -6920,7 +7059,7 @@ async function setupInference(
         args.push("--no-verify");
       }
       args.push("--provider", provider, "--model", model);
-      if (provider === "compatible-endpoint") {
+      if (provider === "compatible-endpoint" || provider === "ollama-remote") {
         args.push("--timeout", String(LOCAL_INFERENCE_TIMEOUT_SECS));
       }
       const applyResult = runOpenshell(args, { ignoreError: true });

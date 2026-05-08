@@ -109,6 +109,88 @@ export interface LocalProviderHealthProbeOptions {
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
 }
 
+export interface RemoteOllamaUrls {
+  rootUrl: string;
+  openAiBaseUrl: string;
+  tagsUrl: string;
+}
+
+function compactCredential(value: string | null | undefined): string {
+  return String(value || "").replace(/\r/g, "").trim();
+}
+
+function stripRemoteOllamaSuffix(pathname: string): string {
+  const suffixes = [
+    "/v1/chat/completions",
+    "/v1/completions",
+    "/v1/responses",
+    "/v1/models",
+    "/v1",
+    "/api/tags",
+    "/api/show",
+    "/api/chat",
+    "/api/generate",
+    "/api",
+  ];
+  let normalized = pathname.replace(/\/+$/, "");
+  for (const suffix of suffixes) {
+    if (normalized === suffix) return "";
+    if (normalized.endsWith(suffix)) {
+      normalized = normalized.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return normalized.replace(/\/+$/, "");
+}
+
+export function normalizeRemoteOllamaBaseUrl(
+  value: string | URL | null | undefined,
+): RemoteOllamaUrls | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  try {
+    const url = new URL(raw);
+    url.search = "";
+    url.hash = "";
+    url.pathname = stripRemoteOllamaSuffix(url.pathname) || "/";
+    const rootUrl = url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`;
+    return {
+      rootUrl,
+      openAiBaseUrl: `${rootUrl}/v1`,
+      tagsUrl: `${rootUrl}/api/tags`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function getRemoteOllamaModelOptions(
+  rootUrl: string,
+  credential: string | null = null,
+  runCaptureImpl?: RunCaptureFn,
+): string[] {
+  const urls = normalizeRemoteOllamaBaseUrl(rootUrl);
+  if (!urls) return [];
+  const capture = runCaptureImpl ?? runCapture;
+  const token = compactCredential(credential);
+  const authArgs = token ? ["-H", `Authorization: Bearer ${token}`] : [];
+  const tagsOutput = capture(
+    [
+      "curl",
+      "-sf",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "5",
+      ...authArgs,
+      urls.tagsUrl,
+    ],
+    { ignoreError: true },
+  );
+  return parseOllamaTags(tagsOutput);
+}
+
 export function validateOllamaPortConfiguration(): ValidationResult {
   if (!isWsl() && OLLAMA_PORT === OLLAMA_PROXY_PORT) {
     return {

@@ -9,6 +9,7 @@ export const NEMOCLAW_PROVIDERS = [
   "nvidia-nim",
   "vllm-local",
   "ollama-local",
+  "ollama-remote",
   "nvidia-ncp",
   "nim-local",
 ] as const;

@@ -71,11 +71,12 @@ The inference provider prompt presents a numbered list.
   1) NVIDIA Endpoints
   2) OpenAI
   3) Other OpenAI-compatible endpoint
-  4) Anthropic
-  5) Other Anthropic-compatible endpoint
-  6) Google Gemini
-  7) Local Ollama (localhost:11434)
-  8) Model Router (complexity-based routing)
+  4) Remote Ollama (LAN/self-hosted)
+  5) Anthropic
+  6) Other Anthropic-compatible endpoint
+  7) Google Gemini
+  8) Local Ollama (localhost:11434)
+  9) Model Router (complexity-based routing)
   Choose [1]:
 ```
 
@@ -148,7 +149,31 @@ NVIDIA Nemotron models expose OpenAI-compatible APIs, so this option is the righ
 :::
 :::
 
-:::{dropdown} Option 4: Anthropic
+:::{dropdown} Option 4: Remote Ollama (LAN)
+:icon: server
+
+Routes inference to a self-hosted Ollama daemon on your network.
+No API key is required for a default Ollama daemon.
+If a reverse proxy protects the daemon, export `NEMOCLAW_REMOTE_OLLAMA_TOKEN` before onboarding.
+
+Respond to the wizard as follows.
+
+1. At the `Choose [1]:` prompt, type `4` to select **Remote Ollama (LAN/self-hosted)**.
+2. At the `Remote Ollama base URL` prompt, enter the Ollama root URL, for example `http://192.168.1.50:11434`. NemoClaw also accepts common paths such as `/api/tags` or `/v1/chat/completions` and normalizes them.
+3. At the `Choose model [1]:` prompt, pick from the models reported by `/api/tags`, or pick **Other...** to enter any Ollama model ID.
+
+For scripted setup, set:
+
+```console
+$ NEMOCLAW_PROVIDER=ollama-remote \
+  NEMOCLAW_ENDPOINT_URL=http://192.168.1.50:11434 \
+  NEMOCLAW_MODEL=gemma3:4b \
+  nemoclaw onboard --non-interactive
+```
+
+:::
+
+:::{dropdown} Option 5: Anthropic
 :icon: server
 
 Routes inference to the Anthropic Messages API at `https://api.anthropic.com`.
@@ -157,12 +182,12 @@ Use `ANTHROPIC_API_KEY` for the API key. Get one from the [Anthropic console key
 
 Respond to the wizard as follows.
 
-1. At the `Choose [1]:` prompt, type `4` to select **Anthropic**.
+1. At the `Choose [1]:` prompt, type `5` to select **Anthropic**.
 2. At the `ANTHROPIC_API_KEY:` prompt, paste your key if it is not already exported.
 3. At the `Choose model [1]:` prompt, pick a curated model (for example, `claude-sonnet-4-6`, `claude-haiku-4-5`, or `claude-opus-4-6`), or pick **Other...** to enter any Claude model ID.
 :::
 
-:::{dropdown} Option 5: Other Anthropic-Compatible Endpoint
+:::{dropdown} Option 6: Other Anthropic-Compatible Endpoint
 :icon: link-external
 
 Routes inference to any server that implements the Anthropic Messages API at `/v1/messages`, including Claude proxies, Bedrock-compatible gateways, and self-hosted Anthropic-compatible servers.
@@ -171,13 +196,13 @@ Use `COMPATIBLE_ANTHROPIC_API_KEY` for the API key. Set it to whatever credentia
 
 Respond to the wizard as follows.
 
-1. At the `Choose [1]:` prompt, type `5` to select **Other Anthropic-compatible endpoint**.
+1. At the `Choose [1]:` prompt, type `6` to select **Other Anthropic-compatible endpoint**.
 2. At the `Anthropic-compatible base URL` prompt, enter the proxy or gateway's base URL from its documentation.
 3. At the `COMPATIBLE_ANTHROPIC_API_KEY:` prompt, paste your key if it is not already exported.
 4. At the `Other Anthropic-compatible endpoint model []:` prompt, enter the model ID exactly as it appears in your gateway's model catalog.
 :::
 
-:::{dropdown} Option 6: Google Gemini
+:::{dropdown} Option 7: Google Gemini
 :icon: server
 
 Routes inference to Google's OpenAI-compatible Gemini endpoint at `https://generativelanguage.googleapis.com/v1beta/openai/`.
@@ -186,12 +211,12 @@ Use `GEMINI_API_KEY` for the API key. Get one from [Google AI Studio API keys](h
 
 Respond to the wizard as follows.
 
-1. At the `Choose [1]:` prompt, type `6` to select **Google Gemini**.
+1. At the `Choose [1]:` prompt, type `7` to select **Google Gemini**.
 2. At the `GEMINI_API_KEY:` prompt, paste your key if it is not already exported.
 3. At the `Choose model [5]:` prompt, pick a curated model (for example, `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, or `gemini-2.5-flash-lite`), or pick **Other...** to enter any Gemini model ID.
 :::
 
-:::{dropdown} Option 7: Local Ollama
+:::{dropdown} Option 8: Local Ollama
 :icon: cpu
 
 Routes inference to a local Ollama instance. Depending on your platform, the wizard can use an existing daemon, start an installed daemon, or offer an install action.
@@ -201,14 +226,14 @@ On WSL, NemoClaw can also use Ollama on the Windows host through `host.docker.in
 
 Respond to the wizard as follows.
 
-1. At the `Choose [1]:` prompt, type `7` to select **Local Ollama**.
+1. At the `Choose [1]:` prompt, type `8` to select **Local Ollama**.
 2. At the `Choose model [1]:` prompt, pick from **Ollama models** if any are already installed. If none are installed, pick a **starter model** to pull and load now, or pick **Other...** to enter any Ollama model ID.
 
 For setup details, including GPU recommendations and starter model choices, refer to [Use a Local Inference Server](../inference/use-local-inference.md).
 
 :::
 
-:::{dropdown} Option 8: Model Router
+:::{dropdown} Option 9: Model Router
 :icon: git-compare
 
 Starts a host-side model router and routes sandbox inference through OpenShell to that router.
@@ -218,7 +243,7 @@ Use `NVIDIA_API_KEY` for the model pool credentials.
 
 Respond to the wizard as follows.
 
-1. At the `Choose [1]:` prompt, type `8` to select **Model Router (complexity-based routing)**.
+1. At the `Choose [1]:` prompt, type `9` to select **Model Router (complexity-based routing)**.
 2. At the `NVIDIA_API_KEY:` prompt, paste your key if it is not already exported.
 3. Review the configuration summary and continue with the sandbox build.
 
@@ -308,7 +333,7 @@ Logs:        nemoclaw my-gpt-claw logs --follow
 [INFO]  === Installation complete ===
 ```
 
-If you picked a different option, the `Model` line shows that provider's model and label instead. For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
+If you picked a different option, the `Model` line shows that provider's model and label instead. For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `gemma3:4b (Remote Ollama (LAN))`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
 
 ## Run Your First Agent Prompt
 

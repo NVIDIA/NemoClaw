@@ -22,6 +22,7 @@ import {
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
+  normalizeRemoteOllamaBaseUrl,
   parseOllamaList,
   parseOllamaTags,
   probeLocalProviderHealth,
@@ -38,6 +39,24 @@ describe("local inference helpers", () => {
     expect(getLocalProviderBaseUrl("ollama-local")).toBe(
       `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/v1`,
     );
+  });
+
+  it("normalizes remote Ollama URLs into API root and OpenAI-compatible base URLs", () => {
+    expect(normalizeRemoteOllamaBaseUrl("http://lan-box:11434")).toEqual({
+      rootUrl: "http://lan-box:11434",
+      openAiBaseUrl: "http://lan-box:11434/v1",
+      tagsUrl: "http://lan-box:11434/api/tags",
+    });
+    expect(normalizeRemoteOllamaBaseUrl("http://lan-box:11434/api/tags?x=1#frag")).toEqual({
+      rootUrl: "http://lan-box:11434",
+      openAiBaseUrl: "http://lan-box:11434/v1",
+      tagsUrl: "http://lan-box:11434/api/tags",
+    });
+    expect(normalizeRemoteOllamaBaseUrl("http://lan-box:11434/v1/chat/completions")).toEqual({
+      rootUrl: "http://lan-box:11434",
+      openAiBaseUrl: "http://lan-box:11434/v1",
+      tagsUrl: "http://lan-box:11434/api/tags",
+    });
   });
 
   it("returns null for unknown local provider URLs", () => {

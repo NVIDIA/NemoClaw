@@ -131,6 +131,42 @@ Run onboard without `--non-interactive` to get the interactive `[y/N]` prompt th
 | `NEMOCLAW_MODEL` | Ollama model tag to use. Optional. |
 | `NEMOCLAW_YES` | Set to `1` to auto-accept the model-download confirmation prompt. Optional. |
 
+## Remote Ollama (LAN)
+
+Use this option when Ollama runs on another machine or a centralized host on your network.
+The host running `nemoclaw onboard` must be able to reach the Ollama HTTP endpoint.
+
+Run the onboard wizard.
+
+```console
+$ nemoclaw onboard
+```
+
+When the wizard asks you to choose an inference provider, select **Remote Ollama (LAN/self-hosted)**.
+At the base URL prompt, enter the Ollama root URL, for example `http://192.168.1.50:11434`.
+NemoClaw also accepts common Ollama paths such as `/api`, `/api/tags`, `/v1`, or `/v1/chat/completions` and normalizes them to the OpenAI-compatible `/v1` base URL.
+
+No API key is required for a default Ollama daemon.
+If you put Ollama behind an authenticated reverse proxy, set `NEMOCLAW_REMOTE_OLLAMA_TOKEN` or `NEMOCLAW_PROVIDER_KEY` before running onboard.
+NemoClaw lists models from `/api/tags` when that endpoint is reachable, then validates the selected model through `/v1/chat/completions`.
+Remote Ollama always uses chat completions, because Ollama-compatible tool calls are most reliable on that path.
+
+### Non-Interactive Setup
+
+```console
+$ NEMOCLAW_PROVIDER=ollama-remote \
+  NEMOCLAW_ENDPOINT_URL=http://192.168.1.50:11434 \
+  NEMOCLAW_MODEL=gemma3:4b \
+  nemoclaw onboard --non-interactive
+```
+
+| Variable | Purpose |
+|---|---|
+| `NEMOCLAW_PROVIDER` | Set to `ollama-remote`. Aliases `remote-ollama` and `ollamaremote` are also accepted. |
+| `NEMOCLAW_ENDPOINT_URL` | Root URL or common API path for the remote Ollama daemon. |
+| `NEMOCLAW_MODEL` | Ollama model tag to use. Required if `/api/tags` does not list models. |
+| `NEMOCLAW_REMOTE_OLLAMA_TOKEN` | Bearer token for an authenticated reverse proxy. Optional. |
+
 ## OpenAI-Compatible Server
 
 This option works with any server that implements `/v1/chat/completions`, including vLLM, TensorRT-LLM, llama.cpp, LocalAI, and others.

@@ -25,6 +25,7 @@ export const DEFAULT_ROUTE_CREDENTIAL_ENV = "OPENAI_API_KEY";
 // OPENAI_API_KEY so the sandbox-side OpenClaw and the host-side gateway
 // never read the user's host OpenAI key for local providers. See GH #2519.
 export const OLLAMA_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
+export const REMOTE_OLLAMA_CREDENTIAL_ENV = "NEMOCLAW_REMOTE_OLLAMA_TOKEN";
 export const VLLM_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_VLLM_LOCAL_TOKEN";
 export const MANAGED_PROVIDER_ID = "inference";
 export { DEFAULT_OLLAMA_MODEL };
@@ -100,6 +101,13 @@ export function getProviderSelectionConfig(
         model: model || "custom-model",
         credentialEnv: "COMPATIBLE_API_KEY",
         providerLabel: "Other OpenAI-compatible endpoint",
+      };
+    case "ollama-remote":
+      return {
+        ...base,
+        model: model || DEFAULT_OLLAMA_MODEL,
+        credentialEnv: REMOTE_OLLAMA_CREDENTIAL_ENV,
+        providerLabel: "Remote Ollama (LAN)",
       };
     case "vllm-local":
       return {

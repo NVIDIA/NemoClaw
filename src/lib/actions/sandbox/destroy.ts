@@ -89,7 +89,7 @@ function cleanupSandboxServices(
   }
 
   const sb = registry.getSandbox(sandboxName);
-  if (sb?.provider?.includes("ollama")) {
+  if (sb?.provider === "ollama-local") {
     const { unloadOllamaModels } = require("../../onboard-ollama-proxy");
     unloadOllamaModels();
   }
@@ -202,7 +202,7 @@ export async function destroySandbox(
     nim.stopNimContainer(sandboxName, { silent: true });
   }
 
-  if (sb?.provider?.includes("ollama")) {
+  if (sb?.provider === "ollama-local") {
     const { unloadOllamaModels, killStaleProxy } = require("../../onboard-ollama-proxy");
     unloadOllamaModels();
     killStaleProxy();

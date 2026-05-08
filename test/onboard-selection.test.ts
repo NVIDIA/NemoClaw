@@ -2268,6 +2268,116 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
+  it("configures remote Ollama from a LAN root URL without requiring a local daemon", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-ollama-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "remote-ollama-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"error":{"message":"not found"}}'
+status="404"
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -d) shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+case "$url" in
+  http://lan-ollama:11434/api/tags)
+    body='{"models":[{"name":"gemma3:4b"}]}'
+    status="200"
+    ;;
+  http://lan-ollama:11434/v1/chat/completions)
+    body='{"id":"chatcmpl-remote","choices":[{"message":{"content":"OK"}}]}'
+    status="200"
+    ;;
+esac
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const messages = [];
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({
+      result,
+      messages,
+      lines,
+      remoteToken: process.env.NEMOCLAW_REMOTE_OLLAMA_TOKEN || null,
+    }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama-remote",
+        NEMOCLAW_ENDPOINT_URL: "http://lan-ollama:11434",
+        NEMOCLAW_MODEL: "gemma3:4b",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-remote");
+    assert.equal(payload.result.model, "gemma3:4b");
+    assert.equal(payload.result.endpointUrl, "http://lan-ollama:11434/v1");
+    assert.equal(payload.result.credentialEnv, "NEMOCLAW_REMOTE_OLLAMA_TOKEN");
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.equal(payload.remoteToken, "ollama");
+    assert.deepEqual(payload.messages, []);
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Using Remote Ollama (LAN)")),
+    );
+  });
+
   it("returns to provider selection instead of exiting on blank custom endpoint input", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
@@ -4157,5 +4267,95 @@ const { setupInference } = require(${onboardPath});
       state.inferenceSetArgs.includes("600"),
       `Expected 600 in inference set args, got: ${JSON.stringify(state.inferenceSetArgs)}`,
     );
+  });
+
+  it("uses local inference timeout when applying remote Ollama inference setup", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-remote-ollama-timeout-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const stateFile = path.join(tmpDir, "state.json");
+    const scriptPath = path.join(tmpDir, "remote-ollama-timeout-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(stateFile, JSON.stringify({ providerArgs: null, inferenceSetArgs: null }));
+
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!${process.execPath}
+const fs = require("fs");
+const args = process.argv.slice(2);
+const stateFile = ${JSON.stringify(stateFile)};
+if (args[0] === "provider" && args[1] === "create") {
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  state.providerArgs = args.slice(2);
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  process.exit(0);
+}
+if (args[0] === "inference" && args[1] === "set") {
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  state.inferenceSetArgs = args.slice(2);
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  process.exit(0);
+}
+if (args[0] === "provider" && args[1] === "get") { process.exit(1); }
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+runner.runCapture = (cmd) => {
+  const args = Array.isArray(cmd) ? cmd : [];
+  if (args[1] === "inference" && args[2] === "get") {
+    return "Gateway inference:\n  Provider: ollama-remote\n  Model: gemma3:4b\n";
+  }
+  return "";
+};
+process.env.NEMOCLAW_REMOTE_OLLAMA_TOKEN = "ollama";
+const { setupInference } = require(${onboardPath});
+(async () => {
+  await setupInference(
+    null,
+    "gemma3:4b",
+    "ollama-remote",
+    "http://lan-ollama:11434/v1",
+    "NEMOCLAW_REMOTE_OLLAMA_TOKEN",
+  );
+  process.exit(0);
+})().catch((err) => { console.error(err); process.exit(1); });
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "600",
+        NEMOCLAW_REMOTE_OLLAMA_TOKEN: "ollama",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+    assert.deepEqual(state.providerArgs, [
+      "--name",
+      "ollama-remote",
+      "--type",
+      "openai",
+      "--credential",
+      "NEMOCLAW_REMOTE_OLLAMA_TOKEN",
+      "--config",
+      "OPENAI_BASE_URL=http://lan-ollama:11434/v1",
+    ]);
+    assert.ok(state.inferenceSetArgs.includes("--timeout"));
+    assert.ok(state.inferenceSetArgs.includes("600"));
   });
 });

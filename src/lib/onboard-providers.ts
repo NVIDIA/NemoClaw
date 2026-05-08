@@ -8,6 +8,7 @@ const { redact } = require("./runner");
 const {
   DEFAULT_CLOUD_MODEL,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
+  REMOTE_OLLAMA_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } = require("./inference-config");
 const { isSafeModelId } = require("./validation");
@@ -79,6 +80,17 @@ const REMOTE_PROVIDER_CONFIG = {
     providerName: "compatible-endpoint",
     providerType: "openai",
     credentialEnv: "COMPATIBLE_API_KEY",
+    endpointUrl: "",
+    helpUrl: null,
+    modelMode: "input",
+    defaultModel: "",
+    skipVerify: true,
+  },
+  "ollama-remote": {
+    label: "Remote Ollama (LAN)",
+    providerName: "ollama-remote",
+    providerType: "openai",
+    credentialEnv: REMOTE_OLLAMA_CREDENTIAL_ENV,
     endpointUrl: "",
     helpUrl: null,
     modelMode: "input",
@@ -160,6 +172,9 @@ function getNonInteractiveProvider() {
     cloud: "build",
     nim: "nim-local",
     vllm: "vllm",
+    "remote-ollama": "ollama-remote",
+    remoteollama: "ollama-remote",
+    ollamaremote: "ollama-remote",
     anthropiccompatible: "anthropicCompatible",
   };
   const normalized = aliases[providerKey] || providerKey;
@@ -170,6 +185,7 @@ function getNonInteractiveProvider() {
     "anthropicCompatible",
     "gemini",
     "ollama",
+    "ollama-remote",
     "custom",
     "nim-local",
     "vllm",
@@ -182,7 +198,7 @@ function getNonInteractiveProvider() {
   if (!validProviders.has(normalized)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
     console.error(
-      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama",
+      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, ollama-remote, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama",
     );
     process.exit(1);
   }
@@ -339,6 +355,7 @@ function getSandboxInferenceConfig(
       };
       break;
     case "compatible-endpoint":
+    case "ollama-remote":
       providerKey = "inference";
       primaryModelRef = `inference/${model}`;
       inferenceCompat = {

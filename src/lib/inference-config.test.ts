@@ -12,6 +12,7 @@ import {
   INFERENCE_ROUTE_URL,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
+  REMOTE_OLLAMA_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
@@ -103,6 +104,16 @@ describe("inference selection config", () => {
       provider: "compatible-endpoint",
       providerLabel: "Other OpenAI-compatible endpoint",
     });
+    expect(getProviderSelectionConfig("ollama-remote", "gemma3:4b")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "gemma3:4b",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: REMOTE_OLLAMA_CREDENTIAL_ENV,
+      provider: "ollama-remote",
+      providerLabel: "Remote Ollama (LAN)",
+    });
     // Full-object assertion for one local provider — uses dedicated
     // credential env, not OPENAI_API_KEY (GH #2519).
     expect(getProviderSelectionConfig("vllm-local", "meta-llama")).toEqual({
@@ -131,6 +142,7 @@ describe("inference selection config", () => {
       "compatible-anthropic-endpoint",
       "gemini-api",
       "compatible-endpoint",
+      "ollama-remote",
       "vllm-local",
       "ollama-local",
     ];

@@ -8,6 +8,7 @@ export const INSTALLER_PROVIDER_VALUES = [
   "anthropicCompatible",
   "gemini",
   "ollama",
+  "ollama-remote",
   "custom",
   "nim-local",
   "vllm",
@@ -19,6 +20,8 @@ export const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, InstallerProvid
   anthropiccompatible: "anthropicCompatible",
   cloud: "build",
   nim: "nim-local",
+  ollamaremote: "ollama-remote",
+  "remote-ollama": "ollama-remote",
 };
 
 const PROVIDERS_BY_LOWERCASE = new Map<string, InstallerProvider>(

@@ -17,6 +17,8 @@ describe("installer provider helpers", () => {
     expect(normalizeInstallerProvider("nim")).toBe("nim-local");
     expect(normalizeInstallerProvider("anthropiccompatible")).toBe("anthropicCompatible");
     expect(normalizeInstallerProvider(" AnthropicCompatible ")).toBe("anthropicCompatible");
+    expect(normalizeInstallerProvider("remote-ollama")).toBe("ollama-remote");
+    expect(normalizeInstallerProvider("ollamaremote")).toBe("ollama-remote");
     expect(normalizeInstallerProvider("vllm")).toBe("vllm");
     expect(normalizeInstallerProvider("")).toBeNull();
     expect(normalizeInstallerProvider("unsupported")).toBeNull();
@@ -33,12 +35,12 @@ describe("installer provider helpers", () => {
 
   it("keeps help text values aligned with install.sh usage", () => {
     expect(installerProviderHelpValues()).toBe(
-      "build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm",
+      "build, openai, anthropic, anthropicCompatible, gemini, ollama, ollama-remote, custom, nim-local, vllm",
     );
     expect(installerProviderUsageLines()).toEqual([
       "build | openai | anthropic | anthropicCompatible",
-      "gemini | ollama | custom | nim-local | vllm",
-      "aliases: anthropiccompatible -> anthropicCompatible, cloud -> build, nim -> nim-local",
+      "gemini | ollama | ollama-remote | custom | nim-local | vllm",
+      "aliases: anthropiccompatible -> anthropicCompatible, cloud -> build, nim -> nim-local, ollamaremote -> ollama-remote, remote-ollama -> ollama-remote",
     ]);
   });
 });
