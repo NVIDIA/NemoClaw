@@ -276,9 +276,10 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
   const url = useQueryParam && normalizedKey
     ? `${baseUrl}/chat/completions?key=${encodeURIComponent(normalizedKey)}`
     : `${baseUrl}/chat/completions`;
+  const timingArgs = options.timingArgs ?? getValidationProbeCurlArgs();
   const result = runCurlProbe([
     "-sS",
-    ...getValidationProbeCurlArgs(),
+    ...timingArgs,
     "-H",
     "Content-Type: application/json",
     ...authHeader,
@@ -644,7 +645,14 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       JSON.stringify(getChatCompletionsProbePayload(model)),
       `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
     ];
-    let retryResult = runCurlProbe(buildRetryArgs());
+    const runRetryProbe = () =>
+      options.requireChatCompletionsToolCalling === true
+        ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
+            authMode: options.authMode,
+            timingArgs: doubledArgs,
+          })
+        : runCurlProbe(buildRetryArgs());
+    let retryResult = runRetryProbe();
     if (retryResult.ok) {
       return { ok: true, api: "openai-completions", label: "Chat Completions API" };
     }
@@ -657,10 +665,19 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         `  Chat Completions API validation ${reason}; retrying in ${Math.round(delayMs / 1000)}s...`,
       );
       sleepSync(delayMs);
-      retryResult = runCurlProbe(buildRetryArgs());
+      retryResult = runRetryProbe();
       if (retryResult.ok) {
         return { ok: true, api: "openai-completions", label: "Chat Completions API" };
       }
+    }
+    if (options.requireChatCompletionsToolCalling === true) {
+      failures.push({
+        name: "Chat Completions API with tool calling (retry)",
+        httpStatus: retryResult.httpStatus,
+        curlStatus: retryResult.curlStatus,
+        message: retryResult.message,
+        body: retryResult.body,
+      });
     }
   }
 

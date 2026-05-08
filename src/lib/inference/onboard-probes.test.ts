@@ -359,6 +359,69 @@ exit 0
       }
     });
 
+    it("keeps timeout retries strict when chat-completions tool calling is required", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-strict-retry-probe-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const counter = path.join(tmpDir, "counter");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(counter, "0");
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+outfile=""
+payload=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    -d) payload="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+printf '%s' "$payload" > "${tmpDir}/request-$n.json"
+if [ "$n" -eq 1 ]; then
+  if [ -n "$outfile" ]; then
+    : > "$outfile"
+  fi
+  printf '000'
+  exit 28
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      try {
+        const result = probeOpenAiLikeEndpoint(
+          "https://api.example.com/v1",
+          "test-model",
+          "sk-test",
+          { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+        );
+
+        expect(result).toMatchObject({ ok: false });
+        expect(result.message).toContain("did not return a tool call");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+        expect(fs.readFileSync(path.join(tmpDir, "request-2.json"), "utf8")).toContain(
+          '"tool_choice":"required"',
+        );
+      } finally {
+        process.env.PATH = originalPath;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("keeps retrying when initial timeout is followed by a transient 502", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-timeout-502-probe-"));
       const fakeBin = path.join(tmpDir, "bin");
