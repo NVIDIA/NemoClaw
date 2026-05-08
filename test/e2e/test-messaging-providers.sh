@@ -1196,21 +1196,33 @@ fi
 
 # M17: Discord users/@me with placeholder token
 info "Calling discord.com/api/v10/users/@me from inside sandbox..."
-dc_api=$(sandbox_exec 'node -e "
+dc_api=$(sandbox_exec 'NODE_NO_WARNINGS=1 node -e "
 const https = require(\"https\");
 const token = process.env.DISCORD_BOT_TOKEN || \"missing\";
-const options = {
-  hostname: \"discord.com\",
-  path: \"/api/v10/users/@me\",
-  headers: { \"Authorization\": \"Bot \" + token },
-};
-const req = https.get(options, (res) => {
-  let body = \"\";
-  res.on(\"data\", (d) => body += d);
-  res.on(\"end\", () => console.log(res.statusCode + \" \" + body.slice(0, 300)));
-});
-req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
-req.setTimeout(30000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+const maxAttempts = 5;
+let attempt = 0;
+function probe() {
+  attempt += 1;
+  const options = {
+    hostname: \"discord.com\",
+    path: \"/api/v10/users/@me\",
+    headers: { \"Authorization\": \"Bot \" + token },
+  };
+  const req = https.get(options, (res) => {
+    let body = \"\";
+    res.on(\"data\", (d) => body += d);
+    res.on(\"end\", () => {
+      if (res.statusCode === 503 && /no healthy upstream/i.test(body) && attempt < maxAttempts) {
+        setTimeout(probe, 2000);
+        return;
+      }
+      console.log(res.statusCode + \" \" + body.slice(0, 300));
+    });
+  });
+  req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
+  req.setTimeout(30000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+}
+probe();
 "' 2>/dev/null || true)
 
 info "Discord API response: ${dc_api:0:300}"

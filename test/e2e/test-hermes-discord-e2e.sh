@@ -448,22 +448,35 @@ if (!token) {
   console.log(JSON.stringify({ error: \"missing_token\" }));
   process.exit(0);
 }
-const req = https.request({
-  hostname: \"discord.com\",
-  path: \"/api/v10/users/@me\",
-  method: \"GET\",
-  headers: { \"Authorization\": \"Bot \" + token },
-}, (res) => {
-  let body = \"\";
-  res.on(\"data\", (d) => body += d);
-  res.on(\"end\", () => console.log(JSON.stringify({
-    statusCode: res.statusCode,
-    body: body.slice(0, 200),
-  })));
-});
-req.on(\"error\", (e) => console.log(JSON.stringify({ error: e.message })));
-req.setTimeout(20000, () => { req.destroy(); console.log(JSON.stringify({ error: \"timeout\" })); });
-req.end();
+const maxAttempts = 5;
+let attempt = 0;
+function probe() {
+  attempt += 1;
+  const req = https.request({
+    hostname: \"discord.com\",
+    path: \"/api/v10/users/@me\",
+    method: \"GET\",
+    headers: { \"Authorization\": \"Bot \" + token },
+  }, (res) => {
+    let body = \"\";
+    res.on(\"data\", (d) => body += d);
+    res.on(\"end\", () => {
+      if (res.statusCode === 503 && /no healthy upstream/i.test(body) && attempt < maxAttempts) {
+        setTimeout(probe, 2000);
+        return;
+      }
+      console.log(JSON.stringify({
+        statusCode: res.statusCode,
+        body: body.slice(0, 200),
+        attempt,
+      }));
+    });
+  });
+  req.on(\"error\", (e) => console.log(JSON.stringify({ error: e.message, attempt })));
+  req.setTimeout(20000, () => { req.destroy(); console.log(JSON.stringify({ error: \"timeout\", attempt })); });
+  req.end();
+}
+probe();
 "' 2>/dev/null || true)
 
 info "Discord users/@me response: ${dc_api:0:300}"
