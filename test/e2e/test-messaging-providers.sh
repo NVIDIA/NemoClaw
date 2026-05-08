@@ -573,8 +573,8 @@ fi
 # token body to a 127.0.0.1 listener (loopback bypasses the L7 proxy), have
 # the listener echo what it actually received, then assert the placeholder is
 # gone. If the rewriter is loaded and wrapping http.request/write/end, the
-# listener sees the canonical openshell:resolve:env:VAR form. If the rewriter
-# is a no-op, the listener sees the raw Bolt-shape placeholder.
+# listener sees the active openshell:resolve:env:VAR placeholder form. If the
+# rewriter is a no-op, the listener sees the raw Bolt-shape placeholder.
 info "Probing rewriter via loopback listener (proves http.request is wrapped)..."
 sl_loopback=$(sandbox_exec 'NODE_NO_WARNINGS=1 node -e "
 const http = require(\"http\");
@@ -615,8 +615,8 @@ server.listen(0, \"127.0.0.1\", () => {
 info "Loopback echoed request: ${sl_loopback:0:300}"
 if echo "$sl_loopback" | grep -qF 'OPENSHELL-RESOLVE-ENV-'; then
   fail "M-S5h: rewriter did NOT translate Bolt-shape on http.request/write/end — the preload is loaded but incomplete or a no-op"
-elif echo "$sl_loopback" | grep -qE '"authorization"\s*:\s*"Bearer openshell:resolve:env:SLACK_BOT_TOKEN' \
-  && echo "$sl_loopback" | grep -qE '"body"\s*:\s*"token=openshell:resolve:env:SLACK_BOT_TOKEN'; then
+elif echo "$sl_loopback" | grep -qE '"authorization"\s*:\s*"Bearer openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN' \
+  && echo "$sl_loopback" | grep -qE '"body"\s*:\s*"token=openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN'; then
   pass "M-S5h: rewriter wraps http.request/write/end — Bolt-shape header and body were translated before egress"
 elif echo "$sl_loopback" | grep -q "ERROR"; then
   fail "M-S5h: loopback probe errored: ${sl_loopback:0:200}"
