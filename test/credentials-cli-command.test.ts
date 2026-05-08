@@ -7,11 +7,18 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const RUNTIME_PATH = require.resolve(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
-const COMMANDS_PATH = path.join(REPO_ROOT, "dist", "lib", "credentials-cli-command.js");
-
-type RequireCacheEntry = NonNullable<(typeof require.cache)[string]>;
-type CredentialsCommandModule = typeof import("../dist/lib/credentials-cli-command.js");
+const COMMAND_PATHS = {
+  common: path.join(REPO_ROOT, "dist", "lib", "commands", "credentials", "common.js"),
+  credentials: path.join(REPO_ROOT, "dist", "lib", "commands", "credentials.js"),
+  list: path.join(REPO_ROOT, "dist", "lib", "commands", "credentials", "list.js"),
+  reset: path.join(REPO_ROOT, "dist", "lib", "commands", "credentials", "reset.js"),
+};
+const GLOBAL_ACTIONS_PATH = path.join(REPO_ROOT, "dist", "lib", "actions", "global.js");
+type CredentialsCommandClasses = {
+  CredentialsCommand: typeof import("../dist/lib/commands/credentials.js").default;
+  CredentialsListCommand: typeof import("../dist/lib/commands/credentials/list.js").default;
+  CredentialsResetCommand: typeof import("../dist/lib/commands/credentials/reset.js").default;
+};
 type SpawnLikeResult = { status: number | null; stdout?: string; stderr?: string };
 type RuntimeRecovery = {
   recovered: boolean;
@@ -38,9 +45,15 @@ class ProcessExitError extends Error {
   }
 }
 
-function loadCommands(): CredentialsCommandModule {
-  delete require.cache[COMMANDS_PATH];
-  return require(COMMANDS_PATH) as CredentialsCommandModule;
+function loadCommands(): CredentialsCommandClasses {
+  for (const modulePath of Object.values(COMMAND_PATHS)) {
+    delete require.cache[modulePath];
+  }
+  return {
+    CredentialsCommand: require(COMMAND_PATHS.credentials).default,
+    CredentialsListCommand: require(COMMAND_PATHS.list).default,
+    CredentialsResetCommand: require(COMMAND_PATHS.reset).default,
+  } as CredentialsCommandClasses;
 }
 
 function installRuntimeBridge(bridge: Partial<RuntimeBridge> = {}): OpenshellCall[] {
@@ -53,13 +66,10 @@ function installRuntimeBridge(bridge: Partial<RuntimeBridge> = {}): OpenshellCal
     },
     ...bridge,
   };
-  const cacheEntry = {
-    id: RUNTIME_PATH,
-    filename: RUNTIME_PATH,
-    loaded: true,
-    exports: runtime,
-  } as RequireCacheEntry;
-  require.cache[RUNTIME_PATH] = cacheEntry;
+  const globalActions = require(GLOBAL_ACTIONS_PATH) as {
+    setGlobalCliActionRuntimeHooksForTest: (hooks: RuntimeBridge) => void;
+  };
+  globalActions.setGlobalCliActionRuntimeHooksForTest(runtime);
   return calls;
 }
 
@@ -128,8 +138,10 @@ async function expectProcessExit(
 }
 
 afterEach(() => {
-  delete require.cache[COMMANDS_PATH];
-  delete require.cache[RUNTIME_PATH];
+  for (const modulePath of Object.values(COMMAND_PATHS)) {
+    delete require.cache[modulePath];
+  }
+  delete require.cache[GLOBAL_ACTIONS_PATH];
 });
 
 describe("credentials oclif commands", () => {

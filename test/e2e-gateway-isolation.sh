@@ -401,6 +401,61 @@ else
   fail "proxy-env.sh has unexpected permissions: $OUT"
 fi
 
+# ── Test 26a: /etc/profile.d/nemoclaw-proxy.sh sources proxy-env (#2704) ──
+# Login shells (bash -lc) run /etc/profile, which dot-sources every
+# /etc/profile.d/*.sh.  Without this hook, login shells started as a user
+# whose HOME ≠ /sandbox (root, container exec without --user) silently miss
+# the proxy env even when /tmp/nemoclaw-proxy-env.sh is populated.
+
+info "26a. /etc/profile.d/nemoclaw-proxy.sh sources proxy config"
+OUT=$(run_as_root "cat /etc/profile.d/nemoclaw-proxy.sh 2>/dev/null || echo MISSING")
+if echo "$OUT" | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
+  pass "/etc/profile.d/nemoclaw-proxy.sh sources /tmp/nemoclaw-proxy-env.sh"
+elif echo "$OUT" | grep -q "MISSING"; then
+  fail "/etc/profile.d/nemoclaw-proxy.sh is missing (#2704)"
+else
+  fail "/etc/profile.d/nemoclaw-proxy.sh does not source from expected path: $OUT"
+fi
+
+# ── Test 26b: /etc/bash.bashrc prepends the proxy hook (#2704) ────
+# Interactive non-login bash (bash -ic) sources /etc/bash.bashrc.  The
+# stock Debian/Ubuntu file has `[ -z "$PS1" ] && return` near the top, so
+# the hook must precede that guard to fire reliably in non-TTY contexts.
+
+info "26b. /etc/bash.bashrc prepends proxy source line ahead of PS1 guard"
+OUT=$(run_as_root "head -3 /etc/bash.bashrc")
+if echo "$OUT" | head -2 | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
+  pass "/etc/bash.bashrc sources /tmp/nemoclaw-proxy-env.sh before the PS1 guard"
+else
+  fail "/etc/bash.bashrc does not source the proxy hook in the first 3 lines: $OUT"
+fi
+
+# ── Test 26c: bash -ic and bash -lc both pick up /tmp/nemoclaw-proxy-env.sh (#2704) ──
+# End-to-end check: write a sentinel export into the runtime proxy-env
+# file, then verify both interactive (bash -ic) and login (bash -lc)
+# bash modes export it, regardless of which user is running. Mirrors the
+# QA test T5893674.
+
+info "26c. bash -ic and bash -lc export proxy env from /tmp/nemoclaw-proxy-env.sh"
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  printf "export NEMOCLAW_PROXY_PROBE=https://probe.invalid:9999\n" \
+    > /tmp/nemoclaw-proxy-env.sh
+  chmod 444 /tmp/nemoclaw-proxy-env.sh
+  echo "ROOT_BASH_IC=$(bash -ic "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+  echo "ROOT_BASH_LC=$(bash -lc "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+  echo "SANDBOX_BASH_IC=$(gosu sandbox bash -ic "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+  echo "SANDBOX_BASH_LC=$(gosu sandbox bash -lc "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+' 2>&1)
+EXPECTED="https://probe.invalid:9999"
+if echo "$OUT" | grep -qE "ROOT_BASH_IC=$EXPECTED" \
+  && echo "$OUT" | grep -qE "ROOT_BASH_LC=$EXPECTED" \
+  && echo "$OUT" | grep -qE "SANDBOX_BASH_IC=$EXPECTED" \
+  && echo "$OUT" | grep -qE "SANDBOX_BASH_LC=$EXPECTED"; then
+  pass "bash -ic / bash -lc export proxy env for both root and sandbox"
+else
+  fail "proxy env not set in all bash modes (#2704): $OUT"
+fi
+
 # ── Test 27: Non-root mode executes without gosu ──────────────────
 # The entrypoint detects uid != 0, skips gosu, and execs the command directly.
 # Use the image's actual sandbox uid/gid here: the system-assigned sandbox uid

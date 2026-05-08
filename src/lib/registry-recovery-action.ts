@@ -3,12 +3,12 @@
 
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 import type { RecoveryResult } from "./inventory-commands";
-import * as onboardSession from "./onboard-session";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
-import { captureOpenshell } from "./openshell-runtime";
-import * as registry from "./registry";
-import type { SandboxEntry } from "./registry";
-import { resolveOpenshell } from "./resolve-openshell";
+import * as onboardSession from "./state/onboard-session";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { captureOpenshell } from "./adapters/openshell/runtime";
+import * as registry from "./state/registry";
+import type { SandboxEntry } from "./state/registry";
+import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "./runtime-recovery";
 import { validateName } from "./runner";
 
@@ -78,6 +78,17 @@ function shouldRecoverRegistryEntries(
   };
 }
 
+/**
+ * #2753: a session that records sandboxName but never completed the sandbox
+ * step is a phantom from an interrupted onboard. Going forward, the onboard
+ * fix prevents such writes; this guard catches stale on-disk sessions that
+ * pre-date the fix so `nemoclaw list` does not resurrect them.
+ */
+function isSessionSandboxConfirmed(session: Session | null): boolean {
+  if (!session?.sandboxName) return false;
+  return session.steps?.sandbox?.status === "complete";
+}
+
 function seedRecoveryMetadata(
   current: { sandboxes: SandboxEntry[] },
   session: Session | null,
@@ -88,7 +99,7 @@ function seedRecoveryMetadata(
   );
   let recoveredFromSession = false;
 
-  if (!session?.sandboxName) {
+  if (!isSessionSandboxConfirmed(session) || !session?.sandboxName) {
     return { metadataByName, recoveredFromSession };
   }
 

@@ -115,7 +115,6 @@ describe("fix-coredns.sh", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fix-coredns-"));
     const fakeBin = path.join(tmp, "bin");
     const dockerLog = path.join(tmp, "docker.log");
-    const corefileLog = path.join(tmp, "corefile.log");
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "docker"),
@@ -125,21 +124,6 @@ printf '%s\n' "$*" >> ${JSON.stringify(dockerLog)}
 if [ "\${1:-}" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi
 if [ "\${1:-}" = "exec" ] && [ "\${3:-}" = "cat" ]; then echo "nameserver 9.9.9.9"; exit 0; fi
 exit 0
-`,
-      { mode: 0o755 },
-    );
-    fs.writeFileSync(
-      path.join(fakeBin, "jq"),
-      `#!/usr/bin/env bash
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--arg" ] && [ "\${2:-}" = "corefile" ]; then
-    printf '%s\n' "$3" > ${JSON.stringify(corefileLog)}
-    shift 3
-  else
-    shift
-  fi
-done
-printf '{"data":{"Corefile":"fake"}}\n'
 `,
       { mode: 0o755 },
     );
@@ -157,9 +141,9 @@ printf '{"data":{"Corefile":"fake"}}\n'
       expect(result.status).toBe(0);
       expect(output).toContain("Patching CoreDNS to forward to 9.9.9.9");
       expect(output).toContain("Done. DNS should resolve");
-      expect(fs.readFileSync(corefileLog, "utf-8")).toContain("forward . 9.9.9.9");
       const calls = fs.readFileSync(dockerLog, "utf-8");
       expect(calls).toContain("kubectl patch configmap coredns");
+      expect(calls).toContain("forward . 9.9.9.9");
       expect(calls).toContain("rollout restart deploy/coredns");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

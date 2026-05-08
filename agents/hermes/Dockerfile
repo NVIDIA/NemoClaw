@@ -38,9 +38,11 @@ ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 
-# Copy config generation script and URL-decode proxy
-COPY agents/hermes/generate-config.ts /opt/nemoclaw-generate-config.ts
-RUN chmod 444 /opt/nemoclaw-generate-config.ts
+# Copy config generator and URL-decode proxy
+COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
+COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
+RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
+    && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} +
 COPY agents/hermes/decode-proxy.py /usr/local/bin/nemoclaw-decode-proxy
 RUN chmod 755 /usr/local/bin/nemoclaw-decode-proxy
 
@@ -66,6 +68,8 @@ ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG CHAT_UI_URL=http://127.0.0.1:8642
 ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
+ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
+ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 ARG NEMOCLAW_BUILD_ID=default
 
 # Promote build-args to env vars for the config generation script.
@@ -74,7 +78,9 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64}
+    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
+    NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
+    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64}
 
 WORKDIR /sandbox
 USER sandbox
@@ -88,7 +94,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # via `shields up`. .env holds API key placeholders for OpenShell provider pipeline.
 # SECURITY: Uses a separate script file instead of inline code to avoid
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
-RUN node --experimental-strip-types /opt/nemoclaw-generate-config.ts
+RUN node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts
 
 # Install NemoClaw plugin into Hermes
 RUN mkdir -p /sandbox/.hermes/plugins/nemoclaw \
@@ -228,6 +234,7 @@ RUN set -eu; \
         /sandbox/.hermes/cache \
         /sandbox/.hermes/pairing \
         /sandbox/.hermes/runtime \
+    && chmod 2770 /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \
     && chmod 640 /sandbox/.hermes/.env \
     && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \

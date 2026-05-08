@@ -68,6 +68,16 @@ state_dirs:
   - cache
   - pairing
 
+# ── Top-level durable state files ───────────────────────────────
+# NemoClaw stores Hermes gateway-created top-level state under runtime/ and
+# exposes compatibility symlinks such as .hermes/state.db -> runtime/state.db.
+# The SQLite database is captured with SQLite's online backup API; WAL/SHM
+# files are intentionally omitted because the backup produces a consistent DB.
+state_files:
+  - path: SOUL.md
+  - path: runtime/state.db
+    strategy: sqlite_backup
+
 # ── Authentication ──────────────────────────────────────────────
 # Hermes does NOT have OpenClaw-style browser device pairing.
 # Web UI auth is Bearer token via API_SERVER_KEY env var.

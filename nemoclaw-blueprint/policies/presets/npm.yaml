@@ -9,20 +9,18 @@ network_policies:
   npm_yarn:
     name: npm_yarn
     endpoints:
+      # L4 CONNECT tunnel. Node 22 undici issues HTTP CONNECT through
+      # HTTPS_PROXY for TLS tunneling; L7 REST-mode method inspection
+      # rejects CONNECT and causes ECONNRESET on tarball downloads
+      # (see #2767). L4 pass-through restores undici compatibility.
       - host: registry.npmjs.org
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
+        access: full
+        tls: skip
       - host: registry.yarnpkg.com
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
+        access: full
+        tls: skip
     binaries:
       - { path: /usr/local/bin/npm* }
       - { path: /usr/local/bin/npx* }
