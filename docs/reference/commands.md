@@ -838,6 +838,8 @@ Prerequisites:
 - `sshfs` must be installed on the host (`sudo apt-get install sshfs` on Linux, `brew install macfuse && brew install sshfs` on macOS).
 - The sandbox must be running.
 - Sandboxes created before the `openssh-sftp-server` base image update must be rebuilt with `nemoclaw <name> rebuild`.
+- The local mount path must be on a writable filesystem; FUSE creates the mount on the host side.
+  If the default `~/.nemoclaw/mounts/<name>` lives on a read-only filesystem, pass an explicit writable path as the second positional argument.
 
 ```console
 # mount a specific path to a custom local directory
