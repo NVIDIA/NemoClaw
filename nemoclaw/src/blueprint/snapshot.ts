@@ -76,6 +76,9 @@ function rejectSymlinksOnPath(targetPath: string): void {
   }
 }
 
+/**
+ * Validate sandbox names before interpolating them into OpenShell commands.
+ */
 function validateSandboxName(sandboxName: string): string {
   if (
     typeof sandboxName !== "string" ||
