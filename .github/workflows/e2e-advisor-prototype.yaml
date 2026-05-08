@@ -16,6 +16,16 @@ on:
         description: Head ref to diff
         required: false
         default: HEAD
+      target_repo:
+        description: Optional repo to analyze, e.g. NVIDIA/NemoClaw
+        required: false
+        type: string
+        default: ""
+      target_pr:
+        description: Optional pull request number in target_repo to analyze
+        required: false
+        type: string
+        default: ""
       run_pi:
         description: Run Pi semantic analysis after deterministic baseline
         required: false
@@ -59,10 +69,22 @@ jobs:
       - name: Install advisor dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      - name: Prepare target PR checkout
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' }}
+        env:
+          TARGET_REPO: ${{ inputs.target_repo }}
+          TARGET_PR: ${{ inputs.target_pr }}
+        run: |
+          git remote remove target 2>/dev/null || true
+          git remote add target "https://github.com/${TARGET_REPO}.git"
+          git fetch --no-tags target main
+          git fetch --no-tags target "pull/${TARGET_PR}/head:refs/remotes/target/pr-${TARGET_PR}"
+          git checkout --detach "refs/remotes/target/pr-${TARGET_PR}"
+
       - name: Run deterministic E2E advisor baseline
         env:
-          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || inputs.base_ref }}
-          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || inputs.head_ref }}
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/main' || inputs.base_ref) }}
+          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
         run: |
           node tools/e2e-advisor/advisor.mjs \
             --base "$BASE_REF" \
