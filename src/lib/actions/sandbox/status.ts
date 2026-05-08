@@ -7,7 +7,11 @@ import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { parseSandboxPhase } from "../../state/gateway";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
-import { probeProviderHealth } from "../../inference/health";
+import {
+  probeProviderHealth,
+  type ProviderHealthProbeOptions,
+  type ProviderHealthStatus,
+} from "../../inference/health";
 import * as nim from "../../inference/nim";
 import * as onboardSession from "../../state/onboard-session";
 import type { Session } from "../../state/onboard-session";
@@ -34,6 +38,23 @@ import { D, G, R, RD, YW } from "../../cli/terminal-style";
 
 const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
+type ProbeProviderHealth = (
+  provider: string,
+  options?: ProviderHealthProbeOptions,
+) => ProviderHealthStatus | null;
+
+export function getSandboxStatusInferenceHealth(
+  gatewayPresent: boolean,
+  currentProvider: unknown,
+  currentModel: unknown,
+  probeProviderHealthImpl: ProbeProviderHealth = probeProviderHealth,
+): ProviderHealthStatus | null {
+  if (!gatewayPresent || typeof currentProvider !== "string") return null;
+  return probeProviderHealthImpl(currentProvider, {
+    model: typeof currentModel === "string" ? currentModel : undefined,
+  });
+}
+
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const sb = registry.getSandbox(sandboxName);
@@ -50,10 +71,11 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  const inferenceHealth =
-    lookup.state === "present" && typeof currentProvider === "string"
-      ? probeProviderHealth(currentProvider)
-      : null;
+  const inferenceHealth = getSandboxStatusInferenceHealth(
+    lookup.state === "present",
+    currentProvider,
+    currentModel,
+  );
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
@@ -65,7 +87,9 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       } else if (inferenceHealth.ok) {
         console.log(`    Inference: ${G}healthy${R} (${inferenceHealth.endpoint})`);
       } else {
-        console.log(`    Inference: ${RD}unreachable${R} (${inferenceHealth.endpoint})`);
+        console.log(
+          `    Inference: ${RD}${inferenceHealth.failureLabel || "unreachable"}${R} (${inferenceHealth.endpoint})`,
+        );
         console.log(`      ${inferenceHealth.detail}`);
       }
     }

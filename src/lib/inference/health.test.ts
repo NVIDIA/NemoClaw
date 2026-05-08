@@ -197,6 +197,92 @@ describe("inference health", () => {
         "https://api.openai.com/v1/models",
       ]);
     });
+
+    it("uses Kimi chat completions for NVIDIA managed inference when a credential is available", () => {
+      let capturedArgv: string[] = [];
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model: "moonshotai/kimi-k2.6",
+        getCredentialImpl: (envName) => (envName === "NVIDIA_API_KEY" ? "nvapi-test" : null),
+        runCurlProbeImpl: (argv) => {
+          capturedArgv = argv;
+          return {
+            ok: true,
+            httpStatus: 200,
+            curlStatus: 0,
+            body: '{"choices":[{"message":{"content":"OK"}}]}',
+            stderr: "",
+            message: "HTTP 200",
+          };
+        },
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(true);
+      expect(result?.endpoint).toBe(`${BUILD_ENDPOINT_URL}/chat/completions`);
+      expect(capturedArgv).toContain("Authorization: Bearer nvapi-test");
+      expect(capturedArgv).toContain("--max-time");
+      expect(capturedArgv[capturedArgv.indexOf("--max-time") + 1]).toBe("60");
+      expect(capturedArgv.at(-1)).toBe(`${BUILD_ENDPOINT_URL}/chat/completions`);
+
+      const payload = JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1]);
+      expect(payload).toEqual({
+        model: "moonshotai/kimi-k2.6",
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        max_tokens: 8,
+      });
+    });
+
+    it("does not fall back to provider-level NVIDIA /models for Kimi without a credential", () => {
+      let called = false;
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model: "moonshotai/kimi-k2.6",
+        getCredentialImpl: () => null,
+        runCurlProbeImpl: () => {
+          called = true;
+          return {
+            ok: false,
+            httpStatus: 0,
+            curlStatus: 28,
+            body: "",
+            stderr: "Operation timed out",
+            message: "curl failed (exit 28): Operation timed out",
+          };
+        },
+      });
+
+      expect(called).toBe(false);
+      expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(false);
+      expect(result?.endpoint).toBe(`${BUILD_ENDPOINT_URL}/chat/completions`);
+      expect(result?.detail).toContain("NVIDIA_API_KEY");
+      expect(result?.detail).toContain("provider-level /models");
+    });
+
+    it("reports Kimi health as not probed when credential lookup fails", () => {
+      let called = false;
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model: "moonshotai/kimi-k2.6",
+        getCredentialImpl: () => {
+          throw new Error("credential store unavailable");
+        },
+        runCurlProbeImpl: () => {
+          called = true;
+          return {
+            ok: false,
+            httpStatus: 0,
+            curlStatus: 28,
+            body: "",
+            stderr: "Operation timed out",
+            message: "curl failed (exit 28): Operation timed out",
+          };
+        },
+      });
+
+      expect(called).toBe(false);
+      expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(false);
+      expect(result?.detail).toContain("credential store unavailable");
+    });
   });
 
   describe("probeProviderHealth (unified)", () => {
@@ -233,6 +319,54 @@ describe("inference health", () => {
       expect(result?.ok).toBe(true);
       expect(result?.probed).toBe(true);
       expect(result?.providerLabel).toBe("OpenAI");
+    });
+
+    it("keeps non-Kimi NVIDIA models on the provider reachability probe", () => {
+      let capturedArgv: string[] = [];
+      const result = probeProviderHealth("nvidia-prod", {
+        model: "minimaxai/minimax-m2.7",
+        runCurlProbeImpl: (argv) => {
+          capturedArgv = argv;
+          return {
+            ok: false,
+            httpStatus: 401,
+            curlStatus: 0,
+            body: "",
+            stderr: "",
+            message: "HTTP 401",
+          };
+        },
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(result?.endpoint).toBe(`${BUILD_ENDPOINT_URL}/models`);
+      expect(capturedArgv.at(-1)).toBe(`${BUILD_ENDPOINT_URL}/models`);
+      expect(capturedArgv).not.toContain(`${BUILD_ENDPOINT_URL}/chat/completions`);
+    });
+
+    it("uses model-aware Kimi probing through the unified health entry point", () => {
+      let capturedArgv: string[] = [];
+      const result = probeProviderHealth("nvidia-nim", {
+        model: "moonshotai/kimi-k2.6",
+        getCredentialImpl: () => "nvapi-test",
+        runCurlProbeImpl: (argv) => {
+          capturedArgv = argv;
+          return {
+            ok: false,
+            httpStatus: 401,
+            curlStatus: 0,
+            body: '{"error":"unauthorized"}',
+            stderr: "",
+            message: "HTTP 401: unauthorized",
+          };
+        },
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.endpoint).toBe(`${BUILD_ENDPOINT_URL}/chat/completions`);
+      expect(capturedArgv.at(-1)).toBe(`${BUILD_ENDPOINT_URL}/chat/completions`);
     });
 
     it("returns not-probed for compatible-endpoint", () => {
