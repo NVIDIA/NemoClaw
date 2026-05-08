@@ -1030,7 +1030,9 @@ Skills are blocked for one of three reasons.
 - The skill requires API credentials that have not been configured, such as a Notion API key or Discord bot token.
 
 Skills that require macOS-only binaries cannot be enabled on Brev.
-Skills that require additional CLI binaries or credentials require a custom sandbox image rebuild.
+Skills that require additional CLI binaries require a custom sandbox image rebuild.
+
+For credentials, use the supported host-side setup flow. Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack>` for messaging channels.
 To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
 
 ```console
