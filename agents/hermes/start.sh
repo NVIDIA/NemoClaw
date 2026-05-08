@@ -501,8 +501,8 @@ refresh_hermes_provider_placeholders() {
     chmod u+w "$hash_file" || return 1
     [ ! -f "$compat_hash" ] || chmod u+w "$compat_hash" 2>/dev/null || true
   elif [ ! -w "$env_file" ] || [ ! -w "$hash_file" ]; then
-    echo "[SECURITY] Hermes provider placeholder refresh requires write access to .env and hash file" >&2
-    return 1
+    echo "[config] Hermes provider placeholders supplied by OpenShell runtime env; .env refresh skipped without write access" >&2
+    return 0
   fi
 
   local _write_rc=0

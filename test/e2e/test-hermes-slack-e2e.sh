@@ -431,18 +431,20 @@ section "Phase 6: Slack placeholder egress from Python"
 slack_probe=$(
   sandbox_exec_stdin "/usr/bin/python3 -" <<'PY'
 import json
+import os
 import socket
 import sys
 import urllib.error
 import urllib.request
 
 def call(label, path, env_key, allowed_errors):
-    token = f"openshell:resolve:env:{env_key}"
+    runtime_token = os.environ.get(env_key, "")
+    token = runtime_token if runtime_token.startswith("openshell:resolve:env:") else f"openshell:resolve:env:{env_key}"
     try:
         for line in open("/sandbox/.hermes/.env", encoding="utf-8"):
             if line.startswith(f"{env_key}="):
                 candidate = line.split("=", 1)[1].strip()
-                if candidate.startswith("openshell:resolve:env:"):
+                if not token.startswith("openshell:resolve:env:v") and candidate.startswith("openshell:resolve:env:"):
                     token = candidate
                 break
     except OSError:

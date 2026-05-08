@@ -434,9 +434,16 @@ section "Phase 6: Discord placeholder egress"
 dc_api=$(sandbox_exec 'NODE_NO_WARNINGS=1 node -e "
 const fs = require(\"fs\");
 const https = require(\"https\");
-const env = fs.readFileSync(\"/sandbox/.hermes/.env\", \"utf8\");
-const line = env.split(/\\n/).find((entry) => entry.startsWith(\"DISCORD_BOT_TOKEN=\"));
-const token = line ? line.slice(\"DISCORD_BOT_TOKEN=\".length) : \"\";
+let token = \"\";
+const runtimeToken = process.env.DISCORD_BOT_TOKEN || \"\";
+if (runtimeToken.startsWith(\"openshell:resolve:env:\")) {
+  token = runtimeToken;
+}
+if (!token) {
+  const env = fs.readFileSync(\"/sandbox/.hermes/.env\", \"utf8\");
+  const line = env.split(/\\n/).find((entry) => entry.startsWith(\"DISCORD_BOT_TOKEN=\"));
+  token = line ? line.slice(\"DISCORD_BOT_TOKEN=\".length) : runtimeToken;
+}
 if (!token) {
   console.log(JSON.stringify({ error: \"missing_token\" }));
   process.exit(0);
