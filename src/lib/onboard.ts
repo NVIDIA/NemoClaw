@@ -3106,6 +3106,7 @@ async function validateCustomAnthropicSelection(
 
 const { promptManualModelId, promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
+const nousModels: typeof import("./inference/nous-models") = require("./inference/nous-models");
 
 // Build context helpers — delegated to src/lib/build-context.ts
 const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
@@ -6638,12 +6639,17 @@ async function setupNim(
           if (isNonInteractive()) {
             model = defaultModel;
           } else {
+            const hermesProviderModels = await nousModels.getHermesProviderModelOptions();
             model = await promptRemoteModel(
               remoteConfig.label,
               selected.key,
               defaultModel,
               null,
-              { topLevelModelLimit: 10, otherShowsFullList: true },
+              {
+                otherShowsFullList: true,
+                remoteModelOptions: { [selected.key]: hermesProviderModels },
+                topLevelModelLimit: 10,
+              },
             );
           }
           if (model === BACK_TO_SELECTION) {

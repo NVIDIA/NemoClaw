@@ -9,6 +9,8 @@
 import { DEFAULT_OLLAMA_MODEL } from "./local";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
+export const NOUS_RECOMMENDED_MODELS_URL =
+  "https://portal.nousresearch.com/api/nous/recommended-models";
 export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 export const HERMES_PROVIDER_MODEL_OPTIONS = [
   "moonshotai/kimi-k2.6",
