@@ -13,6 +13,8 @@ const outDir = args.outDir || "artifacts/e2e-advisor";
 const baselinePath = args.baseline || path.join(outDir, "e2e-advisor-result.json");
 const manifestPath = args.manifest || "test/e2e/e2e-manifest.yaml";
 const schemaPath = args.schema || "tools/e2e-advisor/schema.json";
+const scriptDir = path.dirname(new URL(import.meta.url).pathname).replace(/^\/(.:\/)/, "$1");
+const modelsTemplatePath = args.modelsTemplate || path.join(scriptDir, "pi-models.template.json");
 const promptPath = path.join(outDir, "e2e-advisor-pi-prompt.md");
 const rawPath = path.join(outDir, "e2e-advisor-pi-raw-output.txt");
 // Keep generated Pi credential config outside uploaded artifacts.
@@ -344,7 +346,7 @@ function preparePiConfig(env, provider) {
     env[envName] = env.PI_E2E_ADVISOR_API_KEY;
   }
 
-  const templatePath = path.resolve(root, "tools/e2e-advisor/pi-models.template.json");
+  const templatePath = path.resolve(root, modelsTemplatePath);
   if (fs.existsSync(templatePath)) {
     fs.mkdirSync(piConfigDir, { recursive: true });
     fs.writeFileSync(path.join(piConfigDir, "auth.json"), "{}\n", { mode: 0o600 });
