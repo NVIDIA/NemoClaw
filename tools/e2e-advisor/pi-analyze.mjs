@@ -40,6 +40,7 @@ if (!hasLikelyPiCredential()) {
 }
 
 const piBin = process.env.PI_BIN || "pi";
+const provider = process.env.PI_E2E_ADVISOR_PROVIDER || (process.env.PI_E2E_ADVISOR_API_KEY ? "openai" : "");
 const piArgs = [
   "--no-session",
   "--no-extensions",
@@ -51,8 +52,8 @@ const piArgs = [
   "--print",
 ];
 
-if (process.env.PI_E2E_ADVISOR_PROVIDER) {
-  piArgs.unshift("--provider", process.env.PI_E2E_ADVISOR_PROVIDER);
+if (provider) {
+  piArgs.unshift("--provider", provider);
 }
 if (process.env.PI_E2E_ADVISOR_MODEL) {
   piArgs.unshift("--model", process.env.PI_E2E_ADVISOR_MODEL);
@@ -64,16 +65,19 @@ if (promptStdin) {
   piArgs.push(prompt);
 }
 
+const childEnv = {
+  ...process.env,
+  PI_SKIP_VERSION_CHECK: process.env.PI_SKIP_VERSION_CHECK || "1",
+};
+applyGenericApiKey(childEnv, provider);
+
 const child = spawnSync(piBin, piArgs, {
   cwd: root,
   encoding: "utf8",
   timeout: timeoutMs,
   maxBuffer: 20 * 1024 * 1024,
   input: promptStdin ? prompt : undefined,
-  env: {
-    ...process.env,
-    PI_SKIP_VERSION_CHECK: process.env.PI_SKIP_VERSION_CHECK || "1",
-  },
+  env: childEnv,
 });
 
 const combinedOutput = [
@@ -317,7 +321,39 @@ function hasLikelyPiCredential() {
     "CLOUDFLARE_API_KEY",
     "AWS_BEARER_TOKEN_BEDROCK",
   ];
-  return credentialEnv.some((name) => Boolean(process.env[name])) || Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+  return Boolean(process.env.PI_E2E_ADVISOR_API_KEY) || credentialEnv.some((name) => Boolean(process.env[name])) || Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+}
+
+function applyGenericApiKey(env, provider) {
+  if (!env.PI_E2E_ADVISOR_API_KEY) {
+    return;
+  }
+  const envName = providerEnvName(provider || "openai");
+  if (envName && !env[envName]) {
+    env[envName] = env.PI_E2E_ADVISOR_API_KEY;
+  }
+}
+
+function providerEnvName(provider) {
+  const normalized = provider.toLowerCase();
+  if (normalized.includes("anthropic")) return "ANTHROPIC_API_KEY";
+  if (normalized.includes("openai")) return "OPENAI_API_KEY";
+  if (normalized.includes("azure")) return "AZURE_OPENAI_API_KEY";
+  if (normalized.includes("google") || normalized.includes("gemini")) return "GEMINI_API_KEY";
+  if (normalized.includes("deepseek")) return "DEEPSEEK_API_KEY";
+  if (normalized.includes("groq")) return "GROQ_API_KEY";
+  if (normalized.includes("cerebras")) return "CEREBRAS_API_KEY";
+  if (normalized.includes("xai")) return "XAI_API_KEY";
+  if (normalized.includes("fireworks")) return "FIREWORKS_API_KEY";
+  if (normalized.includes("openrouter")) return "OPENROUTER_API_KEY";
+  if (normalized.includes("vercel")) return "AI_GATEWAY_API_KEY";
+  if (normalized.includes("zai")) return "ZAI_API_KEY";
+  if (normalized.includes("mistral")) return "MISTRAL_API_KEY";
+  if (normalized.includes("minimax")) return "MINIMAX_API_KEY";
+  if (normalized.includes("moonshot")) return "MOONSHOT_API_KEY";
+  if (normalized.includes("opencode")) return "OPENCODE_API_KEY";
+  if (normalized.includes("kimi")) return "KIMI_API_KEY";
+  return "OPENAI_API_KEY";
 }
 
 function writeSkipped(reason) {
