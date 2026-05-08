@@ -630,6 +630,13 @@ async function prepareOllamaModel(model, installedModels = []) {
 /**
  * Unload all running Ollama models from GPU memory.
  * Best-effort operation: silently ignores errors if Ollama is not running.
+ *
+ * Uses `spawnSync` with `curl --max-time 3` rather than Node's
+ * `http.request`/`http.get` so the unload completes before
+ * `process.exit()`. The previous async version was fire-and-forget and got
+ * dropped by Node's event loop on fast CLI exit (e.g. `nemoclaw destroy`),
+ * leaving GPU memory reserved. Reverting to async HTTP would reintroduce
+ * that race; keep it synchronous.
  */
 function unloadOllamaModels() {
   try {

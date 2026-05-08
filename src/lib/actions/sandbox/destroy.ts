@@ -207,6 +207,11 @@ export async function destroySandbox(
     nim.stopNimContainer(sandboxName, { silent: true });
   }
 
+  // The Ollama auth proxy is per-sandbox and only spawned when the provider
+  // is Ollama, so this guard scopes only `killStaleProxy()`. GPU unload is
+  // handled separately by `cleanupSandboxServices` above (which routes
+  // through `stopAll()` or directly into `unloadOllamaModels()` based on
+  // whether host services are being torn down).
   if (sb?.provider?.includes("ollama")) {
     const { killStaleProxy } = require("../../onboard-ollama-proxy");
     killStaleProxy();
