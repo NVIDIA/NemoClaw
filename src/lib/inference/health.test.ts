@@ -8,9 +8,9 @@ import {
   getRemoteProviderHealthEndpoint,
   probeRemoteProviderHealth,
   probeProviderHealth,
-} from "../../dist/lib/inference-health";
+} from "../../../dist/lib/inference/health";
 
-import { BUILD_ENDPOINT_URL } from "../../dist/lib/provider-models";
+import { BUILD_ENDPOINT_URL } from "../../../dist/lib/inference/provider-models";
 
 describe("inference health", () => {
   describe("getRemoteProviderHealthEndpoint", () => {

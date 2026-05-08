@@ -38,15 +38,15 @@ const { resolveOpenshell } = require("./lib/adapters/openshell/resolve");
 const { hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
 const registry = require("./lib/state/registry");
 import type { SandboxEntry } from "./lib/state/registry";
-const nim = require("./lib/nim");
+const nim = require("./lib/inference/nim");
 const shields = require("./lib/shields");
-const { parseGatewayInference } = require("./lib/inference-config");
+const { parseGatewayInference } = require("./lib/inference/config");
 const policies = require("./lib/policies");
-const { probeProviderHealth } = require("./lib/inference-health");
+const { probeProviderHealth } = require("./lib/inference/health");
 const { buildStatusCommandDeps } = require("./lib/status-command-deps");
 const { help, version } = require("./lib/actions/root-help");
-const onboardSession = require("./lib/onboard-session");
-import type { Session } from "./lib/onboard-session";
+const onboardSession = require("./lib/state/onboard-session");
+import type { Session } from "./lib/state/onboard-session";
 const { stripAnsi } = require("./lib/adapters/openshell/client");
 const {
   getInstalledOpenshellVersionOrNull,

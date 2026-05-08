@@ -9,7 +9,7 @@
 
 import { DASHBOARD_PORT } from "../core/ports";
 import { shellQuote } from "../runner";
-import * as onboardSession from "../onboard-session";
+import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { loadAgent, type AgentDefinition } from "./defs";
 

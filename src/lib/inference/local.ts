@@ -6,15 +6,15 @@
  * health checks, and command generators for vLLM and Ollama.
  */
 
-import type { CurlProbeResult } from "./http-probe";
-import { runCurlProbe } from "./http-probe";
+import type { CurlProbeResult } from "../http-probe";
+import { runCurlProbe } from "../http-probe";
 
-const { shellQuote, runCapture } = require("./runner");
+const { shellQuote, runCapture } = require("../runner");
 
-import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "./core/ports";
-import { sleepSeconds } from "./core/wait";
+import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../core/ports";
+import { sleepSeconds } from "../core/wait";
 
-const { isWsl } = require("./platform");
+const { isWsl } = require("../platform");
 
 /** Port containers use to reach Ollama — proxy on non-WSL, direct on WSL2. */
 export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;

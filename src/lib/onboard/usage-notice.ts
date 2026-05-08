@@ -5,12 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import noticeConfig from "../../bin/lib/usage-notice.json";
+import noticeConfig from "../../../bin/lib/usage-notice.json";
 
 export const NOTICE_ACCEPT_FLAG = "--yes-i-accept-third-party-software";
 export const NOTICE_ACCEPT_ENV = "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE";
 export const NOTICE_CONFIG_FILE = path.join(
   __dirname,
+  "..",
   "..",
   "..",
   "bin",
@@ -212,7 +213,7 @@ export async function ensureUsageNoticeConsent({
   }
 
   // credentials is still CJS
-  const ask: PromptFn = promptFn ?? (require("./credentials/store") as { prompt: PromptFn }).prompt;
+  const ask: PromptFn = promptFn ?? (require("../credentials/store") as { prompt: PromptFn }).prompt;
   let answer: string;
   try {
     answer = String(await ask(`  ${config.interactivePrompt}`))

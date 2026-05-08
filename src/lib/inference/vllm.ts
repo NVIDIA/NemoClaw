@@ -5,9 +5,9 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
-const { runCapture, runShell } = require("./runner");
-const { dockerCapture, dockerSpawn } = require("./adapters/docker");
-const { VLLM_PORT } = require("./core/ports");
+const { runCapture, runShell } = require("../runner");
+const { dockerCapture, dockerSpawn } = require("../adapters/docker");
+const { VLLM_PORT } = require("../core/ports");
 const { getGpuIndicesByName } = require("./nim");
 
 // Per-platform install recipe. Add new platforms by appending an entry to

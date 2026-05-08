@@ -829,7 +829,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
 
   // 1. Determine which provider and credentialEnv the sandbox uses.
   //    Load the onboard session and verify it matches this sandbox.
-  const { loadSession } = require("./onboard-session");
+  const { loadSession } = require("./state/onboard-session");
   const session = loadSession();
 
   if (!session || !session.credentialEnv) {

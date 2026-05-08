@@ -7,11 +7,11 @@
  * and performs lightweight reachability checks for remote cloud providers.
  */
 
-import type { CurlProbeResult } from "./http-probe";
-import { runCurlProbe } from "./http-probe";
-import { getProviderSelectionConfig } from "./inference-config";
-import type { LocalProviderHealthProbeOptions } from "./local-inference";
-import { probeLocalProviderHealth } from "./local-inference";
+import type { CurlProbeResult } from "../http-probe";
+import { runCurlProbe } from "../http-probe";
+import { getProviderSelectionConfig } from "./config";
+import type { LocalProviderHealthProbeOptions } from "./local";
+import { probeLocalProviderHealth } from "./local";
 import { BUILD_ENDPOINT_URL } from "./provider-models";
 
 export interface ProviderHealthStatus {

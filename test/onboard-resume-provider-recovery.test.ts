@@ -43,7 +43,7 @@ const {
 } = onboardModule;
 
 const registry: typeof import("../dist/lib/state/registry") = require("../dist/lib/state/registry");
-const onboardSession: typeof import("../dist/lib/onboard-session") = require("../dist/lib/onboard-session");
+const onboardSession: typeof import("../dist/lib/state/onboard-session") = require("../dist/lib/state/onboard-session");
 
 // Force readLiveInference's defaultSandbox check to fail so unit tests that
 // expect null don't depend on whether openshell is on PATH.

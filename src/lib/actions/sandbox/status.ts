@@ -6,11 +6,11 @@
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { parseSandboxPhase } from "../../state/gateway";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
-import { parseGatewayInference } from "../../inference-config";
-import { probeProviderHealth } from "../../inference-health";
-import * as nim from "../../nim";
-import * as onboardSession from "../../onboard-session";
-import type { Session } from "../../onboard-session";
+import { parseGatewayInference } from "../../inference/config";
+import { probeProviderHealth } from "../../inference/health";
+import * as nim from "../../inference/nim";
+import * as onboardSession from "../../state/onboard-session";
+import type { Session } from "../../state/onboard-session";
 import {
   captureOpenshellForStatus,
   isCommandTimeout,

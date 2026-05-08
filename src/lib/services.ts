@@ -429,7 +429,7 @@ export function stopAll(opts: ServiceOptions = {}): void {
   }
 
   try {
-    const { unloadOllamaModels } = require("./onboard-ollama-proxy");
+    const { unloadOllamaModels } = require("./inference/ollama/proxy");
     unloadOllamaModels();
   } catch {
     /* best-effort */

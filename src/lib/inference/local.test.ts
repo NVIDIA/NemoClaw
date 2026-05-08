@@ -27,7 +27,7 @@ import {
   probeLocalProviderHealth,
   validateOllamaModel,
   validateLocalProvider,
-} from "../../dist/lib/local-inference";
+} from "../../../dist/lib/inference/local";
 
 describe("local inference helpers", () => {
   it("returns the expected base URL for vllm-local", () => {
@@ -124,13 +124,13 @@ describe("local inference helpers", () => {
         [
           "const platform = require('./dist/lib/platform.js');",
           "platform.isWsl = () => false;",
-          "const localInference = require('./dist/lib/local-inference.js');",
+          "const localInference = require('./dist/lib/inference/local.js');",
           "const result = localInference.validateLocalProvider('ollama-local', () => '{\"models\":[]}');",
           "process.stdout.write(JSON.stringify(result));",
         ].join(""),
       ],
       {
-        cwd: path.resolve(__dirname, "../.."),
+        cwd: path.resolve(__dirname, "../../.."),
         encoding: "utf8",
         env: {
           ...process.env,

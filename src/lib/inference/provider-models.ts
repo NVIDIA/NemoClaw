@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CurlProbeResult } from "./http-probe";
-import { getCurlTimingArgs, runCurlProbe } from "./http-probe";
-import type { ModelCatalogFetchResult, ModelValidationResult } from "./onboard-types";
+import type { CurlProbeResult } from "../http-probe";
+import { getCurlTimingArgs, runCurlProbe } from "../http-probe";
+import type { ModelCatalogFetchResult, ModelValidationResult } from "../onboard/types";
 
 // credentials.ts still uses CommonJS-style exports.
-const { normalizeCredentialValue } = require("./credentials/store");
+const { normalizeCredentialValue } = require("../credentials/store");
 
 export const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 

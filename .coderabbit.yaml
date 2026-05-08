@@ -221,7 +221,7 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=overlayfs-autofix-e2e
         ```
 
-    - path: "src/lib/preflight.ts"
+    - path: "src/lib/onboard/preflight.ts"
       instructions: *e2e-overlayfs
 
     - path: "src/lib/deploy.ts"

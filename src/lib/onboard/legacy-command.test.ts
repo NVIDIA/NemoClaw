@@ -11,7 +11,7 @@ import {
   parseOnboardArgs,
   runDeprecatedOnboardAliasCommand,
   runOnboardCommand,
-} from "./onboard-command";
+} from "./legacy-command";
 
 function exitWithCode(code: number): never {
   throw new Error(String(code));

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "..", "..", "..");
 const noticePath = path.join(repoRoot, "bin", "lib", "usage-notice.js");
 const {
   NOTICE_ACCEPT_FLAG,
