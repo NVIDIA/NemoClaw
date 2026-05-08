@@ -5487,6 +5487,36 @@ async function createSandbox(
 
 type ProviderChoice = { key: string; label: string };
 
+async function promptOllamaSetupChoice(
+  choices: ProviderChoice[],
+  defaultKey: string | null = null,
+): Promise<ProviderChoice | null> {
+  const defaultIndex = Math.max(
+    0,
+    defaultKey ? choices.findIndex((choice) => choice.key === defaultKey) : 0,
+  );
+  console.log("");
+  console.log("  Ollama setup:");
+  choices.forEach((choice, index) => {
+    console.log(`    ${index + 1}) ${choice.label}`);
+  });
+  console.log(`    ${choices.length + 1}) Back`);
+  console.log("");
+
+  const answer = await prompt(`  Ollama setup [${defaultIndex + 1}]: `);
+  const navigation = getNavigationChoice(answer);
+  if (navigation === "back") return null;
+  if (navigation === "exit") {
+    exitOnboardFromPrompt();
+  }
+  const index = parseInt(answer || String(defaultIndex + 1), 10) - 1;
+  if (Number.isFinite(index) && index >= 0 && index < choices.length) {
+    return choices[index];
+  }
+  if (index === choices.length) return null;
+  return choices[defaultIndex] || choices[0] || null;
+}
+
 function providerNameToOptionKey(
   name: string | null | undefined,
   opts: { hasNimContainer?: boolean } = {},
@@ -5855,14 +5885,7 @@ async function setupNim(
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
-  const options: Array<{ key: string; label: string }> = [];
-  options.push({ key: "build", label: "NVIDIA Endpoints" });
-  options.push({ key: "openai", label: "OpenAI" });
-  options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
-  options.push({ key: "ollama-remote", label: "Remote Ollama (LAN/self-hosted)" });
-  options.push({ key: "anthropic", label: "Anthropic" });
-  options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
-  options.push({ key: "gemini", label: "Google Gemini" });
+  const ollamaChoices: ProviderChoice[] = [];
   if (hasOllama || ollamaRunning) {
     let hostDisplay: string;
     if (ollamaHost === "host.docker.internal") {
@@ -5876,13 +5899,65 @@ async function setupNim(
     // carries the suggestion instead, since Windows-host is preferred.
     const wslOllamaSuggested =
       ollamaRunning && (ollamaHost === "host.docker.internal" || !isWsl());
-    options.push({
+    ollamaChoices.push({
       key: "ollama",
       label:
-        `Local Ollama (${hostDisplay})${ollamaRunning ? " — running" : ""}` +
+        `Use existing local Ollama (${hostDisplay})${ollamaRunning ? " — running" : ""}` +
         (wslOllamaSuggested ? " (suggested)" : ""),
     });
   }
+  // Skipped when Windows-host already won the cache: the running entry
+  // above already covers that case.
+  if (hasWindowsOllama && ollamaHost !== "host.docker.internal") {
+    let windowsOllamaLabel: string;
+    if (windowsOllamaReachable) {
+      windowsOllamaLabel = "Use Ollama on Windows host - running (suggested)";
+    } else if (winOllamaLoopbackOnly) {
+      windowsOllamaLabel = "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
+    } else {
+      windowsOllamaLabel = "Start Ollama on Windows host (suggested)";
+    }
+    ollamaChoices.push({ key: "start-windows-ollama", label: windowsOllamaLabel });
+  }
+  // On WSL, always offer to install Ollama on the Windows host when not
+  // already installed, regardless of WSL Ollama state — users may prefer the
+  // Windows-host instance (GPU access) even with WSL Ollama running.
+  if (isWsl() && !hasWindowsOllama) {
+    ollamaChoices.push({
+      key: "install-windows-ollama",
+      label: "Install Ollama on Windows host (recommended)",
+    });
+  }
+  // Without any Ollama, offer to install one locally as a fallback (e.g. when
+  // the NVIDIA API server is down and cloud keys are unavailable).
+  if (!hasOllama && !ollamaRunning && !hasWindowsOllama) {
+    if (process.platform === "darwin") {
+      ollamaChoices.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
+    } else if (process.platform === "linux") {
+      if (isWsl()) {
+        ollamaChoices.push({ key: "install-ollama", label: "Install Ollama (WSL Linux)" });
+      } else {
+        ollamaChoices.push({ key: "install-ollama", label: "Install Ollama (Linux)" });
+      }
+    }
+  }
+  ollamaChoices.push({
+    key: "ollama-remote",
+    label: "Connect to existing remote Ollama URL",
+  });
+
+  const options: Array<{ key: string; label: string }> = [];
+  options.push({ key: "build", label: "NVIDIA Endpoints" });
+  options.push({ key: "openai", label: "OpenAI" });
+  options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
+  if (isNonInteractive()) {
+    options.push(...ollamaChoices);
+  } else {
+    options.push({ key: "ollama-group", label: "Ollama" });
+  }
+  options.push({ key: "anthropic", label: "Anthropic" });
+  options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
+  options.push({ key: "gemini", label: "Google Gemini" });
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
     options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
   }
@@ -5909,41 +5984,6 @@ async function setupNim(
       key: "vllm",
       label: "Local vLLM [experimental] — running",
     });
-  }
-  // Skipped when Windows-host already won the cache: the running entry
-  // above already covers that case.
-  if (hasWindowsOllama && ollamaHost !== "host.docker.internal") {
-    let windowsOllamaLabel: string;
-    if (windowsOllamaReachable) {
-      windowsOllamaLabel = "Use Ollama on Windows host - running (suggested)";
-    } else if (winOllamaLoopbackOnly) {
-      windowsOllamaLabel = "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
-    } else {
-      windowsOllamaLabel = "Start Ollama on Windows host (suggested)";
-    }
-    options.push({ key: "start-windows-ollama", label: windowsOllamaLabel });
-  }
-  // On WSL, always offer to install Ollama on the Windows host when not
-  // already installed, regardless of WSL Ollama state — users may prefer the
-  // Windows-host instance (GPU access) even with WSL Ollama running.
-  if (isWsl() && !hasWindowsOllama) {
-    options.push({
-      key: "install-windows-ollama",
-      label: "Install Ollama on Windows host (recommended)",
-    });
-  }
-  // Without any Ollama, offer to install one locally as a fallback (e.g. when
-  // the NVIDIA API server is down and cloud keys are unavailable).
-  if (!hasOllama && !ollamaRunning && !hasWindowsOllama) {
-    if (process.platform === "darwin") {
-      options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
-    } else if (process.platform === "linux") {
-      if (isWsl()) {
-        options.push({ key: "install-ollama", label: "Install Ollama (WSL Linux)" });
-      } else {
-        options.push({ key: "install-ollama", label: "Install Ollama (Linux)" });
-      }
-    }
   }
 
   // Model Router: complexity-based routing via blueprint config.
@@ -6082,9 +6122,22 @@ async function setupNim(
         console.log("");
 
         const envProviderHint = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
-        const envProviderIdx = envProviderHint
-          ? options.findIndex((o) => o.key.toLowerCase() === envProviderHint)
+        const envProviderKey =
+          {
+            "remote-ollama": "ollama-remote",
+            ollamaremote: "ollama-remote",
+            remoteollama: "ollama-remote",
+          }[envProviderHint] || envProviderHint;
+        let envProviderIdx = envProviderKey
+          ? options.findIndex((o) => o.key.toLowerCase() === envProviderKey)
           : -1;
+        if (
+          envProviderIdx < 0 &&
+          envProviderKey &&
+          ollamaChoices.some((choice) => choice.key.toLowerCase() === envProviderKey)
+        ) {
+          envProviderIdx = options.findIndex((o) => o.key === "ollama-group");
+        }
         const defaultIdx =
           (envProviderIdx >= 0 ? envProviderIdx : options.findIndex((o) => o.key === "build")) + 1;
         const choice = await prompt(`  Choose [${defaultIdx}]: `);
@@ -6095,6 +6148,29 @@ async function setupNim(
       if (!selected) {
         console.error("  No provider was selected.");
         process.exit(1);
+      }
+
+      if (!isNonInteractive() && selected.key === "ollama-group") {
+        const envProviderHint = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
+        const defaultOllamaKey =
+          {
+            ollama: "ollama",
+            "ollama-local": "ollama",
+            "install-ollama": "install-ollama",
+            "install-windows-ollama": "install-windows-ollama",
+            "start-windows-ollama": "start-windows-ollama",
+            "ollama-remote": "ollama-remote",
+            "remote-ollama": "ollama-remote",
+            ollamaremote: "ollama-remote",
+            remoteollama: "ollama-remote",
+          }[envProviderHint] || null;
+        const ollamaChoice = await promptOllamaSetupChoice(ollamaChoices, defaultOllamaKey);
+        if (!ollamaChoice) {
+          console.log("  Returning to provider selection.");
+          console.log("");
+          continue selectionLoop;
+        }
+        selected = ollamaChoice;
       }
 
       if (REMOTE_PROVIDER_CONFIG[selected.key]) {

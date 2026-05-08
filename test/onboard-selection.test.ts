@@ -708,7 +708,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1"];
+const answers = ["4", "1", "1"];
 const messages = [];
 const commands = [];
 
@@ -847,7 +847,7 @@ child_process.spawnSync = (cmd, args, opts) => {
 const messages = [];
 const runCommands = [];
 const shellCommands = [];
-const answers = ["7", "1"];
+const answers = ["4", "1", "1"];
 
 credentials.prompt = async (message) => {
   messages.push(message);
@@ -954,7 +954,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "2", "back", "1", ""];
+const answers = ["4", "1", "2", "back", "1", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1065,7 +1065,7 @@ exit 0
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1", "y"];
+const answers = ["4", "1", "1", "y"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1180,7 +1180,7 @@ exit 0
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1", "y", "2", "llama3.2:3b", "y"];
+const answers = ["4", "1", "1", "y", "2", "llama3.2:3b", "y"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1297,7 +1297,7 @@ exit 0
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1", "n", "1", "y"];
+const answers = ["4", "1", "1", "n", "1", "y"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1414,7 +1414,7 @@ exit 0
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1"];
+const answers = ["4", "1", "1"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -2376,6 +2376,144 @@ const { setupNim } = require(${onboardPath});
     assert.ok(
       payload.lines.some((line: string) => line.includes("Using Remote Ollama (LAN)")),
     );
+  });
+
+  it("groups Ollama install and remote URL choices under one interactive Ollama option", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-group-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-group-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"error":{"message":"not found"}}'
+status="404"
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -d) shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+case "$url" in
+  http://lan-ollama:11434/api/tags)
+    body='{"models":[{"name":"gemma3:4b"}]}'
+    status="200"
+    ;;
+  http://lan-ollama:11434/v1/chat/completions)
+    body='{"id":"chatcmpl-remote","choices":[{"message":{"content":"OK"}}]}'
+    status="200"
+    ;;
+esac
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const messages = [];
+const promptReturns = [];
+const lines = [];
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  return "";
+};
+credentials.prompt = async (message) => {
+  messages.push(message);
+  if (/Choose \[/.test(message) && !messages.some((entry) => /Ollama setup/.test(entry))) {
+    const option = lines.find((line) => /^\s*\d+\) Ollama\s*$/.test(line));
+    if (!option) throw new Error("Top-level Ollama option not found:\\n" + lines.join("\\n"));
+    const choice = option.match(/^\s*(\d+)\)/)[1];
+    promptReturns.push(choice);
+    return choice;
+  }
+  if (/Ollama setup/.test(message)) {
+    const option = lines.find((line) => /Connect to existing remote Ollama URL/.test(line));
+    if (!option) throw new Error("Remote Ollama setup option not found:\\n" + lines.join("\\n"));
+    const choice = option.match(/^\s*(\d+)\)/)[1];
+    promptReturns.push(choice);
+    return choice;
+  }
+  if (/Remote Ollama base URL/.test(message)) {
+    promptReturns.push("http://lan-ollama:11434");
+    return "http://lan-ollama:11434";
+  }
+  if (/Remote Ollama model id/.test(message)) {
+    promptReturns.push("gemma3:4b");
+    return "gemma3:4b";
+  }
+  if (/Choose model/.test(message)) {
+    promptReturns.push("");
+    return "";
+  }
+  promptReturns.push("");
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, lines, messages, promptReturns }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    const topLevelMenu = payload.lines.slice(
+      payload.lines.findIndex((line: string) => line.includes("Inference options:")),
+      payload.lines.findIndex((line: string) => line.includes("Ollama setup:")),
+    );
+    assert.ok(topLevelMenu.some((line: string) => /^\s*\d+\) Ollama\s*$/.test(line)));
+    assert.ok(!topLevelMenu.some((line: string) => line.includes("Remote Ollama")));
+    assert.ok(!topLevelMenu.some((line: string) => line.includes("Install Ollama")));
+    assert.ok(payload.lines.some((line: string) => line.includes("Ollama setup:")));
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Connect to existing remote Ollama URL")),
+    );
+    assert.equal(payload.result.provider, "ollama-remote");
+    assert.equal(payload.result.endpointUrl, "http://lan-ollama:11434/v1");
   });
 
   it("returns to provider selection instead of exiting on blank custom endpoint input", () => {
@@ -3623,12 +3761,12 @@ printf '%s' "$status"
       { mode: 0o755 },
     );
 
-    // vLLM is option 7 (build, openai, custom, anthropic, anthropicCompatible, gemini, vllm)
+    // vLLM is option 8 (build, openai, custom, Ollama, anthropic, anthropicCompatible, gemini, vllm)
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7"];
+const answers = ["8"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -3725,7 +3863,7 @@ printf '%s' "$status"
       { mode: 0o755 },
     );
 
-    // NIM-local is option 7 (build, openai, custom, anthropic, anthropicCompatible, gemini, nim-local)
+    // NIM-local is option 8 (build, openai, custom, Ollama, anthropic, anthropicCompatible, gemini, nim-local)
     // No ollama, no vLLM — only NIM-local shows up as experimental option
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -3740,8 +3878,8 @@ nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => true;
 nimMod.isNgcLoggedIn = () => true;
 
-// Select option 7 (nim-local), then model 1
-const answers = ["7", "1"];
+// Select option 8 (nim-local), then model 1
+const answers = ["8", "1"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -3836,8 +3974,7 @@ fi
     );
 
     // Simulate: no Ollama installed, no Ollama running, no vLLM on native
-    // Linux, so cloud + install-ollama should appear.
-    const installOptionIndex = "7";
+    // Linux, so the Ollama submenu should offer install-ollama.
     const expectedInstallLabel = "Install Ollama (Linux)";
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -3877,8 +4014,9 @@ const runCommands = [];
 credentials.prompt = async (message) => {
   promptCalls += 1;
   messages.push(message);
-  // Select install-ollama on first prompt, default on model prompt.
-  if (promptCalls === 1) return "${installOptionIndex}";
+  // Select Ollama at the top-level, install-ollama in the submenu, default on model prompt.
+  if (promptCalls === 1) return "4";
+  if (promptCalls === 2) return "1";
   return "";
 };
 credentials.ensureApiKey = async () => {};
@@ -4005,7 +4143,15 @@ function findInstallOllamaChoice() {
   return match[1];
 }
 
-credentials.prompt = async () => findInstallOllamaChoice();
+credentials.prompt = async (message) => {
+  if (/Ollama setup/.test(message)) return findInstallOllamaChoice();
+  const option = menuLines.find((line) => /^\s*\d+\) Ollama\s*$/.test(line));
+  const match = option && option.match(/^\s*(\d+)\)/);
+  if (!match) {
+    throw new Error("Could not find top-level Ollama option in menu:\\n" + menuLines.join("\\n"));
+  }
+  return match[1];
+};
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;

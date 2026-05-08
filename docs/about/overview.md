@@ -33,7 +33,7 @@ The sandbox runtime comes from [NVIDIA OpenShell](https://github.com/NVIDIA/Open
 | Capability              | Description                                                                                                                                          |
 |-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Sandbox OpenClaw        | Creates an OpenShell sandbox pre-configured for OpenClaw, with filesystem and network policies applied from the first boot.                   |
-| Route inference         | Configures OpenShell inference routing so agent traffic goes to the provider and model you chose during onboarding (NVIDIA Endpoints, OpenAI, Anthropic, Gemini, compatible endpoints, local Ollama, and others). The agent uses `inference.local` inside the sandbox; credentials stay on the host. |
+| Route inference         | Configures OpenShell inference routing so agent traffic goes to the provider and model you chose during onboarding (NVIDIA Endpoints, OpenAI, Anthropic, Gemini, compatible endpoints, local or remote Ollama, and others). The agent uses `inference.local` inside the sandbox; credentials stay on the host. |
 | Manage the lifecycle    | Handles blueprint versioning, digest verification, and sandbox setup.                                                                                |
 
 ## Key Features

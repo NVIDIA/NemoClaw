@@ -57,7 +57,7 @@ NemoClaw uses provider-specific local tokens for those routes, and rebuilds of l
 
 The onboard wizard presents the following provider options by default.
 The first seven are always available.
-Ollama appears when it is installed or running on the host.
+The **Ollama** option opens a second setup menu for existing local Ollama, installing Ollama when supported, or connecting to an existing remote Ollama URL.
 Experimental local vLLM appears when you opt in and NemoClaw detects either a running vLLM server or a supported NVIDIA GPU host profile.
 
 | Option | Description | Curated models |
@@ -65,11 +65,10 @@ Experimental local vLLM appears when you opt in and NemoClaw detects either a ru
 | NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_API_KEY`. | Nemotron 3 Super 120B, GLM-5.1, MiniMax M2.7, GPT-OSS 120B, DeepSeek V4 Pro |
 | OpenAI | Routes to the OpenAI API. Set `OPENAI_API_KEY`. | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro-2026-03-05` |
 | Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. If the endpoint also supports `/responses` with OpenClaw-style tool calling, NemoClaw can use that path; otherwise it falls back to `/chat/completions`. The wizard prompts for a base URL and model name. Works with OpenRouter, LocalAI, llama.cpp, or any compatible proxy. When you enable Telegram messaging, onboarding also runs a bounded sandbox-side smoke check through `https://inference.local/v1/chat/completions`. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
-| Remote Ollama (LAN) | Routes to a self-hosted Ollama daemon reachable from the host over the network. The wizard accepts an Ollama root URL such as `http://192.168.1.50:11434`, normalizes it to `/v1`, lists models from `/api/tags` when available, and forces `/v1/chat/completions`. Set `NEMOCLAW_REMOTE_OLLAMA_TOKEN` only if your reverse proxy requires a bearer token. | Selected during onboarding. |
+| Ollama | Opens a setup menu for local Ollama, supported install/start actions, or a self-hosted remote Ollama daemon. Remote setup accepts a root URL such as `http://192.168.1.50:11434`, normalizes it to `/v1`, lists models from `/api/tags` when available, and forces `/v1/chat/completions`. Set `NEMOCLAW_REMOTE_OLLAMA_TOKEN` only if your reverse proxy requires a bearer token. | Selected during onboarding. |
 | Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
 | Other Anthropic-compatible endpoint | Routes to any server that implements the Anthropic Messages API (`/v1/messages`). The wizard prompts for a base URL and model name. Set `COMPATIBLE_ANTHROPIC_API_KEY`. | You provide the model name. |
 | Google Gemini | Routes to Google's OpenAI-compatible endpoint. NemoClaw prefers `/responses` only when the endpoint proves it can handle tool calling in a way OpenClaw uses; otherwise it falls back to `/chat/completions`. Set `GEMINI_API_KEY`. | `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` |
-| Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to [Use a Local Inference Server](use-local-inference.md). |
 | Model Router | Starts a host-side router on port `4000`, registers it as an OpenAI-compatible provider, and keeps the sandbox pointed at `inference.local`. Set `NEMOCLAW_PROVIDER=routed` for non-interactive setup. | The router pool defines the model names. |
 
 ## Choosing the Right Option for Nemotron

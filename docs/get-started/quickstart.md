@@ -71,18 +71,17 @@ The inference provider prompt presents a numbered list.
   1) NVIDIA Endpoints
   2) OpenAI
   3) Other OpenAI-compatible endpoint
-  4) Remote Ollama (LAN/self-hosted)
+  4) Ollama
   5) Anthropic
   6) Other Anthropic-compatible endpoint
   7) Google Gemini
-  8) Local Ollama (localhost:11434)
-  9) Model Router (complexity-based routing)
+  8) Model Router (complexity-based routing)
   Choose [1]:
 ```
 
 Pick the option that matches where you want inference traffic to go, then expand the matching helper below for the follow-up prompts and the API key environment variable to set.
 For the full list of providers and validation behavior, refer to [Inference Options](../inference/inference-options.md).
-Local Ollama appears when NemoClaw detects a usable local Ollama path or can offer an install or start action for your platform.
+The **Ollama** option opens a second setup menu for existing local Ollama, installing Ollama on the host, or connecting to a remote Ollama URL.
 The Model Router option appears when the blueprint router profile is enabled.
 
 :::{tip}
@@ -149,18 +148,32 @@ NVIDIA Nemotron models expose OpenAI-compatible APIs, so this option is the righ
 :::
 :::
 
-:::{dropdown} Option 4: Remote Ollama (LAN)
-:icon: server
+:::{dropdown} Option 4: Ollama
+:icon: cpu
 
-Routes inference to a self-hosted Ollama daemon on your network.
-No API key is required for a default Ollama daemon.
-If a reverse proxy protects the daemon, export `NEMOCLAW_REMOTE_OLLAMA_TOKEN` before onboarding.
+Routes inference to Ollama.
+After you select **Ollama**, the wizard asks which Ollama setup to use.
+
+```text
+  Ollama setup:
+    1) Use existing local Ollama (localhost:11434)
+    2) Install Ollama (Linux)
+    3) Connect to existing remote Ollama URL
+```
+
+The exact local and install entries depend on your platform and what NemoClaw detects.
+For example, WSL can show Windows-host Ollama actions, and native macOS/Linux can show a local install action when Ollama is not present.
 
 Respond to the wizard as follows.
 
-1. At the `Choose [1]:` prompt, type `4` to select **Remote Ollama (LAN/self-hosted)**.
-2. At the `Remote Ollama base URL` prompt, enter the Ollama root URL, for example `http://192.168.1.50:11434`. NemoClaw also accepts common paths such as `/api/tags` or `/v1/chat/completions` and normalizes them.
-3. At the `Choose model [1]:` prompt, pick from the models reported by `/api/tags`, or pick **Other...** to enter any Ollama model ID.
+1. At the `Choose [1]:` prompt, type `4` to select **Ollama**.
+2. At the `Ollama setup` prompt, choose the matching setup path.
+3. For a local or installed Ollama daemon, pick from **Ollama models** or **Ollama starter models**.
+4. For a remote Ollama daemon, enter the Ollama root URL, for example `http://192.168.1.50:11434`. NemoClaw also accepts common paths such as `/api/tags` or `/v1/chat/completions` and normalizes them.
+5. At the model prompt, choose a listed model or enter any Ollama model ID.
+
+No API key is required for a default Ollama daemon.
+If a reverse proxy protects a remote daemon, export `NEMOCLAW_REMOTE_OLLAMA_TOKEN` before onboarding.
 
 For scripted setup, set:
 
@@ -170,6 +183,8 @@ $ NEMOCLAW_PROVIDER=ollama-remote \
   NEMOCLAW_MODEL=gemma3:4b \
   nemoclaw onboard --non-interactive
 ```
+
+For local scripted setup, set `NEMOCLAW_PROVIDER=ollama`.
 
 :::
 
@@ -216,24 +231,7 @@ Respond to the wizard as follows.
 3. At the `Choose model [5]:` prompt, pick a curated model (for example, `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, or `gemini-2.5-flash-lite`), or pick **Other...** to enter any Gemini model ID.
 :::
 
-:::{dropdown} Option 8: Local Ollama
-:icon: cpu
-
-Routes inference to a local Ollama instance. Depending on your platform, the wizard can use an existing daemon, start an installed daemon, or offer an install action.
-
-No API key is required. On non-WSL hosts, NemoClaw generates a token and starts an authenticated proxy so containers can reach Ollama without exposing the daemon directly to your network.
-On WSL, NemoClaw can also use Ollama on the Windows host through `host.docker.internal`.
-
-Respond to the wizard as follows.
-
-1. At the `Choose [1]:` prompt, type `8` to select **Local Ollama**.
-2. At the `Choose model [1]:` prompt, pick from **Ollama models** if any are already installed. If none are installed, pick a **starter model** to pull and load now, or pick **Other...** to enter any Ollama model ID.
-
-For setup details, including GPU recommendations and starter model choices, refer to [Use a Local Inference Server](../inference/use-local-inference.md).
-
-:::
-
-:::{dropdown} Option 9: Model Router
+:::{dropdown} Option 8: Model Router
 :icon: git-compare
 
 Starts a host-side model router and routes sandbox inference through OpenShell to that router.
@@ -243,7 +241,7 @@ Use `NVIDIA_API_KEY` for the model pool credentials.
 
 Respond to the wizard as follows.
 
-1. At the `Choose [1]:` prompt, type `9` to select **Model Router (complexity-based routing)**.
+1. At the `Choose [1]:` prompt, type `8` to select **Model Router (complexity-based routing)**.
 2. At the `NVIDIA_API_KEY:` prompt, paste your key if it is not already exported.
 3. Review the configuration summary and continue with the sandbox build.
 

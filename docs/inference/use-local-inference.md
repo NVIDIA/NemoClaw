@@ -52,7 +52,7 @@ Run the onboard wizard.
 $ nemoclaw onboard
 ```
 
-Select **Local Ollama** from the provider list.
+Select **Ollama** from the provider list, then choose the local Ollama setup entry.
 NemoClaw lists installed models or offers starter models if none are installed.
 It pulls the selected model, loads it into memory, and validates it before continuing.
 If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
@@ -142,7 +142,7 @@ Run the onboard wizard.
 $ nemoclaw onboard
 ```
 
-When the wizard asks you to choose an inference provider, select **Remote Ollama (LAN/self-hosted)**.
+When the wizard asks you to choose an inference provider, select **Ollama**, then choose **Connect to existing remote Ollama URL**.
 At the base URL prompt, enter the Ollama root URL, for example `http://192.168.1.50:11434`.
 NemoClaw also accepts common Ollama paths such as `/api`, `/api/tags`, `/v1`, or `/v1/chat/completions` and normalizes them to the OpenAI-compatible `/v1` base URL.
 
