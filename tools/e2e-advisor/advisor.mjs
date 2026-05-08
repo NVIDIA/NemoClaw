@@ -179,7 +179,7 @@ function chooseConfidence(domains, requiredCount) {
 
 function renderMarkdown(result) {
   const lines = [];
-  lines.push("# E2E Advisor Prototype");
+  lines.push("# E2E Advisor");
   lines.push("");
   lines.push(`Base: \`${result.baseRef}\`  `);
   lines.push(`Head: \`${result.headRef}\`  `);
@@ -253,7 +253,7 @@ function renderMarkdown(result) {
     lines.push("");
   }
 
-  lines.push("_Prototype note: this workflow performs static analysis only. It reads diffs and metadata but does not execute PR-provided code._");
+  lines.push("_Safety note: this workflow performs static analysis only. It reads diffs and metadata but does not execute PR-provided code._");
   lines.push("");
   return `${lines.join("\n")}\n`;
 }

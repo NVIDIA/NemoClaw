@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Prototype deterministic layer for E2E advisor. Rules classify risk domains
-# from changed files. The advisor then maps domains to manifest tests.
+# Deterministic layer for E2E advisor. Rules classify risk domains from
+# changed files. The advisor then maps domains to manifest tests.
 
 version: 1
 rules:

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Static inventory consumed by the E2E advisor prototype. Keep this file close to
+# Static inventory consumed by the E2E advisor. Keep this file close to
 # E2E scripts so test-selection policy can follow renamed files and workflows.
 # The advisor treats changed_files as hints, not as the only source of truth.
 
