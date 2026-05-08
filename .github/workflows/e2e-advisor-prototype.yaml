@@ -75,7 +75,7 @@ jobs:
       - name: Run Pi semantic analysis
         env:
           PI_E2E_ADVISOR_RUN_PI: ${{ github.event_name == 'workflow_dispatch' && inputs.run_pi == false && '0' || '1' }}
-          PI_E2E_ADVISOR_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_provider || 'openai' }}
+          PI_E2E_ADVISOR_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_provider || 'openrouter' }}
           PI_E2E_ADVISOR_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_model || '' }}
           # Preferred fork Phase 1 secret. The script maps this generic key to the selected provider's
           # expected env var before invoking pi, matching how local pi can be run with --api-key.
