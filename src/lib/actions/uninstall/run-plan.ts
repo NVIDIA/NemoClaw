@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { getAgentBranding, type AgentBranding } from "../../cli/branding";
+import { sleepMs } from "../../core/wait";
 import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
@@ -233,6 +234,133 @@ function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: str
   }
 }
 
+// Identifier we look for in `/proc/<pid>/cmdline` (via `ps -p <pid> -o args=`)
+// to confirm a candidate PID is the Ollama auth proxy and not another node
+// process that happens to be on the same port. Mirrors the
+// `isOllamaProxyProcess` check in `src/lib/onboard-ollama-proxy.ts`.
+const OLLAMA_AUTH_PROXY_CMDLINE_MARK = "ollama-auth-proxy.js";
+
+// Resolve the proxy port from runtime.env (rather than `process.env` at
+// module-load time) so a user who onboarded with NEMOCLAW_OLLAMA_PROXY_PORT
+// set to a custom value sees uninstall scan that same port. Mirrors the
+// validation in `src/lib/core/ports.ts::parsePort`; falls back silently to
+// the default (11435) on malformed input — uninstall is best-effort.
+const DEFAULT_OLLAMA_PROXY_PORT = 11435;
+
+function resolveOllamaProxyPort(runtime: UninstallRuntime): number {
+  const raw = runtime.env.NEMOCLAW_OLLAMA_PROXY_PORT;
+  if (raw === undefined || raw === "") return DEFAULT_OLLAMA_PROXY_PORT;
+  const trimmed = String(raw).trim();
+  if (!/^\d+$/.test(trimmed)) return DEFAULT_OLLAMA_PROXY_PORT;
+  const parsed = Number(trimmed);
+  if (parsed < 1024 || parsed > 65535) return DEFAULT_OLLAMA_PROXY_PORT;
+  return parsed;
+}
+
+function isOllamaAuthProxyPid(pid: number, runtime: UninstallRuntime): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
+  return result.status === 0 && result.stdout.includes(OLLAMA_AUTH_PROXY_CMDLINE_MARK);
+}
+
+// `ps -p <pid>` is preferred over `kill(pid, 0)` for existence probing here:
+// `runtime.kill()` collapses every `process.kill` error to `false`, so a foreign
+// PID throwing EPERM (process exists but caller can't signal it) would look
+// identical to ESRCH (gone) and we'd falsely log it as Stopped. `ps` reports
+// existence regardless of signalling permission.
+function pidExists(pid: number, runtime: UninstallRuntime): boolean {
+  return runtime.run("ps", ["-p", String(pid), "-o", "pid="], { env: runtime.env }).status === 0;
+}
+
+function waitForPidExit(pid: number, runtime: UninstallRuntime, timeoutMs: number): boolean {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!pidExists(pid, runtime)) return true;
+    sleepMs(50);
+  }
+  return !pidExists(pid, runtime);
+}
+
+function pidOwnedByCurrentUser(pid: number, runtime: UninstallRuntime): boolean {
+  const expected = runtime.env.SUDO_USER || runtime.env.LOGNAME || os.userInfo().username;
+  if (!expected) return true;
+  const result = runtime.run("ps", ["-p", String(pid), "-o", "user="], { env: runtime.env });
+  return result.status === 0 && result.stdout.trim() === expected;
+}
+
+function tryStopOllamaProxyPid(pid: number, runtime: UninstallRuntime): boolean {
+  // `runtime.kill()` only confirms the signal was sent; the proxy may ignore
+  // SIGTERM, take time to clean up, or linger as a zombie. Verify the PID is
+  // actually gone before claiming success — otherwise the next install fails
+  // with `Ollama auth proxy failed to start on :11435`.
+  runtime.kill(pid);
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped Ollama auth proxy ${pid}`);
+    return true;
+  }
+  runtime.kill(pid, "SIGKILL");
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped Ollama auth proxy ${pid}`);
+    return true;
+  }
+  runtime.warn(`Failed to stop Ollama auth proxy ${pid}`);
+  return false;
+}
+
+function stopOllamaAuthProxy(paths: UninstallPaths, runtime: UninstallRuntime): void {
+  // The auth proxy is a detached node child started by the Local Ollama
+  // onboard path that listens on `NEMOCLAW_OLLAMA_PROXY_PORT` (default
+  // 11435). Without this cleanup,
+  // uninstall + reinstall fails with `Ollama auth proxy failed to start on
+  // :11435` — the on-disk PID file is removed by the "State and binaries"
+  // step but the process keeps running. The two-prong check (persisted PID
+  // first, then port-bound listeners) mirrors `killStaleProxy()` in
+  // `src/lib/onboard-ollama-proxy.ts` and verifies cmdline on every PID, so
+  // an unrelated process on the same port (custom proxy, test setup) is
+  // never killed. See issue #2759.
+  const stopped = new Set<number>();
+
+  // 1. Try the persisted PID file. The proxy stays bound across NemoClaw
+  //    sessions; the PID file is the most reliable signal. The path mirrors
+  //    `PROXY_PID_PATH` in `src/lib/onboard-ollama-proxy.ts` (`~/.nemoclaw`).
+  const pidFile = path.join(paths.nemoclawStateDir, "ollama-auth-proxy.pid");
+  if (runtime.existsSync(pidFile)) {
+    try {
+      const raw = fs.readFileSync(pidFile, "utf-8").trim();
+      const pid = Number.parseInt(raw, 10);
+      if (Number.isFinite(pid) && pid > 0 && isOllamaAuthProxyPid(pid, runtime)) {
+        if (tryStopOllamaProxyPid(pid, runtime)) stopped.add(pid);
+      }
+    } catch {
+      /* ignore — the State step deletes the file shortly anyway */
+    }
+  }
+
+  // 2. Fall back to the configured proxy port for orphans whose PID file is
+  //    gone (e.g. a previous uninstall already wiped state but the process
+  //    survived). Filter via cmdline so we never kill unrelated listeners.
+  if (!runtime.commandExists("lsof")) {
+    if (stopped.size === 0) {
+      runtime.warn("lsof not found; skipping orphan Ollama auth proxy scan.");
+    }
+    return;
+  }
+  const proxyPort = resolveOllamaProxyPort(runtime);
+  const lsof = runtime.run("lsof", ["-ti", `:${proxyPort}`], { env: runtime.env });
+  const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
+  for (const pid of pids) {
+    if (stopped.has(pid)) continue;
+    // Skip foreign-owned PIDs even if the cmdline matches: signalling them
+    // would either no-op under EPERM or escalate via sudo, neither of which
+    // is appropriate during a per-user uninstall.
+    if (!pidOwnedByCurrentUser(pid, runtime)) continue;
+    if (!isOllamaAuthProxyPid(pid, runtime)) continue;
+    if (tryStopOllamaProxyPid(pid, runtime)) stopped.add(pid);
+  }
+
+  if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
+}
+
 function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
   if (!runtime.commandExists("pgrep")) {
     runtime.warn("pgrep not found; skipping orphaned openshell process cleanup.");
@@ -429,6 +557,7 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
       removeGlob(paths.helperServiceGlob, runtime);
       stopMatchingPids(`openshell.*forward.*${runtime.env.NEMOCLAW_DASHBOARD_PORT || "18789"}`, runtime, "local OpenShell forward processes");
       stopOrphanedOpenShell(runtime);
+      stopOllamaAuthProxy(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);
     } else if (step.name === "NemoClaw CLI") {

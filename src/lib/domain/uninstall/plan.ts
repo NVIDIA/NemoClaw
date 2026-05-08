@@ -34,6 +34,7 @@ export type UninstallPlanAction =
   | { kind: "preserve-openshell-binary"; paths: string[] }
   | { kind: "preserve-shim"; reason: string }
   | { kind: "stop-helper-services" }
+  | { kind: "stop-ollama-auth-proxy" }
   | { kind: "stop-openshell-forward-processes" }
   | { kind: "stop-orphaned-openshell-processes" }
   | { kind: "uninstall-npm-package"; name: "nemoclaw" };
@@ -67,6 +68,7 @@ export function buildUninstallPlan(paths: UninstallPaths, options: UninstallPlan
           { kind: "delete-runtime-glob", pattern: paths.helperServiceGlob },
           { kind: "stop-openshell-forward-processes" },
           { kind: "stop-orphaned-openshell-processes" },
+          { kind: "stop-ollama-auth-proxy" },
         ],
       },
       {
