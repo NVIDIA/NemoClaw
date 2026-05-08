@@ -16,6 +16,7 @@ import {
   shouldSelectNamedGatewayForReuse,
   parseSandboxPhase,
 } from "../src/lib/state/gateway.js";
+import { mergeLivePolicyIntoSandboxOutput } from "../dist/lib/actions/sandbox/gateway-state.js";
 
 // Realistic CLI outputs
 const STATUS_CONNECTED = `
@@ -285,5 +286,56 @@ describe("shouldSelectNamedGatewayForReuse", () => {
     expect(shouldSelectNamedGatewayForReuse("", GW_INFO_MISSING, GW_INFO_FOREIGN_ACTIVE)).toBe(
       false,
     );
+  });
+});
+
+describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
+  const sandboxOutput = "Sandbox:\n  Id: abc\n  Phase: Ready\n\nPolicy:\n  schema-stub";
+
+  it("rewrites the YAML version line to the gateway active version", () => {
+    const livePolicy = [
+      "Version:      5",
+      "Hash:         738a54c8520a",
+      "Status:       Loaded",
+      "Active:       6",
+      "---",
+      "version: 1",
+      "filesystem_policy:",
+      "  include_workdir: false",
+    ].join("\n");
+
+    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, livePolicy);
+    expect(merged).toContain("  version: 6");
+    expect(merged).not.toContain("  version: 1");
+    expect(merged).not.toContain("  version: 5");
+  });
+
+  it("leaves the YAML untouched when no Active metadata is provided", () => {
+    const livePolicy = ["---", "version: 1", "filesystem_policy:", "  include_workdir: false"].join(
+      "\n",
+    );
+
+    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, livePolicy);
+    expect(merged).toContain("  version: 1");
+  });
+
+  it("returns the original output when livePolicy is an error string", () => {
+    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, "Error: not found");
+    expect(merged).toBe(sandboxOutput);
+  });
+
+  it("rewrites version when metadata and separator are ANSI-wrapped", () => {
+    const livePolicy = [
+      "\x1b[1mVersion:\x1b[0m      5",
+      "\x1b[1mActive:\x1b[0m       6",
+      "\x1b[2m---\x1b[0m",
+      "version: 1",
+      "filesystem_policy:",
+      "  include_workdir: false",
+    ].join("\n");
+
+    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, livePolicy);
+    expect(merged).toContain("  version: 6");
+    expect(merged).not.toContain("  version: 1");
   });
 });
