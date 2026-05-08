@@ -1016,7 +1016,7 @@ If you encounter issues with Podman, switch to a tested runtime (Docker Engine, 
 
 ## Brev
 
-For Brev setup instructions, see [Get Started with NemoClaw on Brev (Web UI)](../get-started/brev-web-ui-quickstart.md).
+For Brev setup instructions, refer to [Brev Web UI](../deployment/brev-web-ui.md).
 
 ### Most OpenClaw skills show as blocked
 
