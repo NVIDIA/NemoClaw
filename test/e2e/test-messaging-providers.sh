@@ -1212,7 +1212,7 @@ function probe() {
     let body = \"\";
     res.on(\"data\", (d) => body += d);
     res.on(\"end\", () => {
-      if (res.statusCode === 503 && /no healthy upstream/i.test(body) && attempt < maxAttempts) {
+      if (res.statusCode === 503 && attempt < maxAttempts) {
         setTimeout(probe, 2000);
         return;
       }
