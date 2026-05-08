@@ -33,6 +33,7 @@ const HOME = homedir();
 const OPENCLAW_DIR = join(HOME, ".openclaw");
 const NEMOCLAW_DIR = join(HOME, ".nemoclaw");
 const SNAPSHOTS_DIR = join(NEMOCLAW_DIR, "snapshots");
+const SANDBOX_NAME_RE = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
 
 function compactTimestamp(): string {
   return new Date()
@@ -73,6 +74,19 @@ function rejectSymlinksOnPath(targetPath: string): void {
     }
     current = dirname(current);
   }
+}
+
+function validateSandboxName(sandboxName: string): string {
+  if (
+    typeof sandboxName !== "string" ||
+    !SANDBOX_NAME_RE.test(sandboxName) ||
+    sandboxName.length > 63
+  ) {
+    throw new Error(
+      `Invalid sandbox name: '${String(sandboxName)}'. Allowed format: lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.`,
+    );
+  }
+  return sandboxName;
 }
 
 function collectFiles(dir: string): { files: string[]; symlinks: string[] } {
@@ -135,6 +149,7 @@ export async function restoreIntoSandbox(
   snapshotDir: string,
   sandboxName = "openclaw",
 ): Promise<boolean> {
+  const validatedSandboxName = validateSandboxName(sandboxName);
   const source = join(snapshotDir, "openclaw");
   if (!existsSync(source)) {
     return false;
@@ -142,7 +157,7 @@ export async function restoreIntoSandbox(
 
   const result = await execa(
     "openshell",
-    ["sandbox", "cp", source, `${sandboxName}:/sandbox/.openclaw`],
+    ["sandbox", "cp", source, `${validatedSandboxName}:/sandbox/.openclaw`],
     { reject: false },
   );
   if (result.exitCode !== 0) {
@@ -154,7 +169,7 @@ export async function restoreIntoSandbox(
     [
       "sandbox",
       "exec",
-      sandboxName,
+      validatedSandboxName,
       "--",
       "bash",
       "-lc",
@@ -187,7 +202,7 @@ done`,
   );
   if (repairLegacyLinks.exitCode !== 0) {
     console.debug(
-      `legacy symlink repair in sandbox ${sandboxName} exited ${String(repairLegacyLinks.exitCode)}: ${repairLegacyLinks.stderr}`,
+      `legacy symlink repair in sandbox ${validatedSandboxName} exited ${String(repairLegacyLinks.exitCode)}: ${repairLegacyLinks.stderr}`,
     );
   }
 
@@ -200,12 +215,21 @@ done`,
   // doesn't trip on a missing chown binary or a tightened exec policy.
   const chownResult = await execa(
     "openshell",
-    ["sandbox", "exec", sandboxName, "--", "chown", "-R", "sandbox:sandbox", "/sandbox/.openclaw"],
+    [
+      "sandbox",
+      "exec",
+      validatedSandboxName,
+      "--",
+      "chown",
+      "-R",
+      "sandbox:sandbox",
+      "/sandbox/.openclaw",
+    ],
     { reject: false },
   );
   if (chownResult.exitCode !== 0) {
     console.debug(
-      `chown in sandbox ${sandboxName} exited ${String(chownResult.exitCode)}: ${chownResult.stderr}`,
+      `chown in sandbox ${validatedSandboxName} exited ${String(chownResult.exitCode)}: ${chownResult.stderr}`,
     );
   }
   return true;

@@ -239,6 +239,15 @@ describe("snapshot", () => {
       expect(await restoreIntoSandbox(SNAP)).toBe(false);
     });
 
+    it("rejects invalid sandbox names before invoking openshell", async () => {
+      addDir(`${SNAP}/openclaw`);
+
+      await expect(restoreIntoSandbox(SNAP, "bad:name")).rejects.toThrow(/Invalid sandbox name/);
+      await expect(restoreIntoSandbox(SNAP, "BadName")).rejects.toThrow(/Invalid sandbox name/);
+      await expect(restoreIntoSandbox(SNAP, "-bad")).rejects.toThrow(/Invalid sandbox name/);
+      expect(mockExeca).not.toHaveBeenCalled();
+    });
+
     it("uses default sandbox name 'openclaw'", async () => {
       addDir(`${SNAP}/openclaw`);
       mockExeca.mockResolvedValue({ exitCode: 0 });
