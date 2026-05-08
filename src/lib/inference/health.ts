@@ -13,23 +13,12 @@ import path from "node:path";
 
 import type { CurlProbeResult } from "../http-probe";
 import { runCurlProbe } from "../http-probe";
+import { normalizeCredentialValue, resolveProviderCredential } from "../credentials/store";
 import { getProviderSelectionConfig } from "./config";
 import type { LocalProviderHealthProbeOptions } from "./local";
 import { probeLocalProviderHealth } from "./local";
+import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
 import { BUILD_ENDPOINT_URL } from "./provider-models";
-
-const { normalizeCredentialValue, resolveProviderCredential } = require("../credentials/store") as {
-  normalizeCredentialValue: (value: string | null | undefined) => string;
-  resolveProviderCredential: (envName: string) => string | null;
-};
-const { getChatCompletionsProbeCurlArgs } = require("./onboard-probes") as {
-  getChatCompletionsProbeCurlArgs: (opts: {
-    authHeader: string[];
-    model: string;
-    url: string;
-    isWsl?: boolean;
-  }) => string[];
-};
 
 export interface ProviderHealthStatus {
   ok: boolean;

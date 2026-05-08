@@ -253,7 +253,12 @@ function getChatCompletionsProbePayload(model) {
   return payload;
 }
 
-function getChatCompletionsProbeCurlArgs({ authHeader, model, url, isWsl: isWslOverride }) {
+export function getChatCompletionsProbeCurlArgs({
+  authHeader,
+  model,
+  url,
+  isWsl: isWslOverride,
+}) {
   const platformOptions =
     typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : undefined;
   const timingArgs = (() => {
