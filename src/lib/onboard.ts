@@ -6628,12 +6628,15 @@ async function setupNim(
             credentialEnv,
             `Missing credential env for ${remoteConfig.label}`,
           );
-          const token = stageRemoteOllamaCredential(selectedCredentialEnv);
-          const ollamaUrls = requireValue(
-            normalizeRemoteOllamaBaseUrl(endpointUrl),
-            "Expected normalized Remote Ollama URL",
-          );
-          const remoteModels = getRemoteOllamaModelOptions(ollamaUrls.rootUrl, token);
+          const refreshRemoteModels = (): string[] => {
+            const token = stageRemoteOllamaCredential(selectedCredentialEnv);
+            const ollamaUrls = requireValue(
+              normalizeRemoteOllamaBaseUrl(endpointUrl),
+              "Expected normalized Remote Ollama URL",
+            );
+            return getRemoteOllamaModelOptions(ollamaUrls.rootUrl, token);
+          };
+          let remoteModels = refreshRemoteModels();
           const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
           const defaultModel =
             requestedModel ||
@@ -6674,10 +6677,12 @@ async function setupNim(
               break;
             }
             if (validation.retry === "credential" || validation.retry === "retry") {
+              remoteModels = refreshRemoteModels();
               continue;
             }
             if (validation.retry === "model") {
               if (isNonInteractive()) process.exit(1);
+              remoteModels = refreshRemoteModels();
               model = await promptRemoteOllamaModel(defaultModel, remoteModels);
               if (model === BACK_TO_SELECTION) continue selectionLoop;
               continue;

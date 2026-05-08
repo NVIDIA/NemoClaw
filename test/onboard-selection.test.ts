@@ -2442,6 +2442,126 @@ const { setupNim } = require(${onboardPath});
     assert.equal(legacyPayload.remoteToken, "legacy-remote-token");
   });
 
+  it("refreshes remote Ollama models after credential retry", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-ollama-retry-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "remote-ollama-retry-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"error":{"message":"unauthorized"}}'
+status="401"
+outfile=""
+url=""
+auth=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -H) auth="$2"; shift 2 ;;
+    -d) shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+case "$url" in
+  http://lan-ollama:11434/v1/chat/completions)
+    if echo "$auth" | grep -q 'fixed-token'; then
+      body='{"id":"chatcmpl-remote","choices":[{"message":{"content":"OK"}}]}'
+      status="200"
+    fi
+    ;;
+esac
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const messages = [];
+const lines = [];
+const tagTokens = [];
+
+function choosePrintedOption(label) {
+  const option = lines.find((line) => line.includes(label));
+  if (!option) throw new Error("Menu option not found for " + label + ":\\n" + lines.join("\\n"));
+  return option.match(/^\s*(\d+)\)/)[1];
+}
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  if (/Choose \[/.test(message)) return choosePrintedOption("Ollama");
+  if (/Ollama setup/.test(message)) return choosePrintedOption("Connect to existing remote Ollama URL");
+  if (/Remote Ollama base URL/.test(message)) return "http://lan-ollama:11434";
+  if (/Remote Ollama model id/.test(message)) return "fixed:1";
+  if (/Options: retry/.test(message)) return "retry";
+  if (/Remote Ollama \(LAN\) API key/.test(message)) return "fixed-token";
+  return "";
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("http://lan-ollama:11434/api/tags")) {
+    const token = cmd.includes("fixed-token") ? "fixed-token" : cmd.includes("ollama") ? "ollama" : "none";
+    tagTokens.push(token);
+    if (token === "fixed-token") return JSON.stringify({ models: [{ name: "fixed:1" }] });
+    return JSON.stringify({ models: [] });
+  }
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, lines, messages, tagTokens }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-remote");
+    assert.equal(payload.result.model, "fixed:1");
+    assert.deepEqual(payload.tagTokens, ["ollama", "fixed-token"]);
+  });
+
   it("groups Ollama install and remote URL choices under one interactive Ollama option", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-group-"));
@@ -4127,13 +4247,21 @@ let promptCalls = 0;
 const messages = [];
 const updates = [];
 const runCommands = [];
+const lines = [];
+const expectedInstallLabel = ${JSON.stringify(expectedInstallLabel)};
+
+function choosePrintedOption(label) {
+  const option = lines.find((line) => line.includes(") " + label));
+  if (!option) throw new Error("Menu option not found for " + label + ":\\n" + lines.join("\\n"));
+  return option.match(/^\s*(\d+)\)/)[1];
+}
 
 credentials.prompt = async (message) => {
   promptCalls += 1;
   messages.push(message);
   // Select Ollama at the top-level, install-ollama in the submenu, default on model prompt.
-  if (promptCalls === 1) return "4";
-  if (promptCalls === 2) return "1";
+  if (/Choose \[/.test(message)) return choosePrintedOption("Ollama");
+  if (/Ollama setup/.test(message)) return choosePrintedOption(expectedInstallLabel);
   return "";
 };
 credentials.ensureApiKey = async () => {};
@@ -4170,7 +4298,6 @@ const { setupNim } = require(${onboardPath});
 
 (async () => {
   const originalLog = console.log;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim("install-test", null);

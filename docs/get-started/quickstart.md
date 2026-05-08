@@ -331,7 +331,8 @@ Logs:        nemoclaw my-gpt-claw logs --follow
 [INFO]  === Installation complete ===
 ```
 
-If you picked a different option, the `Model` line shows that provider's model and label instead. For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `gemma3:4b (Remote Ollama (LAN))`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
+If you picked a different option, the `Model` line shows that provider's model and label instead.
+For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `gemma3:4b (Remote Ollama (LAN))`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
 
 ## Run Your First Agent Prompt
 

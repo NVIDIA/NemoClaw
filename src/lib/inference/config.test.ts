@@ -178,6 +178,7 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("compatible-anthropic-endpoint")?.model).toBe(
       "custom-anthropic-model",
     );
+    expect(getProviderSelectionConfig("ollama-remote")?.model).toBe(DEFAULT_OLLAMA_MODEL);
     expect(getProviderSelectionConfig("vllm-local")?.model).toBe("vllm-local");
   });
 
@@ -192,6 +193,9 @@ describe("inference selection config", () => {
       `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
     );
     expect(getOpenClawPrimaryModel("ollama-local")).toBe(
+      `${MANAGED_PROVIDER_ID}/${DEFAULT_OLLAMA_MODEL}`,
+    );
+    expect(getOpenClawPrimaryModel("ollama-remote")).toBe(
       `${MANAGED_PROVIDER_ID}/${DEFAULT_OLLAMA_MODEL}`,
     );
   });

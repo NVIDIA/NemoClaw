@@ -130,7 +130,10 @@ export function getProviderSelectionConfig(
 
 export function getOpenClawPrimaryModel(provider: string, model?: string): string {
   const resolvedModel =
-    model || (provider === "ollama-local" ? DEFAULT_OLLAMA_MODEL : DEFAULT_CLOUD_MODEL);
+    model ||
+    (provider === "ollama-local" || provider === "ollama-remote"
+      ? DEFAULT_OLLAMA_MODEL
+      : DEFAULT_CLOUD_MODEL);
   return `${MANAGED_PROVIDER_ID}/${resolvedModel}`;
 }
 
