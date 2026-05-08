@@ -19,6 +19,7 @@ filesystem_policy:
     - /usr
     - /lib
     - /opt/hermes
+    - /opt/nemoclaw-hermes-discord-preload
     - /proc
     - /dev/urandom
     - /app

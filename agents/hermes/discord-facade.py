@@ -79,7 +79,10 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _json_response(data: Any, status: int = 200) -> web.Response:
-    return web.json_response(data, status=status, dumps=lambda value: json.dumps(value, separators=(",", ":")))
+    body = json.dumps(data, separators=(",", ":")).encode("utf-8")
+    return web.Response(
+        body=body, status=status, content_type="application/json"
+    )
 
 
 def _csv_env(*names: str) -> list[str]:
@@ -555,6 +558,7 @@ class DiscordFacade:
         return {
             "id": self.application_id,
             "name": "Hermes",
+            "icon": None,
             "description": "Hermes Discord facade",
             "bot_public": False,
             "bot_require_code_grant": False,

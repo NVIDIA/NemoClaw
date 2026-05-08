@@ -107,6 +107,14 @@ describe("buildRecoveryScript", () => {
     expect(script).not.toContain("hermes gateway run --port 8642");
   });
 
+  it("launches Hermes decode-proxy and Discord facade under the venv interpreter during recovery", () => {
+    const script = buildRecoveryScript(hermesAgent, 8642);
+    expect(script).toContain("/opt/hermes/.venv/bin/python /usr/local/bin/nemoclaw-decode-proxy");
+    expect(script).toContain("/opt/hermes/.venv/bin/python /usr/local/bin/nemoclaw-discord-facade");
+    expect(script).not.toMatch(/(?<![\w/])python3 \/usr\/local\/bin\/nemoclaw-decode-proxy/);
+    expect(script).not.toMatch(/(?<![\w/])python3 \/usr\/local\/bin\/nemoclaw-discord-facade/);
+  });
+
   it("waits for Hermes proxy recovery ports only after ss finds them", () => {
     const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
     expect(recoveryScript).not.toBeNull();

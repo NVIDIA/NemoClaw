@@ -260,12 +260,13 @@ start_socat_forwarder() {
 # sits between the Hermes process and the OpenShell proxy, URL-decoding
 # request targets so the L7 proxy recognizes REST placeholders. It relays
 # upgraded WebSocket bytes unchanged and does not rewrite Discord IDENTIFY.
+HERMES_VENV_PYTHON="/opt/hermes/.venv/bin/python"
 DECODE_PROXY_PID=""
 DECODE_PROXY_PORT=3129
 DISCORD_FACADE_PID=""
 DISCORD_FACADE_PORT=3130
 start_decode_proxy() {
-  nohup python3 /usr/local/bin/nemoclaw-decode-proxy >/dev/null 2>&1 &
+  nohup "$HERMES_VENV_PYTHON" /usr/local/bin/nemoclaw-decode-proxy >/dev/null 2>&1 &
   DECODE_PROXY_PID=$!
   # Wait for it to start listening
   local attempts=0
@@ -286,17 +287,15 @@ start_discord_facade() {
   local log_path="/tmp/discord-facade.log"
   local launch_env=(
     "DISCORD_PROXY=${proxy_url}"
-    "HTTPS_PROXY=${proxy_url}"
-    "HTTP_PROXY=${proxy_url}"
     "NEMOCLAW_DISCORD_FACADE_PORT=${DISCORD_FACADE_PORT}"
   )
 
   if [ "$(id -u)" -eq 0 ] && command -v gosu >/dev/null 2>&1 && id gateway >/dev/null 2>&1; then
     prepare_restricted_log "$log_path" gateway:gateway 600
-    nohup env -u NEMOCLAW_DISCORD_FACADE_URL -u PYTHONPATH "${launch_env[@]}" gosu gateway sh -c 'umask 0007; exec "$@" >/tmp/discord-facade.log 2>&1' sh python3 /usr/local/bin/nemoclaw-discord-facade &
+    nohup env -u NEMOCLAW_DISCORD_FACADE_URL -u PYTHONPATH "${launch_env[@]}" gosu gateway sh -c 'umask 0007; exec "$@" >/tmp/discord-facade.log 2>&1' sh "$HERMES_VENV_PYTHON" /usr/local/bin/nemoclaw-discord-facade &
   else
     prepare_restricted_log "$log_path" "" 600
-    nohup env -u NEMOCLAW_DISCORD_FACADE_URL -u PYTHONPATH "${launch_env[@]}" sh -c 'umask 0007; exec "$@" >/tmp/discord-facade.log 2>&1' sh python3 /usr/local/bin/nemoclaw-discord-facade &
+    nohup env -u NEMOCLAW_DISCORD_FACADE_URL -u PYTHONPATH "${launch_env[@]}" sh -c 'umask 0007; exec "$@" >/tmp/discord-facade.log 2>&1' sh "$HERMES_VENV_PYTHON" /usr/local/bin/nemoclaw-discord-facade &
   fi
   DISCORD_FACADE_PID=$!
   local attempts=0

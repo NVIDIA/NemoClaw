@@ -604,6 +604,24 @@ EOF
       );
     });
 
+    it("hermes start.sh launches the Discord facade and decode proxy under the Hermes venv interpreter", () => {
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
+      expect(src).toContain('HERMES_VENV_PYTHON="/opt/hermes/.venv/bin/python"');
+
+      const facadeFn = src.match(/start_discord_facade\(\) \{([\s\S]*?)^}/m);
+      expect(facadeFn).toBeTruthy();
+      const facadeBody = facadeFn![1];
+      expect(facadeBody).toContain('"$HERMES_VENV_PYTHON" /usr/local/bin/nemoclaw-discord-facade');
+      // Must not launch via bare python3 — that's the system interpreter.
+      expect(facadeBody).not.toMatch(/(?<![\w/"])python3 \/usr\/local\/bin\/nemoclaw-discord-facade/);
+
+      const decodeFn = src.match(/start_decode_proxy\(\) \{([\s\S]*?)^}/m);
+      expect(decodeFn).toBeTruthy();
+      const decodeBody = decodeFn![1];
+      expect(decodeBody).toContain('"$HERMES_VENV_PYTHON" /usr/local/bin/nemoclaw-decode-proxy');
+      expect(decodeBody).not.toMatch(/(?<![\w/"])python3 \/usr\/local\/bin\/nemoclaw-decode-proxy/);
+    });
+
     it("hermes start.sh calls validate_tmp_permissions", () => {
       const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain("validate_tmp_permissions");

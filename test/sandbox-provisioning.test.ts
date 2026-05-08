@@ -481,6 +481,14 @@ describe("Hermes sandbox provisioning", () => {
     expect(policySrc).toContain("- /opt/hermes");
     expect(permissivePolicySrc).toContain("- /opt/hermes");
   });
+
+  it("allowlists the Discord sitecustomize preload dir so Python can load the facade shim", () => {
+    const policySrc = fs.readFileSync(HERMES_POLICY, "utf-8");
+    const permissivePolicySrc = fs.readFileSync(HERMES_POLICY_PERMISSIVE, "utf-8");
+
+    expect(policySrc).toContain("- /opt/nemoclaw-hermes-discord-preload");
+    expect(permissivePolicySrc).toContain("- /opt/nemoclaw-hermes-discord-preload");
+  });
 });
 
 describe("sandbox provisioning: gateway auth token externalization (#2378)", () => {

@@ -45,6 +45,12 @@ if FACADE_URL:
             scheme = "wss" if (_facade.scheme == "https") else "ws"
             return urlunparse((scheme, _facade.netloc, "/gateway", "", rewritten_query, ""))
 
+        def _is_facade_url(url: object) -> bool:
+            try:
+                return urlparse(str(url)).netloc == _facade.netloc
+            except Exception:
+                return False
+
         async def _nemoclaw_request(self, method, str_or_url, **kwargs):
             rewritten = _rewrite_rest_url(str_or_url)
             if rewritten:
@@ -52,6 +58,10 @@ if FACADE_URL:
                 kwargs.pop("proxy_auth", None)
                 kwargs.pop("ssl", None)
                 str_or_url = rewritten
+            elif _is_facade_url(str_or_url):
+                kwargs.pop("proxy", None)
+                kwargs.pop("proxy_auth", None)
+                kwargs.pop("ssl", None)
             return await _original_request(self, method, str_or_url, **kwargs)
 
         def _nemoclaw_ws_connect(self, url, **kwargs):
@@ -61,6 +71,10 @@ if FACADE_URL:
                 kwargs.pop("proxy_auth", None)
                 kwargs.pop("ssl", None)
                 url = rewritten
+            elif _is_facade_url(url):
+                kwargs.pop("proxy", None)
+                kwargs.pop("proxy_auth", None)
+                kwargs.pop("ssl", None)
             return _original_ws_connect(self, url, **kwargs)
 
         aiohttp.ClientSession._request = _nemoclaw_request
