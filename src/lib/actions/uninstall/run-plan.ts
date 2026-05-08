@@ -178,7 +178,7 @@ function printBanner(log: (message: string) => void): void {
 function printBye(runtime: UninstallRuntime): void {
   const branding = getAgentBranding(runtime.env.NEMOCLAW_AGENT);
   runtime.log(branding.display);
-  runtime.log(branding.product === "Hermes" ? "Hermes has left the tidepool." : "Claws retracted. Until next time.");
+  runtime.log(branding.uninstallGoodbye);
 }
 
 function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boolean {

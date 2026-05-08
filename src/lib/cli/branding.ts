@@ -3,7 +3,8 @@
 
 /**
  * Central agent branding — maps the active agent to CLI name, display name,
- * and product name so every user-visible string can stay agent-neutral.
+ * product name, and product-specific copy so every user-visible string can stay
+ * agent-neutral.
  *
  * `nemohermes` is a thin alias launcher that sets `NEMOCLAW_AGENT` before
  * requiring the compiled CLI.  The exported constants cover normal startup,
@@ -18,17 +19,25 @@ export interface AgentBranding {
   display: string;
   /** The agent product name shown in messages, e.g. "OpenClaw" or "Hermes". */
   product: string;
+  /** Final line shown when uninstall completes. */
+  uninstallGoodbye: string;
 }
 
 const DEFAULT_BRANDING: AgentBranding = {
   cli: "nemoclaw",
   display: "NemoClaw",
   product: "OpenClaw",
+  uninstallGoodbye: "Claws retracted. Until next time.",
 };
 
 const AGENT_BRANDING: Record<string, AgentBranding> = {
   openclaw: DEFAULT_BRANDING,
-  hermes: { cli: "nemohermes", display: "NemoHermes", product: "Hermes" },
+  hermes: {
+    cli: "nemohermes",
+    display: "NemoHermes",
+    product: "Hermes",
+    uninstallGoodbye: "Hermes has left the tidepool.",
+  },
 };
 
 const DEFAULT_AGENT = "openclaw";
