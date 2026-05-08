@@ -143,8 +143,9 @@ jobs:
 
       - name: Post E2E advisor PR comment
         if: ${{ always() && github.event_name == 'pull_request' }}
+        continue-on-error: true
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.E2E_ADVISOR_GITHUB_TOKEN || github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           node tools/e2e-advisor/comment.mjs \
