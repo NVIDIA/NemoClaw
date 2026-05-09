@@ -3611,6 +3611,24 @@ function removeDockerDriverGatewayRegistration(): boolean {
   return destroyResult.status === 0;
 }
 
+function terminateDockerDriverGatewayProcess(pid: number): boolean {
+  if (!isPidAlive(pid)) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+    for (let i = 0; i < 10; i += 1) {
+      if (!isPidAlive(pid)) break;
+      sleep(1);
+    }
+    if (isPidAlive(pid)) process.kill(pid, "SIGKILL");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function stopDockerDriverGatewayProcess(): boolean {
   const pid = getDockerDriverGatewayPid();
   if (pid === null || !isPidAlive(pid)) {
@@ -3622,19 +3640,15 @@ function stopDockerDriverGatewayProcess(): boolean {
     return false;
   }
 
-  try {
-    process.kill(pid, "SIGTERM");
-    for (let i = 0; i < 10; i += 1) {
-      if (!isPidAlive(pid)) break;
-      sleep(1);
-    }
-    if (isPidAlive(pid)) process.kill(pid, "SIGKILL");
-    fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
-    return true;
-  } catch {
-    fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
-    return false;
-  }
+  const stopped = terminateDockerDriverGatewayProcess(pid);
+  fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
+  return stopped;
+}
+
+function restartDockerDriverGatewayProcessForDrift(pid: number, reason: string): void {
+  console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
+  terminateDockerDriverGatewayProcess(pid);
+  fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
 }
 
 async function refreshDockerDriverGatewayReuseState(
@@ -3643,14 +3657,35 @@ async function refreshDockerDriverGatewayReuseState(
   if (!isLinuxDockerDriverGatewayEnabled() || gatewayReuseState !== "healthy") {
     return gatewayReuseState;
   }
-  if (isDockerDriverGatewayProcessAlive()) return gatewayReuseState;
+  const gatewayBin = resolveOpenShellGatewayBinary();
+  const desiredEnv = getDockerDriverGatewayEnv(
+    runCaptureOpenshell(["--version"], { ignoreError: true }),
+  );
+  const pid = getDockerDriverGatewayPid();
+  if (pid !== null && isDockerDriverGatewayProcessAlive()) {
+    const drift = getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin);
+    if (drift) {
+      console.log(
+        `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
+      );
+      return "stale";
+    }
+    return gatewayReuseState;
+  }
 
   const portCheck = await checkPortAvailable(GATEWAY_PORT);
   const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck, {
-    gatewayBin: resolveOpenShellGatewayBinary(),
+    gatewayBin,
   });
   if (dockerGatewayPid !== null) {
+    const drift = getDockerDriverGatewayRuntimeDrift(dockerGatewayPid, desiredEnv, gatewayBin);
     rememberDockerDriverGatewayPid(dockerGatewayPid);
+    if (drift) {
+      console.log(
+        `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
+      );
+      return "stale";
+    }
     return "healthy";
   }
 
@@ -3945,11 +3980,11 @@ function getDockerDriverGatewayPid(): number | null {
   }
 }
 
-function readProcessEnv(pid: number): Record<string, string> {
+function readProcessEnv(pid: number): Record<string, string> | null {
   const procEnvPath = `/proc/${pid}/environ`;
   const env: Record<string, string> = {};
   try {
-    if (!fs.existsSync(procEnvPath)) return env;
+    if (!fs.existsSync(procEnvPath)) return null;
     for (const entry of fs.readFileSync(procEnvPath, "utf-8").split("\0")) {
       if (!entry) continue;
       const idx = entry.indexOf("=");
@@ -3957,18 +3992,106 @@ function readProcessEnv(pid: number): Record<string, string> {
       env[entry.slice(0, idx)] = entry.slice(idx + 1);
     }
   } catch {
-    return {};
+    return null;
   }
   return env;
 }
 
 function hasDockerDriverGatewayEnv(pid: number): boolean {
   const env = readProcessEnv(pid);
+  if (!env) return false;
   return (
     env.OPENSHELL_DRIVERS === "docker" ||
     Boolean(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) ||
     env.OPENSHELL_GRPC_ENDPOINT === getDockerDriverGatewayEndpoint()
   );
+}
+
+function readProcessExe(pid: number): string | null {
+  try {
+    const procExePath = `/proc/${pid}/exe`;
+    if (!fs.existsSync(procExePath)) return null;
+    return fs.readlinkSync(procExePath);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeGatewayExecutablePath(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const withoutDeletedSuffix = value.replace(/ \(deleted\)$/, "");
+  try {
+    return fs.realpathSync.native(withoutDeletedSuffix);
+  } catch {
+    return path.resolve(withoutDeletedSuffix);
+  }
+}
+
+type DockerDriverGatewayRuntimeDrift = { reason: string };
+
+const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
+  "OPENSHELL_DRIVERS",
+  "OPENSHELL_BIND_ADDRESS",
+  "OPENSHELL_SERVER_PORT",
+  "OPENSHELL_DISABLE_TLS",
+  "OPENSHELL_DISABLE_GATEWAY_AUTH",
+  "OPENSHELL_DB_URL",
+  "OPENSHELL_GRPC_ENDPOINT",
+  "OPENSHELL_SSH_GATEWAY_HOST",
+  "OPENSHELL_SSH_GATEWAY_PORT",
+  "OPENSHELL_DOCKER_NETWORK_NAME",
+  "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
+  "OPENSHELL_DOCKER_SUPERVISOR_BIN",
+] as const;
+
+function getDockerDriverGatewayRuntimeDriftFromSnapshot({
+  processEnv,
+  processExe,
+  desiredEnv,
+  gatewayBin,
+}: {
+  processEnv: Record<string, string> | null;
+  processExe: string | null;
+  desiredEnv: Record<string, string>;
+  gatewayBin?: string | null;
+}): DockerDriverGatewayRuntimeDrift | null {
+  if (!processEnv) {
+    return { reason: "could not verify process environment" };
+  }
+  for (const key of DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS) {
+    const desired = desiredEnv[key];
+    if (typeof desired !== "string") continue;
+    const actual = processEnv[key];
+    if (actual !== desired) {
+      return { reason: `${key}=${actual || "<unset>"} (expected ${desired})` };
+    }
+  }
+
+  if (processExe === null) {
+    return { reason: "could not verify process executable" };
+  }
+  if (processExe.endsWith(" (deleted)")) {
+    return { reason: "gateway executable was replaced on disk" };
+  }
+  const expectedExe = normalizeGatewayExecutablePath(gatewayBin);
+  const actualExe = normalizeGatewayExecutablePath(processExe);
+  if (expectedExe && actualExe && actualExe !== expectedExe) {
+    return { reason: `executable=${actualExe} (expected ${expectedExe})` };
+  }
+  return null;
+}
+
+function getDockerDriverGatewayRuntimeDrift(
+  pid: number,
+  desiredEnv: Record<string, string>,
+  gatewayBin?: string | null,
+): DockerDriverGatewayRuntimeDrift | null {
+  return getDockerDriverGatewayRuntimeDriftFromSnapshot({
+    processEnv: readProcessEnv(pid),
+    processExe: readProcessExe(pid),
+    desiredEnv,
+    gatewayBin,
+  });
 }
 
 function isDockerDriverGatewayProcess(
@@ -5159,28 +5282,43 @@ async function startDockerDriverGateway({
   exitOnFailure = true,
 }: { exitOnFailure?: boolean } = {}): Promise<void> {
   writeDockerGatewayDebEnvOverride();
+  const gatewayBin = resolveOpenShellGatewayBinary();
+  const openshellVersionOutput = runCaptureOpenshell(["--version"], {
+    ignoreError: true,
+  });
+  const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
     ignoreError: true,
   });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+  const pidFileGatewayPid = getDockerDriverGatewayPid();
   if (
+    pidFileGatewayPid !== null &&
     isDockerDriverGatewayProcessAlive() &&
     isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)
   ) {
-    if (registerDockerDriverGatewayEndpoint()) {
+    const drift = getDockerDriverGatewayRuntimeDrift(pidFileGatewayPid, gatewayEnv, gatewayBin);
+    if (drift) {
+      restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
+    } else if (registerDockerDriverGatewayEndpoint()) {
       console.log("  ✓ Reusing existing Docker-driver gateway");
       return;
     }
   }
 
-  const gatewayBin = resolveOpenShellGatewayBinary();
   const portCheck = await checkPortAvailable(GATEWAY_PORT);
   const portListenerPid = getDockerDriverGatewayPortListenerPid(portCheck, { gatewayBin });
   if (portListenerPid !== null) {
-    rememberDockerDriverGatewayPid(portListenerPid);
-    if (registerDockerDriverGatewayEndpoint()) {
+    const drift = getDockerDriverGatewayRuntimeDrift(portListenerPid, gatewayEnv, gatewayBin);
+    if (drift) {
+      rememberDockerDriverGatewayPid(portListenerPid);
+      restartDockerDriverGatewayProcessForDrift(portListenerPid, drift.reason);
+    } else {
+      rememberDockerDriverGatewayPid(portListenerPid);
+    }
+    if (!drift && registerDockerDriverGatewayEndpoint()) {
       const adoptedStatus = runCaptureOpenshell(["status"], { ignoreError: true });
       const adoptedGwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
         ignoreError: true,
@@ -5221,9 +5359,6 @@ async function startDockerDriverGateway({
   const logPath = path.join(stateDir, "openshell-gateway.log");
   const outFd = fs.openSync(logPath, "a", 0o600);
   const errFd = fs.openSync(logPath, "a", 0o600);
-  const gatewayEnv = getDockerDriverGatewayEnv(runCaptureOpenshell(["--version"], {
-    ignoreError: true,
-  }));
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
   const child = spawn(gatewayBin, [], {
@@ -11453,6 +11588,7 @@ module.exports = {
   getGatewayLocalEndpoint,
   getGatewayStartEnv,
   getDockerDriverGatewayEnv,
+  getDockerDriverGatewayRuntimeDriftFromSnapshot,
   getGatewayClusterContainerState,
   getGatewayHealthWaitConfig,
   getGatewayReuseState,

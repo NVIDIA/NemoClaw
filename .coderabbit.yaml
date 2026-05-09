@@ -188,10 +188,12 @@ reviews:
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
           isolation
         - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
+        - `openshell-gateway-upgrade-e2e` — stale Linux Docker-driver gateway
+          process restart after OpenShell upgrade
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e,hermes-slack-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e
         ```
 
     - path: "src/nemoclaw.ts"
@@ -424,6 +426,20 @@ reviews:
 
     - path: "nemoclaw-blueprint/openclaw-plugins/kimi-inference-compat/**"
       instructions: *e2e-kimi-inference-compat
+
+    - path: "test/e2e/test-openshell-gateway-upgrade.sh"
+      instructions: |
+        This script validates the old OpenShell install upgrade guard for
+        Linux Docker-driver gateway processes.
+
+        **E2E test recommendation:**
+        - `openshell-gateway-upgrade-e2e` — stale gateway process restart after
+          OpenShell upgrade
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openshell-gateway-upgrade-e2e
+        ```
 
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |

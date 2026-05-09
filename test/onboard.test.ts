@@ -81,6 +81,12 @@ type OnboardTestInternals = {
   getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
   getBlueprintMaxOpenshellVersion: (rootDir?: string) => string | null;
   getDockerDriverGatewayEnv: (versionOutput?: string | null) => Record<string, string>;
+  getDockerDriverGatewayRuntimeDriftFromSnapshot: (snapshot: {
+    processEnv: Record<string, string> | null;
+    processExe: string | null;
+    desiredEnv: Record<string, string>;
+    gatewayBin?: string | null;
+  }) => { reason: string } | null;
   isLinuxDockerDriverGatewayEnabled: (platform?: NodeJS.Platform) => boolean;
   isDockerDriverGatewayPortListener: (
     portCheck: {
@@ -197,6 +203,7 @@ function isOnboardTestInternals(
     typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
     typeof value.getDockerDriverGatewayEnv === "function" &&
+    typeof value.getDockerDriverGatewayRuntimeDriftFromSnapshot === "function" &&
     typeof value.isLinuxDockerDriverGatewayEnabled === "function" &&
     typeof value.isDockerDriverGatewayPortListener === "function" &&
     typeof value.findReadableNvidiaCdiSpecFiles === "function" &&
@@ -250,6 +257,7 @@ const {
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   getDockerDriverGatewayEnv,
+  getDockerDriverGatewayRuntimeDriftFromSnapshot,
   isLinuxDockerDriverGatewayEnabled,
   isDockerDriverGatewayPortListener,
   findReadableNvidiaCdiSpecFiles,
@@ -394,6 +402,51 @@ network_policies:
     expect(env.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
     expect(env.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
     expect(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
+  });
+
+  it("detects stale Docker-driver gateway runtime state before reuse", () => {
+    const desiredEnv = getDockerDriverGatewayEnv("openshell 0.0.37");
+    const gatewayBin = process.execPath;
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: desiredEnv,
+        processExe: gatewayBin,
+        desiredEnv,
+        gatewayBin,
+      }),
+    ).toBeNull();
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          ...desiredEnv,
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
+            "ghcr.io/nvidia/openshell/supervisor:0.0.36",
+        },
+        processExe: gatewayBin,
+        desiredEnv,
+        gatewayBin,
+      })?.reason,
+    ).toContain("OPENSHELL_DOCKER_SUPERVISOR_IMAGE=");
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: desiredEnv,
+        processExe: `${gatewayBin} (deleted)`,
+        desiredEnv,
+        gatewayBin,
+      })?.reason,
+    ).toContain("replaced on disk");
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: null,
+        processExe: gatewayBin,
+        desiredEnv,
+        gatewayBin,
+      })?.reason,
+    ).toContain("process environment");
   });
 
   it("recognizes an existing Docker-driver gateway listener on Linux", () => {
