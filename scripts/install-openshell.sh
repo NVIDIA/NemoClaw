@@ -33,13 +33,12 @@ esac
 
 info "Detected $OS_LABEL ($ARCH_LABEL)"
 
-# Minimum version required for Landlock filesystem policy enforcement
-# (NVIDIA/OpenShell#810 fixes the drop_privileges/Landlock ordering bug
-# that caused /sandbox to remain writable on 0.0.26).
-MIN_VERSION="0.0.32"
+# Minimum version required for the released Docker-driver gateway/sandbox
+# binaries and the GPU filesystem policy fixes NemoClaw depends on.
+MIN_VERSION="0.0.37"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.36"
+MAX_VERSION="0.0.37"
 # Pin fresh installs to this version instead of pulling "latest".
 PIN_VERSION="$MAX_VERSION"
 DEV_MIN_VERSION="0.0.37"
@@ -51,11 +50,7 @@ case "$CHANNEL" in
 esac
 
 if [ "$CHANNEL" = "auto" ]; then
-  if [ "$OS" = "Linux" ]; then
-    RESOLVED_CHANNEL="dev"
-  else
-    RESOLVED_CHANNEL="stable"
-  fi
+  RESOLVED_CHANNEL="stable"
 else
   RESOLVED_CHANNEL="$CHANNEL"
 fi
@@ -80,6 +75,13 @@ version_gte() {
   return 0
 }
 
+linux_driver_bins_present() {
+  if [ "$OS" != "Linux" ]; then
+    return 0
+  fi
+  command -v openshell-gateway >/dev/null 2>&1 && command -v openshell-sandbox >/dev/null 2>&1
+}
+
 if command -v openshell >/dev/null 2>&1; then
   INSTALLED_VERSION_OUTPUT="$(openshell --version 2>&1 || true)"
   INSTALLED_VERSION="$(printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
@@ -95,10 +97,15 @@ if command -v openshell >/dev/null 2>&1; then
       if ! version_gte "$MAX_VERSION" "$INSTALLED_VERSION"; then
         fail "openshell $INSTALLED_VERSION is above the maximum ($MAX_VERSION) supported by this NemoClaw release. Upgrade NemoClaw first."
       fi
-      info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION)"
-      exit 0
+      if ! linux_driver_bins_present; then
+        warn "openshell $INSTALLED_VERSION is missing Docker-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."
+      else
+        info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION)"
+        exit 0
+      fi
+    else
+      warn "openshell $INSTALLED_VERSION is below minimum $MIN_VERSION — upgrading..."
     fi
-    warn "openshell $INSTALLED_VERSION is below minimum $MIN_VERSION — upgrading..."
   fi
 fi
 

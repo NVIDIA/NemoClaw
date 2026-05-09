@@ -1036,7 +1036,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi',
+        'if [ "$1" = "--version" ]; then echo "openshell 0.0.37"; exit 0; fi',
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -1112,7 +1112,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi',
+        'if [ "$1" = "--version" ]; then echo "openshell 0.0.37"; exit 0; fi',
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },

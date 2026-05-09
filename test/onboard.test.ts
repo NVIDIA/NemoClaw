@@ -389,11 +389,11 @@ network_policies:
   it("models the Linux OpenShell Docker-driver gateway environment", () => {
     expect(isLinuxDockerDriverGatewayEnabled("linux")).toBe(true);
     expect(isLinuxDockerDriverGatewayEnabled("darwin")).toBe(false);
-    const env = getDockerDriverGatewayEnv("openshell 0.0.37.dev84+g6b2180425");
+    const env = getDockerDriverGatewayEnv("openshell 0.0.37");
     expect(env.OPENSHELL_DRIVERS).toBe("docker");
     expect(env.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
     expect(env.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
-    expect(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":dev");
+    expect(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
   });
 
   it("recognizes an existing Docker-driver gateway listener on Linux", () => {
@@ -427,20 +427,25 @@ network_policies:
     ).toBe(false);
   });
 
-  it("recognizes Docker CDI and dev-channel version gates", () => {
+  it("recognizes Docker CDI and explicit dev-channel version gates", () => {
     expect(parseDockerCdiSpecDirs('["/etc/cdi","/var/run/cdi"]')).toEqual([
       "/etc/cdi",
       "/var/run/cdi",
     ]);
     expect(parseDockerCdiSpecDirs("")).toEqual([]);
     expect(
-      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.37.dev84+g6b2180425", "linux", {
-        NEMOCLAW_OPENSHELL_CHANNEL: "auto",
+      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.38.dev1+gabcdef", "linux", {
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       }),
     ).toBe(true);
     expect(
-      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.37", "linux", {
+      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.38.dev1+gabcdef", "linux", {
         NEMOCLAW_OPENSHELL_CHANNEL: "auto",
+      }),
+    ).toBe(false);
+    expect(
+      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.38", "linux", {
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       }),
     ).toBe(false);
   });

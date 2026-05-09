@@ -3161,7 +3161,7 @@ exit 0`,
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 echo "openshell $*" >> ${JSON.stringify(phaseLog)}
-if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "openshell 0.0.36"; fi
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "openshell 0.0.37"; fi
 exit 0`,
     );
     writeExecutable(

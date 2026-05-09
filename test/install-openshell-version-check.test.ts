@@ -19,11 +19,23 @@ function writeExecutable(target: string, contents: string) {
  * either exit early (version ok / too high) or hit the upgrade warn and then
  * the script tries to download — so we stub curl and gh to fail fast.
  */
-function runWithInstalledVersion(version: string, extraEnv: NodeJS.ProcessEnv = {}) {
+function runWithInstalledVersion(
+  version: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+  options: { driverBins?: boolean; os?: string; arch?: string } = {},
+) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-ver-"));
   try {
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
+
+    if (options.os || options.arch) {
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "${options.arch ?? "x86_64"}"; else echo "${options.os ?? "Linux"}"; fi`,
+      );
+    }
 
     // Fake openshell that reports the given version
     writeExecutable(
@@ -32,6 +44,19 @@ function runWithInstalledVersion(version: string, extraEnv: NodeJS.ProcessEnv = 
 if [ "\${1:-}" = "--version" ]; then echo "openshell ${version}"; exit 0; fi
 exit 99`,
     );
+
+    if (options.driverBins !== false) {
+      writeExecutable(
+        path.join(fakeBin, "openshell-gateway"),
+        `#!/usr/bin/env bash
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "openshell-sandbox"),
+        `#!/usr/bin/env bash
+exit 0`,
+      );
+    }
 
     // Stub curl to fail so the install path exits without doing real network I/O
     writeExecutable(
@@ -63,10 +88,23 @@ exit 1`,
 }
 
 describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
-  it("exits cleanly when openshell 0.0.32 is already installed", () => {
-    const result = runWithInstalledVersion("0.0.32");
+  it("exits cleanly when openshell 0.0.37 and driver binaries are already installed", () => {
+    const result = runWithInstalledVersion("0.0.37");
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/already installed.*0\.0\.32/);
+    expect(result.stdout).toMatch(/already installed.*0\.0\.37/);
+  });
+
+  it("triggers reinstall when openshell 0.0.37 is missing Docker-driver binaries", () => {
+    const result = runWithInstalledVersion("0.0.37", {}, { driverBins: false, os: "Linux" });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/missing Docker-driver binaries/);
+    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.37'/);
+  });
+
+  it("triggers upgrade when openshell 0.0.36 is installed (below current floor)", () => {
+    const result = runWithInstalledVersion("0.0.36");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
 
   it("triggers upgrade when openshell 0.0.28 is installed (below MIN_VERSION)", () => {
@@ -89,7 +127,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("fails with a clear error when openshell is above MAX_VERSION", () => {
-    const result = runWithInstalledVersion("0.0.37");
+    const result = runWithInstalledVersion("0.0.38");
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/above the maximum/);
   });
