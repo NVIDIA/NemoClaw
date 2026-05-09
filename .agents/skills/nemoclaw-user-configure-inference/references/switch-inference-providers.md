@@ -122,6 +122,7 @@ To change these values, set the corresponding environment variables before runni
 | `NEMOCLAW_REASONING` | `true` or `false` | `false` |
 | `NEMOCLAW_INFERENCE_INPUTS` | `text` or `text,image` | `text` |
 | `NEMOCLAW_AGENT_TIMEOUT` | Positive integer (seconds) | `600` |
+| `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | Go-style duration (`30m`, `1h`, `0m` to disable) | `unset` (OpenClaw default) |
 
 Invalid values are ignored, and the default bakes into the image.
 Use `NEMOCLAW_INFERENCE_INPUTS=text,image` only for a model that accepts image input through the selected provider.
@@ -132,6 +133,7 @@ $ export NEMOCLAW_MAX_TOKENS=8192
 $ export NEMOCLAW_REASONING=true
 $ export NEMOCLAW_INFERENCE_INPUTS=text,image
 $ export NEMOCLAW_AGENT_TIMEOUT=1800
+$ export NEMOCLAW_AGENT_HEARTBEAT_EVERY=0m
 $ nemoclaw onboard
 ```
 
@@ -140,6 +142,15 @@ $ nemoclaw onboard
 example, CPU-only Ollama or vLLM on modest hardware). `openclaw.json` is
 immutable at runtime, so this value can only be changed by rebuilding the
 sandbox via `nemoclaw onboard`.
+
+`NEMOCLAW_AGENT_HEARTBEAT_EVERY` sets `agents.defaults.heartbeat.every`.
+This controls OpenClaw's periodic main-session agent turn.
+Each interval, the agent wakes up to review follow-ups and read `HEARTBEAT.md` if present in the workspace.
+The OpenClaw default is 30 minutes (1 hour for Anthropic OAuth / Claude CLI reuse).
+Tune the cadence with a duration string like `5m` or `2h`, or set `0m` to disable the periodic turns entirely.
+Disabling also drops `HEARTBEAT.md` from normal-run bootstrap context per upstream behavior, so the model no longer sees heartbeat-only instructions.
+`openclaw.json` is immutable at runtime, so the in-sandbox `openclaw config set` command cannot change this.
+Rebuild the sandbox via `nemoclaw onboard --resume` to apply a new value.
 
 These variables are build-time settings.
 If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:
