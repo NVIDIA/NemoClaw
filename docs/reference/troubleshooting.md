@@ -1088,6 +1088,7 @@ Take a snapshot before running onboard to protect your workspace files.
 ```console
 $ nemoclaw <name> snapshot create
 ```
+
 :::
 
 Re-run onboarding to restore dashboard connectivity:
