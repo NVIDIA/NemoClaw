@@ -1695,9 +1695,18 @@ ensure_docker() {
   if ! command -v docker >/dev/null 2>&1; then
     info "Docker is not installed."
     info "The next step uses sudo to install Docker system-wide via the official convenience script. You may be prompted for your password."
-    if ! sudo sh -c 'curl -fsSL https://get.docker.com | sh'; then
+    local docker_tmp
+    docker_tmp="$(mktemp)"
+    if ! curl -fsSL https://get.docker.com -o "$docker_tmp"; then
+      rm -f "$docker_tmp"
+      error "Failed to download the Docker convenience script from https://get.docker.com"
+    fi
+    verify_downloaded_script "$docker_tmp" "Docker installer"
+    if ! sudo sh "$docker_tmp"; then
+      rm -f "$docker_tmp"
       error "Docker install failed. Install Docker manually and re-run."
     fi
+    rm -f "$docker_tmp"
   fi
 
   if command -v systemctl >/dev/null 2>&1 \
@@ -1705,7 +1714,9 @@ ensure_docker() {
     && ! systemctl is-active --quiet docker 2>/dev/null; then
     info "The Docker daemon is not running."
     info "The next step uses sudo to enable and start the docker.service unit. You may be prompted for your password."
-    sudo systemctl enable --now docker 2>/dev/null || true
+    if ! sudo systemctl enable --now docker 2>/dev/null; then
+      warn "Could not enable docker.service — will verify daemon accessibility below."
+    fi
   fi
 
   if ! id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
