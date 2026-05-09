@@ -670,7 +670,7 @@ For advanced live edits, use the host-side config command instead of running `op
 $ nemoclaw <sandbox> config set --key <dotpath> --value '<json-or-string>' --restart
 ```
 
-Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with `nemoclaw <sandbox> config rotate-token` instead.
+Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with the credential-management commands instead.
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 
@@ -924,6 +924,22 @@ $ openshell gateway start
 GPU passthrough is not CI-tested on DGX Spark.
 It is expected to work when you pass `--gpu` and the NVIDIA Container Toolkit is configured.
 Verify the toolkit is configured by running `docker run --rm --runtime=nvidia --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi` from the host.
+
+### `unresolvable CDI devices nvidia.com/gpu=all` during gateway start
+
+Recent NVIDIA Container Toolkit installs configure the Docker daemon for Container Device Interface (CDI) device injection, which OpenShell's `gateway start --gpu` then auto-selects.
+If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
+`nemoclaw onboard` now detects this gap during preflight and prints the remediation up front, but the underlying fix is the same on any Docker host whose `docker info` advertises a non-empty `CDISpecDirs`.
+
+Generate the spec, verify it lists `nvidia.com/gpu` entries, then rerun onboarding:
+
+```console
+$ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+$ nvidia-ctk cdi list
+$ nemoclaw onboard
+```
+
+If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
 
 ### `pip install` fails with a system-packages error
 

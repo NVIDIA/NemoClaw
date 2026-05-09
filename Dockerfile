@@ -224,20 +224,28 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # Copy startup script and shared sandbox initialisation library
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-# Copy ws-proxy-fix.js to a Landlock-accessible path. OpenShell ≥0.0.36
+# Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
-# needs to read this file to install the NODE_OPTIONS --require preload.
-COPY nemoclaw-blueprint/scripts/ws-proxy-fix.js /usr/local/lib/nemoclaw/ws-proxy-fix.js
+# needs to read these files to install runtime preloads under /tmp.
+COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp /usr/local/lib/nemoclaw/sandbox-init.sh \
-    && chmod 644 /usr/local/lib/nemoclaw/ws-proxy-fix.js
+COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
+        /usr/local/lib/nemoclaw/sandbox-init.sh \
+        /usr/local/lib/nemoclaw/generate-openclaw-config.py \
+    && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
+    && if [ -f /usr/local/lib/nemoclaw/ws-proxy-fix.js ]; then chmod 644 /usr/local/lib/nemoclaw/ws-proxy-fix.js; fi \
+    && chmod 755 /usr/local/share/nemoclaw \
+        /usr/local/share/nemoclaw/openclaw-plugins \
+    && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
+    && find /usr/local/share/nemoclaw/openclaw-plugins -type f -exec chmod 644 {} +
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
-ARG NEMOCLAW_PROVIDER_KEY=nvidia
-ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b
+ARG NEMOCLAW_PROVIDER_KEY=inference
+ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
@@ -254,6 +262,12 @@ ARG NEMOCLAW_INFERENCE_INPUTS=text
 # immutable at runtime (Landlock read-only), so this can only be changed by
 # rebuilding via `nemoclaw onboard`. Ref: issue #2281
 ARG NEMOCLAW_AGENT_TIMEOUT=600
+# Cadence for OpenClaw's periodic heartbeat
+# (agents.defaults.heartbeat.every). Accepts Go-style durations like "30m",
+# "5m", "1h"; "0m" disables heartbeat. Empty default preserves the OpenClaw
+# built-in cadence. openclaw.json is immutable at runtime, so this can only
+# change at image build time. Ref: issue #2880
+ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Base64-encoded JSON list of messaging channel names to pre-configure
 # (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
@@ -306,6 +320,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
     NEMOCLAW_INFERENCE_INPUTS=${NEMOCLAW_INFERENCE_INPUTS} \
     NEMOCLAW_AGENT_TIMEOUT=${NEMOCLAW_AGENT_TIMEOUT} \
+    NEMOCLAW_AGENT_HEARTBEAT_EVERY=${NEMOCLAW_AGENT_HEARTBEAT_EVERY} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \

@@ -43,6 +43,13 @@ NemoClaw creates a fresh OpenClaw instance inside the sandbox during the onboard
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+The piped installer prompts through your terminal. In headless scripts or CI,
+pass explicit acceptance to the `bash` side of the pipe:
+
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```
+
 If you use nvm or fnm to manage Node.js, the installer might not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 
@@ -68,12 +75,14 @@ The inference provider prompt presents a numbered list.
   5) Other Anthropic-compatible endpoint
   6) Google Gemini
   7) Local Ollama (localhost:11434)
+  8) Model Router (experimental)
   Choose [1]:
 ```
 
 Pick the option that matches where you want inference traffic to go, then expand the matching helper below for the follow-up prompts and the API key environment variable to set.
 For the full list of providers and validation behavior, refer to [Inference Options](../inference/inference-options.md).
 Local Ollama appears when NemoClaw detects a usable local Ollama path or can offer an install or start action for your platform.
+The Model Router option appears when the blueprint router profile is enabled.
 
 :::{tip}
 Export the API key before launching the installer so the wizard does not have to ask for it.
@@ -199,13 +208,38 @@ For setup details, including GPU recommendations and starter model choices, refe
 
 :::
 
+:::{dropdown} Option 8: Model Router
+:icon: git-compare
+
+Starts a host-side model router and routes sandbox inference through OpenShell to that router.
+The router chooses from the model pool in `nemoclaw-blueprint/router/pool-config.yaml` for each request.
+
+Use `NVIDIA_API_KEY` for the model pool credentials.
+
+Respond to the wizard as follows.
+
+1. At the `Choose [1]:` prompt, type `8` to select **Model Router (experimental)**.
+2. At the `NVIDIA_API_KEY:` prompt, paste your key if it is not already exported.
+3. Review the configuration summary and continue with the sandbox build.
+
+For scripted setup, set:
+
+```console
+$ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
+```
+
+The router listens on the host at port `4000`.
+The sandbox still calls `https://inference.local/v1`, so do not point in-sandbox tools at the host router port directly.
+
+:::
+
 :::{dropdown} Experimental: Local NIM and Local vLLM
 :icon: beaker
 
 These options appear when `NEMOCLAW_EXPERIMENTAL=1` is set and the prerequisites are met.
 
 - **Local NVIDIA NIM** requires a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
-- **Local vLLM** requires a vLLM server already running on `localhost:8000`. NemoClaw auto-detects the loaded model.
+- **Local vLLM** uses a vLLM server already running on `localhost:8000`, or installs and starts a managed vLLM container on supported DGX Spark, DGX Station, and Linux NVIDIA GPU hosts. NemoClaw auto-detects the loaded model.
 
 For setup, refer to [Use a Local Inference Server](../inference/use-local-inference.md).
 :::
@@ -256,6 +290,8 @@ The preset selector lets you include more destinations, such as GitHub, Jira, Sl
 Press `r` to toggle a selected preset between read-only and read-write when the preset supports both modes.
 
 When the install completes, a summary confirms the running environment.
+Before printing the summary, NemoClaw verifies that the sandbox gateway and dashboard port forward are reachable.
+Inference route and messaging bridge checks are reported as warnings when they need more time or additional configuration.
 The `Model` and provider line reflects the inference option you picked during onboarding.
 The example below shows the result if you picked an OpenAI-compatible endpoint during onboarding.
 
@@ -272,7 +308,7 @@ Logs:        nemoclaw my-gpt-claw logs --follow
 [INFO]  === Installation complete ===
 ```
 
-If you picked a different option, the `Model` line shows that provider's model and label instead. For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
+If you picked a different option, the `Model` line shows that provider's model and label instead. For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
 
 ## Run Your First Agent Prompt
 
@@ -320,6 +356,7 @@ openclaw agent --agent main --local -m "hello" --session-id test
 - [Switch inference providers](../inference/switch-inference-providers.md) to use a different model or endpoint.
 - [Approve or deny network requests](../network-policy/approve-network-requests.md) when the agent tries to reach external hosts.
 - [Customize the network policy](../network-policy/customize-network-policy.md) to pre-approve trusted domains.
+- [Common integration policy examples](../network-policy/integration-policy-examples.md) for maintained policy presets such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
 - [Deploy to a remote GPU instance](../deployment/deploy-to-remote-gpu.md) for always-on operation.
 - [Monitor sandbox activity](../monitoring/monitor-sandbox-activity.md) through the OpenShell TUI.
 - [Consult the troubleshooting guide](../reference/troubleshooting.md) for common error messages and resolution steps.

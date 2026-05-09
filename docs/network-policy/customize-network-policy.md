@@ -43,7 +43,7 @@ See [Agent cannot reach a host-side HTTP service](../reference/troubleshooting.m
 
 > [!IMPORTANT]
 > Make static policy edits on the host, not inside the sandbox.
-> The sandbox image is intentionally minimal and may not include editors or package-management tools.
+> The sandbox image includes a small set of operational tools such as `vi`, `jq`, and `dos2unix`, but host-side policy files remain the durable source of truth.
 > Changes made only inside the sandbox are also ephemeral and are lost when the sandbox is recreated.
 
 ## Static Changes
@@ -176,6 +176,7 @@ This is useful when you want to test a destination before deciding whether it be
 
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
+For guided post-install examples, see [Common Integration Policy Examples](integration-policy-examples.md).
 
 During onboarding, the [policy tier](../reference/network-policies.md#policy-tiers) you select determines which presets are enabled by default.
 You can add or remove individual presets in the interactive preset screen that follows tier selection.
@@ -186,10 +187,11 @@ Available presets:
 |--------|-----------|
 | `brave` | Brave Search API |
 | `brew` | Homebrew (Linuxbrew) package manager |
-| `discord` | Discord webhook API |
+| `discord` | Discord API, gateway, and CDN access |
 | `github` | GitHub and GitHub REST API |
 | `huggingface` | Hugging Face Hub (download-only) and inference router |
 | `jira` | Atlassian Jira API |
+| `local-inference` | Local Ollama and vLLM through the host gateway |
 | `npm` | npm and Yarn registries |
 | `outlook` | Microsoft 365 and Outlook |
 | `pypi` | Python Package Index |
@@ -304,6 +306,7 @@ $ nemoclaw my-assistant policy-remove my-internal-api --yes
 ## Related Topics
 
 - [Approve or Deny Agent Network Requests](approve-network-requests.md) for real-time operator approval.
+- [Common Integration Policy Examples](integration-policy-examples.md) for maintained preset examples such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
 - [Network Policies](../reference/network-policies.md) for the full baseline policy reference.
 - OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
 - OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.

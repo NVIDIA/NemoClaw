@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- thin oclif adapter covered through CLI integration tests. */
 
 import { Args, Command, Flags } from "@oclif/core";
 
-import { connectSandbox } from "./sandbox-runtime-actions";
+import { connectSandbox } from "./actions/sandbox/runtime";
 
 export default class RecoverCliCommand extends Command {
   static id = "sandbox:recover";
@@ -14,6 +13,7 @@ export default class RecoverCliCommand extends Command {
   static description =
     "Re-run the sandbox-side gateway recovery and re-establish the host-side dashboard port-forward without opening an SSH session. Equivalent to `connect --probe-only`; safe to re-run.";
   static usage = ["<name> recover"];
+  static examples = ["<%= config.bin %> alpha recover"];
   static args = {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
   };

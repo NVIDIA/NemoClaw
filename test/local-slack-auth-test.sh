@@ -17,7 +17,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-START_SCRIPT="$SCRIPT_DIR/../scripts/nemoclaw-start.sh"
+GUARD_SOURCE="$SCRIPT_DIR/../nemoclaw-blueprint/scripts/slack-channel-guard.js"
 PASS=0
 FAIL=0
 
@@ -37,23 +37,21 @@ fail() {
 
 header() { printf '\n── %s ──\n' "$1"; }
 
-# ── Extract the guard JS from the shell script ──────────────────
+# ── Copy the guard JS preload source ─────────────────────────────
 
 TMPDIR_BASE="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
 
 GUARD_JS="$TMPDIR_BASE/slack-channel-guard.js"
 
-# The JS is between the line containing <<'SLACK_GUARD_EOF' and the closing SLACK_GUARD_EOF
-sed -n "/<<'SLACK_GUARD_EOF'$/,/^SLACK_GUARD_EOF$/p" "$START_SCRIPT" \
-  | sed '1d;$d' >"$GUARD_JS"
+cp "$GUARD_SOURCE" "$GUARD_JS"
 
 if [ ! -s "$GUARD_JS" ]; then
-  echo "ERROR: could not extract guard JS from $START_SCRIPT" >&2
+  echo "ERROR: could not copy guard JS from $GUARD_SOURCE" >&2
   exit 1
 fi
 
-echo "Extracted guard JS ($(wc -l <"$GUARD_JS") lines)"
+echo "Copied guard JS ($(wc -l <"$GUARD_JS") lines)"
 
 # ── Test runner ─────────────────────────────────────────────────
 # Runs node with the guard preloaded, executing inline JS.

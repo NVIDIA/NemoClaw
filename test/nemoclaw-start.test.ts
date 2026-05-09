@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "scripts");
 
 function configureGuardBlock(src: string): string {
   const start = src.indexOf("# nemoclaw-configure-guard begin");
@@ -45,8 +46,16 @@ function nonRootFallbackBlock(src: string): string {
 
 function startScriptHeredoc(src: string, marker: string): string {
   const match = src.match(new RegExp(`<<'${marker}'[^\\n]*\\n([\\s\\S]*?)\\n${marker}`));
-  expect(match).toBeTruthy();
-  return match![1];
+  if (match) return match[1];
+  const preloadByMarker: Record<string, string> = {
+    CIAO_GUARD_EOF: "ciao-network-guard.js",
+    SAFETY_NET_EOF: "sandbox-safety-net.js",
+    SLACK_GUARD_EOF: "slack-channel-guard.js",
+    TELEGRAM_DIAGNOSTICS_EOF: "telegram-diagnostics.js",
+  };
+  const preload = preloadByMarker[marker];
+  expect(preload).toBeTruthy();
+  return fs.readFileSync(path.join(PRELOAD_SCRIPTS, preload), "utf-8");
 }
 
 function extractShellFunctionFromSource(src: string, name: string): string {
@@ -897,6 +906,10 @@ describe("Slack channel guard — unhandled-rejection safety net (#2340)", () =>
         `_SLACK_GUARD_SCRIPT=${JSON.stringify(guardPath)}`,
       )
       .replace(
+        '_SLACK_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/slack-channel-guard.js"',
+        `_SLACK_GUARD_SOURCE=${JSON.stringify(path.join(PRELOAD_SCRIPTS, "slack-channel-guard.js"))}`,
+      )
+      .replace(
         'local config_file="/sandbox/.openclaw/openclaw.json"',
         `local config_file=${JSON.stringify(configPath)}`,
       );
@@ -1405,6 +1418,10 @@ describe("Slack token rewriter (#2085)", () => {
         `_SLACK_REWRITER_SCRIPT=${JSON.stringify(rewriterPath)}`,
       )
       .replace(
+        '_SLACK_REWRITER_SOURCE="/usr/local/lib/nemoclaw/preloads/slack-token-rewriter.js"',
+        `_SLACK_REWRITER_SOURCE=${JSON.stringify(path.join(PRELOAD_SCRIPTS, "slack-token-rewriter.js"))}`,
+      )
+      .replace(
         'local config_file="/sandbox/.openclaw/openclaw.json"',
         `local config_file=${JSON.stringify(configPath)}`,
       );
@@ -1497,6 +1514,10 @@ describe("Telegram diagnostics (#2766)", () => {
       .replace(
         '_TELEGRAM_DIAGNOSTICS_SCRIPT="/tmp/nemoclaw-telegram-diagnostics.js"',
         `_TELEGRAM_DIAGNOSTICS_SCRIPT=${JSON.stringify(preloadPath)}`,
+      )
+      .replace(
+        '_TELEGRAM_DIAGNOSTICS_SOURCE="/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js"',
+        `_TELEGRAM_DIAGNOSTICS_SOURCE=${JSON.stringify(path.join(PRELOAD_SCRIPTS, "telegram-diagnostics.js"))}`,
       )
       .replace(
         'local config_file="/sandbox/.openclaw/openclaw.json"',
@@ -1754,6 +1775,130 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
       expect(withoutPreload.stdout).not.toContain(preloadPath);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("write_auth_profile (#1332)", () => {
+  // Invokes write_auth_profile from the production start script in an isolated
+  // HOME, then asserts on the resulting auth-profiles.json — observable
+  // behavior, not source-text shape.
+  const wrapper = [
+    "set -euo pipefail",
+    `eval "$(sed -n '/^write_auth_profile() {$/,/^}$/p' "$1")"`,
+    "write_auth_profile",
+  ].join("\n");
+
+  function runWriteAuthProfile(env: Record<string, string>): {
+    home: string;
+    authPath: string;
+    status: number;
+    stderr: string;
+  } {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-test-"));
+    const result = spawnSync("bash", ["-s", "--", START_SCRIPT], {
+      input: wrapper,
+      env: { PATH: process.env.PATH, HOME: home, ...env },
+      encoding: "utf-8",
+    });
+    return {
+      home,
+      authPath: path.join(home, ".openclaw", "agents", "main", "agent", "auth-profiles.json"),
+      status: result.status ?? -1,
+      stderr: result.stderr ?? "",
+    };
+  }
+
+  it("writes profile under the provider key from NEMOCLAW_PROVIDER_KEY", () => {
+    const { home, authPath, status, stderr } = runWriteAuthProfile({
+      NVIDIA_API_KEY: "secret",
+      NEMOCLAW_PROVIDER_KEY: "openai",
+    });
+    try {
+      expect(status, stderr).toBe(0);
+      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+      expect(profile).toEqual({
+        "openai:manual": {
+          type: "api_key",
+          provider: "openai",
+          keyRef: { source: "env", id: "NVIDIA_API_KEY" },
+          profileId: "openai:manual",
+        },
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to 'inference' when NEMOCLAW_PROVIDER_KEY is unset", () => {
+    const { home, authPath, status, stderr } = runWriteAuthProfile({
+      NVIDIA_API_KEY: "secret",
+    });
+    try {
+      expect(status, stderr).toBe(0);
+      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+      expect(profile).toHaveProperty("inference:manual");
+      expect(profile["inference:manual"].provider).toBe("inference");
+      expect(profile).not.toHaveProperty("nvidia:manual");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not use 'nvidia' as the default provider key", () => {
+    const { home, authPath, status } = runWriteAuthProfile({
+      NVIDIA_API_KEY: "secret",
+    });
+    try {
+      expect(status).toBe(0);
+      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+      for (const key of Object.keys(profile)) {
+        expect(key).not.toMatch(/^nvidia:/);
+      }
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("treats provider_key as a literal (no shell command substitution)", () => {
+    // If the provider_key were interpolated into the heredoc instead of
+    // passed as argv, $(...) inside the value would execute and replace it.
+    const { home, authPath, status, stderr } = runWriteAuthProfile({
+      NVIDIA_API_KEY: "secret",
+      NEMOCLAW_PROVIDER_KEY: "$(echo pwned)",
+    });
+    try {
+      expect(status, stderr).toBe(0);
+      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+      expect(profile).toHaveProperty("$(echo pwned):manual");
+      expect(profile["$(echo pwned):manual"].provider).toBe("$(echo pwned)");
+      expect(profile).not.toHaveProperty("pwned:manual");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("is a no-op when NVIDIA_API_KEY is unset", () => {
+    const { home, authPath, status } = runWriteAuthProfile({});
+    try {
+      expect(status).toBe(0);
+      expect(fs.existsSync(authPath)).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("writes the auth profile with 0600 permissions", () => {
+    const { home, authPath, status } = runWriteAuthProfile({
+      NVIDIA_API_KEY: "secret",
+      NEMOCLAW_PROVIDER_KEY: "openai",
+    });
+    try {
+      expect(status).toBe(0);
+      const mode = fs.statSync(authPath).mode & 0o777;
+      expect(mode).toBe(0o600);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
     }
   });
 });

@@ -305,6 +305,23 @@ If neither is found, verify that Colima is running:
 $ colima status
 ```
 
+### Sandbox build is slow or hangs (under-provisioned container runtime)
+
+Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headroom for the BuildKit-driven sandbox image build.
+On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
+
+Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
+On Colima, raise the resources before re-running onboard:
+
+```console
+$ colima stop
+$ colima start --cpu 6 --memory 12 --disk 100
+```
+
+On Docker Desktop, raise CPU and memory limits in *Settings → Resources*, then apply and restart.
+
+To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1` before running `nemoclaw onboard`.
+
 ### Re-onboard fails because port 18789 is held by SSH
 
 After destroying a sandbox and gateway, the SSH port-forward process for the
@@ -608,7 +625,7 @@ This is expected.
 The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
-To change your configuration, exit the sandbox and rerun onboarding:
+For most configuration changes, exit the sandbox and rerun onboarding:
 
 ```console
 $ nemoclaw onboard
@@ -616,6 +633,14 @@ $ nemoclaw onboard
 
 If NemoClaw reports a resumable failed onboarding session, run `nemoclaw onboard --resume` instead.
 This rebuilds the sandbox with your updated settings.
+
+For advanced live edits, use the host-side config command instead of running `openclaw config set` inside the sandbox:
+
+```console
+$ nemoclaw <sandbox> config set --key <dotpath> --value '<json-or-string>' --restart
+```
+
+Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with the credential-management commands instead.
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 
@@ -869,6 +894,22 @@ $ openshell gateway start
 GPU passthrough is not CI-tested on DGX Spark.
 It is expected to work when you pass `--gpu` and the NVIDIA Container Toolkit is configured.
 Verify the toolkit is configured by running `docker run --rm --runtime=nvidia --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi` from the host.
+
+### `unresolvable CDI devices nvidia.com/gpu=all` during gateway start
+
+Recent NVIDIA Container Toolkit installs configure the Docker daemon for Container Device Interface (CDI) device injection, which OpenShell's `gateway start --gpu` then auto-selects.
+If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
+`nemoclaw onboard` now detects this gap during preflight and prints the remediation up front, but the underlying fix is the same on any Docker host whose `docker info` advertises a non-empty `CDISpecDirs`.
+
+Generate the spec, verify it lists `nvidia.com/gpu` entries, then rerun onboarding:
+
+```console
+$ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+$ nvidia-ctk cdi list
+$ nemoclaw onboard
+```
+
+If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
 
 ### `pip install` fails with a system-packages error
 

@@ -79,6 +79,27 @@
             }
           }
         },
+        "router": {
+          "type": "object",
+          "description": "Model router configuration for complexity-based routing.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether the model router is active."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Port the router proxy listens on."
+            },
+            "pool_config_path": {
+              "type": "string",
+              "description": "Path to the router pool config YAML relative to the blueprint directory."
+            }
+          }
+        },
         "policy": {
           "type": "object",
           "required": ["base"],

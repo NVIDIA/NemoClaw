@@ -10,8 +10,8 @@ const requireCache: Record<string, unknown> = require.cache as any;
 describe("config set nested URL SSRF enforcement", () => {
   it("rejects nested object/array URL values that target private hosts", async () => {
     const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config");
-    const openshellPath = require.resolve("../dist/lib/openshell");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields-audit");
+    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -85,8 +85,8 @@ describe("config set nested URL SSRF enforcement", () => {
 
   it("validates the key before doing URL or DNS validation", async () => {
     const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config");
-    const openshellPath = require.resolve("../dist/lib/openshell");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields-audit");
+    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -164,8 +164,8 @@ describe("config set nested URL SSRF enforcement", () => {
 
   it("accepts nested object/array URL values when all are public", async () => {
     const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config");
-    const openshellPath = require.resolve("../dist/lib/openshell");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields-audit");
+    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -239,8 +239,8 @@ describe("config set nested URL SSRF enforcement", () => {
 
   it("ignores nested non-http URL-like strings and does not crash", async () => {
     const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config");
-    const openshellPath = require.resolve("../dist/lib/openshell");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields-audit");
+    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -315,8 +315,8 @@ describe("config set nested URL SSRF enforcement", () => {
 
   it("recognizes mixed-case http and https schemes in nested values", async () => {
     const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config");
-    const openshellPath = require.resolve("../dist/lib/openshell");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields-audit");
+    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -390,8 +390,8 @@ describe("config set nested URL SSRF enforcement", () => {
 
   it("redacts credentials, query strings, and fragments in validation errors", async () => {
     const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config");
-    const openshellPath = require.resolve("../dist/lib/openshell");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields-audit");
+    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];

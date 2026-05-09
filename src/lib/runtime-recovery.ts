@@ -6,7 +6,7 @@
  * output and determine recovery strategy.
  */
 
-import { loadSession } from "./onboard-session";
+import { loadSession } from "./state/onboard-session";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 

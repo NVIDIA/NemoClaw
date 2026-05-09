@@ -185,6 +185,117 @@ describe("sandbox-create-stream", () => {
     expect((await promise).forcedReady).toBeUndefined();
   });
 
+  it("announces the pull phase when base image download progress appears (classic docker)", async () => {
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      logLine,
+      spawnImpl: () => child as never,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+    });
+
+    child.stdout.emit(
+      "data",
+      Buffer.from(
+        "latest: Pulling from nvidia/nemoclaw/sandbox-base\n" +
+          "abc123def: Pulling fs layer\n" +
+          "abc123def: Downloading  12MB/50MB\n" +
+          "abc123def: Pull complete\n" +
+          "Digest: sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n" +
+          "Status: Downloaded newer image for ghcr.io/nvidia/nemoclaw/sandbox-base:latest\n" +
+          "  Step 1/45 : FROM ghcr.io/nvidia/nemoclaw/sandbox-base:latest\n",
+      ),
+    );
+    child.emit("close", 0);
+
+    await expect(promise).resolves.toMatchObject({ status: 0, sawProgress: true });
+    expect(logLine).toHaveBeenCalledWith("  Pulling base image from registry...");
+    expect(logLine).toHaveBeenCalledWith("latest: Pulling from nvidia/nemoclaw/sandbox-base");
+    expect(logLine).toHaveBeenCalledWith(
+      "Status: Downloaded newer image for ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+    );
+  });
+
+  it("announces the pull phase for BuildKit pull progress", async () => {
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      logLine,
+      spawnImpl: () => child as never,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+    });
+
+    child.stdout.emit(
+      "data",
+      Buffer.from(
+        "#3 resolve ghcr.io/nvidia/nemoclaw/sandbox-base:latest\n" +
+          "#3 sha256:aa11bb22 12.34MB / 45.67MB 3.2s\n",
+      ),
+    );
+    child.emit("close", 0);
+
+    await expect(promise).resolves.toMatchObject({ status: 0, sawProgress: true });
+    expect(logLine).toHaveBeenCalledWith("  Pulling base image from registry...");
+    // Lock in that BuildKit progress lines actually reach the user — guards against
+    // silent regressions where shouldShowLine drops the BuildKit pull patterns.
+    expect(logLine).toHaveBeenCalledWith(
+      expect.stringContaining("#3 resolve ghcr.io/nvidia/nemoclaw/sandbox-base:latest"),
+    );
+    expect(logLine).toHaveBeenCalledWith(
+      expect.stringContaining("#3 sha256:aa11bb22 12.34MB / 45.67MB 3.2s"),
+    );
+  });
+
+  it("recognizes non-lowercase image tag prefixes in 'Pulling from' lines", async () => {
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      logLine,
+      spawnImpl: () => child as never,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+    });
+
+    child.stdout.emit(
+      "data",
+      Buffer.from(
+        "v1.2.3: Pulling from nvidia/nemoclaw/sandbox-base\n" +
+          "cuda-12.5: Pulling from nvidia/cuda\n" +
+          "12.4: Pulling from library/python\n",
+      ),
+    );
+    child.emit("close", 0);
+
+    await expect(promise).resolves.toMatchObject({ status: 0 });
+    expect(logLine).toHaveBeenCalledWith("  Pulling base image from registry...");
+    expect(logLine).toHaveBeenCalledWith("v1.2.3: Pulling from nvidia/nemoclaw/sandbox-base");
+    expect(logLine).toHaveBeenCalledWith("cuda-12.5: Pulling from nvidia/cuda");
+    expect(logLine).toHaveBeenCalledWith("12.4: Pulling from library/python");
+  });
+
+  it("emits a pull-phase heartbeat instead of a build-phase one during base image download", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      logLine,
+      spawnImpl: () => child as never,
+      heartbeatIntervalMs: 100,
+      silentPhaseMs: 50,
+    });
+
+    child.stdout.emit("data", Buffer.from("abc123def: Pulling fs layer\n"));
+    await vi.advanceTimersByTimeAsync(200);
+    child.emit("close", 0);
+    await promise;
+
+    const calls = logLine.mock.calls.map((c) => c[0] as string);
+    expect(calls.some((l) => /Still pulling base image from registry\.\.\./.test(l))).toBe(true);
+    expect(calls.some((l) => /Still building sandbox image\.\.\./.test(l))).toBe(false);
+  });
+
   it("reports spawn errors cleanly", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", process.env, {

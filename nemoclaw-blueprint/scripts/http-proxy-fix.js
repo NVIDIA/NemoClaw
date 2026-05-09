@@ -25,13 +25,10 @@
 // OpenClaw's dist/ — there are no require() calls to intercept. The
 // http.request wrapper sits below all libraries and catches every path.
 //
-// This file is the canonical source for review and tests. At sandbox boot
+// This file is the canonical source for review and tests. The Dockerfile
+// copies it into /usr/local/lib/nemoclaw/preloads/, then at sandbox boot
 // nemoclaw-start.sh writes an identical copy to /tmp/nemoclaw-http-proxy-fix.js
-// and loads it via NODE_OPTIONS=--require. A sync test enforces byte-for-byte
-// equality. The content cannot be baked into /opt/nemoclaw-blueprint/scripts/
-// because adding files to the optimized sandbox build context cache-busts the
-// `COPY nemoclaw-blueprint/` Dockerfile layer and hangs npm ci in k3s
-// Docker-in-Docker — see src/lib/sandbox-build-context.ts.
+// and loads it via NODE_OPTIONS=--require.
 
 (function () {
   'use strict';

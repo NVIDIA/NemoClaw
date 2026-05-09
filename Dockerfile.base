@@ -64,6 +64,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iptables=1.8.9-2 \
         libcap2-bin=1:2.66-4+deb12u2+b2 \
         procps=2:4.0.2-3 \
+        dos2unix=7.4.3-1 \
+        jq=1.6-2.1+deb12u1 \
+        vim-tiny=2:9.0.1378-2+deb12u2 \
         openssh-sftp-server=1:9.2p1-2+deb12u9 \
     && rm -rf /var/lib/apt/lists/*
 

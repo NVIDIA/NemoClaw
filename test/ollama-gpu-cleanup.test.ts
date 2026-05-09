@@ -1,135 +1,138 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
-import http from "node:http";
+import childProcess, { type SpawnSyncReturns } from "node:child_process";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
 
-import { unloadOllamaModels } from "../dist/lib/onboard-ollama-proxy.js";
+const modulePath = path.join(
+  import.meta.dirname,
+  "..",
+  "dist",
+  "lib",
+  "inference",
+  "ollama",
+  "proxy.js",
+);
+
+type SpawnCall = { command: string; args: readonly string[] };
+
+function ok(stdout = ""): SpawnSyncReturns<string> {
+  return {
+    pid: 0,
+    output: ["", stdout, ""],
+    stdout,
+    stderr: "",
+    status: 0,
+    signal: null,
+  };
+}
+
+function fail(stderr = "couldn't connect"): SpawnSyncReturns<string> {
+  return {
+    pid: 0,
+    output: ["", "", stderr],
+    stdout: "",
+    stderr,
+    status: 7,
+    signal: null,
+  };
+}
+
+function withMockedSpawnSync<T>(
+  responder: (call: SpawnCall) => SpawnSyncReturns<string>,
+  fn: (calls: SpawnCall[]) => T,
+): T {
+  const calls: SpawnCall[] = [];
+  const original = childProcess.spawnSync;
+  // @ts-expect-error — partial mock signature is intentional.
+  childProcess.spawnSync = (command: string, args: readonly string[]) => {
+    const call = { command, args };
+    calls.push(call);
+    return responder(call);
+  };
+  try {
+    delete require.cache[require.resolve(modulePath)];
+    return fn(calls);
+  } finally {
+    childProcess.spawnSync = original;
+    delete require.cache[require.resolve(modulePath)];
+  }
+}
 
 describe("Ollama GPU cleanup", () => {
-  it("unloads all running Ollama models via the production HTTP implementation", async () => {
-    const mockModels = {
-      models: [{ name: "llama3.1:8b" }, { name: "qwen:7b" }],
-    };
-
-    const mockResponse = {
-      statusCode: 200,
-      on: vi.fn((event, handler) => {
-        if (event === "data") {
-          handler(JSON.stringify(mockModels));
-        } else if (event === "end") {
-          handler();
+  it("calls curl synchronously to unload every running model via /api/generate", () => {
+    withMockedSpawnSync(
+      ({ args }) => {
+        if (args.some((a) => a.endsWith("/api/ps"))) {
+          return ok(
+            JSON.stringify({ models: [{ name: "llama3.1:8b" }, { name: "qwen:7b" }] }),
+          );
         }
-        return mockResponse;
-      }),
-    };
+        return ok();
+      },
+      (calls) => {
+        const { unloadOllamaModels } = require(modulePath);
+        unloadOllamaModels();
 
-    const mockGetRequest = {
-      on: vi.fn(() => mockGetRequest),
-    };
+        expect(calls).toHaveLength(3);
 
-    const mockUnloadRequests: Array<{
-      on: ReturnType<typeof vi.fn>;
-      write: ReturnType<typeof vi.fn>;
-      end: ReturnType<typeof vi.fn>;
-    }> = [];
+        expect(calls[0].command).toBe("curl");
+        expect(calls[0].args).toContain("--max-time");
+        expect(calls[0].args[calls[0].args.length - 1]).toMatch(/\/api\/ps$/);
 
-    const httpGetSpy = vi.spyOn(http, "get").mockImplementation(((options: any, callback: any) => {
-      expect(options.hostname).toBe("localhost");
-      expect(options.port).toBe(11434);
-      expect(options.path).toBe("/api/ps");
-      callback(mockResponse);
-      return mockGetRequest;
-    }) as any);
+        expect(calls[1].command).toBe("curl");
+        expect(calls[1].args).toContain("-X");
+        expect(calls[1].args).toContain("POST");
+        expect(calls[1].args).toContain(JSON.stringify({ model: "llama3.1:8b", keep_alive: 0 }));
+        expect(calls[1].args[calls[1].args.length - 1]).toMatch(/\/api\/generate$/);
 
-    const httpRequestSpy = vi.spyOn(http, "request").mockImplementation(((
-      options: any,
-      callback: any,
-    ) => {
-      expect(options.hostname).toBe("localhost");
-      expect(options.port).toBe(11434);
-      expect(options.path).toBe("/api/generate");
-      expect(options.method).toBe("POST");
-      expect(options.headers["Content-Type"]).toBe("application/json");
-      const req = {
-        on: vi.fn(() => req),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-      mockUnloadRequests.push(req);
-      callback();
-      return req;
-    }) as any);
-
-    unloadOllamaModels();
-
-    expect(httpGetSpy).toHaveBeenCalledTimes(1);
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(httpRequestSpy).toHaveBeenCalledTimes(2);
-    expect(mockUnloadRequests.map((req) => req.write.mock.calls[0]?.[0])).toEqual([
-      JSON.stringify({ model: "llama3.1:8b", keep_alive: 0 }),
-      JSON.stringify({ model: "qwen:7b", keep_alive: 0 }),
-    ]);
-    expect(mockUnloadRequests.every((req) => req.end.mock.calls.length === 1)).toBe(true);
-
-    httpGetSpy.mockRestore();
-    httpRequestSpy.mockRestore();
+        expect(calls[2].args).toContain(JSON.stringify({ model: "qwen:7b", keep_alive: 0 }));
+      },
+    );
   });
 
-  it("handles errors gracefully when Ollama is not running", () => {
-    const mockGetRequest = {
-      on: vi.fn((event, handler) => {
-        if (event === "error") {
-          handler(new Error("Connection refused"));
-        }
-        return mockGetRequest;
-      }),
-    };
-
-    const httpGetSpy = vi.spyOn(http, "get").mockImplementation((() => mockGetRequest) as any);
-
-    expect(() => unloadOllamaModels()).not.toThrow();
-    expect(httpGetSpy).toHaveBeenCalledTimes(1);
-
-    httpGetSpy.mockRestore();
+  it("returns silently when /api/ps fails (Ollama not running)", () => {
+    withMockedSpawnSync(
+      () => fail(),
+      (calls) => {
+        const { unloadOllamaModels } = require(modulePath);
+        expect(() => unloadOllamaModels()).not.toThrow();
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args[calls[0].args.length - 1]).toMatch(/\/api\/ps$/);
+      },
+    );
   });
 
-  it("does not unload anything when Ollama reports no loaded models", async () => {
-    const mockModels = { models: [] };
-
-    const mockResponse = {
-      statusCode: 200,
-      on: vi.fn((event, handler) => {
-        if (event === "data") {
-          handler(JSON.stringify(mockModels));
-        } else if (event === "end") {
-          handler();
+  it("does not unload anything when Ollama reports no loaded models", () => {
+    withMockedSpawnSync(
+      ({ args }) => {
+        if (args.some((a) => a.endsWith("/api/ps"))) {
+          return ok(JSON.stringify({ models: [] }));
         }
-        return mockResponse;
-      }),
-    };
+        return ok();
+      },
+      (calls) => {
+        const { unloadOllamaModels } = require(modulePath);
+        unloadOllamaModels();
+        expect(calls).toHaveLength(1);
+      },
+    );
+  });
 
-    const mockGetRequest = {
-      on: vi.fn(() => mockGetRequest),
-    };
-
-    const httpGetSpy = vi.spyOn(http, "get").mockImplementation(((_options: any, callback: any) => {
-      callback(mockResponse);
-      return mockGetRequest;
-    }) as any);
-
-    const httpRequestSpy = vi.spyOn(http, "request");
-
-    unloadOllamaModels();
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(httpGetSpy).toHaveBeenCalledTimes(1);
-    expect(httpRequestSpy).not.toHaveBeenCalled();
-
-    httpGetSpy.mockRestore();
-    httpRequestSpy.mockRestore();
+  it("ignores malformed JSON from /api/ps without throwing", () => {
+    withMockedSpawnSync(
+      ({ args }) => {
+        if (args.some((a) => a.endsWith("/api/ps"))) {
+          return ok("not-json");
+        }
+        return ok();
+      },
+      (calls) => {
+        const { unloadOllamaModels } = require(modulePath);
+        expect(() => unloadOllamaModels()).not.toThrow();
+        expect(calls).toHaveLength(1);
+      },
+    );
   });
 });
