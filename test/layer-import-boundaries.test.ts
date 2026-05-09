@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
-const BOUNDARY_SCRIPT = path.join(REPO_ROOT, "scripts", "check-layer-import-boundaries.ts");
+const BOUNDARY_SCRIPT = path.join(REPO_ROOT, "scripts", "checks", "layer-import-boundaries.ts");
 
 describe("CLI layer import boundaries", () => {
   it("keeps domain, adapter, action, and command layers separated", () => {

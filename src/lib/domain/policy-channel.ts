@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- pure helper tests exercise this module; orchestration coverage still runs through dist. */
 
 export type CustomPolicySource =
   | { kind: "none" }
@@ -66,5 +65,3 @@ export function parsePolicyAddArgs(
     presetArg: args.find((arg) => !arg.startsWith("-")) ?? null,
   };
 }
-
-/* v8 ignore stop */

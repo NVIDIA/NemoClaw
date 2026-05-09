@@ -30,7 +30,7 @@ export default class UninstallCliCommand extends Command {
       spawnSyncImpl: spawnSync,
       log: console.log,
       error: console.error,
-      exit: /* v8 ignore next -- uninstall exit behavior is covered by uninstall command tests. */ (code: number) => process.exit(code),
+      exit: (code: number) => process.exit(code),
     });
   }
 }

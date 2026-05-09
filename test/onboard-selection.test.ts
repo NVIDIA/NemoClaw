@@ -12,6 +12,8 @@ const CREDENTIAL_RETRY_PROMPT =
   "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
 const CREDENTIAL_RETRY_PROMPT_RE =
   /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
+const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
+  '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 
 function writeOpenAiStyleAuthRetryCurl(fakeBin: string, goodToken: string, models = ["gpt-5.4"]) {
   fs.writeFileSync(
@@ -688,7 +690,7 @@ const { setupNim } = require(${onboardPath});
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
 status="200"
 outfile=""
 url=""
@@ -810,7 +812,7 @@ const { setupNim } = require(${onboardPath});
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-body='{"id":"ok"}'
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
 status="200"
 outfile=""
 while [ "$#" -gt 0 ]; do
@@ -1035,7 +1037,7 @@ const { setupNim } = require(${onboardPath});
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
 status="200"
 outfile=""
 while [ "$#" -gt 0 ]; do
@@ -1147,7 +1149,7 @@ const { setupNim } = require(${onboardPath});
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
 status="200"
 outfile=""
 while [ "$#" -gt 0 ]; do
@@ -1267,7 +1269,7 @@ const { setupNim } = require(${onboardPath});
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
 status="200"
 outfile=""
 while [ "$#" -gt 0 ]; do
@@ -1384,7 +1386,7 @@ const { setupNim } = require(${onboardPath});
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
 status="200"
 outfile=""
 while [ "$#" -gt 0 ]; do
@@ -3706,7 +3708,7 @@ const { setupNim } = require(${onboardPath});
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-body='{"id":"ok"}'
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
 status="200"
 outfile=""
 while [ "$#" -gt 0 ]; do
@@ -3956,7 +3958,7 @@ const { setupNim } = require(${onboardPath});
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-body='{"id":"ok"}'
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
 status="200"
 outfile=""
 while [ "$#" -gt 0 ]; do

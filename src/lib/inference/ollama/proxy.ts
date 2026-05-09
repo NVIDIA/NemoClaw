@@ -638,6 +638,8 @@ async function prepareOllamaModel(model, installedModels = []) {
  * dropped by Node's event loop on fast CLI exit (e.g. `nemoclaw destroy`),
  * leaving GPU memory reserved. Reverting to async HTTP would reintroduce
  * that race; keep it synchronous.
+ *
+ * Keep this logic in sync with `test/ollama-gpu-cleanup.test.ts`.
  */
 function unloadOllamaModels() {
   try {
@@ -653,6 +655,11 @@ function unloadOllamaModels() {
 
     for (const entry of models) {
       if (!entry?.name) continue;
+      // `-sS` deliberately swallows HTTP 4xx/5xx; this path is best-effort
+      // and `--fail` would only surface orphaned-GPU-memory failures into
+      // unrelated CLI exit codes during destroy. If we ever want explicit
+      // visibility, add `--fail-with-body` and route the result to a warn
+      // logger.
       spawnSync(
         "curl",
         [

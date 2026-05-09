@@ -19,6 +19,7 @@ filesystem_policy:
     - /usr
     - /lib
     - /opt/hermes
+    - /opt/nemoclaw-hermes-discord-preload
     - /proc
     - /dev/urandom
     - /app
@@ -188,9 +189,8 @@ network_policies:
         access: full
       - host: gateway.discord.gg
         port: 443
-        protocol: rest
-        enforcement: enforce
         access: full
+        tls: skip
       - host: cdn.discordapp.com
         port: 443
         protocol: rest

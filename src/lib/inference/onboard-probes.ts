@@ -23,9 +23,11 @@ const {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-// Hostnames that only resolve from inside the OpenShell sandbox network.
-// Probing them from the host always fails with curl exit 6 ("Could not
-// resolve host"), so we skip host-side validation for these URLs. See #893.
+// Hostnames that are normally meant for the sandbox/container host boundary.
+// host.openshell.internal only resolves inside the OpenShell sandbox network,
+// so host-side validation cannot prove reachability for that URL. For ordinary
+// verification we still skip these endpoints, but strict tool-call validation
+// must fail closed unless the host is probeable from the onboard process.
 const SANDBOX_INTERNAL_HOSTS = ["host.openshell.internal", "host.docker.internal"];
 
 function isSandboxInternalUrl(url) {
@@ -60,6 +62,85 @@ function hasResponsesToolCall(body) {
     }
   }
 
+  return false;
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function hasValidFunctionCallPayload(value) {
+  if (!value || typeof value !== "object") return false;
+  if (typeof value.name !== "string" || value.name.length === 0) return false;
+  if (!hasOwn(value, "arguments")) return false;
+  return (
+    typeof value.arguments === "string" ||
+    (typeof value.arguments === "object" &&
+      value.arguments !== null &&
+      !Array.isArray(value.arguments))
+  );
+}
+
+function isStructuredChatCompletionsToolCall(value) {
+  if (!value || typeof value !== "object") return false;
+  if (value.type !== "function") return false;
+  const fn = value.function;
+  return hasValidFunctionCallPayload(fn);
+}
+
+function containsToolCallLikeValue(value) {
+  if (!value || typeof value !== "object") return false;
+  if (hasValidFunctionCallPayload(value)) return true;
+  if (isStructuredChatCompletionsToolCall(value)) return true;
+  if (Array.isArray(value.tool_calls)) {
+    return value.tool_calls.some((call) => isStructuredChatCompletionsToolCall(call));
+  }
+  if (value.message && typeof value.message === "object") {
+    return containsToolCallLikeValue(value.message);
+  }
+  if (Array.isArray(value.choices)) {
+    return value.choices.some((choice) => choice && containsToolCallLikeValue(choice));
+  }
+  return false;
+}
+
+function parseStringifiedToolCall(content) {
+  if (typeof content !== "string") return null;
+  const trimmed = content.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return containsToolCallLikeValue(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasChatCompletionsToolCall(body) {
+  const parsed = parseJsonObject(body);
+  const message = parsed?.choices?.[0]?.message;
+  if (!message || typeof message !== "object") return false;
+  const toolCalls = message.tool_calls;
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return false;
+  return toolCalls.some((call) => isStructuredChatCompletionsToolCall(call));
+}
+
+function hasChatCompletionsToolCallLeak(body) {
+  const parsed = parseJsonObject(body);
+  const message = parsed?.choices?.[0]?.message;
+  if (!message || typeof message !== "object") return false;
+
+  const content = message.content;
+  if (typeof content === "string") {
+    return Boolean(parseStringifiedToolCall(content));
+  }
+  if (Array.isArray(content)) {
+    return content.some((item) => {
+      if (!item || typeof item !== "object") return false;
+      const text = typeof item.text === "string" ? item.text : "";
+      return Boolean(parseStringifiedToolCall(text));
+    });
+  }
   return false;
 }
 
@@ -217,6 +298,114 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
   };
 }
 
+function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {}) {
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const authHeader = !useQueryParam && normalizedKey
+    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
+    : [];
+  const url = useQueryParam && normalizedKey
+    ? `${baseUrl}/chat/completions?key=${encodeURIComponent(normalizedKey)}`
+    : `${baseUrl}/chat/completions`;
+  const timingArgs = options.timingArgs ?? getValidationProbeCurlArgs();
+  const result = runCurlProbe([
+    "-sS",
+    ...timingArgs,
+    "-H",
+    "Content-Type: application/json",
+    ...authHeader,
+    "-d",
+    JSON.stringify({
+      model,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a tool-calling assistant. When tools are available and the user asks for an action, call a tool.",
+        },
+        {
+          role: "user",
+          content:
+            "Send hello to the current session. Use the sessions_send tool and do not answer in plain text.",
+        },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "sessions_send",
+            description: "Send a message to the active chat session.",
+            parameters: {
+              type: "object",
+              properties: { message: { type: "string" } },
+              required: ["message"],
+              additionalProperties: false,
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "memory_search",
+            description: "Search memory for relevant prior context.",
+            parameters: {
+              type: "object",
+              properties: { query: { type: "string" } },
+              required: ["query"],
+              additionalProperties: false,
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "web_fetch",
+            description: "Fetch a URL and summarize the result.",
+            parameters: {
+              type: "object",
+              properties: { url: { type: "string" } },
+              required: ["url"],
+              additionalProperties: false,
+            },
+          },
+        },
+      ],
+      tool_choice: "required",
+      temperature: 0,
+    }),
+    url,
+  ]);
+
+  if (!result.ok) {
+    return result;
+  }
+  if (hasChatCompletionsToolCall(result.body)) {
+    return result;
+  }
+  if (hasChatCompletionsToolCallLeak(result.body)) {
+    return {
+      ok: false,
+      httpStatus: result.httpStatus,
+      curlStatus: result.curlStatus,
+      body: result.body,
+      stderr: result.stderr,
+      message:
+        `HTTP ${result.httpStatus}: Chat Completions leaked tool calls into plain text content. ` +
+        "Use an endpoint/runtime that returns structured tool_calls (for Hermes on local inference, " +
+        "prefer vLLM with --tool-call-parser hermes).",
+    };
+  }
+  return {
+    ok: false,
+    httpStatus: result.httpStatus,
+    curlStatus: result.curlStatus,
+    body: result.body,
+    stderr: result.stderr,
+    message: `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`,
+  };
+}
+
 // ── OpenAI-like probe ────────────────────────────────────────────
 function isDeepSeekV4ProModel(model) {
   return String(model || "").toLowerCase() === "deepseek-ai/deepseek-v4-pro";
@@ -291,12 +480,29 @@ function runChatCompletionsProbe({ authHeader, model, url, isWsl: isWslOverride 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   if (isSandboxInternalUrl(endpointUrl)) {
     const { hostname } = new URL(String(endpointUrl));
-    return {
-      ok: true,
-      api: null,
-      label: null,
-      note: `${hostname} only resolves inside the sandbox — validation skipped. If the endpoint is unreachable at runtime, re-run onboard with a routable URL.`,
-    };
+    if (options.requireChatCompletionsToolCalling !== true) {
+      return {
+        ok: true,
+        api: null,
+        label: null,
+        note: `${hostname} only resolves inside the sandbox — validation skipped. If the endpoint is unreachable at runtime, re-run onboard with a routable URL.`,
+      };
+    }
+    if (hostname !== "host.docker.internal") {
+      return {
+        ok: false,
+        message: `${hostname} only resolves inside the sandbox and cannot be validated for required structured Chat Completions tool calls from the host. Use a routable endpoint URL and retry onboard.`,
+        failures: [
+          {
+            name: "Chat Completions API with tool calling",
+            httpStatus: 0,
+            curlStatus: 0,
+            message: "sandbox-internal endpoint cannot be strictly validated from host",
+            body: "",
+          },
+        ],
+      };
+    }
   }
 
   const useQueryParam = options.authMode === "query-param";
@@ -340,12 +546,16 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     name: "Chat Completions API",
     api: "openai-completions",
     execute: () =>
-      runChatCompletionsProbe({
-        authHeader,
-        model,
-        url: appendKey("/chat/completions"),
-        isWsl: options.isWsl,
-      }),
+      options.requireChatCompletionsToolCalling === true
+        ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
+            authMode: options.authMode,
+          })
+        : runChatCompletionsProbe({
+            authHeader,
+            model,
+            url: appendKey("/chat/completions"),
+            isWsl: options.isWsl,
+          }),
   };
 
   // NVIDIA Build does not expose /v1/responses; probing it always returns
@@ -467,7 +677,14 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       JSON.stringify(getChatCompletionsProbePayload(model)),
       `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
     ];
-    let retryResult = runCurlProbe(buildRetryArgs());
+    const runRetryProbe = () =>
+      options.requireChatCompletionsToolCalling === true
+        ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
+            authMode: options.authMode,
+            timingArgs: doubledArgs,
+          })
+        : runCurlProbe(buildRetryArgs());
+    let retryResult = runRetryProbe();
     if (retryResult.ok) {
       return { ok: true, api: "openai-completions", label: "Chat Completions API" };
     }
@@ -480,10 +697,19 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         `  Chat Completions API validation ${reason}; retrying in ${Math.round(delayMs / 1000)}s...`,
       );
       sleepSync(delayMs);
-      retryResult = runCurlProbe(buildRetryArgs());
+      retryResult = runRetryProbe();
       if (retryResult.ok) {
         return { ok: true, api: "openai-completions", label: "Chat Completions API" };
       }
+    }
+    if (options.requireChatCompletionsToolCalling === true) {
+      failures.push({
+        name: "Chat Completions API with tool calling (retry)",
+        httpStatus: retryResult.httpStatus,
+        curlStatus: retryResult.curlStatus,
+        message: retryResult.message,
+        body: retryResult.body,
+      });
     }
   }
 
@@ -557,6 +783,8 @@ module.exports = {
   isSandboxInternalUrl,
   parseJsonObject,
   hasResponsesToolCall,
+  hasChatCompletionsToolCall,
+  hasChatCompletionsToolCallLeak,
   shouldRequireResponsesToolCalling,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
@@ -565,6 +793,7 @@ module.exports = {
   getChatCompletionsProbePayload,
   getChatCompletionsProbeCurlArgs,
   probeResponsesToolCalling,
+  probeChatCompletionsToolCalling,
   probeOpenAiLikeEndpoint,
   probeAnthropicEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,

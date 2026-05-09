@@ -2735,6 +2735,19 @@ exit 0`,
     // — the friendly hint is the only TTY-related output we expect.
     expect(output).not.toMatch(/\/dev\/tty/);
   });
+
+  it("#3058: error message includes a working curl|bash example users can copy-paste", () => {
+    // The reporter on #3058 hit this error with `curl ... | bash` on a
+    // non-TTY box and was left guessing how to combine the env var with
+    // the documented one-liner. The fix surfaces the exact invocations
+    // (terminal, env-var-in-pipe, flag-via-bash-s) so users can resolve
+    // the failure without leaving the terminal output.
+    const { result } = callShowUsageNotice({});
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash/);
+    expect(output).toMatch(/bash -s -- --yes-i-accept-third-party-software/);
+    expect(output).toMatch(/bash <\(curl/);
+  });
 });
 
 // ---------------------------------------------------------------------------

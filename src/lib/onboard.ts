@@ -2849,6 +2849,8 @@ function patchStagedDockerfile(
 // Inference probes — moved to inference/onboard-probes.ts
 const {
   hasResponsesToolCall,
+  hasChatCompletionsToolCall,
+  hasChatCompletionsToolCallLeak,
   shouldRequireResponsesToolCalling,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
@@ -2870,6 +2872,7 @@ async function validateOpenAiLikeSelection(
   options: {
     authMode?: "bearer" | "query-param";
     requireResponsesToolCalling?: boolean;
+    requireChatCompletionsToolCalling?: boolean;
     skipResponsesProbe?: boolean;
     probeStreaming?: boolean;
   } = {},
@@ -6043,6 +6046,11 @@ async function selectAndValidateOllamaModel(
       selectedModel,
       null,
       "Choose a different Ollama model or select Other.",
+      null,
+      {
+        skipResponsesProbe: true,
+        requireChatCompletionsToolCalling: true,
+      },
     );
     if (validation.retry === "selection") return { outcome: "back-to-selection" };
     if (!validation.ok) continue;
@@ -9341,6 +9349,17 @@ function toOptionalString(value: string | null | undefined): string | undefined 
   return value ?? undefined;
 }
 
+// Preserve the nullable contract end-to-end: `null` means "clear this
+// field on the persisted session", `undefined` means "leave unchanged".
+// Collapsing `null`→`undefined` (as toOptionalString does) silently drops
+// explicit clears such as the credentialEnv reset during a remote→local
+// provider switch — the exact bug in GH #2625.
+function toNullableString(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return value;
+}
+
 function toSessionUpdates(
   updates: {
     sandboxName?: string | null;
@@ -9358,18 +9377,18 @@ function toSessionUpdates(
 ): SessionUpdates {
   const normalized: SessionUpdates = {};
   if (updates.sandboxName !== undefined)
-    normalized.sandboxName = toOptionalString(updates.sandboxName);
-  if (updates.provider !== undefined) normalized.provider = toOptionalString(updates.provider);
-  if (updates.model !== undefined) normalized.model = toOptionalString(updates.model);
+    normalized.sandboxName = toNullableString(updates.sandboxName);
+  if (updates.provider !== undefined) normalized.provider = toNullableString(updates.provider);
+  if (updates.model !== undefined) normalized.model = toNullableString(updates.model);
   if (updates.endpointUrl !== undefined)
-    normalized.endpointUrl = toOptionalString(updates.endpointUrl);
+    normalized.endpointUrl = toNullableString(updates.endpointUrl);
   if (updates.credentialEnv !== undefined)
-    normalized.credentialEnv = toOptionalString(updates.credentialEnv);
+    normalized.credentialEnv = toNullableString(updates.credentialEnv);
   if (updates.preferredInferenceApi !== undefined) {
-    normalized.preferredInferenceApi = toOptionalString(updates.preferredInferenceApi);
+    normalized.preferredInferenceApi = toNullableString(updates.preferredInferenceApi);
   }
   if (updates.nimContainer !== undefined)
-    normalized.nimContainer = toOptionalString(updates.nimContainer);
+    normalized.nimContainer = toNullableString(updates.nimContainer);
   if (updates.webSearchConfig !== undefined) normalized.webSearchConfig = updates.webSearchConfig;
   if (updates.policyPresets) normalized.policyPresets = updates.policyPresets;
   if (updates.messagingChannels) normalized.messagingChannels = updates.messagingChannels;
@@ -10456,6 +10475,8 @@ module.exports = {
   summarizeCurlFailure,
   summarizeProbeFailure,
   hasResponsesToolCall,
+  hasChatCompletionsToolCall,
+  hasChatCompletionsToolCallLeak,
   upsertProvider,
   hashCredential,
   detectMessagingCredentialRotation,

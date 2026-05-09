@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- extracted legacy sandbox liveness paths are covered through CLI subprocess tests. */
 
 import fs from "node:fs";
 import os from "node:os";

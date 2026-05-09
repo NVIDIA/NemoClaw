@@ -11,8 +11,14 @@ OpenShell's L7 proxy doesn't recognize the encoded form.
 This proxy sits between the Python process and the OpenShell proxy,
 URL-decodes the CONNECT target and request paths so the placeholders
 are restored before reaching the L7 proxy. It also translates Slack's
-SDK-compatible xoxb-/xapp- placeholders back to canonical
-openshell:resolve:env:SLACK_* placeholders before OpenShell sees them.
+SDK-compatible xoxb-/xapp- placeholders in cleartext HTTP proxy requests
+back to canonical openshell:resolve:env:SLACK_* placeholders before
+OpenShell sees them. Hermes' Python preload handles Slack HTTPS requests
+before TLS serialization.
+
+This is intentionally not a WebSocket frame rewriter. After the initial
+HTTP proxy request is forwarded, bytes are relayed unchanged; Discord
+gateway IDENTIFY payloads are not inspected or modified here.
 
 Usage: Launched by start.sh, listens on 127.0.0.1:3129.
        HTTPS_PROXY=http://127.0.0.1:3129 hermes gateway run

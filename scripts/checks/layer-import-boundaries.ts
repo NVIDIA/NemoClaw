@@ -20,7 +20,7 @@ type ImportRef = {
   column: number;
 };
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SRC_LIB_ROOT = path.join(REPO_ROOT, "src", "lib");
 const SKIP_DIRS = new Set([".git", "coverage", "dist", "node_modules"]);
 

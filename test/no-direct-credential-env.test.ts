@@ -14,7 +14,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { findDirectCredentialEnvReads } from "../scripts/check-direct-credential-env";
+import { findDirectCredentialEnvReads } from "../scripts/checks/direct-credential-env";
 
 describe("direct credential env guard", () => {
   it.each([
@@ -89,7 +89,7 @@ describe("direct credential env guard", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const result = spawnSync(
       "npx",
-      ["tsx", "scripts/check-direct-credential-env.ts", "src/lib/onboard.ts"],
+      ["tsx", "scripts/checks/direct-credential-env.ts", "src/lib/onboard.ts"],
       {
         cwd: repoRoot,
         encoding: "utf-8",

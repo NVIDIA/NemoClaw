@@ -321,6 +321,7 @@ A `Connected` line reports whether the sandbox has any active SSH sessions and, 
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.
 
 The Policy section displays the live enforced policy (fetched via `openshell policy get --full`), which reflects presets added or removed after sandbox creation.
+When OpenShell reports an active policy version, the displayed YAML `version` line uses that active version instead of the static schema version.
 If the sandbox is running an outdated agent version, the output includes an `Update` line with the available version and a `nemoclaw <name> rebuild` hint.
 
 When other sandboxes have the same messaging channel enabled (Telegram, Discord, or Slack) with the same bot token, the output includes a cross-sandbox overlap warning so you can resolve the conflict before messages start dropping.
@@ -329,6 +330,24 @@ The command also tails `/tmp/gateway.log` inside the default sandbox and flags T
 ```console
 $ nemoclaw my-assistant status
 ```
+
+#### Checking the OpenClaw version
+
+NemoClaw pins the OpenClaw version inside the sandbox at build time, not at runtime.
+The minimum version comes from `min_openclaw_version` in `nemoclaw-blueprint/blueprint.yaml`, and the sandbox image upgrades OpenClaw to that version during `docker build` if the cached base image is older.
+Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer pin — you upgrade by rebuilding the sandbox.
+
+`nemoclaw <name> status` prints the running OpenClaw version on the `Agent` line:
+
+```console
+$ nemoclaw my-assistant status
+...
+    Agent:    OpenClaw v2026.4.24
+...
+```
+
+If the sandbox is running an OpenClaw older than the version this NemoClaw release pins, `status` and `connect` add an `Update` line pointing at `nemoclaw <name> rebuild` to pick up the newer version.
+The rebuild reuses the existing sandbox name and persisted credentials, so messaging tokens and provider keys carry over.
 
 ### `nemoclaw <name> doctor`
 
@@ -587,7 +606,8 @@ If another terminal has an active SSH session to the sandbox, `rebuild` prints a
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
 The sandbox must be running for the backup step to succeed.
-If any manifest-defined state path cannot be archived, `rebuild` reports the failed paths and exits before destroying the original sandbox.
+If an archive command reports partial output while still producing usable data, `rebuild` keeps the captured backup entries and reports only the manifest-defined paths that could not be archived.
+If any required state path still cannot be backed up, `rebuild` exits before destroying the original sandbox.
 After restore, the command runs `openclaw doctor --fix` for cross-version structure repair.
 
 ### `nemoclaw upgrade-sandboxes`
@@ -874,6 +894,7 @@ It prints the versioned URL of the matching `uninstall.sh` so you can download, 
 
 Uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
+For Local Ollama setups, uninstall also stops matching Ollama auth proxy processes before deleting `~/.nemoclaw` state so stale proxy listeners do not block a later reinstall.
 
 | Flag | Effect |
 |---|---|
@@ -955,7 +976,7 @@ $ nemohermes --version            # show the installed NemoHermes CLI version
 ```
 
 The alias is installed alongside `nemoclaw` via `npm link` or `npm install -g`.
-Help text, version output, and error messages automatically adjust to show `nemohermes` when launched through the alias.
+Help text, version output, uninstall progress, completion text, and error messages automatically adjust to show `nemohermes` when launched through the alias.
 
 ### Legacy `nemoclaw setup`
 

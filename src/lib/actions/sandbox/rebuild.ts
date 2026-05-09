@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- exercised through CLI subprocess rebuild tests. */
 
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
@@ -178,12 +177,17 @@ export async function rebuildSandbox(
   } else {
     rebuildCredentialEnv = session?.credentialEnv || null;
   }
-  // Legacy migration: pre-fix local-inference sandboxes (GH #2519) recorded
-  // credentialEnv="OPENAI_API_KEY" in onboard-session.json even though the
-  // sandbox does not actually need a host OpenAI key (ollama-local uses an
-  // auth proxy with an internal token; vllm-local accepts a static dummy
-  // bearer). Treat the legacy value as null so rebuild does not demand a
-  // credential that was never actually used.
+  // Legacy migration: pre-fix local-inference sandboxes (GH #2519, GH #2625)
+  // recorded credentialEnv="OPENAI_API_KEY" in onboard-session.json even
+  // though the sandbox does not actually need a host OpenAI key (ollama-local
+  // uses an auth proxy with an internal token; vllm-local accepts a static
+  // dummy bearer). Treat the legacy value as null so rebuild does not demand
+  // a credential that was never actually used.
+  //
+  // Post-#2625 the write path persists credentialEnv=null directly when the
+  // wizard selects a local provider, so fresh sessions no longer need this
+  // migration. We retain it for users whose session.json on disk predates
+  // the fix.
   if (
     (session?.provider === "ollama-local" || session?.provider === "vllm-local") &&
     rebuildCredentialEnv === "OPENAI_API_KEY"
