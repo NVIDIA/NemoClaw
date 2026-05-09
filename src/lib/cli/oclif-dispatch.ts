@@ -100,6 +100,7 @@ const GLOBAL_ROUTES: Readonly<Record<string, string>> = {
   status: "status",
   debug: "debug",
   uninstall: "uninstall",
+  update: "update",
   list: "list",
   "backup-all": "backup-all",
   "upgrade-sandboxes": "upgrade-sandboxes",

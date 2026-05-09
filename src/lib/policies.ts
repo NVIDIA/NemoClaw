@@ -37,6 +37,10 @@ type SelectionOptions = {
   applied?: string[];
 };
 
+type SetupPolicyPresetSupportOptions = {
+  webSearchSupported?: boolean | null;
+};
+
 function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -114,6 +118,41 @@ function getMessagingPresetWarning(presetName: string): string | null {
     "in the messaging channels step. The bot token and channel bridge are wired",
     "up at onboard time and are not added by applying this preset alone.",
   ].join("\n  ");
+}
+
+function setupPolicyPresetSupported(
+  name: string,
+  options: SetupPolicyPresetSupportOptions = {},
+): boolean {
+  return name !== "brave" || options.webSearchSupported !== false;
+}
+
+function filterSetupPolicyPresets<T extends { name: string }>(
+  presets: T[],
+  options: SetupPolicyPresetSupportOptions = {},
+): T[] {
+  return presets.filter((preset) => setupPolicyPresetSupported(preset.name, options));
+}
+
+function listSetupPolicyPresets(
+  sandboxName: string,
+  options: SetupPolicyPresetSupportOptions = {},
+): PresetInfo[] {
+  return [...filterSetupPolicyPresets(listPresets(), options), ...listCustomPresets(sandboxName)];
+}
+
+function clampSetupPolicyPresetNames(
+  presetNames: string[],
+  allowedPresets: Array<{ name: string }>,
+  options: SetupPolicyPresetSupportOptions = {},
+  customPresetNames: ReadonlySet<string> = new Set(),
+): string[] {
+  const knownPresets = new Set(allowedPresets.map((p) => p.name));
+  return presetNames.filter((name) => {
+    if (!knownPresets.has(name)) return false;
+    if (customPresetNames.has(name)) return true;
+    return setupPolicyPresetSupported(name, options);
+  });
 }
 
 /**
@@ -941,6 +980,10 @@ export {
   loadPreset,
   getPresetEndpoints,
   getMessagingPresetWarning,
+  setupPolicyPresetSupported,
+  filterSetupPolicyPresets,
+  listSetupPolicyPresets,
+  clampSetupPolicyPresetNames,
   extractPresetEntries,
   parseCurrentPolicy,
   buildPolicySetCommand,

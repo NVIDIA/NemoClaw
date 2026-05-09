@@ -81,6 +81,17 @@ export async function runRegisteredOclifCommand(
   } catch (error) {
     const exitCode = getOclifExitCode(error);
     if (exitCode === 0) {
+      // #2666: only oclif's own ExitError(0) is an intentional graceful
+      // exit (e.g. Command.exit(0) — message is the synthetic "EEXIT: 0").
+      // Any OTHER error that happens to carry oclif.exit === 0 used to be
+      // silently swallowed here, producing exit 0 + completely empty
+      // stdout/stderr. Surface its message — and fall back to a generic
+      // line if formatOclifError() returns empty so we never reintroduce
+      // the silent path for an error whose message happens to be blank.
+      if (!isOclifExitError(error)) {
+        const message = formatOclifError(error) || "Command exited with no output.";
+        errorLine(`  ${message}`);
+      }
       process.exitCode = 0;
       return;
     }

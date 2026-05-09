@@ -24,16 +24,22 @@ type SandboxEntryFixture = {
   policies?: string[];
 };
 
+type SetupFixtureOptions = {
+  inferenceProbeResponses?: string[];
+};
+
 function setupFixture(
   sandboxEntry: SandboxEntryFixture,
   liveInferenceProvider: string | null,
   liveInferenceModel: string | null,
+  options: SetupFixtureOptions = {},
 ) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inf-swap-"));
   const homeLocalBin = path.join(tmpDir, ".local", "bin");
   const registryDir = path.join(tmpDir, ".nemoclaw");
   const stateFile = path.join(tmpDir, "state.json");
   const openshellPath = path.join(homeLocalBin, "openshell");
+  const dockerPath = path.join(homeLocalBin, "docker");
   const sandboxName = String(sandboxEntry.name);
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
@@ -56,7 +62,15 @@ function setupFixture(
     inferenceBlock = `Gateway inference:\\n  Not configured\\n`;
   }
 
-  fs.writeFileSync(stateFile, JSON.stringify({ inferenceSetCalls: [] }));
+  fs.writeFileSync(
+    stateFile,
+    JSON.stringify({
+      dockerCalls: [],
+      inferenceProbeResponses: options.inferenceProbeResponses ?? ["OK 200"],
+      inferenceSetCalls: [],
+      sandboxExecCalls: [],
+    }),
+  );
 
   // Fake openshell binary — records inference set calls, stubs everything else
   fs.writeFileSync(
@@ -84,6 +98,20 @@ if (args[0] === "sandbox" && args[1] === "get" && args[2] === ${JSON.stringify(s
 
 if (args[0] === "sandbox" && args[1] === "list") {
   process.stdout.write("${sandboxName}   Ready   2m ago\\n");
+  process.exit(0);
+}
+
+if (args[0] === "sandbox" && args[1] === "exec") {
+  state.sandboxExecCalls.push(args);
+  const command = args.join(" ");
+  if (!command.includes("inference.local/v1/models")) {
+    fs.writeFileSync(stateFile, JSON.stringify(state));
+    process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\nRUNNING\\n");
+    process.exit(0);
+  }
+  const response = state.inferenceProbeResponses.shift() || "OK 200";
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  process.stdout.write(response);
   process.exit(0);
 }
 
@@ -117,6 +145,71 @@ process.exit(0);
     { mode: 0o755 },
   );
 
+  fs.writeFileSync(
+    dockerPath,
+    `#!${process.execPath}
+const fs = require("fs");
+const args = process.argv.slice(2);
+const stateFile = ${JSON.stringify(stateFile)};
+const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+state.dockerCalls.push(args);
+fs.writeFileSync(stateFile, JSON.stringify(state));
+const cmd = args.join(" ");
+
+if (args[0] === "ps") {
+  process.stdout.write("openshell-cluster-nemoclaw\\n");
+  process.exit(0);
+}
+
+if (cmd.includes("get service kube-dns")) {
+  process.stdout.write("10.43.0.10");
+  process.exit(0);
+}
+if (cmd.includes("get endpoints kube-dns")) {
+  process.stdout.write("10.42.0.15");
+  process.exit(0);
+}
+if (cmd.includes("get pods -n openshell -o name")) {
+  process.stdout.write("pod/${sandboxName}-abc\\n");
+  process.exit(0);
+}
+if (cmd.includes("ip addr show")) {
+  process.stdout.write("10.200.0.1\\n");
+  process.exit(0);
+}
+if (cmd.includes("cat /tmp/dns-proxy.pid")) {
+  process.stdout.write("12345\\n");
+  process.exit(0);
+}
+if (cmd.includes("cat /tmp/dns-proxy.log")) {
+  process.stdout.write("dns-proxy: 10.200.0.1:53 -> 10.43.0.10:53 pid=12345\\n");
+  process.exit(0);
+}
+if (cmd.includes("python3 -c")) {
+  process.stdout.write("ok");
+  process.exit(0);
+}
+if (cmd.includes("ls /run/netns/")) {
+  process.stdout.write("sandbox-ns\\n");
+  process.exit(0);
+}
+if (cmd.includes("test -x")) {
+  process.exit(cmd.includes("/usr/sbin/iptables") ? 0 : 1);
+}
+if (cmd.includes("cat /etc/resolv.conf")) {
+  process.stdout.write("nameserver 10.200.0.1\\n");
+  process.exit(0);
+}
+if (cmd.includes("getent hosts github.com")) {
+  process.stdout.write("140.82.112.4 github.com\\n");
+  process.exit(0);
+}
+
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+
   return { tmpDir, stateFile, sandboxName };
 }
 
@@ -131,7 +224,7 @@ function runConnect(tmpDir: string, sandboxName: string) {
       env: {
         ...process.env,
         HOME: tmpDir,
-        PATH: "/usr/bin:/bin",
+        PATH: `${path.join(tmpDir, ".local", "bin")}:/usr/bin:/bin`,
         NEMOCLAW_NO_CONNECT_HINT: "1",
       },
       timeout: execTimeout(15_000),
@@ -221,6 +314,47 @@ describe("sandbox connect inference route swap (#1248)", () => {
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       expect(state.inferenceSetCalls.length).toBe(0);
+    },
+  );
+
+  it(
+    "repairs the sandbox DNS proxy when inference.local returns 503",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "stale-dns-sandbox",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+        "nvidia-prod",
+        "nvidia/nemotron-3-super-120b-a12b",
+        {
+          inferenceProbeResponses: [
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            "OK 200",
+          ],
+        },
+      );
+
+      const result = runConnect(tmpDir, sandboxName);
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      const dockerCalls = state.dockerCalls as string[][];
+      const inferenceExecCalls = state.sandboxExecCalls.filter((call: string[]) =>
+        JSON.stringify(call).includes("inference.local/v1/models"),
+      );
+      expect(state.inferenceSetCalls.length).toBe(0);
+      expect(inferenceExecCalls.length).toBe(2);
+      expect(dockerCalls.some((call) => call.join(" ").includes("get service kube-dns"))).toBe(true);
+      expect(dockerCalls.some((call) => call.join(" ").includes("get endpoints kube-dns"))).toBe(false);
+
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("inference.local is unavailable inside 'stale-dns-sandbox'");
+      expect(combined).toContain("inference.local route repaired");
     },
   );
 });

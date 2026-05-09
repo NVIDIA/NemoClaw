@@ -363,6 +363,8 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Compatibility Commands")).toBeTruthy();
     expect(r.out).toContain("nemoclaw upgrade-sandboxes");
     expect(r.out).toContain("(--check, --auto, --yes|-y)");
+    expect(r.out).toContain("nemoclaw update");
+    expect(r.out).toContain("(--check, --yes|-y)");
     expect(r.out).toContain("nemoclaw gc");
     expect(r.out).toContain("(--yes|-y|--force, --dry-run)");
     expect(r.out).toContain("nemoclaw onboard");
@@ -2023,7 +2025,7 @@ describe("CLI dispatch", () => {
     expect(log).not.toContain("sandbox exec alpha sh -c");
   });
 
-  it("destroys the gateway runtime when the last sandbox is removed", () => {
+  it("preserves the gateway runtime by default when the last sandbox is destroyed (#2166)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -2078,11 +2080,138 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(0);
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("NAME STATUS");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
+    const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+    expect(openshellOutput).toContain("sandbox delete alpha");
+    expect(openshellOutput).toContain("NAME STATUS");
+    // Gateway preservation is now the default. `--yes` confirms only the
+    // sandbox; the shared NemoClaw gateway must stay up so the next
+    // `nemoclaw onboard` reuses it.
+    expect(openshellOutput).not.toContain("forward stop 18789");
+    expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
+  });
+
+  it("tears down the gateway runtime when --cleanup-gateway is passed (#2166)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-cleanup-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const bashLog = path.join(home, "docker.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\n" >> "$log_file"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(bashLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy -y --cleanup-gateway", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+    expect(openshellOutput).toContain("sandbox delete alpha");
+    expect(openshellOutput).toContain("forward stop 18789");
+    expect(openshellOutput).toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
+  });
+
+  it("honours NEMOCLAW_CLEANUP_GATEWAY=1 as the env-driven opt-in (#2166)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-env-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const bashLog = path.join(home, "docker.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\n" >> "$log_file"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(bashLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy -y", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_CLEANUP_GATEWAY: "1",
+    });
+
+    expect(r.code).toBe(0);
+    const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+    expect(openshellOutput).toContain("forward stop 18789");
+    expect(openshellOutput).toContain("gateway destroy -g nemoclaw");
   });
 
   it("keeps the gateway runtime when other sandboxes still exist", () => {
@@ -2346,9 +2475,9 @@ describe("CLI dispatch", () => {
     );
     expect(registryAfter.sandboxes.alpha).toBeFalsy();
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
-    expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
   });
 
   it("deletes messaging providers when destroying a sandbox", () => {

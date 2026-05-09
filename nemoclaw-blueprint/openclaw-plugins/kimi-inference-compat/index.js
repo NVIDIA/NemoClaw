@@ -24,6 +24,105 @@ function emptyParameters() {
 }
 
 const SAFE_SPLIT_EXEC_COMMANDS = new Set(["hostname", "date", "uptime"]);
+const REASONING_FIELD_NAMES = [
+  "reasoning",
+  "reasoningContent",
+  "reasoning_content",
+  "reasoningDetails",
+  "reasoning_details",
+  "thinking",
+  "thinkingContent",
+  "thinking_content",
+];
+const REASONING_EVENT_TYPES = new Set([
+  "reasoning",
+  "reasoning_delta",
+  "reasoning.content.delta",
+  "thinking",
+  "thinking_delta",
+  "thinking.content.delta",
+]);
+const REASONING_CONTENT_TYPES = new Set([
+  "reasoning",
+  "reasoning_delta",
+  "reasoningcontent",
+  "reasoning_content",
+  "thinking",
+  "thinking_delta",
+  "thinkingcontent",
+  "thinking_content",
+]);
+
+function isObjectRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function stripReasoningFields(value) {
+  if (!isObjectRecord(value)) return false;
+  let changed = false;
+  for (const key of REASONING_FIELD_NAMES) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      delete value[key];
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function isReasoningContentBlock(value) {
+  if (!isObjectRecord(value)) return false;
+  const type = normalize(value.type);
+  return REASONING_CONTENT_TYPES.has(type) || type.includes("reasoning") || type.includes("thinking");
+}
+
+function stripReasoningContentBlocks(value) {
+  if (!Array.isArray(value)) return value;
+  return value
+    .filter((block) => !isReasoningContentBlock(block))
+    .map((block) => {
+      stripReasoningFields(block);
+      return block;
+    });
+}
+
+function stripReasoningFromMessage(message) {
+  if (!isObjectRecord(message)) return false;
+  let changed = stripReasoningFields(message);
+  if (Array.isArray(message.content)) {
+    const filtered = stripReasoningContentBlocks(message.content);
+    if (filtered.length !== message.content.length) changed = true;
+    message.content = filtered;
+  }
+  return changed;
+}
+
+function stripReasoningFromChoice(choice) {
+  if (!isObjectRecord(choice)) return false;
+  let changed = stripReasoningFields(choice);
+  changed = stripReasoningFromMessage(choice.message) || changed;
+  changed = stripReasoningFromMessage(choice.delta) || changed;
+  return changed;
+}
+
+function isReasoningEvent(event) {
+  if (!isObjectRecord(event)) return false;
+  const type = normalize(event.type);
+  return REASONING_EVENT_TYPES.has(type) || type.includes("reasoning") || type.includes("thinking");
+}
+
+function filterReasoningFromEvent(event) {
+  if (!isObjectRecord(event)) return event;
+  if (isReasoningEvent(event)) return null;
+
+  stripReasoningFields(event);
+  stripReasoningFromMessage(event.message);
+  stripReasoningFromMessage(event.partial);
+  stripReasoningFromMessage(event.delta);
+  if (Array.isArray(event.choices)) {
+    for (const choice of event.choices) stripReasoningFromChoice(choice);
+  }
+  return event;
+}
 
 function decodeToolCallArguments(value) {
   if (value && typeof value === "object" && !Array.isArray(value)) return value;
@@ -148,6 +247,7 @@ function wrapStreamFinalMessages(stream) {
     stream.result = async () => {
       const message = await originalResult();
       rewriteSafeCombinedExecToolCallInMessage(message);
+      stripReasoningFromMessage(message);
       return message;
     };
   }
@@ -158,11 +258,15 @@ function wrapStreamFinalMessages(stream) {
       const iterator = originalAsyncIterator();
       return {
         async next() {
-          const result = await iterator.next();
-          if (!result.done && result.value && typeof result.value === "object") {
+          while (true) {
+            const result = await iterator.next();
+            if (result.done || !result.value || typeof result.value !== "object") {
+              return result;
+            }
             rewriteSafeCombinedExecToolCallInEvent(result.value);
+            const filtered = filterReasoningFromEvent(result.value);
+            if (filtered !== null) return { ...result, value: filtered };
           }
-          return result;
         },
         async return(value) {
           if (typeof iterator.return === "function") return iterator.return(value);
@@ -194,7 +298,8 @@ module.exports = {
   id: "nemoclaw-kimi-inference-compat",
   name: "NemoClaw Kimi Inference Compatibility",
   version: "0.1.0",
-  description: "Normalizes managed inference.local Kimi tool schemas for NemoClaw sandboxes.",
+  description:
+    "Normalizes managed inference.local Kimi tool schemas and reasoning output for NemoClaw sandboxes.",
   register(api) {
     api.registerProvider({
       id: "inference",
@@ -219,8 +324,10 @@ module.exports = {
   },
   __testing: {
     createSafeExecSplitterWrapper,
+    filterReasoningFromEvent,
     rewriteSafeCombinedExecToolCallInEvent,
     rewriteSafeCombinedExecToolCallInMessage,
+    stripReasoningFromMessage,
     splitSafeExecCommand,
   },
 };

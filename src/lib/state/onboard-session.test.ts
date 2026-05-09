@@ -153,6 +153,122 @@ describe("onboard session", () => {
     expect("token" in loaded.metadata).toBe(false);
   });
 
+  // ── GH #2625: provider switch from remote→local must clear stale fields ──
+  //
+  // Before the fix, filterSafeUpdates only accepted `typeof === "string"` for
+  // nullable session fields, so passing `null` (as the wizard does when a
+  // local provider is selected) silently dropped the clear. A prior
+  // remote-provider session's `credentialEnv: "OPENAI_API_KEY"` survived to
+  // disk and the next rebuild preflight demanded a credential the current
+  // sandbox did not need.
+
+  it("clears credentialEnv when provider-selection update passes null (GH #2625)", () => {
+    // Seed with a prior remote-provider onboard state.
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      provider: "openai",
+      model: "gpt-4o",
+      endpointUrl: "https://api.openai.com/v1",
+      credentialEnv: "OPENAI_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      nimContainer: null,
+    });
+    let loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.credentialEnv).toBe("OPENAI_API_KEY");
+
+    // User re-runs onboard and picks local Ollama. The wizard emits
+    // credentialEnv=null and nimContainer=null alongside the new provider.
+    session.markStepComplete("provider_selection", {
+      provider: "ollama-local",
+      model: "qwen3:14b",
+      endpointUrl: "http://host.docker.internal:11434/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+      nimContainer: null,
+    });
+
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.provider).toBe("ollama-local");
+    expect(loaded.model).toBe("qwen3:14b");
+    expect(loaded.credentialEnv).toBeNull();
+    expect(loaded.nimContainer).toBeNull();
+  });
+
+  it("leaves credentialEnv unchanged when the update does not supply it", () => {
+    // Regression guard: undefined must mean "leave unchanged", distinct from
+    // null ("clear"). Partial updates must not accidentally wipe fields.
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      provider: "openai",
+      model: "gpt-4o",
+      credentialEnv: "OPENAI_API_KEY",
+    });
+    session.markStepComplete("provider_selection", { model: "gpt-4o-mini" });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.model).toBe("gpt-4o-mini");
+    expect(loaded.credentialEnv).toBe("OPENAI_API_KEY");
+    expect(loaded.provider).toBe("openai");
+  });
+
+  it("accepts null as an explicit clear for every nullable string field", () => {
+    // All six nullable fields that travel through filterSafeUpdates must
+    // support the null-clear contract. If any regresses to the old
+    // string-only guard, the test below catches it.
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      sandboxName: "stale-sandbox",
+      provider: "openai",
+      model: "gpt-4o",
+      endpointUrl: "https://api.openai.com/v1",
+      credentialEnv: "OPENAI_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      nimContainer: "nim-abc",
+    });
+
+    session.markStepComplete("provider_selection", {
+      sandboxName: null,
+      provider: null,
+      model: null,
+      endpointUrl: null,
+      credentialEnv: null,
+      preferredInferenceApi: null,
+      nimContainer: null,
+    });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.sandboxName).toBeNull();
+    expect(loaded.provider).toBeNull();
+    expect(loaded.model).toBeNull();
+    expect(loaded.endpointUrl).toBeNull();
+    expect(loaded.credentialEnv).toBeNull();
+    expect(loaded.preferredInferenceApi).toBeNull();
+    expect(loaded.nimContainer).toBeNull();
+  });
+
+  it("clears credentialEnv via completeSession when the wizard finishes on a local provider", () => {
+    // Matches the terminal path at end of onboard(): completeSession is what
+    // finalizes the session for a successful run. A local-provider onboard
+    // must not leave a stale credentialEnv on the "complete" record either.
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      provider: "openai",
+      credentialEnv: "OPENAI_API_KEY",
+    });
+    session.completeSession({
+      provider: "ollama-local",
+      model: "qwen3:14b",
+      credentialEnv: null,
+      nimContainer: null,
+    });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.status).toBe("complete");
+    expect(loaded.provider).toBe("ollama-local");
+    expect(loaded.credentialEnv).toBeNull();
+    expect(loaded.nimContainer).toBeNull();
+  });
+
   it("persists messagingChannels across save/load roundtrips", () => {
     const created = session.createSession();
     created.messagingChannels = ["telegram", "slack"];

@@ -763,6 +763,80 @@ describe("policies", () => {
       }
     });
 
+    it("Hermes Discord gateway policy uses the OpenClaw L4 WebSocket tunnel shape", () => {
+      const policyFiles = [
+        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
+        path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"),
+      ];
+
+      for (const file of policyFiles) {
+        const content = fs.readFileSync(file, "utf8");
+        const gatewaySection =
+          content.split("host: gateway.discord.gg")[1]?.split("- host:")[0] ?? "";
+        expect(gatewaySection).toContain("access: full");
+        expect(gatewaySection).toContain("tls: skip");
+        expect(gatewaySection).not.toContain("protocol: rest");
+        expect(gatewaySection).not.toContain("rules:");
+      }
+    });
+
+    it("Hermes Discord REST mutations are scoped to discord.com", () => {
+      const content = fs.readFileSync(
+        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
+        "utf8",
+      );
+      const parsed = YAML.parse(content);
+      const networkPolicies = parsed.network_policies as Record<
+        string,
+        {
+          endpoints?: Array<{
+            host?: string;
+            rules?: Array<{ allow?: { method?: string; path?: string } }>;
+          }>;
+        }
+      >;
+      const rulesFor = (policy: string, host: string) =>
+        (networkPolicies[policy]?.endpoints ?? [])
+          .filter((endpoint) => endpoint.host === host)
+          .flatMap((endpoint) => endpoint.rules ?? [])
+          .map((rule) => rule.allow)
+          .filter((rule): rule is { method: string; path: string } =>
+            Boolean(rule?.method && rule?.path),
+          );
+      const sortRules = (rules: Array<{ method: string; path: string }>) =>
+        [...rules].sort((a, b) =>
+          `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`),
+        );
+
+      const nousRules = rulesFor("nous_research", "nousresearch.com");
+      expect(nousRules).not.toContainEqual({ method: "PUT", path: "/**" });
+      expect(nousRules).not.toContainEqual({ method: "PATCH", path: "/**" });
+      expect(
+        nousRules.filter((rule) => ["PUT", "PATCH", "DELETE"].includes(rule.method)),
+      ).toEqual([]);
+
+      const discordMutationRules = sortRules(
+        rulesFor("discord", "discord.com").filter((rule) =>
+          ["PUT", "PATCH", "DELETE"].includes(rule.method),
+        ),
+      );
+      expect(discordMutationRules).toEqual(
+        sortRules([
+          { method: "PUT", path: "/api/v*/applications/*/commands" },
+          { method: "PUT", path: "/api/v*/channels/*/messages/*/reactions/*/@me" },
+          { method: "PATCH", path: "/api/v*/applications/*" },
+          { method: "PATCH", path: "/api/v*/applications/*/commands/*" },
+          { method: "PATCH", path: "/api/v*/channels/*/messages/*" },
+          { method: "PATCH", path: "/api/v*/webhooks/*/*/messages/*" },
+          { method: "DELETE", path: "/api/v*/applications/*/commands/*" },
+          { method: "DELETE", path: "/api/v*/channels/*/messages/*" },
+          { method: "DELETE", path: "/api/v*/channels/*/messages/*/reactions/*/*" },
+          { method: "DELETE", path: "/api/v*/webhooks/*/*/messages/*" },
+        ]),
+      );
+      expect(discordMutationRules.some((rule) => rule.path === "/**")).toBe(false);
+    });
+
     it("REST policy YAML avoids deprecated tls: terminate", () => {
       const agentsDir = path.join(REPO_ROOT, "agents");
       const agentPolicyFiles = fs.existsSync(agentsDir)

@@ -9,6 +9,9 @@ const CHANNEL_TOKEN_ENVS: Record<string, string[]> = {
   slack: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
 };
 
+const HERMES_DISCORD_PROXY = "http://127.0.0.1:3129";
+const HERMES_DISCORD_FACADE = "http://127.0.0.1:3130";
+
 export function buildMessagingEnvLines(
   enabledChannels: Set<string>,
   allowedIds: MessagingAllowedIds,
@@ -19,7 +22,15 @@ export function buildMessagingEnvLines(
   for (const channel of enabledChannels) {
     const envKeys = CHANNEL_TOKEN_ENVS[channel] ?? [];
     for (const envKey of envKeys) {
-      envLines.push(`${envKey}=openshell:resolve:env:${envKey}`);
+      envLines.push(`${envKey}=${buildTokenPlaceholder(channel, envKey)}`);
+    }
+    if (channel === "discord") {
+      envLines.push(`DISCORD_PROXY=${HERMES_DISCORD_PROXY}`);
+      envLines.push(`NEMOCLAW_DISCORD_FACADE_URL=${HERMES_DISCORD_FACADE}`);
+      const guildIds = Object.keys(discordGuilds).filter(Boolean);
+      if (guildIds.length > 0) {
+        envLines.push(`NEMOCLAW_DISCORD_GUILD_IDS=${guildIds.join(",")}`);
+      }
     }
   }
 
@@ -32,6 +43,16 @@ export function buildMessagingEnvLines(
   }
 
   return envLines;
+}
+
+function buildTokenPlaceholder(channel: string, envKey: string): string {
+  if (channel === "slack" && envKey === "SLACK_BOT_TOKEN") {
+    return "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+  }
+  if (channel === "slack" && envKey === "SLACK_APP_TOKEN") {
+    return "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN";
+  }
+  return `openshell:resolve:env:${envKey}`;
 }
 
 export function buildDiscordConfig(discordGuilds: DiscordGuilds): Record<string, unknown> {

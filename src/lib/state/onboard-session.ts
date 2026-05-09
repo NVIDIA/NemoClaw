@@ -121,13 +121,16 @@ export interface LockResult {
 }
 
 export interface SessionUpdates {
-  sandboxName?: string;
-  provider?: string;
-  model?: string;
-  endpointUrl?: string;
-  credentialEnv?: string;
-  preferredInferenceApi?: string;
-  nimContainer?: string;
+  // Nullable fields accept `null` as an explicit clear (e.g. a provider
+  // switch from remote→local clears `credentialEnv`). `undefined` means
+  // "leave unchanged". See filterSafeUpdates(). GH #2625.
+  sandboxName?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  endpointUrl?: string | null;
+  credentialEnv?: string | null;
+  preferredInferenceApi?: string | null;
+  nimContainer?: string | null;
   routerPid?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
@@ -700,17 +703,53 @@ export function releaseOnboardLock(): void {
 
 // ── Step management ──────────────────────────────────────────────
 
+// Apply an explicit-clear-aware update for a nullable session field.
+//
+//   value === "string"  → assign (after optional normalizer)
+//   value === null      → explicit clear (persisted as null)
+//   value === undefined → leave unchanged (caller didn't supply this field)
+//
+// Before GH #2625 the persistence layer only accepted strings, which meant
+// a provider switch from remote (credentialEnv="OPENAI_API_KEY") to local
+// (credentialEnv=null) silently dropped the clear and left the stale value
+// on disk. The rebuild preflight then demanded a credential the current
+// sandbox does not actually need.
+function assignNullableString<K extends keyof Session>(
+  safe: Partial<Session>,
+  key: K,
+  value: unknown,
+  normalize?: (v: string) => string | null,
+): void {
+  if (value === undefined) return;
+  if (value === null) {
+    (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
+    return;
+  }
+  if (typeof value === "string") {
+    const normalized = normalize ? normalize(value) : value;
+    if (normalized === null) {
+      // A normalizer that returned null means the input was unredactable;
+      // treat the same as an explicit clear rather than dropping silently.
+      (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
+      return;
+    }
+    (safe as Record<K, Session[K]>)[key] = normalized as Session[K];
+  }
+  // Non-string, non-null, non-undefined values are silently dropped —
+  // matches the pre-#2625 behavior for malformed input (e.g. numbers via
+  // JSON re-entry).
+}
+
 export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   const safe: Partial<Session> = {};
   if (!isObject(updates)) return safe;
-  if (typeof updates.sandboxName === "string") safe.sandboxName = updates.sandboxName;
-  if (typeof updates.provider === "string") safe.provider = updates.provider;
-  if (typeof updates.model === "string") safe.model = updates.model;
-  if (typeof updates.endpointUrl === "string") safe.endpointUrl = redactUrl(updates.endpointUrl);
-  if (typeof updates.credentialEnv === "string") safe.credentialEnv = updates.credentialEnv;
-  if (typeof updates.preferredInferenceApi === "string")
-    safe.preferredInferenceApi = updates.preferredInferenceApi;
-  if (typeof updates.nimContainer === "string") safe.nimContainer = updates.nimContainer;
+  assignNullableString(safe, "sandboxName", updates.sandboxName);
+  assignNullableString(safe, "provider", updates.provider);
+  assignNullableString(safe, "model", updates.model);
+  assignNullableString(safe, "endpointUrl", updates.endpointUrl, redactUrl);
+  assignNullableString(safe, "credentialEnv", updates.credentialEnv);
+  assignNullableString(safe, "preferredInferenceApi", updates.preferredInferenceApi);
+  assignNullableString(safe, "nimContainer", updates.nimContainer);
   if (typeof updates.routerPid === "number" && Number.isInteger(updates.routerPid) && updates.routerPid > 0) {
     safe.routerPid = updates.routerPid;
   }
