@@ -330,6 +330,15 @@ export no_proxy="$_NO_PROXY_VAL"
 export NEMOCLAW_DISCORD_FACADE_URL="http://127.0.0.1:${DISCORD_FACADE_PORT}"
 export PYTHONPATH="/opt/nemoclaw-hermes-discord-preload${PYTHONPATH:+:${PYTHONPATH}}"
 
+# OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA. Persist
+# them into connect-session shells so Python Slack probes and Hermes tools trust
+# the same proxy CA that the entrypoint received at startup.
+if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-$SSL_CERT_FILE}"
+  export REQUESTS_CA_BUNDLE="${REQUESTS_CA_BUNDLE:-$SSL_CERT_FILE}"
+  export GIT_SSL_CAINFO="${GIT_SSL_CAINFO:-$SSL_CERT_FILE}"
+fi
+
 # Resolve sandbox home dir early — used by proxy-env writing and
 # install_configure_guard before the non-root/root branch below.
 if [ "$(id -u)" -eq 0 ]; then
@@ -359,6 +368,12 @@ export DISCORD_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"
 export NEMOCLAW_DISCORD_FACADE_URL="http://127.0.0.1:${DISCORD_FACADE_PORT}"
 export PYTHONPATH="/opt/nemoclaw-hermes-discord-preload\${PYTHONPATH:+:\${PYTHONPATH}}"
 PROXYEOF
+  for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
+    _ca_env_value="${!_ca_env_name:-}"
+    if [ -n "$_ca_env_value" ]; then
+      printf 'export %s=%q\n' "$_ca_env_name" "$_ca_env_value"
+    fi
+  done
 } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
 
 # ── Legacy layout migration ──────────────────────────────────────
