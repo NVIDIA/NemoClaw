@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { listAgents } from "../agent-defs";
-import { runDeprecatedOnboardAliasCommand, runOnboardCommand } from "../onboard-command";
-import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } from "../usage-notice";
+import { listAgents } from "../agent/defs";
+import { runDeprecatedOnboardAliasCommand, runOnboardCommand } from "../onboard/legacy-command";
+import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } from "../onboard/usage-notice";
 
 const { onboard: runOnboard } = require("../onboard") as {
   onboard: (options?: unknown) => Promise<void>;

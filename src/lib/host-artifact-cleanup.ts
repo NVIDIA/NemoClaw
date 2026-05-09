@@ -12,7 +12,7 @@
 // entry on STALE_FILES; the loop does not change. If a future leftover is a
 // folder or symlink instead of a file, widen the shape at that point.
 
-import { removeLegacyCredentialsFileIfEmpty } from "./credentials";
+import { removeLegacyCredentialsFileIfEmpty } from "./credentials/store";
 
 interface StaleHostFile {
   /** Human-readable description for the success log line. */

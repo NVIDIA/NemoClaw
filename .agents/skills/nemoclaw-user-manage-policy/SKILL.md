@@ -78,6 +78,12 @@ Check that the sandbox is running with the updated policy:
 $ nemoclaw <name> status
 ```
 
+### Add Blueprint Policy Additions
+
+If you maintain a custom blueprint, you can add extra policy entries under `components.policy.additions` in `nemoclaw-blueprint/blueprint.yaml`.
+NemoClaw validates those entries with the same policy schema used by preset files, fetches the live policy during sandbox creation, merges the additions into `network_policies`, and applies the merged policy through OpenShell.
+The applied additions are recorded in the run metadata so you can audit which blueprint-level policy entries were active for that sandbox run.
+
 ## Step 2: Dynamic Changes
 
 Dynamic changes apply a policy update to a running sandbox without restarting it.
@@ -168,7 +174,7 @@ Available presets:
 |--------|-----------|
 | `brave` | Brave Search API |
 | `brew` | Homebrew (Linuxbrew) package manager |
-| `discord` | Discord webhook API |
+| `discord` | Discord API, gateway, and CDN access |
 | `github` | GitHub and GitHub REST API |
 | `huggingface` | Hugging Face Hub (download-only) and inference router |
 | `jira` | Atlassian Jira API |

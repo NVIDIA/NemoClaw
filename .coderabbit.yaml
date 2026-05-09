@@ -187,10 +187,11 @@ reviews:
           inference.local regression
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
           isolation
+        - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e,hermes-slack-e2e
         ```
 
     - path: "src/nemoclaw.ts"
@@ -220,7 +221,7 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=overlayfs-autofix-e2e
         ```
 
-    - path: "src/lib/preflight.ts"
+    - path: "src/lib/onboard/preflight.ts"
       instructions: *e2e-overlayfs
 
     - path: "src/lib/deploy.ts"
@@ -251,7 +252,7 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=snapshot-commands-e2e,rebuild-openclaw-e2e
         ```
 
-    - path: "src/lib/shields*.ts"
+    - path: "src/lib/shields/**"
       instructions: |
         These files control shields down/up, config mutability, audit
         trail, and auto-restore timer.
@@ -273,12 +274,27 @@ reviews:
         - `hermes-e2e` — Hermes onboard + health probe + live inference
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
           isolation
+        - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
         - `rebuild-hermes-e2e` — Hermes upgrade path
         - `rebuild-hermes-stale-base-e2e` — Hermes rebuild with stale cached base image
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-discord-e2e,rebuild-hermes-e2e,rebuild-hermes-stale-base-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-discord-e2e,hermes-slack-e2e,rebuild-hermes-e2e,rebuild-hermes-stale-base-e2e
+        ```
+
+    - path: "test/e2e/test-hermes-slack-e2e.sh"
+      instructions: |
+        This script validates Hermes Slack onboarding, policy scoping, Slack
+        credential providers, and Python Slack API egress through OpenShell
+        placeholder substitution.
+
+        **E2E test recommendation:**
+        - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-slack-e2e
         ```
 
     - path: "nemoclaw-blueprint/policies/**"

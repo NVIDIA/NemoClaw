@@ -155,6 +155,27 @@ error() {
 }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
+# Common TTY-required error message for the third-party software notice.
+# Used by both show_usage_notice() and preflight_usage_notice_prompt() so
+# the recovery hint stays in sync (#3058).
+tty_required_error_message() {
+  cat <<'EOF'
+Interactive third-party software acceptance requires a TTY.
+
+  Three ways to proceed (#3058):
+    1. Re-run in a terminal:
+         bash <(curl -fsSL https://www.nvidia.com/nemoclaw.sh)
+
+    2. Accept upfront in the curl|bash pipe:
+         curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+
+    3. Pass the flag through to the installer:
+         curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
+
+  See docs/reference/commands.md for the full non-interactive install reference.
+EOF
+}
+
 verify_downloaded_script() {
   local file="$1" label="${2:-script}" expected_hash="${3:-}"
   if [ ! -s "$file" ]; then
@@ -533,7 +554,7 @@ usage() {
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
-  printf "                                  | gemini | ollama | custom | nim-local | vllm\n"
+  printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -575,7 +596,7 @@ show_usage_notice() {
     exec 3<&-
     return "$status"
   else
-    error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
+    error "$(tty_required_error_message)"
   fi
 }
 
@@ -710,7 +731,7 @@ preflight_usage_notice_prompt() {
     return "$status"
   fi
 
-  error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
+  error "$(tty_required_error_message)"
 }
 
 # spin "label" cmd [args...]
@@ -1320,44 +1341,6 @@ is_source_checkout() {
   return 1
 }
 
-init_nemoclaw_submodules() {
-  local root="$1"
-  [[ -f "$root/.gitmodules" ]] || return 0
-  git -C "$root" rev-parse --git-dir >/dev/null 2>&1 || return 0
-  git -C "$root" submodule update --init --depth 1 2>/dev/null
-}
-
-is_routed_provider_requested() {
-  local provider="${NEMOCLAW_PROVIDER:-}"
-  provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
-  [[ "$provider" == "routed" ]]
-}
-
-install_model_router_if_present() {
-  local root="$1"
-  local router_dir="$root/nemoclaw-blueprint/router/llm-router"
-
-  if ! command_exists pip3; then
-    is_routed_provider_requested && error "pip3 is required for routed inference."
-    return 0
-  fi
-  if [[ ! -d "$router_dir" ]]; then
-    is_routed_provider_requested && error "llm-router is required for routed inference but is missing."
-    return 0
-  fi
-  if [[ ! -f "$router_dir/pyproject.toml" && ! -f "$router_dir/setup.py" ]]; then
-    is_routed_provider_requested && error "llm-router is required for routed inference but is not initialized."
-    warn "Skipping model router install — llm-router submodule is not initialized."
-    return 0
-  fi
-  if ! spin "Installing model router" pip3 install --quiet --user "${router_dir}[prefill,proxy]"; then
-    if is_routed_provider_requested; then
-      error "pip3 install of llm-router failed"
-    fi
-    warn "Skipping model router install — pip3 install failed"
-  fi
-}
-
 install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   local repo_root package_json
@@ -1373,14 +1356,9 @@ install_nemoclaw() {
       spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$NEMOCLAW_SOURCE_ROOT" \
         || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     fi
-    if ! spin "Initializing ${_CLI_DISPLAY} submodules" init_nemoclaw_submodules "$NEMOCLAW_SOURCE_ROOT"; then
-      is_routed_provider_requested && error "Failed to initialize the llm-router submodule required for routed inference."
-      warn "Submodule initialization failed — model router support may be unavailable"
-    fi
     spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm install --ignore-scripts"
     spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
     spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm install --ignore-scripts && npm run build"
-    install_model_router_if_present "$NEMOCLAW_SOURCE_ROOT"
     spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
   else
     if [[ -f "$package_json" ]]; then
@@ -1399,10 +1377,6 @@ install_nemoclaw() {
     mkdir -p "$(dirname "$nemoclaw_src")"
     NEMOCLAW_SOURCE_ROOT="$nemoclaw_src"
     spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
-    if ! spin "Initializing ${_CLI_DISPLAY} submodules" init_nemoclaw_submodules "$nemoclaw_src"; then
-      is_routed_provider_requested && error "Failed to initialize the llm-router submodule required for routed inference."
-      warn "Submodule initialization failed — model router support may be unavailable"
-    fi
     # Fetch version tags into the shallow clone so `git describe --tags
     # --match "v*"` works at runtime (the shallow clone only has the
     # single ref we asked for).
@@ -1418,7 +1392,6 @@ install_nemoclaw() {
     spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
     spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
     spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm install --ignore-scripts && npm run build"
-    install_model_router_if_present "$nemoclaw_src"
     spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
 
     # Install/upgrade the OpenShell CLI on the GitHub-clone path (curl|bash).
@@ -1512,7 +1485,7 @@ verify_nemoclaw() {
 # 5. Onboard
 # ---------------------------------------------------------------------------
 run_installer_host_preflight() {
-  local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/preflight.js"
+  local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   if ! command_exists node || [[ ! -f "$preflight_module" ]]; then
     return 0
   fi

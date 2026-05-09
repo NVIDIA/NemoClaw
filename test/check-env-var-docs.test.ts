@@ -9,7 +9,7 @@
  * and stale-allowlist detection.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,6 +18,7 @@ import {
   findDocumentedVars,
   findEnvVarReads,
   loadAllowlist,
+  walkSourceFiles,
 } from "../scripts/check-env-var-docs";
 
 describe("findEnvVarReads", () => {
@@ -25,6 +26,10 @@ describe("findEnvVarReads", () => {
     ["const x = process.env.NEMOCLAW_FOO;", ["NEMOCLAW_FOO"]],
     ['const x = process.env["NEMOCLAW_FOO"];', ["NEMOCLAW_FOO"]],
     ["if (!process.env.NEMOCLAW_BAR) {}", ["NEMOCLAW_BAR"]],
+    [
+      "const { NEMOCLAW_FOO, NEMOCLAW_BAR: bar, PATH: NEMOCLAW_NOT_REAL } = process.env;",
+      ["NEMOCLAW_BAR", "NEMOCLAW_FOO"],
+    ],
     ["const x = process.env.NEMOCLAW_FOO ?? process.env.NEMOCLAW_BAR;", ["NEMOCLAW_BAR", "NEMOCLAW_FOO"]],
   ])("extracts %s", (code, expected) => {
     expect([...findEnvVarReads(code)].sort()).toEqual(expected);
@@ -97,6 +102,23 @@ describe("loadAllowlist", () => {
 
   it("rejects entries missing name or reason", () => {
     expect(() => loadAllowlist(JSON.stringify([{ name: "X" }]))).toThrow(/name.*reason/);
+  });
+});
+
+describe("walkSourceFiles", () => {
+  it("skips broken symlinks without crashing", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "env-doc-walk-"));
+    try {
+      const srcDir = path.join(dir, "src");
+      mkdirSync(srcDir);
+      const sourceFile = path.join(srcDir, "a.ts");
+      writeFileSync(sourceFile, "const x = process.env.NEMOCLAW_FOO;", "utf-8");
+      symlinkSync(path.join(srcDir, "missing-target.ts"), path.join(srcDir, "broken-link.ts"));
+
+      expect(walkSourceFiles([srcDir])).toEqual([sourceFile]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

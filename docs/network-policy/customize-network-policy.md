@@ -43,7 +43,7 @@ See [Agent cannot reach a host-side HTTP service](../reference/troubleshooting.m
 
 > [!IMPORTANT]
 > Make static policy edits on the host, not inside the sandbox.
-> The sandbox image is intentionally minimal and may not include editors or package-management tools.
+> The sandbox image includes a small set of operational tools such as `vi`, `jq`, and `dos2unix`, but host-side policy files remain the durable source of truth.
 > Changes made only inside the sandbox are also ephemeral and are lost when the sandbox is recreated.
 
 ## Static Changes
@@ -96,6 +96,12 @@ Check that the sandbox is running with the updated policy:
 ```console
 $ nemoclaw <name> status
 ```
+
+### Add Blueprint Policy Additions
+
+If you maintain a custom blueprint, you can add extra policy entries under `components.policy.additions` in `nemoclaw-blueprint/blueprint.yaml`.
+NemoClaw validates those entries with the same policy schema used by preset files, fetches the live policy during sandbox creation, merges the additions into `network_policies`, and applies the merged policy through OpenShell.
+The applied additions are recorded in the run metadata so you can audit which blueprint-level policy entries were active for that sandbox run.
 
 ## Dynamic Changes
 
@@ -187,7 +193,7 @@ Available presets:
 |--------|-----------|
 | `brave` | Brave Search API |
 | `brew` | Homebrew (Linuxbrew) package manager |
-| `discord` | Discord webhook API |
+| `discord` | Discord API, gateway, and CDN access |
 | `github` | GitHub and GitHub REST API |
 | `huggingface` | Hugging Face Hub (download-only) and inference router |
 | `jira` | Atlassian Jira API |

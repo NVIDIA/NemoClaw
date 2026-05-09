@@ -54,7 +54,7 @@ function main(): void {
   const [summaryPath, thresholdPath, label = "coverage"] = process.argv.slice(2);
   if (!summaryPath || !thresholdPath) {
     throw new Error(
-      "Usage: check-coverage-ratchet.ts <coverage-summary.json> <coverage-threshold.json> [label]",
+      "Usage: coverage-ratchet.ts <coverage-summary.json> <coverage-threshold.json> [label]",
     );
   }
 

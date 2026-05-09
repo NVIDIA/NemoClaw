@@ -99,12 +99,57 @@ describe("runRegisteredOclifCommand", () => {
     expect(exit).toHaveBeenCalledWith(2);
   });
 
-  it("treats oclif help exits as success", async () => {
-    runCommandMock.mockRejectedValue({ oclif: { exit: 0 } });
+  it("treats oclif graceful ExitError(0) as silent success", async () => {
+    // Mirrors what `Command.exit(0)` and `--help` actually throw in oclif: an
+    // ExitError instance whose synthetic `EEXIT: 0` message must NOT leak to
+    // the user.
+    class ExitError extends Error {
+      oclif = { exit: 0 };
+    }
+    runCommandMock.mockRejectedValue(new ExitError("EEXIT: 0"));
+    const errorLine = vi.fn();
 
-    await runRegisteredOclifCommand("list", ["--help"], { rootDir: "/repo" });
+    await runRegisteredOclifCommand("list", ["--help"], { rootDir: "/repo", error: errorLine });
 
     expect(process.exitCode).toBe(0);
+    expect(errorLine).not.toHaveBeenCalled();
+  });
+
+  it("#2666: surfaces errors that happen to carry oclif.exit === 0 instead of swallowing them", async () => {
+    // Before #2666 this branch silently set exit 0 and produced no output.
+    // The bug was an arbitrary error riding the same `oclif.exit === 0`
+    // channel, e.g. propagated from inside a command's run(). Surface the
+    // message so the user gets signal.
+    class WeirdError extends Error {
+      oclif = { exit: 0 };
+    }
+    runCommandMock.mockRejectedValue(new WeirdError("Could not verify sandbox 'my-assist' against the live OpenShell gateway"));
+    const errorLine = vi.fn();
+
+    await runRegisteredOclifCommand("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
+
+    expect(process.exitCode).toBe(0);
+    expect(errorLine).toHaveBeenCalledWith(
+      "  Could not verify sandbox 'my-assist' against the live OpenShell gateway",
+    );
+  });
+
+  it("#2666: falls back to a generic line when the error message is empty", async () => {
+    // Closes the residual silent path: if a non-ExitError(0) carries an
+    // empty message (or one that trims to empty), still emit *something*
+    // so the user is never left looking at exit 0 + blank stdout/stderr.
+    class BlankError extends Error {
+      oclif = { exit: 0 };
+    }
+    runCommandMock.mockRejectedValue(new BlankError(""));
+    const errorLine = vi.fn();
+
+    await runRegisteredOclifCommand("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
+
+    expect(process.exitCode).toBe(0);
+    expect(errorLine).toHaveBeenCalledOnce();
+    const [line] = errorLine.mock.calls[0];
+    expect(String(line).trim().length).toBeGreaterThan(0);
   });
 
   it("rethrows non-parse command failures", async () => {
@@ -112,5 +157,45 @@ describe("runRegisteredOclifCommand", () => {
     runCommandMock.mockRejectedValue(error);
 
     await expect(runRegisteredOclifCommand("list", [], { rootDir: "/repo" })).rejects.toBe(error);
+  });
+
+  it("exits cleanly without rethrowing when oclif Command.exit(code) bubbles up", async () => {
+    // NCQ #3180: throwing an ExitError out of the runner leaks a raw
+    // @oclif/core stack trace to the user. Treat any non-zero ExitError
+    // (carrying `oclif.exit`) as a graceful exit with that code.
+    class ExitError extends Error {
+      oclif = { exit: 1 };
+    }
+    runCommandMock.mockRejectedValue(new ExitError("EEXIT: 1"));
+    const errorLine = vi.fn();
+    const exit = vi.fn((code: number): never => {
+      throw new Error(`exit:${code}`);
+    });
+
+    await expect(
+      runRegisteredOclifCommand("sandbox:gateway:token", ["hermes"], {
+        rootDir: "/repo",
+        error: errorLine,
+        exit,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(errorLine).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("rethrows other oclif error classes that carry oclif.exit", async () => {
+    // RequiredArgsError and friends ride the same `oclif.exit` channel as
+    // ExitError but carry a user-visible message that oclif's own handler
+    // is responsible for printing. Don't swallow those.
+    class RequiredArgsError extends Error {
+      oclif = { exit: 2 };
+    }
+    const error = new RequiredArgsError("Missing 1 required arg: path");
+    runCommandMock.mockRejectedValue(error);
+
+    await expect(runRegisteredOclifCommand("skill:install", [], { rootDir: "/repo" })).rejects.toBe(
+      error,
+    );
   });
 });

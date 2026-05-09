@@ -6,9 +6,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { SECRET_PATTERNS } from "../src/lib/secret-patterns";
-import { redact as debugRedact } from "../src/lib/debug";
-import { redactSensitiveText } from "../src/lib/onboard-session";
+import { SECRET_PATTERNS } from "../src/lib/security/secret-patterns";
+import { redact as debugRedact } from "../src/lib/diagnostics/debug";
+import { redactSensitiveText } from "../src/lib/state/onboard-session";
 // runner.ts uses CJS exports — import via dist
 import { createRequire } from "node:module";
 

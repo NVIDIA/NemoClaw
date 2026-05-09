@@ -1,20 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- exercised through CLI subprocess destroy/rebuild tests. */
 
 import fs from "node:fs";
+import path from "node:path";
 
-import { CLI_NAME } from "../../branding";
-import { prompt as askPrompt } from "../../credentials";
+import { CLI_NAME } from "../../cli/branding";
+import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
-import * as onboardSession from "../../onboard-session";
-import type { Session } from "../../onboard-session";
+import * as onboardSession from "../../state/onboard-session";
+import type { Session } from "../../state/onboard-session";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import { DASHBOARD_PORT } from "../../ports";
+import { DASHBOARD_PORT } from "../../core/ports";
 import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -27,7 +27,7 @@ import {
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
-import { G, R, YW } from "../../terminal-style";
+import { G, R, YW } from "../../cli/terminal-style";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -39,6 +39,19 @@ type RemoveSandboxImageDeps = {
 type RemoveSandboxRegistryEntryDeps = {
   removeImage?: (sandboxName: string) => void;
   removeSandbox?: typeof registry.removeSandbox;
+};
+
+type RunOpenshell = (
+  args: string[],
+  opts?: Record<string, unknown>,
+) => { status: number | null };
+
+export type CleanupSandboxServicesDeps = {
+  getSandbox?: typeof registry.getSandbox;
+  stopAll?: (opts: { sandboxName: string }) => void;
+  unloadOllamaModels?: () => void;
+  runOpenshell?: RunOpenshell;
+  rmSync?: typeof fs.rmSync;
 };
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
@@ -62,6 +75,44 @@ function cleanupGatewayAfterLastSandbox(): void {
   });
 }
 
+// Mirrors the body of `isNonInteractive()` in src/lib/onboard.ts. Duplicated
+// here to avoid an awkward sibling-action -> onboard import; the canonical
+// helper should be lifted to src/lib/core/ so this and the lazy requires in
+// policy-channel.ts and inference/ollama/proxy.ts can all share one source.
+function isNonInteractive(): boolean {
+  return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+}
+
+/**
+ * Decide whether to tear down the shared NemoClaw gateway after destroying
+ * the last sandbox. Default is to preserve it (#2166); explicit opt-in via
+ * `cleanupGateway: true` (which `normalizeDestroySandboxOptions` also reads
+ * from `--cleanup-gateway` / `NEMOCLAW_CLEANUP_GATEWAY`).
+ *
+ * Prompt rules:
+ *   - explicit `cleanupGateway` set         → honour it without prompting
+ *   - non-interactive or `--yes` / `--force` → preserve gateway (safe default)
+ *   - interactive without `--yes`           → prompt the user
+ */
+async function resolveCleanupGatewayDecision(
+  options: DestroySandboxOptions,
+): Promise<boolean> {
+  if (options.cleanupGateway === true) return true;
+  if (options.cleanupGateway === false) return false;
+  if (options.yes === true || options.force === true) return false;
+  if (isNonInteractive()) return false;
+  console.log(`  ${YW}This was the last sandbox.${R}`);
+  console.log(
+    "  Also destroy the shared NemoClaw gateway (port forward, gateway pod, cluster volumes)?",
+  );
+  console.log("  Saying 'no' keeps the gateway so the next 'nemoclaw onboard' is faster.");
+  const answer = await askPrompt(
+    "  Type 'yes' to destroy the gateway, or press Enter to keep it [y/N]: ",
+  );
+  const trimmed = answer.trim().toLowerCase();
+  return trimmed === "y" || trimmed === "yes";
+}
+
 function hasNoLiveSandboxes(): boolean {
   const { captureOpenshell } = require("../../adapters/openshell/runtime") as {
     captureOpenshell: (
@@ -79,37 +130,97 @@ function hasNoLiveSandboxes(): boolean {
   return parseLiveSandboxNames(liveList.output).size === 0;
 }
 
-function cleanupSandboxServices(
+export function cleanupSandboxServices(
   sandboxName: string,
   { stopHostServices = false }: { stopHostServices?: boolean } = {},
+  deps: CleanupSandboxServicesDeps = {},
 ): void {
-  if (stopHostServices) {
-    const { stopAll } = require("../../services");
-    stopAll({ sandboxName });
-  }
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const stopAll =
+    deps.stopAll ??
+    ((opts: { sandboxName: string }) => {
+      const services = require("../../services") as {
+        stopAll: (opts: { sandboxName: string }) => void;
+      };
+      services.stopAll(opts);
+    });
+  const unloadOllamaModels =
+    deps.unloadOllamaModels ??
+    (() => {
+      const { unloadOllamaModels: unload } = require("../../inference/ollama/proxy") as {
+        unloadOllamaModels: () => void;
+      };
+      unload();
+    });
+  const runOpenshell =
+    deps.runOpenshell ??
+    ((args: string[], opts?: Record<string, unknown>) => {
+      const runtime = require("../../adapters/openshell/runtime") as {
+        runOpenshell: RunOpenshell;
+      };
+      return runtime.runOpenshell(args, opts);
+    });
+  const rmSync = deps.rmSync ?? fs.rmSync;
 
-  const sb = registry.getSandbox(sandboxName);
-  if (sb?.provider?.includes("ollama")) {
-    const { unloadOllamaModels } = require("../../onboard-ollama-proxy");
-    unloadOllamaModels();
+  if (stopHostServices) {
+    // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
+    // see src/lib/services.ts. Don't double-call here.
+    stopAll({ sandboxName });
+  } else {
+    // No global stop, so `stopAll()` did not run; explicitly free Ollama
+    // models for this sandbox if its provider used Ollama. Without this
+    // branch a single-sandbox destroy would leave models loaded on the GPU.
+    const sb = getSandbox(sandboxName);
+    if (sb?.provider?.includes("ollama")) {
+      unloadOllamaModels();
+    }
   }
 
   try {
-    fs.rmSync(`/tmp/nemoclaw-services-${sandboxName}`, { recursive: true, force: true });
+    rmSync(`/tmp/nemoclaw-services-${sandboxName}`, { recursive: true, force: true });
   } catch {
     // PID directory may not exist — ignore.
   }
 
   // Delete messaging providers created during onboard. Suppress stderr so
   // "! Provider not found" noise doesn't appear when messaging was never configured.
-  const { runOpenshell } = require("../../adapters/openshell/runtime") as {
-    runOpenshell: (args: string[], opts?: Record<string, unknown>) => { status: number | null };
-  };
-  for (const suffix of ["telegram-bridge", "discord-bridge", "slack-bridge"]) {
+  for (const suffix of ["telegram-bridge", "discord-bridge", "slack-bridge", "slack-app"]) {
     runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
     });
+  }
+}
+
+/**
+ * Remove host-side shields state files for a sandbox.
+ *
+ * Without this cleanup a stale shields-<name>.json from a previous
+ * `shields up` survives destroy → re-onboard and causes
+ * `deriveShieldsMode` to report "locked" on a fresh sandbox.
+ *
+ * See: https://github.com/NVIDIA/NemoClaw/issues/3114
+ */
+export function removeShieldsState(
+  sandboxName: string,
+  stateDir = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state"),
+): void {
+  const resolvedStateDir = path.resolve(stateDir);
+  for (const prefix of ["shields-", "shields-timer-"]) {
+    const filePath = path.resolve(resolvedStateDir, `${prefix}${sandboxName}.json`);
+    if (!filePath.startsWith(`${resolvedStateDir}${path.sep}`)) {
+      // Defense-in-depth: sandbox names are validated to [a-z0-9-] at
+      // all entry points, but reject traversal attempts just in case.
+      continue;
+    }
+    try {
+      fs.rmSync(filePath, { force: true });
+    } catch (error) {
+      // force: true already suppresses ENOENT; warn on real failures
+      // (e.g. EPERM) so stale state doesn't silently survive.
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`  ${YW}⚠${R} Failed to remove shields state '${filePath}': ${message}`);
+    }
   }
 }
 
@@ -187,7 +298,7 @@ export async function destroySandbox(
     }
   }
 
-  const nim = require("../../nim") as {
+  const nim = require("../../inference/nim") as {
     stopNimContainer: (sandboxName: string, opts?: { silent?: boolean }) => void;
     stopNimContainerByName: (name: string) => void;
   };
@@ -202,9 +313,13 @@ export async function destroySandbox(
     nim.stopNimContainer(sandboxName, { silent: true });
   }
 
+  // The Ollama auth proxy is per-sandbox and only spawned when the provider
+  // is Ollama, so this guard scopes only `killStaleProxy()`. GPU unload is
+  // handled separately by `cleanupSandboxServices` above (which routes
+  // through `stopAll()` or directly into `unloadOllamaModels()` based on
+  // whether host services are being torn down).
   if (sb?.provider?.includes("ollama")) {
-    const { unloadOllamaModels, killStaleProxy } = require("../../onboard-ollama-proxy");
-    unloadOllamaModels();
+    const { killStaleProxy } = require("../../inference/ollama/proxy");
     killStaleProxy();
   }
 
@@ -237,6 +352,7 @@ export async function destroySandbox(
   });
 
   cleanupSandboxServices(sandboxName, { stopHostServices: shouldStopHostServices });
+  removeShieldsState(sandboxName);
   const removed = removeSandboxRegistryEntry(sandboxName);
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {
@@ -253,7 +369,17 @@ export async function destroySandbox(
       noLiveSandboxes: hasNoLiveSandboxes(),
     })
   ) {
-    cleanupGatewayAfterLastSandbox();
+    const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
+    if (shouldCleanupGateway) {
+      cleanupGatewayAfterLastSandbox();
+    } else {
+      console.log(
+        `  Shared NemoClaw gateway preserved. Re-run 'openshell gateway destroy --name ${NEMOCLAW_GATEWAY_NAME}' to remove it,`,
+      );
+      console.log(
+        `  or pass '--cleanup-gateway' / set NEMOCLAW_CLEANUP_GATEWAY=1 next time. (#2166)`,
+      );
+    }
   }
   if (alreadyGone) {
     console.log(`  Sandbox '${sandboxName}' was already absent from the live gateway.`);

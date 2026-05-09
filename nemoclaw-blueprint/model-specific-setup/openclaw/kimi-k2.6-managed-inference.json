@@ -2,7 +2,7 @@
   "$schema": "../schema.json",
   "id": "kimi-k2.6-managed-inference",
   "agent": "openclaw",
-  "description": "Preserves OpenClaw request and tool-call compatibility for moonshotai/kimi-k2.6 through NemoClaw managed inference.local chat completions.",
+  "description": "Preserves OpenClaw request, tool-call, and reasoning-output compatibility for moonshotai/kimi-k2.6 through NemoClaw managed inference.local chat completions.",
   "match": {
     "modelIds": ["moonshotai/kimi-k2.6"],
     "providerKey": "inference",

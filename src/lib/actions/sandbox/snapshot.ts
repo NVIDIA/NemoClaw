@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- exercised through CLI subprocess snapshot tests. */
 
 import fs from "node:fs";
 import path from "node:path";
 
-import { CLI_NAME } from "../../branding";
+import { CLI_NAME } from "../../cli/branding";
 import { dockerCapture, dockerInspect } from "../../adapters/docker";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { ROOT, run, shellQuote, validateName } from "../../runner";

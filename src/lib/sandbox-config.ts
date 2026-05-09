@@ -20,13 +20,13 @@ const { promises: dnsPromises } = require("node:dns");
 const { isIP } = require("node:net");
 const { validateName } = require("./runner");
 const { dockerExecFileSync } = require("./adapters/docker/exec");
-const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
+const credentialFilter: typeof import("./security/credential-filter") = require("./security/credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue, isCredentialField } = credentialFilter;
-const { appendAuditEntry } = require("./shields-audit");
+const { appendAuditEntry } = require("./shields/audit");
 const { isPrivateHostname, isPrivateIp } = require("./private-networks");
 
-type ConfigObject = import("./credential-filter").ConfigObject;
-type ConfigValue = import("./credential-filter").ConfigValue;
+type ConfigObject = import("./security/credential-filter").ConfigObject;
+type ConfigValue = import("./security/credential-filter").ConfigValue;
 const { runOpenshellCommand, captureOpenshellCommand } = require("./adapters/openshell/client");
 
 function parseJson<T>(text: string): T {
@@ -98,7 +98,7 @@ function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
     const entry = registry.getSandbox(sandboxName);
     if (!entry || !entry.agent) return DEFAULT_AGENT_CONFIG;
 
-    const agentDefs = require("./agent-defs");
+    const agentDefs = require("./agent/defs");
     const agent = agentDefs.loadAgent(entry.agent);
     const cfg = agent.configPaths;
 
@@ -829,7 +829,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
 
   // 1. Determine which provider and credentialEnv the sandbox uses.
   //    Load the onboard session and verify it matches this sandbox.
-  const { loadSession } = require("./onboard-session");
+  const { loadSession } = require("./state/onboard-session");
   const session = loadSession();
 
   if (!session || !session.credentialEnv) {
@@ -866,7 +866,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
   } else if (opts.fromStdin) {
     newToken = await readStdin();
   } else {
-    const { promptSecret } = require("./credentials");
+    const { promptSecret } = require("./credentials/store");
     newToken = await promptSecret(`  New ${credentialEnv} value: `);
   }
 
@@ -886,7 +886,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
   // 4. Stage the new value in the current process so the openshell update
   //    that follows can read it via --credential <ENV>. The OpenShell
   //    gateway becomes the system of record once the update succeeds.
-  const { saveCredential } = require("./credentials");
+  const { saveCredential } = require("./credentials/store");
   saveCredential(credentialEnv, newToken);
 
   // 5. Update the openshell provider

@@ -66,7 +66,7 @@ describe("WSL2 inference verification timeouts (issue #987)", () => {
     function runProbeWithCurlStatuses(statuses: number[]) {
       const httpProbePath = require.resolve("../dist/lib/http-probe.js");
       const platformPath = require.resolve("../dist/lib/platform.js");
-      const probesPath = require.resolve("../dist/lib/onboard-inference-probes.js");
+      const probesPath = require.resolve("../dist/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
       const platform = require(platformPath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;
@@ -153,7 +153,7 @@ describe("WSL2 inference verification timeouts (issue #987)", () => {
     function runProbeWithResults(results: ProbeResultFixture[], opts: { isWsl?: boolean } = {}) {
       const httpProbePath = require.resolve("../dist/lib/http-probe.js");
       const platformPath = require.resolve("../dist/lib/platform.js");
-      const probesPath = require.resolve("../dist/lib/onboard-inference-probes.js");
+      const probesPath = require.resolve("../dist/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
       const platform = require(platformPath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;

@@ -49,6 +49,16 @@ export function findEnvVarReads(sourceText: string, filePath = "source.ts"): Set
     if (name && !isAssignmentOrDeleteTarget(node)) {
       found.add(name);
     }
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isObjectBindingPattern(node.name) &&
+      isProcessEnvExpression(stripParentheses(node.initializer))
+    ) {
+      for (const bindingName of envVarNamesForObjectBindingPattern(node.name)) {
+        found.add(bindingName);
+      }
+    }
     ts.forEachChild(node, visit);
   }
 
@@ -151,7 +161,12 @@ function walk(dir: string, out: string[]): void {
   for (const name of entries) {
     if (name === "node_modules" || name.startsWith(".")) continue;
     const full = path.join(dir, name);
-    const st = statSync(full);
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
     if (st.isDirectory()) {
       walk(full, out);
     } else if (
@@ -177,6 +192,19 @@ function envVarNameFor(node: ts.Node): string | null {
     }
   }
   return null;
+}
+
+function envVarNamesForObjectBindingPattern(pattern: ts.ObjectBindingPattern): string[] {
+  const out: string[] = [];
+  for (const element of pattern.elements) {
+    if (element.dotDotDotToken) continue;
+    const propertyName = element.propertyName ?? element.name;
+    if (ts.isIdentifier(propertyName) || ts.isStringLiteral(propertyName)) {
+      const name = propertyName.text;
+      if (name.startsWith(ENV_PREFIX)) out.push(name);
+    }
+  }
+  return out;
 }
 
 function isProcessEnvExpression(expression: ts.Expression): boolean {

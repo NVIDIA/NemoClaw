@@ -3,7 +3,7 @@
 
 import { Flags } from "@oclif/core";
 
-import { NOTICE_ACCEPT_FLAG } from "../../usage-notice";
+import { NOTICE_ACCEPT_FLAG } from "../../onboard/usage-notice";
 
 const acceptFlagName = NOTICE_ACCEPT_FLAG.replace(/^--/, "");
 

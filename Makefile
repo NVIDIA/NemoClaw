@@ -1,38 +1,39 @@
 .PHONY: check lint format format-biome lint-ts format-ts check-installer-hash docs docs-strict docs-live docs-clean
 
 check:
-	npx prek run --all-files
-	@echo "All checks passed."
+	npm run check
 
-lint: check
+lint:
+	npm run check
 
 # Targeted subproject checks (not part of `make check` — use for focused runs).
 lint-ts:
-	cd nemoclaw && npm run check
+	npm run lint:ts
 
-format: format-biome
+format:
+	npm run format
 
 format-biome:
-	npx biome format --write .
+	npm run format
 
 format-ts:
-	cd nemoclaw && npm run lint:fix && npm run format
+	npm run format:ts
 
 # --- Integrity checks ---
 
 check-installer-hash:
-	bash scripts/check-installer-hash.sh
+	npm run check:installer-hash
 
 # --- Documentation ---
 
 docs:
-	uv run --group docs sphinx-build -b html docs docs/_build/html
+	npm run docs
 
 docs-strict:
-	uv run --group docs sphinx-build -W -b html docs docs/_build/html
+	npm run docs:strict
 
 docs-live:
-	uv run --group docs sphinx-autobuild docs docs/_build/html --open-browser
+	npm run docs:live
 
 docs-clean:
-	rm -rf docs/_build
+	npm run docs:clean

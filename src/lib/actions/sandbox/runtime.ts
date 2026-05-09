@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- transitional action facade until implementations leave src/nemoclaw.ts. */
 
 import type { DestroySandboxOptions, RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxConnectOptions } from "./connect";

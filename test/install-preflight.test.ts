@@ -488,7 +488,7 @@ exit 98
     expect(output).toMatch(/--version/);
     expect(output).toMatch(/NEMOCLAW_PROVIDER/);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
     expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
@@ -504,7 +504,7 @@ exit 98
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
   });
 
@@ -563,11 +563,34 @@ exit 98
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
     const npmLog = path.join(tmp, "npm.log");
+    const pythonLog = path.join(tmp, "python.log");
+    const gitLog = path.join(tmp, "git.log");
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(path.join(tmp, ".git"));
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "$GIT_LOG_PATH"
+exit 90
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "python3"),
+      `#!/usr/bin/env bash
+printf 'python3 %s\\n' "$*" >> "$PYTHON_LOG_PATH"
+exit 88
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "pip3"),
+      `#!/usr/bin/env bash
+printf 'pip3 %s\\n' "$*" >> "$PYTHON_LOG_PATH"
+exit 89
+`,
+    );
     writeNpmStub(
       fakeBin,
       `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
@@ -602,6 +625,13 @@ fi`,
       path.join(tmp, "nemoclaw", "package.json"),
       JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
     );
+    fs.mkdirSync(path.join(tmp, "nemoclaw-blueprint", "router", "llm-router"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw-blueprint", "router", "llm-router", "pyproject.toml"),
+      "[project]\nname = 'llm-router'\n",
+    );
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
@@ -614,6 +644,8 @@ fi`,
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         NPM_LOG_PATH: npmLog,
+        PYTHON_LOG_PATH: pythonLog,
+        GIT_LOG_PATH: gitLog,
       },
     });
 
@@ -624,6 +656,10 @@ fi`,
     expect(log).toMatch(/^link/m);
     // the GitHub URL must NOT appear — this is a local install
     expect(log).not.toMatch(new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    // Model Router must not run provider-specific dependency setup from the generic installer.
+    expect(fs.existsSync(pythonLog)).toBe(false);
+    const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
+    expect(gitCalls).not.toMatch(/submodule/);
   });
 
   it("auto-resumes an interrupted onboarding session during install", () => {
@@ -2698,6 +2734,19 @@ exit 0`,
     // No raw /dev/tty shell noise should leak (e.g. "exec 3</dev/tty")
     // — the friendly hint is the only TTY-related output we expect.
     expect(output).not.toMatch(/\/dev\/tty/);
+  });
+
+  it("#3058: error message includes a working curl|bash example users can copy-paste", () => {
+    // The reporter on #3058 hit this error with `curl ... | bash` on a
+    // non-TTY box and was left guessing how to combine the env var with
+    // the documented one-liner. The fix surfaces the exact invocations
+    // (terminal, env-var-in-pipe, flag-via-bash-s) so users can resolve
+    // the failure without leaving the terminal output.
+    const { result } = callShowUsageNotice({});
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash/);
+    expect(output).toMatch(/bash -s -- --yes-i-accept-third-party-software/);
+    expect(output).toMatch(/bash <\(curl/);
   });
 });
 
