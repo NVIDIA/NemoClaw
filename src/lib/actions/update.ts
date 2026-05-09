@@ -3,11 +3,13 @@
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { versionGte } from "../domain/installer/version";
 
 export const NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh";
+export const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
 export const NEMOCLAW_UPDATE_COMMAND = `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | bash`;
 
 type LogFn = (message?: string) => void;
@@ -37,7 +39,7 @@ export interface RunUpdateDeps {
 
 export interface RunUpdateResult {
   currentVersion: string;
-  installType: "package" | "source";
+  installType: "installer" | "package" | "source";
   latestVersion: string | null;
   ranInstaller: boolean;
   status: number;
@@ -48,24 +50,79 @@ function trimOutput(value: string | Buffer | null | undefined): string {
   return String(value ?? "").trim();
 }
 
-export function getLatestNemoClawVersionFromNpm(
+function realOrResolved(inputPath: string): string {
+  try {
+    return fs.realpathSync(inputPath);
+  } catch {
+    return path.resolve(inputPath);
+  }
+}
+
+function isSameOrChildPath(candidate: string, parent: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function managedInstallRoot(env: NodeJS.ProcessEnv): string {
+  const home = env.HOME || os.homedir();
+  return path.join(realOrResolved(home), ".nemoclaw", "source");
+}
+
+export function detectInstallType(
+  rootDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): RunUpdateResult["installType"] {
+  if (!fs.existsSync(path.join(rootDir, ".git"))) return "package";
+
+  const root = realOrResolved(rootDir);
+  if (isSameOrChildPath(root, managedInstallRoot(env))) return "installer";
+
+  return "source";
+}
+
+export function isSourceCheckout(rootDir: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return detectInstallType(rootDir, env) === "source";
+}
+
+export function getLatestNemoClawVersionFromGitLatestTag(
   deps: {
     env?: NodeJS.ProcessEnv;
-    npmCommand?: string;
+    gitCommand?: string;
+    repoUrl?: string;
     spawnSyncImpl?: SpawnSyncFn;
   } = {},
 ): string | null {
-  const result = (deps.spawnSyncImpl ?? spawnSync)(deps.npmCommand ?? "npm", ["view", "nemoclaw", "version"], {
-    encoding: "utf-8",
-    env: deps.env ?? process.env,
-    stdio: "pipe",
-  });
+  const result = (deps.spawnSyncImpl ?? spawnSync)(
+    deps.gitCommand ?? "git",
+    [
+      "ls-remote",
+      "--tags",
+      deps.repoUrl ?? NEMOCLAW_REPO_URL,
+      "refs/tags/latest",
+      "refs/tags/latest^{}",
+      "refs/tags/v*",
+    ],
+    {
+      encoding: "utf-8",
+      env: deps.env ?? process.env,
+      stdio: "pipe",
+    },
+  );
   if (result.error || (result.status ?? 1) !== 0) return null;
-  return trimOutput(result.stdout) || null;
-}
 
-export function isSourceCheckout(rootDir: string): boolean {
-  return fs.existsSync(path.join(rootDir, ".git"));
+  const versionsBySha = new Map<string, string>();
+  let latestSha: string | null = null;
+  for (const line of trimOutput(result.stdout).split(/\r?\n/)) {
+    const [sha, ref] = line.trim().split(/\s+/, 2);
+    if (!sha || !ref) continue;
+    if (ref === "refs/tags/latest^{}" || (ref === "refs/tags/latest" && !latestSha)) {
+      latestSha = sha;
+      continue;
+    }
+    const match = /^refs\/tags\/v(.+?)(\^\{\})?$/.exec(ref);
+    if (match?.[1]) versionsBySha.set(sha, match[1]);
+  }
+  return latestSha ? versionsBySha.get(latestSha) ?? null : null;
 }
 
 function updateAvailable(currentVersion: string, latestVersion: string | null): boolean | null {
@@ -75,20 +132,35 @@ function updateAvailable(currentVersion: string, latestVersion: string | null): 
 
 function printStatus(input: {
   currentVersion: string;
-  installType: "package" | "source";
+  installType: RunUpdateResult["installType"];
   latestVersion: string | null;
   log: LogFn;
   updateAvailable: boolean | null;
 }): void {
   input.log(`  Current NemoClaw version: ${input.currentVersion}`);
-  input.log(`  Latest published version: ${input.latestVersion ?? "unknown"}`);
-  input.log(`  Install type:             ${input.installType === "source" ? "source checkout" : "package"}`);
+  input.log(`  Latest maintained version:${input.latestVersion ? ` ${input.latestVersion}` : " unknown"}`);
+  const installTypeLabel =
+    input.installType === "source"
+      ? "source checkout"
+      : input.installType === "installer"
+        ? "installer-managed clone"
+        : "package";
+  input.log(`  Install type:             ${installTypeLabel}`);
   input.log(
     `  Update available:         ${
       input.updateAvailable === null ? "unknown" : input.updateAvailable ? "yes" : "no"
     }`,
   );
   input.log(`  Maintained update path:   ${NEMOCLAW_UPDATE_COMMAND}`);
+}
+
+function updateInstallerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next = { ...env };
+  delete next.BASH_ENV;
+  delete next.ENV;
+  delete next.NEMOCLAW_INSTALL_REF;
+  delete next.NEMOCLAW_INSTALL_TAG;
+  return next;
 }
 
 export async function runUpdateAction(
@@ -100,8 +172,12 @@ export async function runUpdateAction(
   const env = deps.env ?? process.env;
   const rootDir = deps.rootDir ?? process.cwd();
   const currentVersion = deps.currentVersion();
-  const latestVersion = (deps.getLatestVersion ?? (() => getLatestNemoClawVersionFromNpm({ env })))();
-  const installType = (deps.isSourceCheckout ?? (() => isSourceCheckout(rootDir)))() ? "source" : "package";
+  const latestVersion = (deps.getLatestVersion ?? (() => getLatestNemoClawVersionFromGitLatestTag({ env })))();
+  const installType = deps.isSourceCheckout
+    ? deps.isSourceCheckout()
+      ? "source"
+      : "package"
+    : detectInstallType(rootDir, env);
   const available = updateAvailable(currentVersion, latestVersion);
 
   printStatus({ currentVersion, installType, latestVersion, log, updateAvailable: available });
@@ -143,6 +219,17 @@ export async function runUpdateAction(
   }
 
   if (!options.yes) {
+    if (env.NEMOCLAW_NON_INTERACTIVE === "1") {
+      error("  Refusing to prompt in non-interactive mode. Re-run with --yes to update.");
+      return {
+        currentVersion,
+        installType,
+        latestVersion,
+        ranInstaller: false,
+        status: 1,
+        updateAvailable: available,
+      };
+    }
     const prompt = deps.prompt;
     if (!prompt) {
       error("  Refusing to run the installer without confirmation. Re-run with --yes for non-interactive update.");
@@ -170,8 +257,8 @@ export async function runUpdateAction(
   }
 
   log("  Running maintained NemoClaw installer...");
-  const result = (deps.spawnSyncImpl ?? spawnSync)("bash", ["-lc", NEMOCLAW_UPDATE_COMMAND], {
-    env,
+  const result = (deps.spawnSyncImpl ?? spawnSync)("bash", ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND], {
+    env: updateInstallerEnv(env),
     stdio: "inherit",
   });
   const status = result.status ?? 1;

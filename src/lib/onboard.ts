@@ -4544,6 +4544,7 @@ const RESERVED_SANDBOX_NAMES = new Set([
   "status",
   "debug",
   "uninstall",
+  "update",
   "credentials",
   "help",
   "sandbox",

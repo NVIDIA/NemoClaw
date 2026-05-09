@@ -658,7 +658,7 @@ $ nemoclaw update [--check] [--yes|-y]
 
 | Flag | Description |
 |------|-------------|
-| `--check` | Show the current version, latest published version, install type, and maintained update command without changing anything |
+| `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything |
 | `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow |
 
 `nemoclaw update` updates the host-side NemoClaw installation.
