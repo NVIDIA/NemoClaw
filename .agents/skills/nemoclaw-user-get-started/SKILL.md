@@ -53,7 +53,7 @@ The inference provider prompt presents a numbered list.
   5) Other Anthropic-compatible endpoint
   6) Google Gemini
   7) Local Ollama (localhost:11434)
-  8) Model Router (complexity-based routing)
+  8) Model Router (experimental)
   Choose [1]:
 ```
 
@@ -190,7 +190,7 @@ Use `NVIDIA_API_KEY` for the model pool credentials.
 
 Respond to the wizard as follows.
 
-1. At the `Choose [1]:` prompt, type `8` to select **Model Router (complexity-based routing)**.
+1. At the `Choose [1]:` prompt, type `8` to select **Model Router (experimental)**.
 2. At the `NVIDIA_API_KEY:` prompt, paste your key if it is not already exported.
 3. Review the configuration summary and continue with the sandbox build.
 
