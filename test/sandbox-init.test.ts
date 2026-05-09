@@ -627,6 +627,16 @@ EOF
       expect(src).toContain("validate_tmp_permissions");
     });
 
+    it("hermes start.sh routes gateway traffic through the decode proxy", () => {
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
+      expect(src).toContain("DECODE_PROXY_PORT=3129");
+      expect(src).toContain('"$HERMES_VENV_PYTHON" /usr/local/bin/nemoclaw-decode-proxy');
+      expect(src).toContain('HTTPS_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"');
+      expect(src).toContain('HTTP_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"');
+      expect(src).toContain('PYTHONPATH="/opt/nemoclaw-hermes-discord-preload${PYTHONPATH:+:${PYTHONPATH}}"');
+      expect(src).toContain("start_decode_proxy");
+    });
+
     it("hermes start.sh checks immutable bits before legacy migration mutates files", () => {
       const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       const fn = src.match(/migrate_legacy_layout\(\) \{([\s\S]*?)^}/m);

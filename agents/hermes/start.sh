@@ -254,12 +254,13 @@ start_socat_forwarder() {
   echo "[gateway] socat forwarder 0.0.0.0:${PUBLIC_PORT} → 127.0.0.1:${INTERNAL_PORT} (pid $SOCAT_PID)" >&2
 }
 
-# ── URL-decode proxy ─────────────────────────────────────────────
+# ── Placeholder rewrite proxy ───────────────────────────────────
 # Python HTTP clients (httpx) URL-encode colons in paths, breaking
 # OpenShell's openshell:resolve:env: placeholder pattern. This proxy
 # sits between the Hermes process and the OpenShell proxy, URL-decoding
 # request targets so the L7 proxy recognizes REST placeholders. It relays
-# upgraded WebSocket bytes unchanged and does not rewrite Discord IDENTIFY.
+# upgraded tunnel/WebSocket bytes unchanged. Slack SDK-shaped placeholders are
+# canonicalized in the Hermes Python preload before HTTPS serialization.
 HERMES_VENV_PYTHON="/opt/hermes/.venv/bin/python"
 DECODE_PROXY_PID=""
 DECODE_PROXY_PORT=3129

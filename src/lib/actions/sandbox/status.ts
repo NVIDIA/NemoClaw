@@ -6,7 +6,11 @@ import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { parseSandboxPhase } from "../../state/gateway";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
-import { probeProviderHealth } from "../../inference/health";
+import {
+  probeProviderHealth,
+  type ProviderHealthProbeOptions,
+  type ProviderHealthStatus,
+} from "../../inference/health";
 import * as nim from "../../inference/nim";
 import * as onboardSession from "../../state/onboard-session";
 import type { Session } from "../../state/onboard-session";
@@ -16,6 +20,7 @@ import {
 } from "../../adapters/openshell/runtime";
 import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import type { SandboxGatewayState } from "./gateway-state";
 import {
   getReconciledSandboxGatewayState,
   getSandboxGatewayStateForStatus,
@@ -33,26 +38,62 @@ import { D, G, R, RD, YW } from "../../cli/terminal-style";
 
 const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
+type ProbeProviderHealth = (
+  provider: string,
+  options?: ProviderHealthProbeOptions,
+) => ProviderHealthStatus | null;
+
+export function getSandboxStatusInferenceHealth(
+  gatewayPresent: boolean,
+  currentProvider: unknown,
+  currentModel: unknown,
+  probeProviderHealthImpl: ProbeProviderHealth = probeProviderHealth,
+): ProviderHealthStatus | null {
+  if (!gatewayPresent || typeof currentProvider !== "string") return null;
+  return probeProviderHealthImpl(currentProvider, {
+    model: typeof currentModel === "string" ? currentModel : undefined,
+  });
+}
+
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const sb = registry.getSandbox(sandboxName);
-  const lookup = await getReconciledSandboxGatewayState(sandboxName, {
-    getState: getSandboxGatewayStateForStatus,
-  });
-  const liveResult =
-    lookup.state === "present"
-      ? await captureOpenshellForStatus(["inference", "get"], {
-          ignoreError: true,
-        })
-      : null;
+  // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
+  // hanging when its container is stopped and the published port is held by a
+  // foreign listener) suppress the sandbox header. The downstream switch
+  // handles `gateway_error` by printing an actionable block + exit(1), so a
+  // synthesized fallback keeps the user-visible contract intact.
+  let lookup: SandboxGatewayState;
+  try {
+    lookup = await getReconciledSandboxGatewayState(sandboxName, {
+      getState: getSandboxGatewayStateForStatus,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    lookup = {
+      state: "gateway_error",
+      output: `  Could not probe live gateway state: ${message}`,
+    };
+  }
+  let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
+  if (lookup.state === "present") {
+    try {
+      liveResult = await captureOpenshellForStatus(["inference", "get"], {
+        ignoreError: true,
+      });
+    } catch {
+      liveResult = null;
+    }
+  }
   const live =
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  const inferenceHealth =
-    lookup.state === "present" && typeof currentProvider === "string"
-      ? probeProviderHealth(currentProvider)
-      : null;
+  const inferenceHealth = getSandboxStatusInferenceHealth(
+    lookup.state === "present",
+    currentProvider,
+    currentModel,
+  );
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
@@ -64,7 +105,9 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       } else if (inferenceHealth.ok) {
         console.log(`    Inference: ${G}healthy${R} (${inferenceHealth.endpoint})`);
       } else {
-        console.log(`    Inference: ${RD}unreachable${R} (${inferenceHealth.endpoint})`);
+        console.log(
+          `    Inference: ${RD}${inferenceHealth.failureLabel || "unreachable"}${R} (${inferenceHealth.endpoint})`,
+        );
         console.log(`      ${inferenceHealth.detail}`);
       }
     }

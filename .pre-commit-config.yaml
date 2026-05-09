@@ -157,6 +157,17 @@ repos:
         pass_filenames: false
         priority: 10
 
+      - id: env-var-docs
+        name: NEMOCLAW_* env-var documentation gate
+        entry: npx tsx scripts/check-env-var-docs.ts
+        language: system
+        # Triggers the audit when src/, bin/, the docs file, the allowlist,
+        # or the gate script itself changes. The script always rescans the
+        # whole repo so pass_filenames is false. See #3184.
+        files: ^(src/.*\.(ts|tsx|js)|bin/.*\.(ts|js)|docs/reference/commands\.md|ci/env-var-doc-allowlist\.json|scripts/check-env-var-docs\.ts)$
+        pass_filenames: false
+        priority: 10
+
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
     hooks:

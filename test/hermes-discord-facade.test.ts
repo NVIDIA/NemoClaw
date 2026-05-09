@@ -11,7 +11,10 @@ const PRELOAD = path.join(ROOT, "agents", "hermes", "discord-preload", "sitecust
 const sanitizedEnv = Object.fromEntries(
   Object.entries(process.env).filter(
     ([key, value]) =>
-      value !== undefined && !key.startsWith("DISCORD_") && !key.startsWith("TELEGRAM_"),
+      value !== undefined &&
+      !key.startsWith("DISCORD_") &&
+      !key.startsWith("SLACK_") &&
+      !key.startsWith("TELEGRAM_"),
   ),
 ) as Record<string, string>;
 const hasCryptography =
@@ -435,6 +438,74 @@ async def main():
     assert "proxy" not in ws["kwargs"]
 
 asyncio.run(main())
+`);
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+  });
+
+  it("rewrites Slack placeholders in aiohttp requests before HTTPS serialization", () => {
+    const result = runPython(`
+import asyncio
+import importlib.util
+import sys
+import types
+
+aiohttp = types.ModuleType("aiohttp")
+
+class ClientSession:
+    async def _request(self, method, url, **kwargs):
+        return {"method": method, "url": str(url), "kwargs": kwargs}
+
+aiohttp.ClientSession = ClientSession
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location("sitecustomize", ${JSON.stringify(PRELOAD)})
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+async def main():
+    session = aiohttp.ClientSession()
+    result = await session._request(
+        "POST",
+        "https://slack.com/api/auth.test?token=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        headers={
+            "Authorization": "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+            "X-Audit": ["xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN", "unchanged"],
+        },
+        data=b"token=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+        params={"token": "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"},
+    )
+    assert result["url"] == "https://slack.com/api/auth.test?token=openshell:resolve:env:SLACK_BOT_TOKEN"
+    assert result["kwargs"]["headers"]["Authorization"] == "Bearer openshell:resolve:env:SLACK_BOT_TOKEN"
+    assert result["kwargs"]["headers"]["X-Audit"][0] == "openshell:resolve:env:SLACK_APP_TOKEN"
+    assert result["kwargs"]["headers"]["X-Audit"][1] == "unchanged"
+    assert result["kwargs"]["data"] == b"token=openshell:resolve:env:SLACK_APP_TOKEN"
+    assert result["kwargs"]["params"]["token"] == "openshell:resolve:env:SLACK_BOT_TOKEN"
+
+asyncio.run(main())
+`);
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+  });
+
+  it("rewrites Slack placeholders in urllib requests before CONNECT", () => {
+    const result = runPython(`
+import importlib.util
+import urllib.request
+
+spec = importlib.util.spec_from_file_location("sitecustomize", ${JSON.stringify(PRELOAD)})
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+req = urllib.request.Request(
+    "https://slack.com/api/apps.connections.open?token=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    data=b"token=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    headers={"Authorization": "Bearer xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN"},
+    method="POST",
+)
+assert req.full_url == "https://slack.com/api/apps.connections.open?token=openshell:resolve:env:SLACK_APP_TOKEN"
+assert req.get_header("Authorization") == "Bearer openshell:resolve:env:SLACK_APP_TOKEN"
+assert req.data == b"token=openshell:resolve:env:SLACK_BOT_TOKEN"
 `);
 
     expect(result.status, result.stderr || result.stdout).toBe(0);

@@ -966,7 +966,7 @@ Use the hosted `curl … | bash` form only when the CLI is broken or already par
 
 ## Environment Variables
 
-NemoClaw reads the following environment variables to configure service ports.
+NemoClaw reads the following environment variables to configure service ports, onboarding behavior, and lifecycle defaults.
 Set them before running `nemoclaw onboard` or any command that starts services.
 All ports must be non-privileged integers between 1024 and 65535.
 
@@ -992,9 +992,58 @@ Defaults are unchanged when no variable is set.
 If `NEMOCLAW_DASHBOARD_PORT` or the port from `CHAT_UI_URL` is already occupied by another sandbox, onboarding scans `18789` through `18799` and uses the next free dashboard port.
 Pass `--control-ui-port <N>` to require a specific port.
 
-### Onboard timeouts
+### Onboarding Configuration
 
-The following environment variables tune onboard-time wall-clock limits. Set them before running `nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
+These variables let you tune onboarding without editing the Dockerfile or passing repeated flags.
+Set them before running `nemoclaw onboard`.
+
+| Variable | Format | Effect |
+|----------|--------|--------|
+| `NEMOCLAW_PROVIDER` | provider key (e.g. `nvidia`, `openai`, `anthropic`, `ollama`, `vllm`, `compatible`) | Selects the inference provider in non-interactive onboarding. Must match one of the keys the wizard would prompt for. |
+| `NEMOCLAW_ENDPOINT_URL` | URL | Custom OpenAI-compatible endpoint URL. Used together with `NEMOCLAW_PROVIDER=compatible`. |
+| `NEMOCLAW_PREFERRED_API` | `completions` (currently the only honored value) | Forces the validation probe to use the `/v1/chat/completions` API path instead of the newer `/v1/responses` API. |
+| `NEMOCLAW_INFERENCE_INPUTS` | comma-separated list of `text` and/or `image` | Declares model input modalities for vision-capable models. Validated strictly; unknown tokens are ignored. |
+| `NEMOCLAW_AGENT_TIMEOUT` | positive integer (seconds) | Overrides `agents.defaults.timeoutSeconds` in the built OpenClaw config. Raise for slow inference. |
+| `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
+| `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
+| `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
+| `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
+| `NEMOCLAW_OLLAMA_REQUIRE_TOOLS` | `0` to disable, anything else to keep the default | When set to `0`, skips the Ollama tool-calling capability check during local-inference onboarding. |
+| `NEMOCLAW_PROXY_HOST` | hostname or IP | Overrides the sandbox-side outbound HTTP proxy host. Defaults to `10.200.0.1`. |
+| `NEMOCLAW_PROXY_PORT` | integer port | Overrides the sandbox-side outbound HTTP proxy port. Defaults to `3128`. |
+| `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
+| `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used by `services` and `debug` lookups when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
+| `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
+| `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Overridden by the `--install-tag` flag. |
+
+### Onboarding Behavior Flags
+
+These flags toggle optional behaviors during onboarding; set them before running `nemoclaw onboard`.
+
+| Variable | Format | Effect |
+|----------|--------|--------|
+| `NEMOCLAW_YES` | `1` to enable | Auto-accepts confirmation prompts (`--yes` equivalent) including in helpers like the Ollama proxy auth setup. |
+| `NEMOCLAW_EXPERIMENTAL` | `1` to enable | Surfaces experimental providers and flows in onboarding. |
+| `NEMOCLAW_IGNORE_RUNTIME_RESOURCES` | `1` to enable | Suppresses the under-provisioned runtime warning during preflight. Use only when you know the sandbox host meets the minimums. |
+| `NEMOCLAW_DISABLE_OVERLAY_FIX` | `1` to enable | Skips the Docker overlay-fix step during sandbox build. For environments where the fix is incompatible. |
+| `NEMOCLAW_OVERLAY_SNAPSHOTTER` | snapshotter name | Selects the containerd overlay snapshotter for sandbox builds. Empty (default) preserves containerd's choice. |
+| `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY` | `1` to enable | Skips the Telegram bot reachability probe during onboard (useful in restricted networks). |
+| `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | `1` to enable | Accepts a new sandbox config path without an interactive prompt when the stored path differs from the discovered one. |
+
+### Probe Timeouts
+
+These tune how long internal probes wait before giving up.
+Defaults are sized for typical hardware; override only if you see false-positive timeouts.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
+| `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
+
+### Onboard Timeouts
+
+The following environment variables tune onboard-time wall-clock limits.
+Set them before running `nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -1006,6 +1055,14 @@ $ nemoclaw onboard
 ```
 
 If the pull exceeds the limit, onboarding emits the timeout in minutes plus a hint to raise this variable, and the partial download is preserved for the next attempt.
+
+### Lifecycle Behavior Flags
+
+These flags change defaults for commands that manage existing sandboxes.
+
+| Variable | Format | Effect |
+|----------|--------|--------|
+| `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Sets the default for whether `nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 
 ## NemoHermes Alias
 

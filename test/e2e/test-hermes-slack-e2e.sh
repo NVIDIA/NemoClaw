@@ -346,17 +346,15 @@ fi
 
 env_probe=$(
   sandbox_exec_stdin "python3 -" <<'PY'
-import re
 from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
 lines = set(text.splitlines())
-missing = []
-for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"):
-    pattern = re.compile(rf"^{key}=openshell:resolve:env:(?:v[0-9]+_)?{key}$")
-    if not any(pattern.match(line) for line in lines):
-        missing.append(f"{key}=openshell:resolve:env:{key}")
-if "API_SERVER_PORT=18642" not in lines:
-    missing.append("API_SERVER_PORT=18642")
+required = {
+    "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    "API_SERVER_PORT=18642",
+}
+missing = sorted(required - lines)
 if missing:
     print("FAIL missing " + ", ".join(missing))
 else:
@@ -365,7 +363,7 @@ PY
 )
 
 if [ "$env_probe" = "OK" ]; then
-  pass ".hermes/.env contains Slack resolver placeholders"
+  pass ".hermes/.env contains Slack SDK-shaped resolver placeholders"
 else
   fail ".hermes/.env check failed: ${env_probe:0:400}"
 fi
@@ -429,26 +427,19 @@ fi
 section "Phase 6: Slack placeholder egress from Python"
 
 slack_probe=$(
-  sandbox_exec_stdin "/usr/bin/python3 -" <<'PY'
+  sandbox_exec_stdin 'sh -lc ". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; /usr/bin/python3.11 -"' <<'PY'
 import json
-import os
 import socket
 import sys
 import urllib.error
 import urllib.request
 
 def call(label, path, env_key, allowed_errors):
-    runtime_token = os.environ.get(env_key, "")
-    token = runtime_token if runtime_token.startswith("openshell:resolve:env:") else f"openshell:resolve:env:{env_key}"
-    try:
-        for line in open("/sandbox/.hermes/.env", encoding="utf-8"):
-            if line.startswith(f"{env_key}="):
-                candidate = line.split("=", 1)[1].strip()
-                if not token.startswith("openshell:resolve:env:v") and candidate.startswith("openshell:resolve:env:"):
-                    token = candidate
-                break
-    except OSError:
-        pass
+    prefix = {
+        "SLACK_BOT_TOKEN": "xoxb",
+        "SLACK_APP_TOKEN": "xapp",
+    }[env_key]
+    token = f"{prefix}-OPENSHELL-RESOLVE-ENV-{env_key}"
     req = urllib.request.Request(
         f"https://slack.com/api/{path}",
         data=b"",
