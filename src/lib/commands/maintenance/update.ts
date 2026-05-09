@@ -4,6 +4,7 @@
 import { Flags } from "@oclif/core";
 
 import { runUpdateAction } from "../../actions/update";
+import { CLI_DISPLAY_NAME } from "../../cli/branding";
 import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
 import { getVersion } from "../../core/version";
 import { prompt } from "../../credentials/store";
@@ -11,8 +12,8 @@ import { prompt } from "../../credentials/store";
 export default class UpdateCommand extends NemoClawCommand {
   static id = "update";
   static strict = true;
-  static summary = "Run the maintained NemoClaw installer update flow";
-  static description = "Check for a NemoClaw CLI update and run the maintained installer flow.";
+  static summary = `Run the maintained ${CLI_DISPLAY_NAME} installer update flow`;
+  static description = `Check for a ${CLI_DISPLAY_NAME} CLI update and run the maintained installer flow.`;
   static usage = ["update [--check] [--yes|-y]"];
   static examples = [
     "<%= config.bin %> update --check",

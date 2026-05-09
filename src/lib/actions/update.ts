@@ -46,8 +46,29 @@ export interface RunUpdateResult {
   updateAvailable: boolean | null;
 }
 
+interface UpdateBranding {
+  cliName: string;
+  displayName: string;
+  maintainedUpdateCommand: string;
+}
+
 function trimOutput(value: string | Buffer | null | undefined): string {
   return String(value ?? "").trim();
+}
+
+function updateBranding(env: NodeJS.ProcessEnv): UpdateBranding {
+  if (env.NEMOCLAW_AGENT === "hermes") {
+    return {
+      cliName: "nemohermes",
+      displayName: "NemoHermes",
+      maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=hermes bash`,
+    };
+  }
+  return {
+    cliName: "nemoclaw",
+    displayName: "NemoClaw",
+    maintainedUpdateCommand: NEMOCLAW_UPDATE_COMMAND,
+  };
 }
 
 function realOrResolved(inputPath: string): string {
@@ -131,13 +152,14 @@ function updateAvailable(currentVersion: string, latestVersion: string | null): 
 }
 
 function printStatus(input: {
+  branding: UpdateBranding;
   currentVersion: string;
   installType: RunUpdateResult["installType"];
   latestVersion: string | null;
   log: LogFn;
   updateAvailable: boolean | null;
 }): void {
-  input.log(`  Current NemoClaw version: ${input.currentVersion}`);
+  input.log(`  Current ${input.branding.displayName} version: ${input.currentVersion}`);
   input.log(`  Latest maintained version:${input.latestVersion ? ` ${input.latestVersion}` : " unknown"}`);
   const installTypeLabel =
     input.installType === "source"
@@ -151,7 +173,7 @@ function printStatus(input: {
       input.updateAvailable === null ? "unknown" : input.updateAvailable ? "yes" : "no"
     }`,
   );
-  input.log(`  Maintained update path:   ${NEMOCLAW_UPDATE_COMMAND}`);
+  input.log(`  Maintained update path:   ${input.branding.maintainedUpdateCommand}`);
 }
 
 function updateInstallerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -172,6 +194,7 @@ export async function runUpdateAction(
   const env = deps.env ?? process.env;
   const rootDir = deps.rootDir ?? process.cwd();
   const currentVersion = deps.currentVersion();
+  const branding = updateBranding(env);
   const latestVersion = (deps.getLatestVersion ?? (() => getLatestNemoClawVersionFromGitLatestTag({ env })))();
   const installType = deps.isSourceCheckout
     ? deps.isSourceCheckout()
@@ -180,7 +203,7 @@ export async function runUpdateAction(
     : detectInstallType(rootDir, env);
   const available = updateAvailable(currentVersion, latestVersion);
 
-  printStatus({ currentVersion, installType, latestVersion, log, updateAvailable: available });
+  printStatus({ branding, currentVersion, installType, latestVersion, log, updateAvailable: available });
 
   if (options.check) {
     return {
@@ -207,7 +230,7 @@ export async function runUpdateAction(
   }
 
   if (available === false) {
-    log("  NemoClaw is already up to date.");
+    log(`  ${branding.displayName} is already up to date.`);
     return {
       currentVersion,
       installType,
@@ -242,7 +265,9 @@ export async function runUpdateAction(
         updateAvailable: available,
       };
     }
-    const answer = (await prompt("  Run the maintained NemoClaw installer now? [y/N]: ")).trim().toLowerCase();
+    const answer = (await prompt(`  Run the maintained ${branding.displayName} installer now? [y/N]: `))
+      .trim()
+      .toLowerCase();
     if (answer !== "y" && answer !== "yes") {
       log("  Update cancelled.");
       return {
@@ -256,14 +281,14 @@ export async function runUpdateAction(
     }
   }
 
-  log("  Running maintained NemoClaw installer...");
+  log(`  Running maintained ${branding.displayName} installer...`);
   const result = (deps.spawnSyncImpl ?? spawnSync)("bash", ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND], {
     env: updateInstallerEnv(env),
     stdio: "inherit",
   });
   const status = result.status ?? 1;
   if (status === 0) {
-    log("  Installer completed. Run `nemoclaw upgrade-sandboxes --check` to verify sandbox state.");
+    log(`  Installer completed. Run \`${branding.cliName} upgrade-sandboxes --check\` to verify sandbox state.`);
   } else {
     error(`  Installer failed with exit ${status}.`);
   }
