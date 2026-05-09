@@ -350,8 +350,8 @@ from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
 lines = set(text.splitlines())
 required = {
-    "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN",
+    "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
     "API_SERVER_PORT=18642",
 }
 missing = sorted(required - lines)
@@ -363,7 +363,7 @@ PY
 )
 
 if [ "$env_probe" = "OK" ]; then
-  pass ".hermes/.env contains Slack resolver placeholders"
+  pass ".hermes/.env contains Slack SDK-shaped resolver placeholders"
 else
   fail ".hermes/.env check failed: ${env_probe:0:400}"
 fi
@@ -427,7 +427,7 @@ fi
 section "Phase 6: Slack placeholder egress from Python"
 
 slack_probe=$(
-  sandbox_exec_stdin "/usr/bin/python3.11 -" <<'PY'
+  sandbox_exec_stdin 'sh -lc ". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; /usr/bin/python3.11 -"' <<'PY'
 import json
 import socket
 import sys
@@ -435,7 +435,11 @@ import urllib.error
 import urllib.request
 
 def call(label, path, env_key, allowed_errors):
-    token = f"openshell:resolve:env:{env_key}"
+    prefix = {
+        "SLACK_BOT_TOKEN": "xoxb",
+        "SLACK_APP_TOKEN": "xapp",
+    }[env_key]
+    token = f"{prefix}-OPENSHELL-RESOLVE-ENV-{env_key}"
     req = urllib.request.Request(
         f"https://slack.com/api/{path}",
         data=b"",

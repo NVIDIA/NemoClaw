@@ -18,8 +18,9 @@
 //   or thinking blocks.
 //
 //   Also inject `chat_template_kwargs: { thinking: false }` for
-//   deepseek-ai/deepseek-v4-pro, matching NVIDIA Build's tested invocation
-//   shape for the OpenAI-compatible chat-completions endpoint.
+//   deepseek-ai/deepseek-v4-pro and moonshotai/kimi-k2.6, matching NVIDIA
+//   Build's tested invocation shape for the OpenAI-compatible
+//   chat-completions endpoint.
 //
 //   Scoped strictly to known affected models — all other requests pass
 //   through untouched. Backends that do not support chat_template_kwargs
@@ -33,7 +34,16 @@
 
   var NEMOTRON_RE = /nemotron/i;
   var DEEPSEEK_V4_PRO_RE = /^deepseek-ai\/deepseek-v4-pro$/i;
+  var KIMI_K26_RE = /^moonshotai\/kimi-k2\.6$/i;
   var COMPLETIONS_RE = /\/v1\/chat\/completions/;
+
+  function hasObjectChatTemplateKwargs(body) {
+    return (
+      body.chat_template_kwargs &&
+      typeof body.chat_template_kwargs === 'object' &&
+      !Array.isArray(body.chat_template_kwargs)
+    );
+  }
 
   function wrapModule(mod) {
     var origRequest = mod.request;
@@ -79,14 +89,19 @@
         var raw = Buffer.concat(chunks);
         try {
           var body = JSON.parse(raw.toString('utf-8'));
-          if (body && body.model && (NEMOTRON_RE.test(body.model) || DEEPSEEK_V4_PRO_RE.test(body.model))) {
-            if (!body.chat_template_kwargs) {
+          if (
+            body && body.model &&
+            (NEMOTRON_RE.test(body.model) ||
+              DEEPSEEK_V4_PRO_RE.test(body.model) ||
+              KIMI_K26_RE.test(body.model))
+          ) {
+            if (!hasObjectChatTemplateKwargs(body)) {
               body.chat_template_kwargs = {};
             }
             if (NEMOTRON_RE.test(body.model)) {
               body.chat_template_kwargs.force_nonempty_content = true;
             }
-            if (DEEPSEEK_V4_PRO_RE.test(body.model)) {
+            if (DEEPSEEK_V4_PRO_RE.test(body.model) || KIMI_K26_RE.test(body.model)) {
               body.chat_template_kwargs.thinking = false;
             }
             intercepted = true;

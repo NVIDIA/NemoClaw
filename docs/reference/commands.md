@@ -65,7 +65,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--yes-i-accept-third-party-software]
 ```
 
 :::{warning}
@@ -268,7 +268,7 @@ Sandboxes with an active SSH session are marked with a `●` indicator so you ca
 When a sandbox has a recorded dashboard port, the output includes its local dashboard URL.
 
 ```console
-$ nemoclaw list
+$ nemoclaw list [--json]
 $ nemoclaw list --json
 ```
 
@@ -305,8 +305,11 @@ After a host reboot, the OpenShell gateway rotates its SSH host keys.
 You no longer need to re-run `nemoclaw onboard` after a reboot in this case.
 
 ```console
-$ nemoclaw my-assistant connect
+$ nemoclaw my-assistant connect [--probe-only]
 ```
+
+The `--probe-only` flag verifies the sandbox is reachable over SSH and exits without opening a shell.
+Use it for health checks and scripted readiness probes.
 
 ### `nemoclaw <name> recover`
 
@@ -434,9 +437,11 @@ If you want to upgrade the sandbox while preserving state, use `nemoclaw <name> 
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
+By default, `destroy` preserves the shared NemoClaw gateway.
+Pass `--cleanup-gateway` to remove the shared gateway when destroying the last sandbox, or `--no-cleanup-gateway` to force preservation when environment defaults request cleanup.
 
 ```console
-$ nemoclaw my-assistant destroy
+$ nemoclaw my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]
 ```
 
 ### `nemoclaw <name> policy-add`
@@ -845,7 +850,7 @@ The `nemoclaw setup` command is deprecated.
 Use `nemoclaw onboard` instead.
 :::
 
-This command remains as a compatibility alias to `nemoclaw onboard`.
+This command remains as a compatibility alias to `nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--yes-i-accept-third-party-software`.
 
 ```console
 $ nemoclaw setup
@@ -858,7 +863,7 @@ The `nemoclaw setup-spark` command is deprecated.
 Use the standard installer and run `nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 :::
 
-This command remains as a compatibility alias to `nemoclaw onboard`.
+This command remains as a compatibility alias to `nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--yes-i-accept-third-party-software`.
 
 ```console
 $ nemoclaw setup-spark
@@ -937,9 +942,10 @@ For Local Ollama setups, uninstall also stops matching Ollama auth proxy process
 | `--yes` | Skip the confirmation prompt |
 | `--keep-openshell` | Leave the `openshell` binary installed |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models |
+| `--gateway <name>` | Override the gateway name to remove (default: `nemoclaw`) |
 
 ```console
-$ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
+$ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <name>]
 ```
 
 #### `nemoclaw uninstall` vs. the hosted `uninstall.sh`

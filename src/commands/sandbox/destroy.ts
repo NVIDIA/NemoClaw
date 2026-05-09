@@ -8,7 +8,7 @@ export default withCommandDisplay(Command, [
   {
     usage: "nemoclaw <name> destroy",
     description: "Stop NIM + delete sandbox",
-    flags: "[--yes|-y|--force]",
+    flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]",
     group: "Sandbox Management",
     scope: "sandbox",
     order: 15,
