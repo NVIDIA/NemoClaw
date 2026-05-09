@@ -88,7 +88,7 @@ load_shell_path
 
 info "Preparing CLI build and OpenShell binaries"
 if [ ! -d node_modules ]; then
-  npm ci
+  npm ci --ignore-scripts
 fi
 npm run build:cli
 bash scripts/install-openshell.sh
