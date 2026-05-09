@@ -319,6 +319,8 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
     const { stdout, stderr } = runCli(["my-assist", "status"]);
     const combined = `${stdout}\n${stderr}`;
     expect(combined).toContain("Failure layer:");
-    expect(combined).toMatch(/container_exited|docker_unreachable|gateway_unreachable/);
+    expect(combined).toMatch(
+      /\b(container_exited_port_conflict|container_exited|docker_unreachable|gateway_unreachable)\b/,
+    );
   });
 });
