@@ -427,7 +427,7 @@ fi
 section "Phase 6: Slack placeholder egress from Python"
 
 slack_probe=$(
-  sandbox_exec_stdin 'sh -lc ". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; /usr/bin/python3.11 -"' <<'PY'
+  sandbox_exec_stdin 'sh -lc ". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; exec /usr/bin/python3 -"' <<'PY'
 import json
 import socket
 import sys
