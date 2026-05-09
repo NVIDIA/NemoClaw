@@ -12,6 +12,10 @@ This proxy sits between the Python process and the OpenShell proxy,
 URL-decodes the CONNECT target and request paths so the placeholders
 are restored before reaching the L7 proxy.
 
+This is intentionally not a WebSocket frame rewriter. After the initial
+HTTP proxy request is forwarded, bytes are relayed unchanged; Discord
+gateway IDENTIFY payloads are not inspected or modified here.
+
 Usage: Launched by start.sh, listens on 127.0.0.1:3129.
        HTTPS_PROXY=http://127.0.0.1:3129 hermes gateway run
 """

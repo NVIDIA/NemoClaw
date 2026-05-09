@@ -18,6 +18,7 @@ filesystem_policy:
     - /usr
     - /lib
     - /opt/hermes
+    - /opt/nemoclaw-hermes-discord-preload
     - /proc
     - /dev/urandom
     - /app
@@ -206,9 +207,23 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+          - allow: { method: GET, path: "/gateway*" }
+          - allow: { method: GET, path: "/api/v*/gateway/bot" }
+          - allow: { method: GET, path: "/api/v*/applications/@me" }
+          - allow: { method: PUT, path: "/api/v*/applications/*/commands" }
+          - allow: { method: PUT, path: "/api/v*/channels/*/messages/*/reactions/*/@me" }
+          - allow: { method: PATCH, path: "/api/v*/applications/*" }
+          - allow: { method: PATCH, path: "/api/v*/applications/*/commands/*" }
+          - allow: { method: PATCH, path: "/api/v*/channels/*/messages/*" }
+          - allow: { method: PATCH, path: "/api/v*/webhooks/*/*/messages/*" }
+          - allow: { method: DELETE, path: "/api/v*/applications/*/commands/*" }
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*" }
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*/reactions/*/*" }
+          - allow: { method: DELETE, path: "/api/v*/webhooks/*/*/messages/*" }
       - host: gateway.discord.gg
         port: 443
         access: full
+        tls: skip
       - host: cdn.discordapp.com
         port: 443
         protocol: rest

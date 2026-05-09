@@ -938,12 +938,12 @@ else
   fi
 fi
 
-# M13c: Full Discord gateway handshake via ws-proxy-fix CONNECT tunnel (#1570).
+# M13c: Unauthenticated Discord gateway transport via ws-proxy-fix CONNECT tunnel (#1570).
 # The `ws` library opens WebSocket connections via https.request() with an
 # Upgrade: websocket header.  The preload patches https.request() to issue a
 # CONNECT tunnel for Discord gateway hosts.
 #
-# This test exercises the real Discord gateway protocol end-to-end:
+# This test exercises the transport/protocol path, not bot authentication:
 #   1. https.request with Upgrade: websocket → CONNECT tunnel via proxy
 #   2. Receive Discord Hello (opcode 10) with heartbeat_interval
 #   3. Send a Heartbeat (opcode 1) back to the gateway
@@ -951,7 +951,9 @@ fi
 #   5. Send close frame and disconnect cleanly
 #
 # If the CONNECT tunnel is broken the connection never upgrades (400 from L7
-# proxy) and none of the protocol steps succeed.
+# proxy) and none of the protocol steps succeed. This deliberately does not
+# send IDENTIFY, so it must not be treated as proof that placeholder tokens are
+# rewritten inside gateway WebSocket payloads.
 dc_ws_tunnel=$(sandbox_exec 'node -e "
 const https = require(\"https\");
 const crypto = require(\"crypto\");
@@ -1129,7 +1131,7 @@ else
 fi
 
 if echo "$dc_ws_tunnel" | grep -q "HEARTBEAT_ACK op=11"; then
-  pass "M13e: Sent Heartbeat, received ACK (opcode 11) — full round-trip verified"
+  pass "M13e: Sent Heartbeat, received ACK (opcode 11) — unauthenticated transport round-trip verified"
 elif echo "$dc_ws_tunnel" | grep -q "SENT_HEARTBEAT"; then
   fail "M13e: Sent Heartbeat but never received ACK"
 else
