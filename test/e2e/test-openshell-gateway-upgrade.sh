@@ -60,8 +60,8 @@ load_shell_path() {
 
 process_env_value() {
   local pid="$1" key="$2"
-  tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null |
-    awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }'
+  tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null \
+    | awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }'
 }
 
 cleanup_pid() {

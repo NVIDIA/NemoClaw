@@ -430,8 +430,12 @@ export async function destroySandbox(
     if (shouldCleanupGateway) {
       cleanupGatewayAfterLastSandbox();
     } else {
+      const gatewayRemovalHint =
+        process.platform === "linux"
+          ? `openshell gateway remove ${NEMOCLAW_GATEWAY_NAME}`
+          : `openshell gateway destroy -g ${NEMOCLAW_GATEWAY_NAME}`;
       console.log(
-        `  Shared NemoClaw gateway preserved. Re-run 'openshell gateway destroy --name ${NEMOCLAW_GATEWAY_NAME}' to remove it,`,
+        `  Shared NemoClaw gateway preserved. Re-run '${gatewayRemovalHint}' to remove it,`,
       );
       console.log(
         `  or pass '--cleanup-gateway' / set NEMOCLAW_CLEANUP_GATEWAY=1 next time. (#2166)`,

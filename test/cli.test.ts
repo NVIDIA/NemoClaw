@@ -2127,6 +2127,7 @@ describe("CLI dispatch", () => {
     // `nemoclaw onboard` reuses it.
     expect(openshellOutput).not.toContain("forward stop 18789");
     expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
+    expect(openshellOutput).not.toContain("gateway remove nemoclaw");
     expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
   });
 
@@ -2188,7 +2189,9 @@ describe("CLI dispatch", () => {
     const openshellOutput = fs.readFileSync(openshellLog, "utf8");
     expect(openshellOutput).toContain("sandbox delete alpha");
     expect(openshellOutput).toContain("forward stop 18789");
-    expect(openshellOutput).toContain("gateway destroy -g nemoclaw");
+    expect(openshellOutput).toContain(
+      process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
+    );
     expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
   });
 
@@ -2250,7 +2253,9 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     const openshellOutput = fs.readFileSync(openshellLog, "utf8");
     expect(openshellOutput).toContain("forward stop 18789");
-    expect(openshellOutput).toContain("gateway destroy -g nemoclaw");
+    expect(openshellOutput).toContain(
+      process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
+    );
   });
 
   it("keeps the gateway runtime when other sandboxes still exist", () => {
