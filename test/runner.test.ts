@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { runCapture } from "../dist/lib/runner";
+import { redact, runCapture } from "../dist/lib/runner";
 
 const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
 
@@ -376,6 +376,13 @@ describe("redact", () => {
     expect(output).toBe("https://example.com/?Signature=****&AUTH=****");
   });
 
+  it("masks dashboard URL hash tokens", () => {
+    const token = "a".repeat(64);
+    const output = redact(`http://127.0.0.1:18789/#token=${token}`);
+    expect(output).toBe("http://127.0.0.1:18789/#token=aaaa********************");
+    expect(output).not.toContain(token);
+  });
+
   it("leaves non-secret strings untouched", () => {
     const { redact } = require(runnerPath);
     expect(redact("docker run --name my-sandbox")).toBe("docker run --name my-sandbox");
@@ -582,10 +589,10 @@ describe("regression guards", () => {
         defs.push(path.relative(repoRoot, file));
       }
     }
-    // runner.ts (CJS consumers) and shell-quote.ts (ESM consumers like config-io.ts)
+    // runner.ts (CJS consumers) and core/shell-quote.ts (ESM consumers like config-io.ts)
     expect(defs.sort()).toEqual([
+      path.join("src", "lib", "core", "shell-quote.ts"),
       path.join("src", "lib", "runner.ts"),
-      path.join("src", "lib", "shell-quote.ts"),
     ]);
   });
 

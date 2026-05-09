@@ -47,12 +47,12 @@ function buildPreamble({
   policyPresets = "npm",
   alreadyApplied = ["npm", "pypi", "huggingface", "brew", "brave"],
 } = {}): string {
-  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
   const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
   const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
   const resolveOpenshellPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "resolve-openshell.js"),
+    path.join(repoRoot, "dist", "lib", "adapters", "openshell", "resolve.js"),
   );
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
 
@@ -145,6 +145,92 @@ console.log = () => {};
       payload.finalApplied.slice().sort(),
       ["npm"],
       `final applied presets should be exactly [npm], got ${JSON.stringify(payload.finalApplied)}`,
+    );
+  });
+
+  // Re-onboarding in the default `suggested` mode must not silently remove
+  // presets the user added via `nemoclaw <name> policy-add` after the original
+  // onboard. Tier defaults are recomputed against the current provider, so a
+  // user-added preset such as `local-inference` is not in `suggestions` on a
+  // cloud-provider sandbox — without the additive guard it would be removed.
+  it("non-interactive suggested re-onboard preserves user-added presets", () => {
+    const script =
+      buildPreamble({
+        policyMode: "suggested",
+        policyPresets: "",
+        // Balanced defaults plus a manually-added preset.
+        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "local-inference"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", { provider: "openai" });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    // The user-added preset must still be in the chosen list.
+    assert.ok(
+      payload.chosen.includes("local-inference"),
+      `expected chosen to preserve local-inference, got ${JSON.stringify(payload.chosen)}`,
+    );
+
+    // Nothing should be removed — every applied preset is either a tier
+    // default or a user-added extra that the additive policy preserves.
+    assert.deepEqual(
+      payload.removedCalls,
+      [],
+      `expected no removals, got ${JSON.stringify(payload.removedCalls)}`,
+    );
+
+    // Final state should still contain every previously-applied preset.
+    const finalSorted = payload.finalApplied.slice().sort();
+    assert.deepEqual(finalSorted, ["brave", "brew", "huggingface", "local-inference", "npm", "pypi"]);
+  });
+
+  // Custom presets loaded via `policy-add --from-file` / `--from-dir` are
+  // recorded on the sandbox alongside built-in presets. They must survive a
+  // non-interactive re-onboard the same way named built-ins do — even though
+  // they do not appear in `policies.listPresets()`.
+  it("non-interactive suggested re-onboard preserves custom presets", () => {
+    const script =
+      buildPreamble({
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", { provider: "openai" });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.ok(
+      payload.chosen.includes("my-internal-api"),
+      `expected chosen to preserve my-internal-api, got ${JSON.stringify(payload.chosen)}`,
+    );
+    assert.deepEqual(
+      payload.removedCalls,
+      [],
+      `expected no removals, got ${JSON.stringify(payload.removedCalls)}`,
     );
   });
 
