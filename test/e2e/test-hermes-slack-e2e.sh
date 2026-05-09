@@ -429,6 +429,7 @@ section "Phase 6: Slack placeholder egress from Python"
 slack_probe=$(
   sandbox_exec_stdin 'sh -lc ". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; if [ -x /opt/hermes/.venv/bin/python ]; then exec /opt/hermes/.venv/bin/python -; fi; exec python3 -" 2>&1' <<'PY'
 import json
+import http.client
 import socket
 import ssl
 import sys
@@ -472,7 +473,7 @@ def call(label, path, env_key, allowed_errors):
         return False
     except Exception as exc:
         reason = f"{type(exc).__name__}: {exc}"
-        if "timed out" in reason.lower():
+        if isinstance(exc, http.client.RemoteDisconnected) or "timed out" in reason.lower():
             print(f"TIMEOUT {label}: {reason}")
             return False
         print(f"ERROR {label}: {reason}")
