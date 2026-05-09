@@ -33,8 +33,9 @@ def _rewrite_slack_value(value):
         except UnicodeDecodeError:
             return value
     if isinstance(value, bytearray):
-        rewritten = _rewrite_slack_value(bytes(value))
-        return bytearray(rewritten) if rewritten != value else value
+        as_bytes = bytes(value)
+        rewritten = _rewrite_slack_value(as_bytes)
+        return bytearray(rewritten) if rewritten != as_bytes else value
     if isinstance(value, tuple):
         return tuple(_rewrite_slack_value(item) for item in value)
     if isinstance(value, list):
@@ -56,7 +57,7 @@ def _rewrite_slack_headers(headers):
             for key, value in list(headers.items()):
                 headers[key] = _rewrite_slack_value(value)
             return headers
-        except Exception:
+        except (AttributeError, KeyError, TypeError):
             pass
     if isinstance(headers, (list, tuple)):
         return type(headers)((key, _rewrite_slack_value(value)) for key, value in headers)
@@ -95,11 +96,12 @@ def _nemoclaw_urllib_request_init(
     self,
     url,
     data=None,
-    headers={},
+    headers=None,
     origin_req_host=None,
     unverifiable=False,
     method=None,
 ):
+    headers = {} if headers is None else headers
     return _original_urllib_request_init(
         self,
         _rewrite_slack_url(url),
