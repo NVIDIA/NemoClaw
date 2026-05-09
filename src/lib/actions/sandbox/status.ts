@@ -27,6 +27,7 @@ import {
   printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
+import { classifyGatewayFailure, getLayerHeader } from "./gateway-failure-classifier";
 import {
   isSandboxGatewayRunningForStatus,
   probeSandboxInferenceGatewayHealth,
@@ -317,6 +318,8 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     if (lookup.output) {
       console.log(lookup.output);
     }
+    const failure = await classifyGatewayFailure(sandboxName);
+    console.log(`  ${YW}${getLayerHeader(failure.layer)}${R}`);
     printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
     process.exit(1);
   }

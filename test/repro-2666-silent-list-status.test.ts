@@ -200,6 +200,28 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
       { mode: 0o755 },
     );
 
+    // Fake docker that simulates: daemon reachable, container stopped
+    fs.writeFileSync(
+      path.join(binDir, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        "case \"$1\" in",
+        "  info)",
+        "    echo 'Server Version: 24.0.0'",
+        "    exit 0",
+        "    ;;",
+        "  ps)",
+        "    echo ''",
+        "    exit 0",
+        "    ;;",
+        "  *)",
+        "    exit 0",
+        "    ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
     const registryDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -267,5 +289,36 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
     // `status` must exit non-zero when the live gateway can't be verified
     // — that's the contract a watchdog wrapping the command relies on.
     expect(code).not.toBe(0);
+  });
+
+  it("nemoclaw <name> status prints the failure layer when the gateway probe fails (#3271)", () => {
+    // Override the fake openshell with one that produces a generic gateway_error
+    // that does NOT match the recovery heuristics (no "Gateway: nemoclaw" etc.),
+    // so the status command falls through to the final else branch where the
+    // classifier runs.
+    fs.writeFileSync(
+      path.join(binDir, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "case \"$*\" in",
+        '  "sandbox get my-assist")',
+        "    echo 'transport error: unexpected EOF' >&2",
+        "    exit 1",
+        "    ;;",
+        "  status)",
+        "    echo 'Status: Unknown'",
+        "    exit 1",
+        "    ;;",
+        "  *)",
+        "    exit 1",
+        "    ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const { stdout, stderr } = runCli(["my-assist", "status"]);
+    const combined = `${stdout}\n${stderr}`;
+    expect(combined).toContain("Failure layer:");
+    expect(combined).toMatch(/container_exited|docker_unreachable|gateway_unreachable/);
   });
 });
