@@ -1673,6 +1673,61 @@ run_onboard() {
   fi
 }
 
+# Make sure Docker is installed and the current user can run it without
+# sudo. If we install Docker or add the user to the docker group, exit with
+# instructions to relogin/newgrp — Linux only loads group membership at
+# login, so the rest of this script (onboard, etc.) would fail otherwise.
+# Skipped on macOS (Docker Desktop) and inside WSL (host-managed Docker).
+ensure_docker() {
+  case "$(uname -s)" in
+    Darwin | MINGW* | MSYS*) return 0 ;;
+  esac
+  if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
+    return 0
+  fi
+  # Fast path: docker info works → already set up (root, or already-active group).
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local group_added=0
+
+  if ! command -v docker >/dev/null 2>&1; then
+    info "Docker is not installed."
+    info "The next step uses sudo to install Docker system-wide via the official convenience script. You may be prompted for your password."
+    if ! sudo sh -c 'curl -fsSL https://get.docker.com | sh'; then
+      error "Docker install failed. Install Docker manually and re-run."
+    fi
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 \
+    && ! sudo -n systemctl is-active --quiet docker 2>/dev/null \
+    && ! systemctl is-active --quiet docker 2>/dev/null; then
+    info "The Docker daemon is not running."
+    info "The next step uses sudo to enable and start the docker.service unit. You may be prompted for your password."
+    sudo systemctl enable --now docker 2>/dev/null || true
+  fi
+
+  if ! id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    info "Your user '$USER' is not in the docker group."
+    info "The next step uses sudo to add you to the group so docker works without sudo. You may be prompted for your password."
+    sudo usermod -aG docker "$USER"
+    group_added=1
+  fi
+
+  if [ "$group_added" = "1" ]; then
+    printf "\n"
+    info "Docker setup complete. To finish:"
+    info "  1) Run: newgrp docker   (or log out and log back in)"
+    info "  2) Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
+    exit 0
+  fi
+
+  if ! docker info >/dev/null 2>&1; then
+    error "Docker is installed but not reachable. Try: sudo systemctl start docker"
+  fi
+}
+
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -1724,6 +1779,8 @@ main() {
   # a real terminal are different: stdin is the script pipe, but /dev/tty can
   # still collect acceptance before Node.js or the CLI are installed.
   preflight_usage_notice_prompt
+
+  ensure_docker
 
   _INSTALL_START=$SECONDS
   print_banner
