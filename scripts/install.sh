@@ -1723,7 +1723,10 @@ maybe_offer_express_install() {
   info "Detected ${platform}."
   printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
   local reply=""
-  read -r reply </dev/tty || true
+  if ! read -r reply </dev/tty; then
+    info "Skipping express install (unable to read from TTY)."
+    return 0
+  fi
   reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
   case "$reply" in
     "" | y | yes)
