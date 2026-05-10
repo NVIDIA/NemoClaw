@@ -482,6 +482,26 @@ export async function rebuildSandbox(
     sessionMatchesSandbox ? sessionBefore?.messagingChannelConfig ?? null : null;
   const rebuildMessagingChannelConfig =
     sb.messagingChannelConfig ?? sessionMessagingChannelConfig ?? null;
+  const rebuildsHermesSandbox = rebuildAgent === "hermes";
+  let registryHermesToolGateways: string[] | null = null;
+  if (rebuildsHermesSandbox && Array.isArray(sb.hermesToolGateways)) {
+    registryHermesToolGateways = sb.hermesToolGateways.filter(
+      (value: unknown): value is string => typeof value === "string",
+    );
+  }
+  const sessionHermesToolGateways =
+    rebuildsHermesSandbox &&
+    sessionMatchesSandbox && Array.isArray(sessionBefore?.hermesToolGateways)
+      ? sessionBefore.hermesToolGateways.filter(
+          (value: unknown): value is string => typeof value === "string",
+        )
+      : null;
+  const rebuildHermesToolGateways = rebuildsHermesSandbox
+    ? registryHermesToolGateways ?? sessionHermesToolGateways ?? []
+    : [];
+  const hasRebuildHermesToolGateways =
+    rebuildsHermesSandbox &&
+    (registryHermesToolGateways !== null || sessionHermesToolGateways !== null);
   const hasRebuildMessagingChannels =
     registryMessagingChannels !== null || sessionMessagingChannels !== null;
   log(
@@ -499,6 +519,7 @@ export async function rebuildSandbox(
     s.agent = rebuildAgent;
     s.messagingChannels = rebuildMessagingChannels;
     s.messagingChannelConfig = rebuildMessagingChannelConfig;
+    s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     // Persist inference selection from the about-to-be-removed registry entry
     // so onboard --resume can recreate with the same provider/model in
     // non-interactive mode. Without this the registry is gone by the time
@@ -624,6 +645,9 @@ export async function rebuildSandbox(
 
   const preservedRegistryFields = {
     ...(hasRebuildMessagingChannels ? { messagingChannels: [...rebuildMessagingChannels] } : {}),
+    ...(hasRebuildHermesToolGateways
+      ? { hermesToolGateways: [...rebuildHermesToolGateways] }
+      : {}),
     ...(Array.isArray(sb.disabledChannels) && sb.disabledChannels.length > 0
       ? { disabledChannels: [...sb.disabledChannels] }
       : {}),

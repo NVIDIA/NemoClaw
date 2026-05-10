@@ -41,6 +41,9 @@ function main(): void {
     settings.messaging.enabledChannels,
     settings.messaging.allowedIds,
     settings.messaging.discordGuilds,
+    settings.managedToolGateways.brokerEnabled
+      ? settings.managedToolGateways.presets
+      : [],
   );
   const written = writeHermesConfigFiles(config, envLines);
 

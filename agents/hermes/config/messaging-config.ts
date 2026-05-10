@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DiscordGuilds, MessagingAllowedIds } from "./build-env.ts";
+import { loadManagedToolGatewayMatrix } from "./managed-tool-gateway.ts";
 
 const CHANNEL_TOKEN_ENVS: Record<string, string[]> = {
   telegram: ["TELEGRAM_BOT_TOKEN"],
@@ -16,8 +17,22 @@ export function buildMessagingEnvLines(
   enabledChannels: Set<string>,
   allowedIds: MessagingAllowedIds,
   discordGuilds: DiscordGuilds,
+  managedToolGatewayPresets: string[] = [],
 ): string[] {
   const envLines = ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1"];
+
+  if (managedToolGatewayPresets.length > 0) {
+    const matrix = loadManagedToolGatewayMatrix();
+    envLines.push("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1");
+    envLines.push(
+      "TOOL_GATEWAY_USER_TOKEN=openshell:resolve:env:NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+    );
+    for (const preset of managedToolGatewayPresets) {
+      const entry = matrix[preset];
+      if (!entry) continue;
+      envLines.push(`${entry.envKey}=${entry.envValue}`);
+    }
+  }
 
   for (const channel of enabledChannels) {
     const envKeys = CHANNEL_TOKEN_ENVS[channel] ?? [];

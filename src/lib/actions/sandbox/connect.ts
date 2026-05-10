@@ -227,6 +227,23 @@ function ensureSandboxInferenceRoute(
   return sb;
 }
 
+function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
+  if (
+    !sb ||
+    sb.agent !== "hermes" ||
+    !Array.isArray(sb.hermesToolGateways) ||
+    sb.hermesToolGateways.length === 0
+  ) {
+    return;
+  }
+  try {
+    const hermesToolGatewayBroker = require("../../hermes-tool-gateway-broker");
+    hermesToolGatewayBroker.ensureHermesToolGatewayBrokerForSandboxEntry(sb);
+  } catch {
+    /* non-fatal — managed-tool calls will surface broker guidance if needed */
+  }
+}
+
 function exitWithSpawnResult(result: SpawnLikeResult): void {
   if (result.status !== null) {
     process.exit(result.status);
@@ -288,6 +305,7 @@ export async function connectSandbox(
   // cluster-wide inference.local route may still point at the *other*
   // provider. Re-set it to match this sandbox's persisted config.
   const sb = ensureSandboxInferenceRoute(sandboxName);
+  maybeEnsureHermesToolGatewayBroker(sb);
 
   const rawTimeout = process.env.NEMOCLAW_CONNECT_TIMEOUT;
   let timeout = 120;

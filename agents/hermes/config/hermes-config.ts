@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { HermesBuildSettings } from "./build-env.ts";
+import {
+  applyManagedToolConfig,
+  loadManagedToolGatewayMatrix,
+} from "./managed-tool-gateway.ts";
 import { buildDiscordConfig } from "./messaging-config.ts";
 
 export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
@@ -38,6 +42,15 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   // real secrets or credential placeholders under platforms.discord.
   if (settings.messaging.enabledChannels.has("discord")) {
     config.discord = buildDiscordConfig(settings.messaging.discordGuilds);
+  }
+
+  if (settings.managedToolGateways.brokerEnabled) {
+    const matrix = loadManagedToolGatewayMatrix();
+    for (const preset of settings.managedToolGateways.presets) {
+      const entry = matrix[preset];
+      if (!entry) continue;
+      applyManagedToolConfig(config, entry.config);
+    }
   }
 
   const telegramConfig = settings.messaging.telegramConfig;

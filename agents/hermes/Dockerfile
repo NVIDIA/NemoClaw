@@ -43,6 +43,7 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 # Copy config generator, Discord facade, and URL-decode proxy
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
+COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} +
 COPY agents/hermes/decode-proxy.py /usr/local/bin/nemoclaw-decode-proxy
@@ -76,6 +77,8 @@ ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
+ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
+ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=
 ARG NEMOCLAW_BUILD_ID=default
 
 # Promote build-args to env vars for the config generation script.
@@ -86,7 +89,9 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
-    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64}
+    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
+    NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
+    NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
 
 WORKDIR /sandbox
 USER sandbox
