@@ -6466,6 +6466,7 @@ async function setupNim(
       // recorded model from the same recovery decision.
       let recoveredFromSandbox = false;
       let recoveredModel: string | null = null;
+      hermesAuthMethod = null;
 
       if (isNonInteractive()) {
         let providerKey = requestedProvider;
@@ -6696,7 +6697,15 @@ async function setupNim(
           if (isNonInteractive()) {
             model = defaultModel;
           } else {
-            const hermesProviderModels = await nousModels.getHermesProviderModelOptions();
+            let hermesProviderModels: string[] = [];
+            try {
+              hermesProviderModels = await nousModels.getHermesProviderModelOptions();
+            } catch (err) {
+              const detail = err instanceof Error ? err.message : String(err);
+              console.warn(
+                `  Warning: failed to load Nous model recommendations; falling back to the current/default model (${detail}).`,
+              );
+            }
             model = await promptRemoteModel(
               remoteConfig.label,
               selected.key,
@@ -7484,7 +7493,14 @@ async function setupInference(
       (credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV
         ? HERMES_AUTH_METHOD_API_KEY
         : HERMES_AUTH_METHOD_OAUTH);
-    if (!hermesProviderAuth.isHermesProviderRegistered(runOpenshell)) {
+    const providerRegistered = hermesProviderAuth.isHermesProviderRegistered(runOpenshell);
+    const hasFreshNousApiKey =
+      resolvedHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY && !!resolveHermesNousApiKey();
+    const shouldPrepareHermesCredentials =
+      !providerRegistered ||
+      hasFreshNousApiKey ||
+      (resolvedHermesAuthMethod === HERMES_AUTH_METHOD_OAUTH && !isNonInteractive());
+    if (shouldPrepareHermesCredentials) {
       try {
         const state =
           resolvedHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY

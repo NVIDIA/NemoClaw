@@ -2676,7 +2676,9 @@ startGateway(null).catch(() => {});
     const scriptPath = path.join(tmpDir, "setup-inference-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const registryPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2790,8 +2792,8 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-delete process.env.NOUS_API_KEY;
-delete process.env.OPENAI_API_KEY;
+process.env.NOUS_API_KEY = "nous-host-secret";
+process.env.OPENAI_API_KEY = "openai-host-secret";
 process.env.NEMOCLAW_NON_INTERACTIVE = "1";
 
 const { setupInference } = require(${onboardPath});
@@ -2824,6 +2826,102 @@ const { setupInference } = require(${onboardPath});
     assert.match(commands[2].command, /inference set --no-verify --provider hermes-provider/);
     assert.ok(!commands.some((entry) => /provider (create|update)/.test(entry.command)));
     assert.ok(!commands.some((entry) => entry.env?.NOUS_API_KEY || entry.env?.OPENAI_API_KEY));
+    assert.ok(
+      !commands.some((entry) => /nous-host-secret|openai-host-secret/.test(entry.command)),
+      "host credential values must not appear in argv",
+    );
+  });
+
+  it("reconciles a registered Hermes Provider when a fresh shell Nous key is selected", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-update-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-hermes-update-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get hermes-provider")) {
+    return { status: 0, stdout: "Provider: hermes-provider", stderr: "" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: hermes-provider",
+      "  Model: moonshotai/kimi-k2.6",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.NOUS_API_KEY = "nous-host-secret";
+delete process.env.OPENAI_API_KEY;
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference(
+    "test-box",
+    "moonshotai/kimi-k2.6",
+    "hermes-provider",
+    "https://inference-api.nousresearch.com/v1",
+    "NOUS_API_KEY",
+    "api_key",
+  );
+  console.log(JSON.stringify(commands));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
+    const update = commands.find((entry) => /provider update hermes-provider/.test(entry.command));
+    assert.ok(update);
+    assert.match(update.command, /--credential NOUS_API_KEY/);
+    assert.equal(update.env?.NOUS_API_KEY, "nous-host-secret");
+    assert.ok(
+      !commands.some((entry) => /nous-host-secret/.test(entry.command)),
+      "shell credential value must not appear in argv",
+    );
+    assert.match(
+      commands.at(-1)?.command || "",
+      /inference set --no-verify --provider hermes-provider/,
+    );
   });
 
   it("configures Model Router as a host provider while sandboxes keep inference.local", () => {

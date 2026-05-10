@@ -118,4 +118,36 @@ describe("agent definitions", () => {
 
     expect(() => loadAgent(agentName)).toThrow(/health_probe\.port/);
   });
+
+  it("rejects invalid inference provider options in manifests", () => {
+    const agentName = `invalid-inference-options-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Inference",
+        "inference:",
+        "  provider_options:",
+        "    - hermesProvider",
+        "    - 42",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/inference\.provider_options/);
+  });
+
+  it("rejects invalid inference provider type in manifests", () => {
+    const agentName = `invalid-inference-provider-type-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Inference Type",
+        "inference:",
+        "  provider_type: 42",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/inference\.provider_type/);
+  });
 });

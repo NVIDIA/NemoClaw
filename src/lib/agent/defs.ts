@@ -85,7 +85,7 @@ export interface AgentDefinition {
   readonly forwardPort: number;
   readonly dashboard: AgentDashboard;
   readonly configPaths: AgentConfigPaths;
-  readonly inferenceProviderOptions?: string[];
+  readonly inferenceProviderOptions: string[];
   readonly stateDirs: string[];
   readonly stateFiles: AgentStateFile[];
   readonly versionCommand: string;
@@ -263,9 +263,28 @@ function readInference(record: ManifestRecord): AgentInference | undefined {
   const inference = readObject(record, "inference");
   if (!inference) return undefined;
 
+  const providerType = inference.provider_type;
+  if (providerType !== undefined && typeof providerType !== "string") {
+    throw new Error("Agent manifest field 'inference.provider_type' must be a string");
+  }
+
+  const providerOptions = inference.provider_options;
+  let providerOptionList: string[] | undefined;
+  if (providerOptions !== undefined) {
+    if (
+      !Array.isArray(providerOptions) ||
+      providerOptions.some((entry) => typeof entry !== "string")
+    ) {
+      throw new Error(
+        "Agent manifest field 'inference.provider_options' must be an array of strings",
+      );
+    }
+    providerOptionList = providerOptions as string[];
+  }
+
   return {
-    provider_type: readString(inference, "provider_type"),
-    provider_options: readStringArray(inference, "provider_options"),
+    provider_type: providerType,
+    provider_options: providerOptionList,
   };
 }
 

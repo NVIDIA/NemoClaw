@@ -22,6 +22,7 @@ export const DEFAULT_SCOPE = "inference:mint_agent_key";
 const POLL_INTERVAL_MIN_SECONDS = 1;
 const POLL_INTERVAL_MAX_SECONDS = 30;
 const DEFAULT_TIMEOUT_SECONDS = 15 * 60;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 export interface DeviceCodeResponse {
   device_code: string;
@@ -56,6 +57,7 @@ export interface DeviceCodeFlowOptions {
   clientId?: string;
   scope?: string;
   timeoutSeconds?: number;
+  requestTimeoutMs?: number;
   noBrowser?: boolean;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -123,13 +125,13 @@ function clampInterval(value: unknown): number {
   );
 }
 
-function createRequestTimeout(timeoutSeconds: number | undefined): {
+function createRequestTimeout(timeoutMs: number | undefined): {
   signal: AbortSignal;
   clear: () => void;
 } {
   const controller = new AbortController();
-  const seconds = Math.max(1, Math.round(timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS));
-  const timer = setTimeout(() => controller.abort(), seconds * 1000);
+  const ms = Math.max(1, Math.round(timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS));
+  const timer = setTimeout(() => controller.abort(), ms);
   return {
     signal: controller.signal,
     clear: () => clearTimeout(timer),
@@ -140,9 +142,9 @@ async function postForm(
   url: string,
   body: Record<string, string>,
   fetchImpl: typeof fetch,
-  timeoutSeconds?: number,
+  requestTimeoutMs?: number,
 ): Promise<Response> {
-  const timeout = createRequestTimeout(timeoutSeconds);
+  const timeout = createRequestTimeout(requestTimeoutMs);
   try {
     return await fetchImpl(url, {
       method: "POST",
@@ -170,7 +172,7 @@ export async function requestDeviceCode(
     `${portalBaseUrl}/api/oauth/device/code`,
     { client_id: clientId, scope },
     fetchImpl,
-    opts.timeoutSeconds,
+    opts.requestTimeoutMs,
   );
 
   if (resp.status !== 200) {
@@ -227,7 +229,7 @@ export async function pollForToken(
         client_id: clientId,
       },
       fetchImpl,
-      opts.timeoutSeconds,
+      opts.requestTimeoutMs,
     );
 
     if (resp.status === 200) {
@@ -285,7 +287,7 @@ export async function refreshAccessTokenWithRefreshToken(
       client_id: clientId,
     },
     fetchImpl,
-    opts.timeoutSeconds,
+    opts.requestTimeoutMs,
   );
 
   if (resp.status !== 200) {
@@ -320,7 +322,7 @@ export async function mintAgentKeyWithAccessToken(
   const portalBaseUrl = opts.portalBaseUrl ?? DEFAULT_PORTAL_BASE_URL;
   const minTtlSeconds = Math.max(60, Math.round(opts.minTtlSeconds ?? 1800));
 
-  const timeout = createRequestTimeout(opts.timeoutSeconds);
+  const timeout = createRequestTimeout(opts.requestTimeoutMs);
   let resp: Response;
   try {
     resp = await fetchImpl(`${portalBaseUrl}/api/oauth/agent-key`, {

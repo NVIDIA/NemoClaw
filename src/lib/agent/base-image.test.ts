@@ -24,6 +24,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       envFile: ".env",
       format: "yaml",
     },
+    inferenceProviderOptions: [],
     stateDirs: [],
     stateFiles: [],
     versionCommand: "hermes --version",
