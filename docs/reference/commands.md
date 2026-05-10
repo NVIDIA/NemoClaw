@@ -1020,6 +1020,9 @@ Set them before running `nemoclaw onboard`.
 | Variable | Format | Effect |
 |----------|--------|--------|
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `nvidia`, `openai`, `anthropic`, `ollama`, `vllm`, `compatible`) | Selects the inference provider in non-interactive onboarding. Must match one of the keys the wizard would prompt for. |
+| `NEMOCLAW_HERMES_AUTH_METHOD` | `oauth` | Selects Hermes Provider authentication in non-interactive onboarding. Valid values: `oauth`, `nous-portal-oauth`, `api-key`, `nous-api-key`. |
+| `NEMOCLAW_HERMES_AUTH` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Back-compatible alias for Hermes Provider authentication selection. |
+| `NEMOCLAW_NOUS_AUTH_METHOD` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Nous-specific alias for Hermes Provider authentication selection. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom OpenAI-compatible endpoint URL. Used together with `NEMOCLAW_PROVIDER=compatible`. |
 | `NEMOCLAW_PREFERRED_API` | `completions` (currently the only honored value) | Forces the validation probe to use the `/v1/chat/completions` API path instead of the newer `/v1/responses` API. |
 | `NEMOCLAW_INFERENCE_INPUTS` | comma-separated list of `text` and/or `image` | Declares model input modalities for vision-capable models. Validated strictly; unknown tokens are ignored. |

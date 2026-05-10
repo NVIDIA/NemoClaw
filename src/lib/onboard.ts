@@ -1575,6 +1575,7 @@ async function promptHermesAuthMethod(): Promise<HermesAuthMethod | typeof BACK_
 
 function resolveHermesNousApiKey(): string | null {
   return (
+    // check-direct-credential-env-ignore -- Hermes Provider API keys are read only from the invoking shell for OpenShell provider registration; do not resolve host credentials.json.
     normalizeCredentialValue(process.env[HERMES_NOUS_API_KEY_CREDENTIAL_ENV]) ||
     normalizeCredentialValue(process.env.NEMOCLAW_PROVIDER_KEY) ||
     null
