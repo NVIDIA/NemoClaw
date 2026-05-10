@@ -412,14 +412,11 @@ RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 # hadolint ignore=DL3059,DL4006
 RUN (openclaw doctor --fix > /dev/null 2>&1 || true) \
     && if [ "${NEMOCLAW_WECHAT_ENABLED}" = "1" ]; then \
-           set -eux; \
+           set -eu; \
            openclaw plugins install \
                '@tencent-weixin/openclaw-weixin@2.4.2' --pin; \
            openclaw config set plugins.entries.openclaw-weixin.enabled true; \
-           openclaw plugins list; \
            python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py; \
-           ls -la "$HOME/.openclaw/openclaw-weixin/" "$HOME/.openclaw/openclaw-weixin/accounts/"; \
-           set +x; \
        fi
 
 # Lock down npm: no further registry traffic in this image. Everything past

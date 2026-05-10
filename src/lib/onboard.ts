@@ -69,6 +69,10 @@ const {
 const {
   syncPresetSelection,
 }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
+const { getAgentBranding } = require("./cli/branding");
+const {
+  HOST_QR_LOGIN_HANDLERS,
+} = require("./host-qr-handlers") as typeof import("./host-qr-handlers");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -8295,15 +8299,21 @@ async function setupMessagingChannels(): Promise<string[]> {
     }
     if (getMessagingToken(ch.envKey)) {
       console.log(`  ✓ ${ch.name} — already configured`);
-    } else if (ch.loginMethod === "host-qr" && ch.name === "wechat") {
-      // Host-side iLink QR handshake — see src/lib/wechat/login.ts. Captures
-      // both the bot token (persisted as a provider credential) and the
-      // non-secret per-account metadata (account id, base URL, user id) the
-      // wrapper plugin needs to skip a second QR scan inside the sandbox.
+    } else if (ch.loginMethod === "host-qr") {
+      // Dispatch to the per-channel host-side QR handler (see
+      // src/lib/host-qr-handlers.ts). Handlers capture both the bot token
+      // and any non-secret per-account metadata the in-sandbox wrapper
+      // plugin needs to skip a second QR scan; the result shape is
+      // uniform so the apply path here stays channel-agnostic.
       console.log("");
       console.log(`  ${ch.help}`);
-      const { runWechatHostQrLogin } = require("./wechat/login");
-      const result = await runWechatHostQrLogin();
+      const handler = HOST_QR_LOGIN_HANDLERS[ch.name];
+      if (!handler) {
+        console.log(`  Skipped ${ch.name} (no host-qr handler registered)`);
+        enabled.delete(ch.name);
+        continue;
+      }
+      const result = await handler();
       if (result.kind !== "ok") {
         const reason =
           result.kind === "timeout"
@@ -8312,28 +8322,30 @@ async function setupMessagingChannels(): Promise<string[]> {
               ? "QR expired too many times"
               : result.kind === "aborted"
                 ? "login aborted"
-                : `login failed: ${result.message}`;
+                : `login failed: ${result.message ?? "unknown error"}`;
         console.log(`  Skipped ${ch.name} (${reason})`);
         enabled.delete(ch.name);
         continue;
       }
-      const { token, accountId, baseUrl, userId } = result.credentials;
-      saveCredential(ch.envKey, token);
-      process.env[ch.envKey] = token;
-      // The account metadata is non-secret but must round-trip through the
-      // sandbox build via NEMOCLAW_WECHAT_CONFIG_B64 — stash it on env so
-      // the build path picks it up alongside the credentials it reads here.
-      process.env.WECHAT_ACCOUNT_ID = accountId;
-      process.env.WECHAT_BASE_URL = baseUrl;
-      process.env.WECHAT_USER_ID = userId;
-      // Seed the DM allowlist with the operator who scanned, unless the
-      // user already supplied their own list. Mirrors the Telegram UX
-      // where the user pastes their own id but for WeChat we already know
-      // it from the QR exchange.
-      if (ch.userIdEnvKey && !process.env[ch.userIdEnvKey]) {
-        process.env[ch.userIdEnvKey] = userId;
+      if (result.token) {
+        saveCredential(ch.envKey, result.token);
+        process.env[ch.envKey] = result.token;
       }
-      console.log(`  ✓ ${ch.name} token saved (account ${accountId})`);
+      // Stash non-secret metadata on env so the Dockerfile-patch path
+      // (createSandbox → patchStagedDockerfile) can serialize it into the
+      // channel's build args without a second round-trip to the handler.
+      if (result.extraEnv) {
+        for (const [key, value] of Object.entries(result.extraEnv)) {
+          process.env[key] = value;
+        }
+      }
+      // Seed the DM allowlist with the operator captured during the QR
+      // handshake, unless the user already supplied their own list.
+      if (ch.userIdEnvKey && result.defaultUserId && !process.env[ch.userIdEnvKey]) {
+        process.env[ch.userIdEnvKey] = result.defaultUserId;
+      }
+      const suffix = result.summary ? ` (${result.summary})` : "";
+      console.log(`  ✓ ${ch.name} token saved${suffix}`);
     } else {
       console.log("");
       console.log(`  ${ch.help}`);

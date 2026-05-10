@@ -25,7 +25,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
 
   it("only wechat declares loginMethod=host-qr", () => {
     // Other channels paste a token; WeChat captures it via a host-side QR
-    // handshake (src/lib/wechat/login.ts). Onboarding branches on this flag,
+    // handshake (src/ext/wechat/login.ts). Onboarding branches on this flag,
     // so flipping it accidentally would silently route WeChat through the
     // paste prompt and break the QR flow.
     expect(getChannelDef("wechat")?.loginMethod).toBe("host-qr");
