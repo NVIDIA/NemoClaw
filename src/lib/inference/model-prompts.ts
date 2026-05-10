@@ -183,7 +183,7 @@ export async function promptRemoteModel(
 ): Promise<string> {
   const deps = resolvePromptOptions(options);
   const modelOptions = deps.remoteModelOptions[providerKey] || [];
-  const defaultIndex = Math.max(0, modelOptions.indexOf(defaultModel));
+  const defaultIndex = modelOptions.indexOf(defaultModel);
   const topLevelLimit =
     options.topLevelModelLimit && options.topLevelModelLimit > 0
       ? Math.min(options.topLevelModelLimit, modelOptions.length)
@@ -192,9 +192,9 @@ export async function promptRemoteModel(
     options.otherShowsFullList === true && topLevelLimit < modelOptions.length;
   const visibleOptions = modelOptions.slice(0, topLevelLimit);
   const defaultChoice =
-    defaultIndex >= visibleOptions.length
-      ? visibleOptions.length + 1
-      : Math.min(defaultIndex, Math.max(visibleOptions.length - 1, 0)) + 1;
+    defaultIndex >= 0
+      ? defaultIndex + 1
+      : Math.min(Math.max(visibleOptions.length, 1), visibleOptions.length + 1);
 
   deps.writeLine("");
   deps.writeLine(`  ${label} models:`);
@@ -202,6 +202,9 @@ export async function promptRemoteModel(
     deps.writeLine(`    ${index + 1}) ${option}`);
   });
   deps.writeLine(`    ${visibleOptions.length + 1}) Other...`);
+  if (defaultIndex >= visibleOptions.length) {
+    deps.writeLine(`    ${defaultIndex + 1}) ${defaultModel} (current)`);
+  }
   deps.writeLine("");
 
   const choice = await deps.promptFn(`  Choose model [${defaultChoice}]: `);
@@ -213,6 +216,9 @@ export async function promptRemoteModel(
     deps.exitFn();
   }
   const index = parseInt(choice || String(defaultChoice), 10) - 1;
+  if (defaultIndex >= 0 && index === defaultIndex) {
+    return defaultModel;
+  }
   if (Number.isFinite(index) && index >= 0 && index < visibleOptions.length) {
     return visibleOptions[index];
   }

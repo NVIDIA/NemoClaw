@@ -7,14 +7,29 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+const CHILD_TIMEOUT_MS = 30_000;
+
 function buildHermeticEnv(tmpDir: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: tmpDir, ...extra };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: tmpDir };
   for (const key of Object.keys(env)) {
-    if (key.startsWith("DISCORD_") || key.startsWith("TELEGRAM_")) {
+    if (
+      key.startsWith("NEMOCLAW_") ||
+      key.startsWith("DISCORD_") ||
+      key.startsWith("TELEGRAM_") ||
+      key.startsWith("AWS_") ||
+      key.startsWith("GCP_") ||
+      key.startsWith("GOOGLE_") ||
+      key.startsWith("GCLOUD_") ||
+      key.startsWith("AZURE_") ||
+      key.endsWith("_CREDENTIALS") ||
+      key.endsWith("_API_KEY") ||
+      key.includes("SECRET") ||
+      key.includes("TOKEN")
+    ) {
       delete env[key];
     }
   }
-  return env;
+  return { ...env, ...extra };
 }
 
 describe("Hermes Provider onboarding selection", () => {
@@ -45,6 +60,7 @@ const { selectOnboardAgent } = require(${onboardPath});
       cwd: repoRoot,
       encoding: "utf-8",
       env: buildHermeticEnv(tmpDir),
+      timeout: CHILD_TIMEOUT_MS,
     });
 
     expect(result.status).toBe(0);
@@ -85,6 +101,7 @@ const { setupNim } = require(${onboardPath});
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_PROVIDER: "hermes-provider",
       }),
+      timeout: CHILD_TIMEOUT_MS,
     });
 
     expect(result.status).not.toBe(0);
@@ -133,6 +150,7 @@ const { setupNim } = require(${onboardPath});
         NEMOCLAW_HERMES_AUTH_METHOD: "nous-api-key",
         NOUS_API_KEY: "nous-key-1",
       }),
+      timeout: CHILD_TIMEOUT_MS,
     });
 
     expect(result.status).toBe(0);

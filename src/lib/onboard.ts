@@ -1552,7 +1552,11 @@ async function promptHermesAuthMethod(): Promise<HermesAuthMethod | typeof BACK_
   ];
   const requested = getRequestedHermesAuthMethod();
   if (isNonInteractive()) {
-    const method = requested || HERMES_AUTH_METHOD_OAUTH;
+    const method =
+      requested ||
+      (resolveHermesNousApiKey()
+        ? HERMES_AUTH_METHOD_API_KEY
+        : HERMES_AUTH_METHOD_OAUTH);
     note(`  [non-interactive] Hermes auth: ${hermesAuthMethodLabel(method)}`);
     return method;
   }
@@ -6580,6 +6584,9 @@ async function setupNim(
         console.error("  No provider was selected.");
         process.exit(1);
       }
+      if (selected.key !== "hermesProvider") {
+        hermesAuthMethod = null;
+      }
 
       if (REMOTE_PROVIDER_CONFIG[selected.key]) {
         const remoteConfig = REMOTE_PROVIDER_CONFIG[selected.key];
@@ -6647,6 +6654,7 @@ async function setupNim(
         if (selected.key === "hermesProvider") {
           const selectedHermesAuthMethod = await promptHermesAuthMethod();
           if (selectedHermesAuthMethod === BACK_TO_SELECTION) {
+            hermesAuthMethod = null;
             console.log("  Returning to provider selection.");
             console.log("");
             continue selectionLoop;

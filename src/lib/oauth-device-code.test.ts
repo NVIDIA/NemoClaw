@@ -43,12 +43,13 @@ describe("pollForToken", () => {
 
 describe("refreshAccessTokenWithRefreshToken", () => {
   it("uses the host-side refresh-token grant form body", async () => {
-    const calls: Array<{ url: string; body: string }> = [];
+    const calls: Array<{ url: string; body: string; signal: AbortSignal | null }> = [];
     const token = await refreshAccessTokenWithRefreshToken("refresh-1", {
       fetch: (async (url, init) => {
         calls.push({
           url: String(url),
           body: String(init?.body ?? ""),
+          signal: init?.signal instanceof AbortSignal ? init.signal : null,
         });
         return new Response(
           JSON.stringify({
@@ -76,6 +77,7 @@ describe("refreshAccessTokenWithRefreshToken", () => {
     expect(new URLSearchParams(calls[0]?.body).get("client_id")).toBe(
       "hermes-cli",
     );
+    expect(calls[0]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("surfaces refresh-token grant errors", async () => {
@@ -100,7 +102,12 @@ describe("refreshAccessTokenWithRefreshToken", () => {
 
 describe("mintAgentKeyWithAccessToken", () => {
   it("mints a short-lived agent key with Authorization bearer auth", async () => {
-    const calls: Array<{ url: string; auth: string | null; body: string }> = [];
+    const calls: Array<{
+      url: string;
+      auth: string | null;
+      body: string;
+      signal: AbortSignal | null;
+    }> = [];
     const key = await mintAgentKeyWithAccessToken("access-1", {
       minTtlSeconds: 120,
       fetch: (async (url, init) => {
@@ -109,6 +116,7 @@ describe("mintAgentKeyWithAccessToken", () => {
           url: String(url),
           auth: headers.get("authorization"),
           body: String(init?.body ?? ""),
+          signal: init?.signal instanceof AbortSignal ? init.signal : null,
         });
         return new Response(
           JSON.stringify({
@@ -129,5 +137,6 @@ describe("mintAgentKeyWithAccessToken", () => {
     expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({
       min_ttl_seconds: 120,
     });
+    expect(calls[0]?.signal).toBeInstanceOf(AbortSignal);
   });
 });

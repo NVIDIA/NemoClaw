@@ -4,10 +4,11 @@
 /**
  * OAuth 2.0 Device Authorization Grant helpers for Hermes Provider onboarding.
  *
- * NemoClaw keeps Nous Portal OAuth on the host. Onboarding stores the
- * refresh-token state under ~/.nemoclaw and uses it to mint short-lived
- * agent keys for the OpenShell inference provider. The sandbox receives the
- * normal OpenShell inference placeholder, never raw Nous OAuth tokens.
+ * Hermes OAuth/API-key material must not be durably persisted to host-side
+ * NemoClaw storage such as ~/.nemoclaw. Onboarding uses ephemeral OAuth tokens
+ * to mint short-lived agent keys for OpenShell provider registration. The
+ * sandbox receives only the normal OpenShell inference placeholder, never raw
+ * Hermes/Nous OAuth tokens or API keys.
  */
 
 import { spawn } from "node:child_process";
@@ -122,19 +123,39 @@ function clampInterval(value: unknown): number {
   );
 }
 
+function createRequestTimeout(timeoutSeconds: number | undefined): {
+  signal: AbortSignal;
+  clear: () => void;
+} {
+  const controller = new AbortController();
+  const seconds = Math.max(1, Math.round(timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS));
+  const timer = setTimeout(() => controller.abort(), seconds * 1000);
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timer),
+  };
+}
+
 async function postForm(
   url: string,
   body: Record<string, string>,
   fetchImpl: typeof fetch,
+  timeoutSeconds?: number,
 ): Promise<Response> {
-  return fetchImpl(url, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams(body).toString(),
-  });
+  const timeout = createRequestTimeout(timeoutSeconds);
+  try {
+    return await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams(body).toString(),
+      signal: timeout.signal,
+    });
+  } finally {
+    timeout.clear();
+  }
 }
 
 export async function requestDeviceCode(
@@ -149,6 +170,7 @@ export async function requestDeviceCode(
     `${portalBaseUrl}/api/oauth/device/code`,
     { client_id: clientId, scope },
     fetchImpl,
+    opts.timeoutSeconds,
   );
 
   if (resp.status !== 200) {
@@ -205,6 +227,7 @@ export async function pollForToken(
         client_id: clientId,
       },
       fetchImpl,
+      opts.timeoutSeconds,
     );
 
     if (resp.status === 200) {
@@ -262,6 +285,7 @@ export async function refreshAccessTokenWithRefreshToken(
       client_id: clientId,
     },
     fetchImpl,
+    opts.timeoutSeconds,
   );
 
   if (resp.status !== 200) {
@@ -296,15 +320,22 @@ export async function mintAgentKeyWithAccessToken(
   const portalBaseUrl = opts.portalBaseUrl ?? DEFAULT_PORTAL_BASE_URL;
   const minTtlSeconds = Math.max(60, Math.round(opts.minTtlSeconds ?? 1800));
 
-  const resp = await fetchImpl(`${portalBaseUrl}/api/oauth/agent-key`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ min_ttl_seconds: minTtlSeconds }),
-  });
+  const timeout = createRequestTimeout(opts.timeoutSeconds);
+  let resp: Response;
+  try {
+    resp = await fetchImpl(`${portalBaseUrl}/api/oauth/agent-key`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ min_ttl_seconds: minTtlSeconds }),
+      signal: timeout.signal,
+    });
+  } finally {
+    timeout.clear();
+  }
 
   if (resp.status !== 200) {
     let errorPayload: { error?: string; error_description?: string } = {};
