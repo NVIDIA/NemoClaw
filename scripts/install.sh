@@ -1704,6 +1704,10 @@ maybe_offer_express_install() {
   fi
   # On a supported platform but a skip condition applies — explain why so
   # the user understands they could have gotten express otherwise.
+  if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_NO_EXPRESS=1)."
+    return 0
+  fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     info "Detected ${platform}. Skipping express prompt (--non-interactive set)."
     return 0

@@ -3270,6 +3270,11 @@ sys.exit(exit_code)
       env: {
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        // These tests verify the third-party-license flow on non-Spark
+        // hardware. On real DGX Spark/Station the express prompt would
+        // also fire and consume the test's input. Skip it explicitly
+        // so the tests stay focused on what they're verifying.
+        NEMOCLAW_NO_EXPRESS: "1",
         ...env,
       },
     });
