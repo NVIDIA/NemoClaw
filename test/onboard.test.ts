@@ -59,6 +59,10 @@ type OnboardTestInternals = {
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
   compactText: (value?: string) => string;
   computeSetupPresetSuggestions: ShimFn<string[]>;
+  filterSetupPolicyPresets: <T extends { name: string }>(
+    presets: T[],
+    options?: { webSearchSupported?: boolean | null },
+  ) => T[];
   formatEnvAssignment: (name: string, value: string) => string;
   findDashboardForwardOwner: (
     forwardListOutput: string | null | undefined,
@@ -213,6 +217,7 @@ function isOnboardTestInternals(
     typeof value.shouldAllowOpenshellAboveBlueprintMax === "function" &&
     typeof value.hasChatCompletionsToolCall === "function" &&
     typeof value.hasChatCompletionsToolCallLeak === "function" &&
+    typeof value.filterSetupPolicyPresets === "function" &&
     typeof value.getDefaultSandboxNameForAgent === "function" &&
     typeof value.getSandboxPromptDefault === "function" &&
     typeof value.getRequestedSandboxAgentName === "function" &&
@@ -247,6 +252,7 @@ const {
   classifySandboxCreateFailure,
   compactText,
   computeSetupPresetSuggestions,
+  filterSetupPolicyPresets,
   formatEnvAssignment,
   getNavigationChoice,
   getGatewayReuseState,
@@ -787,6 +793,35 @@ network_policies:
       expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
     });
 
+    it("filters tier defaults to known presets for agent-specific onboarding", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: known.filter((name) => name !== "brave"),
+      });
+      expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    });
+
+    it("omits Brave when web search is unsupported", () => {
+      const allPresets = known.map((name) => ({ name }));
+      const unsupportedPresets = filterSetupPolicyPresets(allPresets, {
+        webSearchSupported: false,
+      }).map((p) => p.name);
+      const supportedPresets = filterSetupPolicyPresets(allPresets, {
+        webSearchSupported: true,
+      }).map((p) => p.name);
+      expect(unsupportedPresets).not.toContain("brave");
+      expect(supportedPresets).toContain("brave");
+    });
+
+    it("drops Brave tier defaults when web search is unsupported", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: known,
+        webSearchSupported: false,
+      });
+      expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    });
+
     it("forwards enabled messaging channels into the balanced tier suggestions", () => {
       const suggestions = computeSetupPresetSuggestions("balanced", {
         enabledChannels: ["telegram"],
@@ -830,6 +865,15 @@ network_policies:
         knownPresetNames: known,
       });
       expect(suggestions).toContain("brave");
+    });
+
+    it("does not add Brave from webSearchConfig when web search is unsupported", () => {
+      const suggestions = computeSetupPresetSuggestions("restricted", {
+        webSearchConfig: { provider: "brave" },
+        knownPresetNames: known,
+        webSearchSupported: false,
+      });
+      expect(suggestions).not.toContain("brave");
     });
 
     it("adds local-inference for local providers", () => {
@@ -4599,7 +4643,7 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /skippedStepMessage\("openclaw", sandboxName\)/);
     assert.match(
       source,
-      /skippedStepMessage\("policies", \(recordedPolicyPresets \|\| \[\]\)\.join\(", "\)\)/,
+      /skippedStepMessage\("policies", recordedPolicyPresetsForSupport\.join\(", "\)\)/,
     );
   });
 
@@ -4616,6 +4660,14 @@ const { setupInference } = require(${onboardPath});
       // session value participates only when its sandbox step completed.
       /const recordedSandboxName =\s*session\?\.steps\?\.sandbox\?\.status === "complete" \? session\?\.sandboxName \|\| null : null;[\s\S]*?let sandboxName = recordedSandboxName \|\| requestedSandboxName \|\| null;\s*if \(sandboxName && RESERVED_SANDBOX_NAMES\.has\(sandboxName\)\) \{[\s\S]*?process\.exit\(1\);\s*\}/,
     );
+  });
+  it("reserves update as a sandbox name because it is a global command", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /const RESERVED_SANDBOX_NAMES = new Set\([\s\S]*?"update"[\s\S]*?\]\);/);
   });
   it("delegates sandbox-create progress streaming to the extracted helper module", () => {
     const onboardSource = fs.readFileSync(

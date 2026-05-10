@@ -213,10 +213,13 @@ The upgrade flow is non-destructive by default because NemoClaw preserves manife
 
 ```console
 $ nemoclaw <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash          # updates CLI; auto-upgrades stale running sandboxes
+$ nemoclaw update --yes                                        # updates CLI through the maintained installer flow
 $ nemoclaw upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
 $ nemoclaw upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
 ```
+
+`nemoclaw update` is the CLI wrapper around the same installer path as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`.
+Use `nemoclaw update --check` when you only want to inspect version state and see the maintained update command.
 
 For scripted manual rebuilds, use `nemoclaw upgrade-sandboxes --auto` to skip the confirmation prompt.
 

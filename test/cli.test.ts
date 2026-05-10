@@ -363,6 +363,8 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Compatibility Commands")).toBeTruthy();
     expect(r.out).toContain("nemoclaw upgrade-sandboxes");
     expect(r.out).toContain("(--check, --auto, --yes|-y)");
+    expect(r.out).toContain("nemoclaw update");
+    expect(r.out).toContain("(--check, --yes|-y)");
     expect(r.out).toContain("nemoclaw gc");
     expect(r.out).toContain("(--yes|-y|--force, --dry-run)");
     expect(r.out).toContain("nemoclaw onboard");

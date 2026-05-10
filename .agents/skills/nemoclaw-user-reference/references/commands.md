@@ -963,6 +963,14 @@ $ nemoclaw onboard
 
 If the pull exceeds the limit, onboarding emits the timeout in minutes plus a hint to raise this variable, and the partial download is preserved for the next attempt.
 
+### Lifecycle Behavior Flags
+
+These flags change defaults for commands that manage existing sandboxes.
+
+| Variable | Format | Effect |
+|----------|--------|--------|
+| `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `nemoclaw <name> connect` and `nemoclaw <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
+
 ## NemoHermes Alias
 
 `nemohermes` is a convenience alias that pre-selects the Hermes agent.

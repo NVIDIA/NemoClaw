@@ -158,7 +158,8 @@ describe("runSetupDnsProxy", () => {
       calls.push(args);
       const cmd = args.join(" ");
       if (args[0] === "ps") return ok("openshell-cluster-nemoclaw\n");
-      if (cmd.includes("get endpoints kube-dns")) return ok("10.43.0.10");
+      if (cmd.includes("get service kube-dns")) return ok("10.43.0.10");
+      if (cmd.includes("get endpoints kube-dns")) return ok("10.42.0.15");
       if (cmd.includes("get pods -n openshell -o name")) return ok("pod/box[1]-abc\n");
       if (cmd.includes("ip addr show")) return ok("10.200.0.1\n");
       if (cmd.includes("cat /tmp/dns-proxy.pid")) return ok("12345\n");
@@ -182,11 +183,50 @@ describe("runSetupDnsProxy", () => {
     );
 
     expect(result.exitCode).toBe(0);
+    expect(result.dnsUpstream).toBe("10.43.0.10");
     expect(result.pod).toBe("box[1]-abc");
     expect(result.verificationPass).toBe(4);
+    expect(calls.some((args) => args.join(" ").includes("get service kube-dns"))).toBe(true);
+    expect(calls.some((args) => args.join(" ").includes("get endpoints kube-dns"))).toBe(false);
     expect(calls.some((args) => args.includes("box[1]-abc"))).toBe(true);
     expect(calls.some((args) => args.join(" ").includes("nohup python3 -u /tmp/dns-proxy.py '10.43.0.10' '10.200.0.1'"))).toBe(true);
     expect(log).toHaveBeenCalledWith("  DNS verification: 4 passed, 0 failed");
+  });
+
+  it("falls back to the CoreDNS pod endpoint when the kube-dns service IP is unavailable", () => {
+    const calls: string[][] = [];
+    const runDocker = vi.fn((args: string[]) => {
+      calls.push(args);
+      const cmd = args.join(" ");
+      if (args[0] === "ps") return ok("openshell-cluster-nemoclaw\n");
+      if (cmd.includes("get service kube-dns")) return ok("");
+      if (cmd.includes("get endpoints kube-dns")) return ok("10.42.0.15");
+      if (cmd.includes("get pods -n openshell -o name")) return ok("pod/box-abc\n");
+      if (cmd.includes("ip addr show")) return ok("10.200.0.1\n");
+      if (cmd.includes("cat /tmp/dns-proxy.pid")) return ok("12345\n");
+      if (cmd.includes("cat /tmp/dns-proxy.log")) return ok("dns-proxy: 10.200.0.1:53 -> 10.42.0.15:53 pid=12345\n");
+      if (cmd.includes("python3 -c")) return ok("ok");
+      if (cmd.includes("ls /run/netns/")) return ok("sandbox-ns\n");
+      if (cmd.includes("test -x")) return ok();
+      if (cmd.includes("cat /etc/resolv.conf")) return ok("nameserver 10.200.0.1\n");
+      if (cmd.includes("getent hosts github.com")) return ok("140.82.112.4 github.com\n");
+      return ok();
+    });
+
+    const result = runSetupDnsProxy(
+      { gatewayName: "nemoclaw", sandboxName: "box" },
+      {
+        env: { DOCKER_HOST: "unix:///tmp/fake-docker.sock" },
+        log: vi.fn(),
+        runDocker,
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.dnsUpstream).toBe("10.42.0.15");
+    expect(calls.some((args) => args.join(" ").includes("get service kube-dns"))).toBe(true);
+    expect(calls.some((args) => args.join(" ").includes("get endpoints kube-dns"))).toBe(true);
   });
 
   it("rejects unsafe DNS upstreams before launching the forwarder", () => {
@@ -199,7 +239,7 @@ describe("runSetupDnsProxy", () => {
           calls.push(args);
           const cmd = args.join(" ");
           if (args[0] === "ps") return ok("openshell-cluster-nemoclaw\n");
-          if (cmd.includes("get endpoints kube-dns")) return ok("bad;rm\n");
+          if (cmd.includes("get service kube-dns")) return ok("bad;rm\n");
           return ok();
         },
         sleep: vi.fn(),

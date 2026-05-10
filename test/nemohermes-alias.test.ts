@@ -89,6 +89,14 @@ describe("nemohermes alias", () => {
     expect(out).toContain("NemoHermes");
   });
 
+  it("routes nemohermes uninstall as a global command, not a sandbox connect command", () => {
+    const { code, out } = runHermes("uninstall --help");
+    expect(code).toBe(0);
+    expect(out).toContain("NemoHermes Uninstaller");
+    expect(out).toContain("internal uninstall run-plan");
+    expect(out).not.toContain("uninstall connect");
+  });
+
   it("NEMOCLAW_AGENT is set to hermes via the launcher", () => {
     // The launcher sets the env var before requiring dist/nemoclaw.
     // We verify indirectly: --version shows nemohermes branding which
