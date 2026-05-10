@@ -191,10 +191,15 @@ export async function promptRemoteModel(
   const shouldOfferFullList =
     options.otherShowsFullList === true && topLevelLimit < modelOptions.length;
   const visibleOptions = modelOptions.slice(0, topLevelLimit);
-  const defaultChoice =
+  const currentDefaultChoice =
     defaultIndex >= 0
       ? defaultIndex + 1
-      : Math.min(Math.max(visibleOptions.length, 1), visibleOptions.length + 1);
+      : defaultModel && isSafeModelId(defaultModel)
+        ? visibleOptions.length + 2
+        : null;
+  const defaultChoice =
+    currentDefaultChoice ??
+    Math.min(Math.max(visibleOptions.length, 1), visibleOptions.length + 1);
 
   deps.writeLine("");
   deps.writeLine(`  ${label} models:`);
@@ -202,8 +207,8 @@ export async function promptRemoteModel(
     deps.writeLine(`    ${index + 1}) ${option}`);
   });
   deps.writeLine(`    ${visibleOptions.length + 1}) Other...`);
-  if (defaultIndex >= visibleOptions.length) {
-    deps.writeLine(`    ${defaultIndex + 1}) ${defaultModel} (current)`);
+  if (currentDefaultChoice !== null && currentDefaultChoice > visibleOptions.length + 1) {
+    deps.writeLine(`    ${currentDefaultChoice}) ${defaultModel} (current)`);
   }
   deps.writeLine("");
 
@@ -216,7 +221,7 @@ export async function promptRemoteModel(
     deps.exitFn();
   }
   const index = parseInt(choice || String(defaultChoice), 10) - 1;
-  if (defaultIndex >= 0 && index === defaultIndex) {
+  if (currentDefaultChoice !== null && index === currentDefaultChoice - 1) {
     return defaultModel;
   }
   if (Number.isFinite(index) && index >= 0 && index < visibleOptions.length) {

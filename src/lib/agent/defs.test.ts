@@ -63,6 +63,7 @@ describe("agent definitions", () => {
       envFile: ".env",
       format: "yaml",
     });
+    expect(hermes.inferenceProviderOptions).toEqual(["hermesProvider"]);
     expect(hermes.healthProbe.url).toBe("http://localhost:8642/health");
     expect(hermes.messagingPlatforms).toEqual(["telegram", "discord", "slack"]);
   });

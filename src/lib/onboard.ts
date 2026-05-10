@@ -4730,6 +4730,15 @@ function getEffectiveSandboxAgent(agent: AgentDefinition | null | undefined): Ag
   return agent || agentDefs.loadAgent("openclaw");
 }
 
+function getAgentInferenceProviderOptions(agent: AgentDefinition | null | undefined): string[] {
+  const effectiveAgent = agent?.name
+    ? agentDefs.loadAgent(agent.name)
+    : getEffectiveSandboxAgent(agent);
+  return Array.isArray(effectiveAgent.inferenceProviderOptions)
+    ? effectiveAgent.inferenceProviderOptions
+    : [];
+}
+
 function getSandboxAgentRegistryFields(
   agent: AgentDefinition | null | undefined,
   agentVersionKnown = true,
@@ -6333,7 +6342,8 @@ async function setupNim(
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
-  const hermesProviderAvailable = agent?.name === "hermes";
+  const agentProviderOptions = getAgentInferenceProviderOptions(agent);
+  const hermesProviderAvailable = agentProviderOptions.includes("hermesProvider");
   const options: Array<{ key: string; label: string }> = [];
   options.push({ key: "build", label: "NVIDIA Endpoints" });
   options.push({ key: "openai", label: "OpenAI" });
@@ -6429,8 +6439,10 @@ async function setupNim(
   if (blueprintRouterCfg && blueprintRouterCfg.router?.enabled === true) {
     options.push({ key: "routed", label: "Model Router (experimental)" });
   }
-  if (hermesProviderAvailable) {
-    options.push({ key: "hermesProvider", label: "Hermes Provider" });
+  for (const providerKey of agentProviderOptions) {
+    const remoteConfig = REMOTE_PROVIDER_CONFIG[providerKey];
+    if (!remoteConfig || options.some((option) => option.key === providerKey)) continue;
+    options.push({ key: providerKey, label: remoteConfig.label });
   }
 
   function checkOllamaPortsOrWarn(): boolean {
@@ -7472,35 +7484,37 @@ async function setupInference(
       (credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV
         ? HERMES_AUTH_METHOD_API_KEY
         : HERMES_AUTH_METHOD_OAUTH);
-    try {
-      const state =
-        resolvedHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY
-          ? await hermesProviderAuth.ensureHermesProviderApiKeyCredentials(targetSandbox, {
-              apiKey: resolveHermesNousApiKey(),
-              runOpenshell,
-              baseUrl: endpointUrl || undefined,
-            })
-          : await hermesProviderAuth.ensureHermesProviderOAuthCredentials(targetSandbox, {
-              allowInteractiveLogin: !isNonInteractive(),
-              runOpenshell,
-              baseUrl: endpointUrl || undefined,
-            });
-      if (!state) {
-        const authLabel = hermesAuthMethodLabel(resolvedHermesAuthMethod);
-        console.error(`  ✗ Hermes Provider ${authLabel} is not available on the host.`);
+    if (!hermesProviderAuth.isHermesProviderRegistered(runOpenshell)) {
+      try {
+        const state =
+          resolvedHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY
+            ? await hermesProviderAuth.ensureHermesProviderApiKeyCredentials(targetSandbox, {
+                apiKey: resolveHermesNousApiKey(),
+                runOpenshell,
+                baseUrl: endpointUrl || undefined,
+              })
+            : await hermesProviderAuth.ensureHermesProviderOAuthCredentials(targetSandbox, {
+                allowInteractiveLogin: !isNonInteractive(),
+                runOpenshell,
+                baseUrl: endpointUrl || undefined,
+              });
+        if (!state) {
+          const authLabel = hermesAuthMethodLabel(resolvedHermesAuthMethod);
+          console.error(`  ✗ Hermes Provider ${authLabel} is not available on the host.`);
+          console.error(
+            "    Re-run `nemoclaw onboard --agent hermes` interactively to configure credentials.",
+          );
+          process.exit(1);
+        }
+      } catch (err) {
         console.error(
-          "    Re-run `nemoclaw onboard --agent hermes` interactively to configure credentials.",
+          `  ✗ Failed to prepare Hermes Provider credentials: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
         );
-        process.exit(1);
+        if (isNonInteractive()) process.exit(1);
+        return { retry: "selection" };
       }
-    } catch (err) {
-      console.error(
-        `  ✗ Failed to prepare Hermes Provider credentials: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      if (isNonInteractive()) process.exit(1);
-      return { retry: "selection" };
     }
 
     const applyResult = runOpenshell(

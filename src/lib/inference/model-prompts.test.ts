@@ -165,6 +165,27 @@ describe("model prompt helpers", () => {
     expect(result).toBe("model-12");
   });
 
+  it("keeps a safe current remote default that is not in the curated list", async () => {
+    const writeLine = vi.fn();
+    const promptFn = promptSequence([""]);
+    const result = await promptRemoteModel(
+      "OpenAI",
+      "openai",
+      "custom/provider-model",
+      null,
+      {
+        promptFn,
+        writeLine,
+        remoteModelOptions: { openai: ["model-1", "model-2", "model-3"] },
+      },
+    );
+
+    expect(result).toBe("custom/provider-model");
+    expect(promptFn).toHaveBeenCalledWith("  Choose model [5]: ");
+    expect(writeLine).toHaveBeenCalledWith("    4) Other...");
+    expect(writeLine).toHaveBeenCalledWith("    5) custom/provider-model (current)");
+  });
+
   it("limits top-level remote catalogs before manual-entry fallback", async () => {
     const modelOptions = Array.from({ length: 12 }, (_, index) => `model-${index + 1}`);
     const writeLine = vi.fn();

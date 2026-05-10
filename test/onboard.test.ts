@@ -2747,6 +2747,85 @@ const { setupInference } = require(${onboardPath});
     assert.equal(payload.nvidiaApiKey, "nvapi-secret-value");
   });
 
+  it("reuses a registered Hermes Provider without re-collecting host credentials", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-reuse-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-hermes-reuse-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get hermes-provider")) {
+    return { status: 0, stdout: "Provider: hermes-provider", stderr: "" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: hermes-provider",
+      "  Model: moonshotai/kimi-k2.6",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+delete process.env.NOUS_API_KEY;
+delete process.env.OPENAI_API_KEY;
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference("test-box", "moonshotai/kimi-k2.6", "hermes-provider", "https://inference-api.nousresearch.com/v1", "OPENAI_API_KEY", "oauth");
+  console.log(JSON.stringify(commands));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
+    assert.equal(commands.length, 3);
+    assert.match(commands[0].command, /gateway select nemoclaw/);
+    assert.match(commands[1].command, /provider get hermes-provider/);
+    assert.match(commands[2].command, /inference set --no-verify --provider hermes-provider/);
+    assert.ok(!commands.some((entry) => /provider (create|update)/.test(entry.command)));
+    assert.ok(!commands.some((entry) => entry.env?.NOUS_API_KEY || entry.env?.OPENAI_API_KEY));
+  });
+
   it("configures Model Router as a host provider while sandboxes keep inference.local", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-inference-"));
