@@ -7,6 +7,7 @@
 const { redact } = require("../runner");
 const {
   DEFAULT_CLOUD_MODEL,
+  DEFAULT_HERMES_PROVIDER_MODEL,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } = require("../inference/config");
@@ -19,6 +20,7 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+const HERMES_INFERENCE_ENDPOINT_URL = "https://inference-api.nousresearch.com/v1";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -72,6 +74,17 @@ const REMOTE_PROVIDER_CONFIG = {
     helpUrl: "https://aistudio.google.com/app/apikey",
     modelMode: "curated",
     defaultModel: "gemini-2.5-flash",
+    skipVerify: true,
+  },
+  hermesProvider: {
+    label: "Hermes Provider",
+    providerName: "hermes-provider",
+    providerType: "openai",
+    credentialEnv: "OPENAI_API_KEY",
+    endpointUrl: HERMES_INFERENCE_ENDPOINT_URL,
+    helpUrl: "https://portal.nousresearch.com/manage-subscription",
+    modelMode: "curated",
+    defaultModel: DEFAULT_HERMES_PROVIDER_MODEL,
     skipVerify: true,
   },
   custom: {
@@ -161,6 +174,11 @@ function getNonInteractiveProvider() {
     nim: "nim-local",
     vllm: "vllm",
     anthropiccompatible: "anthropicCompatible",
+    hermes: "hermesProvider",
+    "hermes-provider": "hermesProvider",
+    hermesprovider: "hermesProvider",
+    nous: "hermesProvider",
+    "nous-portal": "hermesProvider",
   };
   const normalized = aliases[providerKey] || providerKey;
   const validProviders = new Set([
@@ -169,6 +187,7 @@ function getNonInteractiveProvider() {
     "anthropic",
     "anthropicCompatible",
     "gemini",
+    "hermesProvider",
     "ollama",
     "custom",
     "nim-local",
@@ -182,7 +201,7 @@ function getNonInteractiveProvider() {
   if (!validProviders.has(normalized)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
     console.error(
-      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama",
+      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama",
     );
     process.exit(1);
   }
@@ -332,6 +351,7 @@ function getSandboxInferenceConfig(
       inferenceApi = "anthropic-messages";
       break;
     case "gemini-api":
+    case "hermes-provider":
       providerKey = "inference";
       primaryModelRef = `inference/${model}`;
       inferenceCompat = {

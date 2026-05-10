@@ -167,6 +167,7 @@ describe("agents/hermes/generate-config.ts", () => {
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram", "slack"]),
       NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
         telegram: ["123456789"],
+        slack: ["U0123456789", "U09ABCDEFGH"],
       }),
       NEMOCLAW_TELEGRAM_CONFIG_B64: encodeJson({ requireMention: true }),
     });
@@ -184,6 +185,7 @@ describe("agents/hermes/generate-config.ts", () => {
     );
     expect(envFile).not.toContain("SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n");
     expect(envFile).not.toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
+    expect(envFile).toContain("SLACK_ALLOWED_USERS=U0123456789,U09ABCDEFGH\n");
   });
 
   it("omits Telegram behavior config when requireMention is not boolean", () => {

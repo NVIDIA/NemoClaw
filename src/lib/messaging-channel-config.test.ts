@@ -18,6 +18,7 @@ describe("messaging channel config", () => {
       "DISCORD_SERVER_ID",
       "DISCORD_USER_ID",
       "DISCORD_REQUIRE_MENTION",
+      "SLACK_ALLOWED_USERS",
     ]);
   });
 
@@ -28,12 +29,14 @@ describe("messaging channel config", () => {
         TELEGRAM_REQUIRE_MENTION: "yes",
         DISCORD_SERVER_ID: "1491590992753590594",
         DISCORD_REQUIRE_MENTION: "0",
+        SLACK_ALLOWED_USERS: "  U01ABC2DEF3, U04GHI5JKL6  ",
         NVIDIA_API_KEY: "not-channel-config",
       }),
     ).toEqual({
       TELEGRAM_ALLOWED_IDS: "123,456",
       DISCORD_SERVER_ID: "1491590992753590594",
       DISCORD_REQUIRE_MENTION: "0",
+      SLACK_ALLOWED_USERS: "U01ABC2DEF3, U04GHI5JKL6",
     });
   });
 
