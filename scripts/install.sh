@@ -1717,7 +1717,7 @@ maybe_offer_express_install() {
     return 0
   fi
   info "Detected ${platform}."
-  printf "  Run express install (accepts third-party software notice, auto-configures inference, applies suggested security policy)? [Y/n]: "
+  printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
   local reply=""
   read -r reply </dev/tty || true
   reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
@@ -1725,9 +1725,7 @@ maybe_offer_express_install() {
     "" | y | yes)
       info "Using express install for ${platform}."
       NON_INTERACTIVE=1
-      ACCEPT_THIRD_PARTY_SOFTWARE=1
       export NEMOCLAW_NON_INTERACTIVE=1
-      export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
       export NEMOCLAW_YES=1
       export NEMOCLAW_POLICY_MODE=suggested
       case "$platform" in
@@ -1779,11 +1777,6 @@ main() {
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
 
-  # Offer express install on supported platforms (DGX Spark / Station). When
-  # accepted, sets non-interactive + accept-notice + provider/model env vars
-  # so the rest of the run is fully unattended.
-  maybe_offer_express_install
-
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
   # is only one of several phase-3 steps that need a TTY or --non-interactive
@@ -1802,6 +1795,13 @@ main() {
   # a real terminal are different: stdin is the script pipe, but /dev/tty can
   # still collect acceptance before Node.js or the CLI are installed.
   preflight_usage_notice_prompt
+
+  # Offer express install on supported platforms (DGX Spark / Station). Runs
+  # AFTER the third-party notice so the user has explicitly accepted the
+  # license before opting into the unattended path. Express only sets the
+  # provider/model/policy + non-interactive vars; license acceptance is
+  # already recorded by preflight above.
+  maybe_offer_express_install
 
   _INSTALL_START=$SECONDS
   print_banner
