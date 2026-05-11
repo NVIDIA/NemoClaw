@@ -12,11 +12,17 @@ import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("../../onboard/providers");
 import * as policies from "../../policy";
+// Lazy-required: keeps qrcode-terminal + the iLink HTTP client out of the
+// import graph for non-host-qr channels-add calls.
+const { HOST_QR_LOGIN_HANDLERS } = require("../../host-qr-handlers") as typeof import("../../host-qr-handlers");
+const onboardSession = require("../../state/onboard-session") as typeof import("../../state/onboard-session");
+
 import { parsePolicyAddArgs } from "../../domain/policy-channel";
 import * as registry from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { rebuildSandbox } from "./rebuild";
 import {
+  type ChannelDef,
   KNOWN_CHANNELS,
   clearChannelTokens,
   getChannelDef,
@@ -24,6 +30,7 @@ import {
   knownChannelNames,
   persistChannelTokens,
 } from "../../sandbox/channels";
+import type { HostQrLoginResult } from "../../host-qr-handlers";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -395,45 +402,15 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
   await rebuildSandbox(sandboxName, ["--yes"]);
 }
 
-export async function addSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
-  const dryRun = args.includes("--dry-run");
-  const channelArg = args.find((arg) => !arg.startsWith("-"));
-  if (!channelArg) {
-    console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run]`);
-    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
-    process.exit(1);
-  }
-
-  const channel = getChannelDef(channelArg);
-  if (!channel) {
-    console.error(`  Unknown channel '${channelArg}'.`);
-    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
-    process.exit(1);
-  }
-
-  // Channels whose credentials come from a host-side QR handshake (WeChat
-  // today) cannot be wired up by the paste-prompt path below — the user has
-  // no token to paste, and we also need to capture per-account metadata
-  // (accountId, baseUrl, userId) that this command has no slot for. Bail
-  // explicitly rather than collect an unusable token and queue a rebuild
-  // that would boot with a dormant bridge.
-  if (channel.loginMethod === "host-qr") {
-    console.error(
-      `  '${channelArg}' uses a host-side QR login that 'channels add' does not yet support.`,
-    );
-    console.error(
-      `  Enable it during '${CLI_NAME} onboard' instead — adding QR-based channels post-onboard is tracked separately.`,
-    );
-    process.exit(1);
-  }
-
-  if (dryRun) {
-    console.log(`  --dry-run: would enable channel '${channelArg}' for '${sandboxName}'.`);
-    return;
-  }
-
+// Paste-prompt token acquisition for Telegram / Discord / Slack — extracted
+// from the original inline loop so `addSandboxChannel` can fork cleanly on
+// `loginMethod`.
+async function acquirePasteTokens(
+  channelArg: string,
+  channel: ChannelDef,
+  acquired: Record<string, string>,
+): Promise<void> {
   const tokenKeys = getChannelTokenKeys(channel);
-  const acquired: Record<string, string> = {};
   for (const envKey of tokenKeys) {
     const isPrimary = envKey === channel.envKey;
     const help = isPrimary ? channel.help : channel.appTokenHelp;
@@ -458,6 +435,130 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
       process.exit(1);
     }
     acquired[envKey] = token;
+  }
+}
+
+// Host-QR token acquisition for WeChat (the only channel with
+// `loginMethod: "host-qr"` today). Drives the iLink QR handshake on the
+// host, captures the bot token and the non-secret per-account metadata
+// (accountId, baseUrl, userId), and stashes the metadata where the
+// upcoming rebuild can find it:
+//   - `process.env`         — for the in-process rebuild that fires next
+//                             (`promptAndRebuild` → `rebuildSandbox` →
+//                             `onboard --resume` reads WECHAT_ACCOUNT_ID
+//                             etc. via the wechatConfig builder).
+//   - `session.wechatConfig` — for a deferred rebuild started from a fresh
+//                             process. `rebuildSandbox`'s env-stash reads
+//                             back from here.
+async function acquireHostQrChannel(
+  sandboxName: string,
+  channelArg: string,
+  channel: ChannelDef,
+  acquired: Record<string, string>,
+): Promise<void> {
+  // Cached-token short-circuit. A sandbox originally onboarded with this
+  // channel already has the bot token in OpenShell + the per-account
+  // metadata in session.wechatConfig. Re-running QR would invalidate the
+  // upstream plugin's existing iLink session; prefer the cache and let
+  // the rebuild's env-stash re-bake from session.
+  const cached = getCredential(channel.envKey);
+  if (cached) {
+    acquired[channel.envKey] = cached;
+    return;
+  }
+  if (isNonInteractive()) {
+    console.error(
+      `  '${channelArg}' requires an interactive QR login; cannot run in non-interactive mode.`,
+    );
+    console.error(
+      `  Run '${CLI_NAME} ${sandboxName} channels add ${channelArg}' interactively instead.`,
+    );
+    process.exit(1);
+  }
+  const handler = HOST_QR_LOGIN_HANDLERS[channelArg];
+  if (!handler) {
+    console.error(`  No host-qr handler registered for '${channelArg}'.`);
+    process.exit(1);
+  }
+  console.log("");
+  console.log(`  ${channel.help}`);
+  let result: HostQrLoginResult;
+  try {
+    result = await handler();
+  } catch (err: unknown) {
+    result = { kind: "error", message: err instanceof Error ? err.message : String(err) };
+  }
+  if (result.kind !== "ok") {
+    const reason =
+      result.kind === "timeout"
+        ? "QR login timed out"
+        : result.kind === "expired"
+          ? "QR expired too many times"
+          : result.kind === "aborted"
+            ? "login aborted"
+            : `login failed: ${result.message ?? "unknown error"}`;
+    console.error(`  Aborted — ${reason}.`);
+    process.exit(1);
+  }
+  if (!result.token) {
+    console.error("  Aborted — host-qr handler returned no token.");
+    process.exit(1);
+  }
+  acquired[channel.envKey] = result.token;
+  if (result.extraEnv) {
+    for (const [key, value] of Object.entries(result.extraEnv)) {
+      process.env[key] = value;
+    }
+  }
+  if (channel.userIdEnvKey && result.defaultUserId && !process.env[channel.userIdEnvKey]) {
+    process.env[channel.userIdEnvKey] = result.defaultUserId;
+  }
+  if (channelArg === "wechat" && result.extraEnv) {
+    const captured = {
+      accountId: result.extraEnv.WECHAT_ACCOUNT_ID,
+      baseUrl: result.extraEnv.WECHAT_BASE_URL,
+      userId: result.extraEnv.WECHAT_USER_ID,
+    };
+    onboardSession.updateSession((current) => {
+      const prior = current.wechatConfig;
+      current.wechatConfig = {
+        accountId: captured.accountId || prior?.accountId,
+        baseUrl: captured.baseUrl || prior?.baseUrl,
+        userId: captured.userId || prior?.userId,
+      };
+      return current;
+    });
+  }
+  const suffix = result.summary ? ` (${result.summary})` : "";
+  console.log(`  ${G}✓${R} ${channelArg} token saved${suffix}.`);
+}
+
+export async function addSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
+  const dryRun = args.includes("--dry-run");
+  const channelArg = args.find((arg) => !arg.startsWith("-"));
+  if (!channelArg) {
+    console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run]`);
+    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    process.exit(1);
+  }
+
+  const channel = getChannelDef(channelArg);
+  if (!channel) {
+    console.error(`  Unknown channel '${channelArg}'.`);
+    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    process.exit(1);
+  }
+
+  if (dryRun) {
+    console.log(`  --dry-run: would enable channel '${channelArg}' for '${sandboxName}'.`);
+    return;
+  }
+
+  const acquired: Record<string, string> = {};
+  if (channel.loginMethod === "host-qr") {
+    await acquireHostQrChannel(sandboxName, channelArg, channel, acquired);
+  } else {
+    await acquirePasteTokens(channelArg, channel, acquired);
   }
 
   persistChannelTokens(acquired);

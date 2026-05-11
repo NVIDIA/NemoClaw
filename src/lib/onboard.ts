@@ -5750,21 +5750,20 @@ async function createSandbox(
   // through to the sandbox so the in-sandbox wrapper plugin can pre-seed
   // the upstream @tencent-weixin/openclaw-weixin credentials file without
   // re-running the QR handshake.
+  // Populated from process.env (just captured by the host-qr handler this
+  // run, or from `rebuildSandbox`'s env-stash) with a session fallback for
+  // the resume case where setupMessagingChannels short-circuits the
+  // host-qr handler because the bot token is already cached. Not gated on
+  // `enabledTokenEnvKeys` — the metadata flows into the image whenever it
+  // is known, so seed-wechat-accounts.py can do its job.
   const wechatConfig: { accountId?: string; baseUrl?: string; userId?: string } = {};
-  if (enabledTokenEnvKeys.has("WECHAT_BOT_TOKEN")) {
+  {
     const accountId = normalizeCredentialValue(process.env.WECHAT_ACCOUNT_ID || "");
     const baseUrl = normalizeCredentialValue(process.env.WECHAT_BASE_URL || "");
     const userId = normalizeCredentialValue(process.env.WECHAT_USER_ID || "");
     if (accountId) wechatConfig.accountId = accountId;
     if (baseUrl) wechatConfig.baseUrl = baseUrl;
     if (userId) wechatConfig.userId = userId;
-    // Resume fallback: setupMessagingChannels short-circuits the host-qr
-    // handler when getMessagingToken(WECHAT_BOT_TOKEN) already returns a
-    // cached value, so the WECHAT_ACCOUNT_ID/BASE_URL/USER_ID env vars are
-    // not repopulated on a rebuild. Pull the previously-captured metadata
-    // from the onboard session before line 5499 below overwrites
-    // session.wechatConfig with null — otherwise the rebuild bakes an
-    // empty NEMOCLAW_WECHAT_CONFIG_B64 and seed-wechat-accounts.py no-ops.
     if (Object.keys(wechatConfig).length === 0) {
       const recorded = onboardSession.loadSession()?.wechatConfig;
       if (recorded?.accountId) wechatConfig.accountId = recorded.accountId;

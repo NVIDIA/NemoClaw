@@ -23,10 +23,18 @@ function configB64(payload: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(payload)).toString("base64");
 }
 
+function channelsB64(channels: string[]): string {
+  return Buffer.from(JSON.stringify(channels)).toString("base64");
+}
+
 function runSeed(envOverrides: Record<string, string> = {}) {
   const env: Record<string, string> = {
     PATH: process.env.PATH || "/usr/bin:/bin",
     HOME: tmpDir,
+    // Default to wechat-in-active-channels so existing tests exercise the
+    // openclaw.json-patching path. Tests that simulate `channels stop wechat`
+    // override this with `channelsB64([])` (or any list excluding wechat).
+    NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["wechat"]),
     ...envOverrides,
   };
   return spawnSync("python3", [SCRIPT_PATH], {
@@ -249,5 +257,65 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
     expect(result.stderr).toContain("could not parse");
     // Original (broken) file is left intact for a human to inspect.
     expect(fs.readFileSync(cfgPath, "utf-8")).toBe("{not valid json");
+  });
+});
+
+describe("seed-wechat-accounts.py: stopped-channel preservation", () => {
+  // When NEMOCLAW_MESSAGING_CHANNELS_B64 omits wechat (operator ran
+  // `channels stop wechat` before rebuild) we still want the per-account
+  // state files on disk so a later `channels start wechat` rebuild can
+  // revive the bridge without a fresh QR scan. The openclaw.json patch is
+  // what we suppress — without channels.openclaw-weixin.accounts.<id>.enabled
+  // the upstream plugin treats the account as inactive and the bridge
+  // no-ops, even though the placeholder token + baseUrl/userId are present
+  // in the accounts file.
+
+  it("writes account state files but skips openclaw.json patch when wechat is not in active channels", () => {
+    writeOpenclawConfig({ gateway: { port: 7777 } });
+    const result = runSeed({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["telegram"]),
+      NEMOCLAW_WECHAT_CONFIG_B64: configB64({
+        accountId: "primary",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "wxid-42",
+      }),
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("wechat not in active channels");
+
+    // Per-account files survive — ready for the next `channels start`.
+    const account = readJson(
+      path.join(tmpDir, ".openclaw", "openclaw-weixin", "accounts", "primary.json"),
+    );
+    expect(account.token).toBe(PLACEHOLDER);
+    expect(account.baseUrl).toBe("https://ilinkai.wechat.com");
+    expect(account.userId).toBe("wxid-42");
+    const index = readJson(path.join(tmpDir, ".openclaw", "openclaw-weixin", "accounts.json"));
+    expect(index).toEqual(["primary"]);
+
+    // openclaw.json must not have the channel block, but the unrelated
+    // gateway key the test seeded earlier must survive untouched.
+    const cfg = readJson(path.join(tmpDir, ".openclaw", "openclaw.json"));
+    expect(cfg.channels?.["openclaw-weixin"]).toBeUndefined();
+    expect(cfg.gateway).toEqual({ port: 7777 });
+  });
+
+  it("treats an empty channel list as 'wechat stopped'", () => {
+    // Defensive: a malformed/empty NEMOCLAW_MESSAGING_CHANNELS_B64 must
+    // not silently re-enable wechat. Account state still gets written for
+    // recovery, the channel block does not.
+    writeOpenclawConfig();
+    const result = runSeed({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64([]),
+      NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
+    });
+    expect(result.status).toBe(0);
+
+    expect(
+      fs.existsSync(path.join(tmpDir, ".openclaw", "openclaw-weixin", "accounts", "primary.json")),
+    ).toBe(true);
+    const cfg = readJson(path.join(tmpDir, ".openclaw", "openclaw.json"));
+    expect(cfg.channels?.["openclaw-weixin"]).toBeUndefined();
   });
 });

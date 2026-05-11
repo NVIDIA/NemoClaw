@@ -37,6 +37,14 @@
 #   NEMOCLAW_WECHAT_CONFIG_B64               Base64-encoded JSON: {accountId, baseUrl, userId}.
 #                                            When accountId is empty (no host-side QR login
 #                                            captured), the script no-ops cleanly.
+#   NEMOCLAW_MESSAGING_CHANNELS_B64          Base64-encoded JSON array of active channel names.
+#                                            When "wechat" is absent (operator stopped the
+#                                            channel via `nemoclaw <sandbox> channels stop
+#                                            wechat`), we still write the per-account state
+#                                            files so a later `channels start wechat` can
+#                                            revive the bridge without a fresh QR scan — but
+#                                            we skip patching openclaw.json, so the bridge
+#                                            stays dormant until the channel is re-enabled.
 
 from __future__ import annotations
 
@@ -49,6 +57,22 @@ import sys
 
 
 WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN"
+
+
+def _wechat_enabled() -> bool:
+    """Decide whether wechat is in the active-channel whitelist for this build.
+
+    NEMOCLAW_MESSAGING_CHANNELS_B64 carries the list of channels onboard
+    selected after applying the disable filter. When wechat is absent the
+    bridge must stay dormant on this image, so we skip the openclaw.json
+    patch even though the per-account state files still get written.
+    """
+    raw = os.environ.get("NEMOCLAW_MESSAGING_CHANNELS_B64", "W10=") or "W10="
+    try:
+        channels = json.loads(base64.b64decode(raw).decode("utf-8"))
+    except (ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(channels, list) and "wechat" in channels
 
 
 def _state_dir() -> pathlib.Path:
@@ -177,7 +201,18 @@ def main() -> int:
         f"[seed-wechat-accounts] seeded {account_file} and registered {account_id} in {accounts_index}"
     )
 
-    _patch_openclaw_config(account_id)
+    # Only register the channel in openclaw.json when wechat is enabled for
+    # this build. When the operator stopped the channel before rebuild,
+    # NEMOCLAW_MESSAGING_CHANNELS_B64 omits "wechat" and we leave the patch
+    # off — the account state files above are still on disk and ready for a
+    # later `channels start wechat` rebuild to activate.
+    if _wechat_enabled():
+        _patch_openclaw_config(account_id)
+    else:
+        print(
+            f"[seed-wechat-accounts] wechat not in active channels; preserving account "
+            f"state files but skipping openclaw.json channel registration."
+        )
     return 0
 
 

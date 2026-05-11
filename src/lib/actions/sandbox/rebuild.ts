@@ -207,6 +207,27 @@ export async function rebuildSandbox(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
 
+  // Stash WeChat per-account metadata into process.env before the rebuild
+  // touches anything destructive. The metadata lives in session.wechatConfig
+  // (captured during the original onboard's host-side QR login) — the only
+  // durable source today. Surfacing it as WECHAT_ACCOUNT_ID / WECHAT_BASE_URL
+  // / WECHAT_USER_ID lets the in-process onboard --resume that fires later
+  // see it directly via the wechatConfig builder's process.env path.
+  // `openclaw-weixin/` runtime state is intentionally NOT in state_dirs —
+  // seed-wechat-accounts.py rebuilds the account files from these envs
+  // every image build, so keeping the envs here is the only thing the next
+  // image needs to put the right accountId/baseUrl/userId back into
+  // openclaw.json + the accounts state file.
+  {
+    const wc = onboardSession.loadSession()?.wechatConfig ?? null;
+    if (wc?.accountId && !process.env.WECHAT_ACCOUNT_ID) process.env.WECHAT_ACCOUNT_ID = wc.accountId;
+    if (wc?.baseUrl && !process.env.WECHAT_BASE_URL) process.env.WECHAT_BASE_URL = wc.baseUrl;
+    if (wc?.userId && !process.env.WECHAT_USER_ID) process.env.WECHAT_USER_ID = wc.userId;
+    if (wc?.accountId) {
+      log(`Stashed WeChat account metadata for rebuild: accountId=${wc.accountId}`);
+    }
+  }
+
   // Version check — show what's changing
   const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
   console.log("");
