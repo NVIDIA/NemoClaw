@@ -1490,16 +1490,17 @@ describe("commands/migration-state", () => {
       }
     };
 
-    it.each(["__proto__", "constructor", "prototype"])(
-      "rejects unsafe path segment: %s",
-      (segment) => {
-        const doc: Record<string, unknown> = {};
-        expect(() => {
-          setConfigValue(doc, `${segment}.polluted`, "true");
-        }).toThrow(/Unsafe config path segment/);
-        expectPrototypeClean();
-      },
-    );
+    it.each([
+      "__proto__",
+      "constructor",
+      "prototype",
+    ])("rejects unsafe path segment: %s", (segment) => {
+      const doc: Record<string, unknown> = {};
+      expect(() => {
+        setConfigValue(doc, `${segment}.polluted`, "true");
+      }).toThrow(/Unsafe config path segment/);
+      expectPrototypeClean();
+    });
 
     it("rejects __proto__ in nested position", () => {
       const doc: Record<string, unknown> = {};
@@ -1509,16 +1510,16 @@ describe("commands/migration-state", () => {
       expectPrototypeClean();
     });
 
-    it.each(["foo.prototype.bar", "foo.constructor.bar"])(
-      "rejects unsafe segment in nested path: %s",
-      (configPath) => {
-        const doc: Record<string, unknown> = {};
-        expect(() => {
-          setConfigValue(doc, configPath, "true");
-        }).toThrow(/Unsafe config path segment/);
-        expectPrototypeClean();
-      },
-    );
+    it.each([
+      "foo.prototype.bar",
+      "foo.constructor.bar",
+    ])("rejects unsafe segment in nested path: %s", (configPath) => {
+      const doc: Record<string, unknown> = {};
+      expect(() => {
+        setConfigValue(doc, configPath, "true");
+      }).toThrow(/Unsafe config path segment/);
+      expectPrototypeClean();
+    });
 
     it("allows legitimate dotted paths", () => {
       const doc: Record<string, unknown> = {};

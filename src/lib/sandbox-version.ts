@@ -13,11 +13,12 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { parseVersionFromText, versionGte } from "./openshell.js";
-import * as registry from "./registry.js";
-import { loadAgent } from "./agent-defs.js";
-import { resolveOpenshell } from "./resolve-openshell.js";
-import { captureOpenshellCommand } from "./openshell.js";
+import { parseVersionFromText, versionGte } from "./adapters/openshell/client.js";
+import * as registry from "./state/registry.js";
+import { loadAgent } from "./agent/defs.js";
+import { resolveOpenshell } from "./adapters/openshell/resolve.js";
+import { captureOpenshellCommand } from "./adapters/openshell/client.js";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts.js";
 
 export interface VersionCheckResult {
   sandboxVersion: string | null;
@@ -49,7 +50,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
   const sshConfigResult = captureOpenshellCommand(
     openshellBinary,
     ["sandbox", "ssh-config", sandboxName],
-    { ignoreError: true },
+    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
   );
   if (sshConfigResult.status !== 0) return null;
 
@@ -86,7 +87,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
  */
 export function checkAgentVersion(
   sandboxName: string,
-  opts?: { forceProbe?: boolean },
+  opts?: { forceProbe?: boolean; skipProbe?: boolean },
 ): VersionCheckResult {
   const agent = resolveAgentForSandbox(sandboxName);
   const expectedVersion = agent.expectedVersion;
@@ -106,6 +107,10 @@ export function checkAgentVersion(
       isStale,
       detectionMethod: "registry",
     };
+  }
+
+  if (opts?.skipProbe && !opts.forceProbe) {
+    return { sandboxVersion: null, expectedVersion, isStale: false, detectionMethod: "unavailable" };
   }
 
   // Slow path: SSH exec into sandbox

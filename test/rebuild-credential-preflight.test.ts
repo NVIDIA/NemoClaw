@@ -48,6 +48,12 @@ function createFixture(opts: {
   savedCredential?: { key: string; value: string };
   /** If set, the onboard-session.json provider_selection step status */
   providerSelectionStatus?: string;
+  agent?: string | null;
+  hermesAuthMethod?: string | null;
+  messagingChannels?: string[] | null;
+  providerCredentialHashes?: Record<string, string>;
+  dockerBuildExitCode?: number;
+  providerRegistered?: boolean;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -55,6 +61,12 @@ function createFixture(opts: {
     credentialEnv = "NVIDIA_API_KEY",
     savedCredential,
     providerSelectionStatus = "complete",
+    agent = null,
+    hermesAuthMethod = null,
+    messagingChannels = null,
+    providerCredentialHashes,
+    dockerBuildExitCode = 0,
+    providerRegistered = true,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -73,7 +85,9 @@ function createFixture(opts: {
           provider,
           gpuEnabled: false,
           policies: [],
-          agent: null,
+          agent,
+          messagingChannels,
+          ...(providerCredentialHashes ? { providerCredentialHashes } : {}),
         },
       },
     }),
@@ -100,6 +114,7 @@ function createFixture(opts: {
       model: "meta/llama-3.3-70b-instruct",
       endpointUrl: null,
       credentialEnv,
+      hermesAuthMethod,
       preferredInferenceApi: null,
       nimContainer: null,
       webSearchConfig: null,
@@ -197,9 +212,27 @@ if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
+if (a[0]==="provider" && a[1]==="get")       { process.exit(${providerRegistered ? 0 : 1}); }
 if (a[0]==="provider")                       { process.exit(0); }
 if (a[0]==="forward")                        { process.exit(0); }
 process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+
+  // ── Fake Docker ───────────────────────────────────────────────
+  // Hermes rebuild forces a base-image build before backup/delete.
+  // This fixture only exercises rebuild session state, so Docker succeeds.
+  fs.writeFileSync(
+    path.join(tmpDir, "docker"),
+    `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0]==="build") { process.exit(${dockerBuildExitCode}); }
+if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
+if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
+if (a[0]==="ps") { process.exit(0); }
+process.stderr.write("unexpected docker call: " + a.join(" ") + "\\n");
+process.exit(1);
 `,
     { mode: 0o755 },
   );
@@ -327,6 +360,60 @@ describe("Issue #2273: atomic rebuild", () => {
     );
 
     it(
+      "copies Hermes messaging channels from the registry into the rebuild resume session",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          messagingChannels: ["discord"],
+          providerCredentialHashes: { DISCORD_BOT_TOKEN: "hash-discord" },
+          credentialEnv: "NVIDIA_API_KEY",
+          savedCredential: {
+            key: "NVIDIA_API_KEY",
+            value: "nvapi-test-key-for-rebuild",
+          },
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+        expect(output).toContain("Creating new sandbox with current image");
+
+        const session = JSON.parse(
+          fs.readFileSync(path.join(f.nemoclawDir, "onboard-session.json"), "utf-8"),
+        );
+        expect(session.agent).toBe("hermes");
+        expect(session.messagingChannels).toEqual(["discord"]);
+      },
+    );
+
+    it(
+      "aborts rebuild before backup when forced Hermes base image build fails",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          credentialEnv: "NVIDIA_API_KEY",
+          savedCredential: {
+            key: "NVIDIA_API_KEY",
+            value: "nvapi-test-key-for-rebuild",
+          },
+          dockerBuildExitCode: 23,
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(result.status).not.toBe(0);
+        expect(output).toContain("Rebuild preflight failed");
+        expect(output).toContain("agent base image could not be built");
+        expect(output).toContain("Failed to build Hermes Agent base image (exit 23)");
+        expect(output).toContain("Sandbox is untouched");
+        expect(output).not.toContain("Backing up sandbox state");
+        expect(registryHasSandbox(f)).toBe(true);
+      },
+    );
+
+    it(
       "skips credential preflight for local inference (no credentialEnv in session)",
       { timeout: 60_000 },
       () => {
@@ -400,6 +487,71 @@ describe("Issue #2273: atomic rebuild", () => {
         expect(output).toContain("preflight failed");
         expect(output).toContain("OPENAI_API_KEY");
         expect(output).toContain("untouched");
+        expect(registryHasSandbox(f)).toBe(true);
+      },
+    );
+
+    it(
+      "uses the registered Hermes Provider in OpenShell instead of requiring OPENAI_API_KEY",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          provider: "hermes-provider",
+          credentialEnv: "OPENAI_API_KEY",
+          hermesAuthMethod: "oauth",
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
+        expect(output).not.toContain("provider credential not found");
+        expect(output).toContain("Backing up sandbox state");
+      },
+    );
+
+    it(
+      "registers an exported Hermes API key in OpenShell when the provider is missing",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          provider: "hermes-provider",
+          credentialEnv: "NOUS_API_KEY",
+          hermesAuthMethod: "api_key",
+          providerRegistered: false,
+        });
+
+        const result = runRebuild(f, { NOUS_API_KEY: "nous-key-from-env" });
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(output).not.toContain("Missing credential: NOUS_API_KEY");
+        expect(output).not.toContain("provider credential not found");
+        expect(output).toContain("Backing up sandbox state");
+      },
+    );
+
+    it(
+      "aborts Hermes OAuth rebuild before backup when the OpenShell provider is missing",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          provider: "hermes-provider",
+          credentialEnv: "OPENAI_API_KEY",
+          hermesAuthMethod: "oauth",
+          providerRegistered: false,
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(result.status).not.toBe(0);
+        expect(output).toContain("Hermes Provider is not registered in OpenShell");
+        expect(output).toContain("credentials must be stored in OpenShell");
+        expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
+        expect(output).not.toContain("Backing up sandbox state");
         expect(registryHasSandbox(f)).toBe(true);
       },
     );

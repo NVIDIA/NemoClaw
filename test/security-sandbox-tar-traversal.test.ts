@@ -115,13 +115,13 @@ function buildTar(
  * Import the actual validation/extraction functions from the source.
  */
 type SandboxStateModule = Pick<
-  typeof import("../dist/lib/sandbox-state.js"),
+  typeof import("../dist/lib/state/sandbox.js"),
   "validateTarEntries" | "safeTarExtract" | "rejectHardLinks"
 >;
 
 function isSandboxStateModule(
   value: object | null,
-): value is typeof import("../dist/lib/sandbox-state.js") {
+): value is typeof import("../dist/lib/state/sandbox.js") {
   return (
     value !== null &&
     typeof Reflect.get(value, "validateTarEntries") === "function" &&
@@ -133,7 +133,7 @@ function isSandboxStateModule(
 async function loadSandboxState(): Promise<SandboxStateModule> {
   // The CLI compiles to dist/lib/ — import from there
   const loaded = await import(
-    path.join(import.meta.dirname, "..", "dist", "lib", "sandbox-state.js")
+    path.join(import.meta.dirname, "..", "dist", "lib", "state", "sandbox.js")
   );
   const mod = typeof loaded === "object" && loaded !== null ? loaded : null;
   if (!isSandboxStateModule(mod)) {
@@ -533,7 +533,7 @@ describe("Fix: rejectHardLinks blocks hard-link entries at validation time", () 
 describe("Regression: sandbox-state.ts uses validated tar extraction", () => {
   function getSourceCode(): string {
     return fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "sandbox-state.ts"),
+      path.join(import.meta.dirname, "..", "src", "lib", "state", "sandbox.ts"),
       "utf-8",
     );
   }

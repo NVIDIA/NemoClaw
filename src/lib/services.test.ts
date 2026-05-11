@@ -2,16 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import childProcess, { type SpawnSyncReturns } from "node:child_process";
 import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 // Import from compiled dist/ so coverage is attributed correctly.
-import {
-  getServiceStatuses,
-  showStatus,
-  stopAll,
-} from "../../dist/lib/services";
+import { getServiceStatuses, showStatus, stopAll } from "../../dist/lib/services";
+
+const ollamaProxyDistPath = resolve(
+  import.meta.dirname,
+  "..",
+  "..",
+  "dist",
+  "lib",
+  "inference",
+  "ollama",
+  "proxy.js",
+);
 
 describe("getServiceStatuses", () => {
   let pidDir: string;
@@ -105,10 +113,7 @@ describe("showStatus", () => {
 
   it("does not show tunnel URL when cloudflared is not running", () => {
     // Write a stale log file but no running process
-    writeFileSync(
-      join(pidDir, "cloudflared.log"),
-      "https://abc-def.trycloudflare.com",
-    );
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://abc-def.trycloudflare.com");
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -122,12 +127,41 @@ describe("showStatus", () => {
 
 describe("stopAll", () => {
   let pidDir: string;
+  let spawnSyncCalls: Array<{ command: string; args: readonly string[] }>;
+  let originalSpawnSync: typeof childProcess.spawnSync;
 
   beforeEach(() => {
     pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-test-"));
+    spawnSyncCalls = [];
+    originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — partial mock signature is intentional.
+    childProcess.spawnSync = (command: string, args: readonly string[]) => {
+      spawnSyncCalls.push({ command, args });
+      const reply: SpawnSyncReturns<string> = {
+        pid: 0,
+        output: ["", "", ""],
+        stdout: "",
+        stderr: "",
+        status: 0,
+        signal: null,
+      };
+      // Return an empty model list so the unload's for-loop is a no-op.
+      if (command === "curl" && args.some((a) => a.endsWith("/api/ps"))) {
+        reply.stdout = JSON.stringify({ models: [] });
+        reply.output = ["", reply.stdout, ""];
+      }
+      return reply;
+    };
+    // The dist Ollama proxy module destructures `spawnSync` at
+    // require time, so to make `stopAll` pick up the patched function we
+    // bust its cache. `services.ts` requires the proxy lazily, so the
+    // next call sees the freshly-loaded module.
+    delete require.cache[require.resolve(ollamaProxyDistPath)];
   });
 
   afterEach(() => {
+    childProcess.spawnSync = originalSpawnSync;
+    delete require.cache[require.resolve(ollamaProxyDistPath)];
     rmSync(pidDir, { recursive: true, force: true });
   });
 
@@ -154,5 +188,19 @@ describe("stopAll", () => {
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("All services stopped");
     logSpy.mockRestore();
+  });
+
+  it("unloads Ollama models before reporting services stopped", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    stopAll({ pidDir });
+    logSpy.mockRestore();
+
+    const psCall = spawnSyncCalls.find(
+      (c) =>
+        c.command === "curl" &&
+        c.args.some((a) => a.endsWith("/api/ps")),
+    );
+    expect(psCall).toBeDefined();
+    expect(psCall?.args).toContain("--max-time");
   });
 });

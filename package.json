@@ -10,26 +10,39 @@
   "oclif": {
     "bin": "nemoclaw",
     "commands": {
-      "strategy": "explicit",
-      "target": "./dist/lib/oclif-commands.js"
-    }
+      "strategy": "pattern",
+      "target": "./dist/commands"
+    },
+    "flexibleTaxonomy": true,
+    "topicSeparator": " "
   },
   "scripts": {
+    "preinstall": "node scripts/check-node-version.js",
     "test": "vitest run",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "format": "prettier --write 'bin/**/*.js' 'scripts/**/*.ts' 'test/**/*.{js,ts}'",
-    "format:check": "prettier --check 'bin/**/*.js' 'scripts/**/*.ts' 'test/**/*.{js,ts}'",
+    "check": "npx prek run --all-files",
+    "checks": "tsx scripts/checks/run.ts",
+    "lint": "npx @biomejs/biome lint . && npm run checks",
+    "lint:fix": "npx @biomejs/biome lint --write . && npm run checks",
+    "lint:ts": "cd nemoclaw && npm run check",
+    "format": "npx @biomejs/biome format --write .",
+    "format:check": "npx @biomejs/biome format .",
+    "format:ts": "cd nemoclaw && npm run lint:fix && npm run format",
+    "check:installer-hash": "bash scripts/check-installer-hash.sh",
     "typecheck": "tsc -p jsconfig.json",
     "build:cli": "tsc -p tsconfig.src.json && tsc -p nemoclaw-blueprint/tsconfig.json",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.ts",
-    "migrate:js-to-ts": "tsx scripts/migrate-js-to-ts.ts",
     "ts-migration:assist": "tsx scripts/ts-migration-assist.ts",
     "ts-migration:bulk-fix-prs": "tsx scripts/ts-migration-bulk-fix-prs.ts",
     "ts-migration:guard": "tsx scripts/check-legacy-migrated-paths.ts",
     "type-safety:hotspots": "tsx scripts/type-safety-hotspots.ts",
+    "source-shape:scan": "tsx scripts/find-source-shape-tests.ts --metrics",
+    "source-shape:check": "tsx scripts/find-source-shape-tests.ts --check",
     "bump:version": "tsx scripts/bump-version.ts",
+    "docs": "uv run --group docs sphinx-build -b html docs docs/_build/html",
+    "docs:strict": "uv run --group docs sphinx-build -W -b html docs docs/_build/html",
+    "docs:live": "uv run --group docs sphinx-autobuild docs docs/_build/html --open-browser",
+    "docs:clean": "rm -rf docs/_build",
     "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && (npm install --omit=dev --ignore-scripts 2>/dev/null || true) && if [ -d .git ]; then bash scripts/npm-link-or-shim.sh; if command -v prek >/dev/null 2>&1; then prek install; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
     "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && test -s .version && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
@@ -62,17 +75,14 @@
     "url": "https://github.com/NVIDIA/NemoClaw.git"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.14",
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
-    "@eslint/js": "^10.0.1",
     "@j178/prek": "^0.3.6",
     "@types/node": "^25.5.2",
-    "@typescript-eslint/parser": "^8.58.1",
     "@vitest/coverage-v8": "^4.1.0",
     "ajv": "^8.17.0",
-    "eslint": "^10.1.0",
     "execa": "^9.6.1",
-    "prettier": "^3.8.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.0"

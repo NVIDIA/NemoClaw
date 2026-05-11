@@ -75,7 +75,6 @@ if (!certSetup.ok) {
         `This test must not silently skip in CI — install openssl on the runner.`,
     );
   }
-  // eslint-disable-next-line no-console
   console.warn(`[http-proxy-fix-e2e] skipping locally: ${certSetup.reason}`);
 }
 const key = certSetup.ok ? certSetup.key : Buffer.alloc(0);
@@ -97,7 +96,6 @@ type CapturedRequest = {
 
 function loadWrapper() {
   delete require.cache[FIX_PATH];
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   require(FIX_PATH);
 }
 

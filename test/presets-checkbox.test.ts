@@ -8,7 +8,7 @@ import { execTimeout } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const ONBOARD_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
-const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials.js"));
+const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js"));
 
 type Preset = {
   name: string;

@@ -78,6 +78,20 @@ function stageOptimizedSandboxBuildContext(
   fs.cpSync(path.join(sourceBlueprintDir, "scripts"), path.join(stagedBlueprintDir, "scripts"), {
     recursive: true,
   });
+  fs.cpSync(
+    path.join(sourceBlueprintDir, "openclaw-plugins"),
+    path.join(stagedBlueprintDir, "openclaw-plugins"),
+    {
+      recursive: true,
+    },
+  );
+  fs.cpSync(
+    path.join(sourceBlueprintDir, "model-specific-setup"),
+    path.join(stagedBlueprintDir, "model-specific-setup"),
+    {
+      recursive: true,
+    },
+  );
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });
   fs.copyFileSync(
@@ -98,6 +112,12 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "generate-openclaw-config.py"),
     path.join(stagedScriptsDir, "generate-openclaw-config.py"),
+  );
+  // Dockerfile Patch 4 helper — must be present in the build context because
+  // the Dockerfile COPYs it before the patching RUN step (#2689).
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "rcf_patch.py"),
+    path.join(stagedScriptsDir, "rcf_patch.py"),
   );
 
   return { buildCtx, stagedDockerfile };

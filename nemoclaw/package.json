@@ -14,10 +14,10 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "lint": "eslint 'src/**/*.ts'",
-    "lint:fix": "eslint 'src/**/*.ts' --fix",
-    "format": "prettier --write 'src/**/*.ts'",
-    "format:check": "prettier --check 'src/**/*.ts'",
+    "lint": "biome lint src",
+    "lint:fix": "biome lint --write src",
+    "format": "biome format --write src",
+    "format:check": "biome format src",
     "check": "npm run lint && npm run format:check && tsc --noEmit",
     "clean": "rm -rf dist/"
   },
@@ -29,12 +29,8 @@
     "yaml": "^2.4.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.14",
     "@types/node": "^22.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.57.0",
-    "@typescript-eslint/parser": "^8.57.0",
-    "eslint": "^9.39.4",
-    "eslint-config-prettier": "^10.1.8",
-    "prettier": "^3.8.1",
     "typescript": "^5.4.0",
     "vitest": "^4.1.0"
   },

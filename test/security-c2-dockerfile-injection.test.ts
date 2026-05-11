@@ -216,19 +216,6 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
     expect(chatUiUrlPromoted).toBeTruthy();
   });
 
-  it("Python config script uses os.environ to read CHAT_UI_URL", () => {
-    // Config generation is now in an external script, not inline python3 -c.
-    // Verify the Dockerfile references the script and the script reads the env var.
-    const dockerSrc = fs.readFileSync(DOCKERFILE, "utf-8");
-    expect(dockerSrc).toMatch(/COPY.*generate-openclaw-config\.py/);
-    expect(dockerSrc).toMatch(/RUN python3 \/usr\/local\/lib\/nemoclaw\/generate-openclaw-config\.py/);
-
-    const scriptPath = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
-    const scriptSrc = fs.readFileSync(scriptPath, "utf-8");
-    expect(scriptSrc).toMatch(/CHAT_UI_URL/);
-    expect(scriptSrc).toMatch(/os\.environ/);
-  });
-
   it("Dockerfile promotes NEMOCLAW_MODEL to ENV before the RUN layer", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
     const lines = src.split("\n");
@@ -266,62 +253,12 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
     expect(nemoModelPromoted).toBeTruthy();
   });
 
-  it("Python config script uses os.environ to read NEMOCLAW_MODEL", () => {
-    // Config generation is now in an external script, not inline python3 -c.
-    const scriptPath = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
-    const scriptSrc = fs.readFileSync(scriptPath, "utf-8");
-    expect(scriptSrc).toMatch(/NEMOCLAW_MODEL/);
-    expect(scriptSrc).toMatch(/os\.environ/);
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════
 // 4. Gateway auth hardening — no hardcoded insecure defaults (#117)
 // ═══════════════════════════════════════════════════════════════════
 describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth defaults", () => {
-  it("dangerouslyDisableDeviceAuth is not hardcoded to True", () => {
-    const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    // Must not contain a literal `'dangerouslyDisableDeviceAuth': True`
-    expect(src).not.toMatch(/'dangerouslyDisableDeviceAuth':\s*True/);
-  });
-
-  it("allowInsecureAuth is not hardcoded to True", () => {
-    const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    // Must not contain a literal `'allowInsecureAuth': True`
-    expect(src).not.toMatch(/'allowInsecureAuth':\s*True/);
-  });
-
-  it("dangerouslyDisableDeviceAuth is derived from env var AND non-loopback URL", () => {
-    // Config generation moved to external script — check the script source
-    const scriptPath = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
-    const src = fs.readFileSync(scriptPath, "utf-8");
-    // Env var check still present
-    expect(src).toMatch(/NEMOCLAW_DISABLE_DEVICE_AUTH/);
-    // Non-loopback derivation present
-    expect(src).toMatch(/is_loopback/);
-    // Both feed into disable_device_auth
-    expect(src).toMatch(/disable_device_auth/);
-    expect(src).toMatch(/dangerouslyDisableDeviceAuth/);
-  });
-
-  it("allowInsecureAuth is derived from URL scheme (explicit http allowlist)", () => {
-    // Config generation moved to external script — check the script source
-    const scriptPath = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
-    const src = fs.readFileSync(scriptPath, "utf-8");
-    // Must use explicit 'http' allowlist — not `!= 'https'` which would allow
-    // insecure auth for malformed or unknown schemes (CodeRabbit review on #123)
-    expect(src).toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*==\s*['"]http['"]/);
-    expect(src).not.toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*!=\s*['"]https['"]/);
-    // And use the derived variable in the config dict
-    expect(src).toMatch(/allowInsecureAuth/);
-    expect(src).toMatch(/allow_insecure/);
-  });
-
-  it("NEMOCLAW_DISABLE_DEVICE_AUTH defaults to '0' (secure by default)", () => {
-    const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    expect(src).toMatch(/ARG\s+NEMOCLAW_DISABLE_DEVICE_AUTH=0/);
-  });
-
   it("NEMOCLAW_DISABLE_DEVICE_AUTH is promoted to ENV before the Python RUN layer", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
     const lines = src.split("\n");

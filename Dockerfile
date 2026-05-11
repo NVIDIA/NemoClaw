@@ -12,7 +12,7 @@
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
 # Stage 1: Build TypeScript plugin from source
-FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d AS builder
+FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false
@@ -26,22 +26,32 @@ RUN npm ci && npm run build
 FROM ${BASE_IMAGE}
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
-# Protect procps before autoremove — the GHCR base may predate the procps
-# addition, leaving it absent or auto-marked. apt-mark + conditional install
-# guarantees ps/top/kill are present regardless of base image staleness.
-# Ref: #2343
+# Protect runtime tools before autoremove — the GHCR base may predate the
+# procps/e2fsprogs additions, leaving ps/chattr absent or auto-marked. The
+# conditional install keeps stale bases usable while fresh bases skip apt.
+# Refs: #2343, shields-up chattr hardening
 # hadolint ignore=DL3001
-RUN apt-mark manual procps 2>/dev/null || true \
-    && (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
-        netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
-    && apt-get autoremove --purge -y \
-    && if ! command -v ps >/dev/null 2>&1; then \
-        apt-get update && apt-get install -y --no-install-recommends procps=2:4.0.2-3 \
-        && rm -rf /var/lib/apt/lists/*; \
-    else \
-        rm -rf /var/lib/apt/lists/*; \
-    fi \
-    && ps --version
+RUN set -eu; \
+    apt-mark manual procps e2fsprogs 2>/dev/null || true; \
+    (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
+        netcat-openbsd netcat-traditional ncat 2>/dev/null || true); \
+    apt-get autoremove --purge -y; \
+    needs_ps=0; \
+    needs_chattr=0; \
+    if ! command -v ps >/dev/null 2>&1; then needs_ps=1; fi; \
+    if ! command -v chattr >/dev/null 2>&1; then needs_chattr=1; fi; \
+    if [ "$needs_ps" = "1" ] || [ "$needs_chattr" = "1" ]; then \
+        apt-get update; \
+        if [ "$needs_ps" = "1" ]; then \
+            apt-get install -y --no-install-recommends procps=2:4.0.4-9; \
+        fi; \
+        if [ "$needs_chattr" = "1" ]; then \
+            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b10; \
+        fi; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*; \
+    ps --version; \
+    command -v chattr >/dev/null
 
 
 # Copy built plugin and blueprint into the sandbox
@@ -149,6 +159,7 @@ RUN set -eu; \
 #
 # Both patches fail-close: if grep finds no targets, the build aborts so
 # the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
+COPY scripts/rcf_patch.py /usr/local/lib/nemoclaw/rcf_patch.py
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
     OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
@@ -192,7 +203,7 @@ RUN set -eu; \
     # auto-discovery from the extensions directory. \
     rcf_file="$(grep -RIlE --include='*.js' 'async function replaceConfigFile\(params\)' "$OC_DIST" | head -n 1)"; \
     test -n "$rcf_file" || { echo "ERROR: replaceConfigFile function not found in OpenClaw dist" >&2; exit 1; }; \
-    python3 -c "import sys; p=sys.argv[1]; f=open(p); src=f.read(); f.close(); old='\tif (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t});'; new='\ttry { if (!await tryWriteSingleTopLevelIncludeMutation({\n\t\tsnapshot,\n\t\tnextConfig: params.nextConfig\n\t})) await writeConfigFile(params.nextConfig, {\n\t\tbaseSnapshot: snapshot,\n\t\t...writeOptions,\n\t\t...params.writeOptions\n\t}); } catch(_rcfErr) { if (process.env.OPENSHELL_SANDBOX === \"1\" && _rcfErr.code === \"EACCES\") { console.error(\"[nemoclaw] Config is read-only in sandbox \\u2014 plugin metadata not persisted (plugins auto-load from extensions/)\"); } else { throw _rcfErr; } }'; assert old in src, 'tryWriteSingleTopLevelIncludeMutation/writeConfigFile pattern not found in replaceConfigFile'; f=open(p,'w'); f.write(src.replace(old,new,1)); f.close()" "$rcf_file"; \
+    python3 /usr/local/lib/nemoclaw/rcf_patch.py "$rcf_file"; \
     grep -REq --include='*.js' 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }; \
     # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
     # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
@@ -223,20 +234,28 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # Copy startup script and shared sandbox initialisation library
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-# Copy ws-proxy-fix.js to a Landlock-accessible path. OpenShell ≥0.0.36
+# Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
-# needs to read this file to install the NODE_OPTIONS --require preload.
-COPY nemoclaw-blueprint/scripts/ws-proxy-fix.js /usr/local/lib/nemoclaw/ws-proxy-fix.js
+# needs to read these files to install runtime preloads under /tmp.
+COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp /usr/local/lib/nemoclaw/sandbox-init.sh \
-    && chmod 644 /usr/local/lib/nemoclaw/ws-proxy-fix.js
+COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
+        /usr/local/lib/nemoclaw/sandbox-init.sh \
+        /usr/local/lib/nemoclaw/generate-openclaw-config.py \
+    && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
+    && if [ -f /usr/local/lib/nemoclaw/ws-proxy-fix.js ]; then chmod 644 /usr/local/lib/nemoclaw/ws-proxy-fix.js; fi \
+    && chmod 755 /usr/local/share/nemoclaw \
+        /usr/local/share/nemoclaw/openclaw-plugins \
+    && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
+    && find /usr/local/share/nemoclaw/openclaw-plugins -type f -exec chmod 644 {} +
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
-ARG NEMOCLAW_PROVIDER_KEY=nvidia
-ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b
+ARG NEMOCLAW_PROVIDER_KEY=inference
+ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
@@ -253,6 +272,12 @@ ARG NEMOCLAW_INFERENCE_INPUTS=text
 # immutable at runtime (Landlock read-only), so this can only be changed by
 # rebuilding via `nemoclaw onboard`. Ref: issue #2281
 ARG NEMOCLAW_AGENT_TIMEOUT=600
+# Cadence for OpenClaw's periodic heartbeat
+# (agents.defaults.heartbeat.every). Accepts Go-style durations like "30m",
+# "5m", "1h"; "0m" disables heartbeat. Empty default preserves the OpenClaw
+# built-in cadence. openclaw.json is immutable at runtime, so this can only
+# change at image build time. Ref: issue #2880
+ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Base64-encoded JSON list of messaging channel names to pre-configure
 # (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
@@ -266,6 +291,10 @@ ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).
 # Used to enable guild-channel responses for native Discord. Default: empty map.
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
+# Base64-encoded JSON Telegram config (e.g. {"requireMention":true}).
+# When requireMention is true, Telegram groups get groups: {"*": {"requireMention": true}}
+# with groupPolicy: open. See #1737, #3022. Default: empty map.
+ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
 # since terminal-based pairing is impossible in those contexts.
@@ -301,10 +330,12 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
     NEMOCLAW_INFERENCE_INPUTS=${NEMOCLAW_INFERENCE_INPUTS} \
     NEMOCLAW_AGENT_TIMEOUT=${NEMOCLAW_AGENT_TIMEOUT} \
+    NEMOCLAW_AGENT_HEARTBEAT_EVERY=${NEMOCLAW_AGENT_HEARTBEAT_EVERY} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
+    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
@@ -321,8 +352,8 @@ USER sandbox
 #   Non-root mode: $XDG_RUNTIME_DIR/nemoclaw/gateway-token (sandbox:sandbox 0400)
 # See: scripts/nemoclaw-start.sh generate_gateway_token()
 #
-# Config is mutable by default (600 sandbox:sandbox). Immutability is opt-in
-# via `shields up` (DAC 444 root:root + chattr +i).
+# Config is mutable by default (group-writable sandbox:sandbox). Immutability
+# is opt-in via `shields up` (DAC 444 root:root + chattr +i).
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
 # Temporary workaround for NemoClaw#1738: the OpenClaw Discord extension's
@@ -480,17 +511,65 @@ RUN set -eu; \
     done; \
     rm -rf /root/.npm /sandbox/.npm
 
+# Stale-base fallback for the gateway-in-sandbox-group setup (#2681).
+# Newer base images already add the gateway user to the sandbox group, but
+# the derived image must remain build-clean against older sandbox-base:latest
+# tags too. The `id -nG` check makes this idempotent.
+# hadolint ignore=DL4006
+RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
+        if ! id -nG gateway | tr ' ' '\n' | grep -qx sandbox; then \
+            usermod -aG sandbox gateway; \
+        fi; \
+    fi
+
 # Keep the image readable to the root entrypoint after capabilities are
 # dropped. OpenShell starts the runtime as the sandbox user; the entrypoint
-# restores the stricter mutable-default 600/700 permissions there.
+# and onboard flow normalize the mutable-default group-writable permissions.
 # Shields-up applies 444 root:root + chattr +i on top.
+#
+# `chmod g+w` + setgid (chmod g+s on dirs) on the mutable config tree means
+# both `sandbox` and `gateway` (now a member of the sandbox group) can write
+# to OpenClaw config/state in default mode. New files created in setgid
+# directories inherit group=sandbox regardless of which UID created them,
+# so OpenClaw's mutateConfigFile path (control-UI toggles) writes succeed
+# without needing an EACCES-swallow patch (#2681 supersedes #2693).
 RUN chown -R sandbox:sandbox /sandbox/.openclaw \
-    && chmod 755 /sandbox/.openclaw \
-    && chmod 644 /sandbox/.openclaw/openclaw.json
+    && chmod -R g+rwX,o-rwx /sandbox/.openclaw \
+    && find /sandbox/.openclaw -type d -exec chmod g+s {} + \
+    && chmod 2770 /sandbox/.openclaw \
+    && chmod 660 /sandbox/.openclaw/openclaw.json
+
+# System-wide proxy hooks for shells where ~/.bashrc / ~/.profile aren't
+# sourced (e.g. `bash -ic` / `bash -lc` invoked under a different user or
+# without HOME=/sandbox). Defined in Dockerfile.base; replayed here so the
+# fix applies before the GHCR base image catches up. Idempotent — `mv` of
+# a freshly-rebuilt /etc/bash.bashrc is harmless once the base layer
+# already includes the prepended hook (the cat | mv block just rewrites
+# with the same first line).
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2704
+# hadolint ignore=SC2028,DL4006
+RUN if ! grep -q "/tmp/nemoclaw-proxy-env.sh" /etc/profile.d/nemoclaw-proxy.sh 2>/dev/null; then \
+        printf '%s\n' \
+            '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
+            '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+            > /etc/profile.d/nemoclaw-proxy.sh \
+        && chmod 444 /etc/profile.d/nemoclaw-proxy.sh; \
+    fi \
+    && if ! head -2 /etc/bash.bashrc | grep -q "/tmp/nemoclaw-proxy-env.sh"; then \
+        chmod 644 /etc/bash.bashrc 2>/dev/null || true; \
+        { printf '%s\n' \
+              '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
+              '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+              ''; \
+          cat /etc/bash.bashrc; \
+        } > /etc/bash.bashrc.new \
+        && mv /etc/bash.bashrc.new /etc/bash.bashrc \
+        && chmod 444 /etc/bash.bashrc; \
+    fi
 
 # Pin config hash at build time so the entrypoint can verify integrity.
 RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
-    && chmod 644 /sandbox/.openclaw/.config-hash \
+    && chmod 660 /sandbox/.openclaw/.config-hash \
     && chown sandbox:sandbox /sandbox/.openclaw/.config-hash
 
 # DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write

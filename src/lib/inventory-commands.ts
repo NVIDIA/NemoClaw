@@ -1,15 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { GatewayInference } from "./inference-config";
-import { CLI_NAME } from "./branding";
+import { CLI_NAME } from "./cli/branding";
+import type { GatewayInference } from "./inference/config";
+import { redactFull } from "./security/redact";
 
 export interface SandboxEntry {
   name: string;
   model?: string | null;
   provider?: string | null;
   gpuEnabled?: boolean;
+  hostGpuDetected?: boolean;
+  sandboxGpuEnabled?: boolean;
+  sandboxGpuMode?: string | null;
+  sandboxGpuDevice?: string | null;
+  openshellDriver?: string | null;
+  openshellVersion?: string | null;
   policies?: string[] | null;
+  providerCredentialHashes?: Record<string, string> | null;
   messagingChannels?: string[] | null;
   agent?: string | null;
   dashboardPort?: number | null;
@@ -30,7 +38,15 @@ export interface RecoveryResult {
 export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
   getLiveInference: () => GatewayInference | null;
-  loadLastSession: () => { sandboxName?: string | null } | null;
+  /**
+   * Returns the last onboard session's sandbox name and step state. The
+   * step state is needed to filter out phantom names from interrupted
+   * onboards — see #2753.
+   */
+  loadLastSession: () => {
+    sandboxName?: string | null;
+    steps?: { sandbox?: { status?: string } | null } | null;
+  } | null;
   /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
   getActiveSessionCount?: (sandboxName: string) => number | null;
   log?: (message?: string) => void;
@@ -41,6 +57,12 @@ export interface SandboxInventoryRow {
   model: string | null;
   provider: string | null;
   gpuEnabled: boolean;
+  hostGpuDetected: boolean;
+  sandboxGpuEnabled: boolean;
+  sandboxGpuMode: string | null;
+  sandboxGpuDevice: string | null;
+  openshellDriver: string | null;
+  openshellVersion: string | null;
   policies: string[];
   agent: string | null;
   dashboardPort?: number | null;
@@ -63,12 +85,14 @@ export interface SandboxInventoryResult {
 export interface MessagingOverlap {
   channel: string;
   sandboxes: [string, string];
+  reason?: "matching-token" | "unknown-token";
 }
 
 export interface ShowStatusCommandDeps {
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox?: string | null };
   getLiveInference: () => GatewayInference | null;
   showServiceStatus: (options: { sandboxName?: string }) => void;
+  getServiceStatuses?: (options: { sandboxName?: string }) => StatusServiceRow[];
   checkMessagingBridgeHealth?: (
     sandboxName: string,
     channels: string[],
@@ -78,18 +102,67 @@ export interface ShowStatusCommandDeps {
   log?: (message?: string) => void;
 }
 
+export interface StatusSandboxRow {
+  name: string;
+  model: string | null;
+  provider: string | null;
+  gpuEnabled: boolean;
+  hostGpuDetected: boolean;
+  sandboxGpuEnabled: boolean;
+  sandboxGpuMode: string | null;
+  sandboxGpuDevice: string | null;
+  openshellDriver: string | null;
+  openshellVersion: string | null;
+  policies: string[];
+  agent: string | null;
+  dashboardPort?: number | null;
+  isDefault: boolean;
+}
+
+export interface StatusServiceRow {
+  name: string;
+  running: boolean;
+  pid: number | null;
+}
+
+export interface StatusReport {
+  schemaVersion: 1;
+  defaultSandbox: string | null;
+  liveInference: {
+    provider: string | null;
+    model: string | null;
+  } | null;
+  sandboxes: StatusSandboxRow[];
+  services: StatusServiceRow[];
+}
+
+function safeStatusString(value: string | null | undefined): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  return redactFull(value);
+}
+
 function buildSandboxInventoryRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
   getActiveSessionCount?: (sandboxName: string) => number | null,
 ): SandboxInventoryRow {
   const activeSessionCount = getActiveSessionCount ? getActiveSessionCount(sandbox.name) : null;
+  const sandboxGpuEnabled =
+    typeof sandbox.sandboxGpuEnabled === "boolean"
+      ? sandbox.sandboxGpuEnabled
+      : sandbox.gpuEnabled === true;
 
   return {
     name: sandbox.name,
     model: sandbox.model || null,
     provider: sandbox.provider || null,
     gpuEnabled: sandbox.gpuEnabled === true,
+    hostGpuDetected: sandbox.hostGpuDetected === true,
+    sandboxGpuEnabled,
+    sandboxGpuMode: safeStatusString(sandbox.sandboxGpuMode || null),
+    sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
+    openshellDriver: safeStatusString(sandbox.openshellDriver || null),
+    openshellVersion: safeStatusString(sandbox.openshellVersion || null),
     policies: Array.isArray(sandbox.policies) ? sandbox.policies : [],
     agent: sandbox.agent || null,
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
@@ -105,6 +178,13 @@ export async function getSandboxInventory(
   const recovery = await deps.recoverRegistryEntries();
   const defaultSandbox = recovery.defaultSandbox || null;
   const lastSession = deps.loadLastSession();
+  // #2753: only surface the last-onboarded name when its sandbox step
+  // actually completed. Otherwise an interrupted onboard would leave the
+  // name in the session and the empty-state hint would resurrect it.
+  const lastOnboardedSandbox =
+    lastSession?.sandboxName && lastSession.steps?.sandbox?.status === "complete"
+      ? lastSession.sandboxName
+      : null;
 
   return {
     schemaVersion: 1,
@@ -113,7 +193,7 @@ export async function getSandboxInventory(
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
-    lastOnboardedSandbox: lastSession?.sandboxName || null,
+    lastOnboardedSandbox,
     sandboxes: recovery.sandboxes.map((sandbox) =>
       buildSandboxInventoryRow(sandbox, defaultSandbox, deps.getActiveSessionCount),
     ),
@@ -173,7 +253,7 @@ export function renderSandboxInventoryText(
     const modelDrifted = !!(useLive && liveInference.model && liveInference.model !== sandbox.model);
     const providerDrifted =
       !!(useLive && liveInference.provider && liveInference.provider !== sandbox.provider);
-    const gpu = sandbox.gpuEnabled ? "GPU" : "CPU";
+    const gpu = sandbox.sandboxGpuEnabled ? "sandbox GPU" : "CPU sandbox";
     const presets = sandbox.policies.length > 0 ? sandbox.policies.join(", ") : "none";
     const connected = sandbox.connected ? " ●" : "";
     const agent = sandbox.agent || "openclaw";
@@ -201,6 +281,77 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
   const inventory = await getSandboxInventory(deps);
   const liveInference = inventory.sandboxes.length > 0 ? deps.getLiveInference() : null;
   renderSandboxInventoryText(inventory, log, liveInference);
+}
+
+function buildStatusSandboxRow(
+  sandbox: SandboxEntry,
+  defaultSandbox: string | null,
+  liveInference: GatewayInference | null,
+): StatusSandboxRow {
+  const isDefault = sandbox.name === defaultSandbox;
+  const liveModel = isDefault ? liveInference?.model : null;
+  const liveProvider = isDefault ? liveInference?.provider : null;
+  const dashboardPort =
+    typeof sandbox.dashboardPort === "number" && Number.isFinite(sandbox.dashboardPort)
+      ? sandbox.dashboardPort
+      : null;
+  const sandboxGpuEnabled =
+    typeof sandbox.sandboxGpuEnabled === "boolean"
+      ? sandbox.sandboxGpuEnabled
+      : sandbox.gpuEnabled === true;
+  return {
+    name: safeStatusString(sandbox.name) || sandbox.name,
+    model: safeStatusString(liveModel || sandbox.model || null),
+    provider: safeStatusString(liveProvider || sandbox.provider || null),
+    gpuEnabled: sandbox.gpuEnabled === true,
+    hostGpuDetected: sandbox.hostGpuDetected === true,
+    sandboxGpuEnabled,
+    sandboxGpuMode: safeStatusString(sandbox.sandboxGpuMode || null),
+    sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
+    openshellDriver: safeStatusString(sandbox.openshellDriver || null),
+    openshellVersion: safeStatusString(sandbox.openshellVersion || null),
+    policies: Array.isArray(sandbox.policies)
+      ? sandbox.policies
+          .filter((policy): policy is string => typeof policy === "string")
+          .map((policy) => safeStatusString(policy) || policy)
+      : [],
+    agent: safeStatusString(sandbox.agent || null),
+    ...(dashboardPort != null ? { dashboardPort } : {}),
+    isDefault,
+  };
+}
+
+function normalizeServiceStatus(service: StatusServiceRow): StatusServiceRow {
+  return {
+    name: safeStatusString(service.name) || service.name,
+    running: service.running === true,
+    pid: service.running && Number.isFinite(service.pid) ? service.pid : null,
+  };
+}
+
+export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
+  const { sandboxes, defaultSandbox } = deps.listSandboxes();
+  const resolvedDefault = defaultSandbox || null;
+  const liveInference = sandboxes.length > 0 ? deps.getLiveInference() : null;
+  const services =
+    deps.getServiceStatuses?.({ sandboxName: resolvedDefault || undefined }).map(
+      normalizeServiceStatus,
+    ) ?? [];
+
+  return {
+    schemaVersion: 1,
+    defaultSandbox: safeStatusString(resolvedDefault),
+    liveInference: liveInference
+      ? {
+          provider: safeStatusString(liveInference.provider),
+          model: safeStatusString(liveInference.model),
+        }
+      : null,
+    sandboxes: sandboxes.map((sandbox) =>
+      buildStatusSandboxRow(sandbox, resolvedDefault, liveInference),
+    ),
+    services,
+  };
 }
 
 /**
@@ -240,13 +391,17 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     const overlaps = deps.backfillAndFindOverlaps();
     if (overlaps.length > 0) {
       log("");
-      for (const { channel, sandboxes: pair } of overlaps) {
+      for (const { channel, sandboxes: pair, reason } of overlaps) {
+        const detail =
+          reason === "matching-token"
+            ? `share the same ${channel} credential`
+            : `may share a ${channel} credential; stored credential hashes are incomplete`;
         log(
-          `  ⚠ ${channel} is enabled on both '${pair[0]}' and '${pair[1]}'. Bot tokens only allow one sandbox to poll — both bridges will fail.`,
+          `  ⚠ '${pair[0]}' and '${pair[1]}' ${detail}. Only one bridge can poll/connect per credential.`,
         );
       }
       log(
-        `    Run \`${CLI_NAME} <sandbox> destroy\` on whichever sandbox should stop polling, or rerun onboarding with the channel disabled.`,
+        `    Run \`${CLI_NAME} <sandbox> channels stop <channel>\` to pause one bridge, or \`${CLI_NAME} <sandbox> channels remove <channel>\` to remove stale bridge metadata.`,
       );
     }
   }

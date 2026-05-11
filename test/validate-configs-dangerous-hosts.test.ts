@@ -44,7 +44,6 @@ describe("isDangerousHost", () => {
   });
 
   it.each([undefined, null, 42, {}, []])("returns false for non-string %s", (v) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(isDangerousHost(v as any)).toBe(false);
   });
 

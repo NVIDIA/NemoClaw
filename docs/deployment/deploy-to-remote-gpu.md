@@ -12,6 +12,8 @@ content:
   type: how_to
   difficulty: intermediate
   audience: ["developer", "engineer"]
+skill:
+  priority: 10
 status: published
 ---
 
@@ -60,6 +62,9 @@ $ nemoclaw deploy <instance-name>
 ```
 
 Replace `<instance-name>` with a name for your remote instance, for example `my-gpu-box`.
+The sandbox created on the remote VM uses `NEMOCLAW_SANDBOX_NAME`, or `my-assistant` when the variable is unset.
+Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+The deploy wrapper validates the sandbox name before it provisions the Brev instance, opens SSH, or starts the remote installer.
 
 The legacy compatibility flow performs the following steps on the VM:
 
@@ -152,6 +157,6 @@ $ nemoclaw deploy <instance-name>
 
 ## Related Topics
 
-- [Set Up Telegram](set-up-telegram-bridge.md) to connect Telegram through OpenShell-managed channel messaging.
+- [Set Up Messaging Channels](../manage-sandboxes/messaging-channels.md) to connect Telegram, Discord, or Slack through OpenShell-managed channel messaging.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) for sandbox monitoring tools.
 - [Commands](../reference/commands.md) for the full `deploy` command reference.

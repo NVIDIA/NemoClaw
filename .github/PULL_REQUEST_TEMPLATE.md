@@ -16,7 +16,7 @@
 - [ ] Doc only (includes code sample changes)
 
 ## Verification
-<!-- Check each item you ran and confirmed. Leave unchecked items you skipped. -->
+<!-- Check each item you ran and confirmed. Leave unchecked items you skipped. Doc-only changes do not require npm test unless you ran it. -->
 - [ ] `npx prek run --all-files` passes
 - [ ] `npm test` passes
 - [ ] Tests added or updated for new or changed behavior
@@ -25,10 +25,6 @@
 - [ ] `make docs` builds without warnings (doc changes only)
 - [ ] Doc pages follow the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md) (doc changes only)
 - [ ] New doc pages include SPDX header and frontmatter (new pages only)
-
-## AI Disclosure
-<!-- If an AI agent authored or co-authored this PR, check the box and name the tool. Remove this section for fully human-authored PRs. -->
-- [ ] AI-assisted — tool: <!-- e.g., Claude Code, Cursor, GitHub Copilot -->
 
 ---
 <!-- DCO sign-off required by CI. Run: git config user.name && git config user.email -->

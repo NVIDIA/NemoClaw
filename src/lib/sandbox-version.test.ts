@@ -7,11 +7,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 // Mock heavy dependencies that pull in the full module graph
-vi.mock("./resolve-openshell.js", () => ({
+vi.mock("./adapters/openshell/resolve.js", () => ({
   resolveOpenshell: vi.fn(() => "/usr/local/bin/openshell"),
 }));
 
-vi.mock("./openshell.js", () => ({
+vi.mock("./adapters/openshell/client.js", () => ({
   parseVersionFromText: (value = "") => {
     const match = String(value).match(/([0-9]+\.[0-9]+\.[0-9]+)/);
     return match ? match[1] : null;
@@ -31,7 +31,7 @@ vi.mock("./openshell.js", () => ({
   captureOpenshellCommand: vi.fn(),
 }));
 
-vi.mock("./agent-defs.js", () => ({
+vi.mock("./agent/defs.js", () => ({
   loadAgent: vi.fn((name: string) => ({
     name,
     displayName: name === "openclaw" ? "OpenClaw" : "Hermes Agent",
@@ -48,8 +48,9 @@ vi.mock("child_process", async (importOriginal) => {
 });
 
 import { checkAgentVersion, formatStalenessWarning } from "./sandbox-version.js";
-import * as registry from "./registry.js";
-import { captureOpenshellCommand } from "./openshell.js";
+import * as registry from "./state/registry.js";
+import { captureOpenshellCommand } from "./adapters/openshell/client.js";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts.js";
 import { spawnSync } from "child_process";
 
 describe("checkAgentVersion", () => {
@@ -130,6 +131,11 @@ describe("checkAgentVersion", () => {
     expect(result.detectionMethod).toBe("ssh-exec");
     expect(result.sandboxVersion).toBe("2026.4.24");
     expect(result.isStale).toBe(false);
+    expect(captureOpenshellCommand).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["sandbox", "ssh-config", "test-sb"],
+      { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+    );
 
     // Should have cached the version in registry
     const updated = registry.getSandbox("test-sb");
@@ -147,6 +153,20 @@ describe("checkAgentVersion", () => {
     const result = checkAgentVersion("test-sb");
     expect(result.detectionMethod).toBe("unavailable");
     expect(result.isStale).toBe(false);
+  });
+
+  it("can skip live probing when no cached version is available", () => {
+    registry.registerSandbox({ name: "test-sb", agent: null });
+    vi.mocked(captureOpenshellCommand).mockClear();
+    vi.mocked(spawnSync).mockClear();
+
+    const result = checkAgentVersion("test-sb", { skipProbe: true });
+
+    expect(result.detectionMethod).toBe("unavailable");
+    expect(result.sandboxVersion).toBeNull();
+    expect(result.isStale).toBe(false);
+    expect(captureOpenshellCommand).not.toHaveBeenCalled();
+    expect(spawnSync).not.toHaveBeenCalled();
   });
 
   it("force probe bypasses cached version", () => {
