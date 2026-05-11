@@ -53,6 +53,10 @@ $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEM
 If you use nvm or fnm to manage Node.js, the installer might not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 
+The installer auto-launches `nemoclaw onboard` when it can locate the freshly-installed binary.
+If it cannot locate the binary, or if blocking host preflight checks fail, it does not launch the wizard automatically.
+In that case, the installer prints the relevant diagnostics and a `To finish setup, run:` block with the explicit `nemoclaw onboard` command.
+
 :::{note}
 The onboard flow builds the sandbox image with `NEMOCLAW_DISABLE_DEVICE_AUTH=1` so the dashboard is immediately usable during setup.
 This is a build-time setting baked into the sandbox image, not a runtime knob.

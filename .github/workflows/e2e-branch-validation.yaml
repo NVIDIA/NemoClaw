@@ -3,18 +3,26 @@
 
 name: e2e-branch-validation
 
-# ─── Branch Validation E2E ───────────────────────────────────────────────────
+# ─── Branch Validation E2E ───────────────────────────────────────────
 #
-# PURPOSE: Validates a specific git branch by installing NemoClaw FROM SOURCE
-# on an ephemeral Brev cloud instance. Answers the question: "Does this branch
-# work if you install from source on a clean machine?"
+# PURPOSE: Validates a specific git branch by rsync-ing it onto a real Brev
+# cloud instance provisioned from the PUBLISHED NemoClaw launchable image,
+# then running the selected security / messaging / full suites against it.
+# Answers: "Does this branch work on the image customers actually get?"
 #
 # HOW IT WORKS:
-#   1. Provisions a fresh Brev CPU instance (~4 vCPU, 16 GB RAM)
-#   2. Rsyncs the checked-out branch code to the VM
-#   3. Runs install.sh from source + onboards a sandbox
-#   4. Executes the selected test suite against the live sandbox
-#   5. Tears down the instance (unless keep_alive=true)
+#   1. Provisions a Brev CPU instance from the published NemoClaw launchable
+#      (env-3Azt0aYgVNFEuz7opyx3gscmowS) — a pre-baked GCP image built 3x
+#      daily by brevdev/nemoclaw-image with NemoClaw, OpenShell, and the
+#      sandbox image already on disk. Boots in ~2 min.
+#   2. Rsyncs the checked-out branch code over the image's ~/NemoClaw.
+#   3. Rebuilds CLI dist/, runs onboard, and executes the selected suite.
+#   4. Tears down the instance (unless keep_alive=true).
+#
+# FALLBACK: set use_published_launchable=false to provision a bare Ubuntu
+# VM and bootstrap via scripts/brev-launchable-ci-cpu.sh. Slower (~5 min)
+# and does NOT test the image itself — useful only for validating changes
+# to the startup script without touching the published image.
 #
 # WHEN TO USE:
 #   - Before merging a PR that touches onboard, sandbox, security, or infra
@@ -45,14 +53,27 @@ name: e2e-branch-validation
 #   all                      — Runs credential-sanitization + telegram-injection (NOT full,
 #                              which destroys the sandbox the security tests need).
 #
-# Required secrets: BREV_API_TOKEN, NVIDIA_API_KEY
+# Required secrets: BREV_API_KEY, BREV_ORG_ID, NVIDIA_API_KEY
+#   BREV_API_KEY  — long-lived Brev API key (format: bak-...). Replaces the
+#                   legacy short-lived BREV_API_TOKEN refresh-token secret.
+#   BREV_ORG_ID   — Brev organization id (format: org-...). Required alongside
+#                   the API key for brev login.
+#
+# Optional inputs:
+#   launchable_id — override the published launchable. Default (empty →
+#                   env-3Azt0aYgVNFEuz7opyx3gscmowS) matches docs/deployment/
+#                   brev-web-ui.md. Override to test a staging image.
 # Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
 
 on:
   workflow_dispatch:
     inputs:
+      branch:
+        description: "Branch to test (default: the branch this dispatch targets via --ref)"
+        required: false
+        default: ""
       pr_number:
-        description: "PR number (resolves branch automatically)"
+        description: "PR number (resolves branch automatically, overrides branch input)"
         required: false
         default: ""
       test_suite:
@@ -67,19 +88,24 @@ on:
           - messaging-providers
           - all
       use_launchable:
-        description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
+        description: "Deprecated — always true. Kept for backward-compat with existing dispatches."
         required: false
         type: boolean
         default: true
+      use_published_launchable:
+        description: "Provision from the published NemoClaw launchable image (recommended) vs. the repo-local startup-script fallback"
+        required: false
+        type: boolean
+        default: true
+      launchable_id:
+        description: "Published launchable ID (default: the public NemoClaw launchable env-3Azt0aYgVNFEuz7opyx3gscmowS)"
+        required: false
+        default: ""
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
         type: boolean
         default: false
-      brev_token:
-        description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
-        required: false
-        default: ""
   workflow_call:
     inputs:
       branch:
@@ -97,6 +123,14 @@ on:
         required: false
         type: boolean
         default: true
+      use_published_launchable:
+        required: false
+        type: boolean
+        default: true
+      launchable_id:
+        required: false
+        type: string
+        default: ""
       setup_script_url:
         required: false
         type: string
@@ -106,7 +140,9 @@ on:
         type: boolean
         default: true
     secrets:
-      BREV_API_TOKEN:
+      BREV_API_KEY:
+        required: true
+      BREV_ORG_ID:
         required: true
       NVIDIA_API_KEY:
         required: true
@@ -122,7 +158,14 @@ concurrency:
 
 jobs:
   e2e-branch-validation:
-    # if: github.repository == 'NVIDIA/NemoClaw'  # Disabled for fork testing — re-enable before merge
+    # Allow both upstream (NVIDIA/NemoClaw) and the known CI fork (jyaunches/NemoClaw).
+    # The fork is used to validate the long-lived BREV_API_KEY + nightly wiring
+    # before the secret is rotated into the upstream repo. Other forks get a no-op
+    # skip so community PRs that touch this file don't try to run against someone
+    # else's Brev account.
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' ||
+      github.repository == 'jyaunches/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -138,7 +181,15 @@ jobs:
       - name: Checkout target branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ env.RESOLVED_BRANCH || inputs.branch || 'main' }}
+          # Precedence:
+          #   1. PR-resolved branch (from pr_number lookup above)
+          #   2. Explicit branch input (workflow_dispatch / workflow_call)
+          #   3. github.ref_name (the ref that was dispatched against) —
+          #      this is what `gh workflow run --ref X` passes. Without this
+          #      fallback, workflow_dispatch without explicit inputs silently
+          #      checks out 'main' even when the dispatch targeted a feature
+          #      branch, making branch changes invisible to the run.
+          ref: ${{ env.RESOLVED_BRANCH || inputs.branch || github.ref_name }}
 
       - name: Create check run (pending)
         if: inputs.pr_number != ''
@@ -164,40 +215,79 @@ jobs:
 
       - name: Install Brev CLI
         env:
-          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
+          # GitHub Actions inputs are plaintext run metadata; Brev credentials
+          # must only come from repository/org secrets so they remain masked.
+          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
         run: |
-          # Brev CLI v0.6.322+ — CPU instances use `brev search cpu | brev create`
-          # Startup scripts use `brev create --startup-script @file` (not brev start --cpu)
-          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
+          # Brev CLI v0.6.324+ — first release to support `brev login --api-key`
+          # for long-lived CI auth (bak-... keys). Earlier v0.6.322 pin required
+          # writing ~/.brev/credentials.json by hand because `brev login` had
+          # been removed in #1470 and only supported interactive OAuth.
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.324/brev-cli_0.6.324_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
-          # Brev CLI does not read BREV_API_TOKEN from env — it requires
-          # ~/.brev/credentials.json. The login call was removed in #1470
-          # (374a847d), breaking CI. Write the credentials file so `brev ls`
-          # works in the test harness's hasAuthenticatedBrev check.
-          if [ -z "${BREV_API_TOKEN:-}" ]; then
-            echo "::error::BREV_API_TOKEN is empty — cannot authenticate Brev CLI."
+          if [ -z "${BREV_API_KEY:-}" ]; then
+            echo "::error::BREV_API_KEY is empty — cannot authenticate Brev CLI."
             exit 1
           fi
-          mkdir -p ~/.brev
-          umask 077
-          printf '{"refresh_token":"%s"}' "$BREV_API_TOKEN" > ~/.brev/credentials.json
+          if [ -z "${BREV_ORG_ID:-}" ]; then
+            echo "::error::BREV_ORG_ID is empty — required for API-key login."
+            exit 1
+          fi
+          # Long-lived API-key login. Persists api_key + api_key_org_id into
+          # ~/.brev/credentials.json; no browser, no refresh-token expiry.
+          brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
           chmod 600 ~/.brev/credentials.json
-          # Skip the first-run onboarding wizard that blocks on stdin (also removed in #1470)
+          # Skip the first-run onboarding wizard that blocks on stdin (removed in #1470)
           printf '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
-          brev ls >/dev/null
+          # Verify credentials with brev ls. The Brev backend periodically
+          # returns 'context deadline exceeded' on the workspaces/list
+          # endpoint under platform load — retry a few times before
+          # surfacing as a hard failure. Observed on 2026-05-11 during PR
+          # #3350 validation: up to ~30 min windows where brev ls failed
+          # across multiple orgs with working credentials.
+          for attempt in 1 2 3 4 5; do
+            if brev ls >/dev/null 2>/tmp/brev-ls-err; then
+              echo "brev ls succeeded on attempt $attempt"
+              break
+            fi
+            err=$(cat /tmp/brev-ls-err)
+            if [ "$attempt" -eq 5 ]; then
+              echo "::warning::brev ls failed 5 times (last error: $err) — proceeding anyway; the test harness will retry with brev refresh if needed."
+              break
+            fi
+            echo "brev ls attempt $attempt failed ($err) — retrying in 15s..."
+            sleep 15
+          done
 
       - name: Install dependencies
         run: npm install --ignore-scripts
 
+      - name: Build CLI (dist/)
+        # The Brev E2E harness invokes bin/nemoclaw.js locally for pre-flight
+        # sandbox-name validation before touching Brev. bin/nemoclaw.js
+        # requires '../dist/nemoclaw', which is produced by the `prepare`
+        # npm script — skipped above because --ignore-scripts is set to
+        # avoid the git-hook installer running in CI. Build explicitly.
+        run: npm run build:cli
+
       - name: Run ephemeral Brev E2E
         env:
-          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
+          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
           TEST_SUITE: ${{ inputs.test_suite }}
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
+          # Use the published NemoClaw launchable (pre-baked GCP image, ~2 min
+          # boot) by default. Set to '0' to fall back to the repo-local
+          # startup-script path (bare VM, ~5 min bootstrap).
+          USE_PUBLISHED_LAUNCHABLE: ${{ inputs.use_published_launchable && '1' || '0' }}
+          # Launchable ID override. Empty string → test harness default
+          # (env-3Azt0aYgVNFEuz7opyx3gscmowS, the public NemoClaw launchable).
+          BREV_LAUNCHABLE_ID: ${{ inputs.launchable_id || '' }}
           LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
           BREV_PROVIDER: gcp
           KEEP_ALIVE: ${{ inputs.keep_alive }}

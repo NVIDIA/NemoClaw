@@ -14,7 +14,7 @@ import type { AgentDefinition } from "../dist/lib/agent/defs.js";
 import { loadAgent } from "../dist/lib/agent/defs.js";
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard/contract.js";
 import { NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
-import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context.js";
+import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 
 type ShimScalar = string | number | boolean | null | undefined;
 type ShimCallable = (...args: readonly string[]) => ShimValue;
@@ -2368,12 +2368,16 @@ const { loadAgent } = require(${agentDefsPath});
   });
 
   it("allows slow sandbox create recovery to wait beyond 60 seconds", () => {
+    const envSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "env.ts"),
+      "utf-8",
+    );
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
 
-    assert.match(source, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 180/);
+    assert.match(envSource, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 180/);
     assert.match(source, /Math\.ceil\(SANDBOX_READY_TIMEOUT_SECS \/ 2\)/);
     assert.match(source, /within \$\{SANDBOX_READY_TIMEOUT_SECS\}s/);
   });
@@ -4631,7 +4635,7 @@ const { setupInference } = require(${onboardPath});
       "utf-8",
     );
     const probeSource = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "http-probe.ts"),
+      path.join(import.meta.dirname, "..", "src", "lib", "adapters", "http", "probe.ts"),
       "utf-8",
     );
     const recoverySource = fs.readFileSync(
@@ -4639,7 +4643,7 @@ const { setupInference } = require(${onboardPath});
       "utf-8",
     );
 
-    assert.match(onboardSource, /http-probe/);
+    assert.match(onboardSource, /adapters\/http\/probe/);
     assert.match(probeSource, /return \["--connect-timeout", "10", "--max-time", "60"\];/);
     assert.match(recoverySource, /failure\.curlStatus === 2/);
     assert.match(recoverySource, /local curl invocation error/);
@@ -4851,9 +4855,9 @@ const { setupInference } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
-    const { streamSandboxCreate } = require("../dist/lib/sandbox-create-stream");
+    const { streamSandboxCreate } = require("../dist/lib/sandbox/create-stream");
 
-    assert.match(onboardSource, /sandbox-create-stream/);
+    assert.match(onboardSource, /sandbox\/create-stream/);
     assert.equal(typeof streamSandboxCreate, "function");
   });
 
@@ -6809,7 +6813,7 @@ childProcess.spawn = fakeSpawn;
 // childProcess object above does not reach it. Patch the cached module
 // directly so streamSandboxCreate (called by createSandbox) doesn't spawn
 // a real bash process that tries to hit a live gateway.
-const sandboxCreateStreamMod = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "sandbox-create-stream.js"))});
+const sandboxCreateStreamMod = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "sandbox", "create-stream.js"))});
 const _origStreamCreate = sandboxCreateStreamMod.streamSandboxCreate;
 sandboxCreateStreamMod.streamSandboxCreate = (command, env, options = {}) => {
   return _origStreamCreate(command, env, { ...options, spawnImpl: fakeSpawn });
@@ -7888,7 +7892,7 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "messaging-noninteractive.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "adapters", "http", "probe.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {

@@ -7,7 +7,7 @@
 
 const { normalizeCredentialValue } = require("../credentials/store");
 const { isWsl } = require("../platform");
-const httpProbe = require("../http-probe");
+const httpProbe = require("../adapters/http/probe");
 const {
   isNvcfFunctionNotFoundForAccount,
   nvcfFunctionNotFoundMessage,

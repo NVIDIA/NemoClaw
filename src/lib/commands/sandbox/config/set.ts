@@ -4,7 +4,7 @@
 
 import { Args, Command, Flags } from "@oclif/core";
 
-import * as sandboxConfig from "./sandbox-config";
+import * as sandboxConfig from "../../../sandbox/config";
 
 const sandboxNameArg = Args.string({
   name: "sandbox",

@@ -13,7 +13,7 @@ import {
   summarizeCurlFailure,
   summarizeProbeError,
   summarizeProbeFailure,
-} from "./http-probe";
+} from "./probe";
 
 describe("http-probe helpers", () => {
   it("returns explicit curl timeouts", () => {

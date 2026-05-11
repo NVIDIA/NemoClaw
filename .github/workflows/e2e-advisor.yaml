@@ -49,7 +49,14 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  # `pull-requests: write` is required for the advisor to post (or update) a
+  # comment on a PR via POST /repos/:o/:r/issues/:n/comments. Even though the
+  # endpoint lives under `/issues/`, for GITHUB_TOKEN the permission that
+  # actually gates PR comments is `pull-requests`, not `issues`. With only
+  # `pull-requests: read`, the endpoint returns 403 "Resource not accessible
+  # by integration" despite `issues: write`. See the comment step below and
+  # https://github.com/orgs/community/discussions/56632.
+  pull-requests: write
   issues: write
 
 concurrency:

@@ -5,47 +5,23 @@
 // Supports non-interactive mode via --non-interactive flag or
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
-const { getAgentBranding } = require("./cli/branding");
+const {
+  envInt,
+  LOCAL_INFERENCE_TIMEOUT_SECS,
+  SANDBOX_READY_TIMEOUT_SECS,
+}: typeof import("./onboard/env") = require("./onboard/env");
+const {
+  agentProductName,
+  cliDisplayName,
+  cliName,
+  setOnboardBrandingAgent,
+}: typeof import("./onboard/branding") = require("./onboard/branding");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const pRetry = require("p-retry");
-
-/** Parse a numeric env var, returning `fallback` when unset or non-finite. */
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
-}
-/** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
-const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
-/** Sandbox Ready wait after OpenShell create returns but k3s is still converging. */
-const SANDBOX_READY_TIMEOUT_SECS = envInt("NEMOCLAW_SANDBOX_READY_TIMEOUT", 180);
-
-let onboardBrandingAgent: string | null = null;
-
-function setOnboardBrandingAgent(agentName: string | null | undefined): void {
-  onboardBrandingAgent = agentName || null;
-}
-
-function onboardBranding(): import("./cli/branding").AgentBranding {
-  return getAgentBranding(onboardBrandingAgent || process.env.NEMOCLAW_AGENT || null);
-}
-
-function cliName(): string {
-  return onboardBranding().cli;
-}
-
-function cliDisplayName(): string {
-  return onboardBranding().display;
-}
-
-function agentProductName(): string {
-  return onboardBranding().product;
-}
 
 /** Strip ANSI escape sequences before printing process output to the terminal.
  *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
@@ -101,7 +77,7 @@ function requireValue<T>(value: T | null | undefined, message: string): T {
 const {
   collectBuildContextStats,
   stageOptimizedSandboxBuildContext,
-} = require("./sandbox-build-context");
+} = require("./sandbox/build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const {
   DASHBOARD_PORT,
@@ -286,9 +262,9 @@ const {
 const registry: typeof import("./state/registry") = require("./state/registry");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
-const policies: typeof import("./policies") = require("./policies");
+const policies: typeof import("./policy") = require("./policy");
 const shields = require("./shields");
-const tiers: typeof import("./tiers") = require("./tiers");
+const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
@@ -310,16 +286,16 @@ const validation: typeof import("./validation") = require("./validation");
 const urlUtils: typeof import("./core/url-utils") = require("./core/url-utils");
 const buildContext = require("./build-context");
 const dashboardContract: typeof import("./dashboard/contract") = require("./dashboard/contract");
-const httpProbe: typeof import("./http-probe") = require("./http-probe");
+const httpProbe: typeof import("./adapters/http/probe") = require("./adapters/http/probe");
 const modelPrompts: typeof import("./inference/model-prompts") = require("./inference/model-prompts");
 const providerModels: typeof import("./inference/provider-models") = require("./inference/provider-models");
-const sandboxCreateStream: typeof import("./sandbox-create-stream") = require("./sandbox-create-stream");
+const sandboxCreateStream: typeof import("./sandbox/create-stream") = require("./sandbox/create-stream");
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const webSearch: typeof import("./inference/web-search") = require("./inference/web-search");
 
 import type { AgentDefinition } from "./agent/defs";
+import type { CurlProbeResult } from "./adapters/http/probe";
 import type { GatewayReuseState } from "./state/gateway";
-import type { CurlProbeResult } from "./http-probe";
 import type { GatewayInference, ProviderSelectionConfig } from "./inference/config";
 import type { GpuInfo, ValidationResult } from "./inference/local";
 import {
@@ -338,11 +314,11 @@ import type {
   ProbeResult,
   ValidationFailureLike,
 } from "./onboard/types";
-import { listChannels } from "./sandbox-channels";
-import type { StreamSandboxCreateResult } from "./sandbox-create-stream";
+import { listChannels } from "./sandbox/channels";
+import type { StreamSandboxCreateResult } from "./sandbox/create-stream";
 import type { SandboxEntry } from "./state/registry";
 import type { BackupResult } from "./state/sandbox";
-import type { TierDefinition, TierPreset } from "./tiers";
+import type { TierDefinition, TierPreset } from "./policy/tiers";
 import type { SandboxCreateFailure, ValidationClassification } from "./validation";
 import type { ProbeRecovery } from "./validation-recovery";
 import type { WebSearchConfig } from "./inference/web-search";

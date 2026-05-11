@@ -11,8 +11,8 @@
 //   - Integration with the existing policies module
 
 import { describe, expect, it } from "vitest";
-import policies from "../dist/lib/policies";
-import tiers from "../dist/lib/tiers";
+import policies from "../dist/lib/policy";
+import tiers from "../dist/lib/policy/tiers";
 
 interface TierPreset {
   name: string;

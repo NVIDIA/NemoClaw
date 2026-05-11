@@ -7,11 +7,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 // Mock heavy dependencies that pull in the full module graph
-vi.mock("./adapters/openshell/resolve.js", () => ({
+vi.mock("../adapters/openshell/resolve.js", () => ({
   resolveOpenshell: vi.fn(() => "/usr/local/bin/openshell"),
 }));
 
-vi.mock("./adapters/openshell/client.js", () => ({
+vi.mock("../adapters/openshell/client.js", () => ({
   parseVersionFromText: (value = "") => {
     const match = String(value).match(/([0-9]+\.[0-9]+\.[0-9]+)/);
     return match ? match[1] : null;
@@ -31,7 +31,7 @@ vi.mock("./adapters/openshell/client.js", () => ({
   captureOpenshellCommand: vi.fn(),
 }));
 
-vi.mock("./agent/defs.js", () => ({
+vi.mock("../agent/defs.js", () => ({
   loadAgent: vi.fn((name: string) => ({
     name,
     displayName: name === "openclaw" ? "OpenClaw" : "Hermes Agent",
@@ -47,10 +47,10 @@ vi.mock("child_process", async (importOriginal) => {
   return { ...actual, spawnSync: vi.fn() };
 });
 
-import { checkAgentVersion, formatStalenessWarning } from "./sandbox-version.js";
-import * as registry from "./state/registry.js";
-import { captureOpenshellCommand } from "./adapters/openshell/client.js";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts.js";
+import { checkAgentVersion, formatStalenessWarning } from "./version.js";
+import * as registry from "../state/registry.js";
+import { captureOpenshellCommand } from "../adapters/openshell/client.js";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import { spawnSync } from "child_process";
 
 describe("checkAgentVersion", () => {

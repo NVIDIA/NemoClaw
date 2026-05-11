@@ -196,7 +196,7 @@ export function cleanupSandboxServices(
   const stopAll =
     deps.stopAll ??
     ((opts: { sandboxName: string }) => {
-      const services = require("../../services") as {
+      const services = require("../../tunnel/services") as {
         stopAll: (opts: { sandboxName: string }) => void;
       };
       services.stopAll(opts);
@@ -221,7 +221,7 @@ export function cleanupSandboxServices(
 
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
-    // see src/lib/services.ts. Don't double-call here.
+    // see src/lib/tunnel/services.ts. Don't double-call here.
     stopAll({ sandboxName });
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
