@@ -58,7 +58,10 @@ export default defineConfig({
           include: ["test/e2e/brev-e2e.test.ts"],
           // Branch validation E2E: installs from source on a Brev instance.
           // Only run when explicitly targeted: npx vitest run --project e2e-branch-validation
-          enabled: !!process.env.BREV_API_TOKEN,
+          // Gate on the new long-lived API key secret. Historically this was
+          // BREV_API_TOKEN (short-lived refresh token); renamed in the
+          // nightly-enable PR to match the new `brev login --api-key` flow.
+          enabled: !!process.env.BREV_API_KEY || !!process.env.BREV_API_TOKEN,
         },
       },
     ],

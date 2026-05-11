@@ -98,18 +98,40 @@ function brev(...args: string[]): string {
 function listBrevInstances(): Array<{ name: string; status?: string }> {
   // `brev ls --json` output shape varies between CLI versions:
   //   v0.6.322 returned a bare JSON array.
-  //   v0.6.324 may return an object like { workspaces: [...] } or null
-  //   on empty state. Be defensive so hasBrevInstance()/.some() never
-  //   throws just because we upgraded the CLI.
+  //   v0.6.324 may return an object wrapper (workspaces/instances/data/
+  //   result) or null on empty state. Be defensive so hasBrevInstance()
+  //   never throws on non-array shapes just because we upgraded the CLI.
+  let raw: string;
   try {
-    const parsed = JSON.parse(brev("ls", "--json"));
-    if (Array.isArray(parsed)) return parsed;
-    if (parsed && Array.isArray(parsed.workspaces)) return parsed.workspaces;
-    if (parsed && Array.isArray(parsed.instances)) return parsed.instances;
-    return [];
-  } catch {
+    raw = brev("ls", "--json");
+  } catch (err) {
+    console.log(`[listBrevInstances] brev ls --json failed: ${err}`);
     return [];
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.log(
+      `[listBrevInstances] JSON.parse failed: ${err}; raw(first 500 chars)=${raw.slice(0, 500)}`,
+    );
+    return [];
+  }
+  if (Array.isArray(parsed)) return parsed as Array<{ name: string; status?: string }>;
+  if (parsed && typeof parsed === "object") {
+    const obj = parsed as Record<string, unknown>;
+    for (const key of ["workspaces", "instances", "data", "result", "items"]) {
+      if (Array.isArray(obj[key])) {
+        return obj[key] as Array<{ name: string; status?: string }>;
+      }
+    }
+  }
+  console.log(
+    `[listBrevInstances] unrecognized shape; typeof=${typeof parsed}; keys=${
+      parsed && typeof parsed === "object" ? Object.keys(parsed).join(",") : "n/a"
+    }; raw(first 500 chars)=${raw.slice(0, 500)}`,
+  );
+  return [];
 }
 
 function hasBrevInstance(instanceName: string): boolean {
