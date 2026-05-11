@@ -8326,7 +8326,14 @@ async function setupMessagingChannels(): Promise<string[]> {
         enabled.delete(ch.name);
         continue;
       }
-      const result = await handler();
+      // Belt-and-suspenders: the WeChat handler wraps its own body in
+      // try/catch, but a future handler might not. Treat any thrown error
+      // as a structured "error" result so onboard skips the channel and
+      // keeps going rather than crashing the whole flow.
+      const result = await handler().catch((err: unknown) => ({
+        kind: "error" as const,
+        message: err instanceof Error ? err.message : String(err),
+      }));
       if (result.kind !== "ok") {
         const reason =
           result.kind === "timeout"
