@@ -18,6 +18,7 @@ const {
   formatConfigValueForLogs,
   resolveAgentConfig,
   buildRecomputeSandboxConfigHashScript,
+  selectDockerDriverSandboxContainer,
 } = require("../dist/lib/sandbox-config");
 
 type MutableScalar = string | number | boolean | null | undefined;
@@ -72,15 +73,52 @@ describe("buildRecomputeSandboxConfigHashScript", () => {
     });
 
     expect(script).toContain(
-      "sha256sum '/sandbox/.hermes/config.yaml' '/sandbox/.hermes/.env' > '/etc/nemoclaw/hermes.config-hash'",
+      "strict_hash='/etc/nemoclaw/hermes.config-hash'",
     );
-    expect(script).toContain("chown root:root '/etc/nemoclaw/hermes.config-hash'");
-    expect(script).toContain("chmod 444 '/etc/nemoclaw/hermes.config-hash'");
+    expect(script).toContain('strict_tmp="${strict_hash}.tmp.$$"');
     expect(script).toContain(
-      "cp '/etc/nemoclaw/hermes.config-hash' '/sandbox/.hermes/.config-hash'",
+      "compat_hash='/sandbox/.hermes/.config-hash'",
     );
-    expect(script).toContain("chown sandbox:sandbox '/sandbox/.hermes/.config-hash'");
-    expect(script).toContain("chmod 600 '/sandbox/.hermes/.config-hash'");
+    expect(script).toContain('compat_tmp="${compat_hash}.tmp.$$"');
+    expect(script).toContain('trap \'rm -f "$strict_tmp" "$compat_tmp"\' EXIT HUP INT TERM');
+    expect(script).toContain(
+      'sha256sum \'/sandbox/.hermes/config.yaml\' \'/sandbox/.hermes/.env\' > "$strict_tmp"',
+    );
+    expect(script).toContain('chown root:root "$strict_tmp"');
+    expect(script).toContain('chmod 444 "$strict_tmp"');
+    expect(script).toContain('mv -f "$strict_tmp" "$strict_hash"');
+    expect(script).toContain('cp "$strict_hash" "$compat_tmp"');
+    expect(script).toContain('chown sandbox:sandbox "$compat_tmp"');
+    expect(script).toContain('chmod 600 "$compat_tmp"');
+    expect(script).toContain('mv -f "$compat_tmp" "$compat_hash"');
+  });
+});
+
+describe("selectDockerDriverSandboxContainer", () => {
+  it("returns the exact Docker-driver sandbox container when present", () => {
+    const selected = selectDockerDriverSandboxContainer(
+      "demo",
+      "docker",
+      "openshell-demo\nopenshell-demo-helper\n",
+    );
+
+    expect(selected).toBe("openshell-demo");
+  });
+
+  it("falls back to the generated Docker-driver sandbox container prefix", () => {
+    const selected = selectDockerDriverSandboxContainer(
+      "demo",
+      "docker",
+      "openshell-other\nopenshell-demo-abc123\n",
+    );
+
+    expect(selected).toBe("openshell-demo-abc123");
+  });
+
+  it("does not select a container for legacy gateway sandboxes", () => {
+    expect(
+      selectDockerDriverSandboxContainer("demo", "kubernetes", "openshell-demo\n"),
+    ).toBeNull();
   });
 });
 

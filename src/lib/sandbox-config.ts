@@ -21,10 +21,14 @@ const { isIP } = require("node:net");
 const { validateName } = require("./runner");
 const { shellQuote } = require("./core/shell-quote");
 const { dockerExecFileSync } = require("./adapters/docker/exec");
+const { dockerCapture } = require("./adapters/docker/run");
 const credentialFilter: typeof import("./security/credential-filter") = require("./security/credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue, isCredentialField } = credentialFilter;
 const { appendAuditEntry } = require("./shields/audit");
 const { isPrivateHostname, isPrivateIp } = require("./private-networks");
+const registry = require("./state/registry") as {
+  getSandbox?: (name: string) => { openshellDriver?: string | null } | null;
+};
 
 type ConfigObject = import("./security/credential-filter").ConfigObject;
 type ConfigValue = import("./security/credential-filter").ConfigValue;
@@ -94,6 +98,77 @@ const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
 };
 
 const HERMES_STRICT_HASH_FILE = "/etc/nemoclaw/hermes.config-hash";
+
+// Privileged sandbox exec bypasses the sandbox process's Landlock domain for
+// host-initiated config writes. Legacy OpenShell gateways expose the pod via
+// K3s/kubectl; Docker-driver gateways expose a sandbox container directly.
+function selectDockerDriverSandboxContainer(
+  sandboxName: string,
+  openshellDriver: string | null | undefined,
+  containerNames: string,
+): string | null {
+  if (openshellDriver !== "docker") return null;
+  const prefix = `openshell-${sandboxName}-`;
+  const exact = `openshell-${sandboxName}`;
+  return (
+    containerNames
+      .split("\n")
+      .map((line: string) => line.trim())
+      .find((name: string) => name === exact || name.startsWith(prefix)) || null
+  );
+}
+
+function resolveDockerDriverSandboxContainer(sandboxName: string): string | null {
+  let openshellDriver: string | null | undefined;
+  try {
+    openshellDriver = registry.getSandbox?.(sandboxName)?.openshellDriver;
+  } catch {
+    return null;
+  }
+
+  const output = dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true });
+  return selectDockerDriverSandboxContainer(sandboxName, openshellDriver, output);
+}
+
+function kubectlExecArgv(sandboxName: string, cmd: string[], stdin = false): string[] {
+  const args = [
+    "exec",
+    ...(stdin ? ["-i"] : []),
+    K3S_CONTAINER,
+    "kubectl",
+    "exec",
+    "-n",
+    "openshell",
+    sandboxName,
+    "-c",
+    "agent",
+    ...(stdin ? ["-i"] : []),
+    "--",
+    ...cmd,
+  ];
+  return args;
+}
+
+function privilegedSandboxExecArgv(sandboxName: string, cmd: string[], stdin = false): string[] {
+  const dockerDriverContainer = resolveDockerDriverSandboxContainer(sandboxName);
+  if (dockerDriverContainer) {
+    return ["exec", ...(stdin ? ["-i"] : []), "--user", "root", dockerDriverContainer, ...cmd];
+  }
+  return kubectlExecArgv(sandboxName, cmd, stdin);
+}
+
+function privilegedSandboxExec(
+  sandboxName: string,
+  cmd: string[],
+  opts: { input?: string | Buffer; timeout?: number } = {},
+): string {
+  const hasInput = opts.input !== undefined;
+  return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, hasInput), {
+    input: opts.input,
+    stdio: hasInput ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
+    timeout: opts.timeout ?? 30000,
+  });
+}
 
 function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
   try {
@@ -373,46 +448,14 @@ function writeSandboxConfig(
     fs.writeFileSync(tmpFile, serializeConfig(config, target.format), { mode: 0o600 });
 
     const content = fs.readFileSync(tmpFile, "utf-8");
-    dockerExecFileSync(
-      [
-        "exec",
-        "-i",
-        K3S_CONTAINER,
-        "kubectl",
-        "exec",
-        "-n",
-        "openshell",
-        sandboxName,
-        "-c",
-        "agent",
-        "-i",
-        "--",
-        "sh",
-        "-c",
-        `cat > ${shellQuote(target.configPath)}`,
-      ],
-      { input: content, stdio: ["pipe", "pipe", "pipe"], timeout: 15000 },
+    privilegedSandboxExec(
+      sandboxName,
+      ["sh", "-c", `cat > ${shellQuote(target.configPath)}`],
+      { input: content },
     );
 
     try {
-      dockerExecFileSync(
-        [
-          "exec",
-          K3S_CONTAINER,
-          "kubectl",
-          "exec",
-          "-n",
-          "openshell",
-          sandboxName,
-          "-c",
-          "agent",
-          "--",
-          "chown",
-          "sandbox:sandbox",
-          target.configPath,
-        ],
-        { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-      );
+      privilegedSandboxExec(sandboxName, ["chown", "sandbox:sandbox", target.configPath]);
     } catch {
       // Best effort — chown failure is non-fatal.
     }
@@ -431,14 +474,23 @@ function buildRecomputeSandboxConfigHashScript(target: AgentConfigTarget): strin
     const envFile = `${target.configDir}/.env`;
     const compatibilityHash = `${target.configDir}/.config-hash`;
     const strictHash = shellQuote(HERMES_STRICT_HASH_FILE);
+    const compatibilityHashQuoted = shellQuote(compatibilityHash);
     return [
       `mkdir -p ${shellQuote("/etc/nemoclaw")}`,
-      `sha256sum ${shellQuote(target.configPath)} ${shellQuote(envFile)} > ${strictHash}`,
-      `chown root:root ${strictHash}`,
-      `chmod 444 ${strictHash}`,
-      `cp ${strictHash} ${shellQuote(compatibilityHash)}`,
-      `chown sandbox:sandbox ${shellQuote(compatibilityHash)}`,
-      `chmod 600 ${shellQuote(compatibilityHash)}`,
+      `strict_hash=${strictHash}`,
+      `strict_tmp="\${strict_hash}.tmp.$$"`,
+      `compat_hash=${compatibilityHashQuoted}`,
+      `compat_tmp="\${compat_hash}.tmp.$$"`,
+      `trap 'rm -f "$strict_tmp" "$compat_tmp"' EXIT HUP INT TERM`,
+      `sha256sum ${shellQuote(target.configPath)} ${shellQuote(envFile)} > "$strict_tmp"`,
+      `chown root:root "$strict_tmp"`,
+      `chmod 444 "$strict_tmp"`,
+      `mv -f "$strict_tmp" "$strict_hash"`,
+      `cp "$strict_hash" "$compat_tmp"`,
+      `chown sandbox:sandbox "$compat_tmp"`,
+      `chmod 600 "$compat_tmp"`,
+      `mv -f "$compat_tmp" "$compat_hash"`,
+      "trap - EXIT HUP INT TERM",
     ].join(" && ");
   }
   if (!target.sensitiveFiles?.includes(`${target.configDir}/.config-hash`)) return null;
@@ -453,24 +505,7 @@ function buildRecomputeSandboxConfigHashScript(target: AgentConfigTarget): strin
 function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarget): void {
   const script = buildRecomputeSandboxConfigHashScript(target);
   if (!script) return;
-  dockerExecFileSync(
-    [
-      "exec",
-      K3S_CONTAINER,
-      "kubectl",
-      "exec",
-      "-n",
-      "openshell",
-      sandboxName,
-      "-c",
-      "agent",
-      "--",
-      "sh",
-      "-c",
-      script,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-  );
+  privilegedSandboxExec(sandboxName, ["sh", "-c", script]);
 }
 
 // ---------------------------------------------------------------------------
@@ -835,66 +870,9 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   // Apply change
   setDotpath(config, opts.key, safeValue);
 
-  // Write to temp file in the agent's native format
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
-  const tmpFile = path.join(tmpDir, target.configFile);
-  fs.writeFileSync(tmpFile, serializeConfig(config, target.format), { mode: 0o600 });
-
-  // Write config to sandbox via kubectl exec (bypasses Landlock)
   console.log(`  Writing config to sandbox (${target.configPath})...`);
-  const content = fs.readFileSync(tmpFile, "utf-8");
-  dockerExecFileSync(
-    [
-      "exec",
-      "-i",
-      K3S_CONTAINER,
-      "kubectl",
-      "exec",
-      "-n",
-      "openshell",
-      sandboxName,
-      "-c",
-      "agent",
-      "-i",
-      "--",
-      "sh",
-      "-c",
-      `cat > ${target.configPath}`,
-    ],
-    { input: content, stdio: ["pipe", "pipe", "pipe"], timeout: 15000 },
-  );
-
-  // Fix ownership via kubectl exec (bypasses Landlock)
-  try {
-    dockerExecFileSync(
-      [
-        "exec",
-        K3S_CONTAINER,
-        "kubectl",
-        "exec",
-        "-n",
-        "openshell",
-        sandboxName,
-        "-c",
-        "agent",
-        "--",
-        "chown",
-        "sandbox:sandbox",
-        target.configPath,
-      ],
-      { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-    );
-  } catch {
-    // Best effort — chown failure is non-fatal
-  }
-
-  // Cleanup temp
-  try {
-    fs.unlinkSync(tmpFile);
-    fs.rmdirSync(tmpDir);
-  } catch {
-    // Best effort
-  }
+  writeSandboxConfig(sandboxName, target, config);
+  recomputeSandboxConfigHash(sandboxName, target);
 
   // Audit log
   appendAuditEntry({
@@ -1109,6 +1087,8 @@ export {
   writeSandboxConfig,
   recomputeSandboxConfigHash,
   buildRecomputeSandboxConfigHashScript,
+  selectDockerDriverSandboxContainer,
+  privilegedSandboxExecArgv,
   extractDotpath,
   setDotpath,
   validateConfigDotpath,

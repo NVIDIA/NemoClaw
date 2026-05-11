@@ -14,6 +14,8 @@
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 
+# Do not use errexit because this test records pass/fail counts and exits
+# explicitly after critical failures or at the final summary.
 set -uo pipefail
 
 PASS=0

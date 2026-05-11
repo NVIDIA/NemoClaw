@@ -14,6 +14,8 @@
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 
+# Do not use errexit because this test records pass/fail counts and exits
+# explicitly after critical failures or at the final summary.
 set -uo pipefail
 
 PASS=0
@@ -173,6 +175,9 @@ assert_hermes_config() {
     return
   }
 
+  # Keep this parser dependency-free for the E2E runner: it only reads the
+  # simple model block and should move to PyYAML if nested or multiline values
+  # become relevant.
   probe=$(CONFIG_TEXT="$config" EXPECTED_MODEL="$SWITCH_MODEL" python3 - <<'PY'
 import os
 import re
