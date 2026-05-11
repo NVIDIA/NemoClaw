@@ -51,7 +51,7 @@ For details, refer to [Commands](../reference/commands.md).
 | Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting, `TELEGRAM_REQUIRE_MENTION` for group-chat replies |
 | Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | None |
-| WeChat (personal) | Captured via host-side QR scan during `nemoclaw onboard` — no token to paste | `WECHAT_ALLOWED_IDS` for DM allowlisting (the WeChat user who scanned the QR is added automatically) |
+| WeChat (personal) | Host-side QR scan during `nemoclaw onboard` captures the token — no token to paste | `WECHAT_ALLOWED_IDS` for DM allowlisting (NemoClaw adds the WeChat user who scanned the QR automatically) |
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
@@ -74,8 +74,8 @@ The supported mode in this release is **personal WeChat** (`bot_type=3`).
 WeChat Official Account and WeCom/Enterprise WeChat are not wired up yet.
 Because the bot token only exists after a successful iLink QR handshake, NemoClaw runs the QR login on the host during `nemoclaw onboard`.
 You scan the QR with WeChat on your phone (Discover → Scan), confirm the login, and NemoClaw captures the token, `accountId`, `baseUrl`, and `userId` from the iLink response.
-The token is registered as the `<sandbox>-wechat-bridge` OpenShell provider and replaced inside the sandbox by the `openshell:resolve:env:WECHAT_BOT_TOKEN` placeholder, so it is never baked into the image or written to disk inside the running container.
-WeChat is DM-only (`allowIdsMode: "dm"`) — the operator who scanned the QR is added to `WECHAT_ALLOWED_IDS` automatically, and you can append more comma-separated WeChat user IDs through the same env var.
+NemoClaw registers the token as the `<sandbox>-wechat-bridge` OpenShell provider and substitutes the `openshell:resolve:env:WECHAT_BOT_TOKEN` placeholder for it inside the sandbox, so the token never lands in the image or on disk inside the running container.
+WeChat is DM-only (`allowIdsMode: "dm"`) — NemoClaw adds the operator who scanned the QR to `WECHAT_ALLOWED_IDS` automatically, and you can append more comma-separated WeChat user IDs through the same env var.
 You can silence the host-side `[wechat]` diagnostic lines (poll status, IDC redirects, swallowed gateway errors) by exporting `NEMOCLAW_WECHAT_QUIET=1` once the flow is stable in your environment.
 Tencent's iLink gateway is a third-party service.
 Review your organization's terms-of-service, compliance, and data-residency constraints before enabling WeChat in production.
@@ -102,7 +102,7 @@ $ export SLACK_BOT_TOKEN=<your-slack-bot-token>
 $ export SLACK_APP_TOKEN=<your-slack-app-token>
 ```
 
-WeChat cannot be configured non-interactively in this release because the iLink QR handshake requires a human to scan the QR on a paired phone.
+This release does not support non-interactive WeChat configuration because the iLink QR handshake requires a human to scan the QR on a paired phone.
 Run `nemoclaw onboard` interactively when you want to enable WeChat.
 
 Then run onboarding:
@@ -133,7 +133,7 @@ $ nemoclaw my-assistant channels add slack
 ### `channels add wechat` is not supported in this release
 
 `nemoclaw <sandbox> channels add wechat` exits with an explicit error and does not modify any state.
-The reason is that the host-side iLink QR handshake — which is the only way to obtain a WeChat bot token — does not fit the paste-prompt model the other channels use, and the `channels add` command has no slot for the per-account metadata (`accountId`, `baseUrl`, `userId`) that the in-sandbox bridge needs to start.
+The host-side iLink QR handshake (the only way to obtain a WeChat bot token) does not fit the paste-prompt model the other channels use, and the `channels add` command has no slot for the per-account metadata (`accountId`, `baseUrl`, `userId`) that the in-sandbox bridge needs to start.
 
 To add WeChat to an existing sandbox, recreate it through `nemoclaw onboard`:
 
@@ -210,7 +210,7 @@ Stopping the in-sandbox gateway stops Telegram, Discord, Slack, and WeChat polli
 After the sandbox is running, send a message to the configured bot or app.
 If delivery fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the channel API.
 Use the matching policy preset (`telegram`, `discord`, `slack`, or `wechat`) or review [Common Integration Policy Examples](../network-policy/integration-policy-examples.md).
-For WeChat specifically, the in-sandbox bridge emits a single `[wechat] [<accountId>] provider ready` line on stderr after the first successful iLink hit and an annotated line when the agent turn fails after the provider connected; both are produced by the diagnostics preload and are useful for telling "channel up, inference broken" apart from "channel never connected".
+For WeChat specifically, the in-sandbox bridge emits a single `[wechat] [<accountId>] provider ready` line on stderr after the first successful iLink hit and an annotated line when the agent turn fails after the provider connected; the diagnostics preload produces both lines, which help you tell "channel up, inference broken" apart from "channel never connected".
 
 ## Tunnel Command
 
