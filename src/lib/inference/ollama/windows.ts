@@ -136,41 +136,61 @@ function awaitWindowsOllamaReady(): boolean {
 }
 
 // Relaunch via the watcher path when available so the tray icon and the
-// watcher's auto-restart survive; otherwise launch the daemon directly. After
-// a fresh install, use the verified installedPath because PATH updates may not
-// be visible to this WSL-launched PowerShell process yet.
+// watcher's auto-restart survive; fall back through the verified installed
+// path and finally refreshed PATH because stale watcher paths are possible.
 function launchAndAwaitWindowsOllama(
   opts: { watcherPath?: string; installedPath?: string } = {},
 ): boolean {
   console.log("  Starting Ollama on Windows host via WSL interop...");
   const watcherPath = typeof opts.watcherPath === "string" ? opts.watcherPath.trim() : "";
   const installedPath = typeof opts.installedPath === "string" ? opts.installedPath.trim() : "";
-  let launchScript: string;
+  const launchAttempts: Array<{ label: string; script: string }> = [];
   if (watcherPath) {
-    launchScript =
-      `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(watcherPath)} ` +
-      "-WindowStyle Hidden";
-  } else if (installedPath) {
-    launchScript =
-      `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(installedPath)} ` +
-      "-ArgumentList 'serve' -WindowStyle Hidden";
-  } else {
-    launchScript =
+    launchAttempts.push({
+      label: "Ollama tray app",
+      script:
+        `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(watcherPath)} ` +
+        "-WindowStyle Hidden",
+    });
+  }
+  if (installedPath) {
+    launchAttempts.push({
+      label: "verified ollama.exe",
+      script:
+        `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(installedPath)} ` +
+        "-ArgumentList 'serve' -WindowStyle Hidden",
+    });
+  }
+  launchAttempts.push({
+    label: "refreshed Windows PATH",
+    script:
       "$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User'); " +
-      "$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ollama.exe -ArgumentList serve -WindowStyle Hidden";
-  }
-  const result = run(["powershell.exe", "-Command", launchScript], {
-    ignoreError: true,
-    suppressOutput: true,
+      "$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ollama.exe -ArgumentList serve -WindowStyle Hidden",
   });
-  if (result.status !== 0) {
+
+  for (let i = 0; i < launchAttempts.length; i++) {
+    const attempt = launchAttempts[i];
+    const result = run(["powershell.exe", "-Command", attempt.script], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    if (result.status === 0 && awaitWindowsOllamaReady()) {
+      return true;
+    }
+
     const stderr = String(result.stderr || "").trim();
-    console.error(
-      `  PowerShell launch failed (exit ${result.status})${stderr ? `: ${stderr}` : ""}`,
-    );
-    return false;
+    const error = result.error?.message;
+    const detail =
+      result.status === 0
+        ? "Ollama did not become reachable"
+        : error || `exit ${result.status}${stderr ? `: ${stderr}` : ""}`;
+    console.error(`  PowerShell launch via ${attempt.label} failed: ${detail}`);
+    if (i < launchAttempts.length - 1) {
+      killWindowsOllamaProcesses();
+      sleep(1);
+    }
   }
-  return awaitWindowsOllamaReady();
+  return false;
 }
 
 // Used by start and restart paths to force a 0.0.0.0 binding on an already
