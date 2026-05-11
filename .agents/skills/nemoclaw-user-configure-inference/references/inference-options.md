@@ -49,6 +49,7 @@ Experimental local vLLM appears when you opt in and NemoClaw detects either a ru
 | Other Anthropic-compatible endpoint | Routes to any server that implements the Anthropic Messages API (`/v1/messages`). The wizard prompts for a base URL and model name. Set `COMPATIBLE_ANTHROPIC_API_KEY`. | You provide the model name. |
 | Google Gemini | Routes to Google's OpenAI-compatible endpoint. NemoClaw prefers `/responses` only when the endpoint proves it can handle tool calling in a way OpenClaw uses; otherwise it falls back to `/chat/completions`. Set `GEMINI_API_KEY`. | `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` |
 | Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill). |
+| Model Router | Starts a host-side router on port `4000`, registers it as an OpenAI-compatible provider, and keeps the sandbox pointed at `inference.local`. Set `NEMOCLAW_PROVIDER=routed` for non-interactive setup. | The router pool defines the model names. |
 
 ## Choosing the Right Option for Nemotron
 
@@ -63,6 +64,20 @@ NVIDIA Nemotron models expose OpenAI-compatible APIs across every supported depl
 | Local NIM started by the wizard | **Local NVIDIA NIM** (experimental) | Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU. NemoClaw pulls and manages the container for you. |
 
 For Option 3, the API key environment variable is `COMPATIBLE_API_KEY`. Set it to whatever credential your endpoint expects, or any non-empty placeholder if your endpoint does not require auth.
+
+## Model Router
+
+The Model Router option uses the `routed` inference profile in `nemoclaw-blueprint/blueprint.yaml`.
+When you select it, NemoClaw starts the router proxy on the host, waits for its health endpoint, registers the `nvidia-router` provider with OpenShell, and creates the sandbox with the same `inference.local` route the agent uses for other providers.
+The sandbox does not call the router port directly.
+
+The router model pool lives in `nemoclaw-blueprint/router/pool-config.yaml`.
+The default pool routes between NVIDIA-hosted Nemotron models and uses the `tolerance` value to choose the lowest-cost model whose predicted quality stays within the configured threshold.
+To use the router in scripted setup, set:
+
+```console
+$ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
+```
 
 ## Experimental Options
 
@@ -79,6 +94,7 @@ For setup instructions, refer to Use a Local Inference Server (use the `nemoclaw
 
 NemoClaw validates the selected provider and model before creating the sandbox.
 If credential validation fails, the wizard asks whether to re-enter the API key, choose a different provider, retry, or exit.
+Transient upstream validation failures are retried before the wizard reports a provider failure.
 The `nvapi-` prefix check applies only to `NVIDIA_API_KEY`.
 Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and compatible endpoint keys, use provider-aware validation during retry.
 

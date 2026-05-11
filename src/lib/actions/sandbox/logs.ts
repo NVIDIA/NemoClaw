@@ -17,7 +17,6 @@ import {
 } from "../../domain/sandbox/logs";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 
-/* v8 ignore next -- process exit mapping is covered through CLI subprocess log tests. */
 function exitWithSpawnResult(result: LogProbeResult) {
   if (result.status !== null) {
     process.exit(result.status);
@@ -26,7 +25,6 @@ function exitWithSpawnResult(result: LogProbeResult) {
   process.exit(exitCodeFromSignal(result.signal ?? null));
 }
 
-/* v8 ignore next -- OpenShell subprocess call is covered through CLI subprocess log tests. */
 function runOpenclawGatewayLogs(
   sandboxName: string,
   options: SandboxLogsOptions,
@@ -46,7 +44,6 @@ function runOpenclawGatewayLogs(
   return result;
 }
 
-/* v8 ignore next -- multi-process follow handling is covered through CLI subprocess log tests. */
 function streamSandboxFollowLogs(sandboxName: string, options: SandboxLogsOptions): void {
   const openclawArgs = options.since
     ? null
@@ -146,7 +143,6 @@ function streamSandboxFollowLogs(sandboxName: string, options: SandboxLogsOption
   maybeExit();
 }
 
-/* v8 ignore next -- OpenShell audit setting is covered through CLI subprocess log tests. */
 function enableSandboxAuditLogs(sandboxName: string) {
   const args = buildEnableSandboxAuditLogsArgs(sandboxName);
   const result = runOpenshell(args, {
@@ -159,7 +155,6 @@ function enableSandboxAuditLogs(sandboxName: string) {
   }
 }
 
-/* v8 ignore next -- warning output is exercised through CLI subprocess log tests. */
 function warnSandboxAuditLogsUnavailable(
   sandboxName: string,
   args: string[],
@@ -176,7 +171,6 @@ function warnSandboxAuditLogsUnavailable(
   console.error("  Policy denial events may be missing from OpenShell logs.");
 }
 
-/* v8 ignore next -- external log streaming is covered through CLI subprocess log tests. */
 export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions | boolean) {
   const logsOptions = normalizeSandboxLogsOptions(options);
   if (logsOptions.follow) {

@@ -12,7 +12,7 @@
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
 # Stage 1: Build TypeScript plugin from source
-FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d AS builder
+FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false
@@ -26,22 +26,32 @@ RUN npm ci && npm run build
 FROM ${BASE_IMAGE}
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
-# Protect procps before autoremove — the GHCR base may predate the procps
-# addition, leaving it absent or auto-marked. apt-mark + conditional install
-# guarantees ps/top/kill are present regardless of base image staleness.
-# Ref: #2343
+# Protect runtime tools before autoremove — the GHCR base may predate the
+# procps/e2fsprogs additions, leaving ps/chattr absent or auto-marked. The
+# conditional install keeps stale bases usable while fresh bases skip apt.
+# Refs: #2343, shields-up chattr hardening
 # hadolint ignore=DL3001
-RUN apt-mark manual procps 2>/dev/null || true \
-    && (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
-        netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
-    && apt-get autoremove --purge -y \
-    && if ! command -v ps >/dev/null 2>&1; then \
-        apt-get update && apt-get install -y --no-install-recommends procps=2:4.0.2-3 \
-        && rm -rf /var/lib/apt/lists/*; \
-    else \
-        rm -rf /var/lib/apt/lists/*; \
-    fi \
-    && ps --version
+RUN set -eu; \
+    apt-mark manual procps e2fsprogs 2>/dev/null || true; \
+    (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
+        netcat-openbsd netcat-traditional ncat 2>/dev/null || true); \
+    apt-get autoremove --purge -y; \
+    needs_ps=0; \
+    needs_chattr=0; \
+    if ! command -v ps >/dev/null 2>&1; then needs_ps=1; fi; \
+    if ! command -v chattr >/dev/null 2>&1; then needs_chattr=1; fi; \
+    if [ "$needs_ps" = "1" ] || [ "$needs_chattr" = "1" ]; then \
+        apt-get update; \
+        if [ "$needs_ps" = "1" ]; then \
+            apt-get install -y --no-install-recommends procps=2:4.0.4-9; \
+        fi; \
+        if [ "$needs_chattr" = "1" ]; then \
+            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b10; \
+        fi; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*; \
+    ps --version; \
+    command -v chattr >/dev/null
 
 
 # Copy built plugin and blueprint into the sandbox
@@ -224,21 +234,22 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # Copy startup script and shared sandbox initialisation library
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-# Copy ws-proxy-fix.js to a Landlock-accessible path. OpenShell ≥0.0.36
+# Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
-# needs to read this file to install the NODE_OPTIONS --require preload.
-COPY nemoclaw-blueprint/scripts/ws-proxy-fix.js /usr/local/lib/nemoclaw/ws-proxy-fix.js
+# needs to read these files to install runtime preloads under /tmp.
+COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
-COPY nemoclaw-blueprint/openclaw-plugins/kimi-inference-compat/ /usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat/
+COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /usr/local/lib/nemoclaw/generate-openclaw-config.py \
-    && chmod 644 /usr/local/lib/nemoclaw/ws-proxy-fix.js \
+    && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
+    && if [ -f /usr/local/lib/nemoclaw/ws-proxy-fix.js ]; then chmod 644 /usr/local/lib/nemoclaw/ws-proxy-fix.js; fi \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
-        /usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat \
-    && chmod 644 /usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat/*
+    && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
+    && find /usr/local/share/nemoclaw/openclaw-plugins -type f -exec chmod 644 {} +
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
@@ -261,6 +272,12 @@ ARG NEMOCLAW_INFERENCE_INPUTS=text
 # immutable at runtime (Landlock read-only), so this can only be changed by
 # rebuilding via `nemoclaw onboard`. Ref: issue #2281
 ARG NEMOCLAW_AGENT_TIMEOUT=600
+# Cadence for OpenClaw's periodic heartbeat
+# (agents.defaults.heartbeat.every). Accepts Go-style durations like "30m",
+# "5m", "1h"; "0m" disables heartbeat. Empty default preserves the OpenClaw
+# built-in cadence. openclaw.json is immutable at runtime, so this can only
+# change at image build time. Ref: issue #2880
+ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Base64-encoded JSON list of messaging channel names to pre-configure
 # (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
@@ -313,6 +330,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
     NEMOCLAW_INFERENCE_INPUTS=${NEMOCLAW_INFERENCE_INPUTS} \
     NEMOCLAW_AGENT_TIMEOUT=${NEMOCLAW_AGENT_TIMEOUT} \
+    NEMOCLAW_AGENT_HEARTBEAT_EVERY=${NEMOCLAW_AGENT_HEARTBEAT_EVERY} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \

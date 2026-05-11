@@ -3,7 +3,7 @@
 
 import { Command } from "@oclif/core";
 
-import { runSetupSparkAction } from "../global-cli-actions";
+import { runSetupSparkAction } from "../actions/global";
 import { buildOnboardFlags, type OnboardFlags, toLegacyOnboardArgs } from "./onboard/common";
 
 export default class SetupSparkCliCommand extends Command {

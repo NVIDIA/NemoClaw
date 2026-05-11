@@ -34,7 +34,7 @@ export function normalizeArgv(argv: readonly string[], opts: NormalizeArgvOption
     return { kind: "dumpCommands" };
   }
 
-  if (opts.globalCommands.has(cmd)) {
+  if (cmd === "version" || opts.globalCommands.has(cmd)) {
     return { kind: "global", command: cmd, args };
   }
 

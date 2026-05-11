@@ -11,10 +11,10 @@ export default class ShareUnmountCommand extends Command {
   static strict = true;
   static summary = "Unmount a shared sandbox filesystem";
   static description = "Unmount a previously mounted sandbox filesystem from the host.";
-  static usage = ["<name> share unmount [local-mount-point]"];
+  static usage = ["<name> [local-mount-point]"];
   static examples = [
-    "<%= config.bin %> alpha share unmount",
-    "<%= config.bin %> alpha share unmount ~/mnt/alpha",
+    "<%= config.bin %> sandbox share unmount alpha",
+    "<%= config.bin %> sandbox share unmount alpha ~/mnt/alpha",
   ];
   static args = {
     sandboxName: sandboxNameArg,

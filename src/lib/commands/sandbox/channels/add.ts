@@ -15,8 +15,8 @@ export default class ChannelsAddCommand extends Command {
   static strict = true;
   static summary = "Save messaging channel credentials and rebuild";
   static description = "Store credentials for a messaging channel and queue a sandbox rebuild.";
-  static usage = ["<name> channels add <channel> [--dry-run]"];
-  static examples = ["<%= config.bin %> alpha channels add telegram"];
+  static usage = ["<name> <channel> [--dry-run]"];
+  static examples = ["<%= config.bin %> sandbox channels add alpha telegram"];
   static args = channelMutationArgs;
   static flags = channelMutationFlags;
 

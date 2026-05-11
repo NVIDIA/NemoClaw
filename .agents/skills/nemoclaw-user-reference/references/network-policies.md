@@ -10,6 +10,8 @@ Any request to an unlisted destination is intercepted by OpenShell, and the oper
 
 The baseline policy is defined in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
 
+> **Note:** Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-additions.yaml` so Hermes runtime binaries can reach the service endpoints they need while keeping the same deny-by-default model.
+
 ### Filesystem
 
 | Path | Access |
@@ -65,6 +67,9 @@ All endpoints use TLS termination and are enforced at port 443.
 > **Note:** GitHub access (`github.com`, `api.github.com`) is not included in the baseline policy.
 > Apply the `github` preset during onboarding if your agent needs GitHub access.
 > See Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill).
+>
+> Messaging endpoints for Telegram, Discord, and Slack are not included in the baseline policy.
+> Enable the channel during onboarding or apply the matching messaging preset so the sandbox can reach that platform.
 
 (policy-tiers)=
 

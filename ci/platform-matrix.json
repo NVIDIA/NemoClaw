@@ -116,6 +116,12 @@
       "notes": "Uses Google's OpenAI-compatible endpoint"
     },
     {
+      "name": "Hermes Provider",
+      "status": "hermes only",
+      "endpoint_type": "OpenAI-compatible route",
+      "notes": "Available when onboarding Hermes Agent through `nemohermes`"
+    },
+    {
       "name": "Local Ollama",
       "status": "caveated",
       "endpoint_type": "Local Ollama API",

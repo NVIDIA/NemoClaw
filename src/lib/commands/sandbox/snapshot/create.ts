@@ -10,10 +10,10 @@ export default class SnapshotCreateCommand extends Command {
   static strict = true;
   static summary = "Create a snapshot of sandbox state";
   static description = "Create an auto-versioned snapshot of sandbox workspace state.";
-  static usage = ["<name> snapshot create [--name <label>]"];
+  static usage = ["<name> [--name <label>]"];
   static examples = [
-    "<%= config.bin %> alpha snapshot create",
-    "<%= config.bin %> alpha snapshot create --name before-upgrade",
+    "<%= config.bin %> sandbox snapshot create alpha",
+    "<%= config.bin %> sandbox snapshot create alpha --name before-upgrade",
   ];
   static args = {
     sandboxName: sandboxNameArg,

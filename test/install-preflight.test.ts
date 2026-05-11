@@ -488,7 +488,7 @@ exit 98
     expect(output).toMatch(/--version/);
     expect(output).toMatch(/NEMOCLAW_PROVIDER/);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
     expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
@@ -504,7 +504,7 @@ exit 98
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
   });
 
@@ -563,11 +563,34 @@ exit 98
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
     const npmLog = path.join(tmp, "npm.log");
+    const pythonLog = path.join(tmp, "python.log");
+    const gitLog = path.join(tmp, "git.log");
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(path.join(tmp, ".git"));
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "$GIT_LOG_PATH"
+exit 90
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "python3"),
+      `#!/usr/bin/env bash
+printf 'python3 %s\\n' "$*" >> "$PYTHON_LOG_PATH"
+exit 88
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "pip3"),
+      `#!/usr/bin/env bash
+printf 'pip3 %s\\n' "$*" >> "$PYTHON_LOG_PATH"
+exit 89
+`,
+    );
     writeNpmStub(
       fakeBin,
       `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
@@ -602,6 +625,13 @@ fi`,
       path.join(tmp, "nemoclaw", "package.json"),
       JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
     );
+    fs.mkdirSync(path.join(tmp, "nemoclaw-blueprint", "router", "llm-router"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw-blueprint", "router", "llm-router", "pyproject.toml"),
+      "[project]\nname = 'llm-router'\n",
+    );
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
@@ -614,6 +644,8 @@ fi`,
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         NPM_LOG_PATH: npmLog,
+        PYTHON_LOG_PATH: pythonLog,
+        GIT_LOG_PATH: gitLog,
       },
     });
 
@@ -624,6 +656,10 @@ fi`,
     expect(log).toMatch(/^link/m);
     // the GitHub URL must NOT appear — this is a local install
     expect(log).not.toMatch(new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    // Model Router must not run provider-specific dependency setup from the generic installer.
+    expect(fs.existsSync(pythonLog)).toBe(false);
+    const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
+    expect(gitCalls).not.toMatch(/submodule/);
   });
 
   it("auto-resumes an interrupted onboarding session during install", () => {
@@ -2594,6 +2630,158 @@ exit 0`,
   });
 });
 
+describe("installer Docker bootstrap (sourced)", () => {
+  function runEnsureDockerWithStubs({
+    dockerScript,
+    idScript,
+    systemctlScript = `#!/usr/bin/env bash
+if [ "\${1:-}" = "is-active" ]; then exit 0; fi
+if [ "\${1:-}" = "enable" ]; then exit 0; fi
+exit 0
+`,
+    sudoScript = `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "-n" ]; then shift; fi
+printf '%s\\n' "$*" >> "$SUDO_LOG"
+exec "$@"
+`,
+  }: {
+    dockerScript: string;
+    idScript: string;
+    systemctlScript?: string;
+    sudoScript?: string;
+  }) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-bootstrap-"));
+    const fakeBin = path.join(tmp, "bin");
+    const sudoLog = path.join(tmp, "sudo.log");
+    const idLog = path.join(tmp, "id.log");
+    const dockerCount = path.join(tmp, "docker-count");
+    fs.mkdirSync(fakeBin);
+
+    writeExecutable(path.join(fakeBin, "docker"), dockerScript);
+    writeExecutable(path.join(fakeBin, "id"), idScript);
+    writeExecutable(path.join(fakeBin, "sudo"), sudoScript);
+    writeExecutable(path.join(fakeBin, "systemctl"), systemctlScript);
+    writeExecutable(
+      path.join(fakeBin, "uname"),
+      `#!/usr/bin/env bash
+printf 'Linux\\n'
+`,
+    );
+
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+info() { printf 'INFO: %s\\n' "$*" >&2; }
+warn() { printf 'WARN: %s\\n' "$*" >&2; }
+error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
+ensure_docker
+`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          SUDO_LOG: sudoLog,
+          ID_LOG: idLog,
+          DOCKER_COUNT: dockerCount,
+        },
+      },
+    );
+
+    return {
+      result,
+      sudoLog: fs.existsSync(sudoLog) ? fs.readFileSync(sudoLog, "utf-8") : "",
+      idLog: fs.existsSync(idLog) ? fs.readFileSync(idLog, "utf-8") : "",
+    };
+  }
+
+  it("prompts for newgrp when persisted docker membership is not active", () => {
+    const { result, sudoLog } = runEnsureDockerWithStubs({
+      dockerScript: `#!/usr/bin/env bash
+if [ "\${1:-}" = "info" ]; then exit 1; fi
+exit 0
+`,
+      idScript: `#!/usr/bin/env bash
+case "$*" in
+  "-u") printf '1000\\n' ;;
+  "-un") printf 'alice\\n' ;;
+  "-nG alice") printf 'alice docker\\n' ;;
+  "-nG") printf 'alice adm\\n' ;;
+  *) printf 'unexpected id %s\\n' "$*" >&2; exit 99 ;;
+esac
+`,
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Docker group membership is not active in this shell yet/);
+    expect(output).toMatch(/newgrp docker/);
+    expect(output).not.toMatch(/Docker is installed but not reachable/);
+    expect(sudoLog).not.toMatch(/usermod/);
+  });
+
+  it("reports daemon reachability when the active shell already has docker", () => {
+    const { result } = runEnsureDockerWithStubs({
+      dockerScript: `#!/usr/bin/env bash
+if [ "\${1:-}" = "info" ]; then exit 1; fi
+exit 0
+`,
+      idScript: `#!/usr/bin/env bash
+case "$*" in
+  "-u") printf '1000\\n' ;;
+  "-un") printf 'alice\\n' ;;
+  "-nG alice") printf 'alice docker\\n' ;;
+  "-nG") printf 'alice docker adm\\n' ;;
+  *) printf 'unexpected id %s\\n' "$*" >&2; exit 99 ;;
+esac
+`,
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(/Docker is installed but not reachable/);
+    expect(output).toMatch(/sudo systemctl start docker/);
+    expect(output).not.toMatch(/newgrp docker/);
+  });
+
+  it("skips docker group membership checks for root", () => {
+    const { result, idLog } = runEnsureDockerWithStubs({
+      dockerScript: `#!/usr/bin/env bash
+if [ "\${1:-}" = "info" ]; then
+  count=0
+  if [ -f "$DOCKER_COUNT" ]; then count="$(cat "$DOCKER_COUNT")"; fi
+  count=$((count + 1))
+  printf '%s\\n' "$count" > "$DOCKER_COUNT"
+  if [ "$count" -ge 2 ]; then exit 0; fi
+  exit 1
+fi
+exit 0
+`,
+      idScript: `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$ID_LOG"
+case "$*" in
+  "-u") printf '0\\n' ;;
+  "-un") printf 'root\\n' ;;
+  "-nG"*) printf 'root should not check groups\\n' >&2; exit 99 ;;
+  *) printf 'unexpected id %s\\n' "$*" >&2; exit 99 ;;
+esac
+`,
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(idLog).toMatch(/^-u$/m);
+    expect(idLog).not.toMatch(/-nG/);
+  });
+});
+
 describe("installer license acceptance (sourced)", () => {
   /**
    * Source scripts/install.sh and invoke show_usage_notice() in isolation. The
@@ -2698,6 +2886,164 @@ exit 0`,
     // No raw /dev/tty shell noise should leak (e.g. "exec 3</dev/tty")
     // — the friendly hint is the only TTY-related output we expect.
     expect(output).not.toMatch(/\/dev\/tty/);
+  });
+
+  it("#3058: error message includes a working curl|bash example users can copy-paste", () => {
+    // The reporter on #3058 hit this error with `curl ... | bash` on a
+    // non-TTY box and was left guessing how to combine the env var with
+    // the documented one-liner. The fix surfaces the exact invocations
+    // (terminal, env-var-in-pipe, flag-via-bash-s) so users can resolve
+    // the failure without leaving the terminal output.
+    const { result } = callShowUsageNotice({});
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash/);
+    expect(output).toMatch(/bash -s -- --yes-i-accept-third-party-software/);
+    expect(output).toMatch(/bash <\(curl/);
+  });
+});
+
+describe("installer express install prompt (sourced)", () => {
+  function runExpressPromptWithTty(answer: string, stdinMode: "pipe" | "tty") {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
+    const python =
+      spawnSync("bash", ["-lc", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
+      "python3";
+    const ptyRunner = `
+import os
+import pty
+import select
+import signal
+import sys
+import time
+
+installer = sys.argv[1]
+answer = sys.argv[2].encode()
+stdin_mode = sys.argv[3]
+script = r'''
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf "DGX Spark"; }
+NON_INTERACTIVE=""
+NEMOCLAW_PROVIDER=""
+NEMOCLAW_NO_EXPRESS=""
+maybe_offer_express_install
+printf "RESULT NON_INTERACTIVE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s\\n" \\
+  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
+  "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}"
+'''
+env = dict(os.environ)
+env["INSTALLER_UNDER_TEST"] = installer
+pid, fd = pty.fork()
+if pid == 0:
+    if stdin_mode == "pipe":
+        devnull = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(devnull, 0)
+        os.close(devnull)
+    os.execvpe("bash", ["bash", "-c", script], env)
+
+output = bytearray()
+os.set_blocking(fd, False)
+sent = False
+exit_code = 124
+deadline = time.time() + 10
+while True:
+    ready, _, _ = select.select([fd], [], [], 0.1)
+    if ready:
+        try:
+            chunk = os.read(fd, 4096)
+        except BlockingIOError:
+            chunk = b""
+        except OSError:
+            chunk = b""
+        if chunk:
+            output.extend(chunk)
+        if (not sent) and b"[Y/n]" in output:
+            os.write(fd, answer)
+            sent = True
+    waited = os.waitpid(pid, os.WNOHANG)
+    if waited[0] == pid:
+        exit_code = os.waitstatus_to_exitcode(waited[1])
+        break
+    if time.time() > deadline:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+        break
+
+try:
+    os.close(fd)
+except OSError:
+    pass
+sys.stdout.buffer.write(output)
+sys.exit(exit_code)
+`;
+    return spawnSync(python, ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode], {
+      cwd: tmp,
+      encoding: "utf-8",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+      env: {
+        HOME: tmp,
+        PATH: TEST_SYSTEM_PATH,
+      },
+    });
+  }
+
+  it("offers express install when curl-piped stdin still has a controlling TTY", () => {
+    const result = runExpressPromptWithTty("y\n", "pipe");
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(/Run express install/);
+    expect(output).toMatch(/Using express install for DGX Spark/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 PROVIDER=install-ollama MODEL=qwen3\.6:35b POLICY=suggested YES=1/,
+    );
+  });
+
+  it("skips express install without a controlling TTY", () => {
+    if (process.platform === "darwin") {
+      return;
+    }
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-no-tty-"));
+    const result = spawnSync(
+      "setsid",
+      [
+        "bash",
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf "DGX Spark"; }
+NON_INTERACTIVE=""
+NEMOCLAW_PROVIDER=""
+NEMOCLAW_NO_EXPRESS=""
+maybe_offer_express_install
+printf "RESULT NON_INTERACTIVE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s\\n" \\
+  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
+  "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}"
+`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        input: "",
+        env: {
+          HOME: tmp,
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+        },
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(/Skipping express prompt \(no TTY\)/);
+    expect(output).not.toMatch(/Run express install/);
+    expect(output).toMatch(/RESULT NON_INTERACTIVE= PROVIDER= MODEL= POLICY= YES=/);
   });
 });
 
@@ -3062,6 +3408,8 @@ exit 0`,
       {
         cwd: tmp,
         encoding: "utf-8",
+        // input: "" makes spawnSync attach a non-TTY stdin pipe. setsid above
+        // additionally removes /dev/tty on Linux/WSL.
         input: options.stdinIsTty ? undefined : "",
         env: {
           HOME: tmp,
@@ -3110,7 +3458,7 @@ exit 0`,
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 echo "openshell $*" >> ${JSON.stringify(phaseLog)}
-if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "openshell 0.0.36"; fi
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "openshell 0.0.37"; fi
 exit 0`,
     );
     writeExecutable(
@@ -3221,6 +3569,11 @@ sys.exit(exit_code)
       env: {
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        // These tests verify the third-party-license flow on non-Spark
+        // hardware. On real DGX Spark/Station the express prompt would
+        // also fire and consume the test's input. Skip it explicitly
+        // so the tests stay focused on what they're verifying.
+        NEMOCLAW_NO_EXPRESS: "1",
         ...env,
       },
     });

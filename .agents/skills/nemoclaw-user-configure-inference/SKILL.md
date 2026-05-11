@@ -38,6 +38,9 @@ $ nemoclaw onboard
 Select **Local Ollama** from the provider list.
 NemoClaw lists installed models or offers starter models if none are installed.
 It pulls the selected model, loads it into memory, and validates it before continuing.
+If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
+The validation also requires structured chat-completions tool calls.
+If the model leaks tool-call JSON as plain message text, onboarding stops so you can choose a model that returns tool calls in the expected response field.
 On WSL, if you choose the Windows-host Ollama path, NemoClaw uses `host.docker.internal:11434` and pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
 
 ### WSL with Windows-Host Ollama
@@ -56,9 +59,10 @@ If both WSL and Windows-host Ollama are running, pick the intended menu entry du
 ### Authenticated Reverse Proxy
 
 On non-WSL hosts, NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated reverse proxy on `0.0.0.0:11435`.
+The native install/start paths also reset NemoClaw-managed systemd launches to the loopback binding.
 Containers and other hosts on the local network reach Ollama only through the
 proxy, which validates a Bearer token before forwarding requests.
-Ollama itself is never exposed without authentication.
+On that native path, NemoClaw never exposes Ollama without authentication.
 
 WSL Ollama paths do not use this proxy.
 Windows-host Ollama uses the Windows daemon through `host.docker.internal`.
@@ -70,6 +74,7 @@ For non-WSL Ollama setups, the onboard wizard manages the proxy automatically:
 - Starts the proxy after Ollama and verifies it before continuing.
 - Cleans up stale proxy processes from previous runs.
 - Retries the sandbox container reachability check and can continue when the host-side proxy is healthy even if the container probe fails.
+- Stops matching proxy processes during uninstall before deleting NemoClaw state.
 - Reuses the persisted token after a host reboot so you do not need to re-run
   onboard.
 

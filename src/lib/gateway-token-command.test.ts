@@ -126,4 +126,83 @@ describe("runGatewayTokenCommand", () => {
     expect(exitCode).toBe(1);
     expect(sinks.out).toEqual([]);
   });
+
+  // NCQ #3180: gateway-token is OpenClaw-specific. On non-OpenClaw agents
+  // (e.g. Hermes) the misleading "make sure the sandbox is running" message
+  // and the @oclif/core stack trace must NOT appear.
+  it("prints an agent-aware not-applicable message on hermes without invoking fetchToken", () => {
+    const sinks = makeSinks();
+    const fetchToken = vi.fn(() => "should-not-be-called");
+    const getSandboxAgent = vi.fn(() => "hermes");
+    const exitCode = runGatewayTokenCommand(
+      "hermes",
+      { quiet: false },
+      { fetchToken, getSandboxAgent, log: sinks.log, error: sinks.error },
+    );
+    expect(exitCode).toBe(1);
+    expect(getSandboxAgent).toHaveBeenCalledWith("hermes");
+    expect(fetchToken).not.toHaveBeenCalled();
+    expect(sinks.out).toEqual([]);
+    // Issue #3180 contract: a single agent-aware "not applicable" line.
+    expect(sinks.err).toHaveLength(1);
+    const stderr = sinks.err[0] ?? "";
+    expect(stderr).toMatch(/hermes/);
+    expect(stderr).toMatch(/OpenClaw/);
+    expect(stderr).toMatch(/not applicable/i);
+    expect(stderr).not.toMatch(/sandbox is running/i);
+    expect(stderr).not.toMatch(/ExitError|@oclif\/core|at Object\.exit/);
+  });
+
+  it("falls back to fetchToken when the agent lookup throws", () => {
+    const sinks = makeSinks();
+    const exitCode = runGatewayTokenCommand(
+      "alpha",
+      { quiet: true },
+      {
+        fetchToken: () => "openclaw-token",
+        getSandboxAgent: () => {
+          throw new Error("registry unavailable");
+        },
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(sinks.out).toEqual(["openclaw-token"]);
+  });
+
+  it("uses the OpenClaw control path when the resolved agent is openclaw", () => {
+    const sinks = makeSinks();
+    const fetchToken = vi.fn(() => "openclaw-token");
+    const exitCode = runGatewayTokenCommand(
+      "alpha",
+      { quiet: true },
+      {
+        fetchToken,
+        getSandboxAgent: () => "openclaw",
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(fetchToken).toHaveBeenCalledWith("alpha");
+    expect(sinks.out).toEqual(["openclaw-token"]);
+  });
+
+  it("uses the OpenClaw control path when getSandboxAgent returns null", () => {
+    // Sandbox registry pre-dates the agent field — treat as OpenClaw.
+    const sinks = makeSinks();
+    const exitCode = runGatewayTokenCommand(
+      "alpha",
+      { quiet: true },
+      {
+        fetchToken: () => "openclaw-token",
+        getSandboxAgent: () => null,
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(sinks.out).toEqual(["openclaw-token"]);
+  });
 });

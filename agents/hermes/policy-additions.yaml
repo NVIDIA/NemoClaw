@@ -18,6 +18,7 @@ filesystem_policy:
     - /usr
     - /lib
     - /opt/hermes
+    - /opt/nemoclaw-hermes-discord-preload
     - /proc
     - /dev/urandom
     - /app
@@ -62,7 +63,8 @@ network_policies:
           - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
 
   github:
     name: github
@@ -76,6 +78,7 @@ network_policies:
     binaries:
       - { path: /usr/bin/gh }
       - { path: /usr/bin/git }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── Nous Research — Hermes auth, updates, portal ──────────────
   nous_research:
@@ -95,7 +98,56 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-      - host: api.nousresearch.com
+      - host: inference-api.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: portal.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: browser-use-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: modal-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: openai-audio-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: fal-queue-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: firecrawl-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: tool-gateway.nousresearch.com
         port: 443
         protocol: rest
         enforcement: enforce
@@ -104,7 +156,8 @@ network_policies:
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── PyPI — needed for pip install (skill/plugin deps) ─────────
   pypi:
@@ -124,7 +177,8 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/pip3 }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── Messaging — pre-allowed for agent notifications ───────────
   telegram:
@@ -140,7 +194,8 @@ network_policies:
           - allow: { method: GET, path: "/file/bot*/**" }
     binaries:
       - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
 
   discord:
     name: discord
@@ -152,9 +207,23 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+          - allow: { method: GET, path: "/gateway*" }
+          - allow: { method: GET, path: "/api/v*/gateway/bot" }
+          - allow: { method: GET, path: "/api/v*/applications/@me" }
+          - allow: { method: PUT, path: "/api/v*/applications/*/commands" }
+          - allow: { method: PUT, path: "/api/v*/channels/*/messages/*/reactions/*/@me" }
+          - allow: { method: PATCH, path: "/api/v*/applications/*" }
+          - allow: { method: PATCH, path: "/api/v*/applications/*/commands/*" }
+          - allow: { method: PATCH, path: "/api/v*/channels/*/messages/*" }
+          - allow: { method: PATCH, path: "/api/v*/webhooks/*/*/messages/*" }
+          - allow: { method: DELETE, path: "/api/v*/applications/*/commands/*" }
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*" }
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*/reactions/*/*" }
+          - allow: { method: DELETE, path: "/api/v*/webhooks/*/*/messages/*" }
       - host: gateway.discord.gg
         port: 443
         access: full
+        tls: skip
       - host: cdn.discordapp.com
         port: 443
         protocol: rest
@@ -163,4 +232,42 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
+
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: hooks.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: wss-primary.slack.com
+        port: 443
+        tls: skip
+        access: full
+      - host: wss-backup.slack.com
+        port: 443
+        tls: skip
+        access: full
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }

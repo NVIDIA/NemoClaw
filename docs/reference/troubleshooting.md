@@ -670,7 +670,7 @@ For advanced live edits, use the host-side config command instead of running `op
 $ nemoclaw <sandbox> config set --key <dotpath> --value '<json-or-string>' --restart
 ```
 
-Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with `nemoclaw <sandbox> config rotate-token` instead.
+Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with the credential-management commands instead.
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 
@@ -925,6 +925,22 @@ GPU passthrough is not CI-tested on DGX Spark.
 It is expected to work when you pass `--gpu` and the NVIDIA Container Toolkit is configured.
 Verify the toolkit is configured by running `docker run --rm --runtime=nvidia --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi` from the host.
 
+### `unresolvable CDI devices nvidia.com/gpu=all` during gateway start
+
+Recent NVIDIA Container Toolkit installs configure the Docker daemon for Container Device Interface (CDI) device injection, which OpenShell's `gateway start --gpu` then auto-selects.
+If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
+`nemoclaw onboard` now detects this gap during preflight and prints the remediation up front, but the underlying fix is the same on any Docker host whose `docker info` advertises a non-empty `CDISpecDirs`.
+
+Generate the spec, verify it lists `nvidia.com/gpu` entries, then rerun onboarding:
+
+```console
+$ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+$ nvidia-ctk cdi list
+$ nemoclaw onboard
+```
+
+If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
+
 ### `pip install` fails with a system-packages error
 
 Recent Ubuntu releases (including DGX Spark's Ubuntu 24.04) mark the system Python install as externally managed, so `pip install` without a virtual environment fails.
@@ -1013,3 +1029,86 @@ For additional troubleshooting, see the [Quickstart](../get-started/quickstart.m
 Podman is not a tested runtime.
 OpenShell officially documents Docker-based runtimes only.
 If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
+
+## Brev
+
+For Brev setup instructions, refer to [Brev Web UI](../deployment/brev-web-ui.md).
+
+### Most OpenClaw skills show as blocked
+
+After deploying NemoClaw on Brev, the Skills page in the OpenClaw gateway dashboard shows most bundled skills with a `blocked` status.
+Only three skills are available by default: `healthcheck`, `skill-creator`, and `weather`.
+
+Skills are blocked for one of three reasons.
+
+- The skill requires a macOS-only binary (`memo`, `remindctl`, `grizzly`, and similar) that is not available on the Linux (GCP) instance Brev provisions.
+- The skill requires a CLI binary that is not pre-installed in the sandbox image, such as `gh` for the GitHub skill.
+- The skill requires API credentials that have not been configured, such as a Notion API key or Discord bot token.
+
+Skills that require macOS-only binaries cannot be enabled on Brev.
+Skills that require additional CLI binaries require a custom sandbox image rebuild.
+
+For credentials, use the supported host-side setup flow. Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack>` for messaging channels.
+To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
+After the rebuild completes, return to the Skills page to confirm the skill status has changed from `blocked` to `ready`.
+
+### `openclaw config set` fails with a permission error on Brev (Shields Up)
+
+When `nemoclaw <name> shields up` has been run, `openclaw.json` is owned by root and mounted read-only inside the sandbox.
+Running `openclaw config set` inside the sandbox then returns:
+
+```text
+EACCES: permission denied, open '/sandbox/.openclaw/openclaw.json'
+```
+
+In the default sandbox state (before `shields up`), `openclaw.json` is writable by the sandbox user.
+If you see this error, use the host-side config command instead:
+
+```console
+$ nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
+```
+
+Refer to [Commands](../reference/commands.md) for the full list of supported configuration keys.
+
+### OpenClaw dashboard is unreachable after extended uptime on Brev
+
+After leaving NemoClaw running for an extended period on Brev, the OpenClaw dashboard may return `ERR_CONNECTION_RESET` or fail to load in the browser.
+The agent may still respond on messaging channels such as Telegram or Slack while the dashboard is unreachable.
+
+:::{admonition} Back up your workspace first
+:class: warning
+
+Take a snapshot before running onboard to protect your workspace files.
+
+```console
+$ nemoclaw <name> snapshot create
+```
+
+:::
+
+Re-run onboarding to restore dashboard connectivity:
+
+```console
+$ nemoclaw onboard
+```
+
+Depending on current sandbox state, onboarding may prompt before recreating resources.
+
+### Skill install buttons do not work on Brev
+
+Clicking **Install** on a skill in the OpenClaw gateway dashboard on Brev shows no response or fails silently.
+
+Skill installation runs against the sandbox environment.
+Installing packages on the Brev host does not make them available inside the sandbox.
+To install a skill dependency, add it to the sandbox image and rebuild:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
+After the rebuild completes, return to the Skills page to confirm the skill is ready.

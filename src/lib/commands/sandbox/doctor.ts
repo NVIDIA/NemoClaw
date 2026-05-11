@@ -10,8 +10,8 @@ export default class SandboxDoctorCliCommand extends Command {
   static strict = true;
   static summary = "Diagnose sandbox and gateway health";
   static description = "Run host, gateway, sandbox, inference, messaging, and local service diagnostics.";
-  static usage = ["<name> doctor [--json]"];
-  static examples = ["<%= config.bin %> alpha doctor", "<%= config.bin %> alpha doctor --json"];
+  static usage = ["<name> [--json]"];
+  static examples = ["<%= config.bin %> sandbox doctor alpha", "<%= config.bin %> sandbox doctor alpha --json"];
   static args = {
     sandboxName: Args.string({
       name: "sandbox",

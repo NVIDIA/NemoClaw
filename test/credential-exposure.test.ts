@@ -16,7 +16,7 @@ import { buildSubprocessEnv as buildPluginSubprocessEnv } from "../nemoclaw/src/
 import { getCurlTimingArgs } from "../src/lib/http-probe";
 
 const require = createRequire(import.meta.url);
-const { buildProviderArgs } = require("../dist/lib/onboard-providers.js") as {
+const { buildProviderArgs } = require("../dist/lib/onboard/providers.js") as {
   buildProviderArgs: (
     action: "create" | "update",
     name: string,

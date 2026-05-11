@@ -3,7 +3,7 @@
 //
 // Policy preset management — list, load, merge, and apply presets.
 
-import type { JsonValue, JsonObject } from "./json-types";
+import type { JsonValue, JsonObject } from "./core/json-types";
 
 const fs = require("fs");
 const path = require("path");
@@ -11,8 +11,8 @@ const os = require("os");
 const readline = require("readline");
 const YAML = require("yaml");
 const { ROOT, run, runCapture } = require("./runner");
-const registry = require("./registry");
-const { loadAgent } = require("./agent-defs");
+const registry = require("./state/registry");
+const { loadAgent } = require("./agent/defs");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
@@ -35,6 +35,10 @@ type PolicyDocument = PolicyObject & {
 
 type SelectionOptions = {
   applied?: string[];
+};
+
+type SetupPolicyPresetSupportOptions = {
+  webSearchSupported?: boolean | null;
 };
 
 function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
@@ -114,6 +118,41 @@ function getMessagingPresetWarning(presetName: string): string | null {
     "in the messaging channels step. The bot token and channel bridge are wired",
     "up at onboard time and are not added by applying this preset alone.",
   ].join("\n  ");
+}
+
+function setupPolicyPresetSupported(
+  name: string,
+  options: SetupPolicyPresetSupportOptions = {},
+): boolean {
+  return name !== "brave" || options.webSearchSupported !== false;
+}
+
+function filterSetupPolicyPresets<T extends { name: string }>(
+  presets: T[],
+  options: SetupPolicyPresetSupportOptions = {},
+): T[] {
+  return presets.filter((preset) => setupPolicyPresetSupported(preset.name, options));
+}
+
+function listSetupPolicyPresets(
+  sandboxName: string,
+  options: SetupPolicyPresetSupportOptions = {},
+): PresetInfo[] {
+  return [...filterSetupPolicyPresets(listPresets(), options), ...listCustomPresets(sandboxName)];
+}
+
+function clampSetupPolicyPresetNames(
+  presetNames: string[],
+  allowedPresets: Array<{ name: string }>,
+  options: SetupPolicyPresetSupportOptions = {},
+  customPresetNames: ReadonlySet<string> = new Set(),
+): string[] {
+  const knownPresets = new Set(allowedPresets.map((p) => p.name));
+  return presetNames.filter((name) => {
+    if (!knownPresets.has(name)) return false;
+    if (customPresetNames.has(name)) return true;
+    return setupPolicyPresetSupported(name, options);
+  });
 }
 
 /**
@@ -941,6 +980,10 @@ export {
   loadPreset,
   getPresetEndpoints,
   getMessagingPresetWarning,
+  setupPolicyPresetSupported,
+  filterSetupPolicyPresets,
+  listSetupPolicyPresets,
+  clampSetupPolicyPresetNames,
   extractPresetEntries,
   parseCurrentPolicy,
   buildPolicySetCommand,

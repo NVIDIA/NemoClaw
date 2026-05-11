@@ -85,6 +85,13 @@ function stageOptimizedSandboxBuildContext(
       recursive: true,
     },
   );
+  fs.cpSync(
+    path.join(sourceBlueprintDir, "model-specific-setup"),
+    path.join(stagedBlueprintDir, "model-specific-setup"),
+    {
+      recursive: true,
+    },
+  );
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });
   fs.copyFileSync(

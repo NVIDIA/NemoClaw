@@ -11,11 +11,11 @@ export default class ShareCommand extends Command {
   static strict = true;
   static summary = "Mount/unmount sandbox filesystem on the host via SSHFS";
   static description = "Share files between host and sandbox using SSHFS over OpenShell's SSH proxy.";
-  static usage = ["<name> share <mount|unmount|status>"];
+  static usage = ["<mount|unmount|status> <name>"];
   static examples = [
-    "<%= config.bin %> alpha share mount",
-    "<%= config.bin %> alpha share unmount",
-    "<%= config.bin %> alpha share status",
+    "<%= config.bin %> sandbox share mount alpha",
+    "<%= config.bin %> sandbox share unmount alpha",
+    "<%= config.bin %> sandbox share status alpha",
   ];
   static args = {
     sandboxName: sandboxNameArg,

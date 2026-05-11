@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Config as OclifConfig } from "@oclif/core";
+import { Config as OclifConfig, execute as executeOclif } from "@oclif/core";
 
-import { CLI_NAME } from "../branding";
+import { CLI_NAME } from "./branding";
 
 export interface OclifCommandRunOptions {
   rootDir: string;
@@ -26,6 +26,14 @@ function isOclifParseError(error: unknown): boolean {
       ? (error as { constructor?: { name?: string } }).constructor?.name
       : "";
   return name === "NonExistentFlagsError" || name === "UnexpectedArgsError" || name === "CLIError";
+}
+
+function isOclifExitError(error: unknown): boolean {
+  const name =
+    error && typeof error === "object"
+      ? (error as { constructor?: { name?: string } }).constructor?.name
+      : "";
+  return name === "ExitError";
 }
 
 function formatOclifError(error: unknown): string {
@@ -73,6 +81,17 @@ export async function runRegisteredOclifCommand(
   } catch (error) {
     const exitCode = getOclifExitCode(error);
     if (exitCode === 0) {
+      // #2666: only oclif's own ExitError(0) is an intentional graceful
+      // exit (e.g. Command.exit(0) — message is the synthetic "EEXIT: 0").
+      // Any OTHER error that happens to carry oclif.exit === 0 used to be
+      // silently swallowed here, producing exit 0 + completely empty
+      // stdout/stderr. Surface its message — and fall back to a generic
+      // line if formatOclifError() returns empty so we never reintroduce
+      // the silent path for an error whose message happens to be blank.
+      if (!isOclifExitError(error)) {
+        const message = formatOclifError(error) || "Command exited with no output.";
+        errorLine(`  ${message}`);
+      }
       process.exitCode = 0;
       return;
     }
@@ -82,6 +101,19 @@ export async function runRegisteredOclifCommand(
       exit(exitCode ?? 1);
     }
 
+    // NCQ #3180: oclif's Command.exit(code) throws an ExitError carrying
+    // `oclif.exit`. Treat that as a graceful exit with the requested code
+    // so we don't leak a raw `at Object.exit (... /@oclif/core/...)` stack
+    // trace to the user. Other oclif error classes (e.g. RequiredArgsError)
+    // are left to bubble up so oclif's own handler still prints them.
+    if (isOclifExitError(error) && typeof exitCode === "number") {
+      exit(exitCode);
+    }
+
     throw error;
   }
+}
+
+export async function runOclifArgv(args: string[], opts: OclifCommandRunOptions): Promise<void> {
+  await executeOclif({ args, dir: opts.rootDir });
 }

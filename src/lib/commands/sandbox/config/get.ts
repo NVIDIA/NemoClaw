@@ -3,7 +3,7 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { CLI_NAME } from "../../../branding";
+import { CLI_NAME } from "../../../cli/branding";
 import * as sandboxConfig from "../../../sandbox-config";
 import { sandboxNameArg } from "../common";
 
@@ -12,10 +12,10 @@ export default class SandboxConfigGetCommand extends Command {
   static strict = true;
   static summary = "Get sandbox configuration";
   static description = "Read sanitized sandbox agent configuration.";
-  static usage = ["<name> config get [--key dotpath] [--format json|yaml]"];
+  static usage = ["<name> [--key dotpath] [--format json|yaml]"];
   static examples = [
-    "<%= config.bin %> alpha config get",
-    "<%= config.bin %> alpha config get --key model --format yaml",
+    "<%= config.bin %> sandbox config get alpha",
+    "<%= config.bin %> sandbox config get alpha --key model --format yaml",
   ];
   static args = {
     sandboxName: sandboxNameArg,

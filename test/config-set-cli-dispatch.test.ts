@@ -18,7 +18,7 @@ function deferred<T>() {
 describe("config set CLI dispatch", () => {
   it("awaits configSet before completing the dispatcher", async () => {
     const cliPath = require.resolve("../dist/nemoclaw.js");
-    const registryPath = require.resolve("../dist/lib/registry.js");
+    const registryPath = require.resolve("../dist/lib/state/registry.js");
     const sandboxConfigPath = require.resolve("../dist/lib/sandbox-config.js");
     const runnerPath = require.resolve("../dist/lib/runner.js");
 

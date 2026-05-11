@@ -11,8 +11,8 @@ export default class SandboxStatusCommand extends Command {
   static strict = true;
   static summary = "Sandbox health and NIM status";
   static description = "Show sandbox health, OpenShell gateway state, and local NIM status.";
-  static usage = ["<name> status"];
-  static examples = ["<%= config.bin %> alpha status"];
+  static usage = ["<name>"];
+  static examples = ["<%= config.bin %> sandbox status alpha"];
   static args = {
     sandboxName: sandboxNameArg,
   };

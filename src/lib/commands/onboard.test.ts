@@ -3,10 +3,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runOnboardAction } from "../global-cli-actions";
+import { runOnboardAction } from "../actions/global";
 import OnboardCliCommand from "./onboard";
 
-vi.mock("../global-cli-actions", () => ({
+vi.mock("../actions/global", () => ({
   runOnboardAction: vi.fn().mockResolvedValue(undefined),
   runSetupAction: vi.fn().mockResolvedValue(undefined),
   runSetupSparkAction: vi.fn().mockResolvedValue(undefined),
@@ -44,6 +44,27 @@ describe("onboard oclif command", () => {
     await OnboardCliCommand.run(["--non-interactive", "-y"], rootDir);
 
     expect(runOnboardAction).toHaveBeenCalledWith(["--non-interactive", "--yes"]);
+  });
+
+  it("forwards sandbox GPU flags to legacy onboard parsing", async () => {
+    await OnboardCliCommand.run(
+      [
+        "--non-interactive",
+        "--yes",
+        "--sandbox-gpu",
+        "--sandbox-gpu-device",
+        "nvidia.com/gpu=0",
+      ],
+      rootDir,
+    );
+
+    expect(runOnboardAction).toHaveBeenCalledWith([
+      "--non-interactive",
+      "--sandbox-gpu",
+      "--sandbox-gpu-device",
+      "nvidia.com/gpu=0",
+      "--yes",
+    ]);
   });
 
   it("forwards --no-gpu to the legacy onboard action", async () => {

@@ -25,7 +25,7 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 type BackupScalar = string | number | boolean | null | undefined;
 type BackupValue = BackupScalar | BackupManifestOverrides | BackupValue[];
 
-type SandboxStateModule = typeof import("../dist/lib/sandbox-state.js");
+type SandboxStateModule = typeof import("../dist/lib/state/sandbox.js");
 type SandboxStateModuleCandidate = Partial<SandboxStateModule> | null;
 
 function isSandboxStateModule(value: SandboxStateModuleCandidate): value is SandboxStateModule {
@@ -39,7 +39,7 @@ function isSandboxStateModule(value: SandboxStateModuleCandidate): value is Sand
 }
 
 const loadedSandboxState = await import(
-  pathToFileURL(path.join(REPO_ROOT, "dist", "lib", "sandbox-state.js")).href
+  pathToFileURL(path.join(REPO_ROOT, "dist", "lib", "state", "sandbox.js")).href
 );
 if (!isSandboxStateModule(loadedSandboxState)) {
   throw new Error("Expected sandbox-state module exports to be available");

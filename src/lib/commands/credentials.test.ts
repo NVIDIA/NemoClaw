@@ -9,8 +9,8 @@ const mocks = vi.hoisted(() => ({
   runOpenshellProviderCommand: vi.fn(),
 }));
 
-vi.mock("../credentials", () => ({ prompt: mocks.prompt }));
-vi.mock("../global-cli-actions", () => ({
+vi.mock("../credentials/store", () => ({ prompt: mocks.prompt }));
+vi.mock("../actions/global", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));

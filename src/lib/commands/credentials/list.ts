@@ -3,8 +3,8 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { CLI_NAME } from "../../branding";
-import { runOpenshellProviderCommand } from "../../global-cli-actions";
+import { CLI_NAME } from "../../cli/branding";
+import { runOpenshellProviderCommand } from "../../actions/global";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { isBridgeProviderName, recoverGatewayOrExit } from "./common";
 

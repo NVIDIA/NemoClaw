@@ -3,7 +3,7 @@
 
 import { Command } from "@oclif/core";
 
-import { showVersion } from "../../global-cli-actions";
+import { showVersion } from "../../actions/global";
 
 export default class VersionCommand extends Command {
   static id = "root:version";

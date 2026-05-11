@@ -363,6 +363,8 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Compatibility Commands")).toBeTruthy();
     expect(r.out).toContain("nemoclaw upgrade-sandboxes");
     expect(r.out).toContain("(--check, --auto, --yes|-y)");
+    expect(r.out).toContain("nemoclaw update");
+    expect(r.out).toContain("(--check, --yes|-y)");
     expect(r.out).toContain("nemoclaw gc");
     expect(r.out).toContain("(--yes|-y|--force, --dry-run)");
     expect(r.out).toContain("nemoclaw onboard");
@@ -373,6 +375,12 @@ describe("CLI dispatch", () => {
 
   it("--help exits 0", () => {
     expect(run("--help").code).toBe(0);
+  });
+
+  it("version exits 0", () => {
+    const r = run("version");
+    expect(r.code).toBe(0);
+    expect(r.out.trim()).toMatch(/^nemoclaw v/);
   });
 
   it("-h exits 0", () => {
@@ -412,13 +420,18 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("liost", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("Unknown command: liost");
-    expect(r.out).toContain("Did you mean: nemoclaw list?");
+    try {
+      const r = runWithEnv("liost", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "0",
+      });
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("Unknown command: liost");
+      expect(r.out).toContain("Did you mean: nemoclaw list?");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("recovers a live sandbox before suggesting a bare command typo", () => {
@@ -505,6 +518,21 @@ describe("CLI dispatch", () => {
     expect(out).not.toContain("$ nemoclaw list [--json]");
   });
 
+  it("nemohermes inference set --help uses alias branding and agent-aware wording", () => {
+    const out = execSync(`node "${HERMES_CLI}" inference set --help`, {
+      encoding: "utf-8",
+      stdio: "pipe",
+      timeout: execTimeout(),
+      env: {
+        ...process.env,
+        HOME: `/tmp/nemoclaw-cli-test-${Date.now()}`,
+      },
+    });
+    expect(out).toContain("$ nemohermes inference set --provider <provider> --model <model>");
+    expect(out).toContain("[--sandbox <name>] [--no-verify]");
+    expect(out).toMatch(/OpenClaw or Hermes\s+sandbox config/);
+  });
+
   it("list --json emits structured empty inventory", () => {
     const r = run("list --json");
     expect(r.code).toBe(0);
@@ -585,6 +613,12 @@ describe("CLI dispatch", () => {
           isDefault: true,
           activeSessionCount: 1,
           connected: true,
+          hostGpuDetected: false,
+          sandboxGpuEnabled: true,
+          sandboxGpuMode: null,
+          sandboxGpuDevice: null,
+          openshellDriver: null,
+          openshellVersion: null,
         },
       ],
     });
@@ -924,6 +958,8 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("USAGE");
     expect(r.out).toContain("nemoclaw onboard");
     expect(r.out).toContain("--from <Dockerfile>");
+    expect(r.out).toContain("--yes");
+    expect(r.out).toContain("--sandbox-gpu-device=<value>");
   });
 
   it("unknown onboard option exits 1", () => {
@@ -944,6 +980,32 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
+  it("accepts install automation --yes in onboard CLI parsing", () => {
+    const r = run("onboard --resume --non-interactive --yes-i-accept-third-party-software --yes");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
+    expect(r.out).not.toContain("Nonexistent flag: --yes");
+  });
+
+  it("passes onboard sandbox GPU flags to legacy validation", () => {
+    const r = run(
+      "onboard --sandbox-gpu --no-sandbox-gpu --non-interactive --yes-i-accept-third-party-software --yes",
+    );
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("--sandbox-gpu and --no-sandbox-gpu are mutually exclusive");
+    expect(r.out).not.toContain("Nonexistent flag: --sandbox-gpu");
+    expect(r.out).not.toContain("Nonexistent flag: --no-sandbox-gpu");
+  });
+
+  it("passes onboard sandbox GPU device flags to legacy validation", () => {
+    const r = run(
+      "onboard --sandbox-gpu-device nvidia.com/gpu=0 --no-sandbox-gpu --non-interactive --yes-i-accept-third-party-software --yes",
+    );
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("--sandbox-gpu-device cannot be used with --no-sandbox-gpu");
+    expect(r.out).not.toContain("Nonexistent flag: --sandbox-gpu-device");
+  });
+
   it("setup --help exits 0 and shows onboard usage", () => {
     const r = run("setup --help");
     expect(r.code).toBe(0);
@@ -959,14 +1021,14 @@ describe("CLI dispatch", () => {
   });
 
   it("setup forwards --resume into onboard parsing", () => {
-    const r = run("setup --resume --non-interactive --yes-i-accept-third-party-software");
+    const r = run("setup --resume --non-interactive --yes-i-accept-third-party-software --yes");
     expect(r.code).toBe(1);
     expect(r.out.includes("deprecated")).toBeTruthy();
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
   });
 
   it("resume rejection clarifies --resume semantics and points to onboard (#2281)", () => {
-    const r = run("onboard --resume --non-interactive --yes-i-accept-third-party-software");
+    const r = run("onboard --resume --non-interactive --yes-i-accept-third-party-software --yes");
     expect(r.code).toBe(1);
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
     expect(r.out.includes("--resume only continues an interrupted onboarding run")).toBeTruthy();
@@ -988,7 +1050,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi',
+        'if [ "$1" = "--version" ]; then echo "openshell 0.0.37"; exit 0; fi',
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -1064,7 +1126,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi',
+        'if [ "$1" = "--version" ]; then echo "openshell 0.0.37"; exit 0; fi',
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -1134,7 +1196,9 @@ describe("CLI dispatch", () => {
   });
 
   it("setup-spark is a deprecated compatibility alias for onboard", () => {
-    const r = run("setup-spark --resume --non-interactive --yes-i-accept-third-party-software");
+    const r = run(
+      "setup-spark --resume --non-interactive --yes-i-accept-third-party-software --yes",
+    );
     expect(r.code).toBe(1);
     expect(r.out.includes("setup-spark` is deprecated")).toBeTruthy();
     expect(r.out.includes("Use `nemoclaw onboard` instead")).toBeTruthy();
@@ -1477,6 +1541,28 @@ describe("CLI dispatch", () => {
     const start = runWithEnv("alpha channels start telegram --dry-run", { HOME: home });
     expect(start.code).toBe(0);
     expect(start.out).toContain("Channel 'telegram' is already enabled for 'alpha'. Nothing to do.");
+  });
+
+  it("supports oclif-native sandbox command forms", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-native-sandbox-"));
+    writeSandboxRegistry(home);
+
+    const statusHelp = runWithEnv("sandbox status alpha --help", { HOME: home });
+    expect(statusHelp.code).toBe(0);
+    expect(statusHelp.out).toContain("$ nemoclaw sandbox status <name>");
+    expect(statusHelp.out).not.toContain("Sandbox 'sandbox' does not exist");
+
+    const policy = runWithEnv("sandbox policy add alpha github --dry-run", { HOME: home });
+    expect(policy.code).toBe(0);
+    expect(policy.out).toContain("--dry-run: no changes applied.");
+
+    const channels = runWithEnv("sandbox channels add alpha telegram --dry-run", { HOME: home });
+    expect(channels.code).toBe(0);
+    expect(channels.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
+
+    const snapshots = runWithEnv("sandbox snapshot list alpha", { HOME: home });
+    expect(snapshots.code).toBe(0);
+    expect(snapshots.out).toContain("No snapshots found for 'alpha'.");
   });
 
   it("policy and channel mutations reject missing parser-owned values before dispatch", () => {
@@ -1995,7 +2081,7 @@ describe("CLI dispatch", () => {
     expect(log).not.toContain("sandbox exec alpha sh -c");
   });
 
-  it("destroys the gateway runtime when the last sandbox is removed", () => {
+  it("preserves the gateway runtime by default when the last sandbox is destroyed (#2166)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -2050,11 +2136,143 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(0);
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("NAME STATUS");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
+    const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+    expect(openshellOutput).toContain("sandbox delete alpha");
+    expect(openshellOutput).toContain("NAME STATUS");
+    // Gateway preservation is now the default. `--yes` confirms only the
+    // sandbox; the shared NemoClaw gateway must stay up so the next
+    // `nemoclaw onboard` reuses it.
+    expect(openshellOutput).not.toContain("forward stop 18789");
+    expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
+    expect(openshellOutput).not.toContain("gateway remove nemoclaw");
+    expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
+  });
+
+  it("tears down the gateway runtime when --cleanup-gateway is passed (#2166)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-cleanup-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const bashLog = path.join(home, "docker.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\n" >> "$log_file"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(bashLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy -y --cleanup-gateway", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+    expect(openshellOutput).toContain("sandbox delete alpha");
+    expect(openshellOutput).toContain("forward stop 18789");
+    expect(openshellOutput).toContain(
+      process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
+    );
     expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
+  });
+
+  it("honours NEMOCLAW_CLEANUP_GATEWAY=1 as the env-driven opt-in (#2166)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-env-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const bashLog = path.join(home, "docker.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\n" >> "$log_file"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(bashLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy -y", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_CLEANUP_GATEWAY: "1",
+    });
+
+    expect(r.code).toBe(0);
+    const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+    expect(openshellOutput).toContain("forward stop 18789");
+    expect(openshellOutput).toContain(
+      process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
+    );
   });
 
   it("keeps the gateway runtime when other sandboxes still exist", () => {
@@ -2123,6 +2341,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
       expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
     }
@@ -2188,6 +2407,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
       expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
     }
@@ -2247,6 +2467,7 @@ describe("CLI dispatch", () => {
     expect(registryAfter.sandboxes.alpha).toBeTruthy();
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
   });
 
   it("treats an already-missing sandbox as destroyed and clears the stale registry entry", () => {
@@ -2318,9 +2539,9 @@ describe("CLI dispatch", () => {
     );
     expect(registryAfter.sandboxes.alpha).toBeFalsy();
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
-    expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
   });
 
   it("deletes messaging providers when destroying a sandbox", () => {
@@ -2382,6 +2603,7 @@ describe("CLI dispatch", () => {
     expect(log).toContain("provider delete alpha-telegram-bridge");
     expect(log).toContain("provider delete alpha-discord-bridge");
     expect(log).toContain("provider delete alpha-slack-bridge");
+    expect(log).toContain("provider delete alpha-slack-app");
   });
 
   it("passes plain logs through without the tail flag", () => {
@@ -2592,7 +2814,7 @@ describe("CLI dispatch", () => {
         "      echo 'GATEWAY_PID=123'",
         "      exit 42",
         "      ;;",
-        "    *'curl -sf'*)",
+        "    *'curl -so'*)",
         "      echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
         '      if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
         "      exit 0",
@@ -2655,7 +2877,7 @@ describe("CLI dispatch", () => {
         "      echo 'GATEWAY_PID=123'",
         "      exit 0",
         "      ;;",
-        "    *'curl -sf'*)",
+        "    *'curl -so'*)",
         "      echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
         '      if [ "$(cat "$state_file")" != recovered ]; then echo STOPPED; exit 0; fi',
         '      count=$(cat "$ready_count_file" 2>/dev/null || echo 0)',
@@ -2710,7 +2932,7 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
-        '  if [[ "$cmd" == *"curl -sf"* ]]; then echo "__NEMOCLAW_SANDBOX_EXEC_STARTED__"; echo RUNNING; exit 0; fi',
+        '  if [[ "$cmd" == *"curl -so"* ]]; then echo "__NEMOCLAW_SANDBOX_EXEC_STARTED__"; echo RUNNING; exit 0; fi',
         '  if [[ "$cmd" == *"OPENCLAW="* ]]; then echo "__NEMOCLAW_SANDBOX_EXEC_STARTED__"; echo UNEXPECTED_RECOVERY; exit 1; fi',
         "fi",
         "exit 0",
@@ -2759,7 +2981,7 @@ describe("CLI dispatch", () => {
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
         '  if [[ "$cmd" == *"OPENCLAW="* ]]; then echo "__NEMOCLAW_SANDBOX_EXEC_STARTED__"; echo RECOVERY_FAILED >&2; exit 42; fi',
-        '  if [[ "$cmd" == *"curl -sf"* ]]; then echo "__NEMOCLAW_SANDBOX_EXEC_STARTED__"; echo STOPPED; exit 0; fi',
+        '  if [[ "$cmd" == *"curl -so"* ]]; then echo "__NEMOCLAW_SANDBOX_EXEC_STARTED__"; echo STOPPED; exit 0; fi',
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ]; then',
         "  echo 'Host openshell-alpha'",
@@ -2838,7 +3060,7 @@ describe("CLI dispatch", () => {
         "  echo 'GATEWAY_PID=456'",
         "  exit 0",
         "fi",
-        'if [[ "$cmd" == *"curl -sf"* ]]; then',
+        'if [[ "$cmd" == *"curl -so"* ]]; then',
         '  if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
         "  exit 0",
         "fi",
@@ -2917,7 +3139,7 @@ describe("CLI dispatch", () => {
         "  echo 'GATEWAY_PID=789'",
         "  exit 0",
         "fi",
-        'if [[ "$cmd" == *"curl -sf"* ]]; then',
+        'if [[ "$cmd" == *"curl -so"* ]]; then',
         '  if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
         "  exit 0",
         "fi",
@@ -2968,7 +3190,7 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
-        '  if [[ "$cmd" == *"curl -sf"* ]]; then',
+        '  if [[ "$cmd" == *"curl -so"* ]]; then',
         "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
         '    if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
         "    exit 0",
@@ -4747,11 +4969,11 @@ describe("list shows live gateway inference", () => {
     expect(r.code).toBe(0);
     // Live gateway values render on the default sandbox's main row.
     expect(r.out).toContain(
-      "agent: openclaw  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  GPU  policies: pypi, npm",
+      "agent: openclaw  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  sandbox GPU  policies: pypi, npm",
     );
     // The stale (stored) row must not appear.
     expect(r.out).not.toContain(
-      "agent: openclaw  model: configured-model  provider: configured-provider  GPU  policies: pypi, npm",
+      "agent: openclaw  model: configured-model  provider: configured-provider  sandbox GPU  policies: pypi, npm",
     );
     // Onboarded values appear in the drift annotation.
     expect(r.out).toContain("(onboarded: model=configured-model, provider=configured-provider)");

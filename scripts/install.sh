@@ -155,6 +155,27 @@ error() {
 }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
+# Common TTY-required error message for the third-party software notice.
+# Used by both show_usage_notice() and preflight_usage_notice_prompt() so
+# the recovery hint stays in sync (#3058).
+tty_required_error_message() {
+  cat <<'EOF'
+Interactive third-party software acceptance requires a TTY.
+
+  Three ways to proceed (#3058):
+    1. Re-run in a terminal:
+         bash <(curl -fsSL https://www.nvidia.com/nemoclaw.sh)
+
+    2. Accept upfront in the curl|bash pipe:
+         curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+
+    3. Pass the flag through to the installer:
+         curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
+
+  See docs/reference/commands.md for the full non-interactive install reference.
+EOF
+}
+
 verify_downloaded_script() {
   local file="$1" label="${2:-script}" expected_hash="${3:-}"
   if [ ! -s "$file" ]; then
@@ -533,7 +554,8 @@ usage() {
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
-  printf "                                  | gemini | ollama | custom | nim-local | vllm\n"
+  printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
+  printf "                                  | hermes-provider\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -575,7 +597,7 @@ show_usage_notice() {
     exec 3<&-
     return "$status"
   else
-    error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
+    error "$(tty_required_error_message)"
   fi
 }
 
@@ -710,7 +732,7 @@ preflight_usage_notice_prompt() {
     return "$status"
   fi
 
-  error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or pass --yes-i-accept-third-party-software (or set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1)."
+  error "$(tty_required_error_message)"
 }
 
 # spin "label" cmd [args...]
@@ -1464,7 +1486,7 @@ verify_nemoclaw() {
 # 5. Onboard
 # ---------------------------------------------------------------------------
 run_installer_host_preflight() {
-  local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/preflight.js"
+  local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   if ! command_exists node || [[ ! -f "$preflight_module" ]]; then
     return 0
   fi
@@ -1652,6 +1674,183 @@ run_onboard() {
   fi
 }
 
+# Make sure Docker is installed and the current user can run it without
+# sudo. If we install Docker or add the user to the docker group, exit with
+# instructions to relogin/newgrp — Linux only loads group membership at
+# login, so the rest of this script (onboard, etc.) would fail otherwise.
+# Skipped on macOS (Docker Desktop) and inside WSL (host-managed Docker).
+ensure_docker() {
+  case "$(uname -s)" in
+    Darwin | MINGW* | MSYS*) return 0 ;;
+  esac
+  if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
+    return 0
+  fi
+  # Fast path: docker info works → already set up (root, or already-active group).
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local needs_group_refresh=0
+
+  if ! command -v docker >/dev/null 2>&1; then
+    info "Docker is not installed."
+    info "The next step uses sudo to install Docker system-wide via the official convenience script. You may be prompted for your password."
+    local docker_tmp
+    docker_tmp="$(mktemp)"
+    if ! curl -fsSL https://get.docker.com -o "$docker_tmp"; then
+      rm -f "$docker_tmp"
+      error "Failed to download the Docker convenience script from https://get.docker.com"
+    fi
+    verify_downloaded_script "$docker_tmp" "Docker installer"
+    if ! sudo sh "$docker_tmp"; then
+      rm -f "$docker_tmp"
+      error "Docker install failed. Install Docker manually and re-run."
+    fi
+    rm -f "$docker_tmp"
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 \
+    && ! sudo -n systemctl is-active --quiet docker 2>/dev/null \
+    && ! systemctl is-active --quiet docker 2>/dev/null; then
+    info "The Docker daemon is not running."
+    info "The next step uses sudo to enable and start the docker.service unit. You may be prompted for your password."
+    if ! sudo systemctl enable --now docker 2>/dev/null; then
+      warn "Could not enable docker.service — will verify daemon accessibility below."
+    fi
+  fi
+
+  # Root can use the docker socket without being in the docker group, so
+  # skip the group setup entirely and just verify the daemon is reachable.
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! docker info >/dev/null 2>&1; then
+      error "Docker is installed but not reachable. Try: systemctl start docker"
+    fi
+    return 0
+  fi
+
+  # Use the effective UID's account name rather than $USER, which can be
+  # unset, stale, or overridden by env wrappers.
+  local current_user
+  current_user="$(id -un)"
+
+  # Persisted group membership (NSS / /etc/group). Determines whether we
+  # need to run usermod.
+  if ! id -nG "$current_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    info "Your user '$current_user' is not in the docker group."
+    info "The next step uses sudo to add you to the group so docker works without sudo. You may be prompted for your password."
+    sudo usermod -aG docker "$current_user"
+    needs_group_refresh=1
+  fi
+
+  # Active group list of the current shell (set at login, refreshed only by
+  # new login or `newgrp`). If docker isn't here yet, this session can't
+  # talk to /var/run/docker.sock even though NSS says we're a member.
+  if ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    needs_group_refresh=1
+  fi
+
+  if [ "$needs_group_refresh" = "1" ]; then
+    printf "\n"
+    info "Docker group membership is not active in this shell yet. To finish:"
+    info "  1) Run: newgrp docker   (or log out and log back in)"
+    info "  2) Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
+    exit 0
+  fi
+
+  if ! docker info >/dev/null 2>&1; then
+    error "Docker is installed but not reachable. Try: sudo systemctl start docker"
+  fi
+}
+
+# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback).
+# Echoes "DGX Spark", "DGX Station", or empty. Used to gate the express
+# install prompt; only platforms with a known sensible default are offered.
+detect_express_platform() {
+  local model=""
+  if [ -r /sys/class/dmi/id/product_name ]; then
+    model="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
+  fi
+  if [ -z "$model" ] && [ -r /sys/firmware/devicetree/base/model ]; then
+    model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
+  fi
+  case "$model" in
+    *DGX*Spark*) printf "DGX Spark" ;;
+    *DGX*Station*) printf "DGX Station" ;;
+    *) ;;
+  esac
+}
+
+# Prompt the user to opt into express install on Spark/Station. Sets the
+# non-interactive + provider/model env vars when accepted. Skipped when
+# the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
+# no TTY.
+maybe_offer_express_install() {
+  local platform
+  platform="$(detect_express_platform)"
+  # Not on a platform we have an express recipe for — say nothing.
+  if [ -z "$platform" ]; then
+    return 0
+  fi
+  # On a supported platform but a skip condition applies — explain why so
+  # the user understands they could have gotten express otherwise.
+  if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_NO_EXPRESS=1)."
+    return 0
+  fi
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    info "Detected ${platform}. Skipping express prompt (--non-interactive set)."
+    return 0
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
+    return 0
+  fi
+  local reply=""
+  if [ -t 0 ]; then
+    info "Detected ${platform}."
+    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    if ! IFS= read -r reply; then
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    info "Detected ${platform}."
+    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    if ! IFS= read -r reply <&3; then
+      exec 3<&-
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
+    exec 3<&-
+  else
+    info "Detected ${platform}. Skipping express prompt (no TTY)."
+    return 0
+  fi
+  reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
+  case "$reply" in
+    "" | y | yes)
+      info "Using express install for ${platform}."
+      NON_INTERACTIVE=1
+      export NEMOCLAW_NON_INTERACTIVE=1
+      export NEMOCLAW_YES=1
+      export NEMOCLAW_POLICY_MODE=suggested
+      case "$platform" in
+        "DGX Spark")
+          export NEMOCLAW_PROVIDER=install-ollama
+          export NEMOCLAW_MODEL=qwen3.6:35b
+          ;;
+        "DGX Station")
+          export NEMOCLAW_PROVIDER=install-vllm
+          ;;
+      esac
+      ;;
+    *)
+      info "Skipping express install. Continuing with interactive flow."
+      ;;
+  esac
+}
+
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -1703,6 +1902,15 @@ main() {
   # a real terminal are different: stdin is the script pipe, but /dev/tty can
   # still collect acceptance before Node.js or the CLI are installed.
   preflight_usage_notice_prompt
+
+  ensure_docker
+
+  # Offer express install on supported platforms (DGX Spark / Station). Runs
+  # AFTER the third-party notice so the user has explicitly accepted the
+  # license before opting into the unattended path. Express only sets the
+  # provider/model/policy + non-interactive vars; license acceptance is
+  # already recorded by preflight above.
+  maybe_offer_express_install
 
   _INSTALL_START=$SECONDS
   print_banner

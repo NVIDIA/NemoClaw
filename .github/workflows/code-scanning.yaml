@@ -1,0 +1,163 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Dedicated security reporting workflow for NemoClaw.
+# CodeQL and ShellCheck publish findings to GitHub code scanning while the
+# existing PR and main workflows remain the merge-gating CI path.
+name: code-scanning
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  security-events: write
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, python]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@5e316336eb4f107009e477d4bfbfff13d7250fae # v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@5e316336eb4f107009e477d4bfbfff13d7250fae # v4
+
+  shellcheck:
+    name: ShellCheck SARIF
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Collect shell files
+        id: shell-files
+        run: |
+          git ls-files '*.sh' 'install.sh' 'uninstall.sh' | sort -u > shell-files.txt
+          if [ -s shell-files.txt ]; then
+            echo "has_files=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate ShellCheck SARIF
+        if: steps.shell-files.outputs.has_files == 'true'
+        run: |
+          # Ubuntu's packaged ShellCheck may not support --format=sarif.
+          # Generate json1 and convert it to SARIF for upload.
+          sc_exit=0
+          if xargs -r shellcheck --format=json1 < shell-files.txt > shellcheck.json; then
+            sc_exit=0
+          else
+            sc_exit=$?
+          fi
+
+          if jq -e . shellcheck.json >/dev/null 2>&1; then
+            jq '
+              def level_map:
+                if . == "error" then "error"
+                elif . == "warning" then "warning"
+                else "note"
+                end;
+              {
+                "version": "2.1.0",
+                "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+                "runs": [
+                  {
+                    "tool": {
+                      "driver": {
+                        "name": "ShellCheck",
+                        "informationUri": "https://www.shellcheck.net/",
+                        "rules": (
+                          .comments
+                          | map(select(.code != null) | {
+                            "id": ("SC" + (.code | tostring)),
+                            "name": ("SC" + (.code | tostring)),
+                            "shortDescription": { "text": .level }
+                          }) | unique_by(.id)
+                        )
+                      }
+                    },
+                    "results": (
+                      .comments
+                      | map({
+                        "ruleId": ("SC" + (.code | tostring)),
+                        "level": (.level | level_map),
+                        "message": { "text": .message },
+                        "locations": [
+                          {
+                            "physicalLocation": {
+                              "artifactLocation": { "uri": .file },
+                              "region": (
+                                {
+                                  "startLine": .line,
+                                  "startColumn": .column,
+                                  "endLine": .endLine,
+                                  "endColumn": .endColumn
+                                } | with_entries(select(.value != null))
+                              )
+                            }
+                          }
+                        ]
+                      })
+                    )
+                  }
+                ]
+              }
+            ' shellcheck.json > shellcheck.sarif
+          else
+            echo "ShellCheck produced invalid JSON (exit=$sc_exit); writing empty SARIF fallback."
+            cat > shellcheck.sarif <<'EOF'
+          {
+            "version": "2.1.0",
+            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "runs": []
+          }
+          EOF
+          fi
+
+          if [ "$sc_exit" -ne 0 ]; then
+            echo "ShellCheck reported findings (exit=$sc_exit); continuing so SARIF can be uploaded."
+          fi
+
+      - name: Check SARIF has runs
+        id: sarif-runs
+        if: steps.shell-files.outputs.has_files == 'true'
+        run: |
+          run_count="$(jq '.runs | length' shellcheck.sarif)"
+          if [ "$run_count" -gt 0 ]; then
+            echo "has_runs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_runs=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping SARIF upload because shellcheck.sarif has zero runs."
+          fi
+
+      - name: Upload ShellCheck SARIF
+        if: steps.shell-files.outputs.has_files == 'true' && steps.sarif-runs.outputs.has_runs == 'true'
+        uses: github/codeql-action/upload-sarif@5e316336eb4f107009e477d4bfbfff13d7250fae # v4
+        with:
+          sarif_file: shellcheck.sarif

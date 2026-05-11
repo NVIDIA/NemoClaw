@@ -75,6 +75,12 @@ describe("inventory commands", () => {
           model: "configured-alpha",
           provider: "configured-provider",
           gpuEnabled: true,
+          hostGpuDetected: false,
+          sandboxGpuEnabled: true,
+          sandboxGpuMode: null,
+          sandboxGpuDevice: null,
+          openshellDriver: null,
+          openshellVersion: null,
           policies: ["pypi"],
           agent: "openclaw",
           isDefault: true,
@@ -149,7 +155,7 @@ describe("inventory commands", () => {
     expect(lines).toContain("  Recovered 1 sandbox entry from the live OpenShell gateway.");
     expect(lines).toContain("    alpha *");
     expect(lines).toContain(
-      "      agent: openclaw  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  GPU  policies: pypi",
+      "      agent: openclaw  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  sandbox GPU  policies: pypi",
     );
   });
 
@@ -175,7 +181,7 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain(
-      "      agent: hermes  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  CPU  policies: none",
+      "      agent: hermes  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  CPU sandbox  policies: none",
     );
   });
 
@@ -208,11 +214,11 @@ describe("inventory commands", () => {
 
     // Default sandbox reflects live gateway state, with an onboarded drift note.
     expect(lines).toContain(
-      "      agent: openclaw  model: live-model  provider: live-provider  GPU  policies: none",
+      "      agent: openclaw  model: live-model  provider: live-provider  sandbox GPU  policies: none",
     );
     // Stale stored row for the default sandbox must not leak through.
     expect(lines).not.toContain(
-      "      agent: openclaw  model: configured-alpha  provider: configured-provider  GPU  policies: none",
+      "      agent: openclaw  model: configured-alpha  provider: configured-provider  sandbox GPU  policies: none",
     );
     expect(lines).toContain(
       "      (onboarded: model=configured-alpha, provider=configured-provider)",
@@ -220,7 +226,7 @@ describe("inventory commands", () => {
     // Non-default sandbox keeps its stored config — the gateway only applies
     // to whichever sandbox is currently connected.
     expect(lines).toContain(
-      "      agent: openclaw  model: configured-beta  provider: beta-provider  CPU  policies: none",
+      "      agent: openclaw  model: configured-beta  provider: beta-provider  CPU sandbox  policies: none",
     );
   });
 
@@ -245,7 +251,7 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain(
-      "      agent: openclaw  model: configured-alpha  provider: configured-provider  GPU  policies: none",
+      "      agent: openclaw  model: configured-alpha  provider: configured-provider  sandbox GPU  policies: none",
     );
     expect(lines.some((l) => l.includes("onboarded"))).toBe(false);
   });
@@ -271,7 +277,7 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain(
-      "      agent: openclaw  model: configured-alpha  provider: configured-provider  GPU  policies: none",
+      "      agent: openclaw  model: configured-alpha  provider: configured-provider  sandbox GPU  policies: none",
     );
     expect(lines.some((l) => l.includes("onboarded"))).toBe(false);
   });
@@ -298,7 +304,7 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain(
-      "      agent: openclaw  model: live-model  provider: configured-provider  GPU  policies: none",
+      "      agent: openclaw  model: live-model  provider: configured-provider  sandbox GPU  policies: none",
     );
     expect(lines).toContain("      (onboarded: model=configured-alpha)");
   });
@@ -325,7 +331,7 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain(
-      "      agent: openclaw  model: configured-alpha  provider: live-provider  GPU  policies: none",
+      "      agent: openclaw  model: configured-alpha  provider: live-provider  sandbox GPU  policies: none",
     );
     expect(lines).toContain("      (onboarded: provider=configured-provider)");
   });

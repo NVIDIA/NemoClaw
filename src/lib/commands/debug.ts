@@ -3,15 +3,15 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { CLI_NAME } from "../branding";
-import { runDebug } from "../debug";
-import type { DebugOptions } from "../debug";
-import type { RunDebugCommandDeps } from "../debug-command";
-import { runDebugCommandWithOptions } from "../debug-command";
+import { CLI_NAME } from "../cli/branding";
+import { runDebug } from "../diagnostics/debug";
+import type { DebugOptions } from "../diagnostics/debug";
+import type { RunDebugCommandDeps } from "../diagnostics/debug-command";
+import { runDebugCommandWithOptions } from "../diagnostics/debug-command";
 import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import { captureOpenshellCommand } from "../adapters/openshell/client";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
-import * as registry from "../registry";
+import * as registry from "../state/registry";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "../runtime-recovery";
 
