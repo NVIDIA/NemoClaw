@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConfigObject } from "../security/credential-filter";
-import type { AgentConfigTarget } from "../sandbox-config";
+import type { AgentConfigTarget } from "../sandbox/config";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 
@@ -16,7 +16,7 @@ vi.mock("../inference/local", () => ({
   DEFAULT_OLLAMA_MODEL: "llama3.1",
 }));
 
-vi.mock("../sandbox-config", () => ({
+vi.mock("../sandbox/config", () => ({
   readSandboxConfig: vi.fn(),
   recomputeSandboxConfigHash: vi.fn(),
   resolveAgentConfig: vi.fn(),

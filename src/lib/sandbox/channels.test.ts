@@ -9,7 +9,7 @@ import {
   getChannelTokenKeys,
   knownChannelNames,
   listChannels,
-} from "../../dist/lib/sandbox-channels";
+} from "./channels";
 
 describe("sandbox-channels KNOWN_CHANNELS", () => {
   it("covers telegram, discord, and slack", () => {

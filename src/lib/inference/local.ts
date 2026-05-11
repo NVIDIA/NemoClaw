@@ -6,8 +6,8 @@
  * health checks, and command generators for vLLM and Ollama.
  */
 
-import type { CurlProbeResult } from "../http-probe";
-import { runCurlProbe } from "../http-probe";
+import type { CurlProbeResult } from "../adapters/http/probe";
+import { runCurlProbe } from "../adapters/http/probe";
 
 const { shellQuote, runCapture } = require("../runner");
 

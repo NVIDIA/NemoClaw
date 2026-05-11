@@ -7,7 +7,7 @@ import {
   resolveDefaultSandboxName,
   runStartCommand,
   runStopCommand,
-} from "../../dist/lib/services-command";
+} from "../../../dist/lib/tunnel/service-command";
 
 describe("services command", () => {
   let savedEnv: Record<string, string | undefined>;

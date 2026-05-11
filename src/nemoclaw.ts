@@ -41,7 +41,6 @@ import type { SandboxEntry } from "./lib/state/registry";
 const nim = require("./lib/inference/nim");
 const shields = require("./lib/shields");
 const { parseGatewayInference } = require("./lib/inference/config");
-const policies = require("./lib/policies");
 const { probeProviderHealth } = require("./lib/inference/health");
 const { buildStatusCommandDeps } = require("./lib/status-command-deps");
 const { help, version } = require("./lib/actions/root-help");

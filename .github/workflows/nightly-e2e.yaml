@@ -43,6 +43,13 @@
 #                            OpenShell gateway, secure zero-fill on unlink, allowlist filter
 #                            on non-credential env keys, and symlink-safe deletion.
 #   launchable-smoke-e2e     Community install path (brev-launchable-ci-cpu.sh) on ubuntu-latest.
+#   brev-e2e                 Ephemeral Brev cloud instance end-to-end — provisions a real
+#                            Brev VM from the PUBLISHED NemoClaw launchable image
+#                            (env-3Azt0aYgVNFEuz7opyx3gscmowS, rebuilt 3x daily by
+#                            brevdev/nemoclaw-image), rsyncs main over it, runs the
+#                            selected test suites, and tears down. This is the only
+#                            coverage that validates the image customers actually get.
+#                            Requires BREV_API_KEY (long-lived bak-... CI key) + BREV_ORG_ID.
 #   gpu-e2e                  Local Ollama inference on an NVKS ephemeral GPU runner.
 #   gpu-double-onboard-e2e   Ollama proxy token consistency after re-onboard (#2553).
 #   notify-on-failure        Auto-creates a GitHub issue when any E2E job fails.
@@ -85,7 +92,7 @@ on:
           onboard-repair-e2e, onboard-resume-e2e, runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, device-auth-health-e2e,
-          launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
+          launchable-smoke-e2e, brev-e2e, gpu-e2e, gpu-double-onboard-e2e,
           brave-search-e2e
         required: false
         type: string
@@ -1773,6 +1780,50 @@ jobs:
           path: /tmp/nemoclaw-launchable-test.log
           if-no-files-found: ignore
 
+  # ── Ephemeral Brev E2E (real cloud instance + launchable) ────────
+  # Provisions a fresh Brev CPU instance via the CI launchable, installs
+  # NemoClaw from main, and runs the selected security + messaging suites.
+  # Calls the reusable e2e-branch-validation.yaml workflow.
+  #
+  # Matrix rationale:
+  #   - `all` covers credential-sanitization + telegram-injection
+  #     (the two security regression suites that need a shared sandbox).
+  #   - `messaging-providers` creates its own sandbox and exercises the
+  #     Telegram + Discord L7 proxy chain.
+  #   - `full` is the end-to-end install → onboard → inference → CLI path.
+  #     Listed last because it destroys its sandbox on completion.
+  #
+  # Cost: ~$0.10 per Brev instance × 3 suites ≈ $9/month at nightly cadence.
+  # Secrets: BREV_API_KEY (long-lived bak-... CI key), BREV_ORG_ID (org-...),
+  #          NVIDIA_API_KEY.
+  brev-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',brev-e2e,'))
+    strategy:
+      fail-fast: false
+      matrix:
+        test_suite: [all, messaging-providers, full]
+    uses: ./.github/workflows/e2e-branch-validation.yaml
+    with:
+      # Respect the selected ref for manual dispatches; scheduled runs execute
+      # on main, so this remains main there.
+      branch: ${{ github.ref_name }}
+      test_suite: ${{ matrix.test_suite }}
+      use_launchable: true
+      # Provision from the published NemoClaw launchable image (pre-baked
+      # GCP image, ~2 min boot), not the startup-script fallback. Empty
+      # launchable_id → harness default env-3Azt0aYgVNFEuz7opyx3gscmowS.
+      use_published_launchable: true
+      launchable_id: ""
+      keep_alive: false
+    secrets:
+      BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+      BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
   # ── GPU E2E (Ollama local inference) ──────────────────────────
   # Runs on an NVKS ephemeral GPU runner (RTX Pro 6000, 36 GB VRAM).
   # Each job gets a fresh VM — no state leakage between runs.
@@ -1930,6 +1981,7 @@ jobs:
         overlayfs-autofix-e2e,
         device-auth-health-e2e,
         launchable-smoke-e2e,
+        brev-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
       ]
@@ -2022,6 +2074,7 @@ jobs:
         overlayfs-autofix-e2e,
         device-auth-health-e2e,
         launchable-smoke-e2e,
+        brev-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
       ]
@@ -2162,6 +2215,7 @@ jobs:
         overlayfs-autofix-e2e,
         device-auth-health-e2e,
         launchable-smoke-e2e,
+        brev-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
       ]

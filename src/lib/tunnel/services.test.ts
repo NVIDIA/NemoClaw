@@ -8,10 +8,11 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 // Import from compiled dist/ so coverage is attributed correctly.
-import { getServiceStatuses, showStatus, stopAll } from "../../dist/lib/services";
+import { getServiceStatuses, showStatus, stopAll } from "../../../dist/lib/tunnel/services";
 
 const ollamaProxyDistPath = resolve(
   import.meta.dirname,
+  "..",
   "..",
   "..",
   "dist",

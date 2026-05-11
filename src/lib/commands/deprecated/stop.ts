@@ -4,8 +4,8 @@
 import { Command, Flags } from "@oclif/core";
 
 import { CLI_NAME } from "../../cli/branding";
-import { stopAll } from "../../services";
-import { runStopCommand } from "../../services-command";
+import { stopAll } from "../../tunnel/services";
+import { runStopCommand } from "../../tunnel/service-command";
 import { serviceDeps } from "../tunnel/common";
 
 export default class DeprecatedStopCommand extends Command {

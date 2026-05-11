@@ -18,21 +18,21 @@ const os = require("os");
 const path = require("path");
 const { promises: dnsPromises } = require("node:dns");
 const { isIP } = require("node:net");
-const { validateName } = require("./runner");
-const { shellQuote } = require("./core/shell-quote");
-const { dockerExecFileSync } = require("./adapters/docker/exec");
-const { dockerCapture } = require("./adapters/docker/run");
-const credentialFilter: typeof import("./security/credential-filter") = require("./security/credential-filter");
+const { validateName } = require("../runner");
+const { shellQuote } = require("../core/shell-quote");
+const { dockerExecFileSync } = require("../adapters/docker/exec");
+const { dockerCapture } = require("../adapters/docker/run");
+const credentialFilter: typeof import("../security/credential-filter") = require("../security/credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue, isCredentialField } = credentialFilter;
-const { appendAuditEntry } = require("./shields/audit");
-const { isPrivateHostname, isPrivateIp } = require("./private-networks");
-const registry = require("./state/registry") as {
+const { appendAuditEntry } = require("../shields/audit");
+const { isPrivateHostname, isPrivateIp } = require("../private-networks");
+const registry = require("../state/registry") as {
   getSandbox?: (name: string) => { openshellDriver?: string | null } | null;
 };
 
-type ConfigObject = import("./security/credential-filter").ConfigObject;
-type ConfigValue = import("./security/credential-filter").ConfigValue;
-const { runOpenshellCommand, captureOpenshellCommand } = require("./adapters/openshell/client");
+type ConfigObject = import("../security/credential-filter").ConfigObject;
+type ConfigValue = import("../security/credential-filter").ConfigValue;
+const { runOpenshellCommand, captureOpenshellCommand } = require("../adapters/openshell/client");
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -172,11 +172,11 @@ function privilegedSandboxExec(
 
 function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
   try {
-    const registry = require("./state/registry");
+    const registry = require("../state/registry");
     const entry = registry.getSandbox(sandboxName);
     if (!entry || !entry.agent) return DEFAULT_AGENT_CONFIG;
 
-    const agentDefs = require("./agent/defs");
+    const agentDefs = require("../agent/defs");
     const agent = agentDefs.loadAgent(entry.agent);
     const cfg = agent.configPaths;
 
@@ -921,7 +921,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
 
   // 1. Determine which provider and credentialEnv the sandbox uses.
   //    Load the onboard session and verify it matches this sandbox.
-  const { loadSession } = require("./state/onboard-session");
+  const { loadSession } = require("../state/onboard-session");
   const session = loadSession();
 
   if (!session || !session.credentialEnv) {
@@ -958,7 +958,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
   } else if (opts.fromStdin) {
     newToken = await readStdin();
   } else {
-    const { promptSecret } = require("./credentials/store");
+    const { promptSecret } = require("../credentials/store");
     newToken = await promptSecret(`  New ${credentialEnv} value: `);
   }
 
@@ -978,7 +978,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
   // 4. Stage the new value in the current process so the openshell update
   //    that follows can read it via --credential <ENV>. The OpenShell
   //    gateway becomes the system of record once the update succeeds.
-  const { saveCredential } = require("./credentials/store");
+  const { saveCredential } = require("../credentials/store");
   saveCredential(credentialEnv, newToken);
 
   // 5. Update the openshell provider

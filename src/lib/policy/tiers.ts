@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 
-import { ROOT } from "./runner";
+import { ROOT } from "../runner";
 
 const TIERS_FILE = path.join(ROOT, "nemoclaw-blueprint", "policies", "tiers.yaml");
 const ALLOWED_ACCESS: ReadonlySet<string> = new Set(["read", "read-write"]);

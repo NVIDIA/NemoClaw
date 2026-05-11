@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { getSandboxInventory, listSandboxesCommand, showStatusCommand } from "./inventory-commands";
+import { getSandboxInventory, listSandboxesCommand, showStatusCommand } from "./index";
 
 describe("inventory commands", () => {
   it("returns structured empty inventory for JSON consumers", async () => {

@@ -17,7 +17,7 @@ import {
   resolveAgentConfig,
   type AgentConfigTarget,
   writeSandboxConfig,
-} from "../sandbox-config";
+} from "../sandbox/config";
 import { appendAuditEntry } from "../shields/audit";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";

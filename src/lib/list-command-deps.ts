@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as onboardSession from "./state/onboard-session";
-import type { ListSandboxesCommandDeps, SandboxEntry } from "./inventory-commands";
+import type { ListSandboxesCommandDeps, SandboxEntry } from "./inventory";
 import { parseGatewayInference } from "./inference/config";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { parseSshProcesses, createSystemDeps } from "./state/sandbox-session";

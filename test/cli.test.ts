@@ -307,7 +307,7 @@ function createDebugCommandTestEnv(prefix: string): Record<string, string> {
 
 describe("CLI dispatch", () => {
   it("config get validates flags and values before dispatch", async () => {
-    const sandboxConfigModule = await import("../dist/lib/sandbox-config.js");
+    const sandboxConfigModule = await import("../dist/lib/sandbox/config.js");
     const { parseConfigGetArgs } = (sandboxConfigModule.default ?? sandboxConfigModule) as {
       parseConfigGetArgs: (
         args: string[],

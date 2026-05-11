@@ -243,7 +243,7 @@ reviews:
     - path: "src/lib/onboard/preflight.ts"
       instructions: *e2e-overlayfs
 
-    - path: "src/lib/deploy.ts"
+    - path: "src/lib/deploy/**"
       instructions: |
         This file contains deployment lifecycle logic (start/stop,
         cloudflared tunnel, uninstall).

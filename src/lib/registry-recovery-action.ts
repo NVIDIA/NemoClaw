@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
-import type { RecoveryResult } from "./inventory-commands";
+import type { RecoveryResult } from "./inventory";
 import * as onboardSession from "./state/onboard-session";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { captureOpenshell } from "./adapters/openshell/runtime";

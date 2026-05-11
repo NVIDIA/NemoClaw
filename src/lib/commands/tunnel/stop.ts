@@ -3,8 +3,8 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { stopAll } from "../../services";
-import { runStopCommand } from "../../services-command";
+import { stopAll } from "../../tunnel/services";
+import { runStopCommand } from "../../tunnel/service-command";
 import { serviceDeps } from "./common";
 
 export default class TunnelStopCommand extends Command {

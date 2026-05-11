@@ -9,8 +9,8 @@ import {
   inferDeployProvider,
   isBrevInstanceFailed,
   isBrevInstanceReady,
-} from "../../dist/lib/deploy";
-import { validateName } from "../../dist/lib/runner";
+} from "../../../dist/lib/deploy";
+import { validateName } from "../../../dist/lib/runner";
 
 describe("inferDeployProvider", () => {
   it("prefers an explicit provider override", () => {

@@ -15,11 +15,11 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME } from "./cli/branding";
-import { dockerSpawnSync } from "./adapters/docker";
-import { DASHBOARD_PORT } from "./core/ports";
-import { resolveOpenshell } from "./adapters/openshell/resolve";
-import { buildSubprocessEnv } from "./subprocess-env";
+import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME } from "../cli/branding";
+import { dockerSpawnSync } from "../adapters/docker";
+import { DASHBOARD_PORT } from "../core/ports";
+import { resolveOpenshell } from "../adapters/openshell/resolve";
+import { buildSubprocessEnv } from "../subprocess-env";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -429,7 +429,7 @@ export function stopAll(opts: ServiceOptions = {}): void {
   }
 
   try {
-    const { unloadOllamaModels } = require("./inference/ollama/proxy");
+    const { unloadOllamaModels } = require("../inference/ollama/proxy");
     unloadOllamaModels();
   } catch {
     /* best-effort */

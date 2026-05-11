@@ -10,7 +10,7 @@ import {
   collectBuildContextStats,
   stageLegacySandboxBuildContext,
   stageOptimizedSandboxBuildContext,
-} from "../dist/lib/sandbox-build-context";
+} from "../dist/lib/sandbox/build-context";
 
 describe("sandbox build context staging", () => {
   it("optimized staging excludes blueprint .venv and extra scripts while preserving required files", () => {
