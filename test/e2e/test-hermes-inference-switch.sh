@@ -86,8 +86,8 @@ assert_route() {
   fi
   plain_output=$(printf '%s' "$output" | strip_ansi)
 
-  if grep -Fq "Provider: ${SWITCH_PROVIDER}" <<<"$plain_output" &&
-    grep -Fq "Model: ${SWITCH_MODEL}" <<<"$plain_output"; then
+  if grep -Fq "Provider: ${SWITCH_PROVIDER}" <<<"$plain_output" \
+    && grep -Fq "Model: ${SWITCH_MODEL}" <<<"$plain_output"; then
     pass "OpenShell route points at ${SWITCH_PROVIDER} / ${SWITCH_MODEL}"
   else
     fail "OpenShell route did not switch to ${SWITCH_PROVIDER} / ${SWITCH_MODEL}: ${plain_output:0:400}"
@@ -96,7 +96,8 @@ assert_route() {
 
 assert_registry_session() {
   local probe
-  probe=$(SANDBOX_NAME="$SANDBOX_NAME" EXPECTED_PROVIDER="$SWITCH_PROVIDER" EXPECTED_MODEL="$SWITCH_MODEL" python3 - <<'PY'
+  probe=$(
+    SANDBOX_NAME="$SANDBOX_NAME" EXPECTED_PROVIDER="$SWITCH_PROVIDER" EXPECTED_MODEL="$SWITCH_MODEL" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -181,7 +182,8 @@ assert_hermes_config() {
   # Keep this parser dependency-free for the E2E runner: it only reads the
   # simple model block and should move to PyYAML if nested or multiline values
   # become relevant.
-  probe=$(CONFIG_TEXT="$config" EXPECTED_MODEL="$SWITCH_MODEL" python3 - <<'PY'
+  probe=$(
+    CONFIG_TEXT="$config" EXPECTED_MODEL="$SWITCH_MODEL" python3 - <<'PY'
 import os
 import re
 
@@ -247,7 +249,7 @@ assert_hermes_hashes() {
 
   perms_probe=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
     "stat -c '%u %a' /etc/nemoclaw/hermes.config-hash" 2>&1 || true)
-  if PERMS_PROBE="$perms_probe" python3 - <<'PY'
+  if PERMS_PROBE="$perms_probe" python3 - <<'PY'; then
 import os
 import sys
 
@@ -259,7 +261,6 @@ mode = int(parts[1], 8)
 if uid != 0 or mode & 0o222:
     raise SystemExit(1)
 PY
-  then
     pass "Hermes strict hash is root-owned and not writable"
   else
     fail "Hermes strict hash permissions are wrong: ${perms_probe:0:120}"

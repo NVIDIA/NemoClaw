@@ -98,8 +98,8 @@ assert_route() {
   fi
   plain_output=$(printf '%s' "$output" | strip_ansi)
 
-  if grep -Fq "Provider: ${SWITCH_PROVIDER}" <<<"$plain_output" &&
-    grep -Fq "Model: ${SWITCH_MODEL}" <<<"$plain_output"; then
+  if grep -Fq "Provider: ${SWITCH_PROVIDER}" <<<"$plain_output" \
+    && grep -Fq "Model: ${SWITCH_MODEL}" <<<"$plain_output"; then
     pass "OpenShell route points at ${SWITCH_PROVIDER} / ${SWITCH_MODEL}"
   else
     fail "OpenShell route did not switch to ${SWITCH_PROVIDER} / ${SWITCH_MODEL}: ${plain_output:0:400}"
@@ -108,7 +108,8 @@ assert_route() {
 
 assert_registry_session() {
   local probe
-  probe=$(SANDBOX_NAME="$SANDBOX_NAME" EXPECTED_PROVIDER="$SWITCH_PROVIDER" EXPECTED_MODEL="$SWITCH_MODEL" python3 - <<'PY'
+  probe=$(
+    SANDBOX_NAME="$SANDBOX_NAME" EXPECTED_PROVIDER="$SWITCH_PROVIDER" EXPECTED_MODEL="$SWITCH_MODEL" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
