@@ -38,8 +38,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  run-scenario:
+  # Route the scenario to the correct runner.
+  #
+  # Scenario ids encode their target platform as the first segment
+  # (e.g. `macos-repo-cloud-openclaw`, `wsl-repo-cloud-openclaw`,
+  # `gpu-repo-local-ollama-openclaw`). The workflow previously pinned
+  # `runs-on: ubuntu-latest` for every scenario, which caused non-Ubuntu
+  # scenarios to fail on the wrong runner (CodeRabbit review item #1).
+  resolve-runner:
     runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        env:
+          SCENARIO: ${{ github.event.inputs.scenario }}
+        run: |
+          case "${SCENARIO}" in
+            macos-*)  echo "runner=macos-latest"   >> "$GITHUB_OUTPUT" ;;
+            wsl-*)    echo "runner=windows-latest" >> "$GITHUB_OUTPUT" ;;
+            gpu-*)    echo "runner=self-hosted"    >> "$GITHUB_OUTPUT" ;;
+            ubuntu-*|brev-*) echo "runner=ubuntu-latest" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::Unknown scenario prefix for runner selection: ${SCENARIO}" >&2
+              exit 1
+              ;;
+          esac
+
+  run-scenario:
+    needs: resolve-runner
+    runs-on: ${{ needs.resolve-runner.outputs.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

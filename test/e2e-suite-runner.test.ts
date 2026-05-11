@@ -14,6 +14,7 @@ function runSuites(args: string[], env: Record<string, string> = {}): SpawnSyncR
   return spawnSync("bash", [RUN_SUITES, ...args], {
     env: { ...process.env, ...env },
     encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
     cwd: REPO_ROOT,
   });
 }

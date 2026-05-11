@@ -101,7 +101,7 @@ describe("expected state validator", () => {
     const inferenceSuite: ResolvedSuite = {
       id: "inference",
       requires_state: { "inference.expected": "available" },
-      steps: [{ id: "models-health", script: "suites/inference/00-models-health.sh" }],
+      steps: [{ id: "models-health", script: "suites/inference/cloud/00-models-health.sh" }],
     };
     const report = validateExpectedState({
       stateId: "cloud-openclaw-ready",
@@ -141,6 +141,7 @@ describe("runner_should_not_run_suites_when_expected_state_fails", () => {
             E2E_VALIDATE_EXPECTED_STATE: "1",
           },
           encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );

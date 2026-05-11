@@ -5,7 +5,7 @@
 # Install helper: exposes a single `e2e_install` entrypoint that dispatches
 # by install method and honours E2E_DRY_RUN.
 
-_E2E_INSTALL_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_E2E_INSTALL_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # shellcheck source=env.sh
 . "${_E2E_INSTALL_LIB_DIR}/env.sh"
@@ -51,5 +51,25 @@ e2e_install_from_repo_checkout() {
 }
 
 e2e_install_from_public_curl() {
-  curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/install.sh | bash
+  # Pin the installer source so CI runs do not implicitly follow main's
+  # head (CodeRabbit review item #6). Callers override E2E_INSTALLER_URL
+  # or E2E_INSTALLER_SHA256 to pin to a specific revision / digest.
+  local url="${E2E_INSTALLER_URL:-https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/install.sh}"
+  local sha256="${E2E_INSTALLER_SHA256:-}"
+  local tmp
+  tmp="$(mktemp -t nemoclaw-installer.XXXXXX.sh)"
+  trap 'rm -f "${tmp}"' RETURN
+  if ! curl -fsSL --retry 3 --retry-delay 2 -o "${tmp}" "${url}"; then
+    echo "e2e_install_from_public_curl: failed to download ${url}" >&2
+    return 1
+  fi
+  if [[ -n "${sha256}" ]]; then
+    local got
+    got="$(shasum -a 256 "${tmp}" 2>/dev/null | awk '{print $1}')"
+    if [[ "${got}" != "${sha256}" ]]; then
+      echo "e2e_install_from_public_curl: sha256 mismatch (expected ${sha256}, got ${got})" >&2
+      return 1
+    fi
+  fi
+  bash "${tmp}"
 }

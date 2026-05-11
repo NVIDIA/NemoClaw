@@ -12,8 +12,8 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../lib" && pwd)"
 . "${LIB_DIR}/env.sh"
 # shellcheck source=../../lib/context.sh
 . "${LIB_DIR}/context.sh"
-# shellcheck source=../../lib/sandbox.sh
-. "${LIB_DIR}/sandbox.sh"
+# shellcheck source=../../lib/assert/sandbox-alive.sh
+. "${LIB_DIR}/assert/sandbox-alive.sh"
 
 echo "smoke:sandbox-listed"
 e2e_context_require E2E_SANDBOX_NAME

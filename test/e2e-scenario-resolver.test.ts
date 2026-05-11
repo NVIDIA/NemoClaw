@@ -187,6 +187,7 @@ describe("run-scenario.sh --plan-only", () => {
         {
           env: { ...process.env, E2E_CONTEXT_DIR: tmp },
           encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );
@@ -220,6 +221,7 @@ describe("run-scenario.sh --plan-only", () => {
         {
           env: { ...process.env, E2E_CONTEXT_DIR: tmp },
           encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );

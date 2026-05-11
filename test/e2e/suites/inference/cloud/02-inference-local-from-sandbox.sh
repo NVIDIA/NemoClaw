@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIB_DIR="$(cd "${SCRIPT_DIR}/../../lib" && pwd)"
+LIB_DIR="$(cd "${SCRIPT_DIR}/../../../lib" && pwd)"
 # shellcheck source=../../lib/env.sh
 . "${LIB_DIR}/env.sh"
 # shellcheck source=../../lib/context.sh
@@ -24,6 +24,7 @@ fi
 
 name="$(e2e_context_get E2E_SANDBOX_NAME)"
 route="$(e2e_context_get E2E_INFERENCE_ROUTE)"
-nemoclaw shell "${name}" -- curl -fsS --max-time 10 "http://${route}/v1/models" \
-  | head -c 512
-echo
+# CodeRabbit review item #13: capture then truncate to avoid `| head` racing
+# curl under `pipefail` and flagging a successful request as failed.
+body="$(nemoclaw shell "${name}" -- curl -fsS --max-time 10 "http://${route}/v1/models")"
+printf '%s\n' "${body:0:512}"

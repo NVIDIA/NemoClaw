@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIB_DIR="$(cd "${SCRIPT_DIR}/../../lib" && pwd)"
+LIB_DIR="$(cd "${SCRIPT_DIR}/../../../lib" && pwd)"
 # shellcheck source=../../lib/env.sh
 . "${LIB_DIR}/env.sh"
 # shellcheck source=../../lib/context.sh
@@ -25,8 +25,9 @@ url="$(e2e_context_get E2E_GATEWAY_URL)"
 payload='{"model":"default","messages":[{"role":"user","content":"say ok"}],"max_tokens":8}'
 response="$(curl -fsS --max-time 30 -H 'Content-Type: application/json' \
   -d "${payload}" "${url%/}/v1/chat/completions")"
-echo "${response}" | head -c 1024
-echo
+# CodeRabbit review item #12: substring expansion instead of `| head`
+# avoids SIGPIPE-driven false failures under `set -o pipefail`.
+printf '%s\n' "${response:0:1024}"
 if [[ -z "${response}" ]]; then
   echo "inference:chat-completion: empty response" >&2
   exit 1

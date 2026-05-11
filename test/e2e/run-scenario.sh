@@ -87,8 +87,13 @@ fi
 run_resolver() {
   if [[ -n "${TSX_BIN}" ]]; then
     "${TSX_BIN}" "${SCRIPT_DIR}/resolver/index.ts" "$@"
-  else
-    (cd "${REPO_ROOT}" && npx --yes tsx "${SCRIPT_DIR}/resolver/index.ts" "$@")
+    return
+  fi
+  # CodeRabbit review item #10: fail closed with a clear hint instead of
+  # silently pulling tsx from the network via `npx --yes`.
+  if ! (cd "${REPO_ROOT}" && npx --no-install tsx "${SCRIPT_DIR}/resolver/index.ts" "$@"); then
+    echo "run-scenario: tsx is required but not installed. Run 'npm ci' at the repo root and retry." >&2
+    return 1
   fi
 }
 
@@ -105,14 +110,14 @@ fi
 . "${SCRIPT_DIR}/lib/env.sh"
 # shellcheck source=lib/context.sh
 . "${SCRIPT_DIR}/lib/context.sh"
-# shellcheck source=lib/install.sh
-. "${SCRIPT_DIR}/lib/install.sh"
-# shellcheck source=lib/onboard.sh
-. "${SCRIPT_DIR}/lib/onboard.sh"
-# shellcheck source=lib/gateway.sh
-. "${SCRIPT_DIR}/lib/gateway.sh"
-# shellcheck source=lib/sandbox.sh
-. "${SCRIPT_DIR}/lib/sandbox.sh"
+# shellcheck source=lib/setup/install.sh
+. "${SCRIPT_DIR}/lib/setup/install.sh"
+# shellcheck source=lib/setup/onboard.sh
+. "${SCRIPT_DIR}/lib/setup/onboard.sh"
+# shellcheck source=lib/assert/gateway-alive.sh
+. "${SCRIPT_DIR}/lib/assert/gateway-alive.sh"
+# shellcheck source=lib/assert/sandbox-alive.sh
+. "${SCRIPT_DIR}/lib/assert/sandbox-alive.sh"
 
 # Apply standard non-interactive env (and trace it).
 e2e_env_apply_noninteractive
@@ -154,7 +159,14 @@ e2e_sandbox_assert_running
 # overrides; wiring real probes through the validator happens as
 # scenarios migrate.
 if [[ "${E2E_VALIDATE_EXPECTED_STATE:-0}" == "1" || "${DRY_RUN}" -ne 1 ]]; then
-  if ! run_resolver validate-state "${SCENARIO_ID}" --context-dir "${E2E_CONTEXT_DIR}"; then
+  validate_args=("${SCENARIO_ID}" --context-dir "${E2E_CONTEXT_DIR}")
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    # CodeRabbit review item #9: explicitly opt in to seeding probes from
+    # the expected state in dry-run/test mode. Live runs go through real
+    # probes and must fail closed if any are missing.
+    validate_args+=(--probes-from-state)
+  fi
+  if ! run_resolver validate-state "${validate_args[@]}"; then
     echo "run-scenario: expected-state validation failed; suites will NOT run" >&2
     exit 3
   fi
@@ -165,5 +177,10 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
   exit 0
 fi
 
-echo "run-scenario: full suite execution is not implemented yet (Phase 9 migrates additional scenarios)" >&2
-exit 0
+# CodeRabbit review item #11: do not exit 0 when no suites were executed.
+# Full suite execution against a live environment lands in subsequent
+# scenarios; calling run-scenario.sh in non-dry-run mode must not masquerade
+# as success until that wiring exists for the requested scenario.
+echo "run-scenario: full suite execution is not implemented yet for this scenario." >&2
+echo "run-scenario: pass --dry-run to exercise the plan+context path, or run the suite runner directly with a live environment." >&2
+exit 4

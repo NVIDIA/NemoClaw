@@ -12,8 +12,8 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../lib" && pwd)"
 . "${LIB_DIR}/env.sh"
 # shellcheck source=../../lib/context.sh
 . "${LIB_DIR}/context.sh"
-# shellcheck source=../../lib/gateway.sh
-. "${LIB_DIR}/gateway.sh"
+# shellcheck source=../../lib/assert/gateway-alive.sh
+. "${LIB_DIR}/assert/gateway-alive.sh"
 
 echo "smoke:gateway-health"
 e2e_context_require E2E_GATEWAY_URL

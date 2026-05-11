@@ -15,6 +15,7 @@ function runBash(script: string, env: Record<string, string> = {}): SpawnSyncRet
   return spawnSync("bash", ["-c", script], {
     env: { ...process.env, ...env },
     encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
     cwd: REPO_ROOT,
   });
 }
@@ -94,6 +95,7 @@ describe("E2E context helper (lib/context.sh)", () => {
         {
           env: { ...process.env, E2E_CONTEXT_DIR: tmp },
           encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );

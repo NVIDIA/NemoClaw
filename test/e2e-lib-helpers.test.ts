@@ -15,6 +15,7 @@ function runBash(script: string, env: Record<string, string> = {}): SpawnSyncRet
   return spawnSync("bash", ["-c", script], {
     env: { ...process.env, ...env },
     encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
     cwd: REPO_ROOT,
   });
 }
@@ -73,7 +74,7 @@ describe("E2E shell helpers", () => {
         `
         set -euo pipefail
         . "${LIB}/context.sh"
-        . "${LIB}/sandbox.sh"
+        . "${LIB}/assert/sandbox-alive.sh"
         e2e_context_init
         e2e_context_set E2E_SCENARIO test
         e2e_sandbox_assert_running
@@ -101,6 +102,7 @@ describe("E2E shell helpers", () => {
             E2E_TRACE_FILE: trace,
           },
           encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );

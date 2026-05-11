@@ -52,16 +52,43 @@ e2e_context_path() {
   printf '%s\n' "${E2E_CONTEXT_DIR}/context.env"
 }
 
+# CodeRabbit review item #4: validate that KEY is a plain POSIX identifier
+# (so we never interpolate metacharacters into grep regexes) and that VALUE
+# has no newlines or control characters that could break the line-oriented
+# context.env format.
+_e2e_context_validate_key() {
+  local key="${1:-}"
+  if [[ -z "${key}" ]]; then
+    echo "e2e_context: missing key" >&2
+    return 2
+  fi
+  if [[ ! "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    echo "e2e_context: invalid key (POSIX identifier required): ${key}" >&2
+    return 2
+  fi
+}
+
+_e2e_context_validate_value() {
+  local value="${1-}"
+  # Reject newlines that would corrupt the line-oriented context.env
+  # format. We deliberately do not reject all control characters since
+  # tabs and escape sequences can appear in legitimate values (e.g. test
+  # fixtures that seed tracing markers). Newlines are the only format
+  # break. (CodeRabbit review item #4.)
+  if [[ "${value}" == *$'\n'* ]] || [[ "${value}" == *$'\r'* ]]; then
+    echo "e2e_context: value contains newline characters; reject" >&2
+    return 2
+  fi
+}
+
 # e2e_context_set KEY VALUE
 # Appends or updates a single key in context.env. Value is written literally;
 # callers are responsible for not embedding newlines.
 e2e_context_set() {
   local key="${1:-}"
   local value="${2:-}"
-  if [[ -z "${key}" ]]; then
-    echo "e2e_context_set: missing key" >&2
-    return 2
-  fi
+  _e2e_context_validate_key "${key}" || return 2
+  _e2e_context_validate_value "${value}" || return 2
   _e2e_context_resolve_dir
   local ctx="${E2E_CONTEXT_DIR}/context.env"
   if [[ ! -f "${ctx}" ]]; then
@@ -80,6 +107,7 @@ e2e_context_set() {
 # Prints the value of KEY (empty if missing). Does not fail.
 e2e_context_get() {
   local key="${1:-}"
+  _e2e_context_validate_key "${key}" || return 2
   _e2e_context_resolve_dir
   local ctx="${E2E_CONTEXT_DIR}/context.env"
   [[ -f "${ctx}" ]] || return 0
@@ -96,6 +124,7 @@ e2e_context_require() {
   local missing=()
   local key value
   for key in "$@"; do
+    _e2e_context_validate_key "${key}" || return 2
     if [[ -f "${ctx}" ]]; then
       value="$(grep "^${key}=" "${ctx}" | tail -n1 || true)"
       value="${value#"${key}"=}"

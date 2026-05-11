@@ -38,18 +38,18 @@ suites:
       inference.expected: available
     steps:
       - id: models-health
-        script: suites/inference/00-models-health.sh
+        script: suites/inference/cloud/00-models-health.sh
       - id: chat-completion
-        script: suites/inference/01-chat-completion.sh
+        script: suites/inference/cloud/01-chat-completion.sh
       - id: sandbox-inference-local
-        script: suites/inference/02-inference-local-from-sandbox.sh
+        script: suites/inference/cloud/02-inference-local-from-sandbox.sh
 
   credentials:
     requires_state:
       credentials.expected: present
     steps:
       - id: credentials-present
-        script: suites/credentials/00-credentials-present.sh
+        script: suites/security/credentials/00-credentials-present.sh
 
   local-ollama-inference:
     requires_state:
@@ -58,9 +58,9 @@ suites:
       inference.expected: available
     steps:
       - id: ollama-models-health
-        script: suites/local-ollama-inference/00-ollama-models-health.sh
+        script: suites/inference/ollama-gpu/00-ollama-models-health.sh
       - id: ollama-chat-completion
-        script: suites/local-ollama-inference/01-ollama-chat-completion.sh
+        script: suites/inference/ollama-gpu/01-ollama-chat-completion.sh
 
   ollama-proxy:
     requires_state:
@@ -68,7 +68,7 @@ suites:
       sandbox.status: running
     steps:
       - id: proxy-reachable
-        script: suites/ollama-proxy/00-proxy-reachable.sh
+        script: suites/inference/ollama-auth-proxy/00-proxy-reachable.sh
 
   platform-macos:
     requires_state:
@@ -76,7 +76,7 @@ suites:
       sandbox.status: running
     steps:
       - id: macos-smoke
-        script: suites/platform-macos/00-macos-smoke.sh
+        script: suites/platform/macos/00-macos-smoke.sh
 
   platform-wsl:
     requires_state:
@@ -84,7 +84,7 @@ suites:
       sandbox.status: running
     steps:
       - id: wsl-smoke
-        script: suites/platform-wsl/00-wsl-smoke.sh
+        script: suites/platform/wsl/00-wsl-smoke.sh
 
   hermes-specific:
     requires_state:
@@ -93,4 +93,4 @@ suites:
       sandbox.agent: hermes
     steps:
       - id: hermes-health
-        script: suites/hermes-specific/00-hermes-health.sh
+        script: suites/onboarding/hermes/00-hermes-health.sh

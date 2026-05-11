@@ -35,7 +35,8 @@ describe("Phase 6: ubuntu-repo-cloud-openclaw migration", () => {
       const r = spawnSync(
         "bash",
         [RUN_SCENARIO, "ubuntu-repo-cloud-openclaw", "--plan-only"],
-        { env: { ...process.env, E2E_CONTEXT_DIR: tmp }, encoding: "utf8", cwd: REPO_ROOT },
+        { env: { ...process.env, E2E_CONTEXT_DIR: tmp }, encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000), cwd: REPO_ROOT },
       );
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toMatch(/install=repo-current/);
@@ -56,6 +57,7 @@ describe("Phase 6: ubuntu-repo-cloud-openclaw migration", () => {
         {
           env: { ...process.env, E2E_CONTEXT_DIR: tmp, E2E_TRACE_FILE: trace },
           encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );
@@ -86,6 +88,7 @@ describe("Phase 6: ubuntu-repo-cloud-openclaw migration", () => {
         {
           env: { ...process.env, E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" },
           encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );

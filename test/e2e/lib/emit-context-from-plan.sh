@@ -39,6 +39,13 @@ read_plan_value() {
 }
 
 SCENARIO_ID="$(read_plan_value scenario_id)"
+if [[ -z "${SCENARIO_ID}" ]]; then
+  # Fail fast when the plan is missing its scenario id (CodeRabbit review
+  # item #5). Downstream helpers all index context by scenario and will
+  # silently misbehave if this is empty.
+  echo "emit-context-from-plan: plan.json is missing 'scenario_id': ${PLAN_JSON}" >&2
+  exit 2
+fi
 PLATFORM_OS="$(read_plan_value dimensions.platform.profile.os)"
 EXECUTION_TARGET="$(read_plan_value dimensions.platform.profile.execution_target)"
 INSTALL_METHOD="$(read_plan_value dimensions.install.profile.method)"

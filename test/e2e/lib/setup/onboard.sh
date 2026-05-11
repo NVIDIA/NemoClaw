@@ -4,7 +4,7 @@
 #
 # Onboard helper. Dispatches by onboarding profile id and honors dry-run.
 
-_E2E_ONBOARD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_E2E_ONBOARD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=env.sh
 . "${_E2E_ONBOARD_LIB_DIR}/env.sh"
 # shellcheck source=context.sh

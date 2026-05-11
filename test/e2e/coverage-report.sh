@@ -16,5 +16,11 @@ TSX_BIN="${REPO_ROOT}/node_modules/.bin/tsx"
 if [[ -x "${TSX_BIN}" ]]; then
   "${TSX_BIN}" "${SCRIPT_DIR}/resolver/index.ts" coverage
 else
-  (cd "${REPO_ROOT}" && npx --yes tsx "${SCRIPT_DIR}/resolver/index.ts" coverage)
+  # CodeRabbit review items #3, #10: fall back to --no-install so we rely on
+  # the lockfile-pinned tsx rather than a network fetch, and fail closed
+  # with a clear hint if tsx is not installed.
+  if ! (cd "${REPO_ROOT}" && npx --no-install tsx "${SCRIPT_DIR}/resolver/index.ts" coverage); then
+    echo "coverage-report: tsx not available. Run 'npm ci' at the repo root to install devDependencies." >&2
+    exit 1
+  fi
 fi

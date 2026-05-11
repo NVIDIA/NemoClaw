@@ -4,7 +4,7 @@
 #
 # Sandbox helpers.
 
-_E2E_SB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_E2E_SB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=env.sh
 . "${_E2E_SB_LIB_DIR}/env.sh"
 # shellcheck source=context.sh
@@ -28,7 +28,10 @@ e2e_sandbox_assert_running() {
     echo "e2e_sandbox_assert_running: nemoclaw CLI not on PATH" >&2
     return 1
   fi
-  if ! nemoclaw list 2>/dev/null | grep -q -E "^|[[:space:]]${name}[[:space:]]|${name}\$"; then
+  # Match ${name} as a whole token at start of line or surrounded by
+  # whitespace/line boundary (the earlier "^|..." regex had an empty
+  # first alternative that always matched — CodeRabbit review item #7).
+  if ! nemoclaw list 2>/dev/null | grep -qE "(^|[[:space:]])${name}([[:space:]]|$)"; then
     echo "e2e_sandbox_assert_running: sandbox '${name}' not found in 'nemoclaw list'" >&2
     return 1
   fi

@@ -4,7 +4,7 @@
 #
 # Gateway helpers.
 
-_E2E_GW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_E2E_GW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=env.sh
 . "${_E2E_GW_LIB_DIR}/env.sh"
 # shellcheck source=context.sh

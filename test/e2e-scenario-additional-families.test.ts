@@ -28,6 +28,7 @@ function planOnly(scenarioId: string): { stdout: string; stderr: string; status:
     const r = spawnSync("bash", [RUN_SCENARIO, scenarioId, "--plan-only"], {
       env: { ...process.env, E2E_CONTEXT_DIR: tmp },
       encoding: "utf8",
+    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
       cwd: REPO_ROOT,
     });
     let plan = {};
