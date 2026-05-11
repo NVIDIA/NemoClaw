@@ -45,7 +45,11 @@ name: e2e-branch-validation
 #   all                      — Runs credential-sanitization + telegram-injection (NOT full,
 #                              which destroys the sandbox the security tests need).
 #
-# Required secrets: BREV_API_TOKEN, NVIDIA_API_KEY
+# Required secrets: BREV_API_KEY, BREV_ORG_ID, NVIDIA_API_KEY
+#   BREV_API_KEY  — long-lived Brev API key (format: bak-...). Replaces the
+#                   legacy short-lived BREV_API_TOKEN refresh-token secret.
+#   BREV_ORG_ID   — Brev organization id (format: org-...). Required alongside
+#                   the API key for brev login.
 # Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
 
 on:
@@ -76,8 +80,12 @@ on:
         required: false
         type: boolean
         default: false
-      brev_token:
-        description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
+      brev_api_key:
+        description: "Brev API key (bak-...; overrides BREV_API_KEY secret if provided)"
+        required: false
+        default: ""
+      brev_org_id:
+        description: "Brev org id (org-...; overrides BREV_ORG_ID secret if provided)"
         required: false
         default: ""
   workflow_call:
@@ -106,7 +114,9 @@ on:
         type: boolean
         default: true
     secrets:
-      BREV_API_TOKEN:
+      BREV_API_KEY:
+        required: true
+      BREV_ORG_ID:
         required: true
       NVIDIA_API_KEY:
         required: true
@@ -123,7 +133,7 @@ concurrency:
 jobs:
   e2e-branch-validation:
     # Allow both upstream (NVIDIA/NemoClaw) and the known CI fork (jyaunches/NemoClaw).
-    # The fork is used to validate the long-lived BREV_API_TOKEN + nightly wiring
+    # The fork is used to validate the long-lived BREV_API_KEY + nightly wiring
     # before the secret is rotated into the upstream repo. Other forks get a no-op
     # skip so community PRs that touch this file don't try to run against someone
     # else's Brev account.
@@ -171,26 +181,29 @@ jobs:
 
       - name: Install Brev CLI
         env:
-          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
+          BREV_API_KEY: ${{ inputs.brev_api_key || secrets.BREV_API_KEY }}
+          BREV_ORG_ID: ${{ inputs.brev_org_id || secrets.BREV_ORG_ID }}
         run: |
-          # Brev CLI v0.6.322+ — CPU instances use `brev search cpu | brev create`
-          # Startup scripts use `brev create --startup-script @file` (not brev start --cpu)
-          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
+          # Brev CLI v0.6.324+ — first release to support `brev login --api-key`
+          # for long-lived CI auth (bak-... keys). Earlier v0.6.322 pin required
+          # writing ~/.brev/credentials.json by hand because `brev login` had
+          # been removed in #1470 and only supported interactive OAuth.
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.324/brev-cli_0.6.324_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
-          # Brev CLI does not read BREV_API_TOKEN from env — it requires
-          # ~/.brev/credentials.json. The login call was removed in #1470
-          # (374a847d), breaking CI. Write the credentials file so `brev ls`
-          # works in the test harness's hasAuthenticatedBrev check.
-          if [ -z "${BREV_API_TOKEN:-}" ]; then
-            echo "::error::BREV_API_TOKEN is empty — cannot authenticate Brev CLI."
+          if [ -z "${BREV_API_KEY:-}" ]; then
+            echo "::error::BREV_API_KEY is empty — cannot authenticate Brev CLI."
             exit 1
           fi
-          mkdir -p ~/.brev
-          umask 077
-          printf '{"refresh_token":"%s"}' "$BREV_API_TOKEN" > ~/.brev/credentials.json
+          if [ -z "${BREV_ORG_ID:-}" ]; then
+            echo "::error::BREV_ORG_ID is empty — required for API-key login."
+            exit 1
+          fi
+          # Long-lived API-key login. Persists api_key + api_key_org_id into
+          # ~/.brev/credentials.json; no browser, no refresh-token expiry.
+          brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
           chmod 600 ~/.brev/credentials.json
-          # Skip the first-run onboarding wizard that blocks on stdin (also removed in #1470)
+          # Skip the first-run onboarding wizard that blocks on stdin (removed in #1470)
           printf '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
           brev ls >/dev/null
 
@@ -199,7 +212,8 @@ jobs:
 
       - name: Run ephemeral Brev E2E
         env:
-          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
+          BREV_API_KEY: ${{ inputs.brev_api_key || secrets.BREV_API_KEY }}
+          BREV_ORG_ID: ${{ inputs.brev_org_id || secrets.BREV_ORG_ID }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
