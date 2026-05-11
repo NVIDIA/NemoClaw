@@ -331,6 +331,34 @@ restore_openclaw_config_after_write() {
   lock_config_after_write "$config_file" "$hash_file"
 }
 
+ensure_mutable_openclaw_config_hash() {
+  local config_dir="/sandbox/.openclaw"
+  local config_file="${config_dir}/openclaw.json"
+  local hash_file="${config_dir}/.config-hash"
+
+  [ -f "$config_file" ] || return 0
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing mutable config hash refresh — config directory or file path is a symlink\n' >&2
+    return 1
+  fi
+
+  # Locked/shields-up mode treats .config-hash as a root-owned trust anchor.
+  # verify_config_integrity_if_locked already fails closed when that anchor is
+  # missing, so only synthesize/refresh the mutable-default hash.
+  if [ "$(openclaw_config_dir_owner "$config_dir")" = "root" ]; then
+    return 0
+  fi
+
+  if ! (cd "$config_dir" && sha256sum openclaw.json >"$hash_file"); then
+    printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
+    return 1
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    chown sandbox:sandbox "$hash_file" 2>/dev/null || true
+  fi
+  chmod 660 "$hash_file" 2>/dev/null || true
+}
+
 # ── Runtime model/provider override ──────────────────────────────
 # Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
 # allowing model or provider changes without rebuilding the sandbox image.
@@ -1659,6 +1687,7 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_model_override
   apply_cors_override
   refresh_openclaw_provider_placeholders
+  ensure_mutable_openclaw_config_hash
   export_gateway_token
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
@@ -1752,6 +1781,7 @@ normalize_mutable_config_perms
 apply_model_override
 apply_cors_override
 refresh_openclaw_provider_placeholders
+ensure_mutable_openclaw_config_hash
 export_gateway_token
 write_runtime_shell_env
 ensure_runtime_shell_env_shim
