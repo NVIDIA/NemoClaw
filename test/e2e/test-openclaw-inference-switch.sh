@@ -142,13 +142,16 @@ except Exception as exc:
     session = None
     errors.append(f"could not read onboard session: {exc}")
 
-if session:
-    if session.get("sandboxName") != name:
-        errors.append(f"session sandboxName={session.get('sandboxName')!r}")
-    if session.get("provider") != provider:
-        errors.append(f"session provider={session.get('provider')!r}")
-    if session.get("model") != model:
-        errors.append(f"session model={session.get('model')!r}")
+if session is not None:
+    if not isinstance(session, dict) or not session:
+        errors.append("onboard session is empty or invalid")
+    else:
+        if session.get("sandboxName") != name:
+            errors.append(f"session sandboxName={session.get('sandboxName')!r}")
+        if session.get("provider") != provider:
+            errors.append(f"session provider={session.get('provider')!r}")
+        if session.get("model") != model:
+            errors.append(f"session model={session.get('model')!r}")
 
 if errors:
     print("; ".join(errors))
@@ -430,13 +433,15 @@ section "Phase 5: Cleanup"
 if [ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" != "1" ]; then
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
-fi
 
-registry_file="${HOME}/.nemoclaw/sandboxes.json"
-if [ -f "$registry_file" ] && grep -Fq "\"${SANDBOX_NAME}\"" "$registry_file"; then
-  fail "Sandbox ${SANDBOX_NAME} still in registry after destroy"
+  registry_file="${HOME}/.nemoclaw/sandboxes.json"
+  if [ -f "$registry_file" ] && grep -Fq "\"${SANDBOX_NAME}\"" "$registry_file"; then
+    fail "Sandbox ${SANDBOX_NAME} still in registry after destroy"
+  else
+    pass "Sandbox ${SANDBOX_NAME} removed"
+  fi
 else
-  pass "Sandbox ${SANDBOX_NAME} removed"
+  skip "Sandbox ${SANDBOX_NAME} kept; removal check skipped"
 fi
 
 echo ""
