@@ -32,7 +32,7 @@ on:
         type: string
         default: main
       run_pi:
-        description: Run Pi semantic analysis after deterministic baseline
+        description: Run Pi semantic analysis
         required: false
         type: boolean
         default: true
@@ -96,26 +96,15 @@ jobs:
           git -C "$TARGET_DIR" checkout --detach "refs/remotes/target/pr-${TARGET_PR}"
           echo "ADVISOR_WORKDIR=$TARGET_DIR" >> "$GITHUB_ENV"
 
-      - name: Run deterministic E2E advisor baseline
-        env:
-          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
-          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
-        run: |
-          cd "$ADVISOR_WORKDIR"
-          node "$GITHUB_WORKSPACE/tools/e2e-advisor/advisor.mjs" \
-            --base "$BASE_REF" \
-            --head "$HEAD_REF" \
-            --manifest "$GITHUB_WORKSPACE/test/e2e/e2e-manifest.yaml" \
-            --rules "$GITHUB_WORKSPACE/tools/e2e-advisor/rules.yaml" \
-            --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
-
       - name: Install Pi
         run: npm install -g @mariozechner/pi-coding-agent
 
-      - name: Run Pi semantic analysis
+      - name: Run Pi semantic E2E advisor
         id: pi-analysis
         continue-on-error: true
         env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
+          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
           PI_E2E_ADVISOR_RUN_PI: ${{ github.event_name == 'workflow_dispatch' && inputs.run_pi == false && '0' || '1' }}
           PI_E2E_ADVISOR_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_provider || 'anthropic' }}
           PI_E2E_ADVISOR_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_model || '' }}
@@ -129,19 +118,14 @@ jobs:
         run: |
           cd "$ADVISOR_WORKDIR"
           node "$GITHUB_WORKSPACE/tools/e2e-advisor/pi-analyze.mjs" \
-            --manifest "$GITHUB_WORKSPACE/test/e2e/e2e-manifest.yaml" \
+            --base "$BASE_REF" \
+            --head "$HEAD_REF" \
             --schema "$GITHUB_WORKSPACE/tools/e2e-advisor/schema.json" \
             --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
 
       - name: Publish job summary
         if: always()
         run: |
-          if [ -f artifacts/e2e-advisor/e2e-advisor-summary.md ]; then
-            cat artifacts/e2e-advisor/e2e-advisor-summary.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf '# E2E Advisor\n\nDeterministic analysis did not produce a summary. See logs.\n' >> "$GITHUB_STEP_SUMMARY"
-          fi
-          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           if [ -f artifacts/e2e-advisor/e2e-advisor-pi-summary.md ]; then
             cat artifacts/e2e-advisor/e2e-advisor-pi-summary.md >> "$GITHUB_STEP_SUMMARY"
           else

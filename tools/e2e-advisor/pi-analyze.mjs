@@ -5,46 +5,43 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import yaml from "yaml";
 
 const root = process.cwd();
 const advisorRoot = process.env.GITHUB_WORKSPACE || root;
 const args = parseArgs(process.argv.slice(2));
 const outDir = args.outDir || "artifacts/e2e-advisor";
-const baselinePath = args.baseline || path.join(outDir, "e2e-advisor-result.json");
-const manifestPath = args.manifest || "test/e2e/e2e-manifest.yaml";
+const baseRef = args.base || process.env.BASE_REF || "origin/main";
+const headRef = args.head || process.env.HEAD_REF || "HEAD";
 const schemaPath = args.schema || "tools/e2e-advisor/schema.json";
 const scriptDir = path.dirname(new URL(import.meta.url).pathname).replace(/^\/(.:\/)/, "$1");
 const modelsTemplatePath = args.modelsTemplate || path.join(scriptDir, "pi-models.template.json");
 const promptPath = path.join(outDir, "e2e-advisor-pi-prompt.md");
 const rawPath = path.join(outDir, "e2e-advisor-pi-raw-output.txt");
-// Keep generated Pi credential config outside uploaded artifacts.
-const piConfigDir = process.env.PI_E2E_ADVISOR_CONFIG_DIR || path.join("/tmp", `nemoclaw-e2e-advisor-pi-config-${process.pid}`);
 const piResultPath = path.join(outDir, "e2e-advisor-pi-result.json");
 const finalResultPath = path.join(outDir, "e2e-advisor-final-result.json");
 const piSummaryPath = path.join(outDir, "e2e-advisor-pi-summary.md");
+// Keep generated Pi credential config outside uploaded artifacts.
+const piConfigDir = process.env.PI_E2E_ADVISOR_CONFIG_DIR || path.join("/tmp", `nemoclaw-e2e-advisor-pi-config-${process.pid}`);
 const timeoutMs = Number.parseInt(process.env.PI_E2E_ADVISOR_TIMEOUT_MS || "900000", 10);
 
 fs.mkdirSync(outDir, { recursive: true });
 
-const baseline = readJson(baselinePath);
-const manifest = readYaml(manifestPath);
 const schema = readJson(schemaPath);
-const diff = getDiff(baseline.baseRef, baseline.headRef, 90000);
-const prompt = buildPrompt({ baseline, manifest, schema, diff });
+const changedFiles = getChangedFiles(baseRef, headRef);
+const diff = getDiff(baseRef, headRef, 120000);
+const prompt = buildPrompt({ baseRef, headRef, changedFiles, schema, diff });
 fs.writeFileSync(promptPath, prompt);
 
 if (process.env.PI_E2E_ADVISOR_RUN_PI === "0") {
-  writeSkipped("PI_E2E_ADVISOR_RUN_PI=0");
+  writeUnavailable("PI_E2E_ADVISOR_RUN_PI=0");
   process.exit(0);
 }
 
 if (!hasLikelyPiCredential()) {
-  writeSkipped("No Pi provider credential was available in this workflow environment");
+  writeUnavailable("No Pi provider credential was available in this workflow environment");
   process.exit(0);
 }
 
-const piBin = process.env.PI_BIN || "pi";
 const provider = process.env.PI_E2E_ADVISOR_PROVIDER || (process.env.PI_E2E_ADVISOR_API_KEY ? "anthropic" : "");
 const model = process.env.PI_E2E_ADVISOR_MODEL || defaultModelForProvider(provider);
 const piArgs = [
@@ -64,32 +61,24 @@ if (provider) {
 if (model) {
   piArgs.unshift("--model", model);
 }
-const promptStdin = process.env.PI_E2E_ADVISOR_PROMPT_STDIN !== "0";
-if (promptStdin) {
-  piArgs.push("Analyze the E2E advisor prompt from stdin and return JSON only.");
-} else {
-  piArgs.push(prompt);
-}
+piArgs.push("Analyze the NemoClaw PR from the prompt on stdin. Use read-only tools as needed. Return JSON only.");
 
 const childEnv = {
   ...process.env,
   PI_SKIP_VERSION_CHECK: process.env.PI_SKIP_VERSION_CHECK || "1",
 };
-preparePiConfig(childEnv, provider);
+preparePiConfig(childEnv, provider, model);
 
-const child = spawnSync(piBin, piArgs, {
+const child = spawnSync(process.env.PI_BIN || "pi", piArgs, {
   cwd: root,
   encoding: "utf8",
   timeout: timeoutMs,
   maxBuffer: 20 * 1024 * 1024,
-  input: promptStdin ? prompt : undefined,
+  input: prompt,
   env: childEnv,
 });
 
-const combinedOutput = [
-  child.stdout || "",
-  child.stderr ? `\n--- STDERR ---\n${child.stderr}` : "",
-].join("");
+const combinedOutput = [child.stdout || "", child.stderr ? `\n--- STDERR ---\n${child.stderr}` : ""].join("");
 fs.writeFileSync(rawPath, combinedOutput);
 
 if (child.error) {
@@ -101,17 +90,18 @@ if (child.status !== 0) {
   process.exit(1);
 }
 
-let piResult;
+let result;
 try {
-  piResult = normalizePiResult(extractJson(child.stdout || combinedOutput), baseline);
+  result = normalizePiResult(extractJson(child.stdout || combinedOutput), { baseRef, headRef, changedFiles });
 } catch (error) {
   writeFailure(error.message);
   process.exit(1);
 }
-fs.writeFileSync(piResultPath, `${JSON.stringify(piResult, null, 2)}\n`);
-fs.writeFileSync(finalResultPath, `${JSON.stringify(piResult, null, 2)}\n`);
-fs.writeFileSync(piSummaryPath, renderPiSummary(piResult));
-console.log(renderPiSummary(piResult));
+
+fs.writeFileSync(piResultPath, `${JSON.stringify(result, null, 2)}\n`);
+fs.writeFileSync(finalResultPath, `${JSON.stringify(result, null, 2)}\n`);
+fs.writeFileSync(piSummaryPath, renderSummary(result));
+console.log(renderSummary(result));
 
 function parseArgs(argv) {
   const parsed = {};
@@ -130,14 +120,26 @@ function readJson(relativeOrAbsolutePath) {
   return JSON.parse(fs.readFileSync(path.resolve(root, relativeOrAbsolutePath), "utf8"));
 }
 
-function readYaml(relativeOrAbsolutePath) {
-  return yaml.parse(fs.readFileSync(path.resolve(root, relativeOrAbsolutePath), "utf8"));
+function getChangedFiles(base, head) {
+  const commands = [
+    ["diff", "--name-only", `${base}...${head}`],
+    ["diff", "--name-only", `${base}..${head}`],
+  ];
+  for (const command of commands) {
+    try {
+      const stdout = execFileSync("git", command, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+      return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).sort();
+    } catch {
+      // Try next diff form. Some checkouts do not have a merge base locally.
+    }
+  }
+  throw new Error(`failed to diff ${base}..${head}; ensure both refs are fetched`);
 }
 
-function getDiff(baseRef, headRef, maxChars) {
+function getDiff(base, head, maxChars) {
   const commands = [
-    ["diff", "--find-renames", "--find-copies", "--unified=80", `${baseRef}...${headRef}`],
-    ["diff", "--find-renames", "--find-copies", "--unified=80", `${baseRef}..${headRef}`],
+    ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}...${head}`],
+    ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}..${head}`],
   ];
   for (const command of commands) {
     try {
@@ -150,45 +152,38 @@ function getDiff(baseRef, headRef, maxChars) {
   return "";
 }
 
-function buildPrompt({ baseline, manifest, schema, diff }) {
-  const manifestSummary = (manifest.tests || []).map((test) => ({
-    id: test.id,
-    workflow: test.workflow,
-    job: test.job,
-    script: test.script,
-    runner: test.runner,
-    cost: test.cost,
-    domains: test.domains,
-    risk_areas: test.risk_areas,
-  }));
+function buildPrompt({ baseRef, headRef, changedFiles, schema, diff }) {
+  return `You are the NemoClaw E2E Advisor running in CI for an internal PR.
 
-  return `You are the NemoClaw semantic E2E test advisor running in CI.
+Your job is to semantically review the PR and the repository, then recommend which E2E tests should run.
 
-Goal: analyze this PR/branch statically and decide which existing E2E tests should run, plus whether a new E2E test is recommended. The deterministic baseline is path-rule based; improve it using semantic reasoning over the diff and repository files.
+This is intentionally NOT a path-rule or manifest-driven advisor. Use your judgment. Inspect repository files with read-only tools to understand:
+- existing E2E workflows under .github/workflows,
+- E2E scripts and scenarios under test/e2e,
+- source files touched by the PR,
+- nearby tests and code paths related to the change.
 
 Hard constraints:
 - Static analysis only. Do not execute repository scripts, tests, package managers, or generated code.
-- You may use only read-only inspection tools if needed: read, grep, find, ls.
-- Prefer exact test IDs from the manifest. Do not invent existing test IDs.
-- If behavior is not covered by existing tests, add a newE2eRecommendations entry instead of inventing a test ID.
-- Required tests are for high-risk behavior likely to break real users or security. Optional tests are useful but not mandatory.
-- If no existing E2E is required, set requiredTests to [] and noE2eReason to a concise explanation.
+- Use only read-only tools: read, grep, find, ls.
+- Recommend existing E2E tests by their actual workflow job/script names after inspecting the repo.
+- Do not invent existing tests. If behavior is not covered, add a newE2eRecommendations entry.
+- Required tests are for changes that can break real user flows, security boundaries, networking, credentials, installer/onboarding, sandbox lifecycle, inference routing, or deployment behavior.
+- Optional tests are useful confidence checks but not merge-blocking recommendations.
+- If no E2E is needed, set requiredTests to [] and explain in noE2eReason.
 - Return JSON only. No markdown, no code fences, no commentary outside JSON.
 
-Output must conform to this JSON schema shape. You may omit optional dispatchHint if no nightly jobs are required:
+Output must conform to this JSON schema shape:
 ${JSON.stringify(schema, null, 2)}
 
 Required output metadata values:
 - version: 1
-- baseRef: ${JSON.stringify(baseline.baseRef)}
-- headRef: ${JSON.stringify(baseline.headRef)}
-- changedFiles: exactly the provided changedFiles array
+- baseRef: ${JSON.stringify(baseRef)}
+- headRef: ${JSON.stringify(headRef)}
+- changedFiles: exactly this array: ${JSON.stringify(changedFiles)}
 
-Existing E2E manifest summary:
-${JSON.stringify(manifestSummary, null, 2)}
-
-Deterministic baseline result to review/improve:
-${JSON.stringify(baseline, null, 2)}
+Changed files:
+${changedFiles.map((file) => `- ${file}`).join("\n") || "- <none>"}
 
 Git diff, truncated if large:
 ${diff || "<no diff available>"}
@@ -197,12 +192,7 @@ ${diff || "<no diff available>"}
 
 function extractJson(text) {
   const trimmed = text.trim();
-  const candidates = [
-    trimmed,
-    fenced(trimmed),
-    tagged(trimmed, "e2e_advisor_json"),
-    balancedObject(trimmed),
-  ].filter(Boolean);
+  const candidates = [trimmed, fenced(trimmed), tagged(trimmed, "e2e_advisor_json"), balancedObject(trimmed)].filter(Boolean);
 
   for (const candidate of candidates) {
     try {
@@ -233,32 +223,83 @@ function balancedObject(text) {
   return text.slice(start, end + 1);
 }
 
-function normalizePiResult(result, baseline) {
+function normalizePiResult(result, metadata) {
   const normalized = {
     version: 1,
-    baseRef: baseline.baseRef,
-    headRef: baseline.headRef,
-    changedFiles: baseline.changedFiles,
-    classifiedDomains: Array.isArray(result.classifiedDomains) ? result.classifiedDomains : baseline.classifiedDomains,
-    requiredTests: Array.isArray(result.requiredTests) ? result.requiredTests : baseline.requiredTests,
-    optionalTests: Array.isArray(result.optionalTests) ? result.optionalTests : baseline.optionalTests,
-    newE2eRecommendations: Array.isArray(result.newE2eRecommendations)
-      ? result.newE2eRecommendations
-      : baseline.newE2eRecommendations,
-    noE2eReason: Object.hasOwn(result, "noE2eReason") ? result.noE2eReason : baseline.noE2eReason,
-    confidence: ["low", "medium", "high"].includes(result.confidence) ? result.confidence : baseline.confidence,
+    baseRef: metadata.baseRef,
+    headRef: metadata.headRef,
+    changedFiles: metadata.changedFiles,
+    classifiedDomains: sanitizeDomains(result.classifiedDomains),
+    requiredTests: sanitizeTests(result.requiredTests),
+    optionalTests: sanitizeTests(result.optionalTests),
+    newE2eRecommendations: sanitizeNewRecommendations(result.newE2eRecommendations),
+    noE2eReason: typeof result.noE2eReason === "string" || result.noE2eReason === null ? result.noE2eReason : null,
+    confidence: ["low", "medium", "high"].includes(result.confidence) ? result.confidence : "medium",
   };
 
-  if (result.dispatchHint && typeof result.dispatchHint === "object") {
-    normalized.dispatchHint = result.dispatchHint;
-  } else if (baseline.dispatchHint) {
-    normalized.dispatchHint = baseline.dispatchHint;
+  const dispatchHint = sanitizeDispatchHint(result.dispatchHint);
+  if (dispatchHint) {
+    normalized.dispatchHint = dispatchHint;
   }
 
   return normalized;
 }
 
-function renderPiSummary(result) {
+function sanitizeDomains(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      domain: stringOrUndefined(item.domain),
+      reason: stringOrUndefined(item.reason),
+      confidence: ["low", "medium", "high"].includes(item.confidence) ? item.confidence : "medium",
+      matchedFiles: Array.isArray(item.matchedFiles) ? item.matchedFiles.filter((file) => typeof file === "string") : [],
+    }))
+    .filter((item) => item.domain && item.reason);
+}
+
+function sanitizeTests(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      id: stringOrUndefined(item.id),
+      reason: stringOrUndefined(item.reason),
+      workflow: stringOrUndefined(item.workflow),
+      job: stringOrUndefined(item.job),
+      script: stringOrUndefined(item.script),
+      cost: stringOrUndefined(item.cost),
+      runner: stringOrUndefined(item.runner),
+    }))
+    .filter((item) => item.id && item.reason)
+    .map(dropUndefinedValues);
+}
+
+function sanitizeNewRecommendations(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      domain: stringOrUndefined(item.domain),
+      reason: stringOrUndefined(item.reason),
+      suggestedTest: stringOrUndefined(item.suggestedTest),
+      priority: ["low", "medium", "high"].includes(item.priority) ? item.priority : "medium",
+    }))
+    .filter((item) => item.domain && item.reason && item.suggestedTest);
+}
+
+function sanitizeDispatchHint(value) {
+  if (!value || typeof value !== "object") return undefined;
+  if (typeof value.workflow !== "string" || typeof value.jobsInput !== "string") return undefined;
+  return { workflow: value.workflow, jobsInput: value.jobsInput };
+}
+
+function stringOrUndefined(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function dropUndefinedValues(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
+}
+
+function renderSummary(result) {
   const lines = [];
   lines.push("# Pi Semantic E2E Advisor");
   lines.push("");
@@ -319,26 +360,12 @@ function hasLikelyPiCredential() {
     "GEMINI_API_KEY",
     "GOOGLE_GENERATIVE_AI_API_KEY",
     "GOOGLE_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "GROQ_API_KEY",
-    "CEREBRAS_API_KEY",
-    "XAI_API_KEY",
-    "FIREWORKS_API_KEY",
-    "OPENROUTER_API_KEY",
-    "AI_GATEWAY_API_KEY",
-    "ZAI_API_KEY",
-    "MISTRAL_API_KEY",
-    "MINIMAX_API_KEY",
-    "MOONSHOT_API_KEY",
-    "OPENCODE_API_KEY",
-    "KIMI_API_KEY",
-    "CLOUDFLARE_API_KEY",
     "AWS_BEARER_TOKEN_BEDROCK",
   ];
   return Boolean(process.env.PI_E2E_ADVISOR_API_KEY) || credentialEnv.some((name) => Boolean(process.env[name])) || Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
 }
 
-function preparePiConfig(env, provider) {
+function preparePiConfig(env, provider, model) {
   if (!env.PI_E2E_ADVISOR_API_KEY) {
     return;
   }
@@ -347,22 +374,21 @@ function preparePiConfig(env, provider) {
     env[envName] = env.PI_E2E_ADVISOR_API_KEY;
   }
 
-  const templatePath = path.isAbsolute(modelsTemplatePath)
-    ? modelsTemplatePath
-    : path.resolve(advisorRoot, modelsTemplatePath);
-  if (fs.existsSync(templatePath)) {
-    fs.mkdirSync(piConfigDir, { recursive: true });
-    fs.writeFileSync(path.join(piConfigDir, "auth.json"), "{}\n", { mode: 0o600 });
-    const settings = {
-      defaultProvider: provider || "anthropic",
-      defaultModel: model || defaultModelForProvider(provider),
-      defaultThinkingLevel: "medium",
-    };
-    fs.writeFileSync(path.join(piConfigDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
-    const models = fs.readFileSync(templatePath, "utf8").replaceAll("__PI_E2E_ADVISOR_API_KEY__", env.PI_E2E_ADVISOR_API_KEY);
-    fs.writeFileSync(path.join(piConfigDir, "models.json"), models, { mode: 0o600 });
-    env.PI_CODING_AGENT_DIR = path.resolve(root, piConfigDir);
+  const templatePath = path.isAbsolute(modelsTemplatePath) ? modelsTemplatePath : path.resolve(advisorRoot, modelsTemplatePath);
+  if (!fs.existsSync(templatePath)) {
+    return;
   }
+
+  fs.mkdirSync(piConfigDir, { recursive: true });
+  fs.writeFileSync(path.join(piConfigDir, "auth.json"), "{}\n", { mode: 0o600 });
+  fs.writeFileSync(path.join(piConfigDir, "settings.json"), `${JSON.stringify({
+    defaultProvider: provider || "anthropic",
+    defaultModel: model || defaultModelForProvider(provider),
+    defaultThinkingLevel: "medium",
+  }, null, 2)}\n`);
+  const models = fs.readFileSync(templatePath, "utf8").replaceAll("__PI_E2E_ADVISOR_API_KEY__", env.PI_E2E_ADVISOR_API_KEY);
+  fs.writeFileSync(path.join(piConfigDir, "models.json"), models, { mode: 0o600 });
+  env.PI_CODING_AGENT_DIR = piConfigDir;
 }
 
 function providerEnvName(provider) {
@@ -371,19 +397,6 @@ function providerEnvName(provider) {
   if (normalized.includes("openai")) return "OPENAI_API_KEY";
   if (normalized.includes("azure")) return "AZURE_OPENAI_API_KEY";
   if (normalized.includes("google") || normalized.includes("gemini")) return "GEMINI_API_KEY";
-  if (normalized.includes("deepseek")) return "DEEPSEEK_API_KEY";
-  if (normalized.includes("groq")) return "GROQ_API_KEY";
-  if (normalized.includes("cerebras")) return "CEREBRAS_API_KEY";
-  if (normalized.includes("xai")) return "XAI_API_KEY";
-  if (normalized.includes("fireworks")) return "FIREWORKS_API_KEY";
-  if (normalized.includes("openrouter")) return "OPENROUTER_API_KEY";
-  if (normalized.includes("vercel")) return "AI_GATEWAY_API_KEY";
-  if (normalized.includes("zai")) return "ZAI_API_KEY";
-  if (normalized.includes("mistral")) return "MISTRAL_API_KEY";
-  if (normalized.includes("minimax")) return "MINIMAX_API_KEY";
-  if (normalized.includes("moonshot")) return "MOONSHOT_API_KEY";
-  if (normalized.includes("opencode")) return "OPENCODE_API_KEY";
-  if (normalized.includes("kimi")) return "KIMI_API_KEY";
   return "OPENAI_API_KEY";
 }
 
@@ -395,28 +408,36 @@ function defaultModelForProvider(provider) {
 }
 
 function writeFailure(reason) {
-  const failure = {
-    failed: true,
-    reason,
-    promptPath,
-    baselinePath,
-    rawPath,
-  };
-  fs.writeFileSync(piResultPath, `${JSON.stringify(failure, null, 2)}\n`);
-  fs.copyFileSync(path.resolve(root, baselinePath), finalResultPath);
-  fs.writeFileSync(piSummaryPath, `# Pi Semantic E2E Advisor\n\nFailed: ${reason}\n\nFalling back to deterministic baseline in \`e2e-advisor-final-result.json\`.\n`);
+  const failureResult = unavailableResult(reason, true);
+  fs.writeFileSync(piResultPath, `${JSON.stringify({ failed: true, reason, promptPath, rawPath }, null, 2)}\n`);
+  fs.writeFileSync(finalResultPath, `${JSON.stringify(failureResult, null, 2)}\n`);
+  fs.writeFileSync(piSummaryPath, `# Pi Semantic E2E Advisor\n\nFailed: ${reason}\n`);
   console.error(`Pi semantic analysis failed: ${reason}`);
 }
 
-function writeSkipped(reason) {
-  const skipped = {
-    skipped: true,
-    reason,
-    promptPath,
-    baselinePath,
-  };
-  fs.writeFileSync(piResultPath, `${JSON.stringify(skipped, null, 2)}\n`);
+function writeUnavailable(reason) {
+  const result = unavailableResult(reason, false);
+  fs.writeFileSync(piResultPath, `${JSON.stringify({ skipped: true, reason, promptPath }, null, 2)}\n`);
+  fs.writeFileSync(finalResultPath, `${JSON.stringify(result, null, 2)}\n`);
   fs.writeFileSync(piSummaryPath, `# Pi Semantic E2E Advisor\n\nSkipped: ${reason}\n`);
-  fs.copyFileSync(path.resolve(root, baselinePath), finalResultPath);
-  console.log(`Pi semantic analysis skipped: ${reason}`);
+}
+
+function unavailableResult(reason, failed) {
+  return {
+    version: 1,
+    baseRef,
+    headRef,
+    changedFiles,
+    classifiedDomains: [],
+    requiredTests: [],
+    optionalTests: [],
+    newE2eRecommendations: failed ? [{
+      domain: "e2e-advisor",
+      reason: `Pi semantic review failed: ${reason}`,
+      suggestedTest: "Re-run E2E Advisor after fixing Pi execution.",
+      priority: "high",
+    }] : [],
+    noE2eReason: failed ? null : `Pi semantic review unavailable: ${reason}`,
+    confidence: "low",
+  };
 }
