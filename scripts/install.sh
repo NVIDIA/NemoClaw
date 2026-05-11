@@ -555,6 +555,7 @@ usage() {
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
+  printf "                                  | hermes-provider\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -1762,6 +1763,94 @@ ensure_docker() {
   fi
 }
 
+# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback).
+# Echoes "DGX Spark", "DGX Station", or empty. Used to gate the express
+# install prompt; only platforms with a known sensible default are offered.
+detect_express_platform() {
+  local model=""
+  if [ -r /sys/class/dmi/id/product_name ]; then
+    model="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
+  fi
+  if [ -z "$model" ] && [ -r /sys/firmware/devicetree/base/model ]; then
+    model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
+  fi
+  case "$model" in
+    *DGX*Spark*) printf "DGX Spark" ;;
+    *DGX*Station*) printf "DGX Station" ;;
+    *) ;;
+  esac
+}
+
+# Prompt the user to opt into express install on Spark/Station. Sets the
+# non-interactive + provider/model env vars when accepted. Skipped when
+# the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
+# no TTY.
+maybe_offer_express_install() {
+  local platform
+  platform="$(detect_express_platform)"
+  # Not on a platform we have an express recipe for — say nothing.
+  if [ -z "$platform" ]; then
+    return 0
+  fi
+  # On a supported platform but a skip condition applies — explain why so
+  # the user understands they could have gotten express otherwise.
+  if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_NO_EXPRESS=1)."
+    return 0
+  fi
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    info "Detected ${platform}. Skipping express prompt (--non-interactive set)."
+    return 0
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
+    return 0
+  fi
+  local reply=""
+  if [ -t 0 ]; then
+    info "Detected ${platform}."
+    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    if ! IFS= read -r reply; then
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    info "Detected ${platform}."
+    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    if ! IFS= read -r reply <&3; then
+      exec 3<&-
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
+    exec 3<&-
+  else
+    info "Detected ${platform}. Skipping express prompt (no TTY)."
+    return 0
+  fi
+  reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
+  case "$reply" in
+    "" | y | yes)
+      info "Using express install for ${platform}."
+      NON_INTERACTIVE=1
+      export NEMOCLAW_NON_INTERACTIVE=1
+      export NEMOCLAW_YES=1
+      export NEMOCLAW_POLICY_MODE=suggested
+      case "$platform" in
+        "DGX Spark")
+          export NEMOCLAW_PROVIDER=install-ollama
+          export NEMOCLAW_MODEL=qwen3.6:35b
+          ;;
+        "DGX Station")
+          export NEMOCLAW_PROVIDER=install-vllm
+          ;;
+      esac
+      ;;
+    *)
+      info "Skipping express install. Continuing with interactive flow."
+      ;;
+  esac
+}
+
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -1815,6 +1904,13 @@ main() {
   preflight_usage_notice_prompt
 
   ensure_docker
+
+  # Offer express install on supported platforms (DGX Spark / Station). Runs
+  # AFTER the third-party notice so the user has explicitly accepted the
+  # license before opting into the unattended path. Express only sets the
+  # provider/model/policy + non-interactive vars; license acceptance is
+  # already recorded by preflight above.
+  maybe_offer_express_install
 
   _INSTALL_START=$SECONDS
   print_banner

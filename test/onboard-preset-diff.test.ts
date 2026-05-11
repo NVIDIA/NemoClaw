@@ -59,6 +59,8 @@ function buildPreamble({
   return String.raw`
 // All stubs MUST be installed before requiring onboard so its module-level
 // destructuring picks up the patched functions.
+Object.defineProperty(process, "platform", { value: "darwin" });
+
 const resolver = require(${resolveOpenshellPath});
 resolver.resolveOpenshell = () => "/fake/openshell";
 

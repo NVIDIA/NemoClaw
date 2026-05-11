@@ -25,6 +25,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       envFile: null,
       format: "yaml",
     },
+    inferenceProviderOptions: [],
     stateDirs: [],
     stateFiles: [],
     versionCommand: "test-agent --version",

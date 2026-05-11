@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { CLI_NAME } from "../../cli/branding";
 import { dockerCapture, dockerInspect } from "../../adapters/docker";
+import { stripAnsi } from "../../adapters/openshell/client";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { captureOpenshell, getOpenshellBinary } from "../../adapters/openshell/runtime";
@@ -83,7 +84,14 @@ function renderSnapshotTable(
 
 // Query the running src pod's image reference via `kubectl` inside the
 // gateway container. Returns null on any failure.
-function resolveSrcPodImage(srcName: string): string | null {
+function resolveSrcPodImage(srcName: string, srcEntry?: SandboxEntry | { name: string }): string | null {
+  const registeredImage = (srcEntry as { imageTag?: string | null } | undefined)?.imageTag;
+  const registeredDriver = (srcEntry as { openshellDriver?: string | null } | undefined)
+    ?.openshellDriver;
+  if (registeredDriver === "docker" && registeredImage) {
+    return registeredImage;
+  }
+
   const gatewayContainer = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
   try {
     const output = dockerCapture(
@@ -122,7 +130,7 @@ async function autoCreateSandboxFromSource(
   const basePolicy = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const openshellBin = getOpenshellBinary();
 
-  const fromImage = resolveSrcPodImage(srcName);
+  const fromImage = resolveSrcPodImage(srcName, srcEntry);
   if (!fromImage) {
     console.error(`  Cannot auto-create '${dstName}': could not resolve '${srcName}' pod image.`);
     console.error(`  Create '${dstName}' manually with '${CLI_NAME} onboard'.`);
@@ -174,7 +182,7 @@ async function autoCreateSandboxFromSource(
 
   // Set up DNS proxy in the new pod (same step onboard runs after sandbox create).
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
-  if (fs.existsSync(dnsScript)) {
+  if ((srcEntry as { openshellDriver?: string | null }).openshellDriver !== "docker" && fs.existsSync(dnsScript)) {
     run(["bash", dnsScript, NEMOCLAW_GATEWAY_NAME, dstName], { ignoreError: true });
   }
 
@@ -197,7 +205,17 @@ async function autoCreateSandboxFromSource(
 // Returns true only when the gateway Docker container is confirmed running.
 // `openshell sandbox list` reads a local registry and exits 0 even when the
 // gateway is stopped (#2673), so we probe the container directly instead.
-function probeGatewayRunning(): boolean {
+function probeDockerDriverGatewayRunning(): boolean {
+  const status = captureOpenshell(["status"], { ignoreError: true, timeout: 10000 });
+  const clean = stripAnsi(status.output || "");
+  return status.status === 0 && /^\s*Status:\s*Connected\b/im.test(clean);
+}
+
+function probeGatewayRunning(sandboxName?: string): boolean {
+  const entry = sandboxName ? registry.getSandbox(sandboxName) : null;
+  if (entry?.openshellDriver === "docker") {
+    return probeDockerDriverGatewayRunning();
+  }
   const container = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
   const result = dockerInspect(
     ["--type", "container", "--format", "{{.State.Running}}", container],
@@ -211,7 +229,7 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
   switch (subcommand) {
     case "create": {
       const opts = parseSnapshotCreateFlags(subArgs.slice(1));
-      if (!probeGatewayRunning()) {
+      if (!probeGatewayRunning(sandboxName)) {
         console.error("  Failed to query live sandbox state from OpenShell.");
         process.exit(1);
       }
@@ -280,7 +298,7 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
         parsed.targetSandbox === sandboxName
           ? sandboxName
           : validateName(parsed.targetSandbox, "target sandbox name");
-      if (!probeGatewayRunning()) {
+      if (!probeGatewayRunning(sandboxName)) {
         console.error("  Failed to query live sandbox state from OpenShell.");
         process.exit(1);
       }

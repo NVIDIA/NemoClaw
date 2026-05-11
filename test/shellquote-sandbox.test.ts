@@ -104,6 +104,7 @@ try {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_NON_INTERACTIVE = "1";
   process.env.NEMOCLAW_HEALTH_POLL_COUNT = "1";
+  Object.defineProperty(process, "platform", { value: "darwin" });
   const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands }));
 } catch (error) {

@@ -10,6 +10,12 @@ export interface SandboxEntry {
   model?: string | null;
   provider?: string | null;
   gpuEnabled?: boolean;
+  hostGpuDetected?: boolean;
+  sandboxGpuEnabled?: boolean;
+  sandboxGpuMode?: string | null;
+  sandboxGpuDevice?: string | null;
+  openshellDriver?: string | null;
+  openshellVersion?: string | null;
   policies?: string[] | null;
   providerCredentialHashes?: Record<string, string> | null;
   messagingChannels?: string[] | null;
@@ -51,6 +57,12 @@ export interface SandboxInventoryRow {
   model: string | null;
   provider: string | null;
   gpuEnabled: boolean;
+  hostGpuDetected: boolean;
+  sandboxGpuEnabled: boolean;
+  sandboxGpuMode: string | null;
+  sandboxGpuDevice: string | null;
+  openshellDriver: string | null;
+  openshellVersion: string | null;
   policies: string[];
   agent: string | null;
   dashboardPort?: number | null;
@@ -95,6 +107,12 @@ export interface StatusSandboxRow {
   model: string | null;
   provider: string | null;
   gpuEnabled: boolean;
+  hostGpuDetected: boolean;
+  sandboxGpuEnabled: boolean;
+  sandboxGpuMode: string | null;
+  sandboxGpuDevice: string | null;
+  openshellDriver: string | null;
+  openshellVersion: string | null;
   policies: string[];
   agent: string | null;
   dashboardPort?: number | null;
@@ -129,12 +147,22 @@ function buildSandboxInventoryRow(
   getActiveSessionCount?: (sandboxName: string) => number | null,
 ): SandboxInventoryRow {
   const activeSessionCount = getActiveSessionCount ? getActiveSessionCount(sandbox.name) : null;
+  const sandboxGpuEnabled =
+    typeof sandbox.sandboxGpuEnabled === "boolean"
+      ? sandbox.sandboxGpuEnabled
+      : sandbox.gpuEnabled === true;
 
   return {
     name: sandbox.name,
     model: sandbox.model || null,
     provider: sandbox.provider || null,
     gpuEnabled: sandbox.gpuEnabled === true,
+    hostGpuDetected: sandbox.hostGpuDetected === true,
+    sandboxGpuEnabled,
+    sandboxGpuMode: safeStatusString(sandbox.sandboxGpuMode || null),
+    sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
+    openshellDriver: safeStatusString(sandbox.openshellDriver || null),
+    openshellVersion: safeStatusString(sandbox.openshellVersion || null),
     policies: Array.isArray(sandbox.policies) ? sandbox.policies : [],
     agent: sandbox.agent || null,
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
@@ -225,7 +253,7 @@ export function renderSandboxInventoryText(
     const modelDrifted = !!(useLive && liveInference.model && liveInference.model !== sandbox.model);
     const providerDrifted =
       !!(useLive && liveInference.provider && liveInference.provider !== sandbox.provider);
-    const gpu = sandbox.gpuEnabled ? "GPU" : "CPU";
+    const gpu = sandbox.sandboxGpuEnabled ? "sandbox GPU" : "CPU sandbox";
     const presets = sandbox.policies.length > 0 ? sandbox.policies.join(", ") : "none";
     const connected = sandbox.connected ? " ●" : "";
     const agent = sandbox.agent || "openclaw";
@@ -267,11 +295,21 @@ function buildStatusSandboxRow(
     typeof sandbox.dashboardPort === "number" && Number.isFinite(sandbox.dashboardPort)
       ? sandbox.dashboardPort
       : null;
+  const sandboxGpuEnabled =
+    typeof sandbox.sandboxGpuEnabled === "boolean"
+      ? sandbox.sandboxGpuEnabled
+      : sandbox.gpuEnabled === true;
   return {
     name: safeStatusString(sandbox.name) || sandbox.name,
     model: safeStatusString(liveModel || sandbox.model || null),
     provider: safeStatusString(liveProvider || sandbox.provider || null),
     gpuEnabled: sandbox.gpuEnabled === true,
+    hostGpuDetected: sandbox.hostGpuDetected === true,
+    sandboxGpuEnabled,
+    sandboxGpuMode: safeStatusString(sandbox.sandboxGpuMode || null),
+    sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
+    openshellDriver: safeStatusString(sandbox.openshellDriver || null),
+    openshellVersion: safeStatusString(sandbox.openshellVersion || null),
     policies: Array.isArray(sandbox.policies)
       ? sandbox.policies
           .filter((policy): policy is string => typeof policy === "string")

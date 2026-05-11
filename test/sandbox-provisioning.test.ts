@@ -180,8 +180,8 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
   });
 });
 
-describe("sandbox provisioning: procps debug tools (#2343)", () => {
-  it("base apt layer requests procps and the SFTP server", () => {
+describe("sandbox provisioning: base runtime tools", () => {
+  it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
     const lists = path.join(tmp, "apt-lists");
@@ -198,18 +198,20 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
       ]);
       expect(result.status).toBe(0);
       expect(calls).toContain("apt-get update");
-      expect(calls).toContain("procps=2:4.0.2-3");
-      expect(calls).toContain("openssh-sftp-server=1:9.2p1-2+deb12u9");
+      expect(calls).toContain("procps=2:4.0.4-9");
+      expect(calls).toContain("e2fsprogs=1.47.2-3+b10");
+      expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u2");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("runtime hardening installs procps when a stale base lacks ps", () => {
+  it("runtime hardening installs procps and e2fsprogs when a stale base lacks ps and chattr", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-procps-"));
     const log = path.join(tmp, "calls.log");
     const marker = path.join(tmp, "ps-installed");
+    const chattrMarker = path.join(tmp, "chattr-installed");
     const lists = path.join(tmp, "apt-lists");
     fs.mkdirSync(lists);
     const command = dockerRunCommandBetween(
@@ -222,9 +224,10 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
       "set -euo pipefail",
       `call_log=${JSON.stringify(log)}`,
       `ps_marker=${JSON.stringify(marker)}`,
+      `chattr_marker=${JSON.stringify(chattrMarker)}`,
       'apt-mark() { printf "apt-mark %s\\n" "$*" >> "$call_log"; }',
-      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.2-3"* ]]; then touch "$ps_marker"; fi; }',
-      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; else builtin command "$@"; fi; }',
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b10"* ]]; then touch "$chattr_marker"; fi; }',
+      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; else builtin command "$@"; fi; }',
       'ps() { [ -f "$ps_marker" ] || return 127; printf "procps test version\\n"; }',
       command,
     ].join("\n");
@@ -234,10 +237,13 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       const calls = fs.readFileSync(log, "utf-8");
-      expect(calls).toContain("apt-mark manual procps");
+      expect(calls).toContain("apt-mark manual procps e2fsprogs");
       expect(calls).toContain("apt-get autoremove --purge -y");
       expect(calls).toContain("apt-get update");
-      expect(calls).toContain("apt-get install -y --no-install-recommends procps=2:4.0.2-3");
+      expect(calls).toContain(
+        "apt-get install -y --no-install-recommends procps=2:4.0.4-9",
+      );
+      expect(calls).toContain("apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b10");
       expect(result.stdout).toContain("procps test version");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -577,6 +577,13 @@ EOF
       expect(src).not.toContain("_PROXY_MARKER_BEGIN");
     });
 
+    it("hermes start.sh persists OpenShell proxy CA env for connect sessions", () => {
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
+      expect(src).toContain("SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO");
+      expect(src).toContain("export REQUESTS_CA_BUNDLE=");
+      expect(src).toContain("export GIT_SSL_CAINFO=");
+    });
+
     it("hermes start.sh routes Discord through the local decode proxy", () => {
       const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain('export DISCORD_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"');

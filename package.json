@@ -25,7 +25,7 @@
     "lint:fix": "npx @biomejs/biome lint --write . && npm run checks",
     "lint:ts": "cd nemoclaw && npm run check",
     "format": "npx @biomejs/biome format --write .",
-    "format:check": "npx @biomejs/biome format --check .",
+    "format:check": "npx @biomejs/biome format .",
     "format:ts": "cd nemoclaw && npm run lint:fix && npm run format",
     "check:installer-hash": "bash scripts/check-installer-hash.sh",
     "typecheck": "tsc -p jsconfig.json",
