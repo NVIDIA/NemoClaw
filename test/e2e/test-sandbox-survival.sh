@@ -161,7 +161,9 @@ stop_gateway_runtime() {
         kill -0 "$pid" 2>/dev/null || break
         sleep 1
       done
-      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+      fi
     fi
   fi
 

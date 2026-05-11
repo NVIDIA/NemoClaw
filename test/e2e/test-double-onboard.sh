@@ -13,6 +13,8 @@
 # missing/invalid NVIDIA_API_KEY causing a late failure after sandbox creation;
 # that no longer reflects current non-interactive onboarding behavior.
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 # Three sequential sandbox creations (~5-7 min each) plus cleanup phases need
@@ -141,7 +143,9 @@ stop_gateway_runtime() {
         kill -0 "$pid" 2>/dev/null || break
         sleep 1
       done
-      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+      fi
     fi
   fi
 

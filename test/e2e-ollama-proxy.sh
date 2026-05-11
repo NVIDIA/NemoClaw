@@ -17,8 +17,12 @@ MOCK_PID=""
 PROXY_PID=""
 
 cleanup() {
-  [ -n "${MOCK_PID:-}" ] && kill "$MOCK_PID" 2>/dev/null || true
-  [ -n "${PROXY_PID:-}" ] && kill "$PROXY_PID" 2>/dev/null || true
+  if [ -n "${MOCK_PID:-}" ]; then
+    kill "$MOCK_PID" 2>/dev/null || true
+  fi
+  if [ -n "${PROXY_PID:-}" ]; then
+    kill "$PROXY_PID" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 

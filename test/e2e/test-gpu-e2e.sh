@@ -32,6 +32,8 @@
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash test/e2e/test-gpu-e2e.sh
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 PASS=0
@@ -369,7 +371,7 @@ fi
 
 # 4.5e: Proxy accepts correct token
 if [ -f "$TOKEN_FILE" ]; then
-  PROXY_TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+  PROXY_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
   PROXY_AUTH="Bearer $PROXY_TOKEN"
   PROXY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
     -H "Authorization: $PROXY_AUTH" \
@@ -408,7 +410,7 @@ if [ -n "$PROXY_PID_BEFORE" ] && [ -f "$TOKEN_FILE" ]; then
     fi
     # Restart from persisted token (simulates what ensureOllamaAuthProxy does
     # on sandbox connect after a host reboot)
-    RECOVERED_TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+    RECOVERED_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
     OLLAMA_PROXY_TOKEN="$RECOVERED_TOKEN" \
       OLLAMA_PROXY_PORT="$PROXY_PORT" \
       OLLAMA_BACKEND_PORT=11434 \

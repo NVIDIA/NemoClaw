@@ -1813,7 +1813,7 @@ if [ "$(id -u)" -ne 0 ]; then
   }
   fix_openclaw_ownership
   normalize_mutable_config_perms
-  seed_default_workspace_templates
+  seed_default_workspace_templates /sandbox/.openclaw/workspace "" /sandbox/.openclaw/openclaw.json
   write_auth_profile
   harden_auth_profiles
 
@@ -1992,7 +1992,7 @@ provision_agent_workspaces
 # Run as the sandbox user so the seeded files inherit sandbox:sandbox
 # ownership (the function's own cp calls would otherwise produce
 # root-owned files in this branch). See function comment for context.
-gosu sandbox bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates"
+gosu sandbox bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json"
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh

@@ -22,6 +22,8 @@
 #
 # Triggered via workflow_dispatch (manual) or as part of nightly.
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 PASS=0
@@ -56,9 +58,13 @@ section() {
 
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() {
-  [ -n "${PROXY_PID:-}" ] && kill "$PROXY_PID" 2>/dev/null || true
+  if [ -n "${PROXY_PID:-}" ]; then
+    kill "$PROXY_PID" 2>/dev/null || true
+  fi
   # Don't kill system Ollama — only kill if we started it
-  [ -n "${OLLAMA_PID:-}" ] && kill "$OLLAMA_PID" 2>/dev/null || true
+  if [ -n "${OLLAMA_PID:-}" ]; then
+    kill "$OLLAMA_PID" 2>/dev/null || true
+  fi
   rm -rf "$TOKEN_DIR"
 }
 trap cleanup EXIT
@@ -328,7 +334,7 @@ else
 fi
 
 # 6c: Token file content matches
-FILE_TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+FILE_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
 if [ "$FILE_TOKEN" = "$TOKEN" ]; then
   pass "Token file content matches generated token"
 else
@@ -357,7 +363,7 @@ fi
 
 # 7b: Restart proxy with persisted token (simulates reboot recovery)
 info "Restarting proxy from persisted token..."
-PERSISTED_TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+PERSISTED_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
 OLLAMA_PROXY_TOKEN="$PERSISTED_TOKEN" \
   OLLAMA_PROXY_PORT="$PROXY_PORT" \
   OLLAMA_BACKEND_PORT="$OLLAMA_PORT" \
