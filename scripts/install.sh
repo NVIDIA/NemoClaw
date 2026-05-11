@@ -1719,12 +1719,26 @@ ensure_docker() {
     fi
   fi
 
+  # Root can use the docker socket without being in the docker group, so
+  # skip the group setup entirely and just verify the daemon is reachable.
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! docker info >/dev/null 2>&1; then
+      error "Docker is installed but not reachable. Try: systemctl start docker"
+    fi
+    return 0
+  fi
+
+  # Use the effective UID's account name rather than $USER, which can be
+  # unset, stale, or overridden by env wrappers.
+  local current_user
+  current_user="$(id -un)"
+
   # Persisted group membership (NSS / /etc/group). Determines whether we
   # need to run usermod.
-  if ! id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
-    info "Your user '$USER' is not in the docker group."
+  if ! id -nG "$current_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    info "Your user '$current_user' is not in the docker group."
     info "The next step uses sudo to add you to the group so docker works without sudo. You may be prompted for your password."
-    sudo usermod -aG docker "$USER"
+    sudo usermod -aG docker "$current_user"
     needs_group_refresh=1
   fi
 
