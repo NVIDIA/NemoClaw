@@ -33,7 +33,7 @@ It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime,
 
 ## Get Started
 
-Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
+Run the following command to install NemoClaw and run your first sandboxed agent.
 
 ```{raw} html
 <style>
@@ -140,10 +140,9 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
 </div>
 ```
 
-Run `nemoclaw --help` in your terminal to view the full CLI reference.
-You can also clone the [NemoClaw repository](https://github.com/NVIDIA/NemoClaw) to explore the plugin source and blueprint.
+To find detailed instruction on the installation process, refer to the [Quickstart](get-started/quickstart.md) guide.
 
-Proceed to the [Quickstart](get-started/quickstart.md) for step-by-step instructions.
+To learn more about NemoClaw at a high level, refer to the [NemoClaw Overview](about/overview.md), [Architecture Overview](about/how-it-works.md), and [Ecosystem](about/ecosystem.md) pages.
 
 ---
 

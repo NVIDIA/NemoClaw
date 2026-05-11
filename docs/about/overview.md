@@ -20,7 +20,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Overview
+# Overview of NVIDIA NemoClaw
 
 NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
 NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
@@ -49,13 +49,11 @@ NemoClaw provides the following product capabilities.
 | Routed inference | Provider-routed model calls through the OpenShell gateway, transparent to the agent. Supports NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, compatible endpoints, local Ollama, local vLLM, and the Model Router. |
 | Layered protection | Network, filesystem, process, and inference controls that can be hot-reloaded or locked at creation. |
 
-## Challenge
+## Benefits of Using NemoClaw
 
-Autonomous AI agents like OpenClaw can make arbitrary network requests, access the host filesystem, and call any inference endpoint. Without guardrails, this creates security, cost, and compliance risks that grow as agents run unattended.
+Autonomous AI agents can make arbitrary network requests, access the host filesystem, and call any inference endpoint. Without guardrails, this creates security, cost, and compliance risks that grow as agents run unattended.
 
-## Benefits
-
-NemoClaw provides the following benefits.
+NemoClaw provides the following benefits to mitigate these risks.
 
 | Benefit                    | Description                                                                                                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|
@@ -77,10 +75,9 @@ You can use NemoClaw for various use cases including the following.
 
 ## Next Steps
 
+Navigate to the following topics to learn more about NemoClaw and how to install and use it.
+
+- [Architecture Overview](how-it-works.md) to understand how NemoClaw works.
 - [Ecosystem](ecosystem.md) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
-- [How It Works](how-it-works.md) to understand how NemoClaw works internally: plugin, blueprint, sandbox lifecycle.
-- [Quickstart](../get-started/quickstart.md) to install NemoClaw and run your first agent.
-- [Switch Inference Providers](../inference/switch-inference-providers.md) to configure the inference provider.
-- [Approve or Deny Network Requests](../network-policy/approve-network-requests.md) to manage egress approvals.
-- [Deploy to a Remote GPU Instance](../deployment/deploy-to-remote-gpu.md) for persistent operation.
-- [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) to observe agent behavior.
+- [Quickstart](../get-started/quickstart.md) to install NemoClaw and run your first sandboxed agent.
+- [Inference Options](../inference/inference-options.md) to check the inference providers that NemoClaw supports and how inference routing works.
