@@ -28,6 +28,7 @@ network_policies:
       - { path: /usr/bin/pip* }
       - { path: /usr/local/bin/python3* }
       - { path: /usr/local/bin/pip* }
+      - { path: /usr/local/bin/uv }
       - { path: /sandbox/.venv/bin/python* }
       - { path: /sandbox/.venv/bin/pip* }
       - { path: /sandbox/.uv/python/**/python* }
