@@ -94,6 +94,58 @@ stop_service() {
   fi
 }
 
+render_box() {
+  local columns="${COLUMNS:-100}"
+  if ! [[ "$columns" =~ ^[0-9]+$ ]] || [ "$columns" -le 0 ]; then
+    columns=100
+  fi
+
+  local min_inner=53
+  local max_inner=$((columns - 4))
+  if [ "$max_inner" -lt 0 ]; then
+    max_inner=0
+  fi
+
+  local inner="$min_inner"
+  local line needed visible hbar blank padded
+  for line in "$@"; do
+    needed=$((${#line} + 2))
+    if [ "$needed" -gt "$inner" ]; then
+      inner="$needed"
+    fi
+  done
+  if [ "$inner" -gt "$max_inner" ]; then
+    inner="$max_inner"
+  fi
+
+  printf -v hbar '%*s' "$inner" ''
+  hbar=${hbar// /─}
+  printf -v blank '%*s' "$inner" ''
+
+  printf '  ┌%s┐
+' "$hbar"
+  for line in "$@"; do
+    if [ -z "$line" ]; then
+      printf '  │%s│
+' "$blank"
+      continue
+    fi
+    if [ "${#line}" -gt "$inner" ]; then
+      visible=$((inner - 2))
+      if [ "$visible" -lt 0 ]; then
+        visible=0
+      fi
+      padded="${line:0:$visible}  "
+    else
+      printf -v padded '%-*s' "$inner" "$line"
+    fi
+    printf '  │%s│
+' "$padded"
+  done
+  printf '  └%s┘
+' "$hbar"
+}
+
 show_status() {
   mkdir -p "$PIDDIR"
   echo ""
@@ -143,25 +195,26 @@ do_start() {
     done
   fi
 
-  # Print banner
-  echo ""
-  echo "  ┌─────────────────────────────────────────────────────┐"
-  echo "  │  NemoClaw Services                                  │"
-  echo "  │                                                     │"
-
   local tunnel_url=""
   if [ -f "$PIDDIR/cloudflared.log" ]; then
     tunnel_url="$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$PIDDIR/cloudflared.log" 2>/dev/null | head -1 || true)"
   fi
 
+  local banner_lines=(
+    "  NemoClaw Services"
+    ""
+  )
   if [ -n "$tunnel_url" ]; then
-    printf "  │  Public URL:  %-40s│\n" "$tunnel_url"
+    banner_lines+=("  Public URL:  $tunnel_url")
   fi
+  banner_lines+=(
+    "  Messaging:   via OpenClaw native channels (if configured)"
+    ""
+    "  Run 'openshell term' to monitor egress approvals"
+  )
 
-  echo "  │  Messaging:   via OpenClaw native channels (if configured) │"
-  echo "  │                                                     │"
-  echo "  │  Run 'openshell term' to monitor egress approvals   │"
-  echo "  └─────────────────────────────────────────────────────┘"
+  echo ""
+  render_box "${banner_lines[@]}"
   echo ""
 }
 
