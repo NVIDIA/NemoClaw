@@ -122,7 +122,14 @@ concurrency:
 
 jobs:
   e2e-branch-validation:
-    # if: github.repository == 'NVIDIA/NemoClaw'  # Disabled for fork testing — re-enable before merge
+    # Allow both upstream (NVIDIA/NemoClaw) and the known CI fork (jyaunches/NemoClaw).
+    # The fork is used to validate the long-lived BREV_API_TOKEN + nightly wiring
+    # before the secret is rotated into the upstream repo. Other forks get a no-op
+    # skip so community PRs that touch this file don't try to run against someone
+    # else's Brev account.
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' ||
+      github.repository == 'jyaunches/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
