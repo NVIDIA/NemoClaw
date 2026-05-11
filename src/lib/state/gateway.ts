@@ -170,5 +170,8 @@ export function getSandboxStateFromOutputs(
 ): SandboxState {
   if (!sandboxName) return "missing";
   if (!getOutput) return "missing";
+  if (/\bNotFound\b|\bNot Found\b|sandbox not found/i.test(stripAnsi(getOutput))) {
+    return "missing";
+  }
   return isSandboxReady(listOutput, sandboxName) ? "ready" : "not_ready";
 }

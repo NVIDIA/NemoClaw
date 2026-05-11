@@ -46,6 +46,27 @@ describe("onboard oclif command", () => {
     expect(runOnboardAction).toHaveBeenCalledWith(["--non-interactive", "--yes"]);
   });
 
+  it("forwards sandbox GPU flags to legacy onboard parsing", async () => {
+    await OnboardCliCommand.run(
+      [
+        "--non-interactive",
+        "--yes",
+        "--sandbox-gpu",
+        "--sandbox-gpu-device",
+        "nvidia.com/gpu=0",
+      ],
+      rootDir,
+    );
+
+    expect(runOnboardAction).toHaveBeenCalledWith([
+      "--non-interactive",
+      "--sandbox-gpu",
+      "--sandbox-gpu-device",
+      "nvidia.com/gpu=0",
+      "--yes",
+    ]);
+  });
+
   it("forwards --no-gpu to the legacy onboard action", async () => {
     await OnboardCliCommand.run(["--non-interactive", "--no-gpu"], rootDir);
 

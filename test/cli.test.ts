@@ -420,13 +420,18 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("liost", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("Unknown command: liost");
-    expect(r.out).toContain("Did you mean: nemoclaw list?");
+    try {
+      const r = runWithEnv("liost", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "0",
+      });
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("Unknown command: liost");
+      expect(r.out).toContain("Did you mean: nemoclaw list?");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("recovers a live sandbox before suggesting a bare command typo", () => {
@@ -608,6 +613,12 @@ describe("CLI dispatch", () => {
           isDefault: true,
           activeSessionCount: 1,
           connected: true,
+          hostGpuDetected: false,
+          sandboxGpuEnabled: true,
+          sandboxGpuMode: null,
+          sandboxGpuDevice: null,
+          openshellDriver: null,
+          openshellVersion: null,
         },
       ],
     });
@@ -947,6 +958,8 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("USAGE");
     expect(r.out).toContain("nemoclaw onboard");
     expect(r.out).toContain("--from <Dockerfile>");
+    expect(r.out).toContain("--yes");
+    expect(r.out).toContain("--sandbox-gpu-device=<value>");
   });
 
   it("unknown onboard option exits 1", () => {
@@ -967,6 +980,32 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
+  it("accepts install automation --yes in onboard CLI parsing", () => {
+    const r = run("onboard --resume --non-interactive --yes-i-accept-third-party-software --yes");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
+    expect(r.out).not.toContain("Nonexistent flag: --yes");
+  });
+
+  it("passes onboard sandbox GPU flags to legacy validation", () => {
+    const r = run(
+      "onboard --sandbox-gpu --no-sandbox-gpu --non-interactive --yes-i-accept-third-party-software --yes",
+    );
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("--sandbox-gpu and --no-sandbox-gpu are mutually exclusive");
+    expect(r.out).not.toContain("Nonexistent flag: --sandbox-gpu");
+    expect(r.out).not.toContain("Nonexistent flag: --no-sandbox-gpu");
+  });
+
+  it("passes onboard sandbox GPU device flags to legacy validation", () => {
+    const r = run(
+      "onboard --sandbox-gpu-device nvidia.com/gpu=0 --no-sandbox-gpu --non-interactive --yes-i-accept-third-party-software --yes",
+    );
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("--sandbox-gpu-device cannot be used with --no-sandbox-gpu");
+    expect(r.out).not.toContain("Nonexistent flag: --sandbox-gpu-device");
+  });
+
   it("setup --help exits 0 and shows onboard usage", () => {
     const r = run("setup --help");
     expect(r.code).toBe(0);
@@ -982,14 +1021,14 @@ describe("CLI dispatch", () => {
   });
 
   it("setup forwards --resume into onboard parsing", () => {
-    const r = run("setup --resume --non-interactive --yes-i-accept-third-party-software");
+    const r = run("setup --resume --non-interactive --yes-i-accept-third-party-software --yes");
     expect(r.code).toBe(1);
     expect(r.out.includes("deprecated")).toBeTruthy();
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
   });
 
   it("resume rejection clarifies --resume semantics and points to onboard (#2281)", () => {
-    const r = run("onboard --resume --non-interactive --yes-i-accept-third-party-software");
+    const r = run("onboard --resume --non-interactive --yes-i-accept-third-party-software --yes");
     expect(r.code).toBe(1);
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
     expect(r.out.includes("--resume only continues an interrupted onboarding run")).toBeTruthy();
@@ -1011,7 +1050,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi',
+        'if [ "$1" = "--version" ]; then echo "openshell 0.0.37"; exit 0; fi',
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -1087,7 +1126,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi',
+        'if [ "$1" = "--version" ]; then echo "openshell 0.0.37"; exit 0; fi',
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -1157,7 +1196,9 @@ describe("CLI dispatch", () => {
   });
 
   it("setup-spark is a deprecated compatibility alias for onboard", () => {
-    const r = run("setup-spark --resume --non-interactive --yes-i-accept-third-party-software");
+    const r = run(
+      "setup-spark --resume --non-interactive --yes-i-accept-third-party-software --yes",
+    );
     expect(r.code).toBe(1);
     expect(r.out.includes("setup-spark` is deprecated")).toBeTruthy();
     expect(r.out.includes("Use `nemoclaw onboard` instead")).toBeTruthy();
@@ -2103,6 +2144,7 @@ describe("CLI dispatch", () => {
     // `nemoclaw onboard` reuses it.
     expect(openshellOutput).not.toContain("forward stop 18789");
     expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
+    expect(openshellOutput).not.toContain("gateway remove nemoclaw");
     expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
   });
 
@@ -2164,7 +2206,9 @@ describe("CLI dispatch", () => {
     const openshellOutput = fs.readFileSync(openshellLog, "utf8");
     expect(openshellOutput).toContain("sandbox delete alpha");
     expect(openshellOutput).toContain("forward stop 18789");
-    expect(openshellOutput).toContain("gateway destroy -g nemoclaw");
+    expect(openshellOutput).toContain(
+      process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
+    );
     expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
   });
 
@@ -2226,7 +2270,9 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     const openshellOutput = fs.readFileSync(openshellLog, "utf8");
     expect(openshellOutput).toContain("forward stop 18789");
-    expect(openshellOutput).toContain("gateway destroy -g nemoclaw");
+    expect(openshellOutput).toContain(
+      process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
+    );
   });
 
   it("keeps the gateway runtime when other sandboxes still exist", () => {
@@ -2295,6 +2341,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
       expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
     }
@@ -2360,6 +2407,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
       expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
     }
@@ -2419,6 +2467,7 @@ describe("CLI dispatch", () => {
     expect(registryAfter.sandboxes.alpha).toBeTruthy();
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
   });
 
   it("treats an already-missing sandbox as destroyed and clears the stale registry entry", () => {
@@ -4920,11 +4969,11 @@ describe("list shows live gateway inference", () => {
     expect(r.code).toBe(0);
     // Live gateway values render on the default sandbox's main row.
     expect(r.out).toContain(
-      "agent: openclaw  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  GPU  policies: pypi, npm",
+      "agent: openclaw  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  sandbox GPU  policies: pypi, npm",
     );
     // The stale (stored) row must not appear.
     expect(r.out).not.toContain(
-      "agent: openclaw  model: configured-model  provider: configured-provider  GPU  policies: pypi, npm",
+      "agent: openclaw  model: configured-model  provider: configured-provider  sandbox GPU  policies: pypi, npm",
     );
     // Onboarded values appear in the drift annotation.
     expect(r.out).toContain("(onboarded: model=configured-model, provider=configured-provider)");

@@ -264,6 +264,8 @@ describe("nemoclaw-start non-root fallback", () => {
       'apply_model_override() { :; }',
       'reconcile_agent_model_with_provider() { :; }',
       'apply_cors_override() { :; }',
+      'refresh_openclaw_provider_placeholders() { :; }',
+      'ensure_mutable_openclaw_config_hash() { :; }',
       'export_gateway_token() { :; }',
       'write_runtime_shell_env() { :; }',
       'ensure_runtime_shell_env_shim() { :; }',
@@ -811,6 +813,62 @@ describe("runtime model override (#759)", () => {
       });
       expect(hash).toBe("oldhash\n");
     }
+  });
+});
+
+describe("mutable OpenClaw config hash", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  function runEnsureHash(owner: "sandbox" | "root") {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-hash-"));
+    const openclawDir = path.join(root, ".openclaw");
+    fs.mkdirSync(openclawDir, { recursive: true });
+    fs.writeFileSync(path.join(openclawDir, "openclaw.json"), '{"ok":true}\n');
+
+    const scriptPath = path.join(root, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `openclaw_config_dir_owner() { printf '%s\\n' ${JSON.stringify(owner)}; }`,
+        extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash").replaceAll(
+          "/sandbox/.openclaw",
+          openclawDir,
+        ),
+        "ensure_mutable_openclaw_config_hash",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+    const hashPath = path.join(openclawDir, ".config-hash");
+    const hashExists = fs.existsSync(hashPath);
+    const hashCheck = hashExists
+      ? spawnSync("bash", ["-c", `cd ${JSON.stringify(openclawDir)} && sha256sum -c .config-hash --status`], {
+          encoding: "utf-8",
+          timeout: 5000,
+        })
+      : undefined;
+    const hashMode = hashExists ? fs.statSync(hashPath).mode & 0o777 : undefined;
+    fs.rmSync(root, { recursive: true, force: true });
+    return { result, hashExists, hashCheck, hashMode };
+  }
+
+  it("creates a missing hash for mutable-default OpenClaw config", () => {
+    const { result, hashExists, hashCheck, hashMode } = runEnsureHash("sandbox");
+
+    expect(result.status).toBe(0);
+    expect(hashExists).toBe(true);
+    expect(hashCheck?.status).toBe(0);
+    expect(hashMode).toBe(0o660);
+  });
+
+  it("does not synthesize a missing locked config trust anchor", () => {
+    const { result, hashExists } = runEnsureHash("root");
+
+    expect(result.status).toBe(0);
+    expect(hashExists).toBe(false);
   });
 });
 
@@ -1700,6 +1758,8 @@ describe("Telegram diagnostics (#2766)", () => {
         'apply_model_override() { :; }',
         'reconcile_agent_model_with_provider() { :; }',
         'apply_cors_override() { :; }',
+        'refresh_openclaw_provider_placeholders() { :; }',
+        'ensure_mutable_openclaw_config_hash() { :; }',
         'export_gateway_token() { :; }',
         'write_runtime_shell_env() { :; }',
         'ensure_runtime_shell_env_shim() { :; }',

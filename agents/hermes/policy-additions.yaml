@@ -63,7 +63,7 @@ network_policies:
           - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
   github:
@@ -156,7 +156,7 @@ network_policies:
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
   # ── PyPI — needed for pip install (skill/plugin deps) ─────────
@@ -177,7 +177,7 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/pip3 }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
   # ── Messaging — pre-allowed for agent notifications ───────────
@@ -194,7 +194,7 @@ network_policies:
           - allow: { method: GET, path: "/file/bot*/**" }
     binaries:
       - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
   discord:
@@ -232,7 +232,7 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
   slack:
@@ -269,5 +269,5 @@ network_policies:
         access: full
     binaries:
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }

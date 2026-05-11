@@ -330,6 +330,15 @@ export no_proxy="$_NO_PROXY_VAL"
 export NEMOCLAW_DISCORD_FACADE_URL="http://127.0.0.1:${DISCORD_FACADE_PORT}"
 export PYTHONPATH="/opt/nemoclaw-hermes-discord-preload${PYTHONPATH:+:${PYTHONPATH}}"
 
+# OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA. Persist
+# them into connect-session shells so Python Slack probes and Hermes tools trust
+# the same proxy CA that the entrypoint received at startup.
+if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-$SSL_CERT_FILE}"
+  export REQUESTS_CA_BUNDLE="${REQUESTS_CA_BUNDLE:-$SSL_CERT_FILE}"
+  export GIT_SSL_CAINFO="${GIT_SSL_CAINFO:-$SSL_CERT_FILE}"
+fi
+
 # Resolve sandbox home dir early — used by proxy-env writing and
 # install_configure_guard before the non-root/root branch below.
 if [ "$(id -u)" -eq 0 ]; then
@@ -359,6 +368,12 @@ export DISCORD_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"
 export NEMOCLAW_DISCORD_FACADE_URL="http://127.0.0.1:${DISCORD_FACADE_PORT}"
 export PYTHONPATH="/opt/nemoclaw-hermes-discord-preload\${PYTHONPATH:+:\${PYTHONPATH}}"
 PROXYEOF
+  for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
+    _ca_env_value="${!_ca_env_name:-}"
+    if [ -n "$_ca_env_value" ]; then
+      printf 'export %s=%q\n' "$_ca_env_name" "$_ca_env_value"
+    fi
+  done
 } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
 
 # ── Legacy layout migration ──────────────────────────────────────
@@ -512,6 +527,107 @@ migrate_legacy_layout() {
   echo "[migration] Completed ${label} layout migration (${data_dir} removed)" >&2
 }
 
+refresh_hermes_provider_placeholders() {
+  local env_file="${HERMES_DIR}/.env"
+  local hash_file="${HERMES_HASH_FILE}"
+  local compat_hash="${HERMES_DIR}/.config-hash"
+  [ -f "$env_file" ] || return 0
+
+  local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN"
+  local has_scoped_placeholder=0
+  local key value
+  for key in $keys; do
+    value="${!key:-}"
+    case "$value" in
+      openshell:resolve:env:*) has_scoped_placeholder=1 ;;
+    esac
+  done
+  [ "$has_scoped_placeholder" -eq 1 ] || return 0
+
+  if [ -L "$env_file" ] || [ -L "$hash_file" ] || { [ -e "$compat_hash" ] && [ -L "$compat_hash" ]; }; then
+    echo "[SECURITY] Refusing Hermes provider placeholder refresh — config or hash path is a symlink" >&2
+    return 1
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    chown root:sandbox "$env_file" || return 1
+    chmod 640 "$env_file" || return 1
+    chmod u+w "$hash_file" || return 1
+    [ ! -f "$compat_hash" ] || chmod u+w "$compat_hash" 2>/dev/null || true
+  elif [ ! -w "$env_file" ] || [ ! -w "$hash_file" ]; then
+    echo "[config] Hermes provider placeholders supplied by OpenShell runtime env; .env refresh skipped without write access" >&2
+    return 0
+  fi
+
+  local _write_rc=0
+  NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS="$keys" \
+    python3 - "$env_file" <<'PYPLACEHOLDERS' || _write_rc=$?
+import os
+import sys
+
+env_file = sys.argv[1]
+prefix = "openshell:resolve:env:"
+keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
+replacements = {}
+
+for key in keys:
+    value = os.environ.get(key, "")
+    if value.startswith(prefix):
+        replacements[key] = value
+
+if not replacements:
+    sys.exit(0)
+
+with open(env_file, encoding="utf-8") as f:
+    lines = f.readlines()
+
+changed = False
+updated = []
+for line in lines:
+    stripped = line.rstrip("\n")
+    replaced = False
+    for key, value in replacements.items():
+        if stripped.startswith(f"{key}="):
+            new_line = f"{key}={value}\n"
+            updated.append(new_line)
+            changed = changed or new_line != line
+            replaced = True
+            break
+    if not replaced:
+        updated.append(line)
+
+if not changed:
+    sys.exit(0)
+
+with open(env_file, "w", encoding="utf-8") as f:
+    f.writelines(updated)
+
+print("refreshed=" + ",".join(sorted(replacements)))
+PYPLACEHOLDERS
+
+  if [ "$_write_rc" -eq 0 ]; then
+    if sha256sum "${HERMES_DIR}/config.yaml" "${HERMES_DIR}/.env" >"$hash_file"; then
+      chown root:root "$hash_file" 2>/dev/null || true
+      chmod 444 "$hash_file" 2>/dev/null || true
+      if [ -f "$compat_hash" ]; then
+        sha256sum "${HERMES_DIR}/config.yaml" "${HERMES_DIR}/.env" >"$compat_hash" || _write_rc=$?
+        chown sandbox:sandbox "$compat_hash" 2>/dev/null || true
+        chmod 600 "$compat_hash" 2>/dev/null || true
+      fi
+      echo "[config] Refreshed Hermes provider placeholders from OpenShell runtime env" >&2
+    else
+      _write_rc=$?
+    fi
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    chown sandbox:sandbox "$env_file" 2>/dev/null || true
+    chmod 640 "$env_file" 2>/dev/null || true
+  fi
+
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # Migrate legacy symlink layout before anything else reads .hermes
@@ -529,6 +645,7 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  refresh_hermes_provider_placeholders
   install_configure_guard
   configure_messaging_channels
 
@@ -579,6 +696,7 @@ fi
 # ── Root path (full privilege separation via gosu) ─────────────
 
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
+refresh_hermes_provider_placeholders
 install_configure_guard
 configure_messaging_channels
 

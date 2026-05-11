@@ -41,6 +41,8 @@ describe("onboard command", () => {
       recreateSandbox: false,
       fromDockerfile: null,
       sandboxName: null,
+      sandboxGpu: null,
+      sandboxGpuDevice: null,
       acceptThirdPartySoftware: true,
       agent: null,
       controlUiPort: null,
@@ -87,6 +89,8 @@ describe("onboard command", () => {
       recreateSandbox: false,
       fromDockerfile: null,
       sandboxName: null,
+      sandboxGpu: null,
+      sandboxGpuDevice: null,
       acceptThirdPartySoftware: true,
       agent: null,
       controlUiPort: null,
@@ -114,6 +118,8 @@ describe("onboard command", () => {
       recreateSandbox: false,
       fromDockerfile: null,
       sandboxName: null,
+      sandboxGpu: null,
+      sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
@@ -170,6 +176,8 @@ describe("onboard command", () => {
       recreateSandbox: false,
       fromDockerfile: dockerfilePath,
       sandboxName: null,
+      sandboxGpu: null,
+      sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
@@ -198,6 +206,8 @@ describe("onboard command", () => {
       recreateSandbox: false,
       fromDockerfile: null,
       sandboxName: null,
+      sandboxGpu: null,
+      sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
@@ -247,6 +257,8 @@ describe("onboard command", () => {
       recreateSandbox: false,
       fromDockerfile: dockerfilePath,
       sandboxName: "second-assistant",
+      sandboxGpu: null,
+      sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,
@@ -385,6 +397,8 @@ describe("onboard command", () => {
       recreateSandbox: false,
       fromDockerfile: null,
       sandboxName: null,
+      sandboxGpu: null,
+      sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: "openclaw",
       controlUiPort: null,
@@ -481,6 +495,38 @@ describe("onboard command", () => {
     expect(result.controlUiPort).toBe(19000);
   });
 
+  it("parses direct sandbox GPU flags", () => {
+    const result = parseOnboardArgs(
+      ["--sandbox-gpu", "--sandbox-gpu-device", "0"],
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.sandboxGpu).toBe("enable");
+    expect(result.sandboxGpuDevice).toBe("0");
+  });
+
+  it("rejects conflicting sandbox GPU flags", () => {
+    const errors: string[] = [];
+    expect(() =>
+      parseOnboardArgs(
+        ["--sandbox-gpu", "--no-sandbox-gpu"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: (message = "") => errors.push(message),
+          exit: exitWithPrefixedCode,
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("mutually exclusive");
+  });
+
   it("--help includes --control-ui-port in usage", async () => {
     const lines: string[] = [];
     await runOnboardCommand({
@@ -496,6 +542,7 @@ describe("onboard command", () => {
       }) as never,
     });
     expect(lines.join("\n")).toContain("--control-ui-port");
+    expect(lines.join("\n")).toContain("--sandbox-gpu");
   });
 
   it("prints the setup-spark deprecation text before delegating", async () => {
@@ -522,6 +569,8 @@ describe("onboard command", () => {
       recreateSandbox: false,
       fromDockerfile: null,
       sandboxName: null,
+      sandboxGpu: null,
+      sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
       controlUiPort: null,

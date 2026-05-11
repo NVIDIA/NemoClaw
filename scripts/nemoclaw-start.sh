@@ -331,6 +331,34 @@ restore_openclaw_config_after_write() {
   lock_config_after_write "$config_file" "$hash_file"
 }
 
+ensure_mutable_openclaw_config_hash() {
+  local config_dir="/sandbox/.openclaw"
+  local config_file="${config_dir}/openclaw.json"
+  local hash_file="${config_dir}/.config-hash"
+
+  [ -f "$config_file" ] || return 0
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing mutable config hash refresh — config directory or file path is a symlink\n' >&2
+    return 1
+  fi
+
+  # Locked/shields-up mode treats .config-hash as a root-owned trust anchor.
+  # verify_config_integrity_if_locked already fails closed when that anchor is
+  # missing, so only synthesize/refresh the mutable-default hash.
+  if [ "$(openclaw_config_dir_owner "$config_dir")" = "root" ]; then
+    return 0
+  fi
+
+  if ! (cd "$config_dir" && sha256sum openclaw.json >"$hash_file"); then
+    printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
+    return 1
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    chown sandbox:sandbox "$hash_file" 2>/dev/null || true
+  fi
+  chmod 660 "$hash_file" 2>/dev/null || true
+}
+
 # ── Runtime model/provider override ──────────────────────────────
 # Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
 # allowing model or provider changes without rebuilding the sandbox image.
@@ -639,14 +667,99 @@ PYCORS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
+# OpenShell provider snapshots can expose revision-scoped placeholders such as
+# openshell:resolve:env:v11_DISCORD_BOT_TOKEN in the child environment. Refresh
+# baked canonical placeholders in openclaw.json after the integrity check so
+# token egress keeps working across provider attach/refresh generations without
+# ever writing a raw credential to disk.
+refresh_openclaw_provider_placeholders() {
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+  [ -f "$config_file" ] || return 0
+
+  local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY"
+  local has_scoped_placeholder=0
+  local key value
+  for key in $keys; do
+    value="${!key:-}"
+    case "$value" in
+      openshell:resolve:env:*) has_scoped_placeholder=1 ;;
+    esac
+  done
+  [ "$has_scoped_placeholder" -eq 1 ] || return 0
+
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing provider placeholder refresh — config or hash path is a symlink\n' >&2
+    return 1
+  fi
+
+  prepare_openclaw_config_for_write "$config_file" "$hash_file"
+  local _write_rc=0
+
+  NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS="$keys" \
+    python3 - "$config_file" <<'PYPLACEHOLDERS' || _write_rc=$?
+import json
+import os
+import sys
+
+config_file = sys.argv[1]
+prefix = "openshell:resolve:env:"
+keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
+replacements = {}
+
+for key in keys:
+    value = os.environ.get(key, "")
+    if value.startswith(prefix):
+        replacements[f"{prefix}{key}"] = value
+
+if not replacements:
+    sys.exit(0)
+
+with open(config_file, encoding="utf-8") as f:
+    config = json.load(f)
+
+def rewrite(value):
+    if isinstance(value, str):
+        for old, new in replacements.items():
+            value = value.replace(old, new)
+        return value
+    if isinstance(value, list):
+        return [rewrite(item) for item in value]
+    if isinstance(value, dict):
+        return {k: rewrite(v) for k, v in value.items()}
+    return value
+
+updated = rewrite(config)
+if updated == config:
+    sys.exit(0)
+
+with open(config_file, "w", encoding="utf-8") as f:
+    json.dump(updated, f, indent=2)
+    f.write("\n")
+
+print("refreshed=" + ",".join(sorted(replacements)))
+PYPLACEHOLDERS
+
+  if [ "$_write_rc" -eq 0 ]; then
+    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      printf '[config] Refreshed provider placeholders from OpenShell runtime env\n' >&2
+    else
+      _write_rc=$?
+    fi
+  fi
+
+  restore_openclaw_config_after_write "$config_file" "$hash_file"
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
 # ── Slack token rewriter (Bolt-shape → canonical placeholder) ────
 # Installs a Node preload that translates the Bolt-compatible placeholder
 # (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR — emitted into openclaw.json by
-# generate-openclaw-config.py — into the canonical openshell:resolve:env:VAR
-# form on outbound HTTP. OpenShell's L7 proxy then substitutes the real
-# token from env on the wire, the same path Discord/Telegram/Brave already
-# take. No real Slack token ever touches openclaw.json, /tmp, or any other
-# disk surface readable by the sandbox uid.
+# generate-openclaw-config.py — into the active openshell:resolve:env:*
+# placeholder on outbound HTTP. OpenShell's L7 proxy then substitutes the
+# real token from env on the wire, the same path Discord/Telegram/Brave
+# already take. No real Slack token ever touches openclaw.json, /tmp, or
+# any other disk surface readable by the sandbox uid.
 #
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2085
 
@@ -663,7 +776,7 @@ install_slack_token_rewriter() {
     return 0
   fi
 
-  printf '[channels] Installing Slack token rewriter (Bolt-shape → canonical)\n' >&2
+  printf '[channels] Installing Slack token rewriter (Bolt-shape → OpenShell placeholder)\n' >&2
 
   emit_sandbox_sourced_file "$_SLACK_REWRITER_SCRIPT" <"$_SLACK_REWRITER_SOURCE"
 
@@ -1659,6 +1772,8 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_model_override
   reconcile_agent_model_with_provider
   apply_cors_override
+  refresh_openclaw_provider_placeholders
+  ensure_mutable_openclaw_config_hash
   export_gateway_token
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
@@ -1752,6 +1867,8 @@ normalize_mutable_config_perms
 apply_model_override
 reconcile_agent_model_with_provider
 apply_cors_override
+refresh_openclaw_provider_placeholders
+ensure_mutable_openclaw_config_hash
 export_gateway_token
 write_runtime_shell_env
 ensure_runtime_shell_env_shim

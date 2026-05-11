@@ -8,7 +8,7 @@ import { NOTICE_ACCEPT_FLAG } from "../../onboard/usage-notice";
 const acceptFlagName = NOTICE_ACCEPT_FLAG.replace(/^--/, "");
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -17,6 +17,7 @@ export const onboardExamples = [
   "<%= config.bin %> onboard --resume",
   "<%= config.bin %> onboard --fresh",
   "<%= config.bin %> onboard --from ./Dockerfile --name alpha",
+  "<%= config.bin %> onboard --sandbox-gpu --sandbox-gpu-device nvidia.com/gpu=0",
   `<%= config.bin %> onboard --non-interactive --yes --name alpha ${NOTICE_ACCEPT_FLAG}`,
 ];
 
@@ -29,6 +30,9 @@ export type OnboardFlags = {
   "no-gpu"?: boolean;
   from?: string;
   name?: string;
+  "sandbox-gpu"?: boolean;
+  "no-sandbox-gpu"?: boolean;
+  "sandbox-gpu-device"?: string;
   agent?: string;
   "control-ui-port"?: number;
   yes?: boolean;
@@ -58,6 +62,15 @@ export function buildOnboardFlags(): Record<string, any> {
     }),
     from: Flags.string({ description: "Path to a Dockerfile to use as the sandbox image source" }),
     name: Flags.string({ description: "Sandbox name" }),
+    "sandbox-gpu": Flags.boolean({
+      description: "Enable direct NVIDIA GPU access inside the sandbox",
+    }),
+    "no-sandbox-gpu": Flags.boolean({
+      description: "Force CPU sandbox behavior",
+    }),
+    "sandbox-gpu-device": Flags.string({
+      description: "OpenShell GPU device selector to pass to sandbox create",
+    }),
     agent: Flags.string({ description: "Agent runtime to onboard" }),
     "control-ui-port": Flags.integer({
       description: "Host port for the local control UI",
@@ -82,6 +95,11 @@ export function toLegacyOnboardArgs(flags: OnboardFlags): string[] {
   if (flags["no-gpu"]) args.push("--no-gpu");
   if (flags.from !== undefined) args.push("--from", flags.from);
   if (flags.name !== undefined) args.push("--name", flags.name);
+  if (flags["sandbox-gpu"]) args.push("--sandbox-gpu");
+  if (flags["no-sandbox-gpu"]) args.push("--no-sandbox-gpu");
+  if (flags["sandbox-gpu-device"] !== undefined) {
+    args.push("--sandbox-gpu-device", flags["sandbox-gpu-device"]);
+  }
   if (flags.agent !== undefined) args.push("--agent", flags.agent);
   if (flags["control-ui-port"] !== undefined) {
     args.push("--control-ui-port", String(flags["control-ui-port"]));

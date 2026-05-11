@@ -19,6 +19,9 @@
 #                            Discord + Slack coverage with cross-talk assertions. See issue #1903.
 #   sandbox-survival-e2e     Sandbox survival across gateway restarts (onboard, inference,
 #                            gateway stop/start, verify sandbox + workspace + inference).
+#   openshell-gateway-upgrade-e2e
+#                            Validates stale Linux Docker-driver OpenShell gateway
+#                            processes are restarted after an OpenShell upgrade.
 #   hermes-e2e               Hermes Agent E2E — install → onboard --agent hermes → health
 #                            probe → live inference. Validates the multi-agent architecture.
 #   hermes-inference-switch-e2e
@@ -64,6 +67,7 @@ on:
           messaging-compatible-endpoint-e2e,
           kimi-inference-compat-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
+          openshell-gateway-upgrade-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e,
           hermes-inference-switch-e2e, hermes-discord-e2e,
           hermes-slack-e2e, sandbox-operations-e2e, inference-routing-e2e,
@@ -1203,6 +1207,45 @@ jobs:
             /tmp/nemoclaw-e2e-upgrade-install.log
           if-no-files-found: ignore
 
+  # ── OpenShell gateway upgrade E2E ────────────────────────────
+  # Reproduces the old-install upgrade edge case for Linux Docker-driver
+  # gateways: a healthy gateway process with stale supervisor/runtime env must
+  # be restarted rather than reused after the current OpenShell install.
+  openshell-gateway-upgrade-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Run OpenShell gateway upgrade E2E test
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-openshell-gateway-upgrade.sh
+
+      - name: Upload gateway upgrade logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openshell-gateway-upgrade-logs
+          path: |
+            /tmp/nemoclaw-e2e-openshell-gateway-upgrade.log
+            /tmp/nemoclaw-e2e-openshell-gateway-start.log
+            /tmp/nemoclaw-e2e-openshell-gateway-process.log
+          if-no-files-found: ignore
+
   # ── Hermes rebuild upgrade E2E ──────────────────────────────
   # Same upgrade scenario as OpenClaw but for Hermes Agent.
   rebuild-hermes-e2e:
@@ -1286,12 +1329,14 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-double-install"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run double onboard E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_E2E_INSTALL_SANDBOX_NAME: "e2e-double-install"
         run: |
           [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
           export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -1323,12 +1368,14 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-repair-install"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run onboard repair E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_E2E_INSTALL_SANDBOX_NAME: "e2e-repair-install"
         run: |
           [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
           export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -1768,6 +1815,7 @@ jobs:
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
+        openshell-gateway-upgrade-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,
@@ -1857,6 +1905,7 @@ jobs:
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
+        openshell-gateway-upgrade-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,
@@ -1994,6 +2043,7 @@ jobs:
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
+        openshell-gateway-upgrade-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,

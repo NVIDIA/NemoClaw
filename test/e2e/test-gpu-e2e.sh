@@ -276,7 +276,39 @@ else
   fail "nemoclaw ${SANDBOX_NAME} status failed"
 fi
 
-# 4c: Inference provider is ollama-local
+# 4c: Direct sandbox GPU is enabled by default on NVIDIA hosts
+if status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1); then
+  if echo "$status_output" | grep -Fq "Sandbox GPU: enabled"; then
+    pass "Sandbox GPU is enabled by default"
+  else
+    fail "Sandbox GPU is not enabled in status output"
+  fi
+else
+  fail "Could not read sandbox GPU status"
+fi
+
+# 4d: Direct sandbox GPU proofs
+if openshell sandbox exec -n "$SANDBOX_NAME" -- nvidia-smi >/dev/null 2>&1; then
+  pass "Sandbox nvidia-smi works"
+else
+  fail "Sandbox nvidia-smi failed"
+fi
+
+# shellcheck disable=SC2016  # expanded inside the sandbox by sh -lc
+if openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc \
+  'tid="$(ls /proc/self/task | head -n 1)"; old="$(cat "/proc/self/task/${tid}/comm" 2>/dev/null || true)"; printf nemoclaw-gpu >"/proc/self/task/${tid}/comm"; [ -z "$old" ] || printf "%s" "$old" >"/proc/self/task/${tid}/comm" || true' >/dev/null 2>&1; then
+  pass "Sandbox /proc/self/task/<tid>/comm write works"
+else
+  fail "Sandbox /proc comm write failed"
+fi
+
+if openshell sandbox exec -n "$SANDBOX_NAME" -- python3 -c 'import ctypes; lib=ctypes.CDLL("libcuda.so.1"); rc=lib.cuInit(0); print(f"cuInit(0)={rc}"); raise SystemExit(0 if rc == 0 else 1)' >/dev/null 2>&1; then
+  pass "Sandbox cuInit(0) succeeds"
+else
+  fail "Sandbox cuInit(0) failed"
+fi
+
+# 4e: Inference provider is ollama-local
 if inf_check=$(openshell inference get 2>&1); then
   if echo "$inf_check" | grep -qi "ollama"; then
     pass "Inference provider is Ollama-based"
@@ -287,7 +319,7 @@ else
   fail "openshell inference get failed: ${inf_check:0:200}"
 fi
 
-# 4d: Ollama is running and reachable
+# 4f: Ollama is running and reachable
 if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   pass "Ollama running on 127.0.0.1:11434 (started by onboard)"
 else

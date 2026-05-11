@@ -7,6 +7,7 @@ import type { AgentDefinition } from "./defs";
 type AgentOnboardModule = typeof import("../../../dist/lib/agent/onboard");
 type DockerImageModule = typeof import("../../../dist/lib/adapters/docker/image");
 type DockerInspectModule = typeof import("../../../dist/lib/adapters/docker/inspect");
+type SandboxBaseImageModule = typeof import("../../../dist/lib/sandbox-base-image");
 
 /**
  * Build a minimal Hermes agent manifest for base-image provisioning tests.
@@ -53,6 +54,7 @@ function withMockedDocker<T>(
     ensureAgentBaseImage: AgentOnboardModule["ensureAgentBaseImage"];
     dockerBuildMock: ReturnType<typeof vi.fn>;
     dockerImageInspectMock: ReturnType<typeof vi.fn>;
+    resolveSandboxBaseImageMock: ReturnType<typeof vi.fn>;
     root: string;
   }) => T,
 ): T {
@@ -61,17 +63,28 @@ function withMockedDocker<T>(
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const dockerInspectModule = require("../../../dist/lib/adapters/docker/inspect") as DockerInspectModule;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const sandboxBaseImageModule = require("../../../dist/lib/sandbox-base-image") as SandboxBaseImageModule;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const runnerModule = require("../../../dist/lib/runner") as { ROOT: string };
   const originalDockerBuild = dockerImageModule.dockerBuild;
   const originalDockerImageInspect = dockerInspectModule.dockerImageInspect;
+  const originalResolveSandboxBaseImage = sandboxBaseImageModule.resolveSandboxBaseImage;
   const agentOnboardModulePath = require.resolve("../../../dist/lib/agent/onboard");
   delete require.cache[agentOnboardModulePath];
 
   const dockerBuildMock = vi.fn().mockReturnValue({ status: 0 });
   const dockerImageInspectMock = vi.fn();
+  const resolveSandboxBaseImageMock = vi.fn().mockReturnValue({
+    ref: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:compatible",
+    digest: null,
+    source: "source-sha",
+    glibcVersion: process.platform === "linux" ? "2.41" : null,
+  });
   dockerImageModule.dockerBuild = dockerBuildMock as DockerImageModule["dockerBuild"];
   dockerInspectModule.dockerImageInspect =
     dockerImageInspectMock as DockerInspectModule["dockerImageInspect"];
+  sandboxBaseImageModule.resolveSandboxBaseImage =
+    resolveSandboxBaseImageMock as SandboxBaseImageModule["resolveSandboxBaseImage"];
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -80,11 +93,13 @@ function withMockedDocker<T>(
       ensureAgentBaseImage: agentOnboardModule.ensureAgentBaseImage,
       dockerBuildMock,
       dockerImageInspectMock,
+      resolveSandboxBaseImageMock,
       root: runnerModule.ROOT,
     });
   } finally {
     dockerImageModule.dockerBuild = originalDockerBuild;
     dockerInspectModule.dockerImageInspect = originalDockerImageInspect;
+    sandboxBaseImageModule.resolveSandboxBaseImage = originalResolveSandboxBaseImage;
     delete require.cache[agentOnboardModulePath];
   }
 }
@@ -94,29 +109,45 @@ describe("agent base image provisioning", () => {
     vi.restoreAllMocks();
   });
 
-  it("reuses an existing agent base image during normal onboarding", () => {
-    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, dockerImageInspectMock }) => {
-      dockerImageInspectMock.mockReturnValue({ status: 0 });
+  it("reuses a compatible resolved agent base image during normal onboarding", () => {
+    withMockedDocker(
+      ({
+        ensureAgentBaseImage,
+        dockerBuildMock,
+        dockerImageInspectMock,
+        resolveSandboxBaseImageMock,
+        root,
+      }) => {
+        const result = ensureAgentBaseImage(makeAgent());
 
-      const result = ensureAgentBaseImage(makeAgent());
-
-      expect(result).toEqual({
-        imageTag: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
-        built: false,
-      });
-      expect(dockerImageInspectMock).toHaveBeenCalledWith(
-        "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
-        {
-          ignoreError: true,
-          suppressOutput: true,
-        },
-      );
-      expect(dockerBuildMock).not.toHaveBeenCalled();
-    });
+        expect(result).toEqual({
+          imageTag: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:compatible",
+          built: false,
+        });
+        expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+            dockerfilePath: "/test/root/agents/hermes/Dockerfile.base",
+            envVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+            label: "Hermes Agent sandbox base image",
+            requireOpenshellSandboxAbi: process.platform === "linux",
+            rootDir: root,
+          }),
+        );
+        expect(dockerImageInspectMock).not.toHaveBeenCalled();
+        expect(dockerBuildMock).not.toHaveBeenCalled();
+      },
+    );
   });
 
   it("rebuilds an agent base image when rebuild flow forces local Dockerfile.base refresh", () => {
-    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, dockerImageInspectMock, root }) => {
+    withMockedDocker(({
+      ensureAgentBaseImage,
+      dockerBuildMock,
+      dockerImageInspectMock,
+      resolveSandboxBaseImageMock,
+      root,
+    }) => {
       dockerImageInspectMock.mockReturnValue({ status: 0 });
 
       const result = ensureAgentBaseImage(makeAgent(), { forceBaseImageRebuild: true });
@@ -125,6 +156,7 @@ describe("agent base image provisioning", () => {
         imageTag: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
         built: true,
       });
+      expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
       expect(dockerImageInspectMock).not.toHaveBeenCalled();
       expect(dockerBuildMock).toHaveBeenCalledWith(
         "/test/root/agents/hermes/Dockerfile.base",
@@ -136,18 +168,33 @@ describe("agent base image provisioning", () => {
   });
 
   it("throws when a forced agent base image rebuild fails", () => {
-    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock }) => {
+    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
       dockerBuildMock.mockReturnValue({ status: 23 });
 
       expect(() => ensureAgentBaseImage(makeAgent(), { forceBaseImageRebuild: true })).toThrow(
         "Failed to build Hermes Agent base image (exit 23)",
       );
+      expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
     });
   });
 
-  it("builds an agent base image when no cached image exists", () => {
-    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, dockerImageInspectMock }) => {
+  it("builds an agent base image when no resolved image or cached image exists on non-Linux hosts", () => {
+    withMockedDocker(({
+      ensureAgentBaseImage,
+      dockerBuildMock,
+      dockerImageInspectMock,
+      resolveSandboxBaseImageMock,
+    }) => {
+      resolveSandboxBaseImageMock.mockReturnValue(null);
       dockerImageInspectMock.mockReturnValue({ status: 1 });
+
+      if (process.platform === "linux") {
+        expect(() => ensureAgentBaseImage(makeAgent())).toThrow(
+          "No compatible Hermes Agent sandbox base image found",
+        );
+        expect(dockerBuildMock).not.toHaveBeenCalled();
+        return;
+      }
 
       const result = ensureAgentBaseImage(makeAgent());
 
