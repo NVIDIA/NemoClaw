@@ -34,18 +34,26 @@ const result = readJsonIfExists(resultPath);
 const body = buildComment({ summary, result, runUrl, marker });
 
 const existing = await findExistingComment(repo, pr, token, marker);
-if (existing) {
-  await github(`repos/${repo}/issues/comments/${existing.id}`, token, {
-    method: "PATCH",
-    body: { body },
-  });
-  console.log(`Updated E2E advisor comment on ${repo}#${pr}`);
-} else {
-  await github(`repos/${repo}/issues/${pr}/comments`, token, {
-    method: "POST",
-    body: { body },
-  });
-  console.log(`Created E2E advisor comment on ${repo}#${pr}`);
+try {
+  if (existing) {
+    await github(`repos/${repo}/issues/comments/${existing.id}`, token, {
+      method: "PATCH",
+      body: { body },
+    });
+    console.log(`Updated E2E advisor comment on ${repo}#${pr}`);
+  } else {
+    await github(`repos/${repo}/issues/${pr}/comments`, token, {
+      method: "POST",
+      body: { body },
+    });
+    console.log(`Created E2E advisor comment on ${repo}#${pr}`);
+  }
+} catch (error) {
+  if (isPermissionError(error)) {
+    console.log(`Skipping E2E advisor comment due to permission error: ${error.message}`);
+  } else {
+    throw error;
+  }
 }
 
 function parseArgs(argv) {
@@ -103,6 +111,10 @@ ${summary.trim()}
 async function findExistingComment(repo, pr, token, marker) {
   const comments = await github(`repos/${repo}/issues/${pr}/comments?per_page=100`, token);
   return comments.find((comment) => typeof comment.body === "string" && comment.body.includes(marker));
+}
+
+function isPermissionError(error) {
+  return error instanceof Error && /\b403\b|Resource not accessible by integration|permission/i.test(error.message);
 }
 
 async function github(pathname, token, options = {}) {

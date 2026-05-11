@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # E2E Advisor
 
 The E2E Advisor recommends which NemoClaw end-to-end tests should run for a pull request. It combines a deterministic risk-domain baseline with a Pi semantic review, then posts a sticky PR comment with required/optional E2E recommendations and a dispatch hint.

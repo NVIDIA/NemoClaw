@@ -26,6 +26,11 @@ on:
         required: false
         type: string
         default: ""
+      target_base:
+        description: Base branch to use with target_repo/target_pr manual analysis
+        required: false
+        type: string
+        default: main
       run_pi:
         description: Run Pi semantic analysis after deterministic baseline
         required: false
@@ -54,6 +59,7 @@ concurrency:
 jobs:
   advise:
     name: Pi semantic E2E recommendation
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -78,20 +84,21 @@ jobs:
         env:
           TARGET_REPO: ${{ inputs.target_repo }}
           TARGET_PR: ${{ inputs.target_pr }}
+          TARGET_BASE: ${{ inputs.target_base }}
         run: |
           TARGET_DIR=/tmp/e2e-advisor-target
           rm -rf "$TARGET_DIR"
           mkdir -p "$TARGET_DIR"
           git -C "$TARGET_DIR" init
           git -C "$TARGET_DIR" remote add target "https://github.com/${TARGET_REPO}.git"
-          git -C "$TARGET_DIR" fetch --no-tags target main
+          git -C "$TARGET_DIR" fetch --no-tags target "$TARGET_BASE"
           git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head:refs/remotes/target/pr-${TARGET_PR}"
           git -C "$TARGET_DIR" checkout --detach "refs/remotes/target/pr-${TARGET_PR}"
           echo "ADVISOR_WORKDIR=$TARGET_DIR" >> "$GITHUB_ENV"
 
       - name: Run deterministic E2E advisor baseline
         env:
-          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/main' || inputs.base_ref) }}
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
           HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
         run: |
           cd "$ADVISOR_WORKDIR"
@@ -132,7 +139,7 @@ jobs:
           if [ -f artifacts/e2e-advisor/e2e-advisor-summary.md ]; then
             cat artifacts/e2e-advisor/e2e-advisor-summary.md >> "$GITHUB_STEP_SUMMARY"
           else
-            printf '# E2E Advisor\n\nDeterministic analysis did not produce a summary. See logs.\n' >> "$GITHUB_STEP_SUMMARY"},{
+            printf '# E2E Advisor\n\nDeterministic analysis did not produce a summary. See logs.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           if [ -f artifacts/e2e-advisor/e2e-advisor-pi-summary.md ]; then

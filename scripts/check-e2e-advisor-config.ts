@@ -17,19 +17,37 @@ const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
 const modelsTemplate = JSON.parse(fs.readFileSync(modelsTemplatePath, "utf8"));
 
 const failures: string[] = [];
-const testIds = new Set((manifest.tests ?? []).map((test: { id: string }) => test.id));
+const testIds = new Set<string>();
+const workflowById = new Map<string, { path?: string }>(Object.entries(manifest.workflows ?? {}));
 
-if (testIds.size === 0) {
-  failures.push("test/e2e/e2e-manifest.yaml must define at least one test");
+for (const workflowId of Object.keys(manifest.workflows ?? {})) {
+  const workflow = workflowById.get(workflowId);
+  if (!workflow?.path || !fs.existsSync(path.join(root, workflow.path))) {
+    failures.push(`workflow ${workflowId} references missing file ${workflow?.path ?? "<unknown>"}`);
+  }
 }
 
 for (const test of manifest.tests ?? []) {
   requireField(test, "id", `manifest test ${test.id ?? "<unknown>"}`);
   requireField(test, "workflow", `manifest test ${test.id ?? "<unknown>"}`);
   requireField(test, "job", `manifest test ${test.id ?? "<unknown>"}`);
+  if (test.id) {
+    if (testIds.has(test.id)) {
+      failures.push(`duplicate test id ${test.id}`);
+    } else {
+      testIds.add(test.id);
+    }
+  }
+  if (test.workflow && !workflowById.has(test.workflow)) {
+    failures.push(`manifest test ${test.id ?? "<unknown>"} references unknown workflow ${test.workflow}`);
+  }
   if (test.script && !fs.existsSync(path.join(root, test.script))) {
     failures.push(`manifest test ${test.id} references missing script ${test.script}`);
   }
+}
+
+if (testIds.size === 0) {
+  failures.push("test/e2e/e2e-manifest.yaml must define at least one test");
 }
 
 for (const rule of rules.rules ?? []) {

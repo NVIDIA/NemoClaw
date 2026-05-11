@@ -66,6 +66,7 @@
     "confidence": { "enum": ["low", "medium", "high"] },
     "dispatchHint": {
       "type": "object",
+      "required": ["workflow", "jobsInput"],
       "properties": {
         "workflow": { "type": "string" },
         "jobsInput": { "type": "string" }

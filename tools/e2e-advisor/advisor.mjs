@@ -19,7 +19,13 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const manifest = readYaml(manifestPath);
 const policy = readYaml(rulesPath);
-const changedFiles = getChangedFiles(baseRef, headRef);
+let changedFiles;
+try {
+  changedFiles = getChangedFiles(baseRef, headRef);
+} catch (error) {
+  console.error(`E2E Advisor could not compute changed files: ${error.message}`);
+  process.exit(1);
+}
 const input = {
   version: 1,
   baseRef,
@@ -135,13 +141,13 @@ function getChangedFiles(base, head) {
   ];
   for (const command of candidates) {
     try {
-      const stdout = execFileSync("git", command, { encoding: "utf8" });
+      const stdout = execFileSync("git", command, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
       return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).sort();
     } catch {
       // Try next diff form. GitHub shallow checkouts may not have merge-base.
     }
   }
-  return [];
+  throw new Error(`failed to diff ${base}..${head}; ensure both refs are fetched`);
 }
 
 function matchesRule(rule, file) {
