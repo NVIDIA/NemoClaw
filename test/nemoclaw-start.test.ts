@@ -262,7 +262,10 @@ describe("nemoclaw-start non-root fallback", () => {
       'verify_config_integrity_if_locked() { :; }',
       'normalize_mutable_config_perms() { :; }',
       'apply_model_override() { :; }',
+      'reconcile_agent_model_with_provider() { :; }',
       'apply_cors_override() { :; }',
+      'refresh_openclaw_provider_placeholders() { :; }',
+      'ensure_mutable_openclaw_config_hash() { :; }',
       'export_gateway_token() { :; }',
       'write_runtime_shell_env() { :; }',
       'ensure_runtime_shell_env_shim() { :; }',
@@ -813,6 +816,62 @@ describe("runtime model override (#759)", () => {
   });
 });
 
+describe("mutable OpenClaw config hash", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  function runEnsureHash(owner: "sandbox" | "root") {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-hash-"));
+    const openclawDir = path.join(root, ".openclaw");
+    fs.mkdirSync(openclawDir, { recursive: true });
+    fs.writeFileSync(path.join(openclawDir, "openclaw.json"), '{"ok":true}\n');
+
+    const scriptPath = path.join(root, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `openclaw_config_dir_owner() { printf '%s\\n' ${JSON.stringify(owner)}; }`,
+        extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash").replaceAll(
+          "/sandbox/.openclaw",
+          openclawDir,
+        ),
+        "ensure_mutable_openclaw_config_hash",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+    const hashPath = path.join(openclawDir, ".config-hash");
+    const hashExists = fs.existsSync(hashPath);
+    const hashCheck = hashExists
+      ? spawnSync("bash", ["-c", `cd ${JSON.stringify(openclawDir)} && sha256sum -c .config-hash --status`], {
+          encoding: "utf-8",
+          timeout: 5000,
+        })
+      : undefined;
+    const hashMode = hashExists ? fs.statSync(hashPath).mode & 0o777 : undefined;
+    fs.rmSync(root, { recursive: true, force: true });
+    return { result, hashExists, hashCheck, hashMode };
+  }
+
+  it("creates a missing hash for mutable-default OpenClaw config", () => {
+    const { result, hashExists, hashCheck, hashMode } = runEnsureHash("sandbox");
+
+    expect(result.status).toBe(0);
+    expect(hashExists).toBe(true);
+    expect(hashCheck?.status).toBe(0);
+    expect(hashMode).toBe(0o660);
+  });
+
+  it("does not synthesize a missing locked config trust anchor", () => {
+    const { result, hashExists } = runEnsureHash("root");
+
+    expect(result.status).toBe(0);
+    expect(hashExists).toBe(false);
+  });
+});
+
 describe("runtime CORS origin override (#719)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -1152,6 +1211,13 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
         "cleanup_on_signal() { :; }",
+        // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
+        // in sandbox-init.sh; the launch block uses STEP_DOWN_PREFIX_GATEWAY
+        // for the gateway exec. Initialize to the gosu fallback so the
+        // stubbed gosu() in fakeBin still receives the call (issue #3280
+        // follow-up).
+        "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
+        "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
         launchBlock(kind, gatewayLog),
         kind === "root"
           ? `for _ in ${waitForLaunchLogIterations}; do [ -s ${JSON.stringify(gosuLog)} ] && [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`
@@ -1394,6 +1460,137 @@ describe("NC-2227-01: legacy migration behavior", () => {
   });
 });
 
+describe("seed_default_workspace_templates (#3240)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  function runSeed(
+    workspaceDir: string,
+    templatesDir: string,
+    scriptPath: string,
+    options: { skipBootstrap?: boolean } = {},
+  ) {
+    const configPath = path.join(path.dirname(scriptPath), "openclaw.json");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ agents: { defaults: { skipBootstrap: options.skipBootstrap ?? true } } }),
+    );
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        extractShellFunctionFromSource(src, "seed_default_workspace_templates"),
+        `seed_default_workspace_templates ${JSON.stringify(workspaceDir)} ${JSON.stringify(templatesDir)} ${JSON.stringify(configPath)}`,
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    return spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+  }
+
+  it("seeds the documented workspace templates and skips BOOTSTRAP.md", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(templatesDir, { recursive: true });
+    for (const name of [
+      "AGENTS.md",
+      "SOUL.md",
+      "IDENTITY.md",
+      "USER.md",
+      "TOOLS.md",
+      "HEARTBEAT.md",
+      "BOOTSTRAP.md",
+    ]) {
+      fs.writeFileSync(
+        path.join(templatesDir, name),
+        `---\nsummary: "${name} template"\n---\n# ${name} template content\n`,
+      );
+    }
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"));
+      expect(result.status).toBe(0);
+      for (const name of [
+        "AGENTS.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "TOOLS.md",
+        "HEARTBEAT.md",
+      ]) {
+        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(true);
+      }
+      // BOOTSTRAP.md must NOT be seeded — its presence triggers the
+      // interactive identity-setup turn that skipBootstrap=true is meant
+      // to suppress.
+      expect(fs.existsSync(path.join(workspaceDir, "BOOTSTRAP.md"))).toBe(false);
+      expect(fs.readFileSync(path.join(workspaceDir, "SOUL.md"), "utf-8")).toBe(
+        "# SOUL.md template content\n",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not seed unless OpenClaw bootstrap is explicitly skipped", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-bootstrap-on-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(templatesDir, { recursive: true });
+    fs.writeFileSync(path.join(templatesDir, "SOUL.md"), "soul template");
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"), {
+        skipBootstrap: false,
+      });
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not clobber an already-populated workspace", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-existing-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(templatesDir, { recursive: true });
+    fs.writeFileSync(path.join(workspaceDir, "USER.md"), "user content");
+    fs.writeFileSync(path.join(templatesDir, "USER.md"), "template content");
+    fs.writeFileSync(path.join(templatesDir, "SOUL.md"), "soul template");
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"));
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(path.join(workspaceDir, "USER.md"), "utf-8")).toBe("user content");
+      // Workspace was non-empty, so no other templates were copied in.
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to seed a symlinked workspace dir", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-symlink-"));
+    const realDir = path.join(tmpDir, "real");
+    const linkDir = path.join(tmpDir, "link");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(realDir);
+    fs.mkdirSync(templatesDir);
+    fs.symlinkSync(realDir, linkDir);
+    fs.writeFileSync(path.join(templatesDir, "SOUL.md"), "soul template");
+    try {
+      const result = runSeed(linkDir, templatesDir, path.join(tmpDir, "seed.sh"));
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("refusing to seed symlinked workspace dir");
+      expect(fs.existsSync(path.join(realDir, "SOUL.md"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+});
+
 describe("Slack token rewriter (#2085)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -1566,7 +1763,10 @@ describe("Telegram diagnostics (#2766)", () => {
         'verify_config_integrity_if_locked() { echo "ORDER:verify"; }',
         'normalize_mutable_config_perms() { echo "ORDER:normalize"; }',
         'apply_model_override() { :; }',
+        'reconcile_agent_model_with_provider() { :; }',
         'apply_cors_override() { :; }',
+        'refresh_openclaw_provider_placeholders() { :; }',
+        'ensure_mutable_openclaw_config_hash() { :; }',
         'export_gateway_token() { :; }',
         'write_runtime_shell_env() { :; }',
         'ensure_runtime_shell_env_shim() { :; }',
@@ -1577,10 +1777,17 @@ describe("Telegram diagnostics (#2766)", () => {
         'verify_no_slack_secrets_on_disk() { :; }',
         'write_auth_profile() { :; }',
         'harden_auth_profiles() { :; }',
+        'seed_default_workspace_templates() { :; }',
         'chown() { :; }',
         'chown_tree_no_symlink_follow() { :; }',
         'start_persistent_gateway_log_mirror() { :; }',
         'gosu() { shift; "$@"; }',
+        // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
+        // in sandbox-init.sh; the test scaffolding doesn't source that, so
+        // initialize them here in their fallback form so the gosu() stub still
+        // gets invoked (issue #3280 follow-up).
+        "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
+        "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
         'validate_tmp_permissions() { printf "VALIDATE:%s\\n" "$*"; }',
         '_SANDBOX_HOME=/sandbox',
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,

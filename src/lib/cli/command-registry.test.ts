@@ -17,10 +17,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 53 commands", () => {
-      // 24 global (19 visible + 5 hidden help/version aliases)
+    it("should contain exactly 54 commands", () => {
+      // 25 global (20 visible + 5 hidden help/version aliases)
       // 29 sandbox (23 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(53);
+      expect(COMMANDS).toHaveLength(54);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -39,9 +39,9 @@ describe("command-registry", () => {
   });
 
   describe("globalCommands()", () => {
-    it("should return exactly 24 entries", () => {
-      // 19 visible + 5 hidden (help, --help, -h, --version, -v)
-      expect(globalCommands()).toHaveLength(24);
+    it("should return exactly 25 entries", () => {
+      // 20 visible + 5 hidden (help, --help, -h, --version, -v)
+      expect(globalCommands()).toHaveLength(25);
     });
 
     it("every entry has scope global", () => {
@@ -65,10 +65,10 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 11 hidden commands (42 visible)", () => {
+    it("should exclude 11 hidden commands (43 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
       // 6 hidden sandbox (shields×3, config get/set/rotate-token)
-      expect(visibleCommands()).toHaveLength(42);
+      expect(visibleCommands()).toHaveLength(43);
     });
 
     it("no visible command has hidden=true", () => {
@@ -146,7 +146,7 @@ describe("command-registry", () => {
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 21 tokens matching the old GLOBAL_COMMANDS", () => {
+    it("returns the exact set of 22 tokens matching the global dispatch commands", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "onboard",
@@ -165,6 +165,7 @@ describe("command-registry", () => {
         "backup-all",
         "upgrade-sandboxes",
         "gc",
+        "inference",
         "help",
         "--help",
         "-h",

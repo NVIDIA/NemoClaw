@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   renderSandboxInventoryText: vi.fn(),
   runBackupAllAction: vi.fn(),
   runGarbageCollectImagesAction: vi.fn(),
+  runInferenceSet: vi.fn(),
   runOnboardAction: vi.fn(),
   runSetupAction: vi.fn(),
   runSetupSparkAction: vi.fn(),
@@ -42,6 +43,14 @@ vi.mock("../actions/global", () => ({
   runUpgradeSandboxesAction: mocks.runUpgradeSandboxesAction,
 }));
 
+vi.mock("../actions/inference-set", () => ({
+  InferenceSetError: class InferenceSetError extends Error {
+    exitCode = 1;
+  },
+  runInferenceSet: mocks.runInferenceSet,
+}));
+
+import InferenceSetCommand from "./inference/set";
 import ListCommand from "./list";
 import BackupAllCommand from "./maintenance/backup-all";
 import GarbageCollectImagesCommand from "./maintenance/gc";
@@ -60,6 +69,15 @@ describe("global oclif command adapters", () => {
     mocks.buildStatusCommandDeps.mockReturnValue({ statusDeps: true });
     mocks.getSandboxInventory.mockResolvedValue({ sandboxes: [] });
     mocks.getStatusReport.mockReturnValue({ sandboxes: [] });
+    mocks.runInferenceSet.mockResolvedValue({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/model-a",
+      primaryModelRef: "inference/nvidia/model-a",
+      providerKey: "inference",
+      configChanged: true,
+      sessionUpdated: false,
+    });
   });
 
   afterEach(() => {
@@ -111,5 +129,27 @@ describe("global oclif command adapters", () => {
     expect(mocks.runOnboardAction).toHaveBeenCalledWith(["--resume", "--name", "alpha"]);
     expect(mocks.runSetupAction).toHaveBeenCalledWith(["--fresh"]);
     expect(mocks.runSetupSparkAction).toHaveBeenCalledWith(["--control-ui-port", "18080"]);
+  });
+
+  it("maps inference set flags into the inference action", async () => {
+    await InferenceSetCommand.run(
+      [
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "--sandbox",
+        "alpha",
+        "--no-verify",
+      ],
+      rootDir,
+    );
+
+    expect(mocks.runInferenceSet).toHaveBeenCalledWith({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      sandboxName: "alpha",
+      noVerify: true,
+    });
   });
 });

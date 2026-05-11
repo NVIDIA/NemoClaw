@@ -405,6 +405,66 @@ EOF
     });
   });
 
+  describe("init_step_down_prefixes", () => {
+    it("falls back to gosu when setpriv is unavailable", () => {
+      // Source-time init runs before our test body, so re-run it with a
+      // PATH that hides setpriv and capsh to exercise the fallback.
+      const { stdout, stderr } = runWithLib(
+        [
+          "export PATH=/nonexistent",
+          "init_step_down_prefixes 2>&1",
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_SANDBOX[@]}\"",
+          'echo "--"',
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_GATEWAY[@]}\"",
+        ].join("\n"),
+      );
+      const combined = `${stdout}\n${stderr}`;
+      expect(combined).toContain("falling back to gosu");
+      expect(stdout).toContain("gosu\nsandbox");
+      expect(stdout).toContain("gosu\ngateway");
+    });
+
+    it("uses setpriv with the issue-3280 bounding-set drop when available", () => {
+      const { stdout } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          'cat >"$TMP/setpriv" <<\'STUB\'',
+          "#!/bin/sh",
+          "exit 0",
+          "STUB",
+          'cat >"$TMP/capsh" <<\'STUB\'',
+          "#!/bin/sh",
+          '[ "$1" = "--has-p=cap_setpcap" ] && exit 0',
+          "exit 1",
+          "STUB",
+          'chmod +x "$TMP/setpriv" "$TMP/capsh"',
+          'export PATH="$TMP:$PATH"',
+          "init_step_down_prefixes",
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_SANDBOX[@]}\"",
+          'echo "--"',
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_GATEWAY[@]}\"",
+          'rm -rf "$TMP"',
+        ].join("\n"),
+      );
+      // setpriv prefix must include --reuid/--regid for the user and the
+      // bounding-set drop covering the five load-bearing caps from #3280.
+      expect(stdout).toContain("setpriv");
+      expect(stdout).toContain("--reuid=sandbox");
+      expect(stdout).toContain("--regid=sandbox");
+      expect(stdout).toContain("--reuid=gateway");
+      expect(stdout).toContain("--regid=gateway");
+      // setpriv expects unprefixed cap names (per `setpriv --list`),
+      // unlike capsh which uses cap_*. Keep these in sync with the
+      // STEP_DOWN_PREFIX_* arrays in sandbox-init.sh.
+      expect(stdout).toContain("--bounding-set=-setuid,-setgid,-fowner,-chown,-kill");
+      // Each prefix array must end with '--' so setpriv stops parsing
+      // its own flags before the caller's target command. printf splits
+      // array elements onto separate lines, so each prefix's last element
+      // is a line containing just '--'.
+      expect(stdout.match(/^--$/gm)?.length).toBeGreaterThanOrEqual(3);
+    });
+  });
+
   describe("validate_config_symlinks", () => {
     let workDir: string;
 
@@ -577,6 +637,13 @@ EOF
       expect(src).not.toContain("_PROXY_MARKER_BEGIN");
     });
 
+    it("hermes start.sh persists OpenShell proxy CA env for connect sessions", () => {
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
+      expect(src).toContain("SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO");
+      expect(src).toContain("export REQUESTS_CA_BUNDLE=");
+      expect(src).toContain("export GIT_SSL_CAINFO=");
+    });
+
     it("hermes start.sh routes Discord through the local decode proxy", () => {
       const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       expect(src).toContain('export DISCORD_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"');
@@ -594,7 +661,12 @@ EOF
       expect(body).toContain('local log_path="/tmp/discord-facade.log"');
       expect(body).toContain('prepare_restricted_log "$log_path" gateway:gateway 600');
       expect(body).toContain('prepare_restricted_log "$log_path" "" 600');
-      expect(body).toContain("gosu gateway sh -c");
+      // Privilege step-down now uses STEP_DOWN_PREFIX_GATEWAY (setpriv-
+      // based, see sandbox-init.sh init_step_down_prefixes), not gosu
+      // directly — this drops cap_setuid/setgid/fowner/chown/kill from
+      // the bounding set atomically with reuid. Issue #3280 follow-up.
+      expect(body).toContain('"${STEP_DOWN_PREFIX_GATEWAY[@]}" sh -c');
+      expect(body).not.toContain("gosu gateway sh -c");
       expect(body).toContain('exec "$@" >/tmp/discord-facade.log 2>&1');
       expect(body).not.toContain(
         "gosu gateway python3 /usr/local/bin/nemoclaw-discord-facade >/tmp/discord-facade.log",

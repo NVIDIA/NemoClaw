@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // slack-token-rewriter.js — translates the Bolt-compatible placeholder
-// (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR into the canonical
-// openshell:resolve:env:VAR form on outbound HTTP, so Slack tokens travel
-// the same OpenShell substitution path Discord / Telegram / Brave already
-// use without any real token touching openclaw.json.
+// (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR into the active OpenShell
+// openshell:resolve:env:* placeholder on outbound HTTP, so Slack tokens
+// travel the same OpenShell substitution path Discord / Telegram / Brave
+// already use without any real token touching openclaw.json.
 //
 // Why this preload exists:
 //   Slack's Bolt SDK validates token shape (^xoxb-[A-Za-z0-9_-]+$ /
 //   ^xapp-…$) at App construction, before any HTTP call leaves the
-//   process — so the canonical openshell:resolve:env:VAR placeholder is
-//   rejected synchronously and the gateway crashes. We emit a Bolt-shape
-//   placeholder into openclaw.json (which Bolt accepts), then translate
-//   it back to canonical form here, just before the bytes hit the wire,
+//   process — so OpenShell's openshell:resolve:env:* placeholder is rejected
+//   synchronously and the gateway crashes. We emit a Bolt-shape placeholder
+//   into openclaw.json (which Bolt accepts), then translate it back to the
+//   current OpenShell placeholder here, just before the bytes hit the wire,
 //   where OpenShell's L7 proxy substitutes the real token from env.
 //
 // Wraps http.request / https.request — every Node HTTP client bottoms
@@ -26,7 +26,9 @@
 // token in both Authorization and the urlencoded body.
 //
 // Invariants:
-//   - No env reads. Translation is purely structural.
+//   - Env reads are used only when they contain OpenShell placeholder values.
+//     Raw env values are ignored so real tokens never enter outbound request
+//     objects through this preload.
 //   - Mutates options/headers in place. axios reuses the headers object
 //     after request creation, so cloning would break the request lifecycle.
 //   - Idempotent. The output (openshell:resolve:env:VAR) does not match
@@ -50,11 +52,29 @@
   var BOLT_PLACEHOLDER =
     /\b(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-([A-Z_][A-Z0-9_]*)\b/g;
   var FAST_PATH = 'OPENSHELL-RESOLVE-ENV-';
+  var OPENSHELL_PLACEHOLDER_PREFIX = 'openshell:resolve:env:';
+
+  function placeholderForEnvKey(envKey) {
+    var value = '';
+    try {
+      if (typeof process !== 'undefined' && process && process.env) {
+        value = process.env[envKey];
+      }
+    } catch (_) {
+      value = '';
+    }
+    if (typeof value === 'string' && value.indexOf(OPENSHELL_PLACEHOLDER_PREFIX) === 0) {
+      return value;
+    }
+    return OPENSHELL_PLACEHOLDER_PREFIX + envKey;
+  }
 
   function rewriteString(s) {
     if (typeof s !== 'string') return s;
     if (s.indexOf(FAST_PATH) === -1) return s;
-    return s.replace(BOLT_PLACEHOLDER, 'openshell:resolve:env:$1');
+    return s.replace(BOLT_PLACEHOLDER, function (_match, envKey) {
+      return placeholderForEnvKey(envKey);
+    });
   }
 
   function rewriteHeaders(headers) {

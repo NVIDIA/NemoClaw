@@ -62,6 +62,7 @@ run_nemoclaw() {
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-repair}"
 OTHER_SANDBOX_NAME="${NEMOCLAW_OTHER_SANDBOX_NAME:-e2e-other}"
+INSTALL_SANDBOX_NAME="${NEMOCLAW_E2E_INSTALL_SANDBOX_NAME:-}"
 
 # Shim so the teardown helper's trap can call `nemoclaw destroy` even when
 # this repo-local test run has no globally-installed `nemoclaw` on PATH (it
@@ -74,17 +75,46 @@ fi
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 register_sandbox_for_teardown "$OTHER_SANDBOX_NAME"
+if [ -n "$INSTALL_SANDBOX_NAME" ]; then
+  register_sandbox_for_teardown "$INSTALL_SANDBOX_NAME"
+fi
 
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 RESTORE_API_KEY="${NVIDIA_API_KEY:-}"
+
+wait_openshell_sandbox_absent() {
+  local sandbox_name="$1"
+  local timeout="${2:-60}"
+  local deadline=$((SECONDS + timeout))
+  local output status
+
+  while [ "$SECONDS" -le "$deadline" ]; do
+    output="$(openshell sandbox get "$sandbox_name" 2>&1)"
+    status=$?
+    if [ "$status" -ne 0 ] && grep -qiE 'NotFound|Not Found|sandbox not found' <<<"$output"; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  info "OpenShell still reports sandbox '$sandbox_name' after ${timeout}s:"
+  printf '%s\n' "$output" | sed 's/^/    /'
+  return 1
+}
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Pre-cleanup"
 info "Destroying any leftover sandbox/gateway from previous runs..."
+if [ -n "$INSTALL_SANDBOX_NAME" ]; then
+  run_nemoclaw "$INSTALL_SANDBOX_NAME" destroy 2>/dev/null || true
+fi
 run_nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
 run_nemoclaw "$OTHER_SANDBOX_NAME" destroy 2>/dev/null || true
+if [ -n "$INSTALL_SANDBOX_NAME" ]; then
+  openshell sandbox delete "$INSTALL_SANDBOX_NAME" 2>/dev/null || true
+fi
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 openshell sandbox delete "$OTHER_SANDBOX_NAME" 2>/dev/null || true
 openshell forward stop 18789 2>/dev/null || true
@@ -188,10 +218,10 @@ info "Deleting the recorded sandbox under the session, then resuming..."
 openshell sandbox delete "$SANDBOX_NAME" >/dev/null 2>&1 || true
 openshell forward stop 18789 >/dev/null 2>&1 || true
 
-if openshell sandbox get "$SANDBOX_NAME" >/dev/null 2>&1; then
-  fail "Sandbox '$SANDBOX_NAME' still exists after forced deletion"
-else
+if wait_openshell_sandbox_absent "$SANDBOX_NAME" 60; then
   pass "Sandbox '$SANDBOX_NAME' removed to simulate stale recorded state"
+else
+  fail "Sandbox '$SANDBOX_NAME' still exists after forced deletion"
 fi
 
 REPAIR_LOG="$(mktemp)"

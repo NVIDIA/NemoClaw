@@ -12,7 +12,7 @@
 #   2. Node.js 22 (nodesource)
 #   3. OpenShell CLI binary (pinned release)
 #   4. NemoClaw repo cloned with npm deps installed and TS plugin built
-#   5. Docker images pre-pulled (sandbox-base, openshell/cluster, node:22-slim)
+#   5. Docker images pre-pulled (sandbox-base, openshell/supervisor, node:22-trixie-slim)
 #
 # What this does NOT install (intentionally):
 #   - code-server (not needed for automated CI)
@@ -28,7 +28,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
 #
 # Environment overrides:
-#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.36)
+#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.37)
 #   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
 #   SKIP_DOCKER_PULL      — Set to 1 to skip Docker image pre-pulls
@@ -40,7 +40,7 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.36}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.37}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
@@ -53,7 +53,7 @@ SENTINEL="/var/run/nemoclaw-launchable-ready"
 # timeouts when pulled during CI runs.
 DOCKER_IMAGES=(
   "ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
-  "node:22-slim"
+  "node:22-trixie-slim"
 )
 
 # ── Suppress apt noise ───────────────────────────────────────────────
@@ -250,20 +250,20 @@ DOCKER_PULL_PID=""
 if [[ "${SKIP_DOCKER_PULL:-0}" != "1" ]]; then
   info "Pre-pulling Docker images in background..."
   (
-    CLUSTER_TAG="${OPENSHELL_VERSION#v}" # v0.0.20 → 0.0.20
-    CLUSTER_IMAGE="ghcr.io/nvidia/openshell/cluster:${CLUSTER_TAG}"
+    SUPERVISOR_TAG="${OPENSHELL_VERSION#v}" # v0.0.37 → 0.0.37
+    SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor:${SUPERVISOR_TAG}"
 
     # Pull all images in parallel
-    for image in "${DOCKER_IMAGES[@]}" "$CLUSTER_IMAGE"; do
+    for image in "${DOCKER_IMAGES[@]}" "$SUPERVISOR_IMAGE"; do
       sg docker -c "docker pull $image" 2>&1 | tail -1 &
     done
     wait
 
-    # If pinned cluster tag failed, try :latest
-    if ! sg docker -c "docker image inspect $CLUSTER_IMAGE" >/dev/null 2>&1; then
-      warn "  Could not pull $CLUSTER_IMAGE — trying :latest"
-      sg docker -c "docker pull ghcr.io/nvidia/openshell/cluster:latest" 2>&1 | tail -1 \
-        || warn "  Failed to pull openshell/cluster (will be pulled at test time)"
+    # If pinned supervisor tag failed, try :latest
+    if ! sg docker -c "docker image inspect $SUPERVISOR_IMAGE" >/dev/null 2>&1; then
+      warn "  Could not pull $SUPERVISOR_IMAGE — trying :latest"
+      sg docker -c "docker pull ghcr.io/nvidia/openshell/supervisor:latest" 2>&1 | tail -1 \
+        || warn "  Failed to pull openshell/supervisor (will be pulled at test time)"
     fi
   ) &
   DOCKER_PULL_PID=$!
