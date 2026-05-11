@@ -469,7 +469,7 @@ describe("local inference helpers", () => {
       if (c.includes("free")) return freeOutput;
       return JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
     };
-    const result = validateOllamaModel("nemotron-3-nano:30b", capture);
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => true);
     expect(result.ok).toBe(true);
   });
 
@@ -480,8 +480,68 @@ describe("local inference helpers", () => {
       if (c.includes("free")) return freeOutput;
       return JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
     };
-    const result = validateOllamaModel("nemotron-3-nano:30b", capture);
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => true);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/failed the local probe/);
   });
+
+  it("does not bypass OOM error on non-Spark hosts even with large total RAM", () => {
+    const freeOutput = "               total        used        free\nMem:          262144       250000       1000";
+    const capture = (cmd: string | string[]) => {
+      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (c.includes("free")) return freeOutput;
+      return JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => false);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/failed the local probe/);
+  });
+
+  it("retries with extended timeout when first probe returns empty (slow model load on unified-memory host)", () => {
+    // Simulate Spark: first probe times out (empty), retry with 300s timeout succeeds.
+    const commands: string[] = [];
+    let callCount = 0;
+    const capture = (cmd: string | string[]) => {
+      callCount++;
+      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      commands.push(c);
+      return callCount === 1 ? "" : JSON.stringify({ response: "Hi" });
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => true);
+    expect(result.ok).toBe(true);
+    expect(callCount).toBe(2);
+    expect(commands[1]).toMatch(/--max-time.*300|300.*--max-time/);
+  });
+
+  it("does not retry on non-Spark hosts when first probe returns empty", () => {
+    let callCount = 0;
+    const capture = () => { callCount++; return ""; };
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => false);
+    expect(result.ok).toBe(false);
+    expect(callCount).toBe(1);
+  });
+
+  it("fails when both probe attempts return empty (model truly unhealthy or too slow)", () => {
+    const capture = () => "";
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => true);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/did not answer the local probe in time/);
+  });
+
+  it("passes when first probe times out then retry returns OOM error but total RAM is sufficient", () => {
+    // Composite: mode 2 (first probe empty) + mode 1 (retry returns OOM error).
+    const freeOutput = "               total        used        free\nMem:          131072       120000       1000";
+    let callCount = 0;
+    const capture = (cmd: string | string[]) => {
+      callCount++;
+      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (c.includes("free")) return freeOutput;
+      return callCount === 1
+        ? ""
+        : JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => true);
+    expect(result.ok).toBe(true);
+  });
+
 });

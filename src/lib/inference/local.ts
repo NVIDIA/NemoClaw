@@ -15,6 +15,7 @@ import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 
 const { isWsl } = require("../platform");
+const { detectNvidiaPlatform } = require("./nim");
 
 /** Port containers use to reach Ollama — proxy on non-WSL, direct on WSL2. */
 export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
@@ -529,10 +530,17 @@ export function getOllamaProbeCommand(
 export function validateOllamaModel(
   model: string,
   runCaptureImpl?: RunCaptureFn,
+  isSparkImpl?: () => boolean,
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
+  const isSpark = isSparkImpl ?? (() => detectNvidiaPlatform() === "spark");
   const probeCmd = getOllamaProbeCommand(model);
-  const output = capture(probeCmd, { ignoreError: true });
+  let output = capture(probeCmd, { ignoreError: true });
+  // On DGX Spark (128 GB unified memory), loading a large model from disk can take >2 min.
+  // Only retry with extended timeout on Spark — elsewhere, fast failure is correct. (#3251)
+  if (!output && isSpark()) {
+    output = capture(getOllamaProbeCommand(model, 300), { ignoreError: true });
+  }
   if (!output) {
     return {
       ok: false,
@@ -555,13 +563,12 @@ export function validateOllamaModel(
             `model's capabilities and pick one whose list includes 'tools'.`,
         };
       }
-      // On unified-memory platforms (e.g. DGX Spark), Ollama checks available RAM
-      // instead of total RAM, causing false OOM rejections. (#3251)
-      // If the error is a memory rejection, re-validate against total system RAM.
+      // Ollama checks available RAM instead of total; false positive on DGX Spark
+      // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
       const memMatch = errText.match(
         /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
       );
-      if (memMatch) {
+      if (memMatch && isSpark()) {
         const requiresGiB = parseFloat(memMatch[1]);
         const freeOut = capture(["free", "-m"], { ignoreError: true });
         if (freeOut) {
@@ -570,8 +577,6 @@ export function validateOllamaModel(
             const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
             const totalGiB = totalMB / 1024;
             if (totalGiB >= requiresGiB) {
-              // Total RAM is sufficient — Ollama's available-RAM check is a false
-              // positive on unified-memory hardware. Allow the probe to pass.
               return { ok: true };
             }
           }
