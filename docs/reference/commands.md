@@ -865,6 +865,21 @@ $ nemoclaw status
 $ nemoclaw status --json
 ```
 
+### `nemoclaw inference set`
+
+Switch the active inference provider or model for a NemoClaw-managed OpenClaw sandbox.
+The command updates the OpenShell gateway route, patches the selected running OpenClaw config so the agent's primary model identity matches the route, recomputes the config hash, and updates the NemoClaw registry.
+
+By default, the command syncs the default registered sandbox.
+Pass `--sandbox <name>` to target a different OpenClaw sandbox.
+
+```console
+$ nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify]
+```
+
+Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `ollama-local`, and `vllm-local`.
+Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
+
 ### `nemoclaw setup`
 
 :::{warning}

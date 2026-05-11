@@ -80,6 +80,14 @@ export interface GatewayInference {
   model: string | null;
 }
 
+export interface SandboxInferenceConfig {
+  providerKey: string;
+  primaryModelRef: string;
+  inferenceBaseUrl: string;
+  inferenceApi: string;
+  inferenceCompat: Record<string, unknown> | null;
+}
+
 export function getProviderSelectionConfig(
   provider: string,
   model?: string,
@@ -165,7 +173,60 @@ export function getProviderSelectionConfig(
 export function getOpenClawPrimaryModel(provider: string, model?: string): string {
   const resolvedModel =
     model || (provider === "ollama-local" ? DEFAULT_OLLAMA_MODEL : DEFAULT_CLOUD_MODEL);
-  return `${MANAGED_PROVIDER_ID}/${resolvedModel}`;
+  return getSandboxInferenceConfig(resolvedModel, provider).primaryModelRef;
+}
+
+export function getSandboxInferenceConfig(
+  model: string,
+  provider: string | null = null,
+  preferredInferenceApi: string | null = null,
+): SandboxInferenceConfig {
+  let providerKey: string;
+  let primaryModelRef: string;
+  let inferenceBaseUrl = INFERENCE_ROUTE_URL;
+  let inferenceApi = preferredInferenceApi || "openai-completions";
+  let inferenceCompat: Record<string, unknown> | null = null;
+
+  switch (provider) {
+    case "openai-api":
+      providerKey = "openai";
+      primaryModelRef = `openai/${model}`;
+      break;
+    case "anthropic-prod":
+    case "compatible-anthropic-endpoint":
+      providerKey = "anthropic";
+      primaryModelRef = `anthropic/${model}`;
+      inferenceBaseUrl = "https://inference.local";
+      inferenceApi = "anthropic-messages";
+      break;
+    case "gemini-api":
+    case "hermes-provider":
+      providerKey = MANAGED_PROVIDER_ID;
+      primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
+      inferenceCompat = {
+        supportsStore: false,
+      };
+      break;
+    case "compatible-endpoint":
+      providerKey = MANAGED_PROVIDER_ID;
+      primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
+      inferenceCompat = {
+        supportsStore: false,
+      };
+      break;
+    case "nvidia-router":
+      providerKey = MANAGED_PROVIDER_ID;
+      primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
+      break;
+    case "nvidia-prod":
+    case "nvidia-nim":
+    default:
+      providerKey = MANAGED_PROVIDER_ID;
+      primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
+      break;
+  }
+
+  return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 
 export function parseGatewayInference(output: string | null | undefined): GatewayInference | null {

@@ -10,6 +10,7 @@ const {
   DEFAULT_HERMES_PROVIDER_MODEL,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
+  getSandboxInferenceConfig,
 } = require("../inference/config");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
@@ -102,14 +103,6 @@ const REMOTE_PROVIDER_CONFIG = {
 
 // Providers that run on the host and need the local-inference policy preset.
 const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
-
-type SandboxInferenceConfig = {
-  providerKey: string;
-  primaryModelRef: string;
-  inferenceBaseUrl: string;
-  inferenceApi: string;
-  inferenceCompat: Record<string, unknown> | null;
-};
 
 // Re-exported alias matching the existing onboard.ts call sites. The canonical
 // definitions live in inference-config.ts so that getProviderSelectionConfig
@@ -323,61 +316,6 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell) {
     upserted.push(name);
   }
   return upserted;
-}
-
-// ── Sandbox inference config ─────────────────────────────────────
-
-function getSandboxInferenceConfig(
-  model: string,
-  provider: string | null = null,
-  preferredInferenceApi: string | null = null,
-): SandboxInferenceConfig {
-  let providerKey;
-  let primaryModelRef;
-  let inferenceBaseUrl = "https://inference.local/v1";
-  let inferenceApi = preferredInferenceApi || "openai-completions";
-  let inferenceCompat = null;
-
-  switch (provider) {
-    case "openai-api":
-      providerKey = "openai";
-      primaryModelRef = `openai/${model}`;
-      break;
-    case "anthropic-prod":
-    case "compatible-anthropic-endpoint":
-      providerKey = "anthropic";
-      primaryModelRef = `anthropic/${model}`;
-      inferenceBaseUrl = "https://inference.local";
-      inferenceApi = "anthropic-messages";
-      break;
-    case "gemini-api":
-    case "hermes-provider":
-      providerKey = "inference";
-      primaryModelRef = `inference/${model}`;
-      inferenceCompat = {
-        supportsStore: false,
-      };
-      break;
-    case "compatible-endpoint":
-      providerKey = "inference";
-      primaryModelRef = `inference/${model}`;
-      inferenceCompat = {
-        supportsStore: false,
-      };
-      break;
-    case "nvidia-router":
-      providerKey = "inference";
-      primaryModelRef = `inference/${model}`;
-      break;
-    case "nvidia-prod":
-    case "nvidia-nim":
-    default:
-      providerKey = "inference";
-      primaryModelRef = `inference/${model}`;
-      break;
-  }
-
-  return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 
 module.exports = {
