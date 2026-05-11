@@ -513,6 +513,21 @@ describe("CLI dispatch", () => {
     expect(out).not.toContain("$ nemoclaw list [--json]");
   });
 
+  it("nemohermes inference set --help uses alias branding and agent-aware wording", () => {
+    const out = execSync(`node "${HERMES_CLI}" inference set --help`, {
+      encoding: "utf-8",
+      stdio: "pipe",
+      timeout: execTimeout(),
+      env: {
+        ...process.env,
+        HOME: `/tmp/nemoclaw-cli-test-${Date.now()}`,
+      },
+    });
+    expect(out).toContain("$ nemohermes inference set --provider <provider> --model <model>");
+    expect(out).toContain("[--sandbox <name>] [--no-verify]");
+    expect(out).toMatch(/OpenClaw or Hermes\s+sandbox config/);
+  });
+
   it("list --json emits structured empty inventory", () => {
     const r = run("list --json");
     expect(r.code).toBe(0);

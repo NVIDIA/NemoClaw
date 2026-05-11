@@ -181,13 +181,19 @@ Approved endpoints are session-scoped unless you also add them to the policy thr
 
 ### Change Models or Providers
 
-Use the NemoClaw command for model or provider switches so the OpenShell route and the running OpenClaw config stay consistent:
+Use the NemoClaw command for model or provider switches so the OpenShell route and the running agent config stay consistent:
 
 ```console
 $ nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
-For a build-time OpenClaw setting change, rerun onboarding so the sandbox configuration is recreated consistently:
+For Hermes sandboxes, use the alias; it updates the route and `/sandbox/.hermes/config.yaml` without a rebuild or restart:
+
+```console
+$ nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
+```
+
+For a build-time agent setting change, rerun onboarding so the sandbox configuration is recreated consistently:
 
 ```console
 $ nemoclaw onboard --resume --recreate-sandbox

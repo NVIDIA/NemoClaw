@@ -29,6 +29,7 @@ vi.mock("../shields/audit", () => ({
 
 import {
   type InferenceSetDeps,
+  patchHermesInferenceConfig,
   patchOpenClawInferenceConfig,
   runInferenceSet,
 } from "./inference-set";
@@ -40,6 +41,15 @@ const OPENCLAW_TARGET: AgentConfigTarget = {
   format: "json",
   configFile: "openclaw.json",
   sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+};
+
+const HERMES_TARGET: AgentConfigTarget = {
+  agentName: "hermes",
+  configPath: "/sandbox/.hermes/config.yaml",
+  configDir: "/sandbox/.hermes",
+  format: "yaml",
+  configFile: "config.yaml",
+  sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
 };
 
 function baseSession(overrides: Partial<Session> = {}): Session {
@@ -81,6 +91,10 @@ function baseSession(overrides: Partial<Session> = {}): Session {
 function createDeps(options: {
   config: ConfigObject;
   entry?: SandboxEntry | null;
+  entries?: SandboxEntry[];
+  defaultSandbox?: string | null;
+  requestedAgent?: string | null;
+  target?: AgentConfigTarget;
   session?: Session | null;
   openshellStatus?: number;
 }): InferenceSetDeps & {
@@ -96,6 +110,13 @@ function createDeps(options: {
   getSession: () => Session | null;
 } {
   let session = options.session ?? null;
+  const entries = options.entries ?? [options.entry ?? { name: "alpha", agent: null }];
+  const sandboxes = entries.reduce<Record<string, SandboxEntry>>((acc, entry) => {
+    acc[entry.name] = entry;
+    return acc;
+  }, {});
+  const defaultSandbox =
+    options.defaultSandbox === undefined ? entries[0]?.name ?? null : options.defaultSandbox;
   const calls = {
     runOpenshell: vi.fn(() => ({ status: options.openshellStatus ?? 0, stdout: "", stderr: "" })),
     writeSandboxConfig: vi.fn(),
@@ -110,12 +131,14 @@ function createDeps(options: {
     log: vi.fn(),
   };
   return {
-    getDefaultSandbox: () => "alpha",
-    getSandbox: () => options.entry ?? { name: "alpha", agent: null },
+    getDefaultSandbox: () => defaultSandbox,
+    getSandbox: (name: string) => sandboxes[name] ?? null,
+    listSandboxes: () => ({ sandboxes: entries, defaultSandbox }),
     updateSandbox: calls.updateSandbox,
+    getRequestedAgent: () => options.requestedAgent,
     loadSession: () => session,
     updateSession: calls.updateSession,
-    resolveAgentConfig: () => OPENCLAW_TARGET,
+    resolveAgentConfig: () => options.target ?? OPENCLAW_TARGET,
     readSandboxConfig: () => options.config,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
@@ -227,6 +250,45 @@ describe("patchOpenClawInferenceConfig", () => {
   });
 });
 
+describe("patchHermesInferenceConfig", () => {
+  it("updates only the Hermes model block for the selected route", () => {
+    const config: ConfigObject = {
+      model: {
+        default: "moonshotai/kimi-k2.6",
+        provider: "custom",
+        base_url: "https://old.example/v1",
+        temperature: 0.2,
+      },
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://should-not-change.example/v1",
+          },
+        },
+      },
+      terminal: { backend: "local" },
+    };
+
+    const result = patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini");
+
+    expect(result.changed).toBe(true);
+    expect(config.model).toEqual({
+      default: "openai/gpt-5.4-mini",
+      provider: "custom",
+      base_url: "https://inference.local/v1",
+      temperature: 0.2,
+    });
+    expect(config.models).toEqual({
+      providers: {
+        inference: {
+          baseUrl: "https://should-not-change.example/v1",
+        },
+      },
+    });
+    expect(config.terminal).toEqual({ backend: "local" });
+  });
+});
+
 describe("runInferenceSet", () => {
   it("updates OpenShell, OpenClaw config, registry, and the matching onboard session", async () => {
     const config: ConfigObject = {
@@ -296,15 +358,150 @@ describe("runInferenceSet", () => {
     });
   });
 
-  it("refuses non-OpenClaw sandboxes before changing OpenShell inference", async () => {
+  it("updates OpenShell, Hermes config.yaml, registry, and the matching onboard session", async () => {
+    const config: ConfigObject = {
+      model: {
+        default: "moonshotai/kimi-k2.6",
+        provider: "custom",
+        base_url: "https://inference.local/v1",
+      },
+      terminal: { backend: "local" },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+
+    const result = await runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    expect(deps.calls.runOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--provider",
+        "hermes-provider",
+        "--model",
+        "openai/gpt-5.4-mini",
+        "--no-verify",
+      ],
+      { ignoreError: true },
+    );
+    expect(config).toEqual({
+      model: {
+        default: "openai/gpt-5.4-mini",
+        provider: "custom",
+        base_url: "https://inference.local/v1",
+      },
+      terminal: { backend: "local" },
+    });
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledTimes(1);
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("hermes", HERMES_TARGET, config);
+    expect(deps.calls.writeSandboxConfig.mock.calls[0][1].configPath).toBe(
+      "/sandbox/.hermes/config.yaml",
+    );
+    expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("hermes", HERMES_TARGET);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("hermes", {
+      provider: "hermes-provider",
+      model: "openai/gpt-5.4-mini",
+    });
+    expect(deps.getSession()).toMatchObject({
+      provider: "hermes-provider",
+      model: "openai/gpt-5.4-mini",
+      endpointUrl: "https://inference.local/v1",
+    });
+    expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "shields_down",
+        sandbox: "hermes",
+        reason: "inference set hermes:hermes-provider:openai/gpt-5.4-mini",
+      }),
+    );
+    expect(result).toMatchObject({
+      sandboxName: "hermes",
+      provider: "hermes-provider",
+      model: "openai/gpt-5.4-mini",
+      primaryModelRef: "inference/openai/gpt-5.4-mini",
+      providerKey: "inference",
+      configChanged: true,
+      sessionUpdated: true,
+    });
+  });
+
+  it("uses the unambiguous registered Hermes sandbox under the nemohermes alias", async () => {
+    const config: ConfigObject = { model: {} };
+    const deps = createDeps({
+      config,
+      entries: [
+        { name: "alpha", agent: "openclaw" },
+        { name: "hermes-one", agent: "hermes" },
+      ],
+      defaultSandbox: "alpha",
+      requestedAgent: "hermes",
+      target: HERMES_TARGET,
+    });
+
+    await runInferenceSet({ provider: "hermes-provider", model: "z-ai/glm-5.1" }, deps);
+
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith(
+      "hermes-one",
+      HERMES_TARGET,
+      config,
+    );
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("hermes-one", {
+      provider: "hermes-provider",
+      model: "z-ai/glm-5.1",
+    });
+  });
+
+  it("requires --sandbox when the nemohermes alias cannot choose one Hermes sandbox", async () => {
     const deps = createDeps({
       config: {},
-      entry: { name: "hermes", agent: "hermes" },
+      entries: [
+        { name: "hermes-one", agent: "hermes" },
+        { name: "hermes-two", agent: "hermes" },
+      ],
+      requestedAgent: "hermes",
+      target: HERMES_TARGET,
     });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a" }, deps),
-    ).rejects.toThrow(/currently supports OpenClaw/);
+      runInferenceSet({ provider: "hermes-provider", model: "z-ai/glm-5.1" }, deps),
+    ).rejects.toThrow(/Pass --sandbox <name>/);
+
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("refuses unsupported agent sandboxes before changing OpenShell inference", async () => {
+    const deps = createDeps({
+      config: {},
+      entry: { name: "spark", agent: "spark" },
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/model-a", sandboxName: "spark" },
+        deps,
+      ),
+    ).rejects.toThrow(/supports OpenClaw and Hermes/);
 
     expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();

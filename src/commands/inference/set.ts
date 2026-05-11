@@ -7,7 +7,7 @@ import { withCommandDisplay } from "../../lib/cli/command-display";
 export default withCommandDisplay(Command, [
   {
     usage: "nemoclaw inference set",
-    description: "Switch inference and sync OpenClaw model identity",
+    description: "Switch inference and sync the running agent config",
     flags: "--provider <provider> --model <model> [--sandbox <name>] [--no-verify]",
     group: "Services",
     scope: "global",

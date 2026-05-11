@@ -9700,7 +9700,7 @@ function printDashboard(
   console.log("");
   console.log("  To change settings later:");
   console.log(
-    `    Model:       openshell inference set -g nemoclaw --model <model> --provider <provider>`,
+    `    Model:       ${cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
   );
   console.log(`    Policies:    ${cliName()} ${sandboxName} policy-add`);
   console.log(`    Credentials: ${cliName()} credentials reset <KEY>  then  ${cliName()} onboard`);

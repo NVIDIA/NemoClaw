@@ -93,6 +93,8 @@ const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
 };
 
+const HERMES_STRICT_HASH_FILE = "/etc/nemoclaw/hermes.config-hash";
+
 function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
   try {
     const registry = require("./state/registry");
@@ -424,8 +426,33 @@ function writeSandboxConfig(
   }
 }
 
+function buildRecomputeSandboxConfigHashScript(target: AgentConfigTarget): string | null {
+  if (target.agentName === "hermes") {
+    const envFile = `${target.configDir}/.env`;
+    const compatibilityHash = `${target.configDir}/.config-hash`;
+    const strictHash = shellQuote(HERMES_STRICT_HASH_FILE);
+    return [
+      `mkdir -p ${shellQuote("/etc/nemoclaw")}`,
+      `sha256sum ${shellQuote(target.configPath)} ${shellQuote(envFile)} > ${strictHash}`,
+      `chown root:root ${strictHash}`,
+      `chmod 444 ${strictHash}`,
+      `cp ${strictHash} ${shellQuote(compatibilityHash)}`,
+      `chown sandbox:sandbox ${shellQuote(compatibilityHash)}`,
+      `chmod 600 ${shellQuote(compatibilityHash)}`,
+    ].join(" && ");
+  }
+  if (!target.sensitiveFiles?.includes(`${target.configDir}/.config-hash`)) return null;
+  return [
+    `cd ${shellQuote(target.configDir)}`,
+    `sha256sum ${shellQuote(target.configFile)} > .config-hash`,
+    "(chown sandbox:sandbox .config-hash 2>/dev/null || true)",
+    "(chmod 660 .config-hash 2>/dev/null || true)",
+  ].join(" && ");
+}
+
 function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarget): void {
-  if (!target.sensitiveFiles?.includes(`${target.configDir}/.config-hash`)) return;
+  const script = buildRecomputeSandboxConfigHashScript(target);
+  if (!script) return;
   dockerExecFileSync(
     [
       "exec",
@@ -440,12 +467,7 @@ function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarg
       "--",
       "sh",
       "-c",
-      [
-        `cd ${shellQuote(target.configDir)}`,
-        `sha256sum ${shellQuote(target.configFile)} > .config-hash`,
-        "(chown sandbox:sandbox .config-hash 2>/dev/null || true)",
-        "(chmod 660 .config-hash 2>/dev/null || true)",
-      ].join(" && "),
+      script,
     ],
     { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
   );
@@ -1086,6 +1108,7 @@ export {
   readSandboxConfig,
   writeSandboxConfig,
   recomputeSandboxConfigHash,
+  buildRecomputeSandboxConfigHashScript,
   extractDotpath,
   setDotpath,
   validateConfigDotpath,

@@ -14,7 +14,7 @@ export default class InferenceSetCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Switch the NemoClaw inference model";
   static description =
-    "Update the OpenShell inference route and sync the running OpenClaw sandbox model identity.";
+    "Update the OpenShell inference route and sync the running OpenClaw or Hermes sandbox config.";
   static usage = [
     "inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify]",
   ];
@@ -32,7 +32,8 @@ export default class InferenceSetCommand extends NemoClawCommand {
       required: true,
     }),
     sandbox: Flags.string({
-      description: "Registered OpenClaw sandbox to sync; defaults to the NemoClaw default sandbox",
+      description:
+        "Registered sandbox to sync; defaults to the NemoClaw default sandbox or the unambiguous Hermes sandbox under nemohermes",
     }),
     "no-verify": Flags.boolean({
       description: "Pass --no-verify through to openshell inference set",

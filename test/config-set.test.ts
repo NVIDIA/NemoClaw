@@ -17,6 +17,7 @@ const {
   rewriteConfigUrlsWithDnsPinning,
   formatConfigValueForLogs,
   resolveAgentConfig,
+  buildRecomputeSandboxConfigHashScript,
 } = require("../dist/lib/sandbox-config");
 
 type MutableScalar = string | number | boolean | null | undefined;
@@ -40,6 +41,46 @@ describe("resolveAgentConfig", () => {
   it("includes configFile in configPath", () => {
     const target = resolveAgentConfig("any-sandbox");
     expect(target.configPath.endsWith(target.configFile)).toBe(true);
+  });
+});
+
+describe("buildRecomputeSandboxConfigHashScript", () => {
+  it("keeps OpenClaw on the mutable compatibility hash", () => {
+    const script = buildRecomputeSandboxConfigHashScript({
+      agentName: "openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configDir: "/sandbox/.openclaw",
+      format: "json",
+      configFile: "openclaw.json",
+      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+    });
+
+    expect(script).toContain("cd '/sandbox/.openclaw'");
+    expect(script).toContain("sha256sum 'openclaw.json' > .config-hash");
+    expect(script).toContain("chown sandbox:sandbox .config-hash");
+    expect(script).toContain("chmod 660 .config-hash");
+  });
+
+  it("updates Hermes strict and compatibility hashes with the expected permissions", () => {
+    const script = buildRecomputeSandboxConfigHashScript({
+      agentName: "hermes",
+      configPath: "/sandbox/.hermes/config.yaml",
+      configDir: "/sandbox/.hermes",
+      format: "yaml",
+      configFile: "config.yaml",
+      sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
+    });
+
+    expect(script).toContain(
+      "sha256sum '/sandbox/.hermes/config.yaml' '/sandbox/.hermes/.env' > '/etc/nemoclaw/hermes.config-hash'",
+    );
+    expect(script).toContain("chown root:root '/etc/nemoclaw/hermes.config-hash'");
+    expect(script).toContain("chmod 444 '/etc/nemoclaw/hermes.config-hash'");
+    expect(script).toContain(
+      "cp '/etc/nemoclaw/hermes.config-hash' '/sandbox/.hermes/.config-hash'",
+    );
+    expect(script).toContain("chown sandbox:sandbox '/sandbox/.hermes/.config-hash'");
+    expect(script).toContain("chmod 600 '/sandbox/.hermes/.config-hash'");
   });
 });
 

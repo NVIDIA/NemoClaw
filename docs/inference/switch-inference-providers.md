@@ -35,9 +35,12 @@ No restart is required.
 ## Switch to a Different Model
 
 Use `nemoclaw inference set` with the provider and model that match the upstream you want to use.
-The command updates the OpenShell inference route and synchronizes the running OpenClaw config so `agents.defaults.model.primary` continues to match the routed model.
+The command updates the OpenShell inference route and synchronizes the running agent config.
+For OpenClaw, it updates `agents.defaults.model.primary` and the matching provider namespace.
+For Hermes, it updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, and `model.provider: custom`) without rebuilding or restarting Hermes.
 
 Pass `--sandbox <name>` when you do not want to use the default registered sandbox.
+Under `nemohermes`, pass `--sandbox <name>` when more than one Hermes sandbox is registered.
 
 ### NVIDIA Endpoints
 
@@ -73,6 +76,14 @@ $ nemoclaw inference set --provider compatible-endpoint --model <model-name>
 
 ```console
 $ nemoclaw inference set --provider compatible-anthropic-endpoint --model <model-name>
+```
+
+### Hermes Provider
+
+For a NemoClaw-managed Hermes sandbox, use the Hermes alias with the registered Hermes Provider route:
+
+```console
+$ nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
 ```
 
 #### Switching from Responses API to Chat Completions
@@ -188,7 +199,7 @@ The output includes the active provider, model, and endpoint.
 
 - The host keeps provider credentials.
 - The sandbox continues to use `inference.local`.
-- `nemoclaw inference set` patches the selected running OpenClaw sandbox config and recomputes its config hash.
+- `nemoclaw inference set` patches the selected running OpenClaw or Hermes sandbox config and recomputes its config hash.
 - Use `nemoclaw onboard --resume --recreate-sandbox` for build-time settings such as context window, max tokens, reasoning mode, heartbeat cadence, or image contents.
 - Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 

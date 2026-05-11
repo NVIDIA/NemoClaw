@@ -46,7 +46,9 @@ type OpenshellRunResult = Pick<SpawnSyncReturns<string>, "status" | "stdout" | "
 export interface InferenceSetDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
+  listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox: string | null };
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
+  getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
   updateSession: (
     mutator: (session: onboardSession.Session) => onboardSession.Session | void,
@@ -83,6 +85,7 @@ const SUPPORTED_PROVIDER_NAMES = [
   "compatible-anthropic-endpoint",
   "gemini-api",
   "compatible-endpoint",
+  "hermes-provider",
   "ollama-local",
   "vllm-local",
 ] as const;
@@ -91,7 +94,9 @@ function defaultDeps(): InferenceSetDeps {
   return {
     getDefaultSandbox: registry.getDefault,
     getSandbox: registry.getSandbox,
+    listSandboxes: registry.listSandboxes,
     updateSandbox: registry.updateSandbox,
+    getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
     loadSession: onboardSession.loadSession,
     updateSession: onboardSession.updateSession,
     resolveAgentConfig,
@@ -120,14 +125,52 @@ function assertSupportedProvider(provider: string, model: string): void {
 
 function normalizeSandboxAgent(agentName: string | null | undefined): string {
   const trimmed = typeof agentName === "string" ? agentName.trim() : "";
-  return trimmed || "openclaw";
+  return (trimmed || "openclaw").toLowerCase();
 }
 
 function resolveTargetSandbox(
   sandboxName: string | null | undefined,
-  deps: Pick<InferenceSetDeps, "getDefaultSandbox" | "getSandbox">,
-): { sandboxName: string; entry: SandboxEntry } {
-  const targetName = sandboxName?.trim() || deps.getDefaultSandbox();
+  deps: Pick<
+    InferenceSetDeps,
+    "getDefaultSandbox" | "getSandbox" | "listSandboxes" | "getRequestedAgent"
+  >,
+): { sandboxName: string; entry: SandboxEntry; agentName: string } {
+  const explicitName = sandboxName?.trim();
+  if (explicitName) {
+    const entry = deps.getSandbox(explicitName);
+    if (!entry) {
+      throw new InferenceSetError(`Sandbox '${explicitName}' is not registered.`, 2);
+    }
+    return {
+      sandboxName: explicitName,
+      entry,
+      agentName: normalizeSandboxAgent(entry.agent),
+    };
+  }
+
+  if (normalizeSandboxAgent(deps.getRequestedAgent()) === "hermes") {
+    const hermesSandboxes = deps
+      .listSandboxes()
+      .sandboxes.filter((entry) => normalizeSandboxAgent(entry.agent) === "hermes");
+    if (hermesSandboxes.length === 1) {
+      const entry = hermesSandboxes[0];
+      return { sandboxName: entry.name, entry, agentName: "hermes" };
+    }
+    if (hermesSandboxes.length === 0) {
+      throw new InferenceSetError(
+        "No registered Hermes sandbox found. Pass --sandbox <name> to target a sandbox explicitly.",
+        2,
+      );
+    }
+    throw new InferenceSetError(
+      `Multiple Hermes sandboxes are registered (${hermesSandboxes
+        .map((entry) => entry.name)
+        .join(", ")}). Pass --sandbox <name> to choose one.`,
+      2,
+    );
+  }
+
+  const targetName = deps.getDefaultSandbox();
   if (!targetName) {
     throw new InferenceSetError(
       "No sandbox selected. Pass --sandbox <name> or create a sandbox with nemoclaw onboard.",
@@ -139,13 +182,7 @@ function resolveTargetSandbox(
   if (!entry) {
     throw new InferenceSetError(`Sandbox '${targetName}' is not registered.`, 2);
   }
-  if (normalizeSandboxAgent(entry.agent) !== "openclaw") {
-    throw new InferenceSetError(
-      `nemoclaw inference set currently supports OpenClaw sandboxes; '${targetName}' uses '${entry.agent}'.`,
-      2,
-    );
-  }
-  return { sandboxName: targetName, entry };
+  return { sandboxName: targetName, entry, agentName: normalizeSandboxAgent(entry.agent) };
 }
 
 function ensureObject(record: ConfigObject, key: string): ConfigObject {
@@ -220,6 +257,21 @@ export function patchOpenClawInferenceConfig(
   return { changed: before !== JSON.stringify(config), route };
 }
 
+export function patchHermesInferenceConfig(
+  config: ConfigObject,
+  provider: string,
+  model: string,
+): { changed: boolean; route: SandboxInferenceConfig } {
+  const before = JSON.stringify(config);
+  const route = getSandboxInferenceConfig(model, provider);
+  const modelConfig = ensureObject(config, "model");
+  modelConfig.default = model;
+  modelConfig.base_url = route.inferenceBaseUrl;
+  modelConfig.provider = "custom";
+
+  return { changed: before !== JSON.stringify(config), route };
+}
+
 function updateMatchingOnboardSession(
   sandboxName: string,
   provider: string,
@@ -282,27 +334,29 @@ export async function runInferenceSet(
     );
   }
 
-  const { sandboxName } = resolveTargetSandbox(options.sandboxName, deps);
-  const target = deps.resolveAgentConfig(sandboxName);
-  if (target.agentName !== "openclaw") {
+  const { sandboxName, agentName } = resolveTargetSandbox(options.sandboxName, deps);
+  if (agentName !== "openclaw" && agentName !== "hermes") {
     throw new InferenceSetError(
-      `nemoclaw inference set currently supports OpenClaw configs; '${sandboxName}' uses '${target.agentName}'.`,
+      `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.`,
+      2,
+    );
+  }
+  const target = deps.resolveAgentConfig(sandboxName);
+  const targetAgent = normalizeSandboxAgent(target.agentName);
+  if (targetAgent !== agentName) {
+    throw new InferenceSetError(
+      `Sandbox '${sandboxName}' is registered as '${agentName}' but resolved config for '${target.agentName}'.`,
       2,
     );
   }
 
-  const config = deps.readSandboxConfig(sandboxName, target);
-  const patched = patchOpenClawInferenceConfig(
-    config,
-    provider,
-    model,
-    getPreferredInferenceApi(config),
-  );
-
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
-  const setResult = deps.runOpenshell(openshellInferenceSetArgs({ provider, model, noVerify: options.noVerify }), {
-    ignoreError: true,
-  });
+  const setResult = deps.runOpenshell(
+    openshellInferenceSetArgs({ provider, model, noVerify: options.noVerify }),
+    {
+      ignoreError: true,
+    },
+  );
   if (setResult.status !== 0) {
     throw new InferenceSetError(
       `OpenShell inference route update failed with exit ${setResult.status ?? 1}.`,
@@ -310,7 +364,17 @@ export async function runInferenceSet(
     );
   }
 
-  deps.log(`  Syncing OpenClaw model identity in sandbox '${sandboxName}'...`);
+  const config = deps.readSandboxConfig(sandboxName, target);
+  const patched =
+    agentName === "hermes"
+      ? patchHermesInferenceConfig(config, provider, model)
+      : patchOpenClawInferenceConfig(config, provider, model, getPreferredInferenceApi(config));
+
+  deps.log(
+    agentName === "hermes"
+      ? `  Syncing Hermes model route in sandbox '${sandboxName}'...`
+      : `  Syncing OpenClaw model identity in sandbox '${sandboxName}'...`,
+  );
   deps.writeSandboxConfig(sandboxName, target, config);
   deps.recomputeSandboxConfigHash(sandboxName, target);
 
@@ -323,10 +387,14 @@ export async function runInferenceSet(
     action: "shields_down",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
-    reason: `inference set openclaw:${provider}:${model}`,
+    reason: `inference set ${agentName}:${provider}:${model}`,
   });
 
-  deps.log(`  Inference route synced for '${sandboxName}': ${patched.route.primaryModelRef}`);
+  deps.log(
+    agentName === "hermes"
+      ? `  Inference route synced for '${sandboxName}': ${model}`
+      : `  Inference route synced for '${sandboxName}': ${patched.route.primaryModelRef}`,
+  );
 
   return {
     sandboxName,
