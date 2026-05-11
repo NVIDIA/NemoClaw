@@ -224,6 +224,10 @@ function balancedObject(text) {
 }
 
 function normalizePiResult(result, metadata) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new Error("Pi returned a non-object result");
+  }
+
   const normalized = {
     version: 1,
     baseRef: metadata.baseRef,

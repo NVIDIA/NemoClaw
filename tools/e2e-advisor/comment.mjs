@@ -33,8 +33,8 @@ if (!summary) {
 const result = readJsonIfExists(resultPath);
 const body = buildComment({ summary, result, runUrl, marker });
 
-const existing = await findExistingComment(repo, pr, token, marker);
 try {
+  const existing = await findExistingComment(repo, pr, token, marker);
   if (existing) {
     await github(`repos/${repo}/issues/comments/${existing.id}`, token, {
       method: "PATCH",
@@ -50,7 +50,8 @@ try {
   }
 } catch (error) {
   if (isPermissionError(error)) {
-    console.log(`Skipping E2E advisor comment due to permission error: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(`Skipping E2E advisor comment due to permission error: ${message}`);
   } else {
     throw error;
   }
