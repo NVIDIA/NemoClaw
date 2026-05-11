@@ -508,6 +508,91 @@ PYOVERRIDE
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
+# ── Agent identity reconciliation with provider routing ───────────
+# After the host-side `openshell inference set` swaps the gateway's
+# inference provider entry, agents.defaults.model.primary in
+# openclaw.json can drift from models.providers.<key>.models[0].name.
+# When that happens the gateway routes requests to the new model but
+# the agent self-reports the old one. Realign the two on every
+# sandbox start so the next session boots with a consistent identity.
+# Runs after apply_model_override so explicit NEMOCLAW_MODEL_OVERRIDE
+# values still win. No-op when already in sync.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/3175
+
+reconcile_agent_model_with_provider() {
+  if [ "$(id -u)" -ne 0 ]; then
+    return 0
+  fi
+
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+
+  [ -f "$config_file" ] || return 0
+
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    return 0
+  fi
+
+  local provider_model_ref
+  provider_model_ref="$(
+    python3 - "$config_file" <<'PYRECONCILE_READ'
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        cfg = json.load(f)
+except Exception:
+    sys.exit(0)
+primary = cfg.get("agents", {}).get("defaults", {}).get("model", {}).get("primary")
+provider = cfg.get("models", {}).get("providers", {}).get("inference", {})
+models = provider.get("models") if isinstance(provider, dict) else None
+if not isinstance(models, list) or not models:
+    sys.exit(0)
+first = models[0]
+if not isinstance(first, dict):
+    sys.exit(0)
+provider_ref = first.get("name")
+if not isinstance(provider_ref, str) or not provider_ref:
+    provider_id = first.get("id")
+    if not isinstance(provider_id, str) or not provider_id:
+        sys.exit(0)
+    provider_ref = provider_id if provider_id.startswith("inference/") else f"inference/{provider_id}"
+if not isinstance(primary, str) or primary == provider_ref:
+    sys.exit(0)
+print(provider_ref)
+PYRECONCILE_READ
+  )"
+
+  if [ -z "$provider_model_ref" ]; then
+    return 0
+  fi
+
+  printf '[config] Reconciling agent identity with provider model: %s (#3175)\n' "$provider_model_ref" >&2
+
+  prepare_openclaw_config_for_write "$config_file" "$hash_file"
+  local _write_rc=0
+
+  python3 - "$config_file" "$provider_model_ref" <<'PYRECONCILE_WRITE' || _write_rc=$?
+import json, sys
+config_file, provider_model = sys.argv[1], sys.argv[2]
+with open(config_file) as f:
+    cfg = json.load(f)
+cfg.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})["primary"] = provider_model
+with open(config_file, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYRECONCILE_WRITE
+
+  if [ "$_write_rc" -eq 0 ]; then
+    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      printf '[SECURITY] Config hash recomputed after agent identity reconciliation\n' >&2
+    else
+      _write_rc=$?
+    fi
+  fi
+
+  restore_openclaw_config_after_write "$config_file" "$hash_file"
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
 # ── Runtime CORS origin override ──────────────────────────────────
 # Adds a browser origin to gateway.controlUi.allowedOrigins at startup
 # without rebuilding the sandbox image. Useful for custom domains/ports.
@@ -1685,6 +1770,7 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
   normalize_mutable_config_perms
   apply_model_override
+  reconcile_agent_model_with_provider
   apply_cors_override
   refresh_openclaw_provider_placeholders
   ensure_mutable_openclaw_config_hash
@@ -1779,6 +1865,7 @@ fi
 verify_config_integrity_if_locked /sandbox/.openclaw
 normalize_mutable_config_perms
 apply_model_override
+reconcile_agent_model_with_provider
 apply_cors_override
 refresh_openclaw_provider_placeholders
 ensure_mutable_openclaw_config_hash

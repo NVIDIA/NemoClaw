@@ -119,7 +119,7 @@ flowchart TB
 * - Inference
   - Credential exposure, unauthorized model access, cost overruns.
   - OpenShell gateway
-  - Yes. Use `openshell inference set`.
+  - Yes. Use `nemoclaw inference set`.
 
 :::
 

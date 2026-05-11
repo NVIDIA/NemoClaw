@@ -28,6 +28,7 @@ export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 type SessionJsonValue = JsonValue;
 type UnknownRecord = JsonObject;
 type StepStatus = "pending" | "in_progress" | "complete" | "failed" | "skipped";
+export type HermesAuthMethod = "oauth" | "api_key";
 
 const STEP_STATES: readonly StepStatus[] = [
   "pending",
@@ -75,6 +76,7 @@ export interface Session {
   model: string | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
+  hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   routerPid: number | null;
@@ -129,6 +131,7 @@ export interface SessionUpdates {
   model?: string | null;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
+  hermesAuthMethod?: HermesAuthMethod | null;
   preferredInferenceApi?: string | null;
   nimContainer?: string | null;
   routerPid?: number;
@@ -156,6 +159,7 @@ export interface DebugSessionSummary {
   model: string | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
+  hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   policyPresets: string[] | null;
@@ -199,6 +203,10 @@ export function isObject(value: unknown): value is UnknownRecord {
 
 function readString(value: SessionJsonValue | undefined): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMethod | null {
+  return value === "oauth" || value === "api_key" ? value : null;
 }
 
 function readPositiveInteger(value: SessionJsonValue | undefined): number | null {
@@ -311,6 +319,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     model: overrides.model ?? null,
     endpointUrl: overrides.endpointUrl ?? null,
     credentialEnv: overrides.credentialEnv ?? null,
+    hermesAuthMethod: overrides.hermesAuthMethod ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
@@ -350,6 +359,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     model: readString(data.model),
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
     credentialEnv: readString(data.credentialEnv),
+    hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
     preferredInferenceApi: readString(data.preferredInferenceApi),
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
@@ -748,6 +758,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   assignNullableString(safe, "model", updates.model);
   assignNullableString(safe, "endpointUrl", updates.endpointUrl, redactUrl);
   assignNullableString(safe, "credentialEnv", updates.credentialEnv);
+  if (updates.hermesAuthMethod === "oauth" || updates.hermesAuthMethod === "api_key") {
+    safe.hermesAuthMethod = updates.hermesAuthMethod;
+  } else if (updates.hermesAuthMethod === null) {
+    safe.hermesAuthMethod = null;
+  }
   assignNullableString(safe, "preferredInferenceApi", updates.preferredInferenceApi);
   assignNullableString(safe, "nimContainer", updates.nimContainer);
   if (typeof updates.routerPid === "number" && Number.isInteger(updates.routerPid) && updates.routerPid > 0) {
@@ -892,6 +907,7 @@ export function summarizeForDebug(
     model: session.model,
     endpointUrl: redactUrl(session.endpointUrl),
     credentialEnv: session.credentialEnv,
+    hermesAuthMethod: session.hermesAuthMethod,
     preferredInferenceApi: session.preferredInferenceApi,
     nimContainer: session.nimContainer,
     policyPresets: session.policyPresets,

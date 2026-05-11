@@ -99,10 +99,9 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   $ openshell term
   ```
 
-- Change the live gateway inference route:
+- Inspect the live gateway inference route:
 
   ```console
-  $ openshell inference set -g nemoclaw --provider <provider> --model <model>
   $ openshell inference get -g nemoclaw
   ```
 
@@ -182,13 +181,13 @@ Approved endpoints are session-scoped unless you also add them to the policy thr
 
 ### Change Models or Providers
 
-For a same-provider model switch, change the live OpenShell inference route:
+Use the NemoClaw command for model or provider switches so the OpenShell route and the running OpenClaw config stay consistent:
 
 ```console
-$ openshell inference set -g nemoclaw --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
+$ nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
-For a provider-family change or a build-time OpenClaw setting change, rerun onboarding so the sandbox configuration is recreated consistently:
+For a build-time OpenClaw setting change, rerun onboarding so the sandbox configuration is recreated consistently:
 
 ```console
 $ nemoclaw onboard --resume --recreate-sandbox

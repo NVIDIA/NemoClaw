@@ -28,6 +28,15 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelDef("slack")?.appTokenEnvKey).toBe("SLACK_APP_TOKEN");
   });
 
+  it("asks for Slack human member IDs as a comma-separated allowlist", () => {
+    const slack = getChannelDef("slack");
+    expect(slack?.userIdEnvKey).toBe("SLACK_ALLOWED_USERS");
+    expect(slack?.userIdLabel).toBe("Slack Member IDs (comma-separated allowlist)");
+    expect(slack?.userIdHelp).toContain("comma-separated member IDs");
+    expect(slack?.userIdHelp).toContain("not the app or bot user ID");
+    expect(slack?.allowIdsMode).toBe("dm");
+  });
+
   it("normalises case and whitespace when resolving a channel name", () => {
     expect(getChannelDef("  Telegram  ")).toBe(KNOWN_CHANNELS.telegram);
     expect(getChannelDef("DISCORD")).toBe(KNOWN_CHANNELS.discord);
