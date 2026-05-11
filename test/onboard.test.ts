@@ -2935,7 +2935,11 @@ const { loadAgent } = require(${agentDefsPath});
       "utf-8",
     );
 
-    assert.match(envSource, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 180/);
+    // 300s default (bumped from 180s in #3344) so GPU sandboxes whose image
+    // extraction + GPU device attach can take 3-5 minutes on RTX-class hardware
+    // do not hit a false-positive readiness timeout. NEMOCLAW_SANDBOX_READY_TIMEOUT
+    // still lets users with slower hardware extend further.
+    assert.match(envSource, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 300/);
     assert.match(source, /Math\.ceil\(sandboxReadyTimeoutSecs \/ 2\)/);
     assert.match(source, /within \$\{sandboxReadyTimeoutSecs\}s/);
     assert.doesNotMatch(source, /DOCKER_DRIVER_GPU_SANDBOX_READY_TIMEOUT_SECS = 600/);
