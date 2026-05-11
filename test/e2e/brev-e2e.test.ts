@@ -244,7 +244,16 @@ function sshEnv(
   return ssh(`${envPrefix} && ${cmd}`, { timeout, stream });
 }
 
-function waitForSsh(maxAttempts = 40, intervalMs = 5_000): void {
+function waitForSsh(maxAttempts = 0, intervalMs = 5_000): void {
+  // Launchable instances need more time than bare VMs: the pre-baked image
+  // boots in ~2 min but the Brev platform's SSH-proxy registration can lag
+  // another minute or two before `brev refresh` picks the instance up. The
+  // startup-script path is faster to register because the VM is a plain
+  // GCP instance that comes up in the default Brev flow. Default the
+  // attempt count per mode unless the caller passes an explicit override.
+  if (maxAttempts === 0) {
+    maxAttempts = USE_PUBLISHED_LAUNCHABLE ? 96 : 40;
+  }
   for (let i = 1; i <= maxAttempts; i++) {
     try {
       ssh("echo ok", { timeout: 10_000 });
