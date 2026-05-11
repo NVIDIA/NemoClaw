@@ -1966,6 +1966,7 @@ jobs:
         overlayfs-autofix-e2e,
         device-auth-health-e2e,
         launchable-smoke-e2e,
+        brev-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
       ]
