@@ -239,6 +239,28 @@ describe("slack-token-rewriter: request bodies", () => {
     );
   });
 
+  it("strips auth.test body token when Authorization is set after request creation", () => {
+    const mod = loadRewriter();
+    const original = "token=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+    const req = mod.https.request({
+      hostname: "slack.com",
+      path: "/api/auth.test",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": String(Buffer.byteLength(original)),
+      },
+    });
+
+    req.setHeader(
+      "Authorization",
+      "Bearer openshell:resolve:env:SLACK_BOT_TOKEN",
+    );
+    req.end(original, "utf8");
+
+    expect(req.calls[0].args[0]).toBe("");
+    expect(req.getHeader("content-length")).toBe("0");
+  });
+
   it("keeps non-Slack form bodies on the existing placeholder rewrite path", () => {
     const mod = loadRewriter();
     const original = "token=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";

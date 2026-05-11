@@ -80,16 +80,6 @@
     return headers;
   }
 
-  function getHeaderValue(headers, name) {
-    if (!headers || typeof headers !== 'object') return undefined;
-    var wanted = String(name).toLowerCase();
-    var keys = Object.keys(headers);
-    for (var i = 0; i < keys.length; i++) {
-      if (keys[i].toLowerCase() === wanted) return headers[keys[i]];
-    }
-    return undefined;
-  }
-
   function valueContainsSlackCredentialPlaceholder(value) {
     if (Array.isArray(value)) {
       for (var i = 0; i < value.length; i++) {
@@ -103,13 +93,6 @@
     return (
       s.indexOf(CANONICAL_SLACK_FAST_PATH) !== -1 &&
       CANONICAL_SLACK_CREDENTIAL.test(s)
-    );
-  }
-
-  function optionsHaveSlackPlaceholderAuthorization(options) {
-    if (!options || typeof options !== 'object') return false;
-    return valueContainsSlackCredentialPlaceholder(
-      getHeaderValue(options.headers, 'authorization')
     );
   }
 
@@ -170,21 +153,9 @@
     return false;
   }
 
-  function requestHasSlackPlaceholderAuthorization(arg1, arg2) {
-    if (arg1 && typeof arg1 === 'object' && !(arg1 instanceof URL)) {
-      if (optionsHaveSlackPlaceholderAuthorization(arg1)) return true;
-    }
-    if (arg2 && typeof arg2 === 'object' && !(arg2 instanceof URL)) {
-      if (optionsHaveSlackPlaceholderAuthorization(arg2)) return true;
-    }
-    return false;
-  }
-
   function requestRewriteState(arg1, arg2) {
     return {
-      stripSlackFormTokenParam:
-        requestTargetsSlackWebApi(arg1, arg2) &&
-        requestHasSlackPlaceholderAuthorization(arg1, arg2),
+      targetSlackWebApi: requestTargetsSlackWebApi(arg1, arg2),
     };
   }
 
@@ -223,10 +194,13 @@
   }
 
   function shouldStripSlackFormTokenParam(req) {
-    if (!req || !req.__nemoclawStripSlackFormTokenParam) return false;
+    if (!req || !req.__nemoclawTargetSlackWebApi) return false;
     var contentType = requestHeader(req, 'content-type');
     if (!contentType) return false;
     return (
+      valueContainsSlackCredentialPlaceholder(
+        requestHeader(req, 'authorization')
+      ) &&
       contentType
         .split(';')[0]
         .trim()
@@ -301,8 +275,8 @@
 
   function wrapClientRequest(req, state) {
     if (!req || typeof req !== 'object') return req;
-    if (state && state.stripSlackFormTokenParam) {
-      setRequestFlag(req, '__nemoclawStripSlackFormTokenParam');
+    if (state && state.targetSlackWebApi) {
+      setRequestFlag(req, '__nemoclawTargetSlackWebApi');
     }
     if (req.__nemoclawSlackTokenRewriter) return req;
     setRequestFlag(req, '__nemoclawSlackTokenRewriter');
