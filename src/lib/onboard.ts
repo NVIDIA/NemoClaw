@@ -136,6 +136,7 @@ const {
   awaitWindowsOllamaReady,
   setupWindowsOllamaWith0000Binding,
   switchToWindowsOllamaHost,
+  printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
 const { detectVllmProfile, installVllm } = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
@@ -6934,8 +6935,6 @@ async function setupNim(
         if (isSwitch) {
           switchToWindowsOllamaHost();
         } else if (isInstall) {
-          // installOllamaOnWindowsHost pre-sets the env so the auto-spawned
-          // daemon already binds 0.0.0.0; no kill+relaunch needed.
           const installResult = await installOllamaOnWindowsHost();
           if (!installResult.ok) {
             console.error(
@@ -6945,14 +6944,21 @@ async function setupNim(
             continue selectionLoop;
           }
           if (!awaitWindowsOllamaReady()) {
-            console.error("  Timed out waiting for Ollama to start on the Windows host.");
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
+            console.log("  Installer did not leave a reachable Ollama daemon; restarting it...");
+            if (
+              !setupWindowsOllamaWith0000Binding({
+                installedPath: installResult.path,
+              })
+            ) {
+              printWindowsOllamaTimeoutDiagnostics();
+              if (isNonInteractive()) process.exit(1);
+              continue selectionLoop;
+            }
           }
           console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
         } else {
           if (!setupWindowsOllamaWith0000Binding({ announceStop: isRestart })) {
-            console.error("  Timed out waiting for Ollama to start on the Windows host.");
+            printWindowsOllamaTimeoutDiagnostics();
             if (isNonInteractive()) process.exit(1);
             continue selectionLoop;
           }
