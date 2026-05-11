@@ -1690,7 +1690,7 @@ ensure_docker() {
     return 0
   fi
 
-  local group_added=0
+  local needs_group_refresh=0
 
   if ! command -v docker >/dev/null 2>&1; then
     info "Docker is not installed."
@@ -1719,16 +1719,25 @@ ensure_docker() {
     fi
   fi
 
+  # Persisted group membership (NSS / /etc/group). Determines whether we
+  # need to run usermod.
   if ! id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
     info "Your user '$USER' is not in the docker group."
     info "The next step uses sudo to add you to the group so docker works without sudo. You may be prompted for your password."
     sudo usermod -aG docker "$USER"
-    group_added=1
+    needs_group_refresh=1
   fi
 
-  if [ "$group_added" = "1" ]; then
+  # Active group list of the current shell (set at login, refreshed only by
+  # new login or `newgrp`). If docker isn't here yet, this session can't
+  # talk to /var/run/docker.sock even though NSS says we're a member.
+  if ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    needs_group_refresh=1
+  fi
+
+  if [ "$needs_group_refresh" = "1" ]; then
     printf "\n"
-    info "Docker setup complete. To finish:"
+    info "Docker group membership is not active in this shell yet. To finish:"
     info "  1) Run: newgrp docker   (or log out and log back in)"
     info "  2) Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
     exit 0
