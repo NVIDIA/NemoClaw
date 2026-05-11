@@ -4,7 +4,9 @@ title:
   nav: "Set Up Messaging Channels"
 description:
   main: "Connect Telegram, Discord, Slack, or WeChat to your sandboxed OpenClaw agent using OpenShell-managed channel messaging."
-  agent: "Explains how Telegram, Discord, Slack, and WeChat reach the sandboxed OpenClaw agent through OpenShell-managed processes and NemoClaw channel commands. Use when setting up messaging channels, chat interfaces, or integrations without relying on nemoclaw tunnel start for bridges."
+  agent: >-
+    Explains how Telegram, Discord, Slack, and WeChat reach the sandboxed OpenClaw agent through OpenShell-managed processes and NemoClaw channel commands.
+    Use when setting up messaging channels, chat interfaces, or integrations without relying on nemoclaw tunnel start for bridges.
 keywords: ["nemoclaw messaging channels", "nemoclaw telegram", "nemoclaw discord", "nemoclaw slack", "nemoclaw wechat", "openshell channel messaging"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "telegram", "discord", "slack", "wechat", "messaging", "deployment", "nemoclaw"]
@@ -28,7 +30,8 @@ Telegram, Discord, Slack, and WeChat reach your agent through OpenShell-managed 
 NemoClaw registers channel tokens with OpenShell providers, bakes the selected channel configuration into the sandbox image, and keeps runtime delivery under OpenShell control.
 
 You can enable channels during `nemoclaw onboard` or add them later with host-side `nemoclaw <sandbox> channels` commands.
-WeChat is an exception: it is wired up during `nemoclaw onboard` only — see [Add Channels After Onboarding](#add-channels-after-onboarding) for the limitation.
+WeChat is an exception.
+It is wired up during `nemoclaw onboard` only — see [Add Channels After Onboarding](#add-channels-after-onboarding) for the limitation.
 Do not run `openclaw channels add` or `openclaw channels remove` inside the sandbox because `/sandbox/.openclaw/openclaw.json` is generated at image build time and changes inside the running container do not persist across rebuilds.
 
 `nemoclaw tunnel start` does not start Telegram, Discord, Slack, WeChat, or other chat bridges.
@@ -67,12 +70,15 @@ Slack uses Socket Mode and requires two tokens.
 Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_TOKEN` for the app-level Socket Mode token (`xapp-...`).
 
 WeChat delivers messages over Tencent's iLink gateway via the upstream `@tencent-weixin/openclaw-weixin` plugin, baked into the sandbox base image.
-The supported mode in this release is **personal WeChat** (`bot_type=3`) — WeChat Official Account and WeCom/Enterprise WeChat are not wired up yet.
-Because the bot token only exists after a successful iLink QR handshake, NemoClaw runs the QR login on the host during `nemoclaw onboard`: you scan the QR with WeChat on your phone (Discover → Scan), confirm the login, and NemoClaw captures the token, `accountId`, `baseUrl`, and `userId` from the iLink response.
+The supported mode in this release is **personal WeChat** (`bot_type=3`).
+WeChat Official Account and WeCom/Enterprise WeChat are not wired up yet.
+Because the bot token only exists after a successful iLink QR handshake, NemoClaw runs the QR login on the host during `nemoclaw onboard`.
+You scan the QR with WeChat on your phone (Discover → Scan), confirm the login, and NemoClaw captures the token, `accountId`, `baseUrl`, and `userId` from the iLink response.
 The token is registered as the `<sandbox>-wechat-bridge` OpenShell provider and replaced inside the sandbox by the `openshell:resolve:env:WECHAT_BOT_TOKEN` placeholder, so it is never baked into the image or written to disk inside the running container.
 WeChat is DM-only (`allowIdsMode: "dm"`) — the operator who scanned the QR is added to `WECHAT_ALLOWED_IDS` automatically, and you can append more comma-separated WeChat user IDs through the same env var.
 You can silence the host-side `[wechat]` diagnostic lines (poll status, IDC redirects, swallowed gateway errors) by exporting `NEMOCLAW_WECHAT_QUIET=1` once the flow is stable in your environment.
-Tencent's iLink gateway is a third-party service: review your organization's terms-of-service, compliance, and data-residency constraints before enabling WeChat in production.
+Tencent's iLink gateway is a third-party service.
+Review your organization's terms-of-service, compliance, and data-residency constraints before enabling WeChat in production.
 
 ## Enable Channels During Onboarding
 

@@ -8327,13 +8327,21 @@ async function setupMessagingChannels(): Promise<string[]> {
         continue;
       }
       // Belt-and-suspenders: the WeChat handler wraps its own body in
-      // try/catch, but a future handler might not. Treat any thrown error
-      // as a structured "error" result so onboard skips the channel and
-      // keeps going rather than crashing the whole flow.
-      const result = await handler().catch((err: unknown) => ({
-        kind: "error" as const,
-        message: err instanceof Error ? err.message : String(err),
-      }));
+      // try/catch, but a future handler might not. Use a real try/catch
+      // around `await handler()` rather than `.catch()` so any throw that
+      // escapes before the handler returns its Promise (e.g. a non-async
+      // handler that throws during a setup expression) still gets
+      // normalized to a structured "error" result and the channel is
+      // skipped instead of crashing onboarding.
+      let result: Awaited<ReturnType<typeof handler>>;
+      try {
+        result = await handler();
+      } catch (err: unknown) {
+        result = {
+          kind: "error",
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
       if (result.kind !== "ok") {
         const reason =
           result.kind === "timeout"
