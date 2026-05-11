@@ -5,9 +5,11 @@
 
 These helpers exist for the period after the root CLI JS→TS migration lands on `main`. The CI guard also blocks edits that try to resurrect removed `bin/lib/*.js` compatibility shims; contributors should edit the canonical TS files instead.
 
+The one-time mechanical phase manifests and `migrate:js-to-ts` command have been removed now that the stacked migration has landed. Keep this directory limited to the move map needed by the guard and stale-branch rescue tools.
+
 ## Files
 
-- `move-map.json` — canonical old-path → new-path mapping
+- `move-map.json` — canonical old-path → new-path mapping for rescue tooling and CI guard diagnostics
 - `../ts-migration-assist.ts` — ports branch edits from migrated legacy paths onto the new canonical TS files
 - `../ts-migration-bulk-fix-prs.ts` — maintainer helper for applying the assist script to open PR branches
 

@@ -14,6 +14,10 @@ function sleep(seconds: number): void {
   spawnSync("sleep", [String(seconds)]);
 }
 
+function psSingleQuote(value: string): string {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 // Pre-set OLLAMA_HOST in both User scope (persists across logins) and the
 // current PowerShell session (inherited by the installer's auto-spawned
 // ollama_app + daemon) so the new daemon binds 0.0.0.0 from the start.
@@ -132,30 +136,69 @@ function awaitWindowsOllamaReady(): boolean {
 }
 
 // Relaunch via the watcher path when available so the tray icon and the
-// watcher's auto-restart survive; otherwise launch the daemon directly.
-function launchAndAwaitWindowsOllama(watcherPath?: string): boolean {
+// watcher's auto-restart survive; fall back through the verified installed
+// path and finally refreshed PATH because stale watcher paths are possible.
+function launchAndAwaitWindowsOllama(
+  opts: { watcherPath?: string; installedPath?: string } = {},
+): boolean {
   console.log("  Starting Ollama on Windows host via WSL interop...");
-  const launchScript = watcherPath
-    ? `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath '${watcherPath.replace(/'/g, "''")}' -WindowStyle Hidden`
-    : "$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ollama.exe -ArgumentList serve -WindowStyle Hidden";
-  const result = run(["powershell.exe", "-Command", launchScript], {
-    ignoreError: true,
-    suppressOutput: true,
-  });
-  if (result.status !== 0) {
-    const stderr = String(result.stderr || "").trim();
-    console.error(
-      `  PowerShell launch failed (exit ${result.status})${stderr ? `: ${stderr}` : ""}`,
-    );
-    return false;
+  const watcherPath = typeof opts.watcherPath === "string" ? opts.watcherPath.trim() : "";
+  const installedPath = typeof opts.installedPath === "string" ? opts.installedPath.trim() : "";
+  const launchAttempts: Array<{ label: string; script: string }> = [];
+  if (watcherPath) {
+    launchAttempts.push({
+      label: "Ollama tray app",
+      script:
+        `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(watcherPath)} ` +
+        "-WindowStyle Hidden",
+    });
   }
-  return awaitWindowsOllamaReady();
+  if (installedPath) {
+    launchAttempts.push({
+      label: "verified ollama.exe",
+      script:
+        `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(installedPath)} ` +
+        "-ArgumentList 'serve' -WindowStyle Hidden",
+    });
+  }
+  launchAttempts.push({
+    label: "refreshed Windows PATH",
+    script:
+      "$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User'); " +
+      "$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ollama.exe -ArgumentList serve -WindowStyle Hidden",
+  });
+
+  for (let i = 0; i < launchAttempts.length; i++) {
+    const attempt = launchAttempts[i];
+    const result = run(["powershell.exe", "-Command", attempt.script], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    if (result.status === 0 && awaitWindowsOllamaReady()) {
+      return true;
+    }
+
+    const stderr = String(result.stderr || "").trim();
+    const error = result.error?.message;
+    const detail =
+      result.status === 0
+        ? "Ollama did not become reachable"
+        : error || `exit ${result.status}${stderr ? `: ${stderr}` : ""}`;
+    console.error(`  PowerShell launch via ${attempt.label} failed: ${detail}`);
+    if (i < launchAttempts.length - 1) {
+      killWindowsOllamaProcesses();
+      sleep(1);
+    }
+  }
+  return false;
 }
 
 // Used by start and restart paths to force a 0.0.0.0 binding on an already
-// installed Ollama. Install path skips this: the installer's pre-set env
-// already lands on the auto-spawned daemon.
-function setupWindowsOllamaWith0000Binding(opts: { announceStop?: boolean } = {}): boolean {
+// installed Ollama. Fresh install fallback passes installedPath to avoid
+// relying on a newly-mutated Windows PATH from this process.
+function setupWindowsOllamaWith0000Binding(
+  opts: { announceStop?: boolean; installedPath?: string } = {},
+): boolean {
   const watcherPath = captureWindowsOllamaWatcherPath();
   persistOllamaHostEnvVar();
   if (opts.announceStop) {
@@ -163,7 +206,10 @@ function setupWindowsOllamaWith0000Binding(opts: { announceStop?: boolean } = {}
   }
   killWindowsOllamaProcesses();
   sleep(1);
-  return launchAndAwaitWindowsOllama(watcherPath || undefined);
+  return launchAndAwaitWindowsOllama({
+    watcherPath: watcherPath || undefined,
+    installedPath: opts.installedPath,
+  });
 }
 
 function switchToWindowsOllamaHost(): void {
@@ -171,9 +217,22 @@ function switchToWindowsOllamaHost(): void {
   console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
 }
 
+function printWindowsOllamaTimeoutDiagnostics(): void {
+  console.error("  Timed out waiting for Ollama to start on the Windows host.");
+  console.error("  Diagnose Windows-side Ollama state with:");
+  console.error('    powershell.exe -Command "Get-Process ollama* -ErrorAction SilentlyContinue"');
+  console.error(
+    '    powershell.exe -Command "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue"',
+  );
+  console.error(
+    `    curl -sS --connect-timeout 2 --max-time 5 http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
+  );
+}
+
 module.exports = {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
   setupWindowsOllamaWith0000Binding,
   switchToWindowsOllamaHost,
+  printWindowsOllamaTimeoutDiagnostics,
 };

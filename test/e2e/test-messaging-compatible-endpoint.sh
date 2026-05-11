@@ -425,13 +425,32 @@ check_gateway_ready() {
   local result script
   script=$(
     cat <<'SH'
-node <<'NODE'
+last=""
+for _attempt in $(seq 1 30); do
+  result=$(node <<'NODE' 2>&1 || true
 const net = require("net");
+let done = false;
 const sock = net.connect(18789, "127.0.0.1");
-sock.on("connect", () => { console.log("OPEN"); sock.end(); });
-sock.on("error", (err) => console.log("ERROR " + err.message));
-setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
+function finish(line) {
+  if (done) return;
+  done = true;
+  console.log(line);
+  sock.destroy();
+}
+sock.on("connect", () => finish("OPEN"));
+sock.on("error", (err) => finish("ERROR " + err.message));
+sock.setTimeout(1000, () => finish("TIMEOUT"));
 NODE
+  )
+  if echo "$result" | grep -q "OPEN"; then
+    echo "$result"
+    exit 0
+  fi
+  last="$result"
+  sleep 1
+done
+echo "$last"
+exit 1
 SH
   )
   result=$(sandbox_exec_sh_script "$script" 2>&1 || true)

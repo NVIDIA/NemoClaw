@@ -347,10 +347,10 @@ Refer to [Switch Inference Models](switch-inference-providers.md) for the full p
 For compatible endpoints, the command is:
 
 ```console
-$ openshell inference set --provider compatible-endpoint --model <model-name>
+$ nemoclaw inference set --provider compatible-endpoint --model <model-name>
 ```
 
-If the provider itself needs to change (for example, switching from vLLM to a cloud API), rerun `nemoclaw onboard`.
+If the provider itself needs to change (for example, switching from vLLM to a cloud API), pass the new provider to `nemoclaw inference set`.
 
 ## Next Steps
 

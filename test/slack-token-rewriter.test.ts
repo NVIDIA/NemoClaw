@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 const CANONICAL_REWRITER = path.join(
   import.meta.dirname,
@@ -21,6 +21,20 @@ const CANONICAL_REWRITER = path.join(
   "scripts",
   "slack-token-rewriter.js",
 );
+const TOKEN_ENV_KEYS = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
+const ORIGINAL_TOKEN_ENV = new Map(TOKEN_ENV_KEYS.map((key) => [key, process.env[key]]));
+
+function clearTokenEnv() {
+  for (const key of TOKEN_ENV_KEYS) delete process.env[key];
+}
+
+function restoreTokenEnv() {
+  for (const key of TOKEN_ENV_KEYS) {
+    const original = ORIGINAL_TOKEN_ENV.get(key);
+    if (original === undefined) delete process.env[key];
+    else process.env[key] = original;
+  }
+}
 
 // Build fresh stub modules and load the rewriter on top of them. Returns the
 // stub modules whose request/get methods have been monkey-patched by the
@@ -95,7 +109,11 @@ function loadRewriter() {
 describe("slack-token-rewriter: string rewriting", () => {
   let mod: ReturnType<typeof loadRewriter>;
   beforeEach(() => {
+    clearTokenEnv();
     mod = loadRewriter();
+  });
+  afterEach(() => {
+    restoreTokenEnv();
   });
 
   it("rewrites Bolt-shape placeholder in a string URL argument", () => {
@@ -129,6 +147,30 @@ describe("slack-token-rewriter: string rewriting", () => {
   });
 
   it("rewrites options.headers.Authorization (Bearer prefix)", () => {
+    const opts = {
+      hostname: "api.slack.com",
+      path: "/api/auth.test",
+      headers: { Authorization: "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN" },
+    };
+    mod.https.request(opts);
+    expect(opts.headers.Authorization).toBe("Bearer openshell:resolve:env:SLACK_BOT_TOKEN");
+  });
+
+  it("rewrites to the revision-scoped OpenShell placeholder when present in env", () => {
+    process.env.SLACK_BOT_TOKEN = "openshell:resolve:env:v12_SLACK_BOT_TOKEN";
+    const opts = {
+      hostname: "api.slack.com",
+      path: "/api/auth.test",
+      headers: { Authorization: "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN" },
+    };
+    mod.https.request(opts);
+    expect(opts.headers.Authorization).toBe(
+      "Bearer openshell:resolve:env:v12_SLACK_BOT_TOKEN",
+    );
+  });
+
+  it("does not copy raw env token values into rewritten requests", () => {
+    process.env.SLACK_BOT_TOKEN = "xoxb-real-token-must-not-leak";
     const opts = {
       hostname: "api.slack.com",
       path: "/api/auth.test",

@@ -43,15 +43,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Pull base image from GHCR (fall back to local build)
-        run: |
-          if docker pull ghcr.io/nvidia/nemoclaw/sandbox-base:latest 2>/dev/null; then
-            echo "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest" >> "$GITHUB_ENV"
-          else
-            echo "::warning::GHCR base image not available, building locally"
-            docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
-            echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
-          fi
+      - name: Resolve sandbox base image
+        uses: ./.github/actions/resolve-sandbox-base-image
 
       - name: Build production image
         run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production .
@@ -85,15 +78,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Pull base image from GHCR (fall back to local build)
-        run: |
-          if docker pull ghcr.io/nvidia/nemoclaw/sandbox-base:latest 2>/dev/null; then
-            echo "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest" >> "$GITHUB_ENV"
-          else
-            echo "::warning::GHCR base image not available, building locally"
-            docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
-            echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
-          fi
+      - name: Resolve sandbox base image
+        uses: ./.github/actions/resolve-sandbox-base-image
 
       - name: Build production image on arm64
         run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production-arm64 .

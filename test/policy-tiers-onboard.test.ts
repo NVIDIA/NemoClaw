@@ -69,6 +69,8 @@ const credentials = require(${credPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 
+Object.defineProperty(process, "platform", { value: "darwin" });
+
 // Stub heavy I/O
 credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + msg); };
 credentials.ensureApiKey = async () => {};

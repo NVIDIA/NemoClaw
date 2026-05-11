@@ -6,9 +6,11 @@ import { describe, it, expect } from "vitest";
 // Import from compiled dist/ for correct coverage attribution.
 import {
   CLOUD_MODEL_OPTIONS,
+  DEFAULT_HERMES_PROVIDER_MODEL,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
+  HERMES_PROVIDER_MODEL_OPTIONS,
   INFERENCE_ROUTE_URL,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
@@ -29,6 +31,23 @@ describe("inference selection config", () => {
       "openai/gpt-oss-120b",
       "deepseek-ai/deepseek-v4-pro",
     ]);
+  });
+
+  it("aligns Hermes Provider defaults with the Hermes Agent Nous catalog", () => {
+    expect(DEFAULT_HERMES_PROVIDER_MODEL).toBe("moonshotai/kimi-k2.6");
+    expect(HERMES_PROVIDER_MODEL_OPTIONS.slice(0, 10)).toEqual([
+      "moonshotai/kimi-k2.6",
+      "xiaomi/mimo-v2.5-pro",
+      "xiaomi/mimo-v2.5",
+      "tencent/hy3-preview",
+      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4.6",
+      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-4.5",
+      "anthropic/claude-haiku-4.5",
+      "openai/gpt-5.5",
+    ]);
+    expect(HERMES_PROVIDER_MODEL_OPTIONS.length).toBeGreaterThan(10);
   });
 
   it("maps ollama-local to the sandbox inference route and default model", () => {
@@ -103,6 +122,19 @@ describe("inference selection config", () => {
       provider: "compatible-endpoint",
       providerLabel: "Other OpenAI-compatible endpoint",
     });
+    expect(getProviderSelectionConfig("hermes-provider", "anthropic/claude-opus-4.7")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "anthropic/claude-opus-4.7",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+      provider: "hermes-provider",
+      providerLabel: "Hermes Provider",
+    });
+    expect(getProviderSelectionConfig("hermes-provider")).toEqual(
+      expect.objectContaining({ model: DEFAULT_HERMES_PROVIDER_MODEL }),
+    );
     // Full-object assertion for one local provider — uses dedicated
     // credential env, not OPENAI_API_KEY (GH #2519).
     expect(getProviderSelectionConfig("vllm-local", "meta-llama")).toEqual({
@@ -131,6 +163,7 @@ describe("inference selection config", () => {
       "compatible-anthropic-endpoint",
       "gemini-api",
       "compatible-endpoint",
+      "hermes-provider",
       "vllm-local",
       "ollama-local",
     ];
@@ -165,6 +198,9 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
     expect(getProviderSelectionConfig("compatible-anthropic-endpoint")?.model).toBe(
       "custom-anthropic-model",
+    );
+    expect(getProviderSelectionConfig("hermes-provider")?.model).toBe(
+      DEFAULT_HERMES_PROVIDER_MODEL,
     );
     expect(getProviderSelectionConfig("vllm-local")?.model).toBe("vllm-local");
   });

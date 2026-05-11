@@ -114,7 +114,16 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     if (lookup.state !== "present") {
       console.log("    Inference: not verified (gateway/sandbox state not verified)");
     }
-    console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
+    const hostGpu = sb.hostGpuDetected ? "yes" : "no";
+    const sandboxGpuEnabled = sb.sandboxGpuEnabled ?? (sb.gpuEnabled === true);
+    const sandboxGpu = sandboxGpuEnabled ? "enabled" : "disabled";
+    const sandboxGpuMode = sb.sandboxGpuMode ? ` (${sb.sandboxGpuMode})` : "";
+    const sandboxGpuDevice = sb.sandboxGpuDevice ? ` device=${sb.sandboxGpuDevice}` : "";
+    const openshellDriver = sb.openshellDriver || "unknown";
+    const openshellVersion = sb.openshellVersion || "unknown";
+    console.log(`    Host GPU: ${hostGpu}`);
+    console.log(`    Sandbox GPU: ${sandboxGpu}${sandboxGpuMode}${sandboxGpuDevice}`);
+    console.log(`    OpenShell: ${openshellVersion} (${openshellDriver})`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
 
     // Active session indicator

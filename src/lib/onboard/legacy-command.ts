@@ -13,6 +13,8 @@ export interface OnboardCommandOptions {
   recreateSandbox: boolean;
   fromDockerfile: string | null;
   sandboxName: string | null;
+  sandboxGpu: "enable" | "disable" | null;
+  sandboxGpuDevice: string | null;
   acceptThirdPartySoftware: boolean;
   agent: string | null;
   controlUiPort: number | null;
@@ -51,9 +53,12 @@ const ONBOARD_BASE_ARGS = [
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   const name = CLI_NAME;
   return [
-    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${noticeAcceptFlag}]`,
+    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${noticeAcceptFlag}]`,
     "",
     "  --from <Dockerfile> uses the Dockerfile's parent directory as the Docker build context.",
+    "  --gpu enables direct NVIDIA GPU access inside the sandbox; --no-gpu forces CPU sandbox behavior.",
+    "  --sandbox-gpu enables direct NVIDIA GPU access inside the sandbox; --no-sandbox-gpu forces CPU sandbox behavior.",
+    "  --sandbox-gpu-device passes a specific OpenShell GPU device selector to sandbox create.",
     "  Put files referenced by COPY/ADD next to that Dockerfile, or move the Dockerfile into",
     "  a dedicated build directory to avoid sending unrelated files to Docker.",
     "  Common large directories are skipped: node_modules, .git, .venv, __pycache__.",
@@ -152,6 +157,41 @@ export function parseOnboardArgs(
     parsedArgs.splice(portIdx, 2);
   }
 
+  const sandboxGpuFlag = parsedArgs.includes("--sandbox-gpu");
+  const noSandboxGpuFlag = parsedArgs.includes("--no-sandbox-gpu");
+  if (sandboxGpuFlag && noSandboxGpuFlag) {
+    error("  --sandbox-gpu and --no-sandbox-gpu are mutually exclusive.");
+    printOnboardUsage(error, noticeAcceptFlag);
+    exit(1);
+  }
+  let sandboxGpu: "enable" | "disable" | null = null;
+  if (sandboxGpuFlag) {
+    sandboxGpu = "enable";
+    parsedArgs.splice(parsedArgs.indexOf("--sandbox-gpu"), 1);
+  }
+  if (noSandboxGpuFlag) {
+    sandboxGpu = "disable";
+    parsedArgs.splice(parsedArgs.indexOf("--no-sandbox-gpu"), 1);
+  }
+
+  let sandboxGpuDevice: string | null = null;
+  const sandboxGpuDeviceIdx = parsedArgs.indexOf("--sandbox-gpu-device");
+  if (sandboxGpuDeviceIdx !== -1) {
+    const deviceValue = parsedArgs[sandboxGpuDeviceIdx + 1];
+    if (typeof deviceValue !== "string" || deviceValue.length === 0 || deviceValue.startsWith("--")) {
+      error("  --sandbox-gpu-device requires a device selector");
+      printOnboardUsage(error, noticeAcceptFlag);
+      exit(1);
+    }
+    sandboxGpuDevice = deviceValue;
+    parsedArgs.splice(sandboxGpuDeviceIdx, 2);
+  }
+  if (sandboxGpu === "disable" && sandboxGpuDevice) {
+    error("  --sandbox-gpu-device cannot be used with --no-sandbox-gpu.");
+    printOnboardUsage(error, noticeAcceptFlag);
+    exit(1);
+  }
+
   const allowedArgs = new Set([...ONBOARD_BASE_ARGS, noticeAcceptFlag]);
   const unknownArgs = parsedArgs.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
@@ -174,6 +214,16 @@ export function parseOnboardArgs(
     printOnboardUsage(error, noticeAcceptFlag);
     exit(1);
   }
+  if ((gpu && sandboxGpu === "disable") || (noGpu && sandboxGpu === "enable")) {
+    error("  --gpu/--no-gpu conflict with the sandbox GPU flags.");
+    printOnboardUsage(error, noticeAcceptFlag);
+    exit(1);
+  }
+  if (noGpu && sandboxGpuDevice) {
+    error("  --sandbox-gpu-device cannot be used with --no-gpu.");
+    printOnboardUsage(error, noticeAcceptFlag);
+    exit(1);
+  }
 
   return {
     nonInteractive: parsedArgs.includes("--non-interactive"),
@@ -182,6 +232,8 @@ export function parseOnboardArgs(
     recreateSandbox: parsedArgs.includes("--recreate-sandbox"),
     fromDockerfile,
     sandboxName,
+    sandboxGpu,
+    sandboxGpuDevice,
     acceptThirdPartySoftware:
       parsedArgs.includes(noticeAcceptFlag) || String(deps.env[noticeAcceptEnv] || "") === "1",
     agent,

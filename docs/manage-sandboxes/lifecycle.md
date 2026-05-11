@@ -137,7 +137,7 @@ Recover from a misconfigured sandbox without re-running the full onboard wizard 
 Change the active model or provider at runtime without rebuilding the sandbox:
 
 ```console
-$ openshell inference set -g nemoclaw --model <model> --provider <provider>
+$ nemoclaw inference set --model <model> --provider <provider>
 ```
 
 Refer to [Switch Inference Providers](../inference/switch-inference-providers.md) for provider-specific model IDs and API compatibility notes.
