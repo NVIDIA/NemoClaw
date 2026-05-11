@@ -84,18 +84,23 @@ get_route_output() {
   openshell inference get 2>&1
 }
 
+strip_ansi() {
+  python3 -c 'import re, sys; sys.stdout.write(re.sub(r"\x1b\[[0-9;]*m", "", sys.stdin.read()))'
+}
+
 assert_route() {
-  local output
+  local output plain_output
   if ! output=$(get_route_output); then
     fail "OpenShell inference get failed: ${output:0:240}"
     return
   fi
+  plain_output=$(printf '%s' "$output" | strip_ansi)
 
-  if grep -Fq "Provider: ${SWITCH_PROVIDER}" <<<"$output" &&
-    grep -Fq "Model: ${SWITCH_MODEL}" <<<"$output"; then
+  if grep -Fq "Provider: ${SWITCH_PROVIDER}" <<<"$plain_output" &&
+    grep -Fq "Model: ${SWITCH_MODEL}" <<<"$plain_output"; then
     pass "OpenShell route points at ${SWITCH_PROVIDER} / ${SWITCH_MODEL}"
   else
-    fail "OpenShell route did not switch to ${SWITCH_PROVIDER} / ${SWITCH_MODEL}: ${output:0:400}"
+    fail "OpenShell route did not switch to ${SWITCH_PROVIDER} / ${SWITCH_MODEL}: ${plain_output:0:400}"
   fi
 }
 
