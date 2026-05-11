@@ -96,8 +96,17 @@ function brev(...args: string[]): string {
 }
 
 function listBrevInstances(): Array<{ name: string; status?: string }> {
+  // `brev ls --json` output shape varies between CLI versions:
+  //   v0.6.322 returned a bare JSON array.
+  //   v0.6.324 may return an object like { workspaces: [...] } or null
+  //   on empty state. Be defensive so hasBrevInstance()/.some() never
+  //   throws just because we upgraded the CLI.
   try {
-    return JSON.parse(brev("ls", "--json"));
+    const parsed = JSON.parse(brev("ls", "--json"));
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && Array.isArray(parsed.workspaces)) return parsed.workspaces;
+    if (parsed && Array.isArray(parsed.instances)) return parsed.instances;
+    return [];
   } catch {
     return [];
   }

@@ -210,6 +210,14 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts
 
+      - name: Build CLI (dist/)
+        # The Brev E2E harness invokes bin/nemoclaw.js locally for pre-flight
+        # sandbox-name validation before touching Brev. bin/nemoclaw.js
+        # requires '../dist/nemoclaw', which is produced by the `prepare`
+        # npm script — skipped above because --ignore-scripts is set to
+        # avoid the git-hook installer running in CI. Build explicitly.
+        run: npm run build:cli
+
       - name: Run ephemeral Brev E2E
         env:
           BREV_API_KEY: ${{ inputs.brev_api_key || secrets.BREV_API_KEY }}
