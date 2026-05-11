@@ -449,16 +449,12 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
  * check if the instance exists anyway.
  */
 function createBrevInstance(elapsed: () => string): void {
-  const createCmd = USE_PUBLISHED_LAUNCHABLE
-    ? buildLaunchableCreateCmd(elapsed)
-    : buildStartupScriptCreateCmd(elapsed);
-
   try {
-    execSync(createCmd, {
-      encoding: "utf-8",
-      timeout: 180_000,
-      stdio: USE_PUBLISHED_LAUNCHABLE ? CAPTURE_STDIO : PIPE_INPUT_STDIO,
-    });
+    if (USE_PUBLISHED_LAUNCHABLE) {
+      createPublishedLaunchableInstance(elapsed);
+    } else {
+      createStartupScriptInstance(elapsed);
+    }
   } catch (createErr) {
     console.log(
       `[${elapsed()}] brev create exited with error — checking if instance was created anyway...`,
@@ -468,7 +464,8 @@ function createBrevInstance(elapsed: () => string): void {
     } catch {
       /* ignore */
     }
-    const lsOutput = execSync(`brev ls 2>&1 || true`, { encoding: "utf-8", timeout: 30_000 });
+    const lsResult = spawnSync("brev", ["ls"], { encoding: "utf-8", timeout: 30_000 });
+    const lsOutput = `${lsResult.stdout || ""}\n${lsResult.stderr || ""}`;
     const instanceName = requireInstanceName();
     if (!lsOutput.includes(instanceName)) {
       const createMessage = createErr instanceof Error ? createErr.message : String(createErr);
@@ -486,26 +483,29 @@ function createBrevInstance(elapsed: () => string): void {
 }
 
 /**
- * Build the `brev create --launchable ...` command. Uses the published
- * NemoClaw launchable image (env-... id) which boots from a pre-baked GCP
- * machine image in ~2 min with NemoClaw + OpenShell + sandbox image
- * already on disk.
+ * Create via `brev create --launchable ...`. Uses the published NemoClaw
+ * launchable image (env-... id) which boots from a pre-baked GCP machine
+ * image in ~2 min with NemoClaw + OpenShell + sandbox image already on disk.
  */
-function buildLaunchableCreateCmd(elapsed: () => string): string {
+function createPublishedLaunchableInstance(elapsed: () => string): void {
   console.log(
     `[${elapsed()}] Creating instance via published launchable (pre-baked image, ~2 min boot)...`,
   );
   console.log(`[${elapsed()}]   launchable-id: ${BREV_LAUNCHABLE_ID}`);
-  return `brev create ${INSTANCE_NAME} --launchable ${BREV_LAUNCHABLE_ID} --detached`;
+  execFileSync(
+    "brev",
+    ["create", requireInstanceName(), "--launchable", BREV_LAUNCHABLE_ID, "--detached"],
+    { encoding: "utf-8", timeout: 180_000, stdio: CAPTURE_STDIO },
+  );
 }
 
 /**
- * Build the `brev search cpu | brev create --startup-script @file` command.
- * Legacy path — provisions a bare Ubuntu VM and runs the repo-local
- * brev-launchable-ci-cpu.sh to replicate what the published launchable
- * pre-bakes. Kept as a fallback for validating setup-script changes.
+ * Create via `brev search cpu | brev create --startup-script @file` without
+ * shell interpolation. Legacy path — provisions a bare Ubuntu VM and runs the
+ * repo-local brev-launchable-ci-cpu.sh to replicate what the published
+ * launchable pre-bakes. Kept as a fallback for validating setup-script changes.
  */
-function buildStartupScriptCreateCmd(elapsed: () => string): string {
+function createStartupScriptInstance(elapsed: () => string): void {
   console.log(
     `[${elapsed()}] Creating instance via startup-script (bare VM + bootstrap, fallback mode)...`,
   );
@@ -516,7 +516,7 @@ function buildStartupScriptCreateCmd(elapsed: () => string): string {
   let setupScriptPath: string;
   if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
     setupScriptPath = "/tmp/brev-ci-setup.sh";
-    execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_PATH}"`, {
+    execFileSync("curl", ["-fsSL", "-o", setupScriptPath, DEFAULT_SETUP_SCRIPT_PATH], {
       encoding: "utf-8",
       timeout: 30_000,
     });
@@ -525,10 +525,34 @@ function buildStartupScriptCreateCmd(elapsed: () => string): string {
     setupScriptPath = DEFAULT_SETUP_SCRIPT_PATH;
     console.log(`[${elapsed()}] Using repo-local setup script`);
   }
-  return (
-    `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} ` +
-    `--min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
-    `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`
+
+  const searchOutput = execFileSync(
+    "brev",
+    [
+      "search",
+      "cpu",
+      "--min-vcpu",
+      String(BREV_MIN_VCPU),
+      "--min-ram",
+      String(BREV_MIN_RAM),
+      "--min-disk",
+      String(BREV_MIN_DISK),
+      "--provider",
+      BREV_PROVIDER,
+      "--sort",
+      "price",
+    ],
+    { encoding: "utf-8", timeout: 120_000, stdio: ["pipe", "pipe", "inherit"] },
+  );
+  execFileSync(
+    "brev",
+    ["create", requireInstanceName(), "--startup-script", `@${setupScriptPath}`, "--detached"],
+    {
+      encoding: "utf-8",
+      timeout: 180_000,
+      stdio: PIPE_INPUT_STDIO,
+      input: searchOutput,
+    },
   );
 }
 

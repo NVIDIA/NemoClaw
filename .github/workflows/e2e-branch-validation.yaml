@@ -106,14 +106,6 @@ on:
         required: false
         type: boolean
         default: false
-      brev_api_key:
-        description: "Brev API key (bak-...; overrides BREV_API_KEY secret if provided)"
-        required: false
-        default: ""
-      brev_org_id:
-        description: "Brev org id (org-...; overrides BREV_ORG_ID secret if provided)"
-        required: false
-        default: ""
   workflow_call:
     inputs:
       branch:
@@ -223,8 +215,10 @@ jobs:
 
       - name: Install Brev CLI
         env:
-          BREV_API_KEY: ${{ inputs.brev_api_key || secrets.BREV_API_KEY }}
-          BREV_ORG_ID: ${{ inputs.brev_org_id || secrets.BREV_ORG_ID }}
+          # GitHub Actions inputs are plaintext run metadata; Brev credentials
+          # must only come from repository/org secrets so they remain masked.
+          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
         run: |
           # Brev CLI v0.6.324+ — first release to support `brev login --api-key`
           # for long-lived CI auth (bak-... keys). Earlier v0.6.322 pin required
@@ -280,8 +274,8 @@ jobs:
 
       - name: Run ephemeral Brev E2E
         env:
-          BREV_API_KEY: ${{ inputs.brev_api_key || secrets.BREV_API_KEY }}
-          BREV_ORG_ID: ${{ inputs.brev_org_id || secrets.BREV_ORG_ID }}
+          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
