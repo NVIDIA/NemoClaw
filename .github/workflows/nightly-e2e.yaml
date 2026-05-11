@@ -30,9 +30,11 @@
 #                            on non-credential env keys, and symlink-safe deletion.
 #   launchable-smoke-e2e     Community install path (brev-launchable-ci-cpu.sh) on ubuntu-latest.
 #   brev-e2e                 Ephemeral Brev cloud instance end-to-end — provisions a real
-#                            Brev VM via the CI launchable, rsyncs main, runs the selected
-#                            test suites, and tears down. Covers what launchable-smoke can't:
-#                            the actual Brev cloud provisioning + launchable bootstrap path.
+#                            Brev VM from the PUBLISHED NemoClaw launchable image
+#                            (env-3Azt0aYgVNFEuz7opyx3gscmowS, rebuilt 3x daily by
+#                            brevdev/nemoclaw-image), rsyncs main over it, runs the
+#                            selected test suites, and tears down. This is the only
+#                            coverage that validates the image customers actually get.
 #                            Requires BREV_API_KEY (long-lived bak-... CI key) + BREV_ORG_ID.
 #   gpu-e2e                  Local Ollama inference on an NVKS ephemeral GPU runner.
 #   gpu-double-onboard-e2e   Ollama proxy token consistency after re-onboard (#2553).
@@ -1584,6 +1586,11 @@ jobs:
       branch: main
       test_suite: ${{ matrix.test_suite }}
       use_launchable: true
+      # Provision from the published NemoClaw launchable image (pre-baked
+      # GCP image, ~2 min boot), not the startup-script fallback. Empty
+      # launchable_id → harness default env-3Azt0aYgVNFEuz7opyx3gscmowS.
+      use_published_launchable: true
+      launchable_id: ""
       keep_alive: false
     secrets:
       BREV_API_KEY: ${{ secrets.BREV_API_KEY }}

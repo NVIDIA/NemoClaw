@@ -67,15 +67,39 @@ function requireInstanceName(): string {
 }
 
 // Launchable configuration
-// CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, npm deps, Docker images.
-// The Brev CLI (v0.6.322+) uses `brev search cpu | brev create --startup-script @file`.
-// Default: use the repo-local script (hermetic — always matches the checked-out branch).
-// Override via LAUNCHABLE_SETUP_SCRIPT env var to test a remote URL instead.
+//
+// Two provisioning modes are supported:
+//
+//   1. PUBLISHED LAUNCHABLE (default, preferred):
+//      `brev create INSTANCE --launchable $BREV_LAUNCHABLE_ID`
+//      Uses the pre-baked GCP machine image published by brevdev/nemoclaw-image
+//      (rebuilt 3x daily). Customer-identical — NemoClaw, OpenShell, sandbox
+//      image all pre-imported into containerd. Boots in ~2 min.
+//      BREV_LAUNCHABLE_ID defaults to the public NemoClaw launchable:
+//        env-3Azt0aYgVNFEuz7opyx3gscmowS
+//      (same ID surfaced in docs/deployment/brev-web-ui.md).
+//
+//   2. STARTUP SCRIPT (fallback, legacy):
+//      `brev search cpu | brev create INSTANCE --startup-script @file`
+//      Provisions a bare Ubuntu VM and bootstraps with the repo-local
+//      scripts/brev-launchable-ci-cpu.sh. Useful for validating launchable
+//      setup logic without the published image, or as a fallback if the
+//      published launchable is down. Opt in with USE_PUBLISHED_LAUNCHABLE=0
+//      or by setting LAUNCHABLE_SETUP_SCRIPT to a custom path/URL.
+//
+const PUBLISHED_LAUNCHABLE_ID_DEFAULT = "env-3Azt0aYgVNFEuz7opyx3gscmowS";
+const BREV_LAUNCHABLE_ID = process.env.BREV_LAUNCHABLE_ID || PUBLISHED_LAUNCHABLE_ID_DEFAULT;
+// Default to the published launchable. Set USE_PUBLISHED_LAUNCHABLE=0 (or "false")
+// to fall back to the startup-script path.
+const USE_PUBLISHED_LAUNCHABLE =
+  process.env.USE_PUBLISHED_LAUNCHABLE !== "0" &&
+  process.env.USE_PUBLISHED_LAUNCHABLE !== "false";
 const DEFAULT_SETUP_SCRIPT_PATH =
   process.env.LAUNCHABLE_SETUP_SCRIPT ||
   path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
-// Sentinel file written by brev-launchable-ci-cpu.sh when setup is complete.
-// More reliable than grepping log files.
+// Sentinel file written by brev-launchable-ci-cpu.sh when startup-script setup
+// completes. Not present on the published launchable image — that path uses
+// a systemd/CLI-based readiness probe instead.
 const LAUNCHABLE_SENTINEL = "/var/run/nemoclaw-launchable-ready";
 
 let remoteDir = "";
@@ -245,37 +269,69 @@ function waitForSsh(maxAttempts = 40, intervalMs = 5_000): void {
 }
 
 /**
- * Wait for the launchable setup script to finish by checking a sentinel file.
- * Much more reliable than grepping log files.
+ * Wait for the launchable VM to be ready for tests.
+ *
+ * Two probe strategies depending on provisioning mode:
+ *
+ *   - PUBLISHED_LAUNCHABLE: check that the `nemoclaw` and `openshell` CLIs
+ *     are on PATH and the ~/NemoClaw clone is present. The pre-baked image
+ *     has these at image-build time; we just need the VM to have booted
+ *     and SSH to be reachable. We do NOT wait for openshell-gateway to be
+ *     active — `nemoclaw onboard` in the test's bootstrap will start it.
+ *
+ *   - STARTUP_SCRIPT: poll for /var/run/nemoclaw-launchable-ready, the
+ *     sentinel file written by brev-launchable-ci-cpu.sh on completion.
  */
 function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000): void {
   const start = Date.now();
   const elapsed = () => `${Math.round((Date.now() - start) / 1000)}s`;
   let consecutiveSshFailures = 0;
 
+  const mode = USE_PUBLISHED_LAUNCHABLE ? "published-launchable" : "startup-script";
+  console.log(`[${elapsed()}] Waiting for VM to be ready (mode: ${mode})...`);
+
+  // Readiness probe varies by provisioning mode. Both return "READY" when
+  // the VM is ready for tests and "PENDING" otherwise. Published-launchable
+  // also emits a short diagnostic suffix so the CI log shows which prereq
+  // (nemoclaw / openshell / ~/NemoClaw) is still missing.
+  const probeCmd = USE_PUBLISHED_LAUNCHABLE
+    ? `{ command -v nemoclaw >/dev/null 2>&1 \
+         && command -v openshell >/dev/null 2>&1 \
+         && test -d "$HOME/NemoClaw" \
+         && echo READY; } \
+       || { \
+         have_nc=$(command -v nemoclaw >/dev/null 2>&1 && echo y || echo n); \
+         have_os=$(command -v openshell >/dev/null 2>&1 && echo y || echo n); \
+         have_dir=$(test -d "$HOME/NemoClaw" && echo y || echo n); \
+         echo "PENDING nemoclaw=$have_nc openshell=$have_os repo=$have_dir"; \
+       }`
+    : `test -f ${LAUNCHABLE_SENTINEL} && echo READY || echo PENDING`;
+
   while (Date.now() - start < maxWaitMs) {
     try {
-      const result = ssh(`test -f ${LAUNCHABLE_SENTINEL} && echo READY || echo PENDING`, {
-        timeout: 15_000,
-      });
+      const result = ssh(probeCmd, { timeout: 15_000 });
       consecutiveSshFailures = 0; // reset on success
       if (result.includes("READY")) {
-        console.log(`[${elapsed()}] Launchable setup complete (sentinel file found)`);
+        console.log(`[${elapsed()}] VM ready (${mode})`);
         return;
       }
-      // Show progress from the setup log
-      try {
-        const tail = ssh("tail -2 /tmp/launch-plugin.log 2>/dev/null || echo '(no log yet)'", {
-          timeout: 10_000,
-        });
-        console.log(`[${elapsed()}] Setup still running... ${tail.replace(/\n/g, " | ")}`);
-      } catch {
-        /* ignore */
-      }
+      const progress = USE_PUBLISHED_LAUNCHABLE
+        ? result.trim()
+        : (() => {
+            try {
+              return ssh(
+                "tail -2 /tmp/launch-plugin.log 2>/dev/null || echo '(no log yet)'",
+                { timeout: 10_000 },
+              ).replace(/\n/g, " | ");
+            } catch {
+              return "(log fetch failed)";
+            }
+          })();
+      console.log(`[${elapsed()}] Still pending... ${progress}`);
     } catch {
       consecutiveSshFailures++;
       console.log(
-        `[${elapsed()}] Setup poll: SSH command failed (${consecutiveSshFailures} consecutive), retrying...`,
+        `[${elapsed()}] Readiness poll: SSH command failed (${consecutiveSshFailures} consecutive), retrying...`,
       );
       // Brev VMs sometimes reboot during setup (kernel upgrades, etc.)
       // Refresh the SSH config every 3 consecutive failures to pick up
@@ -294,9 +350,12 @@ function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000):
     execSync(`sleep ${pollIntervalMs / 1000}`);
   }
 
+  const readinessHint = USE_PUBLISHED_LAUNCHABLE
+    ? `nemoclaw+openshell CLIs + ~/NemoClaw (published launchable ${BREV_LAUNCHABLE_ID})`
+    : `sentinel ${LAUNCHABLE_SENTINEL}`;
   throw new Error(
-    `Launchable setup did not complete within ${maxWaitMs / 60_000} minutes. ` +
-      `Sentinel file ${LAUNCHABLE_SENTINEL} not found.`,
+    `Launchable VM did not become ready within ${maxWaitMs / 60_000} minutes. ` +
+      `Readiness check: ${readinessHint}`,
   );
 }
 
@@ -369,7 +428,11 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
 }
 
 /**
- * Create a Brev instance via `brev search cpu | brev create` with a startup script.
+ * Create a Brev instance.
+ *
+ * Prefers the published NemoClaw launchable (pre-baked GCP image, ~2 min boot)
+ * unless explicitly opted out via USE_PUBLISHED_LAUNCHABLE=0. The startup-script
+ * path is kept as a fallback for validating setup-script changes themselves.
  *
  * The Brev API sometimes returns "unexpected EOF" after the instance is actually
  * created server-side. The CLI then falls back to the next instance type, which
@@ -377,36 +440,16 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
  * check if the instance exists anyway.
  */
 function createBrevInstance(elapsed: () => string): void {
-  console.log(
-    `[${elapsed()}] Creating instance via launchable (brev search cpu | brev create + startup-script)...`,
-  );
-  console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
-  console.log(
-    `[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM, ${BREV_MIN_DISK} GB disk, provider: ${BREV_PROVIDER}`,
-  );
-
-  // Resolve the setup script to a local file path.
-  // Default: repo-local scripts/brev-launchable-ci-cpu.sh (hermetic).
-  // Override: set LAUNCHABLE_SETUP_SCRIPT to a URL and it gets downloaded.
-  let setupScriptPath: string;
-  if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
-    setupScriptPath = "/tmp/brev-ci-setup.sh";
-    execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_PATH}"`, {
-      encoding: "utf-8",
-      timeout: 30_000,
-    });
-    console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
-  } else {
-    setupScriptPath = DEFAULT_SETUP_SCRIPT_PATH;
-    console.log(`[${elapsed()}] Using repo-local setup script`);
-  }
+  const createCmd = USE_PUBLISHED_LAUNCHABLE
+    ? buildLaunchableCreateCmd(elapsed)
+    : buildStartupScriptCreateCmd(elapsed);
 
   try {
-    execSync(
-      `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
-        `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
-      { encoding: "utf-8", timeout: 180_000, stdio: PIPE_INPUT_STDIO },
-    );
+    execSync(createCmd, {
+      encoding: "utf-8",
+      timeout: 180_000,
+      stdio: USE_PUBLISHED_LAUNCHABLE ? CAPTURE_STDIO : PIPE_INPUT_STDIO,
+    });
   } catch (createErr) {
     console.log(
       `[${elapsed()}] brev create exited with error — checking if instance was created anyway...`,
@@ -431,6 +474,53 @@ function createBrevInstance(elapsed: () => string): void {
     );
   }
   console.log(`[${elapsed()}] brev create returned (instance provisioning in background)`);
+}
+
+/**
+ * Build the `brev create --launchable ...` command. Uses the published
+ * NemoClaw launchable image (env-... id) which boots from a pre-baked GCP
+ * machine image in ~2 min with NemoClaw + OpenShell + sandbox image
+ * already on disk.
+ */
+function buildLaunchableCreateCmd(elapsed: () => string): string {
+  console.log(
+    `[${elapsed()}] Creating instance via published launchable (pre-baked image, ~2 min boot)...`,
+  );
+  console.log(`[${elapsed()}]   launchable-id: ${BREV_LAUNCHABLE_ID}`);
+  return `brev create ${INSTANCE_NAME} --launchable ${BREV_LAUNCHABLE_ID} --detached`;
+}
+
+/**
+ * Build the `brev search cpu | brev create --startup-script @file` command.
+ * Legacy path — provisions a bare Ubuntu VM and runs the repo-local
+ * brev-launchable-ci-cpu.sh to replicate what the published launchable
+ * pre-bakes. Kept as a fallback for validating setup-script changes.
+ */
+function buildStartupScriptCreateCmd(elapsed: () => string): string {
+  console.log(
+    `[${elapsed()}] Creating instance via startup-script (bare VM + bootstrap, fallback mode)...`,
+  );
+  console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
+  console.log(
+    `[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM, ${BREV_MIN_DISK} GB disk, provider: ${BREV_PROVIDER}`,
+  );
+  let setupScriptPath: string;
+  if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
+    setupScriptPath = "/tmp/brev-ci-setup.sh";
+    execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_PATH}"`, {
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+    console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
+  } else {
+    setupScriptPath = DEFAULT_SETUP_SCRIPT_PATH;
+    console.log(`[${elapsed()}] Using repo-local setup script`);
+  }
+  return (
+    `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} ` +
+    `--min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
+    `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`
+  );
 }
 
 /**

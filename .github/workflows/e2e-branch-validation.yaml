@@ -3,18 +3,26 @@
 
 name: e2e-branch-validation
 
-# ─── Branch Validation E2E ───────────────────────────────────────────────────
+# ─── Branch Validation E2E ───────────────────────────────────────────
 #
-# PURPOSE: Validates a specific git branch by installing NemoClaw FROM SOURCE
-# on an ephemeral Brev cloud instance. Answers the question: "Does this branch
-# work if you install from source on a clean machine?"
+# PURPOSE: Validates a specific git branch by rsync-ing it onto a real Brev
+# cloud instance provisioned from the PUBLISHED NemoClaw launchable image,
+# then running the selected security / messaging / full suites against it.
+# Answers: "Does this branch work on the image customers actually get?"
 #
 # HOW IT WORKS:
-#   1. Provisions a fresh Brev CPU instance (~4 vCPU, 16 GB RAM)
-#   2. Rsyncs the checked-out branch code to the VM
-#   3. Runs install.sh from source + onboards a sandbox
-#   4. Executes the selected test suite against the live sandbox
-#   5. Tears down the instance (unless keep_alive=true)
+#   1. Provisions a Brev CPU instance from the published NemoClaw launchable
+#      (env-3Azt0aYgVNFEuz7opyx3gscmowS) — a pre-baked GCP image built 3x
+#      daily by brevdev/nemoclaw-image with NemoClaw, OpenShell, and the
+#      sandbox image already on disk. Boots in ~2 min.
+#   2. Rsyncs the checked-out branch code over the image's ~/NemoClaw.
+#   3. Rebuilds CLI dist/, runs onboard, and executes the selected suite.
+#   4. Tears down the instance (unless keep_alive=true).
+#
+# FALLBACK: set use_published_launchable=false to provision a bare Ubuntu
+# VM and bootstrap via scripts/brev-launchable-ci-cpu.sh. Slower (~5 min)
+# and does NOT test the image itself — useful only for validating changes
+# to the startup script without touching the published image.
 #
 # WHEN TO USE:
 #   - Before merging a PR that touches onboard, sandbox, security, or infra
@@ -50,6 +58,11 @@ name: e2e-branch-validation
 #                   legacy short-lived BREV_API_TOKEN refresh-token secret.
 #   BREV_ORG_ID   — Brev organization id (format: org-...). Required alongside
 #                   the API key for brev login.
+#
+# Optional inputs:
+#   launchable_id — override the published launchable. Default (empty →
+#                   env-3Azt0aYgVNFEuz7opyx3gscmowS) matches docs/deployment/
+#                   brev-web-ui.md. Override to test a staging image.
 # Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
 
 on:
@@ -75,10 +88,19 @@ on:
           - messaging-providers
           - all
       use_launchable:
-        description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
+        description: "Deprecated — always true. Kept for backward-compat with existing dispatches."
         required: false
         type: boolean
         default: true
+      use_published_launchable:
+        description: "Provision from the published NemoClaw launchable image (recommended) vs. the repo-local startup-script fallback"
+        required: false
+        type: boolean
+        default: true
+      launchable_id:
+        description: "Published launchable ID (default: the public NemoClaw launchable env-3Azt0aYgVNFEuz7opyx3gscmowS)"
+        required: false
+        default: ""
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
@@ -109,6 +131,14 @@ on:
         required: false
         type: boolean
         default: true
+      use_published_launchable:
+        required: false
+        type: boolean
+        default: true
+      launchable_id:
+        required: false
+        type: string
+        default: ""
       setup_script_url:
         required: false
         type: string
@@ -239,6 +269,13 @@ jobs:
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
           TEST_SUITE: ${{ inputs.test_suite }}
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
+          # Use the published NemoClaw launchable (pre-baked GCP image, ~2 min
+          # boot) by default. Set to '0' to fall back to the repo-local
+          # startup-script path (bare VM, ~5 min bootstrap).
+          USE_PUBLISHED_LAUNCHABLE: ${{ inputs.use_published_launchable && '1' || '0' }}
+          # Launchable ID override. Empty string → test harness default
+          # (env-3Azt0aYgVNFEuz7opyx3gscmowS, the public NemoClaw launchable).
+          BREV_LAUNCHABLE_ID: ${{ inputs.launchable_id || '' }}
           LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
           BREV_PROVIDER: gcp
           KEEP_ALIVE: ${{ inputs.keep_alive }}
