@@ -62,22 +62,61 @@ jobs:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # Pin the Pi coding agent to a known-good version. Updates should go through
+      # the normal dependency-review path (e.g. Dependabot) so a compromised
+      # upstream release cannot execute automatically in this secret-bearing job.
+      PI_AGENT_VERSION: "0.73.1"
+      # The trusted checkout always lives at this path and is the only source
+      # of code executed in this job. The PR content, if any, is mounted as
+      # read-only analysis data under PR_WORKDIR.
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
     steps:
-      - name: Checkout
+      # Trusted-code boundary: the advisor implementation (pi-analyze.mjs,
+      # comment.mjs, schema.json, pi-models.template.json) is always fetched
+      # from the main branch of this repo, regardless of what the PR changed.
+      # This prevents a future PR from modifying advisor code and executing
+      # arbitrary Node in a job that holds API keys and a write-scoped token.
+      - name: Checkout trusted advisor code (main)
         uses: actions/checkout@v6
         with:
+          repository: NVIDIA/NemoClaw
+          ref: main
+          path: advisor
+          persist-credentials: false
+
+      # PR content is checked out as inert analysis data only. Nothing from
+      # this directory is invoked as code by the advisor scripts; it is read
+      # via `git diff` / `fs.readFileSync` from inside the trusted scripts.
+      - name: Checkout PR workspace (read-only data)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-workdir
           fetch-depth: 0
+          persist-credentials: false
+
+      # For manual workflow_dispatch against this repo (no target_repo given),
+      # check out the ref the maintainer dispatched against as the workdir.
+      # workflow_dispatch requires write access, so this ref is trusted for
+      # the purposes of analysis-data access, though we still never execute
+      # it as code.
+      - name: Checkout dispatch workspace (read-only data)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' }}
+        uses: actions/checkout@v6
+        with:
+          path: pr-workdir
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
           node-version: "22"
 
-      - name: Install advisor dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
       - name: Set default advisor workdir
-        run: echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+        run: echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"
 
       - name: Prepare target PR checkout
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' }}
@@ -96,8 +135,11 @@ jobs:
           git -C "$TARGET_DIR" checkout --detach "refs/remotes/target/pr-${TARGET_PR}"
           echo "ADVISOR_WORKDIR=$TARGET_DIR" >> "$GITHUB_ENV"
 
+      # Pinned install. The version is held in PI_AGENT_VERSION above so
+      # the pin is reviewed as a code change, not silently inherited from
+      # whatever @latest points to at runtime.
       - name: Install Pi
-        run: npm install -g @mariozechner/pi-coding-agent
+        run: npm install -g "@mariozechner/pi-coding-agent@${PI_AGENT_VERSION}"
 
       - name: Run Pi semantic E2E advisor
         id: pi-analysis
@@ -117,17 +159,17 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd "$ADVISOR_WORKDIR"
-          node "$GITHUB_WORKSPACE/tools/e2e-advisor/pi-analyze.mjs" \
+          node "$ADVISOR_DIR/tools/e2e-advisor/pi-analyze.mjs" \
             --base "$BASE_REF" \
             --head "$HEAD_REF" \
-            --schema "$GITHUB_WORKSPACE/tools/e2e-advisor/schema.json" \
+            --schema "$ADVISOR_DIR/tools/e2e-advisor/schema.json" \
             --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
 
       - name: Publish job summary
         if: always()
         run: |
-          if [ -f artifacts/e2e-advisor/e2e-advisor-pi-summary.md ]; then
-            cat artifacts/e2e-advisor/e2e-advisor-pi-summary.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-pi-summary.md" ]; then
+            cat "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-pi-summary.md" >> "$GITHUB_STEP_SUMMARY"
           else
             printf '# Pi Semantic E2E Advisor\n\nPi analysis did not produce a summary. See raw artifacts/logs.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -139,11 +181,11 @@ jobs:
           GH_TOKEN: ${{ secrets.E2E_ADVISOR_GITHUB_TOKEN || github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          node tools/e2e-advisor/comment.mjs \
+          node "$ADVISOR_DIR/tools/e2e-advisor/comment.mjs" \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
-            --summary artifacts/e2e-advisor/e2e-advisor-pi-summary.md \
-            --result artifacts/e2e-advisor/e2e-advisor-final-result.json
+            --summary "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-pi-summary.md" \
+            --result "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-final-result.json"
 
       - name: Upload advisor artifacts
         if: always()
