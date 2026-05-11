@@ -730,7 +730,10 @@ def main() -> None:
     with open(path, "w") as f:
         json.dump(config, f, indent=2)
     os.chmod(path, 0o600)
-    _seed_wechat_accounts()
+    # NOTE: seed-wechat-accounts.py is invoked separately from the Dockerfile
+    # AFTER `openclaw plugins install`. Calling it here would write
+    # channels.openclaw-weixin before the plugin registers its channel id,
+    # which makes the install fail with "unknown channel id: openclaw-weixin".
 
 
 if __name__ == "__main__":
