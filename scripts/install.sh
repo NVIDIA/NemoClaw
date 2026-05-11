@@ -1716,15 +1716,25 @@ maybe_offer_express_install() {
     info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
     return 0
   fi
-  if [ ! -t 0 ]; then
-    info "Detected ${platform}. Skipping express prompt (no TTY)."
-    return 0
-  fi
-  info "Detected ${platform}."
-  printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
   local reply=""
-  if ! read -r reply </dev/tty; then
-    info "Skipping express install (unable to read from TTY)."
+  if [ -t 0 ]; then
+    info "Detected ${platform}."
+    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    if ! IFS= read -r reply; then
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    info "Detected ${platform}."
+    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    if ! IFS= read -r reply <&3; then
+      exec 3<&-
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
+    exec 3<&-
+  else
+    info "Detected ${platform}. Skipping express prompt (no TTY)."
     return 0
   fi
   reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
