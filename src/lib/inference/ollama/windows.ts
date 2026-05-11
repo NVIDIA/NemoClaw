@@ -200,11 +200,13 @@ function switchToWindowsOllamaHost(): void {
 function printWindowsOllamaTimeoutDiagnostics(): void {
   console.error("  Timed out waiting for Ollama to start on the Windows host.");
   console.error("  Diagnose Windows-side Ollama state with:");
-  console.error('    powershell.exe -Command "Get-Process ollama*"');
+  console.error('    powershell.exe -Command "Get-Process ollama* -ErrorAction SilentlyContinue"');
   console.error(
-    '    powershell.exe -Command "Get-NetTCPConnection -LocalPort 11434 -State Listen"',
+    '    powershell.exe -Command "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue"',
   );
-  console.error(`    curl http://host.docker.internal:${OLLAMA_PORT}/api/tags`);
+  console.error(
+    `    curl -sS --connect-timeout 2 --max-time 5 http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
+  );
 }
 
 module.exports = {
