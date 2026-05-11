@@ -569,13 +569,15 @@ fi
 # invalid_auth (because the un-translated Bolt-shape token is not a valid
 # Slack token either) — so the slack.com 200 invalid_auth in M-S15/M-S16
 # alone doesn't prove the rewriter ran. This loopback probe forces a
-# definitive answer: send a Bolt-shape Authorization header and urlencoded
-# token body to a 127.0.0.1 listener (loopback bypasses the L7 proxy), have
-# the listener echo what it actually received, then assert the placeholder is
-# gone. If the rewriter is loaded and wrapping http.request/write/end, the
-# listener sees the canonical openshell:resolve:env:VAR form. If the rewriter
-# is a no-op, the listener sees the raw Bolt-shape placeholder.
-info "Probing rewriter via loopback listener (proves http.request is wrapped)..."
+# definitive answer: send a Slack Web API-shaped auth.test request with a
+# Bolt-shape Authorization header and redundant urlencoded token body, while
+# resolving slack.com to a 127.0.0.1 listener. The listener echoes what it
+# actually received before any external egress. If the rewriter is loaded and
+# wrapping http.request/write/end, the listener sees the canonical
+# Authorization header and an empty body. If the rewriter is a no-op, the
+# listener sees the raw Bolt-shape placeholder; if it only canonicalizes the
+# body, the listener sees the canonical body token that caused #3315.
+info "Probing rewriter via auth.test-shaped loopback listener (proves body token is stripped)..."
 sl_loopback=$(sandbox_exec 'node -e "
 const http = require(\"http\");
 const server = http.createServer((req, res) => {
@@ -591,10 +593,17 @@ server.listen(0, \"127.0.0.1\", () => {
   const port = server.address().port;
   const data = \"token=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\";
   const r = http.request({
-    hostname: \"127.0.0.1\",
+    hostname: \"slack.com\",
     port: port,
-    path: \"/probe\",
+    path: \"/api/auth.test\",
     method: \"POST\",
+    lookup: (_hostname, opts, cb) => {
+      if (opts && opts.all) {
+        cb(null, [{ address: \"127.0.0.1\", family: 4 }]);
+        return;
+      }
+      cb(null, \"127.0.0.1\", 4);
+    },
     headers: {
       \"Authorization\": \"Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\",
       \"Content-Type\": \"application/x-www-form-urlencoded\",
@@ -615,9 +624,12 @@ server.listen(0, \"127.0.0.1\", () => {
 info "Loopback echoed request: ${sl_loopback:0:300}"
 if echo "$sl_loopback" | grep -qF 'OPENSHELL-RESOLVE-ENV-'; then
   fail "M-S5h: rewriter did NOT translate Bolt-shape on http.request/write/end — the preload is loaded but incomplete or a no-op"
+elif echo "$sl_loopback" | grep -qE '"body"\s*:\s*"token=openshell:resolve:env:SLACK_BOT_TOKEN'; then
+  fail "M-S5h: rewriter canonicalized the redundant auth.test body token instead of stripping it (#3315 regression)"
 elif echo "$sl_loopback" | grep -qE '"authorization"\s*:\s*"Bearer openshell:resolve:env:SLACK_BOT_TOKEN' \
-  && echo "$sl_loopback" | grep -qE '"body"\s*:\s*"token=openshell:resolve:env:SLACK_BOT_TOKEN'; then
-  pass "M-S5h: rewriter wraps http.request/write/end — Bolt-shape header and body were translated before egress"
+  && echo "$sl_loopback" | grep -qE '"content-length"\s*:\s*"0"' \
+  && echo "$sl_loopback" | grep -qE '"body"\s*:\s*""'; then
+  pass "M-S5h: rewriter wraps http.request/write/end — auth.test body token was stripped before egress"
 elif echo "$sl_loopback" | grep -q "ERROR"; then
   fail "M-S5h: loopback probe errored: ${sl_loopback:0:200}"
 elif echo "$sl_loopback" | grep -q "TIMEOUT"; then

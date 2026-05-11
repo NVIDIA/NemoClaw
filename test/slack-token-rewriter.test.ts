@@ -197,6 +197,70 @@ describe("slack-token-rewriter: identity and idempotence", () => {
 });
 
 describe("slack-token-rewriter: request bodies", () => {
+  it("strips redundant auth.test body token when Authorization already carries the Slack placeholder", () => {
+    const mod = loadRewriter();
+    const original = "token=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+    const req = mod.https.request({
+      hostname: "slack.com",
+      path: "/api/auth.test",
+      headers: {
+        Authorization: "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": String(Buffer.byteLength(original)),
+      },
+    });
+
+    req.end(original, "utf8");
+
+    expect(req.calls[0].args[0]).toBe("");
+    expect(req.getHeader("content-length")).toBe("0");
+  });
+
+  it("strips redundant canonical auth.test body token and preserves other form fields", () => {
+    const mod = loadRewriter();
+    const original =
+      "team_id=T123&token=openshell%3Aresolve%3Aenv%3ASLACK_BOT_TOKEN&pretty=1";
+    const expected = "team_id=T123&pretty=1";
+    const req = mod.https.request({
+      hostname: "slack.com",
+      path: "/api/auth.test",
+      headers: {
+        Authorization: "Bearer openshell:resolve:env:SLACK_BOT_TOKEN",
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        "Content-Length": String(Buffer.byteLength(original)),
+      },
+    });
+
+    req.write(Buffer.from(original));
+
+    expect((req.calls[0].args[0] as Buffer).toString("utf8")).toBe(expected);
+    expect(req.getHeader("content-length")).toBe(
+      String(Buffer.byteLength(expected)),
+    );
+  });
+
+  it("keeps non-Slack form bodies on the existing placeholder rewrite path", () => {
+    const mod = loadRewriter();
+    const original = "token=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+    const expected = "token=openshell:resolve:env:SLACK_BOT_TOKEN";
+    const req = mod.http.request({
+      hostname: "127.0.0.1",
+      path: "/api/auth.test",
+      headers: {
+        Authorization: "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": String(Buffer.byteLength(original)),
+      },
+    });
+
+    req.end(original, "utf8");
+
+    expect(req.calls[0].args[0]).toBe(expected);
+    expect(req.getHeader("content-length")).toBe(
+      String(Buffer.byteLength(expected)),
+    );
+  });
+
   it("rewrites Buffer body chunks and adjusts Content-Length", () => {
     const mod = loadRewriter();
     const original = Buffer.from("token=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");

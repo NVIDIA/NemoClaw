@@ -23,7 +23,10 @@
 // `request` function, not module.exports.request — wrapping `request`
 // alone would miss any `get` caller.
 // Request body chunks are wrapped too: Bolt's auth.test path can put the
-// token in both Authorization and the urlencoded body.
+// token in both Authorization and the urlencoded body. For Slack Web API
+// requests that already carry a Slack placeholder Authorization header, that
+// redundant form-body token is removed so Slack never sees an unsubstituted
+// canonical placeholder. Other body placeholders continue to be translated.
 //
 // Invariants:
 //   - No env reads. Translation is purely structural.
@@ -39,7 +42,8 @@
 // nemoclaw-start.sh writes a byte-identical copy to /tmp and loads it via
 // NODE_OPTIONS=--require.
 //
-// Ref: https://github.com/NVIDIA/NemoClaw/issues/2085
+// Refs: https://github.com/NVIDIA/NemoClaw/issues/2085
+//       https://github.com/NVIDIA/NemoClaw/issues/3315
 
 (function () {
   'use strict';
@@ -49,6 +53,11 @@
   // OpenShell's substitution layer accepts.
   var BOLT_PLACEHOLDER =
     /\b(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-([A-Z_][A-Z0-9_]*)\b/g;
+  var BOLT_SLACK_CREDENTIAL =
+    /\b(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-SLACK_(?:BOT|APP)_TOKEN\b/;
+  var CANONICAL_SLACK_CREDENTIAL =
+    /\bopenshell:resolve:env:SLACK_(?:BOT|APP)_TOKEN\b/;
+  var CANONICAL_SLACK_FAST_PATH = 'openshell:resolve:env:SLACK_';
   var FAST_PATH = 'OPENSHELL-RESOLVE-ENV-';
 
   function rewriteString(s) {
@@ -69,6 +78,114 @@
       }
     }
     return headers;
+  }
+
+  function getHeaderValue(headers, name) {
+    if (!headers || typeof headers !== 'object') return undefined;
+    var wanted = String(name).toLowerCase();
+    var keys = Object.keys(headers);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].toLowerCase() === wanted) return headers[keys[i]];
+    }
+    return undefined;
+  }
+
+  function valueContainsSlackCredentialPlaceholder(value) {
+    if (Array.isArray(value)) {
+      for (var i = 0; i < value.length; i++) {
+        if (valueContainsSlackCredentialPlaceholder(value[i])) return true;
+      }
+      return false;
+    }
+    if (value === undefined || value === null) return false;
+    var s = String(value);
+    if (s.indexOf(FAST_PATH) !== -1 && BOLT_SLACK_CREDENTIAL.test(s)) return true;
+    return (
+      s.indexOf(CANONICAL_SLACK_FAST_PATH) !== -1 &&
+      CANONICAL_SLACK_CREDENTIAL.test(s)
+    );
+  }
+
+  function optionsHaveSlackPlaceholderAuthorization(options) {
+    if (!options || typeof options !== 'object') return false;
+    return valueContainsSlackCredentialPlaceholder(
+      getHeaderValue(options.headers, 'authorization')
+    );
+  }
+
+  function normalizeHostname(host) {
+    if (host === undefined || host === null) return '';
+    var s = String(host).trim().toLowerCase();
+    if (!s) return '';
+    if (s[0] === '[') return s;
+    var colon = s.indexOf(':');
+    if (colon !== -1) s = s.slice(0, colon);
+    if (s[s.length - 1] === '.') s = s.slice(0, -1);
+    return s;
+  }
+
+  function isSlackWebApiHost(host) {
+    var h = normalizeHostname(host);
+    return h === 'slack.com' || h === 'api.slack.com';
+  }
+
+  function isSlackWebApiPath(path) {
+    if (typeof path !== 'string' || !path) return false;
+    var p = path;
+    try {
+      if (/^https?:\/\//i.test(p)) p = new URL(p).pathname;
+    } catch (_e) {
+      return false;
+    }
+    return p === '/api' || p.indexOf('/api/') === 0;
+  }
+
+  function isSlackWebApiUrl(value) {
+    if (typeof value !== 'string' && !(value instanceof URL)) return false;
+    try {
+      var url = value instanceof URL ? value : new URL(value);
+      return isSlackWebApiHost(url.hostname) && isSlackWebApiPath(url.pathname);
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function optionsTargetSlackWebApi(options) {
+    if (!options || typeof options !== 'object') return false;
+    if (typeof options.href === 'string' && isSlackWebApiUrl(options.href)) return true;
+    if (typeof options.path === 'string' && isSlackWebApiUrl(options.path)) return true;
+    var host = options.hostname || options.host;
+    var path = options.path || options.pathname || '';
+    return isSlackWebApiHost(host) && isSlackWebApiPath(path);
+  }
+
+  function requestTargetsSlackWebApi(arg1, arg2) {
+    if (isSlackWebApiUrl(arg1)) return true;
+    if (arg1 && typeof arg1 === 'object' && !(arg1 instanceof URL)) {
+      if (optionsTargetSlackWebApi(arg1)) return true;
+    }
+    if (arg2 && typeof arg2 === 'object' && !(arg2 instanceof URL)) {
+      if (optionsTargetSlackWebApi(arg2)) return true;
+    }
+    return false;
+  }
+
+  function requestHasSlackPlaceholderAuthorization(arg1, arg2) {
+    if (arg1 && typeof arg1 === 'object' && !(arg1 instanceof URL)) {
+      if (optionsHaveSlackPlaceholderAuthorization(arg1)) return true;
+    }
+    if (arg2 && typeof arg2 === 'object' && !(arg2 instanceof URL)) {
+      if (optionsHaveSlackPlaceholderAuthorization(arg2)) return true;
+    }
+    return false;
+  }
+
+  function requestRewriteState(arg1, arg2) {
+    return {
+      stripSlackFormTokenParam:
+        requestTargetsSlackWebApi(arg1, arg2) &&
+        requestHasSlackPlaceholderAuthorization(arg1, arg2),
+    };
   }
 
   function rewriteOptions(options) {
@@ -97,9 +214,52 @@
     req.setHeader('Content-Length', String(n + delta));
   }
 
+  function requestHeader(req, name) {
+    if (!req || typeof req.getHeader !== 'function') return undefined;
+    var value = req.getHeader(name);
+    if (Array.isArray(value)) value = value[0];
+    if (value === undefined || value === null) return undefined;
+    return String(value);
+  }
+
+  function shouldStripSlackFormTokenParam(req) {
+    if (!req || !req.__nemoclawStripSlackFormTokenParam) return false;
+    var contentType = requestHeader(req, 'content-type');
+    if (!contentType) return false;
+    return (
+      contentType
+        .split(';')[0]
+        .trim()
+        .toLowerCase() === 'application/x-www-form-urlencoded'
+    );
+  }
+
+  function stripSlackFormTokenParam(s) {
+    if (typeof s !== 'string' || s.indexOf('token') === -1) return s;
+    var changed = false;
+    var out = new URLSearchParams();
+    var params = new URLSearchParams(s);
+    params.forEach(function (value, key) {
+      if (key === 'token' && valueContainsSlackCredentialPlaceholder(value)) {
+        changed = true;
+        return;
+      }
+      out.append(key, value);
+    });
+    return changed ? out.toString() : s;
+  }
+
+  function rewriteBodyString(req, s) {
+    var rewritten = s;
+    if (shouldStripSlackFormTokenParam(req)) {
+      rewritten = stripSlackFormTokenParam(rewritten);
+    }
+    return rewriteString(rewritten);
+  }
+
   function rewriteBodyChunk(req, chunk, encoding) {
     if (typeof chunk === 'string') {
-      var rewritten = rewriteString(chunk);
+      var rewritten = rewriteBodyString(req, chunk);
       if (rewritten !== chunk) {
         adjustContentLength(
           req,
@@ -117,27 +277,35 @@
     var buf = isBuffer
       ? chunk
       : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-    if (buf.indexOf(FAST_PATH) === -1) return chunk;
+    var stripBodyToken = shouldStripSlackFormTokenParam(req);
+    if (!stripBodyToken && buf.indexOf(FAST_PATH) === -1) return chunk;
     var s = buf.toString('utf8');
-    if (s.indexOf(FAST_PATH) === -1) return chunk;
+    if (!stripBodyToken && s.indexOf(FAST_PATH) === -1) return chunk;
     // Do not rewrite arbitrary binary data. Slack's urlencoded bodies are
     // valid UTF-8 and round-trip exactly.
     if (!Buffer.from(s, 'utf8').equals(buf)) return chunk;
-    var rs = rewriteString(s);
+    var rs = rewriteBodyString(req, s);
     if (rs === s) return chunk;
     var out = Buffer.from(rs, 'utf8');
     adjustContentLength(req, buf.length, out.length);
     return out;
   }
 
-  function wrapClientRequest(req) {
-    if (!req || typeof req !== 'object') return req;
-    if (req.__nemoclawSlackTokenRewriter) return req;
+  function setRequestFlag(req, name) {
     try {
-      Object.defineProperty(req, '__nemoclawSlackTokenRewriter', { value: true });
+      Object.defineProperty(req, name, { value: true });
     } catch (_e) {
-      req.__nemoclawSlackTokenRewriter = true;
+      req[name] = true;
     }
+  }
+
+  function wrapClientRequest(req, state) {
+    if (!req || typeof req !== 'object') return req;
+    if (state && state.stripSlackFormTokenParam) {
+      setRequestFlag(req, '__nemoclawStripSlackFormTokenParam');
+    }
+    if (req.__nemoclawSlackTokenRewriter) return req;
+    setRequestFlag(req, '__nemoclawSlackTokenRewriter');
 
     var origWrite = req.write;
     if (typeof origWrite === 'function') {
@@ -195,7 +363,7 @@
       } else {
         rewriteOptions(arg1);
       }
-      return wrapClientRequest(orig.call(this, arg1, arg2, arg3));
+      return wrapClientRequest(orig.call(this, arg1, arg2, arg3), requestRewriteState(arg1, arg2));
     };
   }
 
