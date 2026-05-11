@@ -219,7 +219,15 @@ export async function rebuildSandbox(
   // image needs to put the right accountId/baseUrl/userId back into
   // openclaw.json + the accounts state file.
   {
-    const wc = onboardSession.loadSession()?.wechatConfig ?? null;
+    // Only hydrate from the session when it belongs to THIS sandbox. The
+    // global session file holds the most recent onboard, which may be for a
+    // different sandbox — pulling its wechatConfig would leak that
+    // sandbox's accountId / baseUrl / userId into this image build.
+    const rebuildSession = onboardSession.loadSession();
+    const wc =
+      rebuildSession?.sandboxName === sandboxName
+        ? rebuildSession.wechatConfig ?? null
+        : null;
     if (wc?.accountId && !process.env.WECHAT_ACCOUNT_ID) process.env.WECHAT_ACCOUNT_ID = wc.accountId;
     if (wc?.baseUrl && !process.env.WECHAT_BASE_URL) process.env.WECHAT_BASE_URL = wc.baseUrl;
     if (wc?.userId && !process.env.WECHAT_USER_ID) process.env.WECHAT_USER_ID = wc.userId;

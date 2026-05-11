@@ -314,8 +314,12 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
           // (see AUDIT_SYMLINK_WHITELIST). Accepting them here matches the
           // pre-backup audit so legitimate plugin installs in extensions/
           // can survive a rebuild without tripping the post-extraction check.
+          // Match both the source path AND the link target — a whitelisted
+          // path with a tampered target falls through to the normal
+          // containment check.
           const relFromDir = path.relative(dirPath, fullPath);
-          if (AUDIT_SYMLINK_WHITELIST.has(relFromDir)) {
+          const expectedTarget = AUDIT_SYMLINK_WHITELIST.get(relFromDir);
+          if (expectedTarget !== undefined && expectedTarget === linkTarget) {
             continue;
           }
 
@@ -565,12 +569,22 @@ const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
 // `openclaw plugins install`. npm creates these as part of its standard
 // install layout — peer-dependency links and .bin shortcuts — and the
 // pre-backup audit would otherwise treat them as agent-planted exfil
-// attempts. Paths are relative to the agent state-dir root (e.g. for
-// OpenClaw, /sandbox/.openclaw). Keep in lockstep with WECHAT_PLUGIN_VERSION
-// in Dockerfile.base — bump together if the plugin install layout changes.
-const AUDIT_SYMLINK_WHITELIST: ReadonlySet<string> = new Set([
-  "extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal",
-  "extensions/openclaw-weixin/node_modules/openclaw",
+// attempts. Source paths are relative to the agent state-dir root (e.g.
+// for OpenClaw, /sandbox/.openclaw); targets are matched exactly against
+// the value of `readlink(source)`. Source-only matching is unsafe: a
+// compromised agent could repoint one of these to /etc/passwd and the
+// audit would still let it through. Keep in lockstep with
+// WECHAT_PLUGIN_VERSION in Dockerfile.base — bump together if the plugin
+// install layout changes.
+const AUDIT_SYMLINK_WHITELIST: ReadonlyMap<string, string> = new Map([
+  [
+    "extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal",
+    "../qrcode-terminal/bin/qrcode-terminal.js",
+  ],
+  [
+    "extensions/openclaw-weixin/node_modules/openclaw",
+    "/usr/local/lib/node_modules/openclaw",
+  ],
 ]);
 function _log(msg: string): void {
   if (_verbose()) console.error(`  [sandbox-state ${new Date().toISOString()}] ${msg}`);
@@ -997,10 +1011,15 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // NC-2227-04: Pre-backup audit — reject symlinks, hardlinks, and special
         // files inside state dirs. A compromised agent could plant a symlink like
         // workspace/copy -> ../openclaw.json to exfiltrate config via backup.
+        //
+        // The printf format emits "<type>\t<absPath>\t<linkTarget>" — %l is
+        // empty for non-symlinks but always present, so the field count is
+        // stable. Tab separator assumes state-dir paths don't contain tabs,
+        // matching the wider convention in this file.
         const auditCmd = existingDirs
           .map(
             (d) =>
-              `find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y %p\\n" 2>/dev/null`,
+              `find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y\\t%p\\t%l\\n" 2>/dev/null`,
           )
           .join(" && ");
         _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
@@ -1031,14 +1050,18 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           const violations: string[] = [];
           const dirPrefix = `${dir}/`;
           for (const entry of allEntries) {
-            // find -printf "%y %p\n" → "<type> <absPath>"
-            const spaceIdx = entry.indexOf(" ");
-            const type = spaceIdx > 0 ? entry.slice(0, spaceIdx) : "";
-            const absPath = spaceIdx > 0 ? entry.slice(spaceIdx + 1) : entry;
+            // find -printf "%y\t%p\t%l\n" → "<type>\t<absPath>\t<linkTarget>"
+            // (linkTarget is empty for non-symlinks).
+            const parts = entry.split("\t");
+            const type = parts[0] || "";
+            const absPath = parts[1] || entry;
+            const linkTarget = parts[2] || "";
             const relPath = absPath.startsWith(dirPrefix)
               ? absPath.slice(dirPrefix.length)
               : absPath;
-            if (type === "l" && AUDIT_SYMLINK_WHITELIST.has(relPath)) {
+            const expectedTarget =
+              type === "l" ? AUDIT_SYMLINK_WHITELIST.get(relPath) : undefined;
+            if (expectedTarget !== undefined && expectedTarget === linkTarget) {
               whitelisted.push(entry);
             } else {
               violations.push(entry);

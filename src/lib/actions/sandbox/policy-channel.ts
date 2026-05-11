@@ -463,6 +463,30 @@ async function acquireHostQrChannel(
   // the rebuild's env-stash re-bake from session.
   const cached = getCredential(channel.envKey);
   if (cached) {
+    if (channelArg === "wechat") {
+      // The rebuild needs accountId/baseUrl/userId to reconstruct the
+      // upstream plugin's account state file via seed-wechat-accounts.py.
+      // Restore them from session here so a deferred rebuild (started in a
+      // fresh process where rebuild.ts hasn't stashed yet) still finds
+      // them — and bail loudly if the session was cleared. Only honor the
+      // session entry when it belongs to THIS sandbox, otherwise we'd bake
+      // another sandbox's WECHAT_* into this image.
+      const savedSession = onboardSession.loadSession();
+      const savedWechat =
+        savedSession?.sandboxName === sandboxName ? savedSession.wechatConfig ?? null : null;
+      if (savedWechat?.accountId && !process.env.WECHAT_ACCOUNT_ID) {
+        process.env.WECHAT_ACCOUNT_ID = savedWechat.accountId;
+        if (savedWechat.baseUrl) process.env.WECHAT_BASE_URL = savedWechat.baseUrl;
+        if (savedWechat.userId) process.env.WECHAT_USER_ID = savedWechat.userId;
+      }
+      if (!process.env.WECHAT_ACCOUNT_ID) {
+        console.error("  Cached WeChat token found, but per-account metadata is missing.");
+        console.error(
+          `  Run '${CLI_NAME} ${sandboxName} channels remove ${channelArg}' then '${CLI_NAME} ${sandboxName} channels add ${channelArg}' to capture a fresh account via QR.`,
+        );
+        process.exit(1);
+      }
+    }
     acquired[channel.envKey] = cached;
     return;
   }

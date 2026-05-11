@@ -463,6 +463,34 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
     }
   });
 
+  it("rejects whitelisted source path when the symlink target is tampered", async () => {
+    // The path matches AUDIT_SYMLINK_WHITELIST, but the linkTarget points to
+    // /etc/passwd instead of the expected /usr/local/lib/node_modules/openclaw.
+    // Source-only matching would let a compromised sandbox repoint a known npm
+    // symlink at arbitrary host paths; the post-extraction audit must compare
+    // both fields.
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      const tar = buildTar([
+        {
+          path: "extensions/openclaw-weixin/node_modules/openclaw",
+          type: "2",
+          linkTarget: "/etc/passwd",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("symlink");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("still rejects an absolute /usr/local symlink at a non-whitelisted path", async () => {
     const { safeTarExtract } = await loadSandboxState();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-block-"));
