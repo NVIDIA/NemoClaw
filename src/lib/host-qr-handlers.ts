@@ -38,29 +38,40 @@ export type HostQrLoginHandler = () => Promise<HostQrLoginResult>;
 
 export const HOST_QR_LOGIN_HANDLERS: Record<string, HostQrLoginHandler> = {
   wechat: async () => {
-    // Lazy require keeps qrcode-terminal + the iLink HTTP client out of the
-    // cold-path import graph for non-WeChat onboards.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { runWechatHostQrLogin } = require("../ext/wechat/login") as {
-      runWechatHostQrLogin: typeof import("../ext/wechat/login").runWechatHostQrLogin;
-    };
-    const result = await runWechatHostQrLogin();
-    if (result.kind !== "ok") {
-      return result.kind === "error"
-        ? { kind: "error", message: result.message }
-        : { kind: result.kind };
+    // Wrap the lazy require + the runWechatHostQrLogin call in a single
+    // try/catch so any unexpected throw (missing module after bundling, a
+    // qrcode-terminal native-IO error, an iLink protocol edge case that
+    // escapes the discriminated result) turns into a structured "error"
+    // result the onboard dispatcher already knows how to render — instead
+    // of bubbling an unhandled rejection up through the registry.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { runWechatHostQrLogin } = require("../ext/wechat/login") as {
+        runWechatHostQrLogin: typeof import("../ext/wechat/login").runWechatHostQrLogin;
+      };
+      const result = await runWechatHostQrLogin();
+      if (result.kind !== "ok") {
+        return result.kind === "error"
+          ? { kind: "error", message: result.message }
+          : { kind: result.kind };
+      }
+      const { token, accountId, baseUrl, userId } = result.credentials;
+      return {
+        kind: "ok",
+        token,
+        extraEnv: {
+          WECHAT_ACCOUNT_ID: accountId,
+          WECHAT_BASE_URL: baseUrl,
+          WECHAT_USER_ID: userId,
+        },
+        defaultUserId: userId,
+        summary: `account ${accountId}`,
+      };
+    } catch (err) {
+      return {
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      };
     }
-    const { token, accountId, baseUrl, userId } = result.credentials;
-    return {
-      kind: "ok",
-      token,
-      extraEnv: {
-        WECHAT_ACCOUNT_ID: accountId,
-        WECHAT_BASE_URL: baseUrl,
-        WECHAT_USER_ID: userId,
-      },
-      defaultUserId: userId,
-      summary: `account ${accountId}`,
-    };
   },
 };

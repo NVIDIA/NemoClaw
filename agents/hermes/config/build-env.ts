@@ -17,17 +17,6 @@ export type TelegramConfig = {
   requireMention?: boolean;
 };
 
-export type WechatConfig = {
-  // Stable per-account id (`ilink_bot_id`). Non-secret.
-  accountId?: string;
-  // Per-account base URL. Rotates via IDC redirects; treated as authoritative
-  // at config-bake time and re-fetched on next host-side QR login.
-  baseUrl?: string;
-  // WeChat user id of the operator who scanned the QR. PII-adjacent but not
-  // secret — added to the DM allowlist by default.
-  userId?: string;
-};
-
 export type HermesBuildSettings = {
   model: string;
   baseUrl: string;
@@ -38,7 +27,6 @@ export type HermesBuildSettings = {
     allowedIds: MessagingAllowedIds;
     discordGuilds: DiscordGuilds;
     telegramConfig: TelegramConfig;
-    wechatConfig: WechatConfig;
   };
 };
 
@@ -64,11 +52,6 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
       telegramConfig: readBase64Json<TelegramConfig>(
         env,
         "NEMOCLAW_TELEGRAM_CONFIG_B64",
-        "e30=",
-      ),
-      wechatConfig: readBase64Json<WechatConfig>(
-        env,
-        "NEMOCLAW_WECHAT_CONFIG_B64",
         "e30=",
       ),
     },

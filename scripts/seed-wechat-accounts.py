@@ -34,8 +34,9 @@
 # on disk inside the image.
 #
 # Inputs (from environment, populated by the Dockerfile patcher):
-#   NEMOCLAW_WECHAT_ENABLED=1                Gate. Otherwise this script no-ops.
 #   NEMOCLAW_WECHAT_CONFIG_B64               Base64-encoded JSON: {accountId, baseUrl, userId}.
+#                                            When accountId is empty (no host-side QR login
+#                                            captured), the script no-ops cleanly.
 
 from __future__ import annotations
 
@@ -126,9 +127,6 @@ def _patch_openclaw_config(account_id: str) -> None:
 
 
 def main() -> int:
-    if os.environ.get("NEMOCLAW_WECHAT_ENABLED") != "1":
-        return 0
-
     config = _decode_config()
     account_id = (config.get("accountId") or "").strip()
     base_url = (config.get("baseUrl") or "").strip()
@@ -136,13 +134,11 @@ def main() -> int:
 
     # accountId is non-secret but mandatory: without it we can't pick a
     # filename, and the upstream plugin won't see any registered accounts.
+    # Empty accountId is the expected state when the operator did not go
+    # through a host-side QR login (e.g. wechat channel never picked) —
+    # no-op silently instead of warning, since this script now runs on
+    # every build from generate-openclaw-config.py.
     if not account_id:
-        print(
-            "[seed-wechat-accounts] WeChat is enabled but no accountId in "
-            "NEMOCLAW_WECHAT_CONFIG_B64; skipping seed (channel will refuse "
-            "to start with 'weixin not configured: missing token').",
-            file=sys.stderr,
-        )
         return 0
 
     plugin_dir = _state_dir() / "openclaw-weixin"

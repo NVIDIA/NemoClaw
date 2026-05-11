@@ -302,12 +302,6 @@ ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 # metadata only — the bot token flows through the OpenShell provider, never
 # baked into the image. Default: empty map.
 ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
-# Build-arg gate for the WeChat plugin install (upstream
-# @tencent-weixin/openclaw-weixin + the NemoClaw wechat-bridge wrapper).
-# Set to "1" by the onboard Dockerfile patcher whenever the operator enables
-# WeChat in the channel picker; otherwise stays "0" so non-WeChat users pay
-# no image-size or supply-chain cost for the third-party Tencent dependency.
-ARG NEMOCLAW_WECHAT_ENABLED=0
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
 # since terminal-based pairing is impossible in those contexts.
@@ -355,7 +349,6 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
     NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
     NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
-    NEMOCLAW_WECHAT_ENABLED=${NEMOCLAW_WECHAT_ENABLED} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
@@ -390,34 +383,6 @@ USER sandbox
 # lives in scripts/generate-openclaw-config.py — see that file for the full
 # list of env vars and derivation rules.
 RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
-
-# Install the upstream WeChat plugin from the npm registry while build-time
-# network access is still available. Must run BEFORE NPM_CONFIG_OFFLINE=true
-# below so openclaw's bundled npm can resolve @tencent-weixin/openclaw-weixin
-# and its runtime deps (qrcode-terminal, zod) directly. Runs as the sandbox
-# user (USER sandbox above), so the plugin lands in /sandbox/.openclaw/
-# extensions/ — the runtime HOME for the agent process.
-#
-# Then flip the plugin's enabled flag in openclaw.json (just generated above)
-# and seed its on-disk account store with the iLink session that nemoclaw
-# onboard captured via the host-side QR login. Seeding directly skips the
-# upstream plugin's normal `openclaw channels login`, which would otherwise
-# drive an in-sandbox QR scan with no terminal and no WeChat-paired phone.
-# The seeded `token` value is `openshell:resolve:env:WECHAT_BOT_TOKEN` (same
-# placeholder pattern Telegram and Discord use); the OpenShell L7 proxy
-# substitutes the real bot token at egress.
-#
-# Pin the upstream version — third-party Tencent dependency on a
-# sandbox-network critical path; bumps need explicit review.
-# hadolint ignore=DL3059,DL4006
-RUN (openclaw doctor --fix > /dev/null 2>&1 || true) \
-    && if [ "${NEMOCLAW_WECHAT_ENABLED}" = "1" ]; then \
-           set -eu; \
-           openclaw plugins install \
-               '@tencent-weixin/openclaw-weixin@2.4.2' --pin; \
-           openclaw config set plugins.entries.openclaw-weixin.enabled true; \
-           python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py; \
-       fi
 
 # Lock down npm: no further registry traffic in this image. Everything past
 # this point must resolve from local sources only.

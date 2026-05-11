@@ -40,6 +40,10 @@
 #                                      Dockerfile and Dockerfile.base
 #   5. New .openclaw subdirectory   — add mkdir below
 #   6. PyYAML or other pip dep bump — change the version below
+#   7. WeChat plugin version bump   — update WECHAT_PLUGIN_VERSION default
+#                                      below; bump in lockstep with
+#                                      WECHAT_ILINK_CLIENT_VERSION in
+#                                      src/ext/wechat/qr.ts
 #
 # For ad-hoc rebuilds (e.g., security patch), use workflow_dispatch on
 # the base-image workflow.
@@ -201,3 +205,38 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     fi; \
     npm install -g "openclaw@${OPENCLAW_VERSION}" \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
+
+# Pre-install the @tencent-weixin/openclaw-weixin WeChat plugin while
+# build-time network is still available. Moving the install here (vs. into
+# the per-onboard production Dockerfile) keeps onboarding off the public npm
+# registry for this plugin — a Tencent third-party dependency on the
+# sandbox-network critical path — and turns a slow, network-sensitive step
+# into a baked layer that's cached across every onboard.
+#
+# The channel stays dormant until the production Dockerfile flips
+# plugins.entries.openclaw-weixin.enabled=true and seeds an account; non-
+# WeChat users still pay the supply-chain + image-size cost unconditionally,
+# accepted in exchange for the onboarding robustness win.
+#
+# Pinned in lockstep with WECHAT_ILINK_CLIENT_VERSION in src/ext/wechat/qr.ts
+# — the iLink gateway sees the same client version from both the host login
+# and the in-sandbox plugin. Bump both together.
+#
+# Runs as the sandbox user so the plugin lands in /sandbox/.openclaw/
+# extensions/ (the runtime HOME for the agent process). openclaw doctor --fix
+# bootstraps a default openclaw.json the install can write into; the
+# production Dockerfile's generate-openclaw-config.py overwrites that file
+# wholesale, so anything doctor --fix writes here is discarded by design.
+ARG WECHAT_PLUGIN_VERSION=2.4.2
+USER sandbox
+WORKDIR /sandbox
+# hadolint ignore=DL3059,DL4006
+RUN (openclaw doctor --fix > /dev/null 2>&1 || true) \
+    && openclaw plugins install \
+        "@tencent-weixin/openclaw-weixin@${WECHAT_PLUGIN_VERSION}" --pin
+# Revert to root so the production Dockerfile (which FROMs this base) can run
+# its early root-required layers (apt-mark, COPY into /opt, chmod) before its
+# own `USER sandbox` switch. The same pattern is used in the production
+# Dockerfile's stale-base flatten step.
+# hadolint ignore=DL3002
+USER root

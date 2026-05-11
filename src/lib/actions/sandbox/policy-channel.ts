@@ -411,6 +411,22 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
     process.exit(1);
   }
 
+  // Channels whose credentials come from a host-side QR handshake (WeChat
+  // today) cannot be wired up by the paste-prompt path below — the user has
+  // no token to paste, and we also need to capture per-account metadata
+  // (accountId, baseUrl, userId) that this command has no slot for. Bail
+  // explicitly rather than collect an unusable token and queue a rebuild
+  // that would boot with a dormant bridge.
+  if (channel.loginMethod === "host-qr") {
+    console.error(
+      `  '${channelArg}' uses a host-side QR login that 'channels add' does not yet support.`,
+    );
+    console.error(
+      `  Enable it during '${CLI_NAME} onboard' instead — adding QR-based channels post-onboard is tracked separately.`,
+    );
+    process.exit(1);
+  }
+
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${channelArg}' for '${sandboxName}'.`);
     return;

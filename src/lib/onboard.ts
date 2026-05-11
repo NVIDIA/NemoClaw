@@ -5758,6 +5758,19 @@ async function createSandbox(
     if (accountId) wechatConfig.accountId = accountId;
     if (baseUrl) wechatConfig.baseUrl = baseUrl;
     if (userId) wechatConfig.userId = userId;
+    // Resume fallback: setupMessagingChannels short-circuits the host-qr
+    // handler when getMessagingToken(WECHAT_BOT_TOKEN) already returns a
+    // cached value, so the WECHAT_ACCOUNT_ID/BASE_URL/USER_ID env vars are
+    // not repopulated on a rebuild. Pull the previously-captured metadata
+    // from the onboard session before line 5499 below overwrites
+    // session.wechatConfig with null — otherwise the rebuild bakes an
+    // empty NEMOCLAW_WECHAT_CONFIG_B64 and seed-wechat-accounts.py no-ops.
+    if (Object.keys(wechatConfig).length === 0) {
+      const recorded = onboardSession.loadSession()?.wechatConfig;
+      if (recorded?.accountId) wechatConfig.accountId = recorded.accountId;
+      if (recorded?.baseUrl) wechatConfig.baseUrl = recorded.baseUrl;
+      if (recorded?.userId) wechatConfig.userId = recorded.userId;
+    }
   }
   // Persist the effective Telegram config into the session so a later resume
   // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and

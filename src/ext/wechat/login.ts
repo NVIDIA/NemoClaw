@@ -151,7 +151,10 @@ export async function runWechatHostQrLogin(
 
   emitQr(session, opts);
   let scannedAnnounced = false;
-  let qrRefreshCount = 1;
+  // Counts refreshes only (the initial QR is not a refresh). MAX_QR_REFRESH_COUNT
+  // is the upper bound on refreshes per login; starting at 0 keeps the
+  // increment-then-compare guard at "case expired" allowing exactly that many.
+  let qrRefreshCount = 0;
   let currentBaseUrl = opts.bootstrapBaseUrl;
   const deadline = opts.now() + opts.totalTimeoutMs;
   let lastStatus: string | undefined;

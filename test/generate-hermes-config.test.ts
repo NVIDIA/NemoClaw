@@ -18,7 +18,6 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({}),
   NEMOCLAW_DISCORD_GUILDS_B64: encodeJson({}),
   NEMOCLAW_TELEGRAM_CONFIG_B64: encodeJson({}),
-  NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({}),
 };
 
 let tmpDir: string;
@@ -198,71 +197,6 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.telegram).toBeUndefined();
     expect(config.platforms.telegram).toBeUndefined();
     expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
-  });
-
-  it("emits a wechat config block with snake_case account metadata captured from QR login", () => {
-    // Hermes uses snake_case top-level keys (account_id, base_url, user_id) —
-    // the host-side QR login captures them in camelCase and the build path
-    // round-trips them through NEMOCLAW_WECHAT_CONFIG_B64. Mismatching cases
-    // would silently drop the metadata at config-bake time.
-    const { config, envFile } = runConfigScript({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["wechat"]),
-      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({ wechat: ["wxid-42"] }),
-      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
-        accountId: "ilink-bot-42",
-        baseUrl: "https://ilinkai.wechat.com",
-        userId: "wxid-42",
-      }),
-    });
-
-    expect(config.wechat).toEqual({
-      account_id: "ilink-bot-42",
-      base_url: "https://ilinkai.wechat.com",
-      user_id: "wxid-42",
-    });
-    expect(config.platforms.wechat).toBeUndefined();
-    // Bot token stays a placeholder (rewritten by the L7 proxy at egress);
-    // metadata is emitted as literal env values for the wrapper plugin.
-    expect(envFile).toContain("WECHAT_BOT_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN\n");
-    expect(envFile).toContain("WECHAT_ALLOWED_USERS=wxid-42\n");
-    expect(envFile).toContain("WECHAT_ACCOUNT_ID=ilink-bot-42\n");
-    expect(envFile).toContain("WECHAT_BASE_URL=https://ilinkai.wechat.com\n");
-    expect(envFile).toContain("WECHAT_USER_ID=wxid-42\n");
-  });
-
-  it("omits the wechat config block entirely when wechat is not enabled", () => {
-    // Even if NEMOCLAW_WECHAT_CONFIG_B64 carries leftover values from a prior
-    // build, the gate is on `enabledChannels.has("wechat")` — emitting the
-    // block when WeChat is disabled would leak account metadata into a
-    // config the wrapper plugin will never read.
-    const { config, envFile } = runConfigScript({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram"]),
-      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
-        accountId: "ilink-bot-42",
-        baseUrl: "https://ilinkai.wechat.com",
-        userId: "wxid-42",
-      }),
-    });
-
-    expect(config.wechat).toBeUndefined();
-    expect(envFile).not.toContain("WECHAT_BOT_TOKEN=");
-    expect(envFile).not.toContain("WECHAT_ACCOUNT_ID=");
-  });
-
-  it("emits only the WECHAT_BOT_TOKEN env line when wechatConfig is empty", () => {
-    // Missing-but-enabled case: the operator skipped the QR scan (or login
-    // failed). The bot token line must still be emitted so messaging-config
-    // matches the channel list, but no metadata leaks out.
-    const { config, envFile } = runConfigScript({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["wechat"]),
-      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({}),
-    });
-
-    expect(config.wechat).toBeUndefined();
-    expect(envFile).toContain("WECHAT_BOT_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN\n");
-    expect(envFile).not.toContain("WECHAT_ACCOUNT_ID=");
-    expect(envFile).not.toContain("WECHAT_BASE_URL=");
-    expect(envFile).not.toContain("WECHAT_USER_ID=");
   });
 
   it("ignores the OpenClaw Kimi model-specific setup for Hermes output", () => {

@@ -59,31 +59,27 @@ afterEach(() => {
 });
 
 describe("seed-wechat-accounts.py: gating", () => {
-  it("no-ops when NEMOCLAW_WECHAT_ENABLED is unset", () => {
+  it("no-ops silently when NEMOCLAW_WECHAT_CONFIG_B64 is unset", () => {
+    // The script now runs unconditionally from generate-openclaw-config.py
+    // on every build, so the "no host-side QR login was performed" path is
+    // the common case and must stay quiet — no stderr noise, no on-disk
+    // state under the plugin state dir.
     const result = runSeed();
     expect(result.status).toBe(0);
-    // Nothing should have been written under the plugin state dir.
+    expect(result.stderr).toBe("");
     const pluginDir = path.join(tmpDir, ".openclaw", "openclaw-weixin");
     expect(fs.existsSync(pluginDir)).toBe(false);
   });
 
-  it("no-ops when NEMOCLAW_WECHAT_ENABLED is not exactly '1'", () => {
-    const result = runSeed({ NEMOCLAW_WECHAT_ENABLED: "true" });
-    expect(result.status).toBe(0);
-    const pluginDir = path.join(tmpDir, ".openclaw", "openclaw-weixin");
-    expect(fs.existsSync(pluginDir)).toBe(false);
-  });
-
-  it("skips seeding (and prints a hint) when accountId is missing", () => {
-    // No accountId in the config payload — the upstream plugin would later
-    // fail with "weixin not configured: missing token", so the script
-    // explicitly bails rather than writing a half-formed account file.
+  it("no-ops silently when accountId is missing from the config payload", () => {
+    // baseUrl + userId without accountId would leave the upstream plugin
+    // unable to pick a filename. Bail without writing — quietly, since this
+    // is reachable in non-WeChat onboards too.
     const result = runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({ baseUrl: "https://x", userId: "u" }),
     });
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain("no accountId");
+    expect(result.stderr).toBe("");
     const pluginDir = path.join(tmpDir, ".openclaw", "openclaw-weixin");
     expect(fs.existsSync(pluginDir)).toBe(false);
   });
@@ -93,7 +89,6 @@ describe("seed-wechat-accounts.py: per-account state files", () => {
   it("writes accounts.json index and per-account file with placeholder token", () => {
     writeOpenclawConfig();
     const result = runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({
         accountId: "primary",
         baseUrl: "https://ilinkai.wechat.com",
@@ -117,7 +112,6 @@ describe("seed-wechat-accounts.py: per-account state files", () => {
   it("omits baseUrl and userId when they are absent in the config", () => {
     writeOpenclawConfig();
     const result = runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
     });
     expect(result.status).toBe(0);
@@ -139,7 +133,6 @@ describe("seed-wechat-accounts.py: per-account state files", () => {
     fs.writeFileSync(path.join(pluginDir, "accounts.json"), JSON.stringify(["old"]) + "\n");
 
     const result = runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "new-one" }),
     });
     expect(result.status).toBe(0);
@@ -155,7 +148,6 @@ describe("seed-wechat-accounts.py: per-account state files", () => {
     fs.writeFileSync(path.join(pluginDir, "accounts.json"), JSON.stringify(["primary"]) + "\n");
 
     const result = runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
     });
     expect(result.status).toBe(0);
@@ -173,7 +165,6 @@ describe("seed-wechat-accounts.py: per-account state files", () => {
     );
 
     const result = runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
       OPENCLAW_STATE_DIR: altState,
     });
@@ -191,7 +182,6 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
     // bit of the post-install patch.
     writeOpenclawConfig();
     const result = runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
     });
     expect(result.status).toBe(0);
@@ -205,7 +195,6 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
     // Date.toISOString(). A Python isoformat() with offset would diverge.
     writeOpenclawConfig();
     runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
     });
 
@@ -223,7 +212,6 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
       channels: { telegram: { accounts: { default: { enabled: true } } } },
     });
     runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
     });
 
@@ -238,7 +226,6 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
     // openclaw.json. If it failed silently, we'd rather print a warning than
     // create a half-formed file from this script's narrow vantage point.
     const result = runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
     });
     expect(result.status).toBe(0);
@@ -256,7 +243,6 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
     fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
     fs.writeFileSync(cfgPath, "{not valid json");
     const result = runSeed({
-      NEMOCLAW_WECHAT_ENABLED: "1",
       NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
     });
     expect(result.status).toBe(0);

@@ -1,20 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { DiscordGuilds, MessagingAllowedIds, WechatConfig } from "./build-env.ts";
+import type { DiscordGuilds, MessagingAllowedIds } from "./build-env.ts";
 
 const CHANNEL_TOKEN_ENVS: Record<string, string[]> = {
   telegram: ["TELEGRAM_BOT_TOKEN"],
   discord: ["DISCORD_BOT_TOKEN"],
   slack: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
-  wechat: ["WECHAT_BOT_TOKEN"],
 };
 
 export function buildMessagingEnvLines(
   enabledChannels: Set<string>,
   allowedIds: MessagingAllowedIds,
   discordGuilds: DiscordGuilds,
-  wechatConfig: WechatConfig = {},
 ): string[] {
   const envLines = ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1"];
 

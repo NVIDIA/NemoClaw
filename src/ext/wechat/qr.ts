@@ -76,7 +76,21 @@ export interface WechatQrClientOptions {
   bootstrapBaseUrl?: string;
   /** Override bot type — defaults to `3` (personal WeChat). */
   botType?: string;
+  /** Hard cap on the bootstrap request. Default 10s — long enough for the
+   *  iLink TLS handshake on a slow network, short enough that a black-holed
+   *  gateway doesn't hang the onboarding flow indefinitely. */
+  timeoutMs?: number;
 }
+
+const WECHAT_QR_BOOTSTRAP_TIMEOUT_MS = 10_000;
+
+const KNOWN_WECHAT_QR_STATUSES: ReadonlySet<WechatQrStatus> = new Set([
+  "wait",
+  "scaned",
+  "expired",
+  "confirmed",
+  "scaned_but_redirect",
+]);
 
 export class WechatQrError extends Error {
   constructor(
@@ -126,11 +140,26 @@ export async function fetchWechatQrSession(
     baseUrl,
   );
 
+  const timeoutMs = opts.timeoutMs ?? WECHAT_QR_BOOTSTRAP_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Awaited<ReturnType<FetchLike>>;
   try {
-    response = await transport(url.toString(), { method: "GET", headers: buildIlinkHeaders() });
+    response = await transport(url.toString(), {
+      method: "GET",
+      headers: buildIlinkHeaders(),
+      signal: controller.signal,
+    });
   } catch (err) {
+    if (isAbortError(err)) {
+      throw new WechatQrError(
+        "network",
+        `WeChat QR init request timed out after ${timeoutMs}ms`,
+      );
+    }
     throw new WechatQrError("network", `WeChat QR init request failed: ${stringify(err)}`);
+  } finally {
+    clearTimeout(timer);
   }
   if (!response.ok) {
     const body = await safeText(response);
@@ -220,16 +249,22 @@ export async function pollWechatQrStatus(params: {
       );
     }
     const text = await response.text();
+    let parsed: WechatQrStatusResponse;
     try {
-      const parsed = JSON.parse(text) as WechatQrStatusResponse;
-      if (typeof parsed?.status !== "string") {
-        throw new WechatQrError("parse", "WeChat QR status response missing 'status' field");
-      }
-      return parsed;
+      parsed = JSON.parse(text) as WechatQrStatusResponse;
     } catch (err) {
-      if (err instanceof WechatQrError) throw err;
       throw new WechatQrError("parse", `WeChat QR status returned non-JSON body: ${stringify(err)}`);
     }
+    if (typeof parsed?.status !== "string") {
+      throw new WechatQrError("parse", "WeChat QR status response missing 'status' field");
+    }
+    if (!KNOWN_WECHAT_QR_STATUSES.has(parsed.status as WechatQrStatus)) {
+      throw new WechatQrError(
+        "parse",
+        `WeChat QR status returned unknown status '${parsed.status}'`,
+      );
+    }
+    return parsed;
   } finally {
     clearTimeout(timer);
     if (params.signal) params.signal.removeEventListener("abort", externalAbort);

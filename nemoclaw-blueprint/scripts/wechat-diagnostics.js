@@ -79,11 +79,17 @@
   }
 
   // The iLink gateway uses dynamic per-account subdomains under
-  // *.weixin.qq.com — match the suffix rather than a single host. We treat
-  // any successful 2xx hit on a /ilink/bot/* path as "provider ready".
+  // *.weixin.qq.com — and *.wechat.com (e.g. ilinkai.wechat.com) — so match
+  // the suffix rather than a single host. We treat any successful 2xx hit
+  // on a /ilink/bot/* path as "provider ready".
   function isWechatHost(hostname) {
     if (!hostname) return false;
-    return hostname === 'weixin.qq.com' || hostname.endsWith('.weixin.qq.com');
+    return (
+      hostname === 'weixin.qq.com' ||
+      hostname.endsWith('.weixin.qq.com') ||
+      hostname === 'wechat.com' ||
+      hostname.endsWith('.wechat.com')
+    );
   }
 
   function accountIdFromEnv() {

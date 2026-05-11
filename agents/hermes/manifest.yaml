@@ -94,7 +94,6 @@ messaging_platforms:
     - telegram
     - discord
     - slack
-    - wechat
   # Future: whatsapp, signal, matrix, mattermost, email, etc.
   # Each needs a network policy entry before enabling.
 

@@ -43,6 +43,7 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -443,11 +444,11 @@ def build_config(env: dict | None = None) -> dict:
             env.get("NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=") or "e30="
         ).decode("utf-8")
     )
-    _wechat_config = json.loads(
-        base64.b64decode(
-            env.get("NEMOCLAW_WECHAT_CONFIG_B64", "e30=") or "e30="
-        ).decode("utf-8")
-    )
+    # NEMOCLAW_WECHAT_CONFIG_B64 is intentionally not decoded here. The
+    # WeChat plugin's per-account state (accountId/baseUrl/userId) is read by
+    # seed-wechat-accounts.py, which we invoke from main() after writing
+    # openclaw.json. Decoding it here too would create a misleading second
+    # consumer that nothing acts on.
 
     _token_keys = {
         "discord": "token",
@@ -589,6 +590,12 @@ def build_config(env: dict | None = None) -> dict:
         "acpx": {"enabled": False},
         "bonjour": {"enabled": False},
         "qqbot": {"enabled": False},
+        # The @tencent-weixin/openclaw-weixin plugin is pre-installed in the
+        # base image (Dockerfile.base) so onboarding does not depend on the
+        # public npm registry for it. Enable the entry unconditionally — the
+        # bridge no-ops at startup unless seed-wechat-accounts.py has also
+        # registered an accountId under channels.openclaw-weixin.accounts.
+        "openclaw-weixin": {"enabled": True},
     }
     _bundled_provider_plugins = {
         "amazon-bedrock": {"amazon-bedrock", "bedrock"},
@@ -693,6 +700,28 @@ def build_config(env: dict | None = None) -> dict:
     return config
 
 
+def _seed_wechat_accounts() -> None:
+    """Invoke seed-wechat-accounts.py to write the upstream plugin's on-disk
+    account store and register the channel under channels.openclaw-weixin
+    in the openclaw.json we just produced. The seed script self-gates on
+    accountId — when the operator never ran a host-side QR login,
+    NEMOCLAW_WECHAT_CONFIG_B64 carries no accountId and seed no-ops.
+
+    Invoking via subprocess (rather than importing) preserves the seed
+    script's standalone test contract and keeps its env-driven inputs
+    parsed in one place. Resolves the script from /usr/local/lib/nemoclaw
+    (production image) first, then falls back to a sibling path in the
+    source tree (dev / test invocations)."""
+    candidates = [
+        Path("/usr/local/lib/nemoclaw/seed-wechat-accounts.py"),
+        Path(__file__).resolve().parent / "seed-wechat-accounts.py",
+    ]
+    script = next((p for p in candidates if p.exists()), None)
+    if script is None:
+        return
+    subprocess.run([sys.executable, str(script)], check=False)
+
+
 def main() -> None:
     """Generate openclaw.json from environment variables."""
     config = build_config()
@@ -701,6 +730,7 @@ def main() -> None:
     with open(path, "w") as f:
         json.dump(config, f, indent=2)
     os.chmod(path, 0o600)
+    _seed_wechat_accounts()
 
 
 if __name__ == "__main__":

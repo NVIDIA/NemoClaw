@@ -232,15 +232,5 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_WECHAT_CONFIG_B64=${encodeSanitizedDockerJsonArg(wechatConfig)}`,
     );
   }
-  // Flip the wechat plugin install gate when the channel is enabled. The
-  // upstream @tencent-weixin/openclaw-weixin package is fetched only when
-  // this build-arg is "1" (see Dockerfile around the conditional install
-  // block); operators not using WeChat pay no image-size or supply-chain
-  // cost.
-  const wechatEnabled = messagingChannels.includes("wechat") ? "1" : "0";
-  dockerfile = dockerfile.replace(
-    /^ARG NEMOCLAW_WECHAT_ENABLED=.*$/m,
-    `ARG NEMOCLAW_WECHAT_ENABLED=${sanitizeDockerArg(wechatEnabled)}`,
-  );
   fs.writeFileSync(dockerfilePath, dockerfile);
 }

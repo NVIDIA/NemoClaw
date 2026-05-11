@@ -50,22 +50,6 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
     };
   }
 
-  // WeChat is DM-only with no mention concept. The non-secret per-account
-  // metadata captured by the host-side QR login is surfaced here so the
-  // upstream @tencent-weixin/openclaw-weixin plugin (and the wrapper that
-  // pre-seeds it) can pick the right IDC base URL without re-running QR
-  // login inside the sandbox.
-  const wechatConfig = settings.messaging.wechatConfig;
-  if (settings.messaging.enabledChannels.has("wechat")) {
-    const wechatBlock: Record<string, unknown> = {};
-    if (wechatConfig.accountId) wechatBlock.account_id = wechatConfig.accountId;
-    if (wechatConfig.baseUrl) wechatBlock.base_url = wechatConfig.baseUrl;
-    if (wechatConfig.userId) wechatBlock.user_id = wechatConfig.userId;
-    if (Object.keys(wechatBlock).length > 0) {
-      config.wechat = wechatBlock;
-    }
-  }
-
   // API server — internal port only.
   // Hermes binds to 127.0.0.1 regardless of config (upstream bug).
   // socat in start.sh forwards 0.0.0.0:8642 -> 127.0.0.1:18642.
