@@ -194,6 +194,23 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e,hermes-slack-e2e
         ```
 
+    - path: "src/lib/actions/inference-set.ts"
+      instructions: |
+        This file switches the OpenShell inference route and patches the
+        selected running agent config. Changes here affect OpenClaw and
+        Hermes model switching without a sandbox rebuild.
+
+        **E2E test recommendation:**
+        - `openclaw-inference-switch-e2e` — OpenClaw route + config patch
+          + live OpenClaw request after switch
+        - `hermes-inference-switch-e2e` — Hermes route + config.yaml patch
+          + live Hermes request after switch
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-inference-switch-e2e,hermes-inference-switch-e2e
+        ```
+
     - path: "src/nemoclaw.ts"
       instructions: |
         This file contains CLI dispatch, status, recovery, and connect
@@ -272,6 +289,8 @@ reviews:
 
         **E2E test recommendation:**
         - `hermes-e2e` — Hermes onboard + health probe + live inference
+        - `hermes-inference-switch-e2e` — Hermes route + config.yaml patch
+          + live Hermes request after switch
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
           isolation
         - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
@@ -280,7 +299,7 @@ reviews:
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-discord-e2e,hermes-slack-e2e,rebuild-hermes-e2e,rebuild-hermes-stale-base-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-inference-switch-e2e,hermes-discord-e2e,hermes-slack-e2e,rebuild-hermes-e2e,rebuild-hermes-stale-base-e2e
         ```
 
     - path: "test/e2e/test-hermes-slack-e2e.sh"
@@ -353,6 +372,38 @@ reviews:
         To run selectively:
         ```
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-inference-e2e
+        ```
+
+    - path: "test/e2e/test-openclaw-inference-switch.sh"
+      instructions: |
+        This script validates OpenClaw model/provider switching with
+        `nemoclaw inference set`, including OpenShell route state,
+        /sandbox/.openclaw/openclaw.json, config hash recomputation, and
+        live requests after the switch.
+
+        **E2E test recommendation:**
+        - `openclaw-inference-switch-e2e` — OpenClaw route + config patch
+          + live OpenClaw request after switch
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-inference-switch-e2e
+        ```
+
+    - path: "test/e2e/test-hermes-inference-switch.sh"
+      instructions: |
+        This script validates Hermes model/provider switching with
+        `nemohermes inference set`, including OpenShell route state,
+        /sandbox/.hermes/config.yaml, config hash recomputation, .env
+        preservation, and live requests after the switch.
+
+        **E2E test recommendation:**
+        - `hermes-inference-switch-e2e` — Hermes route + config.yaml patch
+          + live Hermes request after switch
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-inference-switch-e2e
         ```
 
     - path: "test/e2e/test-skill-agent-e2e.sh"
