@@ -33,6 +33,7 @@ const HOME = homedir();
 const OPENCLAW_DIR = join(HOME, ".openclaw");
 const NEMOCLAW_DIR = join(HOME, ".nemoclaw");
 const SNAPSHOTS_DIR = join(NEMOCLAW_DIR, "snapshots");
+const SANDBOX_NAME_RE = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
 
 function compactTimestamp(): string {
   return new Date()
@@ -94,6 +95,16 @@ function collectFiles(dir: string): { files: string[]; symlinks: string[] } {
   return { files, symlinks };
 }
 
+function validateSandboxName(sandboxName: string): void {
+  if (!SANDBOX_NAME_RE.test(sandboxName) || sandboxName.length > 63) {
+    const preview = sandboxName.length > 80 ? `${sandboxName.slice(0, 80)}…` : sandboxName;
+    throw new Error(
+      `Invalid sandbox name: '${preview}'. ` +
+        "Allowed format: lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",
+    );
+  }
+}
+
 export function createSnapshot(): string | null {
   if (!existsSync(OPENCLAW_DIR)) {
     return null;
@@ -135,6 +146,8 @@ export async function restoreIntoSandbox(
   snapshotDir: string,
   sandboxName = "openclaw",
 ): Promise<boolean> {
+  validateSandboxName(sandboxName);
+
   const source = join(snapshotDir, "openclaw");
   if (!existsSync(source)) {
     return false;
