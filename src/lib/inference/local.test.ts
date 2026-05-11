@@ -460,4 +460,28 @@ describe("local inference helpers", () => {
   it("treats non-JSON probe output as success once the model responds", () => {
     expect(validateOllamaModel("nemotron-3-nano:30b", () => "ok")).toEqual({ ok: true });
   });
+
+  it("passes ollama memory validation when total RAM covers the model on unified-memory hosts", () => {
+    // Simulate Spark: Ollama returns available-RAM OOM error, but total RAM is 128 GB.
+    const freeOutput = "               total        used        free\nMem:          131072       120000       1000";
+    const capture = (cmd: string | string[]) => {
+      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (c.includes("free")) return freeOutput;
+      return JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture);
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails ollama memory validation when total RAM is also insufficient", () => {
+    const freeOutput = "               total        used        free\nMem:           16384        15000        100";
+    const capture = (cmd: string | string[]) => {
+      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (c.includes("free")) return freeOutput;
+      return JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/failed the local probe/);
+  });
 });

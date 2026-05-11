@@ -555,6 +555,28 @@ export function validateOllamaModel(
             `model's capabilities and pick one whose list includes 'tools'.`,
         };
       }
+      // On unified-memory platforms (e.g. DGX Spark), Ollama checks available RAM
+      // instead of total RAM, causing false OOM rejections. (#3251)
+      // If the error is a memory rejection, re-validate against total system RAM.
+      const memMatch = errText.match(
+        /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
+      );
+      if (memMatch) {
+        const requiresGiB = parseFloat(memMatch[1]);
+        const freeOut = capture(["free", "-m"], { ignoreError: true });
+        if (freeOut) {
+          const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+          if (memLine) {
+            const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
+            const totalGiB = totalMB / 1024;
+            if (totalGiB >= requiresGiB) {
+              // Total RAM is sufficient — Ollama's available-RAM check is a false
+              // positive on unified-memory hardware. Allow the probe to pass.
+              return { ok: true };
+            }
+          }
+        }
+      }
       return {
         ok: false,
         message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
