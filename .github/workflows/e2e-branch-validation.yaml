@@ -55,8 +55,12 @@ name: e2e-branch-validation
 on:
   workflow_dispatch:
     inputs:
+      branch:
+        description: "Branch to test (default: the branch this dispatch targets via --ref)"
+        required: false
+        default: ""
       pr_number:
-        description: "PR number (resolves branch automatically)"
+        description: "PR number (resolves branch automatically, overrides branch input)"
         required: false
         default: ""
       test_suite:
@@ -155,7 +159,15 @@ jobs:
       - name: Checkout target branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ env.RESOLVED_BRANCH || inputs.branch || 'main' }}
+          # Precedence:
+          #   1. PR-resolved branch (from pr_number lookup above)
+          #   2. Explicit branch input (workflow_dispatch / workflow_call)
+          #   3. github.ref_name (the ref that was dispatched against) —
+          #      this is what `gh workflow run --ref X` passes. Without this
+          #      fallback, workflow_dispatch without explicit inputs silently
+          #      checks out 'main' even when the dispatch targeted a feature
+          #      branch, making branch changes invisible to the run.
+          ref: ${{ env.RESOLVED_BRANCH || inputs.branch || github.ref_name }}
 
       - name: Create check run (pending)
         if: inputs.pr_number != ''
