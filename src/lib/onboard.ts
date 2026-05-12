@@ -6478,6 +6478,12 @@ async function createSandbox(
   const tokensByEnvKey = Object.fromEntries(
     messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
   );
+  const qrSelectedChannels = Array.isArray(enabledChannels)
+    ? enabledChannels.filter((name) => {
+        const ch = MESSAGING_CHANNELS.find((c) => c.name === name);
+        return !!ch && channelUsesQrPairing(ch);
+      })
+    : [];
   const activeMessagingChannels = [
     ...new Set([
       ...messagingTokenDefs
@@ -6492,6 +6498,7 @@ async function createSandbox(
           return [];
         }),
       ...reusableMessagingChannels,
+      ...qrSelectedChannels,
     ]),
   ];
   const initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
@@ -8944,8 +8951,19 @@ async function checkTelegramReachability(token: string) {
   }
 }
 
-async function setupMessagingChannels(): Promise<string[]> {
+async function setupMessagingChannels(
+  agent: AgentDefinition | null = null,
+): Promise<string[]> {
   step(5, 8, "Messaging channels");
+
+  const supportedPlatforms = agent?.messagingPlatforms;
+  // When the agent declares a supported messaging-platform list, hide every
+  // other channel from the picker. Agents that omit the field (or expose an
+  // empty list) keep the historical behaviour of showing all known channels.
+  const availableChannels =
+    supportedPlatforms && supportedPlatforms.length > 0
+      ? MESSAGING_CHANNELS.filter((c) => supportedPlatforms.includes(c.name))
+      : MESSAGING_CHANNELS;
 
   const getMessagingToken = (envKey: string | undefined): string | null =>
     envKey ? getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null : null;
@@ -8955,7 +8973,7 @@ async function setupMessagingChannels(): Promise<string[]> {
 
   // Non-interactive: skip prompt, tokens come from env/credentials
   if (isNonInteractive() || process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
-    const found = MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name);
+    const found = availableChannels.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name);
     if (found.length > 0) {
       note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
       if (found.includes("telegram")) {
@@ -8973,12 +8991,12 @@ async function setupMessagingChannels(): Promise<string[]> {
   // Single-keypress toggle selector — pre-select channels that already have tokens.
   // Press a channel number to toggle; press Enter to continue.
   const enabled = new Set(
-    MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name),
+    availableChannels.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name),
   );
 
   const output = process.stderr;
   // Lines above the prompt: 1 blank + 1 header + N channels + 1 blank = N + 3
-  const linesAbovePrompt = MESSAGING_CHANNELS.length + 3;
+  const linesAbovePrompt = availableChannels.length + 3;
   let firstDraw = true;
   const showList = () => {
     if (!firstDraw) {
@@ -8988,13 +9006,13 @@ async function setupMessagingChannels(): Promise<string[]> {
     firstDraw = false;
     output.write("\n");
     output.write("  Available messaging channels:\n");
-    MESSAGING_CHANNELS.forEach((ch, i) => {
+    availableChannels.forEach((ch, i) => {
       const marker = enabled.has(ch.name) ? "●" : "○";
       const status = getMessagingToken(ch.envKey) ? " (configured)" : "";
       output.write(`    [${i + 1}] ${marker} ${ch.name} — ${ch.description}${status}\n`);
     });
     output.write("\n");
-    output.write(`  Press 1-${MESSAGING_CHANNELS.length} to toggle, Enter when done: `);
+    output.write(`  Press 1-${availableChannels.length} to toggle, Enter when done: `);
   };
 
   showList();
@@ -9042,8 +9060,8 @@ async function setupMessagingChannels(): Promise<string[]> {
           return;
         }
         const num = parseInt(ch, 10);
-        if (num >= 1 && num <= MESSAGING_CHANNELS.length) {
-          const channel = MESSAGING_CHANNELS[num - 1];
+        if (num >= 1 && num <= availableChannels.length) {
+          const channel = availableChannels[num - 1];
           if (enabled.has(channel.name)) {
             enabled.delete(channel.name);
           } else {
@@ -9079,7 +9097,7 @@ async function setupMessagingChannels(): Promise<string[]> {
 
   // For each selected channel, prompt for token if not already set
   for (const name of selected) {
-    const ch = MESSAGING_CHANNELS.find((c) => c.name === name);
+    const ch = availableChannels.find((c) => c.name === name);
     if (!ch) {
       console.log(`  Unknown channel: ${name}`);
       continue;
@@ -11641,7 +11659,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           );
         }
       } else {
-        selectedMessagingChannels = await setupMessagingChannels();
+        selectedMessagingChannels = await setupMessagingChannels(agent);
       }
       const messagingChannelConfig = readMessagingChannelConfigFromEnv();
       onboardSession.updateSession((current: Session) => {

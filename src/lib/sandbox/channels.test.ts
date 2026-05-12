@@ -48,6 +48,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
   it("normalises case and whitespace when resolving a channel name", () => {
     expect(getChannelDef("  Telegram  ")).toBe(KNOWN_CHANNELS.telegram);
     expect(getChannelDef("DISCORD")).toBe(KNOWN_CHANNELS.discord);
+    expect(getChannelDef("  WhatsApp  ")).toBe(KNOWN_CHANNELS.whatsapp);
   });
 
   it("returns undefined for unknown channel names", () => {

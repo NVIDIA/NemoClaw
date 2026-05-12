@@ -189,6 +189,51 @@ describe("policies", () => {
       }
     });
 
+    it("whatsapp preset routes web.whatsapp.com as an L4 CONNECT tunnel with TLS pass-through", () => {
+      const content = requirePresetContent(policies.loadPreset("whatsapp"));
+      const parsed = YAML.parse(content);
+      const endpoints = parsed.network_policies.whatsapp.endpoints;
+
+      const webEndpoint = endpoints.find(
+        (item: { host?: string }) => item.host === "web.whatsapp.com",
+      );
+      expect(webEndpoint).toBeDefined();
+      expect(webEndpoint.port).toBe(443);
+      expect(webEndpoint.access).toBe("full");
+      expect(webEndpoint.tls).toBe("skip");
+      // L4 tunnels cannot enforce REST rules; the preset must not pretend to.
+      expect(webEndpoint.protocol).toBeUndefined();
+      expect(webEndpoint.rules).toBeUndefined();
+    });
+
+    it("whatsapp media and static hosts stay constrained to expected REST methods", () => {
+      const content = requirePresetContent(policies.loadPreset("whatsapp"));
+      const parsed = YAML.parse(content);
+      const endpoints = parsed.network_policies.whatsapp.endpoints;
+
+      const mmg = endpoints.find(
+        (item: { host?: string }) => item.host === "mmg.whatsapp.net",
+      );
+      expect(mmg).toBeDefined();
+      expect(mmg.port).toBe(443);
+      expect(mmg.protocol).toBe("rest");
+      expect(mmg.enforcement).toBe("enforce");
+      const mmgMethods = mmg.rules.map((rule: { allow?: { method?: string } }) => rule.allow?.method);
+      expect(mmgMethods.sort()).toEqual(["GET", "POST"]);
+
+      const staticHost = endpoints.find(
+        (item: { host?: string }) => item.host === "static.whatsapp.net",
+      );
+      expect(staticHost).toBeDefined();
+      expect(staticHost.port).toBe(443);
+      expect(staticHost.protocol).toBe("rest");
+      expect(staticHost.enforcement).toBe("enforce");
+      const staticMethods = staticHost.rules.map(
+        (rule: { allow?: { method?: string } }) => rule.allow?.method,
+      );
+      expect(staticMethods).toEqual(["GET"]);
+    });
+
     it("local-inference preset targets host.openshell.internal on Ollama, proxy, and vLLM ports", () => {
       const content = requirePresetContent(policies.loadPreset("local-inference"));
       expect(content).toContain("host.openshell.internal");
