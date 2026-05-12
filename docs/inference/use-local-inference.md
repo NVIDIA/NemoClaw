@@ -235,15 +235,14 @@ $ NEMOCLAW_PROVIDER=anthropicCompatible \
 When vLLM is already running on `localhost:8000`, NemoClaw can detect it automatically and query the `/v1/models` endpoint to determine the loaded model.
 On supported Linux hosts with NVIDIA GPUs, the onboard wizard can also install or start a managed vLLM container for you.
 
-Set the experimental flag and run onboard.
+For an already-running vLLM server, run `nemoclaw onboard` and select **Local vLLM [experimental]** from the provider list.
 
 ```console
-$ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
+$ nemoclaw onboard
 ```
 
-Select **Local vLLM [experimental]** from the provider list.
 If vLLM is already running, NemoClaw detects the running model and validates the endpoint.
-If vLLM is not running and your host matches a managed profile, select the **Install vLLM** or **Start vLLM** entry.
+If vLLM is not running and your host matches a managed profile, set `NEMOCLAW_EXPERIMENTAL=1`, rerun `nemoclaw onboard`, and select the **Install vLLM** or **Start vLLM** entry.
 NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, and prints progress markers while the model loads.
 The first run can take 10 to 30 minutes.
 Later runs reuse the cached image and model weights.
@@ -266,8 +265,7 @@ The vLLM `/v1/responses` endpoint does not run the `--tool-call-parser`, so tool
 Use an already-running vLLM server:
 
 ```console
-$ NEMOCLAW_EXPERIMENTAL=1 \
-  NEMOCLAW_PROVIDER=vllm \
+$ NEMOCLAW_PROVIDER=vllm \
   nemoclaw onboard --non-interactive
 ```
 

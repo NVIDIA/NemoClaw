@@ -202,6 +202,179 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
+  it("offers detected running vLLM without requiring a rerun", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-running-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "vllm-running-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"ok"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const messages = [];
+const lines = [];
+const originalLog = console.log;
+
+function findRunningVllmChoice() {
+  const option = lines.find((line) =>
+    /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(line)
+  );
+  const match = option && option.match(/^\s*(\d+)\)/);
+  if (!match) {
+    throw new Error("Could not find running vLLM option in menu:\\n" + lines.join("\\n"));
+  }
+  return match[1];
+}
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  if (/Choose \[/.test(message)) return findRunningVllmChoice();
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim({ type: "nvidia" }, null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_EXPERIMENTAL: "",
+        NEMOCLAW_PROVIDER: "",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).not.toBe("");
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "vllm-local");
+    assert.equal(payload.result.model, "meta-llama/Llama-3.3-70B-Instruct");
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Detected local inference option: vLLM"),
+      ),
+    );
+    assert.ok(
+      payload.lines.some((line: string) =>
+        /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(
+          line,
+        ),
+      ),
+    );
+    assert.ok(!payload.lines.some((line: string) => line.includes("rerun the same command")));
+  });
+
+  it("does not turn non-interactive NEMOCLAW_PROVIDER=vllm into managed install-vllm", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-no-install-"));
+    const scriptPath = path.join(tmpDir, "vllm-no-install-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const vllm = require(${vllmPath});
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive test");
+};
+vllm.installVllm = async () => {
+  console.error("INSTALL_VLLM_CALLED");
+  return { ok: false };
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim({ type: "nvidia" }, null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "vllm",
+        NEMOCLAW_EXPERIMENTAL: "",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Requested provider 'vllm' is not available/);
+    assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
+  });
+
   it("does not label NVIDIA Endpoints as recommended in the provider list", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-recommended-label-"));
