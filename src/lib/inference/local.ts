@@ -8,8 +8,9 @@
 
 import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
+import type { CaptureResult } from "../runner";
 
-const { shellQuote, runCapture } = require("../runner");
+const { shellQuote, runCapture, runCaptureEx } = require("../runner");
 
 import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
@@ -27,6 +28,8 @@ export const SMALL_OLLAMA_MODEL = "qwen2.5:7b";
 export const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
 
 export type RunCaptureFn = (cmd: string | string[], opts?: { ignoreError?: boolean }) => string;
+
+export type RunCaptureExFn = (cmd: string[]) => CaptureResult;
 
 // Hosts that the WSL-side onboard CLI tries when probing Ollama. Native Linux
 // and macOS only ever reach Ollama on the local loopback. WSL with Docker
@@ -531,14 +534,18 @@ export function validateOllamaModel(
   model: string,
   runCaptureImpl?: RunCaptureFn,
   isSparkImpl?: () => boolean,
+  runCaptureExImpl?: RunCaptureExFn,
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
+  const captureEx = runCaptureExImpl ?? runCaptureEx;
   const isSpark = isSparkImpl ?? (() => detectNvidiaPlatform() === "spark");
   const probeCmd = getOllamaProbeCommand(model);
-  let output = capture(probeCmd, { ignoreError: true });
+  const probeResult = captureEx(probeCmd);
+  let output = probeResult.stdout;
   // On DGX Spark (128 GB unified memory), loading a large model from disk can take >2 min.
-  // Only retry with extended timeout on Spark — elsewhere, fast failure is correct. (#3251)
-  if (!output && isSpark()) {
+  // Only retry with a 300 s timeout when the initial probe genuinely timed out — fast
+  // failures (connection refused, Ollama not running) surface immediately. (#3251)
+  if (!output && isSpark() && probeResult.timedOut) {
     output = capture(getOllamaProbeCommand(model, 300), { ignoreError: true });
   }
   if (!output) {
