@@ -431,9 +431,8 @@ section "Phase 5: Plant state markers in sandbox"
 MARKER_VALUE="nemoclaw-survival-$(date +%s)"
 
 # 5a: Workspace file in writable agent state directory.
-# /sandbox/ is read-only by policy (openclaw-sandbox.yaml); writable state
-# lives under /sandbox/.openclaw/. OpenShell ≥0.0.36 correctly enforces
-# this (NVIDIA/OpenShell#910), so markers must target the writable path.
+# /sandbox is writable in the mutable-default policy. Use .openclaw for durable
+# agent state markers so survival checks validate the configured state path.
 # shellcheck disable=SC2029
 if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo ${MARKER_VALUE} > /sandbox/.openclaw/.survival-marker-workspace" 2>/dev/null; then
   pass "Planted workspace marker: /sandbox/.openclaw/.survival-marker-workspace"
@@ -477,7 +476,7 @@ if [ -n "$agent_files_before" ]; then
 fi
 
 # 5d: Record a deeper workspace file to test nested persistence
-# Uses writable .openclaw path — /sandbox/ is read-only by policy.
+# Uses the writable .openclaw path for durable agent state.
 # shellcheck disable=SC2029
 if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
   "mkdir -p /sandbox/.openclaw/test-data && echo ${MARKER_VALUE} > /sandbox/.openclaw/test-data/nested-marker.txt" \

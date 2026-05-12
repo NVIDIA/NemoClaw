@@ -80,10 +80,10 @@ fi
 # PATH was already locked down at the top of this script (before the
 # early stderr capture). This comment marks the original location.
 
-# Redirect tool caches and state to /tmp so they don't fail on the read-only
-# /sandbox home directory (#804). Without these, tools would try to create
-# dotfiles (~/.npm, ~/.cache, ~/.bash_history, ~/.gitconfig, ~/.local, ~/.claude)
-# in the Landlock read-only home and fail.
+# Redirect tool caches and state to /tmp so transient package-manager and
+# shell state stays outside the agent's durable workspace. Without these, tools
+# would create noisy dotfiles (~/.npm, ~/.cache, ~/.bash_history, ~/.gitconfig,
+# ~/.local, ~/.claude) under /sandbox.
 #
 # IMPORTANT: This array is the single source of truth for tool-cache redirects.
 # The same entries are emitted into /tmp/nemoclaw-proxy-env.sh (see below) so
@@ -1527,7 +1527,7 @@ GUARDENVEOF
     # Slack token rewriter for connect sessions — same conditional pattern.
     echo "[ -f \"$_SLACK_REWRITER_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_REWRITER_SCRIPT\""
     # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
-    echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
+    echo '# Tool cache redirects — keep transient tool state under /tmp'
     for _redir in "${_TOOL_REDIRECTS[@]}"; do
       echo "export ${_redir?}"
     done
