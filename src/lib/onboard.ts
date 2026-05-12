@@ -27,10 +27,17 @@ const {
   spawnOutputToString,
 }: typeof import("./onboard/compatible-endpoint-smoke") = require("./onboard/compatible-endpoint-smoke");
 const {
+  buildSandboxConfigSyncScript,
+  writeSandboxConfigSyncFile,
+}: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
+const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
   prepareInitialSandboxCreatePolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
+const {
+  getSelectionDrift,
+}: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -326,7 +333,7 @@ const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-f
 import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./adapters/http/probe";
 import type { GatewayReuseState } from "./state/gateway";
-import type { GatewayInference, ProviderSelectionConfig } from "./inference/config";
+import type { GatewayInference } from "./inference/config";
 import type { GpuInfo, ValidationResult } from "./inference/local";
 import {
   hydrateMessagingChannelConfig,
@@ -356,6 +363,7 @@ import type {
   DockerDriverBinaryOverrides,
   OpenShellInstallDeps,
 } from "./onboard/openshell-install";
+import type { SelectionDrift } from "./onboard/selection-drift";
 
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -2105,15 +2113,6 @@ type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
 
-type SelectionDrift = {
-  changed: boolean;
-  providerChanged: boolean;
-  modelChanged: boolean;
-  existingProvider: string | null;
-  existingModel: string | null;
-  unknown: boolean;
-};
-
 function verifyDirectSandboxGpu(sandboxName: string): void {
   console.log("  Verifying direct sandbox GPU access...");
   for (const proof of buildDirectSandboxGpuProofCommands(sandboxName)) {
@@ -2372,102 +2371,6 @@ function shouldRestoreLatestBackupOnRecreate(): boolean {
   return process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
 }
 
-function findSelectionConfigPath(dir: string): string | null {
-  if (!dir || !fs.existsSync(dir)) return null;
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      const found = findSelectionConfigPath(fullPath);
-      if (found) return found;
-      continue;
-    }
-    if (entry.name === "config.json") {
-      return fullPath;
-    }
-  }
-  return null;
-}
-
-function readSandboxSelectionConfig(sandboxName: string): ProviderSelectionConfig | null {
-  if (!sandboxName) return null;
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-selection-"));
-  try {
-    const result = runOpenshell(
-      [
-        "sandbox",
-        "download",
-        sandboxName,
-        "/sandbox/.nemoclaw/config.json",
-        `${tmpDir}${path.sep}`,
-      ],
-      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
-    );
-    if (result.status !== 0) return null;
-    const configPath = findSelectionConfigPath(tmpDir);
-    if (!configPath) return null;
-    try {
-      const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      return parsed && typeof parsed === "object" ? parsed : null;
-    } catch {
-      return null;
-    }
-  } catch {
-    return null;
-  } finally {
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // ignore cleanup errors
-    }
-  }
-}
-
-function getSelectionDrift(
-  sandboxName: string,
-  requestedProvider: string | null,
-  requestedModel: string | null,
-): SelectionDrift {
-  const existing = readSandboxSelectionConfig(sandboxName);
-  if (!existing) {
-    return {
-      changed: true,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider: null,
-      existingModel: null,
-      unknown: true,
-    };
-  }
-
-  const existingProvider = typeof existing.provider === "string" ? existing.provider : null;
-  const existingModel = typeof existing.model === "string" ? existing.model : null;
-  if (!existingProvider || !existingModel) {
-    return {
-      changed: true,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider,
-      existingModel,
-      unknown: true,
-    };
-  }
-
-  const providerChanged = Boolean(
-    existingProvider && requestedProvider && existingProvider !== requestedProvider,
-  );
-  const modelChanged = Boolean(existingModel && requestedModel && existingModel !== requestedModel);
-
-  return {
-    changed: providerChanged || modelChanged,
-    providerChanged,
-    modelChanged,
-    existingProvider,
-    existingModel,
-    unknown: false,
-  };
-}
-
 async function confirmRecreateForSelectionDrift(
   sandboxName: string,
   drift: SelectionDrift,
@@ -2495,40 +2398,8 @@ async function confirmRecreateForSelectionDrift(
   return isAffirmativeAnswer(answer);
 }
 
-function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
-  // Do not rewrite openclaw.json at runtime. Model routing is handled by the
-  // host-side gateway (`openshell inference set` in Step 5), not from inside
-  // the sandbox. We write the NemoClaw selection config and normalize the
-  // mutable-default OpenClaw config permissions after the gateway has had a
-  // chance to perform its own startup initialization.
-  return `
-set -euo pipefail
-mkdir -p ~/.nemoclaw
-cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
-${JSON.stringify(selectionConfig, null, 2)}
-EOF_NEMOCLAW_CFG
-config_dir=/sandbox/.openclaw
-if [ -d "$config_dir" ]; then
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
-  if [ "$config_dir_owner" != "root" ]; then
-    chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
-    find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
-    chmod 2770 "$config_dir" 2>/dev/null || true
-    chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
-  fi
-fi
-exit
-`.trim();
-}
-
 function isOpenclawReady(sandboxName: string): boolean {
   return Boolean(fetchGatewayAuthTokenFromSandbox(sandboxName));
-}
-
-function writeSandboxConfigSyncFile(script: string): string {
-  const scriptFile = secureTempFile("nemoclaw-sync", ".sh");
-  fs.writeFileSync(scriptFile, `${script}\n`, { mode: 0o600 });
-  return scriptFile;
 }
 
 function encodeDockerJsonArg(value: LooseValue): string {
@@ -6048,7 +5919,7 @@ async function createSandbox(
     const needsProviderMigration =
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
-    const selectionDrift = getSelectionDrift(sandboxName, provider, model);
+    const selectionDrift = getSelectionDrift(sandboxName, provider, model, { runOpenshell });
     const confirmedSelectionDrift = selectionDrift.changed && !selectionDrift.unknown;
     const sandboxGpuDrift = hasSandboxGpuDrift(sandboxName, effectiveSandboxGpuConfig);
 
