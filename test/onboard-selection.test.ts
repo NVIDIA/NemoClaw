@@ -15,6 +15,30 @@ const CREDENTIAL_RETRY_PROMPT_RE =
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 
+function writeOllamaToolCallingCurl(fakeBin: string) {
+  fs.writeFileSync(
+    path.join(fakeBin, "curl"),
+    `#!/usr/bin/env bash
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+    { mode: 0o755 },
+  );
+}
+
 function writeOpenAiStyleAuthRetryCurl(fakeBin: string, goodToken: string, models = ["gpt-5.4"]) {
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
@@ -922,6 +946,387 @@ const { setupNim } = require(${onboardPath});
       ),
       "managed Ollama launch must not expose raw Ollama on all interfaces",
     );
+  });
+
+  it("applies the systemd loopback override for an existing running Ollama install", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-systemd-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOllamaToolCallingCurl(fakeBin);
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
+
+const runCommands = [];
+const shellCommands = [];
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  return "";
+};
+runner.run = (command) => {
+  runCommands.push(Array.isArray(command) ? command.join(" ") : command);
+  return { status: 0 };
+};
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, lines, runCommands, shellCommands }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Configuring Ollama systemd loopback override"),
+      ),
+      "existing Ollama systemd installs should get the loopback override",
+    );
+    assert.ok(
+      payload.shellCommands.some(
+        (command: string) =>
+          command.includes("sudo install -D -m 0644") &&
+          command.includes("/etc/systemd/system/ollama.service.d/override.conf") &&
+          command.includes("sudo systemctl daemon-reload") &&
+          command.includes("sudo systemctl restart ollama"),
+      ),
+      "should install and restart the Ollama systemd drop-in",
+    );
+  });
+
+  it("preserves existing Ollama systemd override settings while repairing loopback", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-merge-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-systemd-merge-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOllamaToolCallingCurl(fakeBin);
+
+    const script = String.raw`
+const fs = require("fs");
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
+
+let installedBody = "";
+const shellCommands = [];
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  if (cmd.includes("sudo cat") && cmd.includes("ollama.service.d/override.conf")) {
+    return [
+      "[Service]",
+      "Environment=\"OLLAMA_MODELS=/srv/ollama\"",
+      "Environment=\"OLLAMA_HOST=0.0.0.0:11434\"",
+      "Environment=\"HTTPS_PROXY=http://proxy.internal:8080\"",
+      "",
+      "[Install]",
+      "WantedBy=multi-user.target",
+      "",
+    ].join("\\n");
+  }
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  return "";
+};
+runner.run = () => ({ status: 0 });
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  const match = command.match(/sudo install -D -m 0644 '([^']+)'/);
+  if (match) installedBody = fs.readFileSync(match[1], "utf8");
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, shellCommands, installedBody }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.ok(payload.installedBody.includes('Environment="OLLAMA_MODELS=/srv/ollama"'));
+    assert.ok(payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'));
+    assert.ok(payload.installedBody.includes("[Install]"));
+    assert.ok(payload.installedBody.includes("WantedBy=multi-user.target"));
+
+    const repairedHost = 'Environment="OLLAMA_HOST=127.0.0.1:11434"';
+    const oldHost = 'Environment="OLLAMA_HOST=0.0.0.0:11434"';
+    assert.ok(payload.installedBody.includes(oldHost), "existing override content is preserved");
+    assert.ok(
+      payload.installedBody.lastIndexOf(repairedHost) > payload.installedBody.lastIndexOf(oldHost),
+      "loopback repair should override earlier OLLAMA_HOST settings",
+    );
+  });
+
+  it("repairs already-loopback systemd Ollama without starting a duplicate daemon", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-loopback-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-systemd-loopback-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOllamaToolCallingCurl(fakeBin);
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
+
+let tagsProbeCount = 0;
+const shellCommands = [];
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) {
+    tagsProbeCount += 1;
+    return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  }
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  return "";
+};
+runner.run = () => ({ status: 0 });
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, lines, shellCommands, tagsProbeCount }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.ok(
+      payload.shellCommands.some((command: string) =>
+        command.includes("/etc/systemd/system/ollama.service.d/override.conf"),
+      ),
+      "already-loopback systemd Ollama still needs the persistent drop-in",
+    );
+    assert.ok(
+      !payload.shellCommands.some((command: string) =>
+        command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
+      ),
+      "systemd restart success should not spawn a duplicate manual daemon",
+    );
+    assert.ok(
+      payload.tagsProbeCount >= 2,
+      "should re-probe after the systemd restart instead of trusting a stale loopback cache",
+    );
+  });
+
+  it("fails closed when an existing Ollama systemd override cannot be applied", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-existing-systemd-fail-"),
+    );
+    const scriptPath = path.join(tmpDir, "existing-systemd-fail-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  return "";
+};
+runner.runShell = (command) => {
+  if (command.includes("sudo install -D -m 0644")) return { status: 1 };
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim(null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Failed to apply Ollama systemd loopback override/);
+    assert.match(result.stderr, /Refusing to continue/);
   });
 
   it("returns to provider selection when Ollama manual entry chooses back", () => {
