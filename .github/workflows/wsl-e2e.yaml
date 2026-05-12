@@ -122,6 +122,10 @@ jobs:
           $script = @'
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
+          printf '%s\n' \
+            'Acquire::ForceIPv4 "true";' \
+            'Acquire::Retries "5";' \
+            >/etc/apt/apt.conf.d/99github-actions-network
           apt-get update
           apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip rsync tar unzip xz-utils
           '@

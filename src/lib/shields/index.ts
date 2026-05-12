@@ -15,28 +15,53 @@ const path = require("path");
 const { fork } = require("child_process");
 const { run, runCapture, validateName, shellQuote } = require("../runner");
 const { dockerExecFileSync } = require("../adapters/docker/exec");
+const { dockerCapture } = require("../adapters/docker/run");
+const registry = require("../state/registry") as {
+  getSandbox?: (name: string) => { openshellDriver?: string | null } | null;
+};
 const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
   parseCurrentPolicy,
   PERMISSIVE_POLICY_PATH,
-} = require("../policies");
+} = require("../policy");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const { appendAuditEntry } = require("./audit");
-const { resolveAgentConfig } = require("../sandbox-config");
+const { resolveAgentConfig } = require("../sandbox/config");
 
 const STATE_DIR = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state");
 
 // ---------------------------------------------------------------------------
-// kubectl exec — bypasses the sandbox's Landlock context
+// privileged sandbox exec — bypasses the sandbox's Landlock context
 //
 // openshell sandbox exec runs commands INSIDE the Landlock domain, so it
 // can't modify read_only paths or change chattr flags. kubectl exec starts
 // a new process in the pod that does NOT inherit the Landlock ruleset.
-// We reach kubectl via the K3s container: docker exec <k3s> kubectl exec ...
+// On the legacy gateway we reach kubectl via the K3s container. On the
+// Docker-driver gateway there is no K3s container, so we exec into the
+// sandbox Docker container directly as root.
 // ---------------------------------------------------------------------------
 
 const K3S_CONTAINER = "openshell-cluster-nemoclaw";
+
+function resolveDockerDriverSandboxContainer(sandboxName: string): string | null {
+  try {
+    if (registry.getSandbox?.(sandboxName)?.openshellDriver !== "docker") {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  const prefix = `openshell-${sandboxName}-`;
+  const exact = `openshell-${sandboxName}`;
+  const output = dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true });
+  return (
+    output
+      .split("\n")
+      .map((line: string) => line.trim())
+      .find((name: string) => name === exact || name.startsWith(prefix)) || null
+  );
+}
 
 function kubectlExecArgv(sandboxName: string, cmd: string[]): string[] {
   return [
@@ -54,15 +79,23 @@ function kubectlExecArgv(sandboxName: string, cmd: string[]): string[] {
   ];
 }
 
-function kubectlExec(sandboxName: string, cmd: string[]): void {
-  dockerExecFileSync(kubectlExecArgv(sandboxName, cmd), {
+function privilegedSandboxExecArgv(sandboxName: string, cmd: string[]): string[] {
+  const dockerDriverContainer = resolveDockerDriverSandboxContainer(sandboxName);
+  if (dockerDriverContainer) {
+    return ["exec", "--user", "root", dockerDriverContainer, ...cmd];
+  }
+  return kubectlExecArgv(sandboxName, cmd);
+}
+
+function privilegedSandboxExec(sandboxName: string, cmd: string[]): void {
+  dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd), {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 15000,
   });
 }
 
-function kubectlExecCapture(sandboxName: string, cmd: string[]): string {
-  return dockerExecFileSync(kubectlExecArgv(sandboxName, cmd), {
+function privilegedSandboxExecCapture(sandboxName: string, cmd: string[]): string {
+  return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd), {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 15000,
   }).trim();
@@ -272,24 +305,24 @@ function applyStateDirLockMode(sandboxName: string, configDir: string, owner: st
   for (const dirName of HIGH_RISK_STATE_DIRS) {
     const dirPath = `${configDir}/${dirName}`;
     try {
-      kubectlExec(sandboxName, ["chown", "-R", owner, dirPath]);
+      privilegedSandboxExec(sandboxName, ["chown", "-R", owner, dirPath]);
     } catch {
       // Directory may not exist for this agent — silently skip
     }
     try {
-      kubectlExec(sandboxName, ["chmod", dirMode, dirPath]);
+      privilegedSandboxExec(sandboxName, ["chmod", dirMode, dirPath]);
     } catch {
       // Silently skip
     }
     if (isLocking) {
       try {
-        kubectlExec(sandboxName, ["chmod", "g-s", dirPath]);
+        privilegedSandboxExec(sandboxName, ["chmod", "g-s", dirPath]);
       } catch {
         // Best effort; do not skip recursive write stripping.
       }
     }
     try {
-      kubectlExec(sandboxName, ["chmod", "-R", recursiveMode, dirPath]);
+      privilegedSandboxExec(sandboxName, ["chmod", "-R", recursiveMode, dirPath]);
     } catch {
       // Silently skip
     }
@@ -299,7 +332,7 @@ function applyStateDirLockMode(sandboxName: string, configDir: string, owner: st
   // discovered dynamically because they are configured by openclaw.json.
   const clearSetgid = isLocking ? "1" : "0";
   try {
-    kubectlExec(sandboxName, [
+    privilegedSandboxExec(sandboxName, [
       "sh",
       "-c",
       `
@@ -338,7 +371,7 @@ function assertNoLegacyStateLayout(sandboxName: string, configDir: string): void
   const script =
     'set -u; config_dir="$1"; data_dir="$2"; data_real="$(readlink -f "$data_dir" 2>/dev/null || printf "%s" "$data_dir")"; if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then echo "legacy data dir exists: $data_dir"; exit 1; fi; for entry in "$config_dir"/*; do [ -L "$entry" ] || continue; target="$(readlink -f "$entry" 2>/dev/null || readlink "$entry" 2>/dev/null || true)"; case "$target" in "$data_real"/*|"$data_dir"/*) echo "legacy symlink remains: $entry -> $target"; exit 1;; esac; done';
   try {
-    kubectlExecCapture(sandboxName, ["sh", "-c", script, "sh", configDir, dataDir]);
+    privilegedSandboxExecCapture(sandboxName, ["sh", "-c", script, "sh", configDir, dataDir]);
   } catch (err) {
     const execErr = err as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
     const captured = [execErr.stdout, execErr.stderr]
@@ -381,28 +414,28 @@ function unlockAgentConfig(
   const dirMode = target.agentName === "hermes" ? "750" : "2770";
   for (const f of filesToUnlock) {
     try {
-      kubectlExec(sandboxName, ["chattr", "-i", f]);
+      privilegedSandboxExec(sandboxName, ["chattr", "-i", f]);
     } catch {
       errors.push(`chattr -i ${f}`);
     }
     try {
-      kubectlExec(sandboxName, ["chown", "sandbox:sandbox", f]);
+      privilegedSandboxExec(sandboxName, ["chown", "sandbox:sandbox", f]);
     } catch {
       errors.push(`chown ${f}`);
     }
     try {
-      kubectlExec(sandboxName, ["chmod", fileMode, f]);
+      privilegedSandboxExec(sandboxName, ["chmod", fileMode, f]);
     } catch {
       errors.push(`chmod ${fileMode} ${f}`);
     }
   }
   try {
-    kubectlExec(sandboxName, ["chown", "sandbox:sandbox", target.configDir]);
+    privilegedSandboxExec(sandboxName, ["chown", "sandbox:sandbox", target.configDir]);
   } catch {
     errors.push("chown config dir");
   }
   try {
-    kubectlExec(sandboxName, ["chmod", dirMode, target.configDir]);
+    privilegedSandboxExec(sandboxName, ["chmod", dirMode, target.configDir]);
   } catch {
     errors.push(`chmod ${dirMode} config dir`);
   }
@@ -421,7 +454,7 @@ function unlockAgentConfig(
   const issues: string[] = [];
   for (const f of filesToUnlock) {
     try {
-      const perms = kubectlExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", f]);
+      const perms = privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", f]);
       const [mode, owner] = perms.split(" ");
       if (mode !== fileMode) issues.push(`${f} mode=${mode} (expected ${fileMode})`);
       if (owner !== "sandbox:sandbox") issues.push(`${f} owner=${owner} (expected sandbox:sandbox)`);
@@ -430,7 +463,7 @@ function unlockAgentConfig(
       issues.push(`${f} stat failed: ${msg}`);
     }
     try {
-      const attrs = kubectlExecCapture(sandboxName, ["lsattr", "-d", f]);
+      const attrs = privilegedSandboxExecCapture(sandboxName, ["lsattr", "-d", f]);
       const [flags] = attrs.trim().split(/\s+/, 1);
       if (flags.includes("i")) issues.push(`${f} immutable bit still set`);
     } catch {
@@ -439,7 +472,7 @@ function unlockAgentConfig(
   }
 
   try {
-    const dirPerms = kubectlExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", target.configDir]);
+    const dirPerms = privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", target.configDir]);
     const [mode, owner] = dirPerms.split(" ");
     if (mode !== dirMode) issues.push(`config dir mode=${mode} (expected ${dirMode})`);
     if (owner !== "sandbox:sandbox") {
@@ -482,25 +515,25 @@ function lockAgentConfig(
 
   for (const f of filesToLock) {
     try {
-      kubectlExec(sandboxName, ["chmod", "444", f]);
+      privilegedSandboxExec(sandboxName, ["chmod", "444", f]);
     } catch {
       errors.push(`chmod 444 ${f}`);
     }
     try {
-      kubectlExec(sandboxName, ["chown", "root:root", f]);
+      privilegedSandboxExec(sandboxName, ["chown", "root:root", f]);
     } catch {
       errors.push(`chown root:root ${f}`);
     }
   }
 
   try {
-    kubectlExec(sandboxName, ["chmod", "755", target.configDir]);
+    privilegedSandboxExec(sandboxName, ["chmod", "755", target.configDir]);
   } catch {
     errors.push("chmod 755 config dir");
   }
 
   try {
-    kubectlExec(sandboxName, ["chown", "root:root", target.configDir]);
+    privilegedSandboxExec(sandboxName, ["chown", "root:root", target.configDir]);
   } catch {
     errors.push("chown root:root config dir");
   }
@@ -510,7 +543,7 @@ function lockAgentConfig(
   let chattrSucceeded = true;
   for (const f of filesToLock) {
     try {
-      kubectlExec(sandboxName, ["chattr", "+i", f]);
+      privilegedSandboxExec(sandboxName, ["chattr", "+i", f]);
     } catch {
       chattrSucceeded = false;
     }
@@ -525,12 +558,12 @@ function lockAgentConfig(
   // after descendant locking so shields-up verifies the root config dir as
   // plain 755, not 2755.
   try {
-    kubectlExec(sandboxName, ["chmod", "g-s", target.configDir]);
+    privilegedSandboxExec(sandboxName, ["chmod", "g-s", target.configDir]);
   } catch {
     errors.push("chmod g-s config dir");
   }
   try {
-    kubectlExec(sandboxName, ["chmod", "755", target.configDir]);
+    privilegedSandboxExec(sandboxName, ["chmod", "755", target.configDir]);
   } catch {
     errors.push("chmod 755 config dir");
   }
@@ -545,7 +578,7 @@ function lockAgentConfig(
   const issues: string[] = [];
   for (const f of filesToLock) {
     try {
-      const perms = kubectlExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", f]);
+      const perms = privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", f]);
       const [mode, owner] = perms.split(" ");
       if (!/^4[0-4][0-4]$/.test(mode)) issues.push(`${f} mode=${mode} (expected 444)`);
       if (owner !== "root:root") issues.push(`${f} owner=${owner} (expected root:root)`);
@@ -556,7 +589,7 @@ function lockAgentConfig(
   }
 
   try {
-    const dirPerms = kubectlExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", target.configDir]);
+    const dirPerms = privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", target.configDir]);
     const [dirMode, dirOwner] = dirPerms.split(" ");
     if (dirMode !== "755") issues.push(`dir mode=${dirMode} (expected 755)`);
     if (dirOwner !== "root:root") issues.push(`dir owner=${dirOwner} (expected root:root)`);
@@ -568,7 +601,7 @@ function lockAgentConfig(
   if (chattrSucceeded) {
     for (const f of filesToLock) {
       try {
-        const attrs = kubectlExecCapture(sandboxName, ["lsattr", "-d", f]);
+        const attrs = privilegedSandboxExecCapture(sandboxName, ["lsattr", "-d", f]);
         // lsattr format: "----i---------e----- /path/to/file"
         // First whitespace-delimited token is the flags field.
         const [flags] = attrs.trim().split(/\s+/, 1);

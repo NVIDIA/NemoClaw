@@ -36,11 +36,11 @@ const REMOVED_SHIM_MOVES: Record<string, string> = {
   "bin/lib/registry.js": "src/lib/state/registry.ts",
   "bin/lib/resolve-openshell.js": "src/lib/adapters/openshell/resolve.ts",
   "bin/lib/runtime-recovery.js": "src/lib/runtime-recovery.ts",
-  "bin/lib/sandbox-build-context.js": "src/lib/sandbox-build-context.ts",
-  "bin/lib/services.js": "src/lib/services.ts",
+  "bin/lib/sandbox-build-context.js": "src/lib/sandbox/build-context.ts",
+  "bin/lib/services.js": "src/lib/tunnel/services.ts",
   "bin/lib/version.js": "src/lib/core/version.ts",
   "bin/lib/onboard.js": "src/lib/onboard.ts",
-  "bin/lib/policies.js": "src/lib/policies.ts",
+  "bin/lib/policies.js": "src/lib/policy/index.ts",
   "bin/lib/runner.js": "src/lib/runner.ts",
 };
 

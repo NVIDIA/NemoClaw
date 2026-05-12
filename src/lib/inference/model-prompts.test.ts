@@ -118,6 +118,91 @@ describe("model prompt helpers", () => {
     expect(result).toBe("custom-model");
   });
 
+  it("opens the full model list from long curated remote catalogs", async () => {
+    const modelOptions = Array.from({ length: 12 }, (_, index) => `model-${index + 1}`);
+    const writeLine = vi.fn();
+    const result = await promptRemoteModel("Hermes Provider", "hermesProvider", "model-1", null, {
+      promptFn: promptSequence(["4", "11"]),
+      writeLine,
+      remoteModelOptions: { hermesProvider: modelOptions },
+      topLevelModelLimit: 3,
+      otherShowsFullList: true,
+    });
+
+    expect(result).toBe("model-11");
+    expect(writeLine).toHaveBeenCalledWith("    4) Other...");
+    expect(writeLine).toHaveBeenCalledWith("  Hermes Provider full model list:");
+    expect(writeLine).toHaveBeenCalledWith("    11) model-11");
+  });
+
+  it("keeps a hidden remote default when the user presses enter", async () => {
+    const modelOptions = Array.from({ length: 12 }, (_, index) => `model-${index + 1}`);
+    const promptFn = promptSequence([""]);
+    const writeLine = vi.fn();
+    const result = await promptRemoteModel("Hermes Provider", "hermesProvider", "model-12", null, {
+      promptFn,
+      writeLine,
+      remoteModelOptions: { hermesProvider: modelOptions },
+      topLevelModelLimit: 3,
+      otherShowsFullList: false,
+    });
+
+    expect(result).toBe("model-12");
+    expect(promptFn).toHaveBeenCalledWith("  Choose model [12]: ");
+    expect(writeLine).toHaveBeenCalledWith("    12) model-12 (current)");
+  });
+
+  it("keeps a hidden remote default when the user types its index", async () => {
+    const modelOptions = Array.from({ length: 12 }, (_, index) => `model-${index + 1}`);
+    const result = await promptRemoteModel("Hermes Provider", "hermesProvider", "model-12", null, {
+      promptFn: promptSequence(["12"]),
+      writeLine: vi.fn(),
+      remoteModelOptions: { hermesProvider: modelOptions },
+      topLevelModelLimit: 3,
+      otherShowsFullList: true,
+    });
+
+    expect(result).toBe("model-12");
+  });
+
+  it("keeps a safe current remote default that is not in the curated list", async () => {
+    const writeLine = vi.fn();
+    const promptFn = promptSequence([""]);
+    const result = await promptRemoteModel(
+      "OpenAI",
+      "openai",
+      "custom/provider-model",
+      null,
+      {
+        promptFn,
+        writeLine,
+        remoteModelOptions: { openai: ["model-1", "model-2", "model-3"] },
+      },
+    );
+
+    expect(result).toBe("custom/provider-model");
+    expect(promptFn).toHaveBeenCalledWith("  Choose model [5]: ");
+    expect(writeLine).toHaveBeenCalledWith("    4) Other...");
+    expect(writeLine).toHaveBeenCalledWith("    5) custom/provider-model (current)");
+  });
+
+  it("limits top-level remote catalogs before manual-entry fallback", async () => {
+    const modelOptions = Array.from({ length: 12 }, (_, index) => `model-${index + 1}`);
+    const writeLine = vi.fn();
+    const result = await promptRemoteModel("Hermes Provider", "hermesProvider", "model-12", null, {
+      promptFn: promptSequence(["4", "custom-model"]),
+      writeLine,
+      remoteModelOptions: { hermesProvider: modelOptions },
+      topLevelModelLimit: 3,
+      otherShowsFullList: false,
+    });
+
+    expect(result).toBe("custom-model");
+    expect(writeLine).toHaveBeenCalledWith("    3) model-3");
+    expect(writeLine).not.toHaveBeenCalledWith("    4) model-4");
+    expect(writeLine).toHaveBeenCalledWith("    4) Other...");
+  });
+
   it("retries invalid input models until validation succeeds", async () => {
     const promptFn = promptSequence(["bad model", "other", "candidate"]);
     const errorLine = vi.fn();

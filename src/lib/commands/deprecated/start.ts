@@ -4,8 +4,8 @@
 import { Command, Flags } from "@oclif/core";
 
 import { CLI_NAME } from "../../cli/branding";
-import { startAll } from "../../services";
-import { runStartCommand } from "../../services-command";
+import { startAll } from "../../tunnel/services";
+import { runStartCommand } from "../../tunnel/service-command";
 import { serviceDeps } from "../tunnel/common";
 
 export default class DeprecatedStartCommand extends Command {

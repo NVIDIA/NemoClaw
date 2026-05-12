@@ -17,7 +17,9 @@ const {
   rewriteConfigUrlsWithDnsPinning,
   formatConfigValueForLogs,
   resolveAgentConfig,
-} = require("../dist/lib/sandbox-config");
+  buildRecomputeSandboxConfigHashScript,
+  selectDockerDriverSandboxContainer,
+} = require("../dist/lib/sandbox/config");
 
 type MutableScalar = string | number | boolean | null | undefined;
 type MutableValue = MutableScalar | MutableMap | MutableValue[];
@@ -40,6 +42,83 @@ describe("resolveAgentConfig", () => {
   it("includes configFile in configPath", () => {
     const target = resolveAgentConfig("any-sandbox");
     expect(target.configPath.endsWith(target.configFile)).toBe(true);
+  });
+});
+
+describe("buildRecomputeSandboxConfigHashScript", () => {
+  it("keeps OpenClaw on the mutable compatibility hash", () => {
+    const script = buildRecomputeSandboxConfigHashScript({
+      agentName: "openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configDir: "/sandbox/.openclaw",
+      format: "json",
+      configFile: "openclaw.json",
+      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+    });
+
+    expect(script).toContain("cd '/sandbox/.openclaw'");
+    expect(script).toContain("sha256sum 'openclaw.json' > .config-hash");
+    expect(script).toContain("chown sandbox:sandbox .config-hash");
+    expect(script).toContain("chmod 660 .config-hash");
+  });
+
+  it("updates Hermes strict and compatibility hashes with the expected permissions", () => {
+    const script = buildRecomputeSandboxConfigHashScript({
+      agentName: "hermes",
+      configPath: "/sandbox/.hermes/config.yaml",
+      configDir: "/sandbox/.hermes",
+      format: "yaml",
+      configFile: "config.yaml",
+      sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
+    });
+
+    expect(script).toContain(
+      "strict_hash='/etc/nemoclaw/hermes.config-hash'",
+    );
+    expect(script).toContain('strict_tmp="${strict_hash}.tmp.$$"');
+    expect(script).toContain(
+      "compat_hash='/sandbox/.hermes/.config-hash'",
+    );
+    expect(script).toContain('compat_tmp="${compat_hash}.tmp.$$"');
+    expect(script).toContain('trap \'rm -f "$strict_tmp" "$compat_tmp"\' EXIT HUP INT TERM');
+    expect(script).toContain(
+      'sha256sum \'/sandbox/.hermes/config.yaml\' \'/sandbox/.hermes/.env\' > "$strict_tmp"',
+    );
+    expect(script).toContain('chown root:root "$strict_tmp"');
+    expect(script).toContain('chmod 444 "$strict_tmp"');
+    expect(script).toContain('mv -f "$strict_tmp" "$strict_hash"');
+    expect(script).toContain('cp "$strict_hash" "$compat_tmp"');
+    expect(script).toContain('chown sandbox:sandbox "$compat_tmp"');
+    expect(script).toContain('chmod 600 "$compat_tmp"');
+    expect(script).toContain('mv -f "$compat_tmp" "$compat_hash"');
+  });
+});
+
+describe("selectDockerDriverSandboxContainer", () => {
+  it("returns the exact Docker-driver sandbox container when present", () => {
+    const selected = selectDockerDriverSandboxContainer(
+      "demo",
+      "docker",
+      "openshell-demo\nopenshell-demo-helper\n",
+    );
+
+    expect(selected).toBe("openshell-demo");
+  });
+
+  it("falls back to the generated Docker-driver sandbox container prefix", () => {
+    const selected = selectDockerDriverSandboxContainer(
+      "demo",
+      "docker",
+      "openshell-other\nopenshell-demo-abc123\n",
+    );
+
+    expect(selected).toBe("openshell-demo-abc123");
+  });
+
+  it("does not select a container for legacy gateway sandboxes", () => {
+    expect(
+      selectDockerDriverSandboxContainer("demo", "kubernetes", "openshell-demo\n"),
+    ).toBeNull();
   });
 });
 

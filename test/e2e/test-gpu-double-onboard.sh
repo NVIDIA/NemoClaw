@@ -42,6 +42,8 @@
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
 #     bash test/e2e/test-gpu-double-onboard.sh
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1800
@@ -316,7 +318,7 @@ fi
 # 4f: Record the first-onboard token for later comparison
 TOKEN_AFTER_FIRST=""
 if [ -f "$TOKEN_FILE" ]; then
-  TOKEN_AFTER_FIRST=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+  TOKEN_AFTER_FIRST=$(tr -d '[:space:]' <"$TOKEN_FILE")
   info "Token after first onboard: ${TOKEN_AFTER_FIRST:0:8}..."
 fi
 
@@ -421,7 +423,7 @@ else
 fi
 
 # 6b: Read the post-re-onboard token
-TOKEN_AFTER_SECOND=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+TOKEN_AFTER_SECOND=$(tr -d '[:space:]' <"$TOKEN_FILE")
 info "Token after re-onboard: ${TOKEN_AFTER_SECOND:0:8}..."
 
 # 6c: Token file permissions preserved

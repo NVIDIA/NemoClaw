@@ -5,14 +5,14 @@
 import { spawnSync } from "node:child_process";
 
 import { parseGatewayInference } from "./inference/config";
-import type { MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory-commands";
+import type { MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory";
 import { backfillMessagingChannels, findAllOverlaps } from "./messaging-conflict";
 import type { CaptureOpenshellResult } from "./adapters/openshell/client";
 import { captureOpenshellCommand, stripAnsi } from "./adapters/openshell/client";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import * as registry from "./state/registry";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
-import { getServiceStatuses, showStatus as showServiceStatus } from "./services";
+import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
 
 function captureOpenshell(
   rootDir: string,

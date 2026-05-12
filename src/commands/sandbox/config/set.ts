@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import Command from "../../../lib/sandbox-config-set-cli-command";
+import Command from "../../../lib/commands/sandbox/config/set";
 import { withCommandDisplay } from "../../../lib/cli/command-display";
 
 export default withCommandDisplay(Command, [

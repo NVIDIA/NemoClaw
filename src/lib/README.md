@@ -36,17 +36,18 @@ src/lib/dashboard/**    dashboard contract, health, and recovery helpers
 src/lib/deploy/**       deploy/build-image support that is not yet action-shaped
 src/lib/diagnostics/**  debug collection and diagnostic report helpers
 src/lib/inference/**    inference config, health probes, local runtime helpers
+src/lib/inventory/**    list/status inventory shaping and presentation models
 src/lib/messaging/**    channel/messaging policy and message filtering helpers
 src/lib/onboard/**      onboarding support modules around the large legacy flow
-src/lib/policy/**       policy preset loading and application support
+src/lib/policy/**       policy preset loading, tier selection, and application support
 src/lib/runtime/**      sandbox/runtime recovery helpers
-src/lib/sandbox/**      sandbox config, build, stream, and version support
+src/lib/sandbox/**      sandbox config, build, stream, channel, and version support
 src/lib/security/**     redaction, secret patterns, and credential filtering
 src/lib/shields/**      shields orchestration, timers, and audit helpers
 src/lib/tunnel/**       local service/tunnel command support
 ```
 
-Prefer small mechanical PRs that move one cluster at a time. High-import legacy files such as `onboard.ts`, `runner.ts`, `policies.ts`, `nim.ts`, and `services.ts` should either move late or keep temporary compatibility re-export files at their old paths.
+Prefer small mechanical PRs that move one cluster at a time. High-import legacy files such as `onboard.ts`, `runner.ts`, and any remaining large top-level modules should either move late or keep temporary compatibility re-export files at their old paths.
 
 ## Suggested migration sequence
 

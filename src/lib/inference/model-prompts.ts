@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { CLOUD_MODEL_OPTIONS } from "./config";
+import { CLOUD_MODEL_OPTIONS, HERMES_PROVIDER_MODEL_OPTIONS } from "./config";
 import { isSafeModelId } from "../validation";
 import { validateNvidiaEndpointModel } from "./provider-models";
 
@@ -21,6 +21,7 @@ export const REMOTE_MODEL_OPTIONS: Record<string, string[]> = {
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
   ],
+  hermesProvider: [...HERMES_PROVIDER_MODEL_OPTIONS],
 };
 
 export interface PromptValidationResult {
@@ -42,6 +43,10 @@ export interface ModelPromptOptions {
   backToSelection?: string;
   /** Pre-fill this model ID as the default in interactive prompts. */
   defaultModelId?: string;
+  /** Show only this many remote models in the first menu before offering Other. */
+  topLevelModelLimit?: number;
+  /** When true, Other opens the full model list before falling back to manual entry. */
+  otherShowsFullList?: boolean;
 }
 
 function getNavigationChoice(value = ""): "back" | "exit" | null {
@@ -178,14 +183,75 @@ export async function promptRemoteModel(
 ): Promise<string> {
   const deps = resolvePromptOptions(options);
   const modelOptions = deps.remoteModelOptions[providerKey] || [];
-  const defaultIndex = Math.max(0, modelOptions.indexOf(defaultModel));
+  const defaultIndex = modelOptions.indexOf(defaultModel);
+  const topLevelLimit =
+    options.topLevelModelLimit && options.topLevelModelLimit > 0
+      ? Math.min(options.topLevelModelLimit, modelOptions.length)
+      : modelOptions.length;
+  const shouldOfferFullList =
+    options.otherShowsFullList === true && topLevelLimit < modelOptions.length;
+  const visibleOptions = modelOptions.slice(0, topLevelLimit);
+  const currentDefaultChoice =
+    defaultIndex >= 0
+      ? defaultIndex + 1
+      : defaultModel && isSafeModelId(defaultModel)
+        ? visibleOptions.length + 2
+        : null;
+  const defaultChoice =
+    currentDefaultChoice ??
+    Math.min(Math.max(visibleOptions.length, 1), visibleOptions.length + 1);
 
   deps.writeLine("");
   deps.writeLine(`  ${label} models:`);
+  visibleOptions.forEach((option, index) => {
+    deps.writeLine(`    ${index + 1}) ${option}`);
+  });
+  deps.writeLine(`    ${visibleOptions.length + 1}) Other...`);
+  if (currentDefaultChoice !== null && currentDefaultChoice > visibleOptions.length + 1) {
+    deps.writeLine(`    ${currentDefaultChoice}) ${defaultModel} (current)`);
+  }
+  deps.writeLine("");
+
+  const choice = await deps.promptFn(`  Choose model [${defaultChoice}]: `);
+  const navigation = deps.getNavigationChoiceFn(choice);
+  if (navigation === "back") {
+    return deps.backToSelection;
+  }
+  if (navigation === "exit") {
+    deps.exitFn();
+  }
+  const index = parseInt(choice || String(defaultChoice), 10) - 1;
+  if (currentDefaultChoice !== null && index === currentDefaultChoice - 1) {
+    return defaultModel;
+  }
+  if (Number.isFinite(index) && index >= 0 && index < visibleOptions.length) {
+    return visibleOptions[index];
+  }
+  if (index === visibleOptions.length) {
+    return shouldOfferFullList
+      ? promptFullRemoteModelList(label, modelOptions, defaultModel, validator, deps)
+      : promptManualModelId(`  ${label} model id: `, label, validator, deps);
+  }
+
+  return promptManualModelId(`  ${label} model id: `, label, validator, deps);
+}
+
+async function promptFullRemoteModelList(
+  label: string,
+  modelOptions: string[],
+  defaultModel: string,
+  validator: ((model: string) => PromptValidationResult) | null,
+  options: ModelPromptOptions,
+): Promise<string> {
+  const deps = resolvePromptOptions(options);
+  const defaultIndex = Math.max(0, modelOptions.indexOf(defaultModel));
+
+  deps.writeLine("");
+  deps.writeLine(`  ${label} full model list:`);
   modelOptions.forEach((option, index) => {
     deps.writeLine(`    ${index + 1}) ${option}`);
   });
-  deps.writeLine(`    ${modelOptions.length + 1}) Other...`);
+  deps.writeLine(`    ${modelOptions.length + 1}) Custom model id...`);
   deps.writeLine("");
 
   const choice = await deps.promptFn(`  Choose model [${defaultIndex + 1}]: `);

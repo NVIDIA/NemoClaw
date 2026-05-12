@@ -331,6 +331,34 @@ restore_openclaw_config_after_write() {
   lock_config_after_write "$config_file" "$hash_file"
 }
 
+ensure_mutable_openclaw_config_hash() {
+  local config_dir="/sandbox/.openclaw"
+  local config_file="${config_dir}/openclaw.json"
+  local hash_file="${config_dir}/.config-hash"
+
+  [ -f "$config_file" ] || return 0
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing mutable config hash refresh — config directory or file path is a symlink\n' >&2
+    return 1
+  fi
+
+  # Locked/shields-up mode treats .config-hash as a root-owned trust anchor.
+  # verify_config_integrity_if_locked already fails closed when that anchor is
+  # missing, so only synthesize/refresh the mutable-default hash.
+  if [ "$(openclaw_config_dir_owner "$config_dir")" = "root" ]; then
+    return 0
+  fi
+
+  if ! (cd "$config_dir" && sha256sum openclaw.json >"$hash_file"); then
+    printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
+    return 1
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    chown sandbox:sandbox "$hash_file" 2>/dev/null || true
+  fi
+  chmod 660 "$hash_file" 2>/dev/null || true
+}
+
 # ── Runtime model/provider override ──────────────────────────────
 # Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
 # allowing model or provider changes without rebuilding the sandbox image.
@@ -480,6 +508,91 @@ PYOVERRIDE
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
+# ── Agent identity reconciliation with provider routing ───────────
+# After the host-side `openshell inference set` swaps the gateway's
+# inference provider entry, agents.defaults.model.primary in
+# openclaw.json can drift from models.providers.<key>.models[0].name.
+# When that happens the gateway routes requests to the new model but
+# the agent self-reports the old one. Realign the two on every
+# sandbox start so the next session boots with a consistent identity.
+# Runs after apply_model_override so explicit NEMOCLAW_MODEL_OVERRIDE
+# values still win. No-op when already in sync.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/3175
+
+reconcile_agent_model_with_provider() {
+  if [ "$(id -u)" -ne 0 ]; then
+    return 0
+  fi
+
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+
+  [ -f "$config_file" ] || return 0
+
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    return 0
+  fi
+
+  local provider_model_ref
+  provider_model_ref="$(
+    python3 - "$config_file" <<'PYRECONCILE_READ'
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        cfg = json.load(f)
+except Exception:
+    sys.exit(0)
+primary = cfg.get("agents", {}).get("defaults", {}).get("model", {}).get("primary")
+provider = cfg.get("models", {}).get("providers", {}).get("inference", {})
+models = provider.get("models") if isinstance(provider, dict) else None
+if not isinstance(models, list) or not models:
+    sys.exit(0)
+first = models[0]
+if not isinstance(first, dict):
+    sys.exit(0)
+provider_ref = first.get("name")
+if not isinstance(provider_ref, str) or not provider_ref:
+    provider_id = first.get("id")
+    if not isinstance(provider_id, str) or not provider_id:
+        sys.exit(0)
+    provider_ref = provider_id if provider_id.startswith("inference/") else f"inference/{provider_id}"
+if not isinstance(primary, str) or primary == provider_ref:
+    sys.exit(0)
+print(provider_ref)
+PYRECONCILE_READ
+  )"
+
+  if [ -z "$provider_model_ref" ]; then
+    return 0
+  fi
+
+  printf '[config] Reconciling agent identity with provider model: %s (#3175)\n' "$provider_model_ref" >&2
+
+  prepare_openclaw_config_for_write "$config_file" "$hash_file"
+  local _write_rc=0
+
+  python3 - "$config_file" "$provider_model_ref" <<'PYRECONCILE_WRITE' || _write_rc=$?
+import json, sys
+config_file, provider_model = sys.argv[1], sys.argv[2]
+with open(config_file) as f:
+    cfg = json.load(f)
+cfg.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})["primary"] = provider_model
+with open(config_file, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYRECONCILE_WRITE
+
+  if [ "$_write_rc" -eq 0 ]; then
+    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      printf '[SECURITY] Config hash recomputed after agent identity reconciliation\n' >&2
+    else
+      _write_rc=$?
+    fi
+  fi
+
+  restore_openclaw_config_after_write "$config_file" "$hash_file"
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
 # ── Runtime CORS origin override ──────────────────────────────────
 # Adds a browser origin to gateway.controlUi.allowedOrigins at startup
 # without rebuilding the sandbox image. Useful for custom domains/ports.
@@ -554,14 +667,99 @@ PYCORS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
+# OpenShell provider snapshots can expose revision-scoped placeholders such as
+# openshell:resolve:env:v11_DISCORD_BOT_TOKEN in the child environment. Refresh
+# baked canonical placeholders in openclaw.json after the integrity check so
+# token egress keeps working across provider attach/refresh generations without
+# ever writing a raw credential to disk.
+refresh_openclaw_provider_placeholders() {
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+  [ -f "$config_file" ] || return 0
+
+  local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY"
+  local has_scoped_placeholder=0
+  local key value
+  for key in $keys; do
+    value="${!key:-}"
+    case "$value" in
+      openshell:resolve:env:*) has_scoped_placeholder=1 ;;
+    esac
+  done
+  [ "$has_scoped_placeholder" -eq 1 ] || return 0
+
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing provider placeholder refresh — config or hash path is a symlink\n' >&2
+    return 1
+  fi
+
+  prepare_openclaw_config_for_write "$config_file" "$hash_file"
+  local _write_rc=0
+
+  NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS="$keys" \
+    python3 - "$config_file" <<'PYPLACEHOLDERS' || _write_rc=$?
+import json
+import os
+import sys
+
+config_file = sys.argv[1]
+prefix = "openshell:resolve:env:"
+keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
+replacements = {}
+
+for key in keys:
+    value = os.environ.get(key, "")
+    if value.startswith(prefix):
+        replacements[f"{prefix}{key}"] = value
+
+if not replacements:
+    sys.exit(0)
+
+with open(config_file, encoding="utf-8") as f:
+    config = json.load(f)
+
+def rewrite(value):
+    if isinstance(value, str):
+        for old, new in replacements.items():
+            value = value.replace(old, new)
+        return value
+    if isinstance(value, list):
+        return [rewrite(item) for item in value]
+    if isinstance(value, dict):
+        return {k: rewrite(v) for k, v in value.items()}
+    return value
+
+updated = rewrite(config)
+if updated == config:
+    sys.exit(0)
+
+with open(config_file, "w", encoding="utf-8") as f:
+    json.dump(updated, f, indent=2)
+    f.write("\n")
+
+print("refreshed=" + ",".join(sorted(replacements)))
+PYPLACEHOLDERS
+
+  if [ "$_write_rc" -eq 0 ]; then
+    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      printf '[config] Refreshed provider placeholders from OpenShell runtime env\n' >&2
+    else
+      _write_rc=$?
+    fi
+  fi
+
+  restore_openclaw_config_after_write "$config_file" "$hash_file"
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
 # ── Slack token rewriter (Bolt-shape → canonical placeholder) ────
 # Installs a Node preload that translates the Bolt-compatible placeholder
 # (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR — emitted into openclaw.json by
-# generate-openclaw-config.py — into the canonical openshell:resolve:env:VAR
-# form on outbound HTTP. OpenShell's L7 proxy then substitutes the real
-# token from env on the wire, the same path Discord/Telegram/Brave already
-# take. No real Slack token ever touches openclaw.json, /tmp, or any other
-# disk surface readable by the sandbox uid.
+# generate-openclaw-config.py — into the active openshell:resolve:env:*
+# placeholder on outbound HTTP. OpenShell's L7 proxy then substitutes the
+# real token from env on the wire, the same path Discord/Telegram/Brave
+# already take. No real Slack token ever touches openclaw.json, /tmp, or
+# any other disk surface readable by the sandbox uid.
 #
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2085
 
@@ -578,7 +776,7 @@ install_slack_token_rewriter() {
     return 0
   fi
 
-  printf '[channels] Installing Slack token rewriter (Bolt-shape → canonical)\n' >&2
+  printf '[channels] Installing Slack token rewriter (Bolt-shape → OpenShell placeholder)\n' >&2
 
   emit_sandbox_sourced_file "$_SLACK_REWRITER_SCRIPT" <"$_SLACK_REWRITER_SOURCE"
 
@@ -789,10 +987,13 @@ start_persistent_gateway_log_mirror() {
 start_auto_pair() {
   # Run auto-pair as sandbox user (it talks to the gateway via CLI)
   # SECURITY: Pass resolved openclaw path to prevent PATH hijacking
-  # When running as non-root, skip gosu (we're already the sandbox user)
+  # When running as non-root, skip privilege step-down (we're already
+  # the sandbox user). When root, step down via STEP_DOWN_PREFIX_SANDBOX
+  # which uses setpriv to drop load-bearing caps from the bounding set
+  # atomically with reuid (issue #3280 follow-up).
   local run_prefix=()
   if [ "$(id -u)" -eq 0 ]; then
-    run_prefix=(gosu sandbox)
+    run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
   fi
   OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
@@ -1472,6 +1673,79 @@ migrate_legacy_layout() {
 
   echo "[migration] Completed ${label} layout migration (${data_dir} removed)" >&2
 }
+
+# Seed default OpenClaw workspace template files when the workspace is
+# pristine. OpenClaw normally writes these from bundled templates at first
+# agent boot via ensureAgentWorkspace(), but when
+# `agents.defaults.skipBootstrap=true` (set by NemoClaw to suppress the
+# interactive identity-setup turn) that path short-circuits before any
+# template is written, leaving /sandbox/.openclaw/workspace/ empty.
+# Reuse OpenClaw's own bundled templates so seeded content matches what
+# upstream would have produced. BOOTSTRAP.md is intentionally excluded —
+# its presence is what triggers the interactive turn we are skipping.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/3240
+seed_default_workspace_templates() {
+  local workspace_dir="${1:-/sandbox/.openclaw/workspace}"
+  local templates_dir="${2:-}"
+  local config_file="${3:-/sandbox/.openclaw/openclaw.json}"
+
+  if [ ! -f "$config_file" ]; then
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! node - "$config_file" <<'NODE' >/dev/null 2>&1; then
+const fs = require("fs");
+const configPath = process.argv[2];
+const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+process.exit(cfg?.agents?.defaults?.skipBootstrap === true ? 0 : 1);
+NODE
+    return 0
+  fi
+
+  [ -e "$workspace_dir" ] || return 0
+  if [ -L "$workspace_dir" ]; then
+    echo "[SECURITY] refusing to seed symlinked workspace dir: $workspace_dir" >&2
+    return 0
+  fi
+  [ -d "$workspace_dir" ] || return 0
+  # Only seed pristine workspaces — never clobber user content.
+  if [ -n "$(ls -A "$workspace_dir" 2>/dev/null)" ]; then
+    return 0
+  fi
+  if [ -z "$templates_dir" ]; then
+    local npm_root
+    npm_root="$(npm root -g 2>/dev/null)" || return 0
+    [ -n "$npm_root" ] || return 0
+    templates_dir="${npm_root}/openclaw/dist/docs/reference/templates"
+  fi
+  if [ ! -d "$templates_dir" ]; then
+    echo "[setup] openclaw templates dir not found at ${templates_dir}; skipping workspace seed" >&2
+    return 0
+  fi
+  local file src dst tmp seeded=0
+  for file in AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md; do
+    src="$templates_dir/$file"
+    dst="$workspace_dir/$file"
+    if [ -f "$src" ] && [ ! -e "$dst" ]; then
+      tmp="${dst}.tmp.$$"
+      if awk '
+        NR == 1 && $0 == "---" { in_frontmatter = 1; next }
+        in_frontmatter && $0 == "---" { in_frontmatter = 0; next }
+        !in_frontmatter { print }
+      ' "$src" >"$tmp" 2>/dev/null && mv "$tmp" "$dst" 2>/dev/null; then
+        seeded=$((seeded + 1))
+      else
+        rm -f "$tmp" 2>/dev/null || true
+      fi
+    fi
+  done
+  if [ "$seeded" -gt 0 ]; then
+    echo "[setup] seeded ${seeded} default workspace template(s) into ${workspace_dir}" >&2
+  fi
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # Migrate legacy symlink layout before anything else reads .openclaw
@@ -1499,7 +1773,10 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
   normalize_mutable_config_perms
   apply_model_override
+  reconcile_agent_model_with_provider
   apply_cors_override
+  refresh_openclaw_provider_placeholders
+  ensure_mutable_openclaw_config_hash
   export_gateway_token
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
@@ -1536,6 +1813,7 @@ if [ "$(id -u)" -ne 0 ]; then
   }
   fix_openclaw_ownership
   normalize_mutable_config_perms
+  seed_default_workspace_templates /sandbox/.openclaw/workspace "" /sandbox/.openclaw/openclaw.json
   write_auth_profile
   harden_auth_profiles
 
@@ -1583,14 +1861,17 @@ if [ "$(id -u)" -ne 0 ]; then
   exit $?
 fi
 
-# ── Root path (full privilege separation via gosu) ─────────────
+# ── Root path (full privilege separation via setpriv) ──────────
 
 # Verify locked config integrity before starting anything. Mutable-default
 # config is intentionally writable and is not a trust anchor until shields-up.
 verify_config_integrity_if_locked /sandbox/.openclaw
 normalize_mutable_config_perms
 apply_model_override
+reconcile_agent_model_with_provider
 apply_cors_override
+refresh_openclaw_provider_placeholders
+ensure_mutable_openclaw_config_hash
 export_gateway_token
 write_runtime_shell_env
 ensure_runtime_shell_env_shim
@@ -1607,11 +1888,11 @@ verify_no_slack_secrets_on_disk
 
 # Write auth profile as sandbox user and recursively re-tighten any
 # auth-profiles.json files under ~/.openclaw.
-gosu sandbox bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
+"${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
-  exec gosu sandbox "${NEMOCLAW_CMD[@]}"
+  exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
 fi
 
 # Gateway log: owned by gateway user, world-readable for diagnostics.
@@ -1707,6 +1988,12 @@ NODE
 }
 provision_agent_workspaces
 
+# Seed default workspace templates if the default workspace is empty.
+# Run as the sandbox user so the seeded files inherit sandbox:sandbox
+# ownership (the function's own cp calls would otherwise produce
+# root-owned files in this branch). See function comment for context.
+gosu sandbox bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json"
+
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
@@ -1717,7 +2004,7 @@ validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
-nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
+nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 

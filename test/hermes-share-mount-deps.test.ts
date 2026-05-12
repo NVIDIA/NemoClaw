@@ -35,7 +35,7 @@ function runLoggedShell(command: string, tmp: string) {
 }
 
 describe("Hermes share mount package parity (#2947)", () => {
-  it("requests gnupg, procps, and openssh-sftp-server from the Hermes base apt layer", () => {
+  it("requests gnupg, procps, e2fsprogs, and openssh-sftp-server from the Hermes base apt layer", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-share-apt-"));
     const lists = path.join(tmp, "apt-lists");
@@ -50,9 +50,10 @@ describe("Hermes share mount package parity (#2947)", () => {
 
       expect(result.status).toBe(0);
       expect(calls).toContain("apt-get update");
-      expect(calls).toContain("gnupg=2.2.40-1.1+deb12u2");
-      expect(calls).toContain("procps=2:4.0.2-3");
-      expect(calls).toContain("openssh-sftp-server=1:9.2p1-2+deb12u9");
+      expect(calls).toContain("gnupg=2.4.7-21+deb13u1");
+      expect(calls).toContain("procps=2:4.0.4-9");
+      expect(calls).toContain("e2fsprogs=1.47.2-3+b10");
+      expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u2");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

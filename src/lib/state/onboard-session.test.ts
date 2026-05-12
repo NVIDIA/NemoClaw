@@ -211,6 +211,28 @@ describe("onboard session", () => {
     expect(loaded.provider).toBe("openai");
   });
 
+  it("only persists known Hermes auth methods", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      provider: "hermes-provider",
+      hermesAuthMethod: "oauth",
+    });
+    let loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.hermesAuthMethod).toBe("oauth");
+
+    session.markStepComplete("provider_selection", {
+      hermesAuthMethod: "not-a-real-method" as never,
+    });
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.hermesAuthMethod).toBe("oauth");
+
+    session.markStepComplete("provider_selection", {
+      hermesAuthMethod: null,
+    });
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.hermesAuthMethod).toBeNull();
+  });
+
   it("accepts null as an explicit clear for every nullable string field", () => {
     // All six nullable fields that travel through filterSafeUpdates must
     // support the null-clear contract. If any regresses to the old

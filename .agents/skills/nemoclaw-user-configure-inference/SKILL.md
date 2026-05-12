@@ -53,6 +53,8 @@ When NemoClaw runs inside WSL, the provider menu can include Windows-host Ollama
 - **Install Ollama on Windows host** when Windows does not have Ollama installed.
 
 The install and restart paths set `OLLAMA_HOST=0.0.0.0:11434` on the Windows side so Docker and WSL can reach the daemon through `host.docker.internal`.
+After an install or restart action, NemoClaw relaunches Ollama from the detected Windows tray app or verified `ollama.exe` path and waits until `host.docker.internal:11434` responds.
+If the daemon does not become reachable, onboarding prints PowerShell commands you can run to inspect the Windows-side process and port state.
 Use one Ollama instance on port `11434` at a time.
 If both WSL and Windows-host Ollama are running, pick the intended menu entry during onboarding so NemoClaw validates and pulls models against the right daemon.
 
@@ -273,11 +275,14 @@ $ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
 
 Select **Local NVIDIA NIM [experimental]** from the provider list.
 NemoClaw filters available models by GPU VRAM, pulls the NIM container image, starts it, and waits for it to become healthy before continuing.
+On hosts with mixed NVIDIA GPU models, the preflight summary shows each detected GPU model and the total VRAM so you can confirm which device class the model selection used.
 
 NIM container images are hosted on `nvcr.io` and require NGC registry authentication before `docker pull` succeeds.
 If Docker is not already logged in to `nvcr.io`, onboard prompts for an [NGC API key](https://org.ngc.nvidia.com/setup/api-key) and runs `docker login nvcr.io` over `--password-stdin` so the key is never written to disk or shell history.
 The prompt masks the key during input and retries once on a bad key before failing.
 In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run `docker login nvcr.io` yourself, then re-run `nemoclaw onboard --non-interactive`.
+If `NGC_API_KEY` or `NVIDIA_API_KEY` is already exported, NemoClaw passes it into the managed NIM container through the process environment instead of command-line arguments.
+If the NIM container exits before the health endpoint becomes ready, onboarding stops early and prints the last container log lines.
 
 > **Note:** NIM uses vLLM internally.
 > The same `chat/completions` API path restriction applies.
@@ -326,10 +331,10 @@ Refer to Switch Inference Models (use the `nemoclaw-user-configure-inference` sk
 For compatible endpoints, the command is:
 
 ```console
-$ openshell inference set --provider compatible-endpoint --model <model-name>
+$ nemoclaw inference set --provider compatible-endpoint --model <model-name>
 ```
 
-If the provider itself needs to change (for example, switching from vLLM to a cloud API), rerun `nemoclaw onboard`.
+If the provider itself needs to change (for example, switching from vLLM to a cloud API), pass the new provider to `nemoclaw inference set`.
 
 ## References
 

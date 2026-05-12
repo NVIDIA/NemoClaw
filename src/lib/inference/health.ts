@@ -11,8 +11,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { CurlProbeResult } from "../http-probe";
-import { runCurlProbe } from "../http-probe";
+import type { CurlProbeResult } from "../adapters/http/probe";
+import { runCurlProbe } from "../adapters/http/probe";
 import { normalizeCredentialValue, resolveProviderCredential } from "../credentials/store";
 import { getProviderSelectionConfig } from "./config";
 import type { LocalProviderHealthProbeOptions } from "./local";

@@ -246,14 +246,14 @@ NEMOCLAW_MODULE_DIR="$(node -e "
     if (m) {
       const nodeDir = path.dirname(path.dirname(m[1]));
       const candidate = path.join(nodeDir, 'lib/node_modules/nemoclaw');
-      if (fs.existsSync(path.join(candidate, 'dist/lib/policies.js'))) {
+      if (fs.existsSync(path.join(candidate, 'dist/lib/policy/index.js'))) {
         console.log(candidate);
         process.exit(0);
       }
     }
     // Last resort: relative to the repo root
     const repoCandidate = '${REPO_ROOT}';
-    if (fs.existsSync(path.join(repoCandidate, 'dist/lib/policies.js'))) {
+    if (fs.existsSync(path.join(repoCandidate, 'dist/lib/policy/index.js'))) {
       console.log(repoCandidate);
       process.exit(0);
     }
@@ -266,7 +266,7 @@ diag "NemoClaw module dir: ${NEMOCLAW_MODULE_DIR}"
 for preset in npm pypi; do
   info "  Applying preset: ${preset}"
   node -e "
-    const policies = require('${NEMOCLAW_MODULE_DIR}/dist/lib/policies.js');
+    const policies = require('${NEMOCLAW_MODULE_DIR}/dist/lib/policy/index.js');
     const ok = policies.applyPreset('${SANDBOX_NAME}', '${preset}');
     if (!ok) { console.error('applyPreset returned false for ${preset}'); process.exit(1); }
   " || fail "Failed to apply preset: ${preset}"

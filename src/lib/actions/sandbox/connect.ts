@@ -27,7 +27,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
-import * as sandboxVersion from "../../sandbox-version";
+import * as sandboxVersion from "../../sandbox/version";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 

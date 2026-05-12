@@ -4,7 +4,7 @@
 import { Command, Flags } from "@oclif/core";
 
 import { CLI_NAME } from "../../../cli/branding";
-import * as sandboxConfig from "../../../sandbox-config";
+import * as sandboxConfig from "../../../sandbox/config";
 import { sandboxNameArg } from "../common";
 
 export default class SandboxConfigGetCommand extends Command {

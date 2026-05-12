@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { listChannels } from "./sandbox-channels";
+import { listChannels } from "./sandbox/channels";
 
 export type MessagingChannelConfig = Record<string, string>;
 

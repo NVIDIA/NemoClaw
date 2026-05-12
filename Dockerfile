@@ -12,7 +12,7 @@
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
 # Stage 1: Build TypeScript plugin from source
-FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d AS builder
+FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false
@@ -26,22 +26,32 @@ RUN npm ci && npm run build
 FROM ${BASE_IMAGE}
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
-# Protect procps before autoremove — the GHCR base may predate the procps
-# addition, leaving it absent or auto-marked. apt-mark + conditional install
-# guarantees ps/top/kill are present regardless of base image staleness.
-# Ref: #2343
+# Protect runtime tools before autoremove — the GHCR base may predate the
+# procps/e2fsprogs additions, leaving ps/chattr absent or auto-marked. The
+# conditional install keeps stale bases usable while fresh bases skip apt.
+# Refs: #2343, shields-up chattr hardening
 # hadolint ignore=DL3001
-RUN apt-mark manual procps 2>/dev/null || true \
-    && (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
-        netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
-    && apt-get autoremove --purge -y \
-    && if ! command -v ps >/dev/null 2>&1; then \
-        apt-get update && apt-get install -y --no-install-recommends procps=2:4.0.2-3 \
-        && rm -rf /var/lib/apt/lists/*; \
-    else \
-        rm -rf /var/lib/apt/lists/*; \
-    fi \
-    && ps --version
+RUN set -eu; \
+    apt-mark manual procps e2fsprogs 2>/dev/null || true; \
+    (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
+        netcat-openbsd netcat-traditional ncat 2>/dev/null || true); \
+    apt-get autoremove --purge -y; \
+    needs_ps=0; \
+    needs_chattr=0; \
+    if ! command -v ps >/dev/null 2>&1; then needs_ps=1; fi; \
+    if ! command -v chattr >/dev/null 2>&1; then needs_chattr=1; fi; \
+    if [ "$needs_ps" = "1" ] || [ "$needs_chattr" = "1" ]; then \
+        apt-get update; \
+        if [ "$needs_ps" = "1" ]; then \
+            apt-get install -y --no-install-recommends procps=2:4.0.4-9; \
+        fi; \
+        if [ "$needs_chattr" = "1" ]; then \
+            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b10; \
+        fi; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*; \
+    ps --version; \
+    command -v chattr >/dev/null
 
 
 # Copy built plugin and blueprint into the sandbox

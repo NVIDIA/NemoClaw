@@ -188,10 +188,29 @@ reviews:
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
           isolation
         - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
+        - `openshell-gateway-upgrade-e2e` — stale Linux Docker-driver gateway
+          process restart after OpenShell upgrade
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e,hermes-slack-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e
+        ```
+
+    - path: "src/lib/actions/inference-set.ts"
+      instructions: |
+        This file switches the OpenShell inference route and patches the
+        selected running agent config. Changes here affect OpenClaw and
+        Hermes model switching without a sandbox rebuild.
+
+        **E2E test recommendation:**
+        - `openclaw-inference-switch-e2e` — OpenClaw route + config patch
+          + live OpenClaw request after switch
+        - `hermes-inference-switch-e2e` — Hermes route + config.yaml patch
+          + live Hermes request after switch
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-inference-switch-e2e,hermes-inference-switch-e2e
         ```
 
     - path: "src/nemoclaw.ts"
@@ -224,7 +243,7 @@ reviews:
     - path: "src/lib/onboard/preflight.ts"
       instructions: *e2e-overlayfs
 
-    - path: "src/lib/deploy.ts"
+    - path: "src/lib/deploy/**"
       instructions: |
         This file contains deployment lifecycle logic (start/stop,
         cloudflared tunnel, uninstall).
@@ -272,6 +291,8 @@ reviews:
 
         **E2E test recommendation:**
         - `hermes-e2e` — Hermes onboard + health probe + live inference
+        - `hermes-inference-switch-e2e` — Hermes route + config.yaml patch
+          + live Hermes request after switch
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
           isolation
         - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
@@ -280,7 +301,7 @@ reviews:
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-discord-e2e,hermes-slack-e2e,rebuild-hermes-e2e,rebuild-hermes-stale-base-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-inference-switch-e2e,hermes-discord-e2e,hermes-slack-e2e,rebuild-hermes-e2e,rebuild-hermes-stale-base-e2e
         ```
 
     - path: "test/e2e/test-hermes-slack-e2e.sh"
@@ -355,6 +376,38 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-inference-e2e
         ```
 
+    - path: "test/e2e/test-openclaw-inference-switch.sh"
+      instructions: |
+        This script validates OpenClaw model/provider switching with
+        `nemoclaw inference set`, including OpenShell route state,
+        /sandbox/.openclaw/openclaw.json, config hash recomputation, and
+        live requests after the switch.
+
+        **E2E test recommendation:**
+        - `openclaw-inference-switch-e2e` — OpenClaw route + config patch
+          + live OpenClaw request after switch
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-inference-switch-e2e
+        ```
+
+    - path: "test/e2e/test-hermes-inference-switch.sh"
+      instructions: |
+        This script validates Hermes model/provider switching with
+        `nemohermes inference set`, including OpenShell route state,
+        /sandbox/.hermes/config.yaml, config hash recomputation, .env
+        preservation, and live requests after the switch.
+
+        **E2E test recommendation:**
+        - `hermes-inference-switch-e2e` — Hermes route + config.yaml patch
+          + live Hermes request after switch
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-inference-switch-e2e
+        ```
+
     - path: "test/e2e/test-skill-agent-e2e.sh"
       instructions: &e2e-skill-agent |
         This script tests skill injection into the sandbox and verifies
@@ -424,6 +477,38 @@ reviews:
 
     - path: "nemoclaw-blueprint/openclaw-plugins/kimi-inference-compat/**"
       instructions: *e2e-kimi-inference-compat
+
+    - path: "test/e2e/test-openshell-gateway-upgrade.sh"
+      instructions: |
+        This script validates the old OpenShell install upgrade guard for
+        Linux Docker-driver gateway processes.
+
+        **E2E test recommendation:**
+        - `openshell-gateway-upgrade-e2e` — stale gateway process restart after
+          OpenShell upgrade
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openshell-gateway-upgrade-e2e
+        ```
+
+    - path: "test/e2e/test-gateway-health-honest.sh"
+      instructions: |
+        This script is the coverage guard for #3111. It sabotages the
+        openshell-gateway binary with a shim that crashes on startup and
+        asserts onboard does NOT falsely log "Docker-driver gateway is
+        healthy" and does exit non-zero. Exercises the NemoClaw-side
+        false-positive (detached-zombie isPidAlive + metadata-only
+        isGatewayHealthy) regardless of OpenShell packaging choices.
+
+        **E2E test recommendation:**
+        - `gateway-health-honest-e2e` — false-positive health check when
+          the gateway binary crashes on startup (#3111)
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=gateway-health-honest-e2e
+        ```
 
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |

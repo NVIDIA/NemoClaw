@@ -225,10 +225,27 @@ test_state_02_backup_restore() {
   log "  Backup dir: $backup_dir"
 
   log "  Step 3: Destroying sandbox..."
-  nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tee -a "$LOG_FILE" || true
+  local destroy_ok=0
+  for destroy_attempt in 1 2 3; do
+    nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tee -a "$LOG_FILE" || true
+    local list_output list_rc=0
+    list_output=$(nemoclaw list 2>&1) || list_rc=$?
+    if [[ $list_rc -eq 0 ]]; then
+      if ! printf '%s\n' "$list_output" | grep -Fq -- "$SANDBOX_NAME"; then
+        destroy_ok=1
+        break
+      fi
+    else
+      log "  Destroy attempt $destroy_attempt: unable to read sandbox list (exit $list_rc), retrying..."
+    fi
+    if [[ $destroy_attempt -lt 3 ]]; then
+      log "  Destroy attempt $destroy_attempt failed (sandbox still listed), retrying in 10s..."
+      sleep 10
+    fi
+  done
 
-  if nemoclaw list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
-    fail "TC-STATE-02: Destroy" "Sandbox still exists after destroy"
+  if [[ $destroy_ok -eq 0 ]]; then
+    fail "TC-STATE-02: Destroy" "Sandbox still exists after 3 destroy attempts"
     return
   fi
   pass "TC-STATE-02: Sandbox destroyed"
