@@ -1099,6 +1099,7 @@ These flags toggle optional behaviors during onboarding; set them before running
 | Variable | Format | Effect |
 |----------|--------|--------|
 | `NEMOCLAW_YES` | `1` to enable | Auto-accepts confirmation prompts (`--yes` equivalent) including in helpers like the Ollama proxy auth setup. |
+| `NEMOCLAW_NO_EXPRESS` | `1` to enable | Installer-only. Skips the DGX Spark and DGX Station express install prompt and continues with the normal interactive onboarding flow. |
 | `NEMOCLAW_EXPERIMENTAL` | `1` to enable | Surfaces experimental providers and flows in onboarding. |
 | `NEMOCLAW_IGNORE_RUNTIME_RESOURCES` | `1` to enable | Suppresses the under-provisioned runtime warning during preflight. Use only when you know the sandbox host meets the minimums. |
 | `NEMOCLAW_DISABLE_OVERLAY_FIX` | `1` to enable | Skips the Docker overlay-fix step during sandbox build. For environments where the fix is incompatible. |

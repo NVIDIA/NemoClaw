@@ -51,8 +51,17 @@ Adjust the value via the `--ulimit nproc=512:512` flag if launching with
 
 ## Dropping Linux Capabilities
 
-When running the sandbox container, drop all Linux capabilities and re-add only
-what is strictly required:
+The NemoClaw entrypoint drops dangerous capabilities from the process bounding
+set before it starts agent services.
+It removes `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_NET_RAW`,
+`CAP_DAC_OVERRIDE`, `CAP_SYS_CHROOT`, `CAP_FSETID`, `CAP_SETFCAP`,
+`CAP_MKNOD`, `CAP_AUDIT_WRITE`, and `CAP_NET_BIND_SERVICE`.
+When `setpriv` is available, the entrypoint also removes the remaining
+privilege-separation capabilities during the switch from root to the
+`sandbox` and `gateway` users.
+
+For defense-in-depth, also drop all Linux capabilities at the container runtime
+when you launch the image directly:
 
 ```console
 $ docker run --rm \
