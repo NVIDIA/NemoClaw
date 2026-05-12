@@ -229,8 +229,14 @@ lock_openclaw_config_baseline_if_present() {
     return 0
   fi
 
-  chown root:sandbox "$baseline_file" 2>/dev/null || true
-  chmod 0440 "$baseline_file" 2>/dev/null || true
+  if ! chown root:sandbox "$baseline_file"; then
+    printf '[SECURITY] Failed to set ownership on %s\n' "$baseline_file" >&2
+    return 1
+  fi
+  if ! chmod 0440 "$baseline_file"; then
+    printf '[SECURITY] Failed to set permissions on %s\n' "$baseline_file" >&2
+    return 1
+  fi
 }
 
 # Idempotent. Skips when shields are UP (config dir owned by root) so
@@ -251,7 +257,7 @@ normalize_mutable_config_perms() {
   find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
   chmod 2770 "$config_dir" 2>/dev/null || true
   chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
-  lock_openclaw_config_baseline_if_present "$config_dir"
+  lock_openclaw_config_baseline_if_present "$config_dir" || return 1
 }
 
 openclaw_config_dir_owner() {
@@ -387,7 +393,7 @@ write_openclaw_config_baseline() {
   # baseline because mutable permission normalization is intentionally broad.
   if [ -f "$baseline_file" ]; then
     lock_openclaw_config_baseline_if_present "$config_dir"
-    return 0
+    return $?
   fi
 
   # Skip in shields-up mode — config is supposed to be locked, baseline
@@ -409,31 +415,87 @@ write_openclaw_config_baseline() {
   # JSON5.parse / parseJsonWithJson5Fallback, and migration-state.ts uses
   # JSON5.parse — so use the real JSON5 parser instead of approximating the
   # grammar with regexes.
-  if ! node - "$config_file" 2>/dev/null <<'NODE_VALIDATE'; then
+  local _json5_rc=0
+  node - "$config_file" <<'NODE_VALIDATE' || _json5_rc=$?
   const fs = require("fs");
+  const path = require("path");
+  const { execFileSync } = require("child_process");
 
+  const configPath = process.argv[2];
+
+  function addResolved(candidates, specifier, roots) {
+    for (const root of roots) {
+      if (!root) continue;
+      try {
+        candidates.push(require.resolve(specifier, { paths: [root] }));
+      } catch {
+        // Try the next root.
+      }
+    }
+  }
+
+  function addExisting(candidates, candidatePath) {
+    if (candidatePath && fs.existsSync(candidatePath)) {
+      candidates.push(candidatePath);
+    }
+  }
+
+  const candidates = [];
+  const repoPluginRoot = path.resolve(process.cwd(), "nemoclaw");
+  addResolved(candidates, "json5", ["/opt/nemoclaw", repoPluginRoot, process.cwd()]);
+  addExisting(candidates, "/opt/nemoclaw/node_modules/json5");
+  addExisting(candidates, path.join(repoPluginRoot, "node_modules", "json5"));
+
+  try {
+    const globalRoot = execFileSync("npm", ["root", "-g"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    addResolved(candidates, "json5", [globalRoot]);
+    addExisting(candidates, path.join(globalRoot, "json5"));
+    addExisting(candidates, path.join(globalRoot, "openclaw", "node_modules", "json5"));
+  } catch {
+    // npm may be absent in minimal runtimes; packaged /opt/nemoclaw remains primary.
+  }
+
+  const attempted = [];
   let JSON5;
-  for (const candidate of [
-    "/opt/nemoclaw/node_modules/json5",
-    "./nemoclaw/node_modules/json5",
-    "json5",
-  ]) {
+  for (const candidate of [...new Set(candidates)]) {
     try {
       JSON5 = require(candidate);
-      break;
+      if (JSON5 && typeof JSON5.parse === "function") {
+        break;
+      }
+      attempted.push(`${candidate}: missing parse()`);
+      JSON5 = undefined;
     } catch {
-      // Try the next runtime location.
+      attempted.push(candidate);
     }
   }
 
   if (!JSON5) {
-    process.exit(1);
+    console.error(
+      `[config] ERROR: unable to load JSON5 parser for baseline validation. Tried: ${
+        attempted.length ? attempted.join(", ") : "(no candidate module paths found)"
+      }`,
+    );
+    process.exit(2);
   }
 
-  JSON5.parse(fs.readFileSync(process.argv[2], "utf8"));
+  try {
+    JSON5.parse(fs.readFileSync(configPath, "utf8"));
+  } catch {
+    process.exit(3);
+  }
 NODE_VALIDATE
-    return 0
-  fi
+  case "$_json5_rc" in
+    0) ;;
+    3) return 0 ;;
+    *)
+      printf '[config] ERROR: JSON5 baseline validator failed for %s\n' "$config_file" >&2
+      return 1
+      ;;
+  esac
 
   if ! cp "$config_file" "$baseline_file" 2>/dev/null; then
     return 0
@@ -441,7 +503,7 @@ NODE_VALIDATE
   # 0440 root:sandbox so the gateway/sandbox user can READ for recovery but
   # cannot truncate or rewrite the baseline through the same path that
   # corrupts the active config.
-  lock_openclaw_config_baseline_if_present "$config_dir"
+  lock_openclaw_config_baseline_if_present "$config_dir" || return 1
   printf '[config] Baseline snapshot created: %s\n' "$baseline_file" >&2
 }
 
