@@ -226,12 +226,13 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.telegram.groups).toBeUndefined();
   });
 
-  it("adds channels.openclaw-weixin.accounts.<id>.enabled via the chained seed step", () => {
-    // generate-openclaw-config.py now invokes seed-wechat-accounts.py as a
-    // subprocess at the end of main(). The chicken-and-egg with `openclaw
-    // plugins install` is gone (the plugin is pre-installed in
-    // Dockerfile.base), so the seed step is free to register the channel
-    // block straight into the openclaw.json we just produced.
+  it("does not write channels.openclaw-weixin from generate-openclaw-config (Dockerfile seed runs separately)", () => {
+    // Commit a21e123 reverted the chained seed: generate-openclaw-config.py
+    // intentionally leaves channels.openclaw-weixin unset, even when a
+    // wechatConfig is provided. The Dockerfile invokes
+    // seed-wechat-accounts.py separately, AFTER `openclaw plugins install`
+    // registers the openclaw-weixin channel id. Writing the channel block
+    // here would trigger "unknown channel id: openclaw-weixin" on install.
     const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
     const wechatConfig = Buffer.from(
       JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
@@ -240,7 +241,7 @@ describe("generate-openclaw-config.py: config generation", () => {
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
       NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
     });
-    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary?.enabled).toBe(true);
+    expect(config.channels?.["openclaw-weixin"]).toBeUndefined();
     // The "wechat" alias is the NemoClaw channel name, not an OpenClaw
     // channel id — must never appear under channels.
     expect(config.channels?.wechat).toBeUndefined();

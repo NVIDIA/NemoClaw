@@ -241,15 +241,18 @@ describe("policies", () => {
       expect(hosts).toEqual(["api.telegram.org"]);
     });
 
-    it("extracts both *.wechat.com and *.weixin.qq.com from wechat preset", () => {
-      // The upstream @tencent-weixin/openclaw-weixin plugin reaches the iLink
-      // gateway under *.wechat.com (e.g. ilinkai.wechat.com) and may also
-      // call into *.weixin.qq.com for account flows. Both wildcards are
-      // load-bearing — dropping either breaks the bridge on IDC rotation.
+    it("extracts the explicit iLink hosts from wechat preset", () => {
+      // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
+      // runtime, so the preset lists each known iLink IDC host explicitly.
+      // Both hosts are load-bearing today — `ilinkai.weixin.qq.com` is the
+      // bootstrap (hard-coded in src/ext/wechat/qr.ts), `ilinkai.wechat.com`
+      // is the per-account baseUrl returned after QR confirm. Additional
+      // IDC hosts may need to be added when operators observe new
+      // `DENIED ... -> <host>:443` lines in OCSF logs.
       const content = requirePresetContent(policies.loadPreset("wechat"));
       const hosts = policies.getPresetEndpoints(content);
-      expect(hosts).toContain("*.wechat.com");
-      expect(hosts).toContain("*.weixin.qq.com");
+      expect(hosts).toContain("ilinkai.weixin.qq.com");
+      expect(hosts).toContain("ilinkai.wechat.com");
     });
 
     it("every preset has at least one endpoint", () => {
@@ -1088,14 +1091,14 @@ exit 1
       expect(content).not.toMatch(/host:\s*api\.telegram\.org[\s\S]*?tls:/);
     });
 
-    it("wechat REST preset enforces both wildcard hosts on port 443 with allow GET/POST", () => {
-      // We can't pin a single subdomain on either TLD because per-account
-      // baseUrls rotate behind WeChat's IDC redirects, but the proxy must
-      // still see protocol/enforcement/method allowlists on each entry —
-      // dropping any of those silently widens egress past what the preset
-      // documents.
+    it("wechat REST preset enumerates explicit iLink hosts on port 443 with allow GET/POST", () => {
+      // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
+      // runtime, so each iLink IDC host the upstream plugin can hit must be
+      // listed explicitly. The proxy must still see
+      // protocol/enforcement/method allowlists on each entry — dropping any
+      // of those silently widens egress past what the preset documents.
       const content = requirePresetContent(policies.loadPreset("wechat"));
-      for (const host of [String.raw`\*\.wechat\.com`, String.raw`\*\.weixin\.qq\.com`]) {
+      for (const host of ["ilinkai\\.weixin\\.qq\\.com", "ilinkai\\.wechat\\.com"]) {
         expect(content).toMatch(
           new RegExp(
             `host:\\s*"?${host}"?[\\s\\S]*?port:\\s*443[\\s\\S]*?protocol:\\s*rest[\\s\\S]*?enforcement:\\s*enforce`,

@@ -5150,7 +5150,19 @@ async function createSandbox(
   // Credentials stay in the keychain; the bridge simply isn't registered with
   // the gateway on the next rebuild. `channels start` removes the entry and
   // the bridge comes back.
-  const disabledChannels = registry.getDisabledChannels(sandboxName);
+  //
+  // Prefer the session value over the registry: rebuild stashes
+  // disabledChannels onto the session (see actions/sandbox/rebuild.ts) and
+  // the drift-recreate paths below (around line 10640) call
+  // registry.removeSandbox before this read fires, leaving the registry
+  // entry empty mid-rebuild. The session is the durable carrier.
+  const sessionForDisabledChannels = onboardSession.loadSession();
+  const sessionDisabledChannels =
+    sessionForDisabledChannels?.sandboxName === sandboxName &&
+    Array.isArray(sessionForDisabledChannels.disabledChannels)
+      ? sessionForDisabledChannels.disabledChannels
+      : null;
+  const disabledChannels = sessionDisabledChannels ?? registry.getDisabledChannels(sandboxName);
   const disabledEnvKeys = new Set(
     MESSAGING_CHANNELS.filter((c) => disabledChannels.includes(c.name)).flatMap((c) =>
       c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey],
@@ -6145,6 +6157,15 @@ async function createSandbox(
     dashboardPort: actualDashboardPort,
   });
   registry.setDefault(sandboxName);
+  // The disabledChannels carry-across (set by rebuildSandbox) has now landed
+  // in the registry alongside the rest of the new entry. Clear it from the
+  // session so a future unrelated onboard does not inherit a stale value.
+  if (sessionDisabledChannels !== null) {
+    onboardSession.updateSession((s) => {
+      s.disabledChannels = null;
+      return s;
+    });
+  }
 
   // Restore workspace state if we backed it up during credential rotation or
   // before a breaking OpenShell gateway upgrade.

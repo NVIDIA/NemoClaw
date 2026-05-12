@@ -40,25 +40,6 @@ export function buildMessagingEnvLines(
     envLines.push(`SLACK_ALLOWED_USERS=${allowedIds.slack.map(String).join(",")}`);
   }
 
-  if (enabledChannels.has("wechat")) {
-    if (allowedIds.wechat?.length) {
-      envLines.push(`WECHAT_ALLOWED_USERS=${allowedIds.wechat.map(String).join(",")}`);
-    }
-    // WeChat per-account metadata is non-secret; emit literal values rather
-    // than openshell:resolve:env: placeholders so the in-sandbox wrapper
-    // plugin can read them directly without going through the credentials
-    // gateway. The bot token (WECHAT_BOT_TOKEN above) stays a placeholder.
-    if (wechatConfig.accountId) {
-      envLines.push(`WECHAT_ACCOUNT_ID=${wechatConfig.accountId}`);
-    }
-    if (wechatConfig.baseUrl) {
-      envLines.push(`WECHAT_BASE_URL=${wechatConfig.baseUrl}`);
-    }
-    if (wechatConfig.userId) {
-      envLines.push(`WECHAT_USER_ID=${wechatConfig.userId}`);
-    }
-  }
-
   return envLines;
 }
 
