@@ -304,6 +304,11 @@ ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
 # so each image gets a fresh gateway auth token.
 # Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
 ARG NEMOCLAW_BUILD_ID=default
+# macOS OpenShell VM backend imports the Docker image into a virtiofs rootfs
+# where image uid/gid ownership is presented as the host user. The VM also
+# starts NemoClaw as the non-root sandbox user, so uid-owned 770/660 paths
+# become unreadable unless this Darwin-only compatibility mode is enabled.
+ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 # Sandbox egress proxy host/port. Defaults match the OpenShell-injected
 # gateway (10.200.0.1:3128). Operators on non-default networks can override
 # at sandbox creation time by exporting NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT
@@ -591,6 +596,21 @@ RUN chown root:root /sandbox/.nemoclaw \
     && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
     && touch /sandbox/.nemoclaw/config.json \
     && chown sandbox:sandbox /sandbox/.nemoclaw/config.json
+
+# OpenShell 0.0.37's macOS VM backend currently remaps rootfs ownership to the
+# host uid/gid inside the guest, while the entrypoint runs as non-root sandbox.
+# Enable this only for Darwin VM builds so Linux Docker-driver sandboxes keep
+# the tighter group-only mutable-default permissions.
+RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
+        chmod -R a+rwX /sandbox/.openclaw; \
+        find /sandbox/.openclaw -type d -exec chmod a+rwx {} +; \
+        chmod a+rw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash; \
+        for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
+            chmod -R a+rwX "$p"; \
+            find "$p" -type d -exec chmod a+rwx {} +; \
+        done; \
+        chmod a+rw /sandbox/.nemoclaw/config.json; \
+    fi
 
 # Entrypoint runs as root to start the gateway as the gateway user,
 # then drops to sandbox for agent commands. See nemoclaw-start.sh.

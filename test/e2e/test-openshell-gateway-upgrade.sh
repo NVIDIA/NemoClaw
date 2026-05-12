@@ -208,6 +208,102 @@ EOF
   pass "macOS OpenShell 0.0.37 incomplete install fetches Darwin gateway and VM driver assets"
 }
 
+exercise_macos_vm_driver_entitlement_repair() {
+  local tmp fake_bin state_file sign_log install_out install_err
+  tmp="$(mktemp -d)"
+  fake_bin="$tmp/bin"
+  state_file="$tmp/codesign-state"
+  sign_log="$tmp/codesign.log"
+  install_out="$tmp/install.out"
+  install_err="$tmp/install.err"
+  mkdir -p "$fake_bin"
+
+  cat >"$fake_bin/uname" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-m" ]; then
+  printf 'arm64\n'
+else
+  printf 'Darwin\n'
+fi
+EOF
+
+  cat >"$fake_bin/openshell" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  printf 'openshell 0.0.37\n'
+  exit 0
+fi
+exit 99
+EOF
+
+  cat >"$fake_bin/openshell-gateway" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat >"$fake_bin/openshell-driver-vm" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat >"$fake_bin/codesign" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-d" ]; then
+  if [ -f "$NEMOCLAW_FAKE_CODESIGN_STATE" ]; then
+    printf '%s\n' '<plist version="1.0"><dict><key>com.apple.security.hypervisor</key><true/></dict></plist>'
+  fi
+  exit 0
+fi
+printf '%s\n' "$*" >>"$NEMOCLAW_FAKE_CODESIGN_LOG"
+: >"$NEMOCLAW_FAKE_CODESIGN_STATE"
+exit 0
+EOF
+
+  chmod +x "$fake_bin"/*
+
+  if ! PATH="$fake_bin:/usr/bin:/bin" \
+    NEMOCLAW_OPENSHELL_CHANNEL=stable \
+    NEMOCLAW_FAKE_CODESIGN_LOG="$sign_log" \
+    NEMOCLAW_FAKE_CODESIGN_STATE="$state_file" \
+    bash scripts/install-openshell.sh >"$install_out" 2>"$install_err"; then
+    diag "installer stdout:"
+    cat "$install_out" 2>/dev/null || true
+    diag "installer stderr:"
+    cat "$install_err" 2>/dev/null || true
+    rm -rf "$tmp"
+    fail "macOS installer did not repair missing openshell-driver-vm Hypervisor entitlement"
+  fi
+
+  if ! grep -q -- "--force --sign - --entitlements" "$sign_log"; then
+    diag "codesign log:"
+    cat "$sign_log" 2>/dev/null || true
+    rm -rf "$tmp"
+    fail "macOS installer did not codesign openshell-driver-vm with entitlements"
+  fi
+
+  if grep -q "Installing OpenShell from release" "$install_out"; then
+    diag "installer stdout:"
+    cat "$install_out" 2>/dev/null || true
+    rm -rf "$tmp"
+    fail "macOS installer reinstalled instead of repairing an otherwise complete OpenShell install"
+  fi
+
+  rm -rf "$tmp"
+  pass "macOS OpenShell 0.0.37 installer repairs missing VM driver Hypervisor entitlement"
+}
+
+exercise_macos_vm_rootfs_permission_regression() {
+  grep -q "ARG NEMOCLAW_DARWIN_VM_COMPAT=0" Dockerfile \
+    || fail "Dockerfile is missing the macOS VM rootfs compatibility ARG"
+  grep -q 'NEMOCLAW_DARWIN_VM_COMPAT=${darwinVmCompat' src/lib/onboard.ts \
+    || fail "onboard does not patch the macOS VM rootfs compatibility ARG"
+  grep -q 'process.platform === "darwin"' src/lib/onboard.ts \
+    || fail "onboard does not enable macOS VM rootfs compatibility for Darwin sandbox builds"
+  grep -q "chmod -R a+rwX /sandbox/.openclaw" Dockerfile \
+    || fail "Dockerfile does not relax OpenClaw state permissions for macOS VM rootfs remapping"
+  pass "macOS VM sandbox builds enable rootfs ownership compatibility"
+}
+
 wait_for_survivor_ready() {
   for _i in $(seq 1 60); do
     if openshell sandbox list 2>/dev/null | grep -q "${SURVIVOR_SANDBOX}.*Ready"; then
@@ -478,6 +574,8 @@ load_shell_path
 
 if [ "$(uname -s)" != "Linux" ]; then
   exercise_macos_gateway_installer_regression
+  exercise_macos_vm_driver_entitlement_repair
+  exercise_macos_vm_rootfs_permission_regression
   pass "Skipping live Docker-driver gateway restart regression on non-Linux host"
   exit 0
 fi
@@ -494,3 +592,5 @@ assert_survivor_sandbox_after_upgrade
 pass "Current NemoClaw installer upgraded old ${OLD_NEMOCLAW_REF} claw, restored state, and kept OpenClaw running on OpenShell ${CURRENT_OPENSHELL_VERSION}"
 
 exercise_macos_gateway_installer_regression
+exercise_macos_vm_driver_entitlement_repair
+exercise_macos_vm_rootfs_permission_regression

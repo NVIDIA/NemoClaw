@@ -80,6 +80,27 @@ exit 1`,
 exit 1`,
     );
 
+    if ((options.os ?? "Linux") === "Darwin") {
+      writeExecutable(
+        path.join(fakeBin, "codesign"),
+        `#!/usr/bin/env bash
+state="\${NEMOCLAW_FAKE_CODESIGN_STATE:-}"
+if [ "\${1:-}" = "-d" ]; then
+  if [ "\${NEMOCLAW_FAKE_CODESIGN_HAS_ENTITLEMENT:-1}" = "1" ] || { [ -n "$state" ] && [ -f "$state" ]; }; then
+    printf '%s\\n' '<plist version="1.0"><dict><key>com.apple.security.hypervisor</key><true/></dict></plist>'
+  fi
+  exit 0
+fi
+if [ -n "\${NEMOCLAW_FAKE_CODESIGN_LOG:-}" ]; then
+  printf '%s\\n' "$*" >> "$NEMOCLAW_FAKE_CODESIGN_LOG"
+fi
+if [ -n "$state" ]; then
+  : > "$state"
+fi
+exit 0`,
+      );
+    }
+
     return spawnSync("bash", [SCRIPT], {
       env: {
         ...process.env,
@@ -116,6 +137,36 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/already installed.*0\.0\.37/);
+  });
+
+  it("repairs macOS openshell-driver-vm when the Hypervisor entitlement is missing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-codesign-"));
+    try {
+      const state = path.join(tmp, "codesign-state");
+      const log = path.join(tmp, "codesign.log");
+      const result = runWithInstalledVersion(
+        "0.0.37",
+        {
+          NEMOCLAW_FAKE_CODESIGN_HAS_ENTITLEMENT: "0",
+          NEMOCLAW_FAKE_CODESIGN_STATE: state,
+          NEMOCLAW_FAKE_CODESIGN_LOG: log,
+        },
+        {
+          driverBins: "gateway-vm",
+          os: "Darwin",
+          arch: "arm64",
+        },
+      );
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toMatch(/missing the macOS Hypervisor entitlement/);
+      expect(result.stdout).toMatch(/Signing openshell-driver-vm/);
+      expect(result.stdout).toMatch(/already installed.*0\.0\.37/);
+      expect(result.stdout).not.toMatch(/Installing OpenShell from release/);
+      expect(fs.readFileSync(log, "utf-8")).toContain("--force --sign - --entitlements");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("triggers reinstall on macOS when openshell 0.0.37 is missing required gateway binaries", () => {
