@@ -78,19 +78,10 @@ load_shell_path() {
 }
 
 survivor_agent_probe() {
+  local probe
   # shellcheck disable=SC2016
-  openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- sh -lc '
-pid="$(cat /tmp/nemoclaw-e2e-agent.pid 2>/dev/null || true)"
-[ -n "$pid" ] || exit 1
-kill -0 "$pid" 2>/dev/null || exit 1
-counter="$(sed -n "s/^[^ ]* \([0-9][0-9]*\).*/\1/p" /tmp/nemoclaw-e2e-agent.heartbeat 2>/dev/null | head -1)"
-cmdline="$(tr "\000" " " <"/proc/${pid}/cmdline" 2>/dev/null || true)"
-case "$cmdline" in
-  *nemoclaw-e2e-agent*) ;;
-  *) exit 1 ;;
-esac
-printf "%s %s %s\n" "$pid" "${counter:-0}" "$cmdline"
-'
+  probe='pid="$(cat /tmp/nemoclaw-e2e-agent.pid 2>/dev/null || true)"; [ -n "$pid" ] || exit 1; kill -0 "$pid" 2>/dev/null || exit 1; counter="$(sed -n "s/^[^ ]* \([0-9][0-9]*\).*/\1/p" /tmp/nemoclaw-e2e-agent.heartbeat 2>/dev/null | head -1)"; cmdline="$(tr "\000" " " <"/proc/${pid}/cmdline" 2>/dev/null || true)"; case "$cmdline" in *nemoclaw-e2e-agent*) ;; *) exit 1 ;; esac; printf "%s %s %s\n" "$pid" "${counter:-0}" "$cmdline"'
+  openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- sh -lc "$probe"
 }
 
 wait_for_survivor_agent_ready() {
@@ -379,9 +370,9 @@ start_survivor_agent_in_existing_claw() {
     sh -lc "printf '%s\n' '$SURVIVOR_MARKER' >/tmp/nemoclaw-gateway-upgrade-marker" \
     || fail "failed to write survivor marker before gateway upgrade"
 
-  local remote_setup
-  remote_setup="$(cat <<'REMOTE'
-cat >/tmp/nemoclaw-e2e-agent <<'AGENT'
+  local agent_payload remote_setup
+  agent_payload="$(
+    cat <<'AGENT' | base64 | tr -d '\n'
 #!/bin/sh
 set -eu
 pid_file="/tmp/nemoclaw-e2e-agent.pid"
@@ -397,11 +388,8 @@ while true; do
   sleep 1
 done
 AGENT
-chmod 755 /tmp/nemoclaw-e2e-agent
-rm -f /tmp/nemoclaw-e2e-agent.pid /tmp/nemoclaw-e2e-agent.heartbeat /tmp/nemoclaw-e2e-agent.events /tmp/nemoclaw-e2e-agent.log
-nohup /tmp/nemoclaw-e2e-agent >/tmp/nemoclaw-e2e-agent.log 2>&1 &
-REMOTE
-)"
+  )"
+  remote_setup="printf '%s' '$agent_payload' | base64 -d >/tmp/nemoclaw-e2e-agent; chmod 755 /tmp/nemoclaw-e2e-agent; rm -f /tmp/nemoclaw-e2e-agent.pid /tmp/nemoclaw-e2e-agent.heartbeat /tmp/nemoclaw-e2e-agent.events /tmp/nemoclaw-e2e-agent.log; nohup /tmp/nemoclaw-e2e-agent >/tmp/nemoclaw-e2e-agent.log 2>&1 &"
 
   openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- sh -lc "$remote_setup" \
     || fail "failed to start survivor agent before gateway upgrade"
