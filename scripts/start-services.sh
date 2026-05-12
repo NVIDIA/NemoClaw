@@ -107,7 +107,7 @@ render_box() {
   fi
 
   local inner="$min_inner"
-  local line needed visible hbar blank padded
+  local line needed visible pad_len pad hbar blank padded
   for line in "$@"; do
     needed=$((${#line} + 2))
     if [ "$needed" -gt "$inner" ]; then
@@ -135,7 +135,12 @@ render_box() {
       if [ "$visible" -lt 0 ]; then
         visible=0
       fi
-      padded="${line:0:$visible}  "
+      pad_len=$((inner - visible))
+      if [ "$pad_len" -lt 0 ]; then
+        pad_len=0
+      fi
+      printf -v pad '%*s' "$pad_len" ''
+      padded="${line:0:$visible}${pad}"
     else
       printf -v padded '%-*s' "$inner" "$line"
     fi
