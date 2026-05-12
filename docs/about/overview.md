@@ -20,14 +20,14 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Overview
+# Overview of NVIDIA NemoClaw
 
-NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants.
+NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
 NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
 It incorporates policy-based privacy and security guardrails, giving you control over your agents’ behavior and data handling.
 This enables self-evolving claws to run more safely in clouds, on prem, RTX PCs and DGX Spark.
 
-NemoClaw pairs open-source and hosted models (for example [NVIDIA Nemotron](https://build.nvidia.com)) with a hardened sandbox, routed inference, and declarative egress policy so deployment stays safer and more repeatable.
+NemoClaw pairs hosted models on inference providers or local endpoints with a hardened sandbox, routed inference, and declarative egress policy so deployment stays safer and more repeatable.
 The sandbox runtime comes from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell); NemoClaw adds the blueprint, `nemoclaw` CLI, onboarding, and related tooling as the reference way to run OpenClaw there.
 
 | Capability              | Description                                                                                                                                          |
@@ -45,17 +45,15 @@ NemoClaw provides the following product capabilities.
 | Guided onboarding | Validates credentials, selects providers, and creates a working sandbox in one command. |
 | Hardened blueprint | A security-first Dockerfile with capability drops, least-privilege network rules, and declarative policy. |
 | State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
-| Channel messaging | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the sandboxed agent. NemoClaw configures channels during onboarding; OpenShell supplies the native constructs, credential flow, and runtime supervision. |
+| Messaging channels | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the sandboxed agent. NemoClaw configures channels during onboarding; OpenShell supplies the native constructs, credential flow, and runtime supervision. |
 | Routed inference | Provider-routed model calls through the OpenShell gateway, transparent to the agent. Supports NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, compatible endpoints, local Ollama, local vLLM, and the Model Router. |
 | Layered protection | Network, filesystem, process, and inference controls that can be hot-reloaded or locked at creation. |
 
-## Challenge
+## Benefits of Using NemoClaw
 
-Autonomous AI agents like OpenClaw can make arbitrary network requests, access the host filesystem, and call any inference endpoint. Without guardrails, this creates security, cost, and compliance risks that grow as agents run unattended.
+Autonomous AI agents can make arbitrary network requests, access the host filesystem, and call any inference endpoint. Without guardrails, this creates security, cost, and compliance risks that grow as agents run unattended.
 
-## Benefits
-
-NemoClaw provides the following benefits.
+NemoClaw provides the following benefits to mitigate these risks.
 
 | Benefit                    | Description                                                                                                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|
@@ -77,10 +75,9 @@ You can use NemoClaw for various use cases including the following.
 
 ## Next Steps
 
+Navigate to the following topics to learn more about NemoClaw and how to install and use it.
+
+- [Architecture Overview](how-it-works.md) to understand how NemoClaw works.
 - [Ecosystem](ecosystem.md) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
-- [How It Works](how-it-works.md) to understand how NemoClaw works internally: plugin, blueprint, sandbox lifecycle.
-- [Quickstart](../get-started/quickstart.md) to install NemoClaw and run your first agent.
-- [Switch Inference Providers](../inference/switch-inference-providers.md) to configure the inference provider.
-- [Approve or Deny Network Requests](../network-policy/approve-network-requests.md) to manage egress approvals.
-- [Deploy to a Remote GPU Instance](../deployment/deploy-to-remote-gpu.md) for persistent operation.
-- [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) to observe agent behavior.
+- [Quickstart](../get-started/quickstart.md) to install NemoClaw and run your first sandboxed agent.
+- [Inference Options](../inference/inference-options.md) to check the inference providers that NemoClaw supports and how inference routing works.
