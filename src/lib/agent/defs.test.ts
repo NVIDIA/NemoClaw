@@ -65,7 +65,7 @@ describe("agent definitions", () => {
     });
     expect(hermes.inferenceProviderOptions).toEqual(["hermesProvider"]);
     expect(hermes.healthProbe.url).toBe("http://localhost:8642/health");
-    expect(hermes.messagingPlatforms).toEqual(["telegram", "discord", "slack", "whatsapp"]);
+    expect(hermes.messagingPlatforms).toEqual(["telegram", "discord", "slack"]);
   });
 
   it("orders OpenClaw first in interactive choices", () => {
