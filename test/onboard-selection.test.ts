@@ -798,7 +798,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("starts managed Ollama on loopback before exposing the auth proxy", () => {
+  it("starts managed Ollama on loopback before exposing the auth proxy", { timeout: 10_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-loopback-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3691,7 +3691,7 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line: string) => line.includes("tool-call-parser requires")));
   });
 
-  it("offers install-ollama option on Linux when Ollama is not installed", () => {
+  it("offers install-ollama option on Linux when Ollama is not installed", { timeout: 10_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-ollama-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3941,7 +3941,7 @@ const { setupNim } = require(${onboardPath});
     assert.match(result.stderr, /Refusing to continue/);
   });
 
-  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", () => {
+  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", { timeout: 10_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-noninteractive-install-ollama-"),

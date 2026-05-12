@@ -66,8 +66,11 @@ resolver.resolveOpenshell = () => "/fake/openshell";
 
 const runner = require(${runnerPath});
 runner.run = () => {};
-// Return "Running" so waitForSandboxReady passes immediately.
-runner.runCapture = () => "Running";
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : String(command);
+  if (text.includes("sandbox list")) return "test-sb Ready";
+  return "Running";
+};
 
 const credentials = require(${credPath});
 credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + msg); };

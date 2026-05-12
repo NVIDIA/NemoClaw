@@ -159,9 +159,11 @@ $ nemoclaw onboard
 
 `NEMOCLAW_AGENT_TIMEOUT` controls the per-request inference timeout baked into
 `agents.defaults.timeoutSeconds`. Increase it for slow local inference (for
-example, CPU-only Ollama or vLLM on modest hardware). `openclaw.json` is
-immutable at runtime, so this value can only be changed by rebuilding the
-sandbox via `nemoclaw onboard`.
+example, CPU-only Ollama or vLLM on modest hardware). NemoClaw writes this
+value into `openclaw.json` during onboarding. The default sandbox may keep that
+file writable for agent state, but direct in-sandbox edits are not the supported
+or durable way to change NemoClaw-managed defaults. Rebuild the sandbox via
+`nemoclaw onboard` to apply a new value.
 
 `NEMOCLAW_AGENT_HEARTBEAT_EVERY` sets `agents.defaults.heartbeat.every`.
 This controls OpenClaw's periodic main-session agent turn.
@@ -169,8 +171,10 @@ Each interval, the agent wakes up to review follow-ups and read `HEARTBEAT.md` i
 The OpenClaw default is 30 minutes (1 hour for Anthropic OAuth / Claude CLI reuse).
 Tune the cadence with a duration string like `5m` or `2h`, or set `0m` to disable the periodic turns entirely.
 Disabling also drops `HEARTBEAT.md` from normal-run bootstrap context per upstream behavior, so the model no longer sees heartbeat-only instructions.
-`openclaw.json` is immutable at runtime, so the in-sandbox `openclaw config set` command cannot change this.
-Rebuild the sandbox via `nemoclaw onboard --resume` to apply a new value.
+NemoClaw writes this value into `openclaw.json` during onboarding.
+The in-sandbox `openclaw config set` command is not the supported path for
+NemoClaw-managed build-time defaults, and direct file edits are overwritten by a
+rebuild. Rebuild the sandbox via `nemoclaw onboard --resume` to apply a new value.
 
 These variables are build-time settings.
 If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:

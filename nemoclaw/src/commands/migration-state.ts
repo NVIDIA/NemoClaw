@@ -185,6 +185,18 @@ function loadConfigDocument(configPath: string): OpenClawConfigDocument | null {
     return null;
   }
   const raw = readFileSync(configPath, "utf-8");
+  // Empty / whitespace-only openclaw.json — the upstream openshell-inference-set
+  // truncate-then-write window can leave the file at 0 bytes (#3118). JSON5.parse
+  // would throw "JSON5: invalid end of input at 1:1"; surface a recovery hint
+  // instead so callers can route the user to the restart-recovery path rather
+  // than chasing the parser error.
+  if (raw.trim() === "") {
+    throw new Error(
+      `Config at ${configPath} is empty (0 bytes or whitespace-only). ` +
+        "Restart the sandbox to trigger baseline recovery, or restore the " +
+        "file from a known-good copy (see #3118).",
+    );
+  }
   return parseConfigDocument(JSON5.parse(raw), `Config at ${configPath}`);
 }
 

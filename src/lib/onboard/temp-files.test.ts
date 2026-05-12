@@ -59,7 +59,7 @@ describe("onboard temp file helpers", () => {
   });
 
   it("does not remove matching-prefix directories outside os.tmpdir()", () => {
-    const outsideParent = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-cleanup-"));
+    const outsideParent = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-cleanup-"));
     createdParents.push(outsideParent);
     const filePath = path.join(outsideParent, "nemoclaw-cleanup.txt");
     fs.writeFileSync(filePath, "payload");

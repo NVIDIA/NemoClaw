@@ -275,6 +275,11 @@ const policies: typeof import("./policy") = require("./policy");
 const shields = require("./shields");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
+const {
+  getGatewayReuseHealthWaitConfig,
+  isGatewayHttpReady,
+  waitForGatewayHttpReady,
+} = require("./onboard/gateway-http-readiness") as typeof import("./onboard/gateway-http-readiness");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const {
@@ -1544,7 +1549,7 @@ function validateSandboxGpuPreflight(config: SandboxGpuConfig): void {
     process.exit(1);
   }
   if (!config.sandboxGpuEnabled) return;
-  if (!isLinuxDockerDriverGatewayEnabled()) return;
+  if (!isLinuxDockerDriverGatewayPlatform()) return;
 
   const cdiSpecDirs = getDockerCdiSpecDirs();
   const cdiSpecFiles = findReadableNvidiaCdiSpecFiles(cdiSpecDirs);
@@ -3781,6 +3786,13 @@ function getGatewayLocalEndpoint(): string {
 
 function isLinuxDockerDriverGatewayEnabled(
   platform: NodeJS.Platform = process.platform,
+  arch: NodeJS.Architecture = process.arch,
+): boolean {
+  return platform === "linux" || (platform === "darwin" && arch === "arm64");
+}
+
+function isLinuxDockerDriverGatewayPlatform(
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
   return platform === "linux";
 }
@@ -3837,6 +3849,51 @@ function resolveOpenShellSandboxBinary(): string | null {
   return null;
 }
 
+function resolveOpenShellVmDriverBinary(): string | null {
+  const configuredDir = process.env.OPENSHELL_DRIVER_DIR;
+  if (configuredDir && configuredDir.trim()) {
+    const configured = path.join(path.resolve(configuredDir.trim()), "openshell-driver-vm");
+    if (fs.existsSync(configured)) return configured;
+  }
+  const sibling = resolveSiblingBinary("openshell-driver-vm");
+  if (sibling) return sibling;
+  for (const candidate of [
+    path.join(os.homedir(), ".local", "bin", "openshell-driver-vm"),
+    path.join(os.homedir(), ".local", "libexec", "openshell", "openshell-driver-vm"),
+    "/usr/local/bin/openshell-driver-vm",
+    "/usr/local/libexec/openshell/openshell-driver-vm",
+    "/usr/local/libexec/openshell-driver-vm",
+    "/usr/bin/openshell-driver-vm",
+  ]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function areRequiredDockerDriverBinariesPresent(
+  platform: NodeJS.Platform = process.platform,
+  binaries: {
+    gatewayBin?: string | null;
+    sandboxBin?: string | null;
+    vmDriverBin?: string | null;
+  } = {},
+  arch: NodeJS.Architecture = process.arch,
+): boolean {
+  if (!isLinuxDockerDriverGatewayEnabled(platform, arch)) return true;
+  const gatewayBin = Object.prototype.hasOwnProperty.call(binaries, "gatewayBin")
+    ? binaries.gatewayBin
+    : resolveOpenShellGatewayBinary();
+  const sandboxBin = Object.prototype.hasOwnProperty.call(binaries, "sandboxBin")
+    ? binaries.sandboxBin
+    : resolveOpenShellSandboxBinary();
+  const hasVmDriverBin = Object.prototype.hasOwnProperty.call(binaries, "vmDriverBin");
+  const vmDriverBin = hasVmDriverBin ? binaries.vmDriverBin : resolveOpenShellVmDriverBinary();
+  if (!gatewayBin) return false;
+  if (platform === "linux" && !sandboxBin) return false;
+  if (platform === "darwin" && hasVmDriverBin && !vmDriverBin) return false;
+  return true;
+}
+
 function getOpenShellDockerSupervisorImage(versionOutput: string | null = null): string {
   if (process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) {
     return process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
@@ -3851,25 +3908,37 @@ function getOpenShellDockerSupervisorImage(versionOutput: string | null = null):
 
 function getDockerDriverGatewayEnv(
   versionOutput: string | null = null,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
   const stateDir = getDockerDriverGatewayStateDir();
   const env: Record<string, string> = {
-    OPENSHELL_DRIVERS: "docker",
+    OPENSHELL_DRIVERS: platform === "darwin" ? "vm" : "docker",
     OPENSHELL_BIND_ADDRESS: "127.0.0.1",
     OPENSHELL_SERVER_PORT: String(GATEWAY_PORT),
     OPENSHELL_DISABLE_TLS: "true",
     OPENSHELL_DISABLE_GATEWAY_AUTH: "true",
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
-    OPENSHELL_GRPC_ENDPOINT: getDockerDriverGatewayEndpoint(),
+    OPENSHELL_GRPC_ENDPOINT:
+      platform === "darwin"
+        ? `http://host.containers.internal:${GATEWAY_PORT}`
+        : getDockerDriverGatewayEndpoint(),
     OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
     OPENSHELL_SSH_GATEWAY_PORT: String(GATEWAY_PORT),
-    OPENSHELL_DOCKER_NETWORK_NAME:
-      process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
-    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: getOpenShellDockerSupervisorImage(versionOutput),
   };
-  const sandboxBin = resolveOpenShellSandboxBinary();
-  if (sandboxBin) {
-    env.OPENSHELL_DOCKER_SUPERVISOR_BIN = sandboxBin;
+  if (platform === "darwin") {
+    env.OPENSHELL_VM_DRIVER_STATE_DIR = path.join(stateDir, "vm-driver");
+    const vmDriverBin = resolveOpenShellVmDriverBinary();
+    if (vmDriverBin) {
+      env.OPENSHELL_DRIVER_DIR = path.dirname(vmDriverBin);
+    }
+  } else {
+    env.OPENSHELL_DOCKER_NETWORK_NAME =
+      process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker";
+    env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE = getOpenShellDockerSupervisorImage(versionOutput);
+    const sandboxBin = resolveOpenShellSandboxBinary();
+    if (sandboxBin) {
+      env.OPENSHELL_DOCKER_SUPERVISOR_BIN = sandboxBin;
+    }
   }
   return env;
 }
@@ -3943,6 +4012,10 @@ function normalizeGatewayExecutablePath(value: string | null | undefined): strin
 
 type DockerDriverGatewayRuntimeDrift = { reason: string };
 
+function shouldRequireDockerDriverEnv(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "linux";
+}
+
 const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_DRIVERS",
   "OPENSHELL_BIND_ADDRESS",
@@ -3999,7 +4072,9 @@ function getDockerDriverGatewayRuntimeDrift(
   pid: number,
   desiredEnv: Record<string, string>,
   gatewayBin?: string | null,
+  platform: NodeJS.Platform = process.platform,
 ): DockerDriverGatewayRuntimeDrift | null {
+  if (!shouldRequireDockerDriverEnv(platform)) return null;
   return getDockerDriverGatewayRuntimeDriftFromSnapshot({
     processEnv: readProcessEnv(pid),
     processExe: readProcessExe(pid),
@@ -4038,7 +4113,7 @@ function isDockerDriverGatewayProcessAlive(): boolean {
   const pid = getDockerDriverGatewayPid();
   if (pid === null || !isPidAlive(pid)) return false;
   if (!isDockerDriverGatewayProcess(pid, resolveOpenShellGatewayBinary(), {
-    requireDockerDriverEnv: true,
+    requireDockerDriverEnv: shouldRequireDockerDriverEnv(),
   })) {
     fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
     return false;
@@ -4060,13 +4135,20 @@ function getDockerDriverGatewayPortListenerPid(
   portCheck: import("./onboard/preflight").PortProbeResult,
   opts: {
     platform?: NodeJS.Platform;
+    arch?: NodeJS.Architecture;
     gatewayBin?: string | null;
     isPidAliveFn?: (pid: number) => boolean;
     isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
   } = {},
 ): number | null {
   if (portCheck.ok) return null;
-  if (!isLinuxDockerDriverGatewayEnabled(opts.platform ?? process.platform)) return null;
+  if (
+    !isLinuxDockerDriverGatewayEnabled(
+      opts.platform ?? process.platform,
+      opts.arch ?? process.arch,
+    )
+  )
+    return null;
   const pid = Number(portCheck.pid);
   if (!Number.isInteger(pid) || pid <= 0) return null;
   const proc = String(portCheck.process || "").toLowerCase();
@@ -4076,7 +4158,9 @@ function getDockerDriverGatewayPortListenerPid(
   const isGateway =
     opts.isDockerDriverGatewayProcessFn ??
     ((candidatePid: number, gatewayBin?: string | null) =>
-      isDockerDriverGatewayProcess(candidatePid, gatewayBin, { requireDockerDriverEnv: true }));
+      isDockerDriverGatewayProcess(candidatePid, gatewayBin, {
+        requireDockerDriverEnv: shouldRequireDockerDriverEnv(opts.platform ?? process.platform),
+      }));
   if (!isGateway(pid, opts.gatewayBin)) return null;
   return pid;
 }
@@ -4581,7 +4665,7 @@ async function preflight(
   if (host.runtime !== "unknown") {
     console.log(`  ✓ Container runtime: ${host.runtime}`);
   }
-  if (isLinuxDockerDriverGatewayEnabled() && host.runtime === "podman") {
+  if (isLinuxDockerDriverGatewayPlatform() && host.runtime === "podman") {
     console.error("  ✗ NemoClaw Linux onboarding now uses OpenShell's Docker driver.");
     console.error("    Podman is not supported for this NemoClaw integration path.");
     console.error("    Switch to Docker Engine and rerun onboarding.");
@@ -4680,8 +4764,7 @@ async function preflight(
         shouldUseOpenshellDevChannel() &&
         !isOpenshellDevVersion(currentVersionOutput);
       const needsDockerDriverBinaries =
-        isLinuxDockerDriverGatewayEnabled() &&
-        (!resolveOpenShellGatewayBinary() || !resolveOpenShellSandboxBinary());
+        isLinuxDockerDriverGatewayEnabled() && !areRequiredDockerDriverBinariesPresent();
       const needsUpgrade =
         !versionGte(currentVersion, minOpenshellVersion) ||
         needsDevChannel ||
@@ -4690,8 +4773,14 @@ async function preflight(
         if (needsDevChannel) {
           console.log("  OpenShell Docker-driver onboarding requires the dev channel. Upgrading...");
         } else if (needsDockerDriverBinaries) {
+          const required =
+            process.platform === "linux"
+              ? "gateway and sandbox"
+              : process.platform === "darwin"
+                ? "gateway and VM driver"
+                : "gateway";
           console.log(
-            "  OpenShell Docker-driver onboarding requires the gateway and sandbox binaries. Reinstalling...",
+            `  OpenShell standalone gateway onboarding requires the ${required} binaries. Reinstalling...`,
           );
         } else {
           console.log(
@@ -4792,9 +4881,38 @@ async function preflight(
       gatewayReuseState = "missing";
       console.log("  ✓ Stale gateway metadata cleaned up");
     } else if (containerState === "unknown") {
+      // Docker probe failed but cached metadata says healthy. Try the host-level
+      // HTTP probe — it doesn't depend on Docker, so it can confirm the gateway
+      // is genuinely serving even when the daemon is flaky.
+      //
+      // Per #2020 the "unknown" state must stay non-destructive end-to-end:
+      // do not downgrade to "missing" in preflight even when HTTP probe fails.
+      // Doing so would feed the orphan-cleanup block below, and a transient
+      // `docker inspect` failure plus an HTTP warm-up miss would delete a
+      // live gateway. The main onboard "unknown" branch makes the abort/reuse
+      // decision once preflight has surfaced the warning to the user.
+      if (await waitForGatewayHttpReady()) {
+        console.log(
+          "  Warning: could not verify gateway container state (Docker may be unavailable), but the gateway is responding on HTTP. Proceeding with reuse.",
+        );
+      } else {
+        console.log(
+          "  Warning: could not verify gateway container state and the gateway is not responding on HTTP. Onboard will abort before reuse if this persists; restart Docker and re-run.",
+        );
+      }
+    } else if (!(await waitForGatewayHttpReady())) {
+      // Container is running but the gateway HTTP endpoint is not responding.
+      // Common immediately after a Docker daemon restart — the container comes
+      // back before the OpenShell gateway upstream finishes warming up. Safe to
+      // recreate because Docker is functional. See #3258.
       console.log(
-        "  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.",
+        `  Gateway container is running but http://127.0.0.1:${GATEWAY_PORT}/ is not responding. Recreating...`,
       );
+      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      destroyGateway();
+      registry.clearAll();
+      gatewayReuseState = "missing";
+      console.log("  ✓ Stale gateway cleaned up");
     } else {
       const imageDrift = getGatewayClusterImageDrift();
       if (imageDrift) {
@@ -5048,10 +5166,20 @@ async function startGatewayWithOptions(
       gatewaySnapshot.activeGatewayInfo,
     )
   ) {
-    console.log("  ✓ Reusing existing gateway");
-    runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
-    return;
+    // Final reuse gate — `isGatewayHealthy()` parses openshell CLI metadata,
+    // which can be stale when the gateway container was just restarted (e.g.
+    // after `colima stop && colima start`). Verify the gateway HTTP endpoint
+    // is actually serving before declaring reuse, so we don't skip startup
+    // and fail later in step 4 with "Connection refused". See #3258.
+    if (await isGatewayHttpReady()) {
+      console.log("  ✓ Reusing existing gateway");
+      runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
+      process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+      return;
+    }
+    console.log(
+      `  Gateway metadata reports healthy but http://127.0.0.1:${GATEWAY_PORT}/ is not responding. Starting a fresh gateway...`,
+    );
   }
 
   // When a stale gateway is detected (metadata exists but container is gone,
@@ -5148,7 +5276,12 @@ async function startGatewayWithOptions(
             ignoreError: true,
           });
           const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-          if (isGatewayHealthy(status, namedInfo, currentInfo)) {
+          // Require BOTH the openshell CLI metadata to report healthy AND the
+          // host HTTP endpoint to be serving — the CLI metadata can report
+          // healthy from the previous run while the upstream is still warming
+          // up after a Docker daemon restart, leading to "Connection refused"
+          // in step 4. See #3258.
+          if (isGatewayHealthy(status, namedInfo, currentInfo) && (await isGatewayHttpReady())) {
             return; // success
           }
           if (i < healthPollCount - 1) sleep(healthPollInterval);
@@ -5462,7 +5595,11 @@ async function recoverGatewayRuntime() {
 
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   let status = runCaptureOpenshell(["status"], { ignoreError: true });
-  if (status.includes("Connected") && isSelectedGateway(status)) {
+  if (
+    status.includes("Connected") &&
+    isSelectedGateway(status) &&
+    (await isGatewayHttpReady())
+  ) {
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
     return true;
   }
@@ -5504,7 +5641,11 @@ async function recoverGatewayRuntime() {
       attachGatewayMetadataIfNeeded();
     }
     status = runCaptureOpenshell(["status"], { ignoreError: true });
-    if (status.includes("Connected") && isSelectedGateway(status)) {
+    if (
+      status.includes("Connected") &&
+      isSelectedGateway(status) &&
+      (await isGatewayHttpReady())
+    ) {
       process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
       const runtime = getContainerRuntime();
       if (shouldPatchCoredns(runtime)) {
@@ -5641,7 +5782,11 @@ function getSandboxRuntimeRegistryFields(
     sandboxGpuEnabled: config.sandboxGpuEnabled,
     sandboxGpuMode: config.mode,
     sandboxGpuDevice: config.sandboxGpuDevice,
-    openshellDriver: isLinuxDockerDriverGatewayEnabled() ? "docker" : "kubernetes",
+    openshellDriver: isLinuxDockerDriverGatewayEnabled()
+      ? process.platform === "darwin"
+        ? "vm"
+        : "docker"
+      : "kubernetes",
     openshellVersion: getInstalledOpenshellVersion(
       runCaptureOpenshell(["--version"], { ignoreError: true }),
     ),
@@ -6867,7 +7012,7 @@ async function createSandbox(
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
   // sandbox namespace can resolve hostnames (fixes #626).
-  if (!isLinuxDockerDriverGatewayEnabled()) {
+  if (!isLinuxDockerDriverGatewayPlatform()) {
     console.log("  Setting up sandbox DNS proxy...");
     runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
       ignoreError: true,
@@ -11172,9 +11317,43 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         gatewayReuseState = "missing";
         console.log("  ✓ Stale gateway metadata cleaned up");
       } else if (containerState === "unknown") {
+        // Docker probe failed but cached metadata says healthy. Try the host-level
+        // HTTP probe — it doesn't depend on Docker, so it can confirm the gateway
+        // is genuinely serving even when the daemon is flaky.
+        if (await waitForGatewayHttpReady()) {
+          console.log(
+            "  Warning: could not verify gateway container state (Docker may be unavailable), but the gateway is responding on HTTP. Proceeding with reuse.",
+          );
+        } else {
+          // Docker can't be probed AND the gateway HTTP endpoint isn't
+          // responding. We cannot tell whether the existing gateway is live
+          // (transient `docker inspect` flake + warm-up miss) or genuinely
+          // gone. Per #2020 we must not destroy in this branch, and we must
+          // not downgrade to "missing" either: that would push execution into
+          // `startGatewayWithOptions`, whose retry hook calls
+          // `destroyGateway()` between attempts — which would tear down a
+          // possibly-live gateway. Bail with an actionable error instead.
+          console.log(
+            `  Error: could not verify gateway container state and http://127.0.0.1:${GATEWAY_PORT}/ is not responding.`,
+          );
+          console.log(
+            "  Refusing to proceed without a clear Docker signal — restarting Docker and re-running onboard is the safe path. See #3258 / #2020.",
+          );
+          process.exit(1);
+        }
+      } else if (!(await waitForGatewayHttpReady())) {
+        // Container is running but the gateway HTTP endpoint is not responding.
+        // Common immediately after a Docker daemon restart — the container comes
+        // back before the OpenShell gateway upstream finishes warming up. Safe to
+        // recreate because Docker is functional. See #3258.
         console.log(
-          "  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.",
+          `  Gateway container is running but http://127.0.0.1:${GATEWAY_PORT}/ is not responding. Recreating...`,
         );
+        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+        destroyGateway();
+        registry.clearAll();
+        gatewayReuseState = "missing";
+        console.log("  ✓ Stale gateway cleaned up");
       } else {
         const imageDrift = getGatewayClusterImageDrift();
         if (imageDrift) {
@@ -11797,6 +11976,8 @@ module.exports = {
   ensureValidatedBraveSearchCredential,
   formatEnvAssignment,
   getFutureShellPathHint,
+  areRequiredDockerDriverBinariesPresent,
+  shouldRequireDockerDriverEnv,
   getGatewayBootstrapRepairPlan,
   getGatewayLocalEndpoint,
   getGatewayStartEnv,
@@ -11804,8 +11985,11 @@ module.exports = {
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
   getGatewayClusterContainerState,
   getGatewayHealthWaitConfig,
+  getGatewayReuseHealthWaitConfig,
   getGatewayReuseState,
   isDockerDriverGatewayPortListener,
+  isGatewayHttpReady,
+  waitForGatewayHttpReady,
   handleFinalGatewayStartFailure,
   getNavigationChoice,
   getSandboxInferenceConfig,
