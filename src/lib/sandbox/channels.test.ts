@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   KNOWN_CHANNELS,
+  channelUsesQrPairing,
   getChannelDef,
   getChannelTokenKeys,
   knownChannelNames,
@@ -12,20 +13,27 @@ import {
 } from "./channels";
 
 describe("sandbox-channels KNOWN_CHANNELS", () => {
-  it("covers telegram, discord, and slack", () => {
-    expect(knownChannelNames()).toEqual(["telegram", "discord", "slack"]);
+  it("covers telegram, discord, slack, and whatsapp", () => {
+    expect(knownChannelNames()).toEqual(["telegram", "discord", "slack", "whatsapp"]);
   });
 
-  it("exposes the primary bot-token env var for each channel", () => {
+  it("exposes the primary bot-token env var for token-based channels", () => {
     expect(getChannelDef("telegram")?.envKey).toBe("TELEGRAM_BOT_TOKEN");
     expect(getChannelDef("discord")?.envKey).toBe("DISCORD_BOT_TOKEN");
     expect(getChannelDef("slack")?.envKey).toBe("SLACK_BOT_TOKEN");
+  });
+
+  it("omits envKey for QR-paired channels (whatsapp)", () => {
+    expect(getChannelDef("whatsapp")?.envKey).toBeUndefined();
+    expect(channelUsesQrPairing(KNOWN_CHANNELS.whatsapp)).toBe(true);
+    expect(channelUsesQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
   });
 
   it("only slack declares a secondary app-token env var", () => {
     expect(getChannelDef("telegram")?.appTokenEnvKey).toBeUndefined();
     expect(getChannelDef("discord")?.appTokenEnvKey).toBeUndefined();
     expect(getChannelDef("slack")?.appTokenEnvKey).toBe("SLACK_APP_TOKEN");
+    expect(getChannelDef("whatsapp")?.appTokenEnvKey).toBeUndefined();
   });
 
   it("asks for Slack human member IDs as a comma-separated allowlist", () => {
@@ -60,14 +68,20 @@ describe("sandbox-channels getChannelTokenKeys", () => {
       "SLACK_APP_TOKEN",
     ]);
   });
+
+  it("returns an empty list for QR-paired channels", () => {
+    expect(getChannelTokenKeys(KNOWN_CHANNELS.whatsapp)).toEqual([]);
+  });
 });
 
 describe("sandbox-channels listChannels", () => {
   it("materialises an array with the name merged into each entry", () => {
     const list = listChannels();
-    expect(list.map((c) => c.name)).toEqual(["telegram", "discord", "slack"]);
+    expect(list.map((c) => c.name)).toEqual(["telegram", "discord", "slack", "whatsapp"]);
     const telegram = list.find((c) => c.name === "telegram");
     expect(telegram?.envKey).toBe("TELEGRAM_BOT_TOKEN");
     expect(telegram?.allowIdsMode).toBe("dm");
+    const whatsapp = list.find((c) => c.name === "whatsapp");
+    expect(whatsapp?.envKey).toBeUndefined();
   });
 });

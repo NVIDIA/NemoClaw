@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+preset:
+  name: whatsapp
+  description: WhatsApp Web WebSocket and media access
+network_policies:
+  whatsapp:
+    name: whatsapp
+    endpoints:
+      # WhatsApp Web Noise-over-WebSocket — pure L4 CONNECT tunnel. The
+      # /ws/chat upgrade requires HTTP/1.1; h2 has no 101 Switching
+      # Protocols and the proxy negotiates h2 by default on REST hosts
+      # (NVIDIA/NemoClaw#513). OpenShell v0.0.15+ also auto-terminates
+      # TLS unconditionally (NVIDIA/OpenShell#544), which breaks the
+      # Noise handshake — tls: skip restores pre-v0.0.15 pass-through.
+      - host: web.whatsapp.com
+        port: 443
+        access: full
+        tls: skip
+      - host: mmg.whatsapp.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: static.whatsapp.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }

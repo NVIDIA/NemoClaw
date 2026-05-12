@@ -47,6 +47,7 @@ For details, refer to [Commands](../reference/commands.md).
 | Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting, `TELEGRAM_REQUIRE_MENTION` for group-chat replies |
 | Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | None |
+| WhatsApp | None — pair via QR after rebuild | None |
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
@@ -64,11 +65,16 @@ Set `DISCORD_USER_ID` to restrict access to one user; otherwise, any member of t
 Slack uses Socket Mode and requires two tokens.
 Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_TOKEN` for the app-level Socket Mode token (`xapp-...`).
 
+WhatsApp Web does not use a host-side token.
+Pairing happens inside the sandbox: after the rebuild completes, run `openshell term <sandbox>` and then `openclaw channels login --channel whatsapp` to render the QR code in the terminal, then scan it with your phone.
+Because session credentials are generated and stored inside the sandbox image, NemoClaw cannot detect cross-sandbox WhatsApp conflicts the way it does for token-based channels; pair only one sandbox per WhatsApp account at a time.
+
 ## Enable Channels During Onboarding
 
-When the wizard reaches **Messaging channels**, it lists Telegram, Discord, and Slack.
+When the wizard reaches **Messaging channels**, it lists Telegram, Discord, Slack, and WhatsApp.
 Press a channel number to toggle it on or off, then press **Enter** when done.
 If a token is not already in the environment or credential store, the wizard prompts for it and saves it.
+WhatsApp uses QR pairing instead of a host-side token, so the wizard does not prompt — it prints pairing instructions and you complete the pairing inside the sandbox after rebuild.
 NemoClaw also selects the matching network policy preset during policy setup so the channel can reach its provider API.
 
 For scripted setup, export the credentials and optional settings for the channels you want to enable before you run onboarding:
@@ -169,7 +175,7 @@ Stopping the in-sandbox gateway stops Telegram, Discord, and Slack polling for t
 
 After the sandbox is running, send a message to the configured bot or app.
 If delivery fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the channel API.
-Use the matching policy preset (`telegram`, `discord`, or `slack`) or review [Common Integration Policy Examples](../network-policy/integration-policy-examples.md).
+Use the matching policy preset (`telegram`, `discord`, `slack`, or `whatsapp`) or review [Common Integration Policy Examples](../network-policy/integration-policy-examples.md).
 
 ## Tunnel Command
 

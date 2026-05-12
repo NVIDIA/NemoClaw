@@ -4,7 +4,7 @@
 import { deleteCredential, saveCredential } from "../credentials/store";
 
 export interface ChannelDef {
-  envKey: string;
+  envKey?: string;
   description: string;
   help: string;
   label: string;
@@ -76,6 +76,11 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     userIdLabel: "Slack Member IDs (comma-separated allowlist)",
     allowIdsMode: "dm",
   },
+  whatsapp: {
+    description: "WhatsApp Web messaging (QR pairing)",
+    help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, run `openshell term <sandbox>` and then `openclaw channels login --channel whatsapp` to display the QR.",
+    label: "WhatsApp",
+  },
 };
 
 export function getChannelDef(name: string): ChannelDef | undefined {
@@ -91,7 +96,18 @@ export function listChannels(): Array<{ name: string } & ChannelDef> {
 }
 
 export function getChannelTokenKeys(channel: ChannelDef): string[] {
+  if (!channel.envKey) return [];
   return channel.appTokenEnvKey ? [channel.envKey, channel.appTokenEnvKey] : [channel.envKey];
+}
+
+export function channelUsesQrPairing(channel: ChannelDef): boolean {
+  return !channel.envKey;
+}
+
+export function channelHasStaticToken(
+  channel: ChannelDef,
+): channel is ChannelDef & { envKey: string } {
+  return typeof channel.envKey === "string" && channel.envKey.length > 0;
 }
 
 export function persistChannelTokens(tokens: Record<string, string>): void {

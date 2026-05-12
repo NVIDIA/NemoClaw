@@ -63,6 +63,7 @@ messaging_platforms:
     - telegram
     - discord
     - slack
+    - whatsapp
 
 # ── Inference ───────────────────────────────────────────────────
 inference:

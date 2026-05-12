@@ -94,7 +94,8 @@ messaging_platforms:
     - telegram
     - discord
     - slack
-  # Future: whatsapp, signal, matrix, mattermost, email, etc.
+    - whatsapp
+  # Future: signal, matrix, mattermost, email, etc.
   # Each needs a network policy entry before enabling.
 
 # ── Inference ───────────────────────────────────────────────────

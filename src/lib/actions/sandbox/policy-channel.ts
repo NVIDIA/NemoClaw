@@ -18,6 +18,7 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { rebuildSandbox } from "./rebuild";
 import {
   KNOWN_CHANNELS,
+  channelUsesQrPairing,
   clearChannelTokens,
   getChannelDef,
   getChannelTokenKeys,
@@ -413,6 +414,17 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
 
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${channelArg}' for '${sandboxName}'.`);
+    return;
+  }
+
+  if (channelUsesQrPairing(channel)) {
+    await applyChannelAddToGatewayAndRegistry(sandboxName, channelArg, {});
+    console.log("");
+    console.log(`  ${channel.help}`);
+    console.log(
+      `  ${G}✓${R} Enabled ${channelArg} channel. Complete QR pairing from inside the sandbox after rebuild.`,
+    );
+    await promptAndRebuild(sandboxName, `add '${channelArg}'`);
     return;
   }
 

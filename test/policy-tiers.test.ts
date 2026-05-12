@@ -138,11 +138,12 @@ describe("tiers", () => {
       }
     });
 
-    it("does not include messaging presets (slack, discord, telegram)", () => {
+    it("does not include messaging presets (slack, discord, telegram, whatsapp)", () => {
       const names = mustGetTier("balanced").presets.map((preset: TierPreset) => preset.name);
       expect(names).not.toContain("slack");
       expect(names).not.toContain("discord");
       expect(names).not.toContain("telegram");
+      expect(names).not.toContain("whatsapp");
     });
   });
 
@@ -159,11 +160,12 @@ describe("tiers", () => {
       }
     });
 
-    it("includes messaging presets (slack, discord, telegram)", () => {
+    it("includes messaging presets (slack, discord, telegram, whatsapp)", () => {
       const names = mustGetTier("open").presets.map((preset: TierPreset) => preset.name);
       expect(names).toContain("slack");
       expect(names).toContain("discord");
       expect(names).toContain("telegram");
+      expect(names).toContain("whatsapp");
     });
 
     it("includes productivity presets (jira, outlook)", () => {

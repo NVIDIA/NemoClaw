@@ -106,12 +106,17 @@ function getPresetEndpoints(content: string): string[] {
  * having enabled the channel opens the firewall but leaves the sandbox
  * without a running bridge. See #1691.
  */
-const MESSAGING_PRESET_NAMES = new Set(["telegram", "discord", "slack"]);
+const MESSAGING_PRESET_LABELS: Record<string, string> = {
+  telegram: "Telegram",
+  discord: "Discord",
+  slack: "Slack",
+  whatsapp: "WhatsApp",
+};
+const MESSAGING_PRESET_NAMES = new Set(Object.keys(MESSAGING_PRESET_LABELS));
 
 function getMessagingPresetWarning(presetName: string): string | null {
   if (!MESSAGING_PRESET_NAMES.has(presetName)) return null;
-  const label =
-    presetName === "telegram" ? "Telegram" : presetName === "discord" ? "Discord" : "Slack";
+  const label = MESSAGING_PRESET_LABELS[presetName] ?? presetName;
   return [
     `Note: the '${presetName}' preset only opens network egress to the ${label} API.`,
     `To actually enable ${label} messaging, re-run 'nemoclaw onboard' and select ${label}`,
