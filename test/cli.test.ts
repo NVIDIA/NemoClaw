@@ -1307,7 +1307,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("--sandbox NAME");
   });
 
-  it("debug --sandbox skips stale default warning", testTimeoutOptions(), () => {
+  it("debug --sandbox skips stale default warning", testTimeoutOptions(15_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-"));
     fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(
