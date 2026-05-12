@@ -20,8 +20,8 @@
 #   sandbox-survival-e2e     Sandbox survival across gateway restarts (onboard, inference,
 #                            gateway stop/start, verify sandbox + workspace + inference).
 #   openshell-gateway-upgrade-e2e
-#                            Validates stale Linux Docker-driver OpenShell gateway
-#                            processes are restarted after an OpenShell upgrade.
+#                            Validates old OpenShell install upgrade, stale gateway
+#                            restart, and same running agent survival.
 #   gateway-health-honest-e2e
 #                            Coverage guard for #3111: onboard must not log
 #                            "Docker-driver gateway is healthy" when the gateway
@@ -1257,9 +1257,9 @@ jobs:
           if-no-files-found: ignore
 
   # ── OpenShell gateway upgrade E2E ────────────────────────────
-  # Reproduces the old-install upgrade edge case for Linux Docker-driver
-  # gateways: a healthy gateway process with stale supervisor/runtime env must
-  # be restarted rather than reused after the current OpenShell install.
+  # Reproduces the old-install upgrade edge case: a working claw on the previous
+  # OpenShell must run through current install/onboard, restart the stale
+  # Docker-driver gateway, and keep the same in-sandbox agent process alive.
   openshell-gateway-upgrade-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -1291,6 +1291,7 @@ jobs:
           name: openshell-gateway-upgrade-logs
           path: |
             /tmp/nemoclaw-e2e-openshell-gateway-upgrade.log
+            /tmp/nemoclaw-e2e-openshell-gateway-install.log
             /tmp/nemoclaw-e2e-openshell-gateway-start.log
             /tmp/nemoclaw-e2e-openshell-gateway-process.log
           if-no-files-found: ignore

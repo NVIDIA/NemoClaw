@@ -6,15 +6,16 @@
 # 1. If a macOS arm64 user already has the OpenShell 0.0.37 CLI but not the
 #    standalone openshell-gateway binary, the installer must fetch the Darwin
 #    gateway asset instead of accepting the incomplete CLI-only install.
-# 2. If a user already has a healthy Docker-driver OpenShell gateway from an
-#    older runtime, NemoClaw must not reuse it after installing the current
-#    OpenShell release. The gateway process must be restarted with the supported
-#    supervisor image and current openshell-sandbox binary before onboarding
-#    continues.
+# 2. If a user already has a working claw on the previous OpenShell release,
+#    the current install/onboard path must upgrade OpenShell, restart the stale
+#    gateway on the current supervisor image, and keep the existing sandbox
+#    reachable. This guards the curl|bash upgrade shape that installs the new
+#    NemoClaw and then immediately runs onboarding against the existing claw.
 
 set -euo pipefail
 
 LOG_FILE="/tmp/nemoclaw-e2e-openshell-gateway-upgrade.log"
+INSTALL_LOG="/tmp/nemoclaw-e2e-openshell-gateway-install.log"
 START_LOG="/tmp/nemoclaw-e2e-openshell-gateway-start.log"
 GATEWAY_LOG="/tmp/nemoclaw-e2e-openshell-gateway-process.log"
 exec > >(tee "$LOG_FILE") 2>&1
@@ -32,6 +33,12 @@ fail() {
   diag "openshell status: $(openshell status 2>&1 || true)"
   diag "gateway info: $(openshell gateway info -g nemoclaw 2>&1 || true)"
   diag "pid file: $(cat "$PID_FILE" 2>/dev/null || echo missing)"
+  if command -v openshell >/dev/null 2>&1 && [ -n "${SURVIVOR_SANDBOX:-}" ]; then
+    diag "survivor agent state: $(survivor_agent_probe 2>&1 || true)"
+    diag "survivor agent log tail:"
+    openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
+      sh -lc 'tail -40 /tmp/nemoclaw-e2e-agent.log 2>/dev/null || true' 2>/dev/null || true
+  fi
   diag "gateway log tail:"
   tail -100 "$GATEWAY_LOG" 2>/dev/null || true
   exit 1
@@ -41,11 +48,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 STATE_DIR="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-$HOME/.local/state/nemoclaw/openshell-docker-gateway}"
 PID_FILE="${STATE_DIR}/openshell-gateway.pid"
-STALE_IMAGE="ghcr.io/nvidia/openshell/supervisor:0.0.36"
+OLD_OPENSHELL_VERSION="${NEMOCLAW_OLD_OPENSHELL_VERSION:-0.0.36}"
+CURRENT_OPENSHELL_VERSION="${NEMOCLAW_CURRENT_OPENSHELL_VERSION:-0.0.37}"
+STALE_IMAGE="ghcr.io/nvidia/openshell/supervisor:${OLD_OPENSHELL_VERSION}"
 EXPECTED_IMAGE=""
 SURVIVOR_SANDBOX="${NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME:-e2e-gateway-upgrade-survivor}"
 SURVIVOR_MARKER="gateway-upgrade-survivor-$(date +%s)"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
+OLD_OPENSHELL_DIR=""
+SURVIVOR_AGENT_PID=""
+SURVIVOR_AGENT_COUNTER_BEFORE="0"
 
 OLD_PID=""
 NEW_PID=""
@@ -71,6 +83,130 @@ process_env_value() {
     | awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }'
 }
 
+remove_path_entry() {
+  local remove="$1" entry new_path=""
+  IFS=':' read -r -a path_entries <<<"$PATH"
+  for entry in "${path_entries[@]}"; do
+    [ "$entry" = "$remove" ] && continue
+    if [ -z "$new_path" ]; then
+      new_path="$entry"
+    else
+      new_path="${new_path}:$entry"
+    fi
+  done
+  export PATH="$new_path"
+}
+
+download_release_asset() {
+  local release_tag="$1" asset_name="$2" dest_dir="$3"
+  if command -v gh >/dev/null 2>&1; then
+    if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" \
+      gh release download "$release_tag" --repo NVIDIA/OpenShell \
+        --pattern "$asset_name" --dir "$dest_dir" --clobber 2>/dev/null; then
+      return 0
+    fi
+  fi
+  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/${release_tag}/${asset_name}" \
+    -o "${dest_dir}/${asset_name}"
+}
+
+install_openshell_release_to_dir() {
+  local version="$1" target_dir="$2" tmpdir arch_label asset_name checksum_file
+  mkdir -p "$target_dir"
+  tmpdir="$(mktemp -d)"
+
+  case "$(uname -m)" in
+    x86_64 | amd64) arch_label="x86_64" ;;
+    aarch64 | arm64) arch_label="aarch64" ;;
+    *) fail "unsupported Linux architecture for old OpenShell install: $(uname -m)" ;;
+  esac
+
+  local -a assets=(
+    "openshell-${arch_label}-unknown-linux-musl.tar.gz"
+    "openshell-gateway-${arch_label}-unknown-linux-gnu.tar.gz"
+    "openshell-sandbox-${arch_label}-unknown-linux-gnu.tar.gz"
+  )
+  local -a checksum_files=(
+    "openshell-checksums-sha256.txt"
+    "openshell-gateway-checksums-sha256.txt"
+    "openshell-sandbox-checksums-sha256.txt"
+  )
+
+  info "Installing OpenShell ${version} into temporary old-install bin"
+  for asset_name in "${assets[@]}" "${checksum_files[@]}"; do
+    download_release_asset "v${version}" "$asset_name" "$tmpdir"
+  done
+
+  info "Verifying OpenShell ${version} release checksums"
+  for i in "${!assets[@]}"; do
+    asset_name="${assets[$i]}"
+    checksum_file="${checksum_files[$i]}"
+    (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | shasum -a 256 -c -) \
+      || fail "SHA-256 checksum verification failed for ${asset_name}"
+  done
+
+  for asset_name in "${assets[@]}"; do
+    tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
+  done
+
+  install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
+  install -m 755 "$tmpdir/openshell-gateway" "$target_dir/openshell-gateway"
+  install -m 755 "$tmpdir/openshell-sandbox" "$target_dir/openshell-sandbox"
+  rm -rf "$tmpdir"
+
+  local installed_version
+  installed_version="$("$target_dir/openshell" --version 2>&1 || true)"
+  if ! grep -q "$version" <<<"$installed_version"; then
+    fail "temporary old OpenShell install is ${installed_version}, expected ${version}"
+  fi
+  pass "Temporary old OpenShell install ready: ${installed_version}"
+}
+
+assert_current_openshell_selected() {
+  local version_output
+  version_output="$(openshell --version 2>&1 || true)"
+  if ! grep -q "$CURRENT_OPENSHELL_VERSION" <<<"$version_output"; then
+    fail "PATH still resolves openshell to '${version_output}', expected ${CURRENT_OPENSHELL_VERSION}"
+  fi
+  command -v openshell-gateway >/dev/null 2>&1 || fail "openshell-gateway not found after upgrade"
+  command -v openshell-sandbox >/dev/null 2>&1 || fail "openshell-sandbox not found after upgrade"
+  pass "Current OpenShell selected after upgrade: ${version_output}"
+}
+
+survivor_agent_probe() {
+  # shellcheck disable=SC2016
+  openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- sh -lc '
+pid="$(cat /tmp/nemoclaw-e2e-agent.pid 2>/dev/null || true)"
+[ -n "$pid" ] || exit 1
+kill -0 "$pid" 2>/dev/null || exit 1
+counter="$(sed -n "s/^[^ ]* \([0-9][0-9]*\).*/\1/p" /tmp/nemoclaw-e2e-agent.heartbeat 2>/dev/null | head -1)"
+cmdline="$(tr "\000" " " <"/proc/${pid}/cmdline" 2>/dev/null || true)"
+case "$cmdline" in
+  *nemoclaw-e2e-agent*) ;;
+  *) exit 1 ;;
+esac
+printf "%s %s %s\n" "$pid" "${counter:-0}" "$cmdline"
+'
+}
+
+wait_for_survivor_agent_ready() {
+  for _i in $(seq 1 60); do
+    if survivor_agent_probe >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+survivor_agent_pid() {
+  survivor_agent_probe | awk '{print $1}'
+}
+
+survivor_agent_counter() {
+  survivor_agent_probe | awk '{print $2}'
+}
+
 cleanup_pid() {
   local pid="$1"
   [ -n "$pid" ] || return 0
@@ -90,6 +226,7 @@ cleanup() {
     openshell gateway remove nemoclaw >/dev/null 2>&1 || true
   fi
   rm -f "$PID_FILE"
+  [ -z "$OLD_OPENSHELL_DIR" ] || rm -rf "$OLD_OPENSHELL_DIR"
 }
 trap cleanup EXIT
 
@@ -189,9 +326,27 @@ create_survivor_sandbox() {
   openshell sandbox delete "$SURVIVOR_SANDBOX" >/dev/null 2>&1 || true
 
   testdir="$(mktemp -d)"
+  cat >"${testdir}/nemoclaw-e2e-agent" <<'AGENT'
+#!/bin/sh
+set -eu
+pid_file="/tmp/nemoclaw-e2e-agent.pid"
+heartbeat_file="/tmp/nemoclaw-e2e-agent.heartbeat"
+events_file="/tmp/nemoclaw-e2e-agent.events"
+printf '%s\n' "$$" >"$pid_file"
+printf 'started %s\n' "$$" >>"$events_file"
+counter=0
+trap 'printf "stopped %s\n" "$$" >>"$events_file"; exit 0' TERM INT
+while true; do
+  counter=$((counter + 1))
+  printf '%s %s %s\n' "$$" "$counter" "$(date +%s)" >"$heartbeat_file"
+  sleep 1
+done
+AGENT
   cat >"${testdir}/Dockerfile" <<'DOCKERFILE'
 FROM alpine:3.20
 RUN adduser -D -h /sandbox sandbox && mkdir -p /sandbox && chown -R sandbox:sandbox /sandbox
+COPY nemoclaw-e2e-agent /usr/local/bin/nemoclaw-e2e-agent
+RUN chmod 755 /usr/local/bin/nemoclaw-e2e-agent
 USER sandbox
 WORKDIR /sandbox
 CMD ["sh", "-lc", "sleep infinity"]
@@ -208,6 +363,14 @@ DOCKERFILE
   openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
     sh -lc "printf '%s\n' '$SURVIVOR_MARKER' >/tmp/nemoclaw-gateway-upgrade-marker" \
     || fail "failed to write survivor marker before gateway upgrade"
+
+  openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
+    sh -lc 'rm -f /tmp/nemoclaw-e2e-agent.*; nohup /usr/local/bin/nemoclaw-e2e-agent >/tmp/nemoclaw-e2e-agent.log 2>&1 &' \
+    || fail "failed to start survivor agent before gateway upgrade"
+  wait_for_survivor_agent_ready || fail "survivor agent did not become healthy before gateway upgrade"
+  SURVIVOR_AGENT_PID="$(survivor_agent_pid)"
+  SURVIVOR_AGENT_COUNTER_BEFORE="$(survivor_agent_counter)"
+  [ -n "$SURVIVOR_AGENT_PID" ] || fail "survivor agent pid was empty before gateway upgrade"
 
   mkdir -p "$(dirname "$REGISTRY_FILE")"
   python3 - <<PY
@@ -236,10 +399,11 @@ data["defaultSandbox"] = data.get("defaultSandbox") or "${SURVIVOR_SANDBOX}"
 path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 
-  pass "Survivor sandbox is Ready and registered before gateway upgrade"
+  pass "Survivor sandbox and agent pid ${SURVIVOR_AGENT_PID} are Ready before gateway upgrade"
 }
 
 assert_survivor_sandbox_after_upgrade() {
+  local marker pid counter
   info "Verifying survivor sandbox after OpenShell gateway upgrade"
   wait_for_survivor_ready || fail "survivor sandbox is not Ready after gateway upgrade"
 
@@ -250,6 +414,22 @@ assert_survivor_sandbox_after_upgrade() {
   )"
   [ "$marker" = "$SURVIVOR_MARKER" ] \
     || fail "survivor marker changed after gateway upgrade: got '${marker}'"
+
+  wait_for_survivor_agent_ready || fail "survivor agent is not healthy after gateway upgrade"
+  pid="$(survivor_agent_pid)"
+  [ "$pid" = "$SURVIVOR_AGENT_PID" ] \
+    || fail "survivor agent process changed across gateway upgrade: was ${SURVIVOR_AGENT_PID}, now ${pid}"
+  for _i in $(seq 1 30); do
+    counter="$(survivor_agent_counter)"
+    if [ "${counter:-0}" -gt "${SURVIVOR_AGENT_COUNTER_BEFORE:-0}" ]; then
+      pass "Same survivor agent pid ${pid} is still running after gateway upgrade"
+      break
+    fi
+    sleep 1
+  done
+  counter="$(survivor_agent_counter)"
+  [ "${counter:-0}" -gt "${SURVIVOR_AGENT_COUNTER_BEFORE:-0}" ] \
+    || fail "survivor agent heartbeat did not advance after gateway upgrade"
 
   if [ -f "$REGISTRY_FILE" ] && grep -Fq "\"${SURVIVOR_SANDBOX}\"" "$REGISTRY_FILE"; then
     pass "NemoClaw registry retained survivor sandbox after gateway upgrade"
@@ -277,21 +457,22 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 info "Preparing CLI build and OpenShell binaries"
+rm -f "$INSTALL_LOG"
 if [ ! -d node_modules ]; then
   npm ci --ignore-scripts
 fi
 npm run build:cli
-bash scripts/install-openshell.sh
-load_shell_path
 
-command -v openshell >/dev/null 2>&1 || fail "openshell not found after install"
-command -v openshell-gateway >/dev/null 2>&1 || fail "openshell-gateway not found after install"
-command -v openshell-sandbox >/dev/null 2>&1 || fail "openshell-sandbox not found after install"
-unset OPENSHELL_DOCKER_SUPERVISOR_IMAGE
-unset OPENSHELL_DOCKER_SUPERVISOR_BIN
-EXPECTED_IMAGE="$(
-  node -e "const { execFileSync } = require('child_process'); const { getDockerDriverGatewayEnv } = require('./dist/lib/onboard'); const version = execFileSync('openshell', ['--version'], { encoding: 'utf8' }).trim(); console.log(getDockerDriverGatewayEnv(version).OPENSHELL_DOCKER_SUPERVISOR_IMAGE);"
-)"
+OLD_OPENSHELL_DIR="$(mktemp -d)"
+install_openshell_release_to_dir "$OLD_OPENSHELL_VERSION" "$OLD_OPENSHELL_DIR"
+export PATH="$OLD_OPENSHELL_DIR:$PATH"
+
+command -v openshell >/dev/null 2>&1 || fail "old openshell not found before upgrade"
+command -v openshell-gateway >/dev/null 2>&1 || fail "old openshell-gateway not found before upgrade"
+command -v openshell-sandbox >/dev/null 2>&1 || fail "old openshell-sandbox not found before upgrade"
+if ! openshell --version 2>&1 | grep -q "$OLD_OPENSHELL_VERSION"; then
+  fail "test did not start from old OpenShell ${OLD_OPENSHELL_VERSION}"
+fi
 
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
@@ -339,7 +520,30 @@ OLD_IMAGE="$(process_env_value "$OLD_PID" OPENSHELL_DOCKER_SUPERVISOR_IMAGE)"
 pass "Stale gateway is healthy with ${OLD_IMAGE}"
 create_survivor_sandbox
 
-info "Invoking NemoClaw gateway start path; it must restart the stale process"
+info "Running current OpenShell installer against old working install"
+XDG_BIN_HOME="$OLD_OPENSHELL_DIR" NEMOCLAW_NON_INTERACTIVE=1 \
+  bash scripts/install-openshell.sh 2>&1 | tee "$INSTALL_LOG"
+
+if ! grep -q "below minimum ${CURRENT_OPENSHELL_VERSION}" "$INSTALL_LOG"; then
+  fail "OpenShell installer did not detect old ${OLD_OPENSHELL_VERSION} install"
+fi
+if ! grep -q "Installing OpenShell from release 'v${CURRENT_OPENSHELL_VERSION}'" "$INSTALL_LOG"; then
+  fail "OpenShell installer did not install the current ${CURRENT_OPENSHELL_VERSION} release"
+fi
+
+if ! "$OLD_OPENSHELL_DIR/openshell" --version 2>&1 | grep -q "$CURRENT_OPENSHELL_VERSION"; then
+  remove_path_entry "$OLD_OPENSHELL_DIR"
+fi
+load_shell_path
+assert_current_openshell_selected
+
+unset OPENSHELL_DOCKER_SUPERVISOR_IMAGE
+unset OPENSHELL_DOCKER_SUPERVISOR_BIN
+EXPECTED_IMAGE="$(
+  node -e "const { execFileSync } = require('child_process'); const { getDockerDriverGatewayEnv } = require('./dist/lib/onboard'); const version = execFileSync('openshell', ['--version'], { encoding: 'utf8' }).trim(); console.log(getDockerDriverGatewayEnv(version).OPENSHELL_DOCKER_SUPERVISOR_IMAGE);"
+)"
+
+info "Invoking NemoClaw gateway start path after install; it must restart the stale process"
 unset OPENSHELL_DOCKER_SUPERVISOR_IMAGE
 unset OPENSHELL_DOCKER_SUPERVISOR_BIN
 node <<'NODE' 2>&1 | tee "$START_LOG"
