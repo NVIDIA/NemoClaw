@@ -37,11 +37,6 @@ export interface GatewayPortValidationOptions {
   ollamaProxyPort: number;
 }
 
-function hasExplicitEnvValue(envVar: string): boolean {
-  const raw = process.env[envVar];
-  return raw !== undefined && String(raw).trim() !== "";
-}
-
 /**
  * The default port the OpenClaw dashboard listens on inside the sandbox.
  * The sandbox image is built with CHAT_UI_URL=http://127.0.0.1:SANDBOX_DASHBOARD_PORT
@@ -106,9 +101,7 @@ export function parseGatewayPort(
   options: GatewayPortValidationOptions,
 ): number {
   const port = parsePort(envVar, fallback);
-  if (hasExplicitEnvValue(envVar)) {
-    validateGatewayPort(envVar, port, options);
-  }
+  validateGatewayPort(envVar, port, options);
   return port;
 }
 

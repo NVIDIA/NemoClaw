@@ -95,6 +95,15 @@ describe("parseGatewayPort", () => {
     expect(parseGatewayPort(ENV_KEY, 8080, GATEWAY_VALIDATION_OPTIONS)).toBe(8080);
   });
 
+  it("rejects the default gateway port when another service is configured there", () => {
+    expect(() =>
+      parseGatewayPort(ENV_KEY, 8080, {
+        ...GATEWAY_VALIDATION_OPTIONS,
+        vllmPort: 8080,
+      }),
+    ).toThrow("NEMOCLAW_VLLM_PORT");
+  });
+
   it("accepts a non-conflicting gateway port override", () => {
     process.env[ENV_KEY] = "8990";
     expect(parseGatewayPort(ENV_KEY, 8080, GATEWAY_VALIDATION_OPTIONS)).toBe(8990);

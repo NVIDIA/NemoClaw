@@ -9,9 +9,11 @@ const ORIGINAL_ENV = { ...process.env };
 const ONBOARD_MODULE = require.resolve("../dist/lib/onboard.js");
 const PORTS_MODULE = require.resolve("../dist/lib/core/ports.js");
 const GATEWAY_ADDRESS_MODULE = require.resolve("../dist/lib/core/gateway-address.js");
+const GATEWAY_ENV_MODULE = require.resolve("../dist/lib/onboard/docker-driver-gateway-env.js");
 
 function loadOnboard() {
   delete require.cache[ONBOARD_MODULE];
+  delete require.cache[GATEWAY_ENV_MODULE];
   delete require.cache[PORTS_MODULE];
   delete require.cache[GATEWAY_ADDRESS_MODULE];
   return require("../dist/lib/onboard");
@@ -20,6 +22,7 @@ function loadOnboard() {
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   delete require.cache[ONBOARD_MODULE];
+  delete require.cache[GATEWAY_ENV_MODULE];
   delete require.cache[PORTS_MODULE];
   delete require.cache[GATEWAY_ADDRESS_MODULE];
 });

@@ -103,13 +103,6 @@ const {
   DASHBOARD_PORT_RANGE_START,
   DASHBOARD_PORT_RANGE_END,
 } = require("./core/ports");
-const {
-  GATEWAY_BIND_ADDRESS,
-  WILDCARD_GATEWAY_BIND_ADDRESS,
-  getGatewayConnectHost,
-  getGatewayHttpEndpoint,
-  getGatewayHttpsEndpoint,
-} = require("./core/gateway-address");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
   findReachableOllamaHost,
@@ -299,6 +292,9 @@ const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
 const { reportDockerDriverGatewayStartFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
+const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
+  require("./onboard/docker-driver-gateway-env");
+const { getDockerDriverGatewayEndpoint } = dockerDriverGatewayEnv;
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const {
@@ -3473,9 +3469,7 @@ async function refreshDockerDriverGatewayReuseState(
     return gatewayReuseState;
   }
 
-  const portCheck = await checkPortAvailable(GATEWAY_PORT, {
-    host: GATEWAY_BIND_ADDRESS,
-  });
+  const portCheck = await checkGatewayPortAvailable();
   const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck, {
     gatewayBin,
   });
@@ -3677,8 +3671,12 @@ function captureProcessArgs(pid: number): string {
   }).trim();
 }
 
+function checkGatewayPortAvailable() {
+  return checkPortAvailable(GATEWAY_PORT, dockerDriverGatewayEnv.getGatewayPortCheckOptions());
+}
+
 function getGatewayLocalEndpoint(): string {
-  return getGatewayHttpsEndpoint();
+  return dockerDriverGatewayEnv.getGatewayHttpsEndpoint();
 }
 
 function isLinuxDockerDriverGatewayEnabled(
@@ -3692,10 +3690,6 @@ function isLinuxDockerDriverGatewayPlatform(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
   return platform === "linux";
-}
-
-function getDockerDriverGatewayEndpoint(): string {
-  return getGatewayHttpEndpoint();
 }
 
 function getDockerDriverGatewayStateDir(): string {
@@ -3807,37 +3801,14 @@ function getDockerDriverGatewayEnv(
   versionOutput: string | null = null,
   platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
-  const stateDir = getDockerDriverGatewayStateDir();
-  const env: Record<string, string> = {
-    OPENSHELL_DRIVERS: platform === "darwin" ? "vm" : "docker",
-    OPENSHELL_BIND_ADDRESS: GATEWAY_BIND_ADDRESS,
-    OPENSHELL_SERVER_PORT: String(GATEWAY_PORT),
-    OPENSHELL_DISABLE_TLS: "true",
-    OPENSHELL_DISABLE_GATEWAY_AUTH: "true",
-    OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
-    OPENSHELL_GRPC_ENDPOINT:
-      platform === "darwin"
-        ? `http://host.containers.internal:${GATEWAY_PORT}`
-        : getDockerDriverGatewayEndpoint(),
-    OPENSHELL_SSH_GATEWAY_HOST: getGatewayConnectHost(),
-    OPENSHELL_SSH_GATEWAY_PORT: String(GATEWAY_PORT),
-  };
-  if (platform === "darwin") {
-    env.OPENSHELL_VM_DRIVER_STATE_DIR = path.join(stateDir, "vm-driver");
-    const vmDriverBin = resolveOpenShellVmDriverBinary();
-    if (vmDriverBin) {
-      env.OPENSHELL_DRIVER_DIR = path.dirname(vmDriverBin);
-    }
-  } else {
-    env.OPENSHELL_DOCKER_NETWORK_NAME =
-      process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker";
-    env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE = getOpenShellDockerSupervisorImage(versionOutput);
-    const sandboxBin = resolveOpenShellSandboxBinary();
-    if (sandboxBin) {
-      env.OPENSHELL_DOCKER_SUPERVISOR_BIN = sandboxBin;
-    }
-  }
-  return env;
+  return dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
+    platform,
+    stateDir: getDockerDriverGatewayStateDir(),
+    dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
+    getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
+    resolveVmDriverBin: resolveOpenShellVmDriverBinary,
+    resolveSandboxBin: resolveOpenShellSandboxBinary,
+  });
 }
 
 function isPidAlive(pid: number): boolean {
@@ -3913,21 +3884,6 @@ function shouldRequireDockerDriverEnv(platform: NodeJS.Platform = process.platfo
   return platform === "linux";
 }
 
-const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
-  "OPENSHELL_DRIVERS",
-  "OPENSHELL_BIND_ADDRESS",
-  "OPENSHELL_SERVER_PORT",
-  "OPENSHELL_DISABLE_TLS",
-  "OPENSHELL_DISABLE_GATEWAY_AUTH",
-  "OPENSHELL_DB_URL",
-  "OPENSHELL_GRPC_ENDPOINT",
-  "OPENSHELL_SSH_GATEWAY_HOST",
-  "OPENSHELL_SSH_GATEWAY_PORT",
-  "OPENSHELL_DOCKER_NETWORK_NAME",
-  "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
-  "OPENSHELL_DOCKER_SUPERVISOR_BIN",
-] as const;
-
 function getDockerDriverGatewayRuntimeDriftFromSnapshot({
   processEnv,
   processExe,
@@ -3942,7 +3898,7 @@ function getDockerDriverGatewayRuntimeDriftFromSnapshot({
   if (!processEnv) {
     return { reason: "could not verify process environment" };
   }
-  for (const key of DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS) {
+  for (const key of dockerDriverGatewayEnv.DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS) {
     const desired = desiredEnv[key];
     if (typeof desired !== "string") continue;
     const actual = processEnv[key];
@@ -4067,38 +4023,6 @@ function isDockerDriverGatewayPortListener(
   opts: Parameters<typeof getDockerDriverGatewayPortListenerPid>[1] = {},
 ): boolean {
   return getDockerDriverGatewayPortListenerPid(portCheck, opts) !== null;
-}
-
-function writeDockerGatewayDebEnvOverride(): void {
-  const servicePath = "/usr/lib/systemd/user/openshell-gateway.service";
-  const legacyServicePath = "/lib/systemd/user/openshell-gateway.service";
-  if (
-    !fs.existsSync("/usr/bin/openshell-gateway") &&
-    !fs.existsSync(servicePath) &&
-    !fs.existsSync(legacyServicePath)
-  ) {
-    return;
-  }
-  const envFile = path.join(os.homedir(), ".config", "openshell", "gateway.env");
-  fs.mkdirSync(path.dirname(envFile), { recursive: true, mode: 0o700 });
-  const existing = fs.existsSync(envFile) ? fs.readFileSync(envFile, "utf-8") : "";
-  const preserved = existing
-    .split("\n")
-    .filter(
-      (line: string) =>
-        line.trim() &&
-        !/^OPENSHELL_(DRIVERS|DOCKER_SUPERVISOR_IMAGE|DOCKER_SUPERVISOR_BIN)=/.test(line),
-    );
-  const override = getDockerDriverGatewayEnv();
-  const next = [
-    ...preserved,
-    `OPENSHELL_DRIVERS=${override.OPENSHELL_DRIVERS}`,
-    `OPENSHELL_DOCKER_SUPERVISOR_IMAGE=${override.OPENSHELL_DOCKER_SUPERVISOR_IMAGE}`,
-    ...(override.OPENSHELL_DOCKER_SUPERVISOR_BIN
-      ? [`OPENSHELL_DOCKER_SUPERVISOR_BIN=${override.OPENSHELL_DOCKER_SUPERVISOR_BIN}`]
-      : []),
-  ].join("\n");
-  fs.writeFileSync(envFile, `${next}\n`, { encoding: "utf-8", mode: 0o600 });
 }
 
 function registerDockerDriverGatewayEndpoint(): boolean {
@@ -4882,7 +4806,6 @@ async function preflight(
       port: GATEWAY_PORT,
       label: "OpenShell gateway",
       envVar: "NEMOCLAW_GATEWAY_PORT",
-      host: GATEWAY_BIND_ADDRESS,
     },
     ...(dashboardPortToCheck !== null
       ? [
@@ -4890,13 +4813,13 @@ async function preflight(
             port: dashboardPortToCheck,
             label: `${cliDisplayName()} dashboard`,
             envVar: "NEMOCLAW_DASHBOARD_PORT",
-            host: undefined,
           },
         ]
       : []),
   ];
-  for (const { port, label, envVar, host } of requiredPorts) {
-    const portCheckOptions = host ? { host } : undefined;
+  for (const { port, label, envVar } of requiredPorts) {
+    const portCheckOptions =
+      port === GATEWAY_PORT ? dockerDriverGatewayEnv.getGatewayPortCheckOptions() : undefined;
     let portCheck = await checkPortAvailable(port, portCheckOptions);
     if (!portCheck.ok) {
       if ((port === GATEWAY_PORT || port === DASHBOARD_PORT) && gatewayReuseState === "healthy") {
@@ -4967,11 +4890,7 @@ async function preflight(
     }
     console.log(`  ✓ Port ${port} available (${label})`);
   }
-  if (GATEWAY_BIND_ADDRESS === WILDCARD_GATEWAY_BIND_ADDRESS) {
-    console.log(
-      "  ! OpenShell gateway bind address set to 0.0.0.0; the gateway may be reachable from other hosts on this network.",
-    );
-  }
+  dockerDriverGatewayEnv.warnIfGatewayWildcardBindAddress();
 
   // GPU
   const gpu = nim.detectGpu();
@@ -5237,7 +5156,7 @@ async function startGatewayWithOptions(
 async function startDockerDriverGateway({
   exitOnFailure = true,
 }: { exitOnFailure?: boolean } = {}): Promise<void> {
-  writeDockerGatewayDebEnvOverride();
+  dockerDriverGatewayEnv.writeDockerGatewayDebEnvOverride(() => getDockerDriverGatewayEnv());
   const gatewayBin = resolveOpenShellGatewayBinary();
   const openshellVersionOutput = runCaptureOpenshell(["--version"], {
     ignoreError: true,
@@ -5264,9 +5183,7 @@ async function startDockerDriverGateway({
     }
   }
 
-  const portCheck = await checkPortAvailable(GATEWAY_PORT, {
-    host: GATEWAY_BIND_ADDRESS,
-  });
+  const portCheck = await checkGatewayPortAvailable();
   const portListenerPid = getDockerDriverGatewayPortListenerPid(portCheck, { gatewayBin });
   if (portListenerPid !== null) {
     const drift = getDockerDriverGatewayRuntimeDrift(portListenerPid, gatewayEnv, gatewayBin);
@@ -5378,12 +5295,7 @@ async function startGatewayForRecovery(_gpu: ReturnType<typeof nim.detectGpu>): 
 }
 
 function getGatewayStartEnv(): Record<string, string> {
-  const gatewayEnv: Record<string, string> = {
-    OPENSHELL_BIND_ADDRESS: GATEWAY_BIND_ADDRESS,
-    OPENSHELL_SERVER_PORT: String(GATEWAY_PORT),
-    OPENSHELL_SSH_GATEWAY_HOST: getGatewayConnectHost(),
-    OPENSHELL_SSH_GATEWAY_PORT: String(GATEWAY_PORT),
-  };
+  const gatewayEnv = dockerDriverGatewayEnv.getGatewayStartNetworkEnv();
   const openshellVersion = getInstalledOpenshellVersion();
   const stableGatewayImage = openshellVersion
     ? `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`
