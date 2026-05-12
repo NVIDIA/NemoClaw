@@ -1806,11 +1806,17 @@ jobs:
       fail-fast: false
       matrix:
         test_suite: [all, messaging-providers, full]
+    # Re-enable once BREV_API_KEY/BREV_ORG_ID are installed in the upstream
+    # NVIDIA/NemoClaw repo. Referencing a reusable workflow that requires
+    # missing secrets causes GitHub to fail the entire workflow at startup
+    # (zero jobs/logs), which is what broke nightly after #3350 merged.
+    if: false
     uses: ./.github/workflows/e2e-branch-validation.yaml
     with:
-      # Respect the selected ref for manual dispatches; scheduled runs execute
-      # on main, so this remains main there.
-      branch: ${{ github.ref_name }}
+      # Scheduled nightly runs should validate main. Manual dispatches in this
+      # workflow also only run against main in the upstream repo; branch-specific
+      # Brev validation should use e2e-branch-validation.yaml directly.
+      branch: main
       test_suite: ${{ matrix.test_suite }}
       use_launchable: true
       # Provision from the published NemoClaw launchable image (pre-baked
@@ -1819,10 +1825,7 @@ jobs:
       use_published_launchable: true
       launchable_id: ""
       keep_alive: false
-    secrets:
-      BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
-      BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+    secrets: inherit
 
   # ── GPU E2E (Ollama local inference) ──────────────────────────
   # Runs on an NVKS ephemeral GPU runner (RTX Pro 6000, 36 GB VRAM).
