@@ -38,10 +38,12 @@ section "Restart dashboard forward with explicit all-interface bind"
 # interfaces. On main, NEMOCLAW_DASHBOARD_BIND is ignored and the forward stays
 # localhost-only; the fix should make this opt-in produce 0.0.0.0:<port>.
 openshell forward stop "${DASHBOARD_PORT}" >/dev/null 2>&1 || true
-if NEMOCLAW_DASHBOARD_BIND=0.0.0.0 nemoclaw "${SANDBOX_NAME}" connect >/tmp/nemoclaw-dashboard-remote-bind-connect.log 2>&1; then
+CONNECT_LOG="$(mktemp -t nemoclaw-dashboard-remote-bind.XXXXXX.log)"
+trap 'rm -f "${CONNECT_LOG}"' EXIT
+if NEMOCLAW_DASHBOARD_BIND=0.0.0.0 nemoclaw "${SANDBOX_NAME}" connect >"${CONNECT_LOG}" 2>&1; then
   pass "nemoclaw connect completed with NEMOCLAW_DASHBOARD_BIND=0.0.0.0"
 else
-  cat /tmp/nemoclaw-dashboard-remote-bind-connect.log
+  cat "${CONNECT_LOG}"
   fail "nemoclaw connect failed with NEMOCLAW_DASHBOARD_BIND=0.0.0.0"
 fi
 
