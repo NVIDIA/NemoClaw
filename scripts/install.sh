@@ -551,6 +551,10 @@ usage() {
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
+  printf "    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1\n"
+  printf "                                  Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
+  printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
+  printf "                                  Continue after manually backing up and retiring old gateway\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
@@ -1554,6 +1558,96 @@ installed_openshell_version() {
   openshell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
+truthy_env() {
+  case "${1:-}" in
+    1 | true | TRUE | yes | YES | y | Y) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+legacy_openshell_gateway_upgrade_needed() {
+  local version="$1"
+  [[ -n "$version" ]] && ! version_gte "$version" "0.0.37"
+}
+
+installer_non_interactive() {
+  [[ "${NON_INTERACTIVE:-}" == "1" || "${NEMOCLAW_NON_INTERACTIVE:-}" == "1" ]]
+}
+
+print_openshell_upgrade_manual_commands() {
+  cat <<EOF
+  Manual upgrade path:
+    ${_CLI_BIN} backup-all
+    openshell gateway destroy -g nemoclaw || openshell gateway destroy
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
+    ${_CLI_BIN} upgrade-sandboxes --check
+
+  Use NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to allow the installer
+  to run the backup, gateway retirement, and restore preparation automatically.
+EOF
+}
+
+confirm_experimental_openshell_gateway_upgrade() {
+  local sandbox_count="$1" old_openshell_version="$2"
+
+  if truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
+    info "Using manually prepared OpenShell gateway upgrade state."
+    export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
+    return 1
+  fi
+
+  if truthy_env "${NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE:-}"; then
+    info "Accepted experimental OpenShell gateway upgrade for ${sandbox_count} existing sandbox(es)."
+    return 0
+  fi
+
+  cat <<EOF
+
+  Existing NemoClaw sandbox state uses OpenShell ${old_openshell_version}.
+  This release upgrades OpenShell to 0.0.37, which uses a different gateway layout.
+
+  NemoClaw can run the new automatic upgrade path now:
+    1. back up registered claws
+    2. retire the old OpenShell gateway while the old CLI is still available
+    3. install OpenShell 0.0.37
+    4. recreate and restore the claw during onboarding
+
+  This upgrade path is new. Durable workspace and configuration state should be
+  preserved, but running processes may be interrupted.
+
+EOF
+  print_openshell_upgrade_manual_commands
+  printf "\n"
+
+  if installer_non_interactive; then
+    error "OpenShell 0.0.37 gateway upgrade requires explicit opt-in. Set NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to continue automatically, or run the manual commands above."
+  fi
+
+  local answer=""
+  if [ -t 0 ]; then
+    printf "  Continue with automatic OpenShell gateway upgrade? [Y/n]: "
+    IFS= read -r answer || answer=""
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    info "Installer stdin is piped; prompting for OpenShell gateway upgrade on /dev/tty..."
+    printf "  Continue with automatic OpenShell gateway upgrade? [Y/n]: "
+    IFS= read -r answer <&3 || answer=""
+    exec 3<&-
+  else
+    error "OpenShell 0.0.37 gateway upgrade requires a TTY prompt. Set NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to continue automatically, or run the manual commands above."
+  fi
+
+  answer="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
+  case "$answer" in
+    "" | y | yes)
+      info "Accepted experimental OpenShell gateway upgrade."
+      return 0
+      ;;
+    *)
+      error "Aborting before OpenShell gateway upgrade. Existing gateway and sandboxes were left unchanged."
+      ;;
+  esac
+}
+
 preinstall_backup_and_retire_legacy_gateway() {
   local reg_file="${HOME}/.nemoclaw/sandboxes.json"
   [ -f "$reg_file" ] || return 0
@@ -1572,8 +1666,24 @@ preinstall_backup_and_retire_legacy_gateway() {
   old_openshell_version="$(installed_openshell_version || true)"
   local old_cli_runner=""
   if ! old_cli_runner="$(resolve_existing_cli_runner)"; then
+    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version" && truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
+      info "Using manually prepared OpenShell gateway upgrade state."
+      export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
+      return 0
+    fi
+    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
+      warn "Existing sandbox sessions use OpenShell ${old_openshell_version}, but no usable ${_CLI_BIN} CLI was found for pre-upgrade backup."
+      print_openshell_upgrade_manual_commands
+      error "Aborting before OpenShell gateway upgrade. Restore a working ${_CLI_BIN} CLI or manually back up and retire the old gateway first."
+    fi
     warn "Existing sandbox sessions detected, but no usable ${_CLI_BIN} CLI was found for pre-upgrade backup."
     return 0
+  fi
+
+  if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
+    if ! confirm_experimental_openshell_gateway_upgrade "$sandbox_count" "$old_openshell_version"; then
+      return 0
+    fi
   fi
 
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"

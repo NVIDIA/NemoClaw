@@ -314,6 +314,7 @@ run_installer_payload() {
     COMPATIBLE_API_KEY=dummy \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 \
     NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
     NEMOCLAW_INSTALL_REF="$ref" \
     NEMOCLAW_INSTALL_TAG="$ref" \
@@ -409,6 +410,8 @@ install_current_nemoclaw_upgrade() {
   local current_ref
   current_ref="${GITHUB_SHA:-$(git rev-parse HEAD)}"
   run_installer_payload "current ${current_ref:0:12}" "$current_ref" "${REPO_ROOT}/scripts/install.sh" "$CURRENT_INSTALL_LOG"
+  grep -Fq "Accepted experimental OpenShell gateway upgrade" "$CURRENT_INSTALL_LOG" \
+    || fail "current installer did not exercise the experimental OpenShell gateway upgrade acceptance path"
 
   if ! openshell --version 2>&1 | grep -q "$CURRENT_OPENSHELL_VERSION"; then
     fail "current NemoClaw install did not upgrade OpenShell to ${CURRENT_OPENSHELL_VERSION}: $(openshell --version 2>&1 || true)"
