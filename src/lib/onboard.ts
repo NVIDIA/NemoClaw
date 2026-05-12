@@ -3787,7 +3787,7 @@ function getGatewayLocalEndpoint(): string {
 function isLinuxDockerDriverGatewayEnabled(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  return platform === "linux";
+  return platform === "linux" || platform === "darwin";
 }
 
 function getDockerDriverGatewayEndpoint(): string {

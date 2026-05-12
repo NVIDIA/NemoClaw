@@ -62,7 +62,7 @@ exit 0`,
     writeExecutable(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-echo "curl stub: not available in test" >&2
+echo "curl stub: $*" >&2
 exit 1`,
     );
 
@@ -101,8 +101,24 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.37'/);
   });
 
+  it("triggers reinstall on macOS when openshell 0.0.37 is missing the gateway binary", () => {
+    const result = runWithInstalledVersion("0.0.37", {}, {
+      driverBins: false,
+      os: "Darwin",
+      arch: "arm64",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/missing Docker-driver binaries/);
+  });
+
+  it("includes the macOS arm64 gateway asset in the install payload", () => {
+    expect(fs.readFileSync(SCRIPT, "utf8")).toMatch(
+      /openshell-gateway-aarch64-apple-darwin\.tar\.gz/,
+    );
+  });
+
   it("triggers upgrade when openshell 0.0.36 is installed (below current floor)", () => {
-    const result = runWithInstalledVersion("0.0.36");
+    const result = runWithInstalledVersion("0.0.36", {}, { os: "Linux" });
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
@@ -164,7 +180,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       writeExecutable(
         path.join(fakeBin, "curl"),
         `#!/usr/bin/env bash
-echo "curl stub: not available in test" >&2
+echo "curl stub: $*" >&2
 exit 1`,
       );
       writeExecutable(

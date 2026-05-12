@@ -2,11 +2,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Regression coverage for PR #3001 upgrade installs: if a user already has a
-# healthy Linux Docker-driver OpenShell gateway from an older runtime, NemoClaw
-# must not reuse it after installing the current OpenShell release. The gateway
-# process must be restarted with the supported supervisor image and current
-# openshell-sandbox binary before onboarding continues.
+# Regression coverage for PR #3001 upgrade installs:
+# 1. If a macOS arm64 user already has the OpenShell 0.0.37 CLI but not the
+#    standalone openshell-gateway binary, the installer must fetch the Darwin
+#    gateway asset instead of accepting the incomplete CLI-only install.
+# 2. If a user already has a healthy Docker-driver OpenShell gateway from an
+#    older runtime, NemoClaw must not reuse it after installing the current
+#    OpenShell release. The gateway process must be restarted with the supported
+#    supervisor image and current openshell-sandbox binary before onboarding
+#    continues.
 
 set -euo pipefail
 
@@ -39,6 +43,9 @@ STATE_DIR="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-$HOME/.local/state/nemoclaw/o
 PID_FILE="${STATE_DIR}/openshell-gateway.pid"
 STALE_IMAGE="ghcr.io/nvidia/openshell/supervisor:0.0.36"
 EXPECTED_IMAGE=""
+SURVIVOR_SANDBOX="${NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME:-e2e-gateway-upgrade-survivor}"
+SURVIVOR_MARKER="gateway-upgrade-survivor-$(date +%s)"
+REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
 
 OLD_PID=""
 NEW_PID=""
@@ -78,13 +85,196 @@ cleanup() {
   set +e
   cleanup_pid "$OLD_PID"
   cleanup_pid "$NEW_PID"
-  openshell gateway remove nemoclaw >/dev/null 2>&1 || true
+  if command -v openshell >/dev/null 2>&1; then
+    openshell sandbox delete "$SURVIVOR_SANDBOX" >/dev/null 2>&1 || true
+    openshell gateway remove nemoclaw >/dev/null 2>&1 || true
+  fi
   rm -f "$PID_FILE"
 }
 trap cleanup EXIT
 
+exercise_macos_gateway_installer_regression() {
+  local tmp fake_bin curl_log install_out install_err
+  tmp="$(mktemp -d)"
+  fake_bin="$tmp/bin"
+  curl_log="$tmp/curl.log"
+  install_out="$tmp/install.out"
+  install_err="$tmp/install.err"
+  mkdir -p "$fake_bin"
+
+  cat >"$fake_bin/uname" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-m" ]; then
+  printf 'arm64\n'
+else
+  printf 'Darwin\n'
+fi
+EOF
+
+  cat >"$fake_bin/openshell" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  printf 'openshell 0.0.37\n'
+  exit 0
+fi
+exit 99
+EOF
+
+  cat >"$fake_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+
+  cat >"$fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+out=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-o" ]; then
+    out="$arg"
+    break
+  fi
+  prev="$arg"
+done
+printf '%s\n' "$*" >>"$NEMOCLAW_FAKE_CURL_LOG"
+if [ -n "$out" ]; then
+  printf 'fake payload\n' >"$out"
+fi
+exit 0
+EOF
+
+  chmod +x "$fake_bin"/*
+
+  if PATH="$fake_bin:/usr/bin:/bin" \
+    NEMOCLAW_OPENSHELL_CHANNEL=stable \
+    NEMOCLAW_FAKE_CURL_LOG="$curl_log" \
+    bash scripts/install-openshell.sh >"$install_out" 2>"$install_err"; then
+    rm -rf "$tmp"
+    fail "macOS incomplete OpenShell install unexpectedly succeeded with fake payloads"
+  fi
+
+  if ! grep -q "missing Docker-driver binaries" "$install_out"; then
+    diag "installer stdout:"
+    cat "$install_out"
+    diag "installer stderr:"
+    cat "$install_err"
+    rm -rf "$tmp"
+    fail "macOS installer did not detect missing openshell-gateway"
+  fi
+
+  if ! grep -q "openshell-gateway-aarch64-apple-darwin.tar.gz" "$curl_log"; then
+    diag "curl log:"
+    cat "$curl_log" 2>/dev/null || true
+    rm -rf "$tmp"
+    fail "macOS installer did not request the Darwin openshell-gateway asset"
+  fi
+
+  rm -rf "$tmp"
+  pass "macOS OpenShell 0.0.37 incomplete install fetches the Darwin gateway asset"
+}
+
+wait_for_survivor_ready() {
+  for _i in $(seq 1 60); do
+    if openshell sandbox list 2>/dev/null | grep -q "${SURVIVOR_SANDBOX}.*Ready"; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+create_survivor_sandbox() {
+  local testdir
+  info "Creating survivor sandbox before OpenShell gateway upgrade"
+  openshell sandbox delete "$SURVIVOR_SANDBOX" >/dev/null 2>&1 || true
+
+  testdir="$(mktemp -d)"
+  cat >"${testdir}/Dockerfile" <<'DOCKERFILE'
+FROM alpine:3.20
+RUN adduser -D -h /sandbox sandbox && mkdir -p /sandbox && chown -R sandbox:sandbox /sandbox
+USER sandbox
+WORKDIR /sandbox
+CMD ["sh", "-lc", "sleep infinity"]
+DOCKERFILE
+
+  openshell sandbox create --name "$SURVIVOR_SANDBOX" --from "${testdir}/Dockerfile" --gateway nemoclaw --no-tty -- true \
+    || {
+      rm -rf "$testdir"
+      fail "failed to create survivor sandbox before gateway upgrade"
+    }
+  rm -rf "$testdir"
+
+  wait_for_survivor_ready || fail "survivor sandbox did not become Ready before gateway upgrade"
+  openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
+    sh -lc "printf '%s\n' '$SURVIVOR_MARKER' >/tmp/nemoclaw-gateway-upgrade-marker" \
+    || fail "failed to write survivor marker before gateway upgrade"
+
+  mkdir -p "$(dirname "$REGISTRY_FILE")"
+  python3 - <<PY
+import json
+from pathlib import Path
+
+path = Path("${REGISTRY_FILE}")
+data = {"sandboxes": {}, "defaultSandbox": None}
+if path.exists():
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        pass
+data.setdefault("sandboxes", {})["${SURVIVOR_SANDBOX}"] = {
+    "name": "${SURVIVOR_SANDBOX}",
+    "model": "test-survivor",
+    "provider": "test",
+    "gpuEnabled": False,
+    "policies": [],
+    "policyTier": None,
+    "agent": None,
+    "agentVersion": None,
+    "openshellDriver": "docker",
+}
+data["defaultSandbox"] = data.get("defaultSandbox") or "${SURVIVOR_SANDBOX}"
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+
+  pass "Survivor sandbox is Ready and registered before gateway upgrade"
+}
+
+assert_survivor_sandbox_after_upgrade() {
+  info "Verifying survivor sandbox after OpenShell gateway upgrade"
+  wait_for_survivor_ready || fail "survivor sandbox is not Ready after gateway upgrade"
+
+  local marker
+  marker="$(
+    openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
+      cat /tmp/nemoclaw-gateway-upgrade-marker 2>/dev/null || true
+  )"
+  [ "$marker" = "$SURVIVOR_MARKER" ] \
+    || fail "survivor marker changed after gateway upgrade: got '${marker}'"
+
+  if [ -f "$REGISTRY_FILE" ] && grep -Fq "\"${SURVIVOR_SANDBOX}\"" "$REGISTRY_FILE"; then
+    pass "NemoClaw registry retained survivor sandbox after gateway upgrade"
+  else
+    fail "NemoClaw registry lost survivor sandbox after gateway upgrade"
+  fi
+
+  local list_output
+  if list_output="$(nemoclaw list 2>&1)" && grep -Fq "$SURVIVOR_SANDBOX" <<<"$list_output"; then
+    pass "nemoclaw list still shows survivor sandbox after gateway upgrade"
+  else
+    fail "nemoclaw list does not show survivor sandbox after gateway upgrade: ${list_output:0:200}"
+  fi
+
+  pass "Survivor sandbox remained reachable after OpenShell gateway upgrade"
+}
+
 cd "$REPO_ROOT"
 load_shell_path
+exercise_macos_gateway_installer_regression
+
+if [ "$(uname -s)" != "Linux" ]; then
+  pass "Skipping live Docker-driver gateway restart regression on non-Linux host"
+  exit 0
+fi
 
 info "Preparing CLI build and OpenShell binaries"
 if [ ! -d node_modules ]; then
@@ -147,6 +337,7 @@ openshell status >/dev/null 2>&1 || fail "stale gateway never became healthy"
 OLD_IMAGE="$(process_env_value "$OLD_PID" OPENSHELL_DOCKER_SUPERVISOR_IMAGE)"
 [ "$OLD_IMAGE" = "$STALE_IMAGE" ] || fail "stale gateway did not start with expected image"
 pass "Stale gateway is healthy with ${OLD_IMAGE}"
+create_survivor_sandbox
 
 info "Invoking NemoClaw gateway start path; it must restart the stale process"
 unset OPENSHELL_DOCKER_SUPERVISOR_IMAGE
@@ -180,4 +371,5 @@ if ! grep -qi "Docker-driver gateway is stale" "$START_LOG"; then
 fi
 
 openshell status >/dev/null 2>&1 || fail "replacement gateway is not healthy"
+assert_survivor_sandbox_after_upgrade
 pass "NemoClaw restarted stale gateway with ${NEW_IMAGE}"

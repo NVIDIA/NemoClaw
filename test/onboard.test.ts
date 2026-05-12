@@ -403,9 +403,10 @@ network_policies:
     ]);
   });
 
-  it("models the Linux OpenShell Docker-driver gateway environment", () => {
+  it("models the OpenShell Docker-driver gateway environment", () => {
     expect(isLinuxDockerDriverGatewayEnabled("linux")).toBe(true);
-    expect(isLinuxDockerDriverGatewayEnabled("darwin")).toBe(false);
+    expect(isLinuxDockerDriverGatewayEnabled("darwin")).toBe(true);
+    expect(isLinuxDockerDriverGatewayEnabled("win32")).toBe(false);
     const env = getDockerDriverGatewayEnv("openshell 0.0.37");
     expect(env.OPENSHELL_DRIVERS).toBe("docker");
     expect(env.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
@@ -458,7 +459,7 @@ network_policies:
     ).toContain("process environment");
   });
 
-  it("recognizes an existing Docker-driver gateway listener on Linux", () => {
+  it("recognizes an existing Docker-driver gateway listener on Docker-driver platforms", () => {
     const opts = {
       platform: "linux" as NodeJS.Platform,
       isPidAliveFn: (pid: number) => pid === 1234,
@@ -479,6 +480,12 @@ network_policies:
       isDockerDriverGatewayPortListener(
         { ok: false, process: "openshell", pid: 1234 },
         { ...opts, platform: "darwin" },
+      ),
+    ).toBe(true);
+    expect(
+      isDockerDriverGatewayPortListener(
+        { ok: false, process: "openshell", pid: 1234 },
+        { ...opts, platform: "win32" },
       ),
     ).toBe(false);
     expect(
@@ -2484,7 +2491,7 @@ mod._load = function(req, parent, isMain) {
   }
   return origLoad.call(this, req, parent, isMain);
 };
-Object.defineProperty(process, "platform", { value: "darwin" });
+Object.defineProperty(process, "platform", { value: "freebsd" });
 const { startGateway } = require(${onboardPath});
 startGateway(null).catch(() => {});
 `;
