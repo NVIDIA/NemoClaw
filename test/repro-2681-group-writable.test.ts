@@ -30,10 +30,13 @@ function extractShellFunctionFromSource(src: string, name: string): string {
 
 function normalizeMutableConfigPermsFor(configDir: string): string {
   const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
-  return extractShellFunctionFromSource(startScript, "normalize_mutable_config_perms").replace(
-    'local config_dir="/sandbox/.openclaw"',
-    `local config_dir=${JSON.stringify(configDir)}`,
-  );
+  return [
+    extractShellFunctionFromSource(startScript, "lock_openclaw_config_baseline_if_present"),
+    extractShellFunctionFromSource(startScript, "normalize_mutable_config_perms").replace(
+      'local config_dir="/sandbox/.openclaw"',
+      `local config_dir=${JSON.stringify(configDir)}`,
+    ),
+  ].join("\n");
 }
 
 function modeBits(filePath: string): number {
