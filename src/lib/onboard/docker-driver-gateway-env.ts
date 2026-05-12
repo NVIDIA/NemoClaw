@@ -150,8 +150,10 @@ export function writeDockerGatewayDebEnvOverride(
   ];
   if (!servicePaths.some((candidate) => fs.existsSync(candidate))) return;
   const override = getOverride();
-  const envFile = path.join(os.homedir(), ".config", "openshell", "gateway.env");
-  fs.mkdirSync(path.dirname(envFile), { recursive: true, mode: 0o700 });
+  const envDir = path.join(os.homedir(), ".config", "openshell");
+  const envFile = path.join(envDir, "gateway.env");
+  fs.mkdirSync(envDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(envDir, 0o700);
   const existing = readTextFileIfPresent(envFile);
   fs.writeFileSync(envFile, buildDockerGatewayDebEnvFile(existing, override), {
     encoding: "utf-8",
