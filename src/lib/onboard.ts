@@ -3518,8 +3518,9 @@ function areRequiredDockerDriverBinariesPresent(
     sandboxBin?: string | null;
     vmDriverBin?: string | null;
   } = {},
+  arch: NodeJS.Architecture = process.arch,
 ): boolean {
-  if (!isLinuxDockerDriverGatewayEnabled(platform)) return true;
+  if (!isLinuxDockerDriverGatewayEnabled(platform, arch)) return true;
   const gatewayBinary =
     Object.prototype.hasOwnProperty.call(binaries, "gatewayBin")
       ? binaries.gatewayBin
@@ -3990,8 +3991,9 @@ function getGatewayLocalEndpoint(): string {
 
 function isLinuxDockerDriverGatewayEnabled(
   platform: NodeJS.Platform = process.platform,
+  arch: NodeJS.Architecture = process.arch,
 ): boolean {
-  return platform === "linux" || platform === "darwin";
+  return platform === "linux" || (platform === "darwin" && arch === "arm64");
 }
 
 function isLinuxDockerDriverGatewayPlatform(
@@ -4314,13 +4316,20 @@ function getDockerDriverGatewayPortListenerPid(
   portCheck: import("./onboard/preflight").PortProbeResult,
   opts: {
     platform?: NodeJS.Platform;
+    arch?: NodeJS.Architecture;
     gatewayBin?: string | null;
     isPidAliveFn?: (pid: number) => boolean;
     isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
   } = {},
 ): number | null {
   if (portCheck.ok) return null;
-  if (!isLinuxDockerDriverGatewayEnabled(opts.platform ?? process.platform)) return null;
+  if (
+    !isLinuxDockerDriverGatewayEnabled(
+      opts.platform ?? process.platform,
+      opts.arch ?? process.arch,
+    )
+  )
+    return null;
   const pid = Number(portCheck.pid);
   if (!Number.isInteger(pid) || pid <= 0) return null;
   const proc = String(portCheck.process || "").toLowerCase();
@@ -5823,12 +5832,11 @@ function getSandboxRuntimeRegistryFields(
     sandboxGpuEnabled: config.sandboxGpuEnabled,
     sandboxGpuMode: config.mode,
     sandboxGpuDevice: config.sandboxGpuDevice,
-    openshellDriver:
-      process.platform === "darwin"
+    openshellDriver: isLinuxDockerDriverGatewayEnabled()
+      ? process.platform === "darwin"
         ? "vm"
-        : isLinuxDockerDriverGatewayEnabled()
-          ? "docker"
-          : "kubernetes",
+        : "docker"
+      : "kubernetes",
     openshellVersion: getInstalledOpenshellVersion(
       runCaptureOpenshell(["--version"], { ignoreError: true }),
     ),

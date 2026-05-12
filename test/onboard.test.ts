@@ -87,6 +87,7 @@ type OnboardTestInternals = {
       sandboxBin?: string | null;
       vmDriverBin?: string | null;
     },
+    arch?: NodeJS.Architecture,
   ) => boolean;
   getSandboxInferenceConfig: ShimFn<SandboxInferenceConfig>;
   getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
@@ -103,7 +104,10 @@ type OnboardTestInternals = {
     desiredEnv: Record<string, string>;
     gatewayBin?: string | null;
   }) => { reason: string } | null;
-  isLinuxDockerDriverGatewayEnabled: (platform?: NodeJS.Platform) => boolean;
+  isLinuxDockerDriverGatewayEnabled: (
+    platform?: NodeJS.Platform,
+    arch?: NodeJS.Architecture,
+  ) => boolean;
   isDockerDriverGatewayPortListener: (
     portCheck: {
       ok: boolean;
@@ -112,6 +116,7 @@ type OnboardTestInternals = {
     },
     opts?: {
       platform?: NodeJS.Platform;
+      arch?: NodeJS.Architecture;
       gatewayBin?: string | null;
       isPidAliveFn?: (pid: number) => boolean;
       isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
@@ -421,7 +426,8 @@ network_policies:
 
   it("models the OpenShell standalone gateway environment", () => {
     expect(isLinuxDockerDriverGatewayEnabled("linux")).toBe(true);
-    expect(isLinuxDockerDriverGatewayEnabled("darwin")).toBe(true);
+    expect(isLinuxDockerDriverGatewayEnabled("darwin", "arm64")).toBe(true);
+    expect(isLinuxDockerDriverGatewayEnabled("darwin", "x64")).toBe(false);
     expect(isLinuxDockerDriverGatewayEnabled("win32")).toBe(false);
     const linuxEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
     expect(linuxEnv.OPENSHELL_DRIVERS).toBe("docker");
@@ -438,11 +444,15 @@ network_policies:
 
   it("requires platform-specific standalone gateway binaries", () => {
     expect(
-      areRequiredDockerDriverBinariesPresent("darwin", {
-        gatewayBin: "/tmp/openshell-gateway",
-        sandboxBin: null,
-        vmDriverBin: "/tmp/openshell-driver-vm",
-      }),
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+          vmDriverBin: "/tmp/openshell-driver-vm",
+        },
+        "arm64",
+      ),
     ).toBe(true);
     expect(
       areRequiredDockerDriverBinariesPresent("linux", {
@@ -459,19 +469,37 @@ network_policies:
       }),
     ).toBe(true);
     expect(
-      areRequiredDockerDriverBinariesPresent("darwin", {
-        gatewayBin: "/tmp/openshell-gateway",
-        sandboxBin: null,
-        vmDriverBin: null,
-      }),
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+          vmDriverBin: null,
+        },
+        "arm64",
+      ),
     ).toBe(false);
     expect(
-      areRequiredDockerDriverBinariesPresent("darwin", {
-        gatewayBin: null,
-        sandboxBin: "/tmp/openshell-sandbox",
-        vmDriverBin: "/tmp/openshell-driver-vm",
-      }),
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: null,
+          sandboxBin: "/tmp/openshell-sandbox",
+          vmDriverBin: "/tmp/openshell-driver-vm",
+        },
+        "arm64",
+      ),
     ).toBe(false);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: null,
+          sandboxBin: null,
+        },
+        "x64",
+      ),
+    ).toBe(true);
   });
 
   it("requires Docker-driver process env verification only where /proc is available", () => {
@@ -545,7 +573,7 @@ network_policies:
     expect(
       isDockerDriverGatewayPortListener(
         { ok: false, process: "openshell", pid: 1234 },
-        { ...opts, platform: "darwin" },
+        { ...opts, platform: "darwin", arch: "arm64" },
       ),
     ).toBe(true);
     expect(
