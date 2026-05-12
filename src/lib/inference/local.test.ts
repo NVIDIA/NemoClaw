@@ -11,6 +11,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   LARGE_OLLAMA_MIN_MEMORY_MB,
   OLLAMA_CONTAINER_PORT,
+  QWEN3_6_OLLAMA_MODEL,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -400,10 +401,9 @@ describe("local inference helpers", () => {
     expect(
       getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB - 1 }),
     ).toEqual(["qwen2.5:7b"]);
-    expect(getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB })).toEqual([
-      "qwen2.5:7b",
-      DEFAULT_OLLAMA_MODEL,
-    ]);
+    expect(getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB })).toEqual(
+      ["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL],
+    );
     expect(getDefaultOllamaModel({ totalMemoryMB: 16384 }, () => "")).toBe("qwen2.5:7b");
   });
 
