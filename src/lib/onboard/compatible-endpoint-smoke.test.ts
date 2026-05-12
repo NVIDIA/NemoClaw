@@ -55,7 +55,9 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     const script = buildCompatibleEndpointSandboxSmokeScript("Qwen/Qwen3.6-27B");
 
     expect(script).toContain('"max_tokens": 256');
-    expect(script).not.toContain('"max_tokens": 32,');
+    // Regex (not substring) so a regression to `"max_tokens": 32` without the
+    // trailing comma also fails the test, per CR review on PR #3356.
+    expect(script).not.toMatch(/"max_tokens":\s*32\b/);
   });
 
   it("accepts a reasoning-only response as a valid smoke signal (#3341)", () => {
