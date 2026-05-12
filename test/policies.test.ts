@@ -190,14 +190,20 @@ describe("policies", () => {
     });
 
     it("whatsapp preset routes web.whatsapp.com as an L4 CONNECT tunnel with TLS pass-through", () => {
-      const content = requirePresetContent(policies.loadPreset("whatsapp"));
-      const parsed = YAML.parse(content);
-      const endpoints = parsed.network_policies.whatsapp.endpoints;
-
-      const webEndpoint = endpoints.find(
-        (item: { host?: string }) => item.host === "web.whatsapp.com",
+      const presetPath = path.join(
+        import.meta.dirname,
+        "..",
+        "nemoclaw-blueprint",
+        "policies",
+        "presets",
+        "whatsapp.yaml",
       );
-      expect(webEndpoint).toBeDefined();
+      const parsed = YAML.parse(fs.readFileSync(presetPath, "utf-8"));
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.whatsapp?.endpoints ?? [];
+
+      const webEndpoint = endpoints.find((item) => item.host === "web.whatsapp.com");
+      if (!webEndpoint) throw new Error("expected web.whatsapp.com endpoint");
       expect(webEndpoint.port).toBe(443);
       expect(webEndpoint.access).toBe("full");
       expect(webEndpoint.tls).toBe("skip");
@@ -207,28 +213,34 @@ describe("policies", () => {
     });
 
     it("whatsapp media and static hosts stay constrained to expected REST methods", () => {
-      const content = requirePresetContent(policies.loadPreset("whatsapp"));
-      const parsed = YAML.parse(content);
-      const endpoints = parsed.network_policies.whatsapp.endpoints;
-
-      const mmg = endpoints.find(
-        (item: { host?: string }) => item.host === "mmg.whatsapp.net",
+      const presetPath = path.join(
+        import.meta.dirname,
+        "..",
+        "nemoclaw-blueprint",
+        "policies",
+        "presets",
+        "whatsapp.yaml",
       );
-      expect(mmg).toBeDefined();
+      const parsed = YAML.parse(fs.readFileSync(presetPath, "utf-8"));
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.whatsapp?.endpoints ?? [];
+
+      const mmg = endpoints.find((item) => item.host === "mmg.whatsapp.net");
+      if (!mmg) throw new Error("expected mmg.whatsapp.net endpoint");
       expect(mmg.port).toBe(443);
       expect(mmg.protocol).toBe("rest");
       expect(mmg.enforcement).toBe("enforce");
-      const mmgMethods = mmg.rules.map((rule: { allow?: { method?: string } }) => rule.allow?.method);
+      const mmgRules = Array.isArray(mmg.rules) ? mmg.rules : [];
+      const mmgMethods = mmgRules.map((rule: { allow?: { method?: string } }) => rule.allow?.method);
       expect(mmgMethods.sort()).toEqual(["GET", "POST"]);
 
-      const staticHost = endpoints.find(
-        (item: { host?: string }) => item.host === "static.whatsapp.net",
-      );
-      expect(staticHost).toBeDefined();
+      const staticHost = endpoints.find((item) => item.host === "static.whatsapp.net");
+      if (!staticHost) throw new Error("expected static.whatsapp.net endpoint");
       expect(staticHost.port).toBe(443);
       expect(staticHost.protocol).toBe("rest");
       expect(staticHost.enforcement).toBe("enforce");
-      const staticMethods = staticHost.rules.map(
+      const staticRules = Array.isArray(staticHost.rules) ? staticHost.rules : [];
+      const staticMethods = staticRules.map(
         (rule: { allow?: { method?: string } }) => rule.allow?.method,
       );
       expect(staticMethods).toEqual(["GET"]);
