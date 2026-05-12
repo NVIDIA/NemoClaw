@@ -96,8 +96,8 @@ Three tiers are available:
 | Tier | Description |
 |------|-------------|
 | Restricted | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
-| Balanced (default) | Full dev tooling and web search. Package installs, model downloads, and inference. No messaging platform access. |
-| Open | Broad access across third-party services including messaging and productivity. |
+| Balanced (default) | Full dev tooling and web search when the active agent supports web search. Package installs, model downloads, and inference. No messaging platform access. |
+| Open | Broad access across third-party services including messaging and productivity. Agent-specific unsupported presets are filtered out. |
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
 For details on tiers and the presets each includes, see [Network Policies](network-policies.md#policy-tiers).
@@ -114,6 +114,7 @@ Onboarding applies tier defaults and preserves any presets you previously added 
 Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to be authoritative.
 Onboarding removes any preset that is not in the list.
 `skip` leaves the applied set untouched and does not apply tier defaults.
+NemoClaw filters tier suggestions and resume selections by active agent support, so unsupported presets such as Brave Search are not reapplied to agents that do not support them.
 
 | Value | Behaviour |
 |-------|-----------|
