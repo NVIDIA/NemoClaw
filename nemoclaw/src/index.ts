@@ -183,13 +183,17 @@ export interface BeforeToolCallResult {
   blockReason?: string;
 }
 
-/** Return value from a before_agent_start hook. */
-export interface BeforeAgentStartResult {
+/** Return value from a before_prompt_build hook. */
+export interface BeforePromptBuildResult {
+  systemPrompt?: string;
   prependContext?: string;
+  appendContext?: string;
+  prependSystemContext?: string;
+  appendSystemContext?: string;
 }
 
 /** Union of all hook result types. */
-export type HookResult = BeforeToolCallResult | BeforeAgentStartResult | undefined;
+export type HookResult = BeforeToolCallResult | BeforePromptBuildResult | undefined;
 
 /**
  * The API object injected into the plugin's register function by the OpenClaw
