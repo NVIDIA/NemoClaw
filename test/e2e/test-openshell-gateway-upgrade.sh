@@ -16,8 +16,11 @@ set -euo pipefail
 
 LOG_FILE="/tmp/nemoclaw-e2e-openshell-gateway-upgrade.log"
 INSTALL_LOG="/tmp/nemoclaw-e2e-openshell-gateway-install.log"
+OLD_INSTALL_LOG="/tmp/nemoclaw-e2e-openshell-gateway-old-install.log"
+CURRENT_INSTALL_LOG="/tmp/nemoclaw-e2e-openshell-gateway-current-install.log"
 START_LOG="/tmp/nemoclaw-e2e-openshell-gateway-start.log"
 GATEWAY_LOG="/tmp/nemoclaw-e2e-openshell-gateway-process.log"
+MOCK_LOG="/tmp/nemoclaw-e2e-openshell-gateway-compatible-mock.log"
 exec > >(tee "$LOG_FILE") 2>&1
 
 RED='\033[0;31m'
@@ -48,20 +51,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 STATE_DIR="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-$HOME/.local/state/nemoclaw/openshell-docker-gateway}"
 PID_FILE="${STATE_DIR}/openshell-gateway.pid"
+OLD_NEMOCLAW_REF="${NEMOCLAW_OLD_NEMOCLAW_REF:-v0.0.36}"
 OLD_OPENSHELL_VERSION="${NEMOCLAW_OLD_OPENSHELL_VERSION:-0.0.36}"
 CURRENT_OPENSHELL_VERSION="${NEMOCLAW_CURRENT_OPENSHELL_VERSION:-0.0.37}"
-STALE_IMAGE="ghcr.io/nvidia/openshell/supervisor:${OLD_OPENSHELL_VERSION}"
-EXPECTED_IMAGE=""
 SURVIVOR_SANDBOX="${NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME:-e2e-gateway-upgrade-survivor}"
 SURVIVOR_MARKER="gateway-upgrade-survivor-$(date +%s)"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
-OLD_OPENSHELL_DIR=""
-CURRENT_OPENSHELL_DIR=""
+FAKE_BASE_URL=""
+FAKE_MOCK_PID=""
 SURVIVOR_AGENT_PID=""
 SURVIVOR_AGENT_COUNTER_BEFORE="0"
-
-OLD_PID=""
-NEW_PID=""
 
 load_shell_path() {
   if [ -f "$HOME/.bashrc" ]; then
@@ -76,115 +75,6 @@ load_shell_path() {
   if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     export PATH="$HOME/.local/bin:$PATH"
   fi
-}
-
-process_env_value() {
-  local pid="$1" key="$2"
-  tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null \
-    | awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }'
-}
-
-remove_path_entry() {
-  local remove="$1" entry new_path=""
-  IFS=':' read -r -a path_entries <<<"$PATH"
-  for entry in "${path_entries[@]}"; do
-    [ "$entry" = "$remove" ] && continue
-    if [ -z "$new_path" ]; then
-      new_path="$entry"
-    else
-      new_path="${new_path}:$entry"
-    fi
-  done
-  export PATH="$new_path"
-}
-
-linux_release_arch_label() {
-  case "$(uname -m)" in
-    x86_64 | amd64) printf 'x86_64' ;;
-    aarch64 | arm64) printf 'aarch64' ;;
-    *) fail "unsupported Linux architecture: $(uname -m)" ;;
-  esac
-}
-
-download_release_asset() {
-  local release_tag="$1" asset_name="$2" dest_dir="$3"
-  if command -v gh >/dev/null 2>&1; then
-    if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" \
-      gh release download "$release_tag" --repo NVIDIA/OpenShell \
-        --pattern "$asset_name" --dir "$dest_dir" --clobber 2>/dev/null; then
-      return 0
-    fi
-  fi
-  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/${release_tag}/${asset_name}" \
-    -o "${dest_dir}/${asset_name}"
-}
-
-verify_release_asset() {
-  local tmpdir="$1" asset_name="$2" checksum_file="$3"
-  if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | sha256sum -c -) \
-      || fail "SHA-256 checksum verification failed for ${asset_name}"
-  else
-    (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | shasum -a 256 -c -) \
-      || fail "SHA-256 checksum verification failed for ${asset_name}"
-  fi
-}
-
-install_openshell_cli_release_to_dir() {
-  local version="$1" target_dir="$2" label="${3:-release}" tmpdir arch_label asset_name checksum_file
-  mkdir -p "$target_dir"
-  tmpdir="$(mktemp -d)"
-  arch_label="$(linux_release_arch_label)"
-  asset_name="openshell-${arch_label}-unknown-linux-musl.tar.gz"
-  checksum_file="openshell-checksums-sha256.txt"
-
-  info "Installing real OpenShell ${version} CLI into temporary ${label} bin"
-  download_release_asset "v${version}" "$asset_name" "$tmpdir"
-  download_release_asset "v${version}" "$checksum_file" "$tmpdir"
-  verify_release_asset "$tmpdir" "$asset_name" "$checksum_file"
-  tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
-  install -m 755 "$tmpdir/openshell" "${target_dir}/openshell"
-  rm -rf "$tmpdir"
-
-  pass "Temporary ${label} OpenShell CLI ready: $("${target_dir}/openshell" --version)"
-}
-
-install_driver_bins_release_to_dir() {
-  local version="$1" target_dir="$2" label="${3:-release}" tmpdir arch_label asset_name checksum_file
-  mkdir -p "$target_dir"
-  tmpdir="$(mktemp -d)"
-  arch_label="$(linux_release_arch_label)"
-
-  info "Installing OpenShell ${version} Docker-driver binaries into temporary ${label} bin"
-  for asset_name in \
-    "openshell-gateway-${arch_label}-unknown-linux-gnu.tar.gz" \
-    "openshell-sandbox-${arch_label}-unknown-linux-gnu.tar.gz"; do
-    case "$asset_name" in
-      openshell-gateway-*) checksum_file="openshell-gateway-checksums-sha256.txt" ;;
-      openshell-sandbox-*) checksum_file="openshell-sandbox-checksums-sha256.txt" ;;
-      *) fail "unknown driver asset ${asset_name}" ;;
-    esac
-    download_release_asset "v${version}" "$asset_name" "$tmpdir"
-    download_release_asset "v${version}" "$checksum_file" "$tmpdir"
-    verify_release_asset "$tmpdir" "$asset_name" "$checksum_file"
-    tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
-  done
-
-  install -m 755 "$tmpdir/openshell-gateway" "${target_dir}/openshell-gateway"
-  install -m 755 "$tmpdir/openshell-sandbox" "${target_dir}/openshell-sandbox"
-  rm -rf "$tmpdir"
-  pass "Temporary ${label} Docker-driver binaries ready"
-}
-
-assert_current_openshell_selected() {
-  local version_output
-  version_output="$(openshell --version 2>&1 || true)"
-  if ! grep -q "$CURRENT_OPENSHELL_VERSION" <<<"$version_output"; then
-    fail "PATH still resolves openshell to '${version_output}', expected ${CURRENT_OPENSHELL_VERSION}"
-  fi
-  command -v openshell-gateway >/dev/null 2>&1 || fail "openshell-gateway not found after upgrade"
-  command -v openshell-sandbox >/dev/null 2>&1 || fail "openshell-sandbox not found after upgrade"
-  pass "Current OpenShell selected after upgrade: ${version_output}"
 }
 
 survivor_agent_probe() {
@@ -233,15 +123,12 @@ cleanup_pid() {
 
 cleanup() {
   set +e
-  cleanup_pid "$OLD_PID"
-  cleanup_pid "$NEW_PID"
+  cleanup_pid "$FAKE_MOCK_PID"
   if command -v openshell >/dev/null 2>&1; then
     openshell sandbox delete "$SURVIVOR_SANDBOX" >/dev/null 2>&1 || true
     openshell gateway remove nemoclaw >/dev/null 2>&1 || true
   fi
   rm -f "$PID_FILE"
-  [ -z "$OLD_OPENSHELL_DIR" ] || rm -rf "$OLD_OPENSHELL_DIR"
-  [ -z "$CURRENT_OPENSHELL_DIR" ] || rm -rf "$CURRENT_OPENSHELL_DIR"
 }
 trap cleanup EXIT
 
@@ -335,13 +222,166 @@ wait_for_survivor_ready() {
   return 1
 }
 
-create_survivor_sandbox() {
-  local testdir
-  info "Creating survivor sandbox before OpenShell gateway upgrade"
-  openshell sandbox delete "$SURVIVOR_SANDBOX" >/dev/null 2>&1 || true
+start_compatible_endpoint_mock() {
+  local tmp port_file
+  tmp="$(mktemp -d)"
+  port_file="${tmp}/port"
+  rm -f "$MOCK_LOG"
 
-  testdir="$(mktemp -d)"
-  cat >"${testdir}/nemoclaw-e2e-agent" <<'AGENT'
+  python3 - "$port_file" "$MOCK_LOG" <<'PY' &
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+port_file = sys.argv[1]
+log_file = sys.argv[2]
+
+class Handler(BaseHTTPRequestHandler):
+    def _send(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _log(self, message):
+        with open(log_file, "a", encoding="utf-8") as fh:
+            fh.write(message + "\n")
+            fh.flush()
+
+    def log_message(self, _fmt, *_args):
+        return
+
+    def do_GET(self):
+        self._log(f"GET {self.path}")
+        if self.path in ("/v1/models", "/models"):
+            self._send(200, {"data": [{"id": "test-model", "object": "model"}]})
+            return
+        self._send(404, {"error": {"message": "not found"}})
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length) if length else b""
+        self._log(f"POST {self.path} {body[:200].decode('utf-8', 'replace')}")
+        if self.path in ("/v1/chat/completions", "/chat/completions"):
+            self._send(200, {
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }],
+            })
+            return
+        if self.path in ("/v1/responses", "/responses"):
+            self._send(200, {
+                "id": "resp-test",
+                "object": "response",
+                "output": [{
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }],
+            })
+            return
+        self._send(404, {"error": {"message": "not found"}})
+
+server = HTTPServer(("127.0.0.1", 0), Handler)
+with open(port_file, "w", encoding="utf-8") as fh:
+    fh.write(str(server.server_port))
+server.serve_forever()
+PY
+  FAKE_MOCK_PID="$!"
+
+  for _i in $(seq 1 30); do
+    if [ -s "$port_file" ]; then
+      FAKE_BASE_URL="http://127.0.0.1:$(cat "$port_file")/v1"
+      if curl -sf "${FAKE_BASE_URL}/models" >/dev/null 2>&1; then
+        rm -rf "$tmp"
+        pass "Compatible endpoint mock is listening at ${FAKE_BASE_URL}"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  rm -rf "$tmp"
+  fail "compatible endpoint mock did not start"
+}
+
+run_installer_payload() {
+  local label="$1" ref="$2" installer="$3" log_file="$4"
+  info "Running ${label} NemoClaw installer from ${ref}"
+  rm -f "$log_file"
+  env \
+    COMPATIBLE_API_KEY=dummy \
+    NEMOCLAW_NON_INTERACTIVE=1 \
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+    NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
+    NEMOCLAW_INSTALL_REF="$ref" \
+    NEMOCLAW_INSTALL_TAG="$ref" \
+    NEMOCLAW_PROVIDER=custom \
+    NEMOCLAW_ENDPOINT_URL="$FAKE_BASE_URL" \
+    NEMOCLAW_MODEL=test-model \
+    NEMOCLAW_SANDBOX_NAME="$SURVIVOR_SANDBOX" \
+    NEMOCLAW_POLICY_MODE=skip \
+    NEMOCLAW_DASHBOARD_PORT= \
+    CHAT_UI_URL= \
+    bash "$installer" --non-interactive --yes-i-accept-third-party-software \
+    >"$log_file" 2>&1 || {
+      diag "${label} installer log tail:"
+      tail -120 "$log_file" 2>/dev/null || true
+      fail "${label} NemoClaw installer failed"
+    }
+  load_shell_path
+}
+
+download_old_installer_payload() {
+  local target="$1"
+  curl -fsSL "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${OLD_NEMOCLAW_REF}/scripts/install.sh" \
+    -o "$target"
+  chmod 755 "$target"
+}
+
+install_old_nemoclaw_and_claw() {
+  local installer
+  installer="$(mktemp)"
+  download_old_installer_payload "$installer"
+  run_installer_payload "old ${OLD_NEMOCLAW_REF}" "$OLD_NEMOCLAW_REF" "$installer" "$OLD_INSTALL_LOG"
+  rm -f "$installer"
+
+  if ! openshell --version 2>&1 | grep -q "$OLD_OPENSHELL_VERSION"; then
+    fail "old NemoClaw install did not leave OpenShell ${OLD_OPENSHELL_VERSION}: $(openshell --version 2>&1 || true)"
+  fi
+  pass "Old NemoClaw install selected $(openshell --version)"
+
+  if [ -d "$HOME/.nemoclaw/source/.git" ]; then
+    local old_head expected_head
+    old_head="$(git -C "$HOME/.nemoclaw/source" rev-parse HEAD 2>/dev/null || true)"
+    expected_head="$(git ls-remote https://github.com/NVIDIA/NemoClaw.git "refs/tags/${OLD_NEMOCLAW_REF}" | awk '{print $1}')"
+    [ -n "$old_head" ] && [ "$old_head" = "$expected_head" ] \
+      || fail "old installer source is ${old_head:-unknown}, expected ${expected_head:-$OLD_NEMOCLAW_REF}"
+    pass "Old NemoClaw source is ${OLD_NEMOCLAW_REF} (${old_head:0:12})"
+  fi
+
+  wait_for_survivor_ready || fail "survivor sandbox did not become Ready before gateway upgrade"
+  if nemoclaw list 2>&1 | grep -Fq "$SURVIVOR_SANDBOX"; then
+    pass "Old NemoClaw install registered survivor claw ${SURVIVOR_SANDBOX}"
+  else
+    fail "old NemoClaw install did not register survivor claw ${SURVIVOR_SANDBOX}"
+  fi
+}
+
+start_survivor_agent_in_existing_claw() {
+  info "Starting survivor agent inside old NemoClaw claw"
+  openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
+    sh -lc "printf '%s\n' '$SURVIVOR_MARKER' >/tmp/nemoclaw-gateway-upgrade-marker" \
+    || fail "failed to write survivor marker before gateway upgrade"
+
+  local remote_setup
+  remote_setup="$(cat <<'REMOTE'
+cat >/tmp/nemoclaw-e2e-agent <<'AGENT'
 #!/bin/sh
 set -eu
 pid_file="/tmp/nemoclaw-e2e-agent.pid"
@@ -357,64 +397,40 @@ while true; do
   sleep 1
 done
 AGENT
-  cat >"${testdir}/Dockerfile" <<'DOCKERFILE'
-FROM alpine:3.20
-RUN adduser -D -h /sandbox sandbox && mkdir -p /sandbox && chown -R sandbox:sandbox /sandbox
-COPY nemoclaw-e2e-agent /usr/local/bin/nemoclaw-e2e-agent
-RUN chmod 755 /usr/local/bin/nemoclaw-e2e-agent
-USER sandbox
-WORKDIR /sandbox
-CMD ["sh", "-lc", "tail -f /dev/null"]
-DOCKERFILE
+chmod 755 /tmp/nemoclaw-e2e-agent
+rm -f /tmp/nemoclaw-e2e-agent.pid /tmp/nemoclaw-e2e-agent.heartbeat /tmp/nemoclaw-e2e-agent.events /tmp/nemoclaw-e2e-agent.log
+nohup /tmp/nemoclaw-e2e-agent >/tmp/nemoclaw-e2e-agent.log 2>&1 &
+REMOTE
+)"
 
-  openshell sandbox create --name "$SURVIVOR_SANDBOX" --from "${testdir}/Dockerfile" --gateway nemoclaw --no-tty \
-    || {
-      rm -rf "$testdir"
-      fail "failed to create survivor sandbox before gateway upgrade"
-    }
-  rm -rf "$testdir"
-
-  wait_for_survivor_ready || fail "survivor sandbox did not become Ready before gateway upgrade"
-  openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
-    sh -lc "printf '%s\n' '$SURVIVOR_MARKER' >/tmp/nemoclaw-gateway-upgrade-marker" \
-    || fail "failed to write survivor marker before gateway upgrade"
-
-  openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
-    sh -lc 'rm -f /tmp/nemoclaw-e2e-agent.*; nohup /usr/local/bin/nemoclaw-e2e-agent >/tmp/nemoclaw-e2e-agent.log 2>&1 &' \
+  openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- sh -lc "$remote_setup" \
     || fail "failed to start survivor agent before gateway upgrade"
   wait_for_survivor_agent_ready || fail "survivor agent did not become healthy before gateway upgrade"
   SURVIVOR_AGENT_PID="$(survivor_agent_pid)"
   SURVIVOR_AGENT_COUNTER_BEFORE="$(survivor_agent_counter)"
   [ -n "$SURVIVOR_AGENT_PID" ] || fail "survivor agent pid was empty before gateway upgrade"
 
-  mkdir -p "$(dirname "$REGISTRY_FILE")"
-  python3 - <<PY
-import json
-from pathlib import Path
-
-path = Path("${REGISTRY_FILE}")
-data = {"sandboxes": {}, "defaultSandbox": None}
-if path.exists():
-    try:
-        data = json.loads(path.read_text())
-    except Exception:
-        pass
-data.setdefault("sandboxes", {})["${SURVIVOR_SANDBOX}"] = {
-    "name": "${SURVIVOR_SANDBOX}",
-    "model": "test-survivor",
-    "provider": "test",
-    "gpuEnabled": False,
-    "policies": [],
-    "policyTier": None,
-    "agent": None,
-    "agentVersion": None,
-    "openshellDriver": "docker",
+  pass "Old NemoClaw claw and agent pid ${SURVIVOR_AGENT_PID} are Ready before gateway upgrade"
 }
-data["defaultSandbox"] = data.get("defaultSandbox") or "${SURVIVOR_SANDBOX}"
-path.write_text(json.dumps(data, indent=2) + "\n")
-PY
 
-  pass "Survivor sandbox and agent pid ${SURVIVOR_AGENT_PID} are Ready before gateway upgrade"
+install_current_nemoclaw_upgrade() {
+  local current_ref
+  current_ref="${GITHUB_SHA:-$(git rev-parse HEAD)}"
+  run_installer_payload "current ${current_ref:0:12}" "$current_ref" "${REPO_ROOT}/scripts/install.sh" "$CURRENT_INSTALL_LOG"
+
+  if ! openshell --version 2>&1 | grep -q "$CURRENT_OPENSHELL_VERSION"; then
+    fail "current NemoClaw install did not upgrade OpenShell to ${CURRENT_OPENSHELL_VERSION}: $(openshell --version 2>&1 || true)"
+  fi
+  pass "Current NemoClaw install selected $(openshell --version)"
+
+  local status_output
+  status_output="$(openshell status 2>&1 || true)"
+  if ! grep -q "Version:.*${CURRENT_OPENSHELL_VERSION}" <<<"$status_output"; then
+    diag "openshell status after current install:"
+    printf '%s\n' "$status_output"
+    fail "gateway server did not report OpenShell ${CURRENT_OPENSHELL_VERSION} after upgrade"
+  fi
+  pass "Gateway server reports OpenShell ${CURRENT_OPENSHELL_VERSION} after upgrade"
 }
 
 assert_survivor_sandbox_after_upgrade() {
@@ -471,135 +487,15 @@ if [ "$(uname -s)" != "Linux" ]; then
   exit 0
 fi
 
-info "Preparing CLI build and OpenShell binaries"
-rm -f "$INSTALL_LOG"
-if [ ! -d node_modules ]; then
-  npm ci --ignore-scripts
-fi
-npm run build:cli
+info "Preparing real old-install upgrade scenario"
+rm -f "$INSTALL_LOG" "$OLD_INSTALL_LOG" "$CURRENT_INSTALL_LOG" "$START_LOG" "$GATEWAY_LOG"
+start_compatible_endpoint_mock
+install_old_nemoclaw_and_claw
+start_survivor_agent_in_existing_claw
 
-OLD_OPENSHELL_DIR="$(mktemp -d)"
-install_openshell_cli_release_to_dir "$OLD_OPENSHELL_VERSION" "$OLD_OPENSHELL_DIR" "old-install"
-export PATH="$OLD_OPENSHELL_DIR:$PATH"
-
-command -v openshell >/dev/null 2>&1 || fail "old openshell not found before upgrade"
-if ! openshell --version 2>&1 | grep -q "$OLD_OPENSHELL_VERSION"; then
-  fail "test did not start from old OpenShell ${OLD_OPENSHELL_VERSION}"
-fi
-pass "E2E starts from real OpenShell CLI $(openshell --version)"
-
-CURRENT_OPENSHELL_DIR="$(mktemp -d)"
-install_openshell_cli_release_to_dir "$CURRENT_OPENSHELL_VERSION" "$CURRENT_OPENSHELL_DIR" "Docker-driver harness"
-install_driver_bins_release_to_dir "$CURRENT_OPENSHELL_VERSION" "$CURRENT_OPENSHELL_DIR" "Docker-driver harness"
-
-mkdir -p "$STATE_DIR"
-chmod 700 "$STATE_DIR"
-rm -f "$PID_FILE" "$START_LOG" "$GATEWAY_LOG"
-openshell gateway remove nemoclaw >/dev/null 2>&1 || true
-
-GATEWAY_BIN="${CURRENT_OPENSHELL_DIR}/openshell-gateway"
-SANDBOX_BIN="${CURRENT_OPENSHELL_DIR}/openshell-sandbox"
-[ -x "$GATEWAY_BIN" ] || fail "current openshell-gateway harness not found"
-[ -x "$SANDBOX_BIN" ] || fail "current openshell-sandbox harness not found"
-STALE_GATEWAY_BIN="${STATE_DIR}/openshell-gateway-stale"
-cp "$GATEWAY_BIN" "$STALE_GATEWAY_BIN"
-chmod 700 "$STALE_GATEWAY_BIN"
-
-info "Starting a stale but healthy Docker-driver gateway"
-(
-  export OPENSHELL_DRIVERS=docker
-  export OPENSHELL_BIND_ADDRESS=127.0.0.1
-  export OPENSHELL_SERVER_PORT=8080
-  export OPENSHELL_DISABLE_TLS=true
-  export OPENSHELL_DISABLE_GATEWAY_AUTH=true
-  export OPENSHELL_DB_URL="sqlite:${STATE_DIR}/openshell.db"
-  export OPENSHELL_GRPC_ENDPOINT=http://127.0.0.1:8080
-  export OPENSHELL_SSH_GATEWAY_HOST=127.0.0.1
-  export OPENSHELL_SSH_GATEWAY_PORT=8080
-  export OPENSHELL_DOCKER_NETWORK_NAME="${OPENSHELL_DOCKER_NETWORK_NAME:-openshell-docker}"
-  export OPENSHELL_DOCKER_SUPERVISOR_IMAGE="$STALE_IMAGE"
-  export OPENSHELL_DOCKER_SUPERVISOR_BIN="$SANDBOX_BIN"
-  exec "$STALE_GATEWAY_BIN"
-) >>"$GATEWAY_LOG" 2>&1 &
-OLD_PID="$!"
-echo "$OLD_PID" >"$PID_FILE"
-
-for _i in $(seq 1 60); do
-  kill -0 "$OLD_PID" 2>/dev/null || fail "stale gateway process exited early"
-  openshell gateway add --local --name nemoclaw http://127.0.0.1:8080 >/dev/null 2>&1 || true
-  openshell gateway select nemoclaw >/dev/null 2>&1 || true
-  if openshell status >/dev/null 2>&1; then
-    break
-  fi
-  sleep 2
-done
-openshell status >/dev/null 2>&1 || fail "stale gateway never became healthy"
-
-OLD_IMAGE="$(process_env_value "$OLD_PID" OPENSHELL_DOCKER_SUPERVISOR_IMAGE)"
-[ "$OLD_IMAGE" = "$STALE_IMAGE" ] || fail "stale gateway did not start with expected image"
-pass "Stale gateway is healthy with ${OLD_IMAGE}"
-PATH="$CURRENT_OPENSHELL_DIR:$PATH" create_survivor_sandbox
-
-info "Running onboard OpenShell upgrade preflight against old working install"
-XDG_BIN_HOME="$OLD_OPENSHELL_DIR" NEMOCLAW_NON_INTERACTIVE=1 \
-  node <<'NODE' 2>&1 | tee "$INSTALL_LOG"
-const { ensureOpenshellForOnboard } = require("./dist/lib/onboard");
-
-ensureOpenshellForOnboard();
-NODE
-
-if ! grep -q "below minimum ${CURRENT_OPENSHELL_VERSION}" "$INSTALL_LOG"; then
-  fail "onboard OpenShell preflight did not detect old ${OLD_OPENSHELL_VERSION} install"
-fi
-if ! grep -q "openshell CLI: openshell ${CURRENT_OPENSHELL_VERSION}" "$INSTALL_LOG"; then
-  fail "onboard OpenShell preflight did not select ${CURRENT_OPENSHELL_VERSION} after upgrade"
-fi
-
-if ! "$OLD_OPENSHELL_DIR/openshell" --version 2>&1 | grep -q "$CURRENT_OPENSHELL_VERSION"; then
-  remove_path_entry "$OLD_OPENSHELL_DIR"
-fi
-load_shell_path
-assert_current_openshell_selected
-
-unset OPENSHELL_DOCKER_SUPERVISOR_IMAGE
-unset OPENSHELL_DOCKER_SUPERVISOR_BIN
-EXPECTED_IMAGE="$(
-  node -e "const { execFileSync } = require('child_process'); const { getDockerDriverGatewayEnv } = require('./dist/lib/onboard'); const version = execFileSync('openshell', ['--version'], { encoding: 'utf8' }).trim(); console.log(getDockerDriverGatewayEnv(version).OPENSHELL_DOCKER_SUPERVISOR_IMAGE);"
-)"
-
-info "Invoking NemoClaw gateway start path after install; it must restart the stale process"
-unset OPENSHELL_DOCKER_SUPERVISOR_IMAGE
-unset OPENSHELL_DOCKER_SUPERVISOR_BIN
-node <<'NODE' 2>&1 | tee "$START_LOG"
-const { startGateway } = require("./dist/lib/onboard");
-
-startGateway(null)
-  .then(() => undefined)
-  .catch((error) => {
-    console.error(error && error.stack ? error.stack : error);
-    process.exit(1);
-  });
-NODE
-
-[ -f "$PID_FILE" ] || fail "NemoClaw did not write a replacement gateway pid file"
-NEW_PID="$(tr -d '[:space:]' <"$PID_FILE")"
-[ -n "$NEW_PID" ] || fail "replacement gateway pid file is empty"
-[ "$NEW_PID" != "$OLD_PID" ] || fail "NemoClaw reused the stale gateway pid"
-
-wait "$OLD_PID" 2>/dev/null || true
-if kill -0 "$OLD_PID" 2>/dev/null; then
-  fail "stale gateway process is still alive after restart"
-fi
-
-NEW_IMAGE="$(process_env_value "$NEW_PID" OPENSHELL_DOCKER_SUPERVISOR_IMAGE)"
-[ "$NEW_IMAGE" = "$EXPECTED_IMAGE" ] || fail "replacement gateway image was ${NEW_IMAGE:-unset}, expected ${EXPECTED_IMAGE}"
-
-if ! grep -qi "Docker-driver gateway is stale" "$START_LOG"; then
-  fail "NemoClaw start log did not report stale gateway restart"
-fi
-
-openshell status >/dev/null 2>&1 || fail "replacement gateway is not healthy"
+info "Running current NemoClaw installer/onboard against old working claw"
+install_current_nemoclaw_upgrade
 assert_survivor_sandbox_after_upgrade
-pass "NemoClaw restarted stale gateway with ${NEW_IMAGE}"
+pass "Current NemoClaw installer upgraded old ${OLD_NEMOCLAW_REF} claw without replacing the running agent"
 
 exercise_macos_gateway_installer_regression

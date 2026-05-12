@@ -1258,8 +1258,8 @@ jobs:
 
   # ── OpenShell gateway upgrade E2E ────────────────────────────
   # Reproduces the old-install upgrade edge case: a working claw on the previous
-  # OpenShell must run through current install/onboard, restart the stale
-  # Docker-driver gateway, and keep the same in-sandbox agent process alive.
+  # NemoClaw/OpenShell release must run through current curl-style install/onboard
+  # and keep the same in-sandbox agent process alive under the upgraded gateway.
   openshell-gateway-upgrade-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -1267,7 +1267,7 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade-e2e,'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -1292,8 +1292,11 @@ jobs:
           path: |
             /tmp/nemoclaw-e2e-openshell-gateway-upgrade.log
             /tmp/nemoclaw-e2e-openshell-gateway-install.log
+            /tmp/nemoclaw-e2e-openshell-gateway-old-install.log
+            /tmp/nemoclaw-e2e-openshell-gateway-current-install.log
             /tmp/nemoclaw-e2e-openshell-gateway-start.log
             /tmp/nemoclaw-e2e-openshell-gateway-process.log
+            /tmp/nemoclaw-e2e-openshell-gateway-compatible-mock.log
           if-no-files-found: ignore
 
   # ── Gateway health-honesty E2E ──────────────────────────────
