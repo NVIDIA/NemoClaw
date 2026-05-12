@@ -11164,15 +11164,20 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         // preflight detects the conflict, falls back to a different port, the
         // build bakes the original port into CHAT_UI_URL, and the new sandbox
         // never becomes reachable. Sweep before preflight so the port shows up
-        // free. See #3397, #3398. Protect the dashboard ports of currently
-        // registered sandboxes so a fresh onboard for a new name does not
-        // disrupt the forward of an existing sandbox.
+        // free. See #3397, #3398. Protect the dashboard ports of OTHER
+        // registered sandboxes so a fresh onboard for a different name does
+        // not disrupt their forwards; the target sandbox's own port stays
+        // unprotected so we can recover the upgrade/same-name case where the
+        // stale process is holding the exact port we're rebuilding on.
         const { stopStaleDashboardListeners } = require("./onboard/stale-gateway-cleanup") as {
           stopStaleDashboardListeners: typeof import("./onboard/stale-gateway-cleanup").stopStaleDashboardListeners;
         };
-        const protectedPorts = registry
-          .listSandboxes()
-          .sandboxes.map((sb) => sb.dashboardPort)
+        const sandboxRegistry = registry.listSandboxes();
+        const targetSandboxName =
+          requestedSandboxName ?? sandboxRegistry.defaultSandbox ?? null;
+        const protectedPorts = sandboxRegistry.sandboxes
+          .filter((sb) => sb.name !== targetSandboxName)
+          .map((sb) => sb.dashboardPort)
           .filter((p): p is number => typeof p === "number" && Number.isFinite(p));
         stopStaleDashboardListeners({}, { protectedPorts });
       }
