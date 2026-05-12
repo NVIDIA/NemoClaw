@@ -32,7 +32,6 @@
     "build:cli": "tsc -p tsconfig.src.json && tsc -p nemoclaw-blueprint/tsconfig.json",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.ts",
-    "migrate:js-to-ts": "tsx scripts/migrate-js-to-ts.ts",
     "ts-migration:assist": "tsx scripts/ts-migration-assist.ts",
     "ts-migration:bulk-fix-prs": "tsx scripts/ts-migration-bulk-fix-prs.ts",
     "ts-migration:guard": "tsx scripts/check-legacy-migrated-paths.ts",

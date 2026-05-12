@@ -99,7 +99,7 @@ flowchart TB
 * - Inference
   - Credential exposure, unauthorized model access, cost overruns.
   - OpenShell gateway
-  - Yes. Use `openshell inference set`.
+  - Yes. Use `nemoclaw inference set`.
 
 :::
 
@@ -263,19 +263,21 @@ See the [Process Controls](https://docs.nvidia.com/openshell/latest/security/bes
 
 The entrypoint drops dangerous Linux capabilities from the bounding set at startup using `capsh`.
 This limits what capabilities any child process (gateway, sandbox, agent) can ever acquire.
+When the entrypoint switches from root to the `sandbox` and `gateway` users, it uses `setpriv` when available to remove the remaining privilege-separation capabilities from the child process at the same time as the user change.
 
-The entrypoint drops these capabilities: `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, `cap_net_bind_service`.
-The entrypoint keeps these because it needs them for privilege separation using gosu: `cap_chown`, `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_kill`.
+The initial entrypoint drop removes `cap_sys_admin`, `cap_sys_ptrace`, `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, and `cap_net_bind_service`.
+During `setpriv` step-down, the child process also loses `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_chown`, and `cap_kill`.
 
 This is best-effort: if `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
+If `setpriv` is unavailable, the entrypoint falls back to `gosu` and logs a warning that the remaining bounding-set capabilities were retained for the child process.
 For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose (see Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill)).
 
 | Aspect | Detail |
 |---|---|
-| Default | The entrypoint drops dangerous capabilities at startup using `capsh`. Best-effort. |
+| Default | The entrypoint drops dangerous capabilities at startup using `capsh`, then uses `setpriv` during user step-down when possible. Best-effort. |
 | What you can change | When launching with `docker run` directly, pass `--cap-drop=ALL --cap-add=NET_BIND_SERVICE` for stricter enforcement. In the standard NemoClaw flow (with `nemoclaw onboard`), the entrypoint handles capability dropping automatically. |
-| Risk if relaxed | `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. Attackers can use `CAP_SYS_CHROOT` in container escape chains. If `capsh` is unavailable, the container runs with the default Docker capability set. |
-| Recommendation | Run on an image that includes `capsh` (the NemoClaw image includes it through `libcap2-bin`). For defense-in-depth, also pass `--cap-drop=ALL` at the container runtime level. |
+| Risk if relaxed | `CAP_SYS_ADMIN` and `CAP_SYS_PTRACE` expand kernel and process attack surface. `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. If `capsh` or `setpriv` cannot run, the container retains more of the runtime-provided capability set. |
+| Recommendation | Run on an image that includes `capsh` and `setpriv` (the NemoClaw image includes them). For defense-in-depth, also pass `--cap-drop=ALL` at the container runtime level. |
 
 ### Gateway Process Isolation
 

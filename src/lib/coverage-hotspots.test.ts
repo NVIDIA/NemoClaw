@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseDuration } from "./domain/duration";
 import { parseGatewayTokenArgs, runGatewayTokenCommand } from "./gateway-token-command";
-import { resolveDefaultSandboxName, runStartCommand, runStopCommand } from "./services-command";
+import { resolveDefaultSandboxName, runStartCommand, runStopCommand } from "./tunnel/service-command";
 import { getVersion } from "./core/version";
 
 // Narrow coverage guard for small helper modules that are otherwise only

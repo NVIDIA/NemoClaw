@@ -18,7 +18,7 @@ vi.mock("../runner", () => ({
   ROOT: "/mock/root",
 }));
 
-vi.mock("../policies", () => ({
+vi.mock("../policy", () => ({
   buildPolicyGetCommand: vi.fn((name) => ["openshell", "policy", "get", "--full", name]),
   buildPolicySetCommand: vi.fn((file, name) => [
     "openshell",
@@ -33,7 +33,7 @@ vi.mock("../policies", () => ({
   PERMISSIVE_POLICY_PATH: "/mock/permissive.yaml",
 }));
 
-vi.mock("../sandbox-config", () => ({
+vi.mock("../sandbox/config", () => ({
   resolveAgentConfig: vi.fn(() => ({
     agentName: "openclaw",
     configPath: "/sandbox/.openclaw/openclaw.json",

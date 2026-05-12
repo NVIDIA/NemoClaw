@@ -35,7 +35,7 @@ import * as nim from "../../inference/nim";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
-import * as policies from "../../policies";
+import * as policies from "../../policy";
 import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -46,7 +46,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import * as sandboxState from "../../state/sandbox";
-import * as sandboxVersion from "../../sandbox-version";
+import * as sandboxVersion from "../../sandbox/version";
 import { B, D, G, R, RD as _RD, YW } from "../../cli/terminal-style";
 
 const agentRuntime = require("../../../../bin/lib/agent-runtime");

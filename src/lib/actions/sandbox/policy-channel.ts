@@ -11,11 +11,11 @@ import { getCredential, prompt as askPrompt } from "../../credentials/store";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("../../onboard/providers");
-import * as policies from "../../policies";
+import * as policies from "../../policy";
 import { parsePolicyAddArgs } from "../../domain/policy-channel";
 import * as registry from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
-import { rebuildSandbox } from "./runtime";
+import { rebuildSandbox } from "./rebuild";
 import {
   KNOWN_CHANNELS,
   clearChannelTokens,
@@ -23,7 +23,7 @@ import {
   getChannelTokenKeys,
   knownChannelNames,
   persistChannelTokens,
-} from "../../sandbox-channels";
+} from "../../sandbox/channels";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =

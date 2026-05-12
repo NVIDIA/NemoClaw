@@ -243,7 +243,7 @@ reviews:
     - path: "src/lib/onboard/preflight.ts"
       instructions: *e2e-overlayfs
 
-    - path: "src/lib/deploy.ts"
+    - path: "src/lib/deploy/**"
       instructions: |
         This file contains deployment lifecycle logic (start/stop,
         cloudflared tunnel, uninstall).
@@ -490,6 +490,24 @@ reviews:
         To run selectively:
         ```
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openshell-gateway-upgrade-e2e
+        ```
+
+    - path: "test/e2e/test-gateway-health-honest.sh"
+      instructions: |
+        This script is the coverage guard for #3111. It sabotages the
+        openshell-gateway binary with a shim that crashes on startup and
+        asserts onboard does NOT falsely log "Docker-driver gateway is
+        healthy" and does exit non-zero. Exercises the NemoClaw-side
+        false-positive (detached-zombie isPidAlive + metadata-only
+        isGatewayHealthy) regardless of OpenShell packaging choices.
+
+        **E2E test recommendation:**
+        - `gateway-health-honest-e2e` — false-positive health check when
+          the gateway binary crashes on startup (#3111)
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=gateway-health-honest-e2e
         ```
 
     - path: ".github/workflows/nightly-e2e.yaml"

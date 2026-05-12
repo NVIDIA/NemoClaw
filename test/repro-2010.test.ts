@@ -17,7 +17,7 @@ import os from "node:os";
 import { spawnSync } from "node:child_process";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const POLICIES_PATH = path.join(REPO_ROOT, "dist", "lib", "policies.js");
+const POLICIES_PATH = path.join(REPO_ROOT, "dist", "lib", "policy", "index.js");
 const RUNNER_PATH = path.join(REPO_ROOT, "dist", "lib", "runner.js");
 const CLI_PATH = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const REGISTRY_PATH = path.join(REPO_ROOT, "dist", "lib", "state", "registry.js");

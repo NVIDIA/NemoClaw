@@ -53,6 +53,23 @@ $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEM
 If you use nvm or fnm to manage Node.js, the installer might not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 
+On Linux, the installer checks Docker before it installs NemoClaw.
+If Docker is missing, the installer downloads the official Docker convenience script, asks for `sudo`, installs Docker, and starts the Docker service when systemd is available.
+If Docker is installed but your current shell cannot use the Docker socket yet, the installer adds your user to the `docker` group when needed and exits with a recovery command.
+
+```console
+$ newgrp docker
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+On DGX Spark and DGX Station, an interactive installer can offer express install after you accept the third-party software notice.
+Express install switches onboarding to non-interactive mode, applies the suggested security policy, and selects the managed local inference path for that platform.
+Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer when you want to choose a provider yourself.
+
+The installer auto-launches `nemoclaw onboard` when it can locate the freshly-installed binary.
+If it cannot locate the binary, or if blocking host preflight checks fail, it does not launch the wizard automatically.
+In that case, the installer prints the relevant diagnostics and a `To finish setup, run:` block with the explicit `nemoclaw onboard` command.
+
 :::{note}
 The onboard flow builds the sandbox image with `NEMOCLAW_DISABLE_DEVICE_AUTH=1` so the dashboard is immediately usable during setup.
 This is a build-time setting baked into the sandbox image, not a runtime knob.

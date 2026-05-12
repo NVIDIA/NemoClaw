@@ -3,7 +3,7 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { showSandboxStatus } from "../../actions/sandbox/runtime";
+import { showSandboxStatus } from "../../actions/sandbox/status";
 import { sandboxNameArg } from "./common";
 
 export default class SandboxStatusCommand extends Command {

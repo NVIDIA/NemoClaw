@@ -41,7 +41,6 @@ import type { SandboxEntry } from "./lib/state/registry";
 const nim = require("./lib/inference/nim");
 const shields = require("./lib/shields");
 const { parseGatewayInference } = require("./lib/inference/config");
-const policies = require("./lib/policies");
 const { probeProviderHealth } = require("./lib/inference/health");
 const { buildStatusCommandDeps } = require("./lib/status-command-deps");
 const { help, version } = require("./lib/actions/root-help");
@@ -164,7 +163,7 @@ function printConnectOrderHint(candidate: string | null): void {
 }
 
 const VALID_SANDBOX_ACTIONS =
-  "connect, status, doctor, logs, policy-add, policy-remove, policy-list, skill, snapshot, share, rebuild, recover, shields, config, channels, gateway-token, destroy";
+  "connect, status, doctor, logs, policy-add, policy-remove, policy-list, hosts-add, hosts-list, hosts-remove, skill, snapshot, share, rebuild, recover, shields, config, channels, gateway-token, destroy";
 
 function printDispatchUsageError(
   result: Extract<DispatchResult, { kind: "usageError" }>,

@@ -22,6 +22,11 @@
 #   openshell-gateway-upgrade-e2e
 #                            Validates stale Linux Docker-driver OpenShell gateway
 #                            processes are restarted after an OpenShell upgrade.
+#   gateway-health-honest-e2e
+#                            Coverage guard for #3111: onboard must not log
+#                            "Docker-driver gateway is healthy" when the gateway
+#                            binary crashes on startup (detached-zombie + metadata-
+#                            only health check regression).
 #   hermes-e2e               Hermes Agent E2E — install → onboard --agent hermes → health
 #                            probe → live inference. Validates the multi-agent architecture.
 #   hermes-inference-switch-e2e
@@ -67,7 +72,7 @@ on:
           messaging-compatible-endpoint-e2e,
           kimi-inference-compat-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
-          openshell-gateway-upgrade-e2e,
+          openshell-gateway-upgrade-e2e, gateway-health-honest-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e,
           hermes-inference-switch-e2e, hermes-discord-e2e,
           hermes-slack-e2e, sandbox-operations-e2e, inference-routing-e2e,
@@ -1290,6 +1295,58 @@ jobs:
             /tmp/nemoclaw-e2e-openshell-gateway-process.log
           if-no-files-found: ignore
 
+  # ── Gateway health-honesty E2E ──────────────────────────────
+  # Coverage guard for #3111. Issue #3111 reported that onboard prints
+  # "✓ Docker-driver gateway is healthy" on Ubuntu 22.04 even though the
+  # shipped openshell-gateway binary (GNU-linked against GLIBC 2.38/2.39)
+  # crashes immediately on a 22.04 host (GLIBC 2.35).
+  #
+  # Root cause is platform-independent: the detached child remains a
+  # zombie so isPidAlive() returns true, registerDockerDriverGatewayEndpoint()
+  # writes metadata without any TCP probe, and isGatewayHealthy() is a
+  # string match on openshell CLI output rather than a real health check.
+  # Any scenario where the gateway binary fails before serving connections
+  # will surface the same false-positive log on ANY Linux host — not just
+  # Ubuntu 22.04.
+  #
+  # This test sabotages the gateway binary with a shim that matches the
+  # #3111 failure mode (immediate exit with GLIBC-style stderr) and asserts
+  # that onboard does NOT log "healthy" and exits non-zero.
+  gateway-health-honest-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',gateway-health-honest-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Run gateway health-honesty E2E test
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-gateway-health-honest.sh
+
+      - name: Upload gateway health-honesty logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-health-honest-logs
+          path: |
+            /tmp/nemoclaw-e2e-gateway-health-honest.log
+            /tmp/nemoclaw-e2e-gateway-health-honest-start.log
+            /tmp/nemoclaw-e2e-gateway-health-honest-process.log
+          if-no-files-found: ignore
+
   # ── Hermes rebuild upgrade E2E ──────────────────────────────
   # Same upgrade scenario as OpenClaw but for Hermes Agent.
   rebuild-hermes-e2e:
@@ -1861,6 +1918,7 @@ jobs:
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         openshell-gateway-upgrade-e2e,
+        gateway-health-honest-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,
@@ -1952,6 +2010,7 @@ jobs:
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         openshell-gateway-upgrade-e2e,
+        gateway-health-honest-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,
@@ -2091,6 +2150,7 @@ jobs:
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         openshell-gateway-upgrade-e2e,
+        gateway-health-honest-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,

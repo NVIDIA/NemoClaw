@@ -13,7 +13,7 @@ import { createRequire } from "node:module";
 import { describe, it, expect } from "vitest";
 import { buildSubprocessEnv as buildCliSubprocessEnv } from "../src/lib/subprocess-env";
 import { buildSubprocessEnv as buildPluginSubprocessEnv } from "../nemoclaw/src/lib/subprocess-env";
-import { getCurlTimingArgs } from "../src/lib/http-probe";
+import { getCurlTimingArgs } from "../src/lib/adapters/http/probe";
 
 const require = createRequire(import.meta.url);
 const { buildProviderArgs } = require("../dist/lib/onboard/providers.js") as {

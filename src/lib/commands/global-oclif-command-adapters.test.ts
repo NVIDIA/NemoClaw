@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   showStatusCommand: vi.fn(),
 }));
 
-vi.mock("../inventory-commands", () => ({
+vi.mock("../inventory", () => ({
   getSandboxInventory: mocks.getSandboxInventory,
   getStatusReport: mocks.getStatusReport,
   renderSandboxInventoryText: mocks.renderSandboxInventoryText,

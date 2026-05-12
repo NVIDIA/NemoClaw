@@ -32,7 +32,7 @@ import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
-import * as sandboxVersion from "../../sandbox-version";
+import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import { D, G, R, RD, YW } from "../../cli/terminal-style";
 

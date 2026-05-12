@@ -3,8 +3,8 @@
 
 import { Command, Flags } from "@oclif/core";
 
-import { startAll } from "../../services";
-import { runStartCommand } from "../../services-command";
+import { startAll } from "../../tunnel/services";
+import { runStartCommand } from "../../tunnel/service-command";
 import { serviceDeps } from "./common";
 
 export default class TunnelStartCommand extends Command {

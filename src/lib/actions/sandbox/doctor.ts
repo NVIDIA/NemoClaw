@@ -20,7 +20,7 @@ import type { SandboxEntry } from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { ROOT } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
-import * as sandboxVersion from "../../sandbox-version";
+import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import { buildStatusCommandDeps } from "../../status-command-deps";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";

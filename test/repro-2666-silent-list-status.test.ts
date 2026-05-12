@@ -29,7 +29,7 @@ import {
   type ListSandboxesCommandDeps,
   getSandboxInventory,
   renderSandboxInventoryText,
-} from "../dist/lib/inventory-commands.js";
+} from "../dist/lib/inventory/index.js";
 import { recoverRegistryEntriesWithFallback } from "../dist/lib/list-command-deps.js";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");

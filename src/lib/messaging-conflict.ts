@@ -14,7 +14,7 @@
 // the live OpenShell gateway for known provider names.
 
 import type { SandboxEntry } from "./state/registry";
-import { getChannelDef, getChannelTokenKeys } from "./sandbox-channels";
+import { getChannelDef, getChannelTokenKeys } from "./sandbox/channels";
 
 type ProbeResult = "present" | "absent" | "error";
 type ConflictReason = "matching-token" | "unknown-token";

@@ -3,9 +3,14 @@
 
 import { Args } from "@oclif/core";
 
-import { runSandboxSnapshot } from "../../../actions/sandbox/runtime";
-
-let runtimeBridgeFactory = () => ({ sandboxSnapshot: runSandboxSnapshot });
+let runtimeBridgeFactory = () => ({
+  sandboxSnapshot: async (sandboxName: string, args: string[]) => {
+    const { runSandboxSnapshot } = require("../../../actions/sandbox/snapshot") as {
+      runSandboxSnapshot: (sandboxName: string, args: string[]) => Promise<void>;
+    };
+    await runSandboxSnapshot(sandboxName, args);
+  },
+});
 
 export function setSnapshotRuntimeBridgeFactoryForTest(
   factory: () => { sandboxSnapshot: (sandboxName: string, args: string[]) => Promise<void> },

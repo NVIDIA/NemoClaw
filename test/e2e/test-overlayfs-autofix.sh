@@ -62,6 +62,8 @@
 #   NVIDIA_API_KEY=nvapi-... \
 #     bash test/e2e/test-overlayfs-autofix.sh
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1500

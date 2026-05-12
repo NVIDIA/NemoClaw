@@ -77,6 +77,30 @@ describe("gateway liveness probe (#2020)", () => {
     expect(cleanupAfterProbe).toBeTruthy();
   });
 
+  it("main onboard flow aborts (does not downgrade or destroy) when Docker is unknown and HTTP is unready (#3258, #2020)", () => {
+    // Regression guard: when verifyGatewayContainerRunning() returns "unknown"
+    // and the host HTTP probe also fails, we cannot tell whether the existing
+    // gateway is live. Per #2020 the branch must stay non-destructive, and
+    // it must not downgrade gatewayReuseState to "missing" — that would feed
+    // execution into startGatewayWithOptions, whose retry hook destroys the
+    // gateway between failed attempts and would tear down a possibly-live
+    // gateway when Docker is just temporarily unavailable.
+    const onboardSection = content.slice(content.indexOf("async function onboard("));
+    const unknownBranchMatch = onboardSection.match(
+      /containerState === "unknown"[\s\S]*?waitForGatewayHttpReady\(\)[\s\S]*?\} else \{[\s\S]*?\}\s*\}/,
+    );
+    expect(unknownBranchMatch).toBeTruthy();
+    if (!unknownBranchMatch) {
+      throw new Error('Expected containerState === "unknown" branch in main onboard()');
+    }
+    const branchBody = unknownBranchMatch[0];
+    // Must bail out — no fall-through into start-gateway / orphan-cleanup paths.
+    expect(branchBody).toMatch(/process\.exit\(/);
+    // Must not downgrade reuse state (would feed startGatewayWithOptions whose
+    // retry hook calls destroyGateway, tearing down a possibly-live gateway).
+    expect(branchBody).not.toMatch(/gatewayReuseState\s*=\s*"missing"/);
+  });
+
   it("does not modify isGatewayHealthy() in src/lib/state/gateway.ts", () => {
     // isGatewayHealthy() must remain a pure function — no I/O.
     // Scope the check to the function body so unrelated helpers don't cause false failures.

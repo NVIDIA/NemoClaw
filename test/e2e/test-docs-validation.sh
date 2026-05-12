@@ -23,6 +23,8 @@
 #   bash test/e2e/test-docs-validation.sh
 #   CHECK_DOC_LINKS_REMOTE=0 bash test/e2e/test-docs-validation.sh
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 PASS=0

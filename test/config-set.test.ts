@@ -19,7 +19,7 @@ const {
   resolveAgentConfig,
   buildRecomputeSandboxConfigHashScript,
   selectDockerDriverSandboxContainer,
-} = require("../dist/lib/sandbox-config");
+} = require("../dist/lib/sandbox/config");
 
 type MutableScalar = string | number | boolean | null | undefined;
 type MutableValue = MutableScalar | MutableMap | MutableValue[];
