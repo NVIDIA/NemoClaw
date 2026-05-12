@@ -4746,7 +4746,7 @@ async function preflight(
       // back before the OpenShell gateway upstream finishes warming up. Safe to
       // recreate because Docker is functional. See #3258.
       console.log(
-        `  Gateway container is running but ${getDockerDriverGatewayEndpoint()}/ is not responding. Recreating...`,
+        `  Gateway container is running but ${getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
       );
       runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
       destroyGateway();
@@ -5025,7 +5025,7 @@ async function startGatewayWithOptions(
       return;
     }
     console.log(
-      `  Gateway metadata reports healthy but ${getDockerDriverGatewayEndpoint()}/ is not responding. Starting a fresh gateway...`,
+      `  Gateway metadata reports healthy but ${getGatewayLocalEndpoint()}/ is not responding. Starting a fresh gateway...`,
     );
   }
 
@@ -11184,7 +11184,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           // `destroyGateway()` between attempts — which would tear down a
           // possibly-live gateway. Bail with an actionable error instead.
           console.log(
-            `  Error: could not verify gateway container state and ${getDockerDriverGatewayEndpoint()}/ is not responding.`,
+            `  Error: could not verify gateway container state and ${getGatewayLocalEndpoint()}/ is not responding.`,
           );
           console.log(
             "  Refusing to proceed without a clear Docker signal — restarting Docker and re-running onboard is the safe path. See #3258 / #2020.",
@@ -11197,7 +11197,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         // back before the OpenShell gateway upstream finishes warming up. Safe to
         // recreate because Docker is functional. See #3258.
         console.log(
-          `  Gateway container is running but ${getDockerDriverGatewayEndpoint()}/ is not responding. Recreating...`,
+          `  Gateway container is running but ${getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
         );
         runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
         destroyGateway();

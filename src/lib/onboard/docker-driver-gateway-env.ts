@@ -157,4 +157,5 @@ export function writeDockerGatewayDebEnvOverride(
     encoding: "utf-8",
     mode: 0o600,
   });
+  fs.chmodSync(envFile, 0o600);
 }
