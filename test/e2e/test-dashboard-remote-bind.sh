@@ -4,7 +4,7 @@
 
 set -uo pipefail
 
-section() { echo "\n=== $1 ==="; }
+section() { printf '\n=== %s ===\n' "$1"; }
 pass() { echo "PASS: $1"; }
 fail() {
   echo "FAIL: $1"
