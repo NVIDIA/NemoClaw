@@ -3774,6 +3774,20 @@ function hostCommandExists(commandName: string): boolean {
   });
 }
 
+function ensureOllamaLinuxExtractionDependencies(): void {
+  if (hostCommandExists("zstd")) return;
+  console.log(
+    "  The Ollama Linux installer requires zstd for archive extraction. " +
+      "The next step uses sudo to install zstd; you may be prompted for your password.",
+  );
+  runShell(`if ! command -v apt-get >/dev/null 2>&1; then
+  echo "ERROR: Ollama requires zstd for extraction, and only apt-based Linux is supported here." >&2
+  echo "Install zstd manually (for example, sudo dnf install zstd or sudo pacman -S zstd), then rerun ${cliName()} onboard." >&2
+  exit 1
+fi
+sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends zstd`);
+}
+
 function captureProcessArgs(pid: number): string {
   return runCapture(["ps", "-p", String(pid), "-o", "args="], {
     ignoreError: true,
@@ -8343,7 +8357,11 @@ async function setupNim(
           });
           sleep(2);
         } else {
-          console.log("  Installing Ollama via official installer...");
+          ensureOllamaLinuxExtractionDependencies();
+          console.log(
+            "  The Ollama installer creates a system user, a systemd service, and writes to /usr/local. " +
+              "It uses sudo for those steps; you may be prompted for your password.",
+          );
           runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
           // Give the just-started ollama.service a moment to bind port
           // 11434 before we probe or apply the systemd drop-in override.
@@ -8368,6 +8386,11 @@ async function setupNim(
           // start: manual launch with the loopback binding.
           if (!isWsl() && hasOllamaSystemdUnit) {
             console.log("  Configuring Ollama systemd loopback override...");
+            console.log(
+              `  Applying an Ollama systemd override (OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT}). ` +
+                "The next steps use sudo to write the drop-in, reload systemd, and restart the service; " +
+                "you may be prompted for your password.",
+            );
             const dropInBody = `[Service]\nEnvironment="OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT}"\n`;
             const tmpDropIn = secureTempFile("nemoclaw-ollama-override", ".conf");
             fs.writeFileSync(tmpDropIn, dropInBody, { mode: 0o644 });

@@ -3765,6 +3765,7 @@ let promptCalls = 0;
 const messages = [];
 const updates = [];
 const runCommands = [];
+const events = [];
 
 credentials.prompt = async (message) => {
   promptCalls += 1;
@@ -3792,10 +3793,13 @@ runner.runCapture = (command) => {
   return "";
 };
 runner.run = (command, opts) => {
-  runCommands.push(typeof command === "string" ? command : command.join(" "));
+  const rendered = typeof command === "string" ? command : command.join(" ");
+  runCommands.push(rendered);
+  events.push({ type: "command", value: rendered });
 };
 runner.runShell = (command, opts) => {
   runCommands.push(command);
+  events.push({ type: "command", value: command });
 };
 registry.updateSandbox = (_name, update) => updates.push(update);
 
@@ -3808,10 +3812,14 @@ const { setupNim } = require(${onboardPath});
 (async () => {
   const originalLog = console.log;
   const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
+  console.log = (...args) => {
+    const line = args.join(" ");
+    lines.push(line);
+    events.push({ type: "log", value: line });
+  };
   try {
     const result = await setupNim("install-test", null);
-    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines, runCommands }));
+    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines, runCommands, events }));
   } finally {
     console.log = originalLog;
   }
@@ -3846,6 +3854,43 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "ollama-local");
 
     // Should have run the curl installer (not brew)
+    const zstdPreflightIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("apt-get install -y -qq --no-install-recommends zstd"),
+    );
+    const ollamaInstallerIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("ollama.com/install.sh"),
+    );
+    assert.ok(zstdPreflightIndex >= 0, "Should preflight zstd before the Ollama installer");
+    assert.ok(
+      ollamaInstallerIndex > zstdPreflightIndex,
+      "Should install zstd before running the Ollama installer",
+    );
+    const zstdWarningEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "log" && event.value.includes("requires zstd for archive extraction"),
+    );
+    const zstdCommandEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "command" &&
+        event.value.includes("apt-get install -y -qq --no-install-recommends zstd"),
+    );
+    const installerWarningEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "log" &&
+        event.value.includes("creates a system user, a systemd service, and writes to /usr/local"),
+    );
+    const installerCommandEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "command" && event.value.includes("ollama.com/install.sh"),
+    );
+    assert.ok(
+      zstdWarningEventIndex >= 0 && zstdWarningEventIndex < zstdCommandEventIndex,
+      "Should explain the zstd sudo install before running apt-get",
+    );
+    assert.ok(
+      installerWarningEventIndex >= 0 && installerWarningEventIndex < installerCommandEventIndex,
+      "Should explain the Ollama installer sudo usage before running it",
+    );
     assert.ok(
       payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
       "Should use curl installer on Linux",
@@ -3937,6 +3982,8 @@ const { setupNim } = require(${onboardPath});
     });
 
     assert.equal(result.status, 1);
+    assert.match(result.stdout, /Applying an Ollama systemd override/);
+    assert.match(result.stdout, /use sudo to write the drop-in, reload systemd, and restart the service/);
     assert.match(result.stderr, /Failed to apply Ollama systemd loopback override/);
     assert.match(result.stderr, /Refusing to continue/);
   });
@@ -4066,6 +4113,20 @@ const { setupNim } = require(${onboardPath});
 
     assert.equal(payload.promptCalls, 0);
     assert.equal(payload.result.provider, "ollama-local");
+    const zstdPreflightIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("apt-get install -y -qq --no-install-recommends zstd"),
+    );
+    const ollamaInstallerIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("ollama.com/install.sh"),
+    );
+    assert.ok(
+      zstdPreflightIndex >= 0,
+      "Should preflight zstd before the non-interactive Ollama installer",
+    );
+    assert.ok(
+      ollamaInstallerIndex > zstdPreflightIndex,
+      "Should install zstd before running the non-interactive Ollama installer",
+    );
     assert.ok(
       payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
       "Should use the Ollama installer when requested non-interactively on a fresh host",
