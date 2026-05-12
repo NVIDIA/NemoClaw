@@ -1043,12 +1043,14 @@ const { setupNim } = require(${onboardPath});
     assert.ok(
       payload.shellCommands.some(
         (command: string) =>
-          command.includes("sudo install -D -m 0644") &&
+          command.includes("install -D -m 0644") &&
           command.includes("/etc/systemd/system/ollama.service.d/override.conf") &&
-          command.includes("sudo systemctl daemon-reload") &&
-          command.includes("sudo systemctl restart ollama"),
+          command.includes("systemctl daemon-reload") &&
+          command.includes("systemctl --no-block restart ollama") &&
+          command.includes("pre_state=$(") &&
+          command.includes("current_state=$("),
       ),
-      "should install and restart the Ollama systemd drop-in",
+      "should install and wait for the Ollama systemd drop-in restart",
     );
   });
 
@@ -1083,6 +1085,7 @@ child_process.spawnSync = (cmd, args, opts) => {
 
 let installedBody = "";
 const shellCommands = [];
+const shellCalls = [];
 
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
@@ -1090,26 +1093,30 @@ runner.runCapture = (command) => {
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
-  if (cmd.includes("sudo cat") && cmd.includes("ollama.service.d/override.conf")) {
-    return [
-      "[Service]",
-      "Environment=\"OLLAMA_MODELS=/srv/ollama\"",
-      "Environment=\"OLLAMA_HOST=0.0.0.0:11434\"",
-      "Environment=\"HTTPS_PROXY=http://proxy.internal:8080\"",
-      "",
-      "[Install]",
-      "WantedBy=multi-user.target",
-      "",
-    ].join("\\n");
-  }
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   return "";
 };
 runner.run = () => ({ status: 0 });
-runner.runShell = (command) => {
+runner.runShell = (command, opts = {}) => {
   shellCommands.push(command);
-  const match = command.match(/sudo install -D -m 0644 '([^']+)'/);
+  shellCalls.push({ command, opts });
+  if (command.includes("cat") && command.includes("ollama.service.d/override.conf")) {
+    return {
+      status: 0,
+      stdout: [
+        "[Service]",
+        "Environment=\"OLLAMA_MODELS=/srv/ollama\"",
+        "Environment=\"OLLAMA_HOST=0.0.0.0:11434\"",
+        "Environment=\"HTTPS_PROXY=http://proxy.internal:8080\"",
+        "",
+        "[Install]",
+        "WantedBy=multi-user.target",
+        "",
+      ].join("\\n"),
+    };
+  }
+  const match = command.match(/sudo(?: -n)? install -D -m 0644 '([^']+)'/);
   if (match) installedBody = fs.readFileSync(match[1], "utf8");
   return { status: 0 };
 };
@@ -1124,7 +1131,7 @@ const { setupNim } = require(${onboardPath});
   console.log = () => {};
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, shellCommands, installedBody }));
+    originalLog(JSON.stringify({ result, shellCommands, shellCalls, installedBody }));
   } finally {
     console.log = originalLog;
   }
@@ -1155,6 +1162,11 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'));
     assert.ok(payload.installedBody.includes("[Install]"));
     assert.ok(payload.installedBody.includes("WantedBy=multi-user.target"));
+    const catCall = payload.shellCalls.find(
+      (call: { command: string }) =>
+        call.command.includes("cat") && call.command.includes("ollama.service.d/override.conf"),
+    );
+    assert.equal(catCall?.opts?.suppressOutput, true);
 
     const repairedHost = 'Environment="OLLAMA_HOST=127.0.0.1:11434"';
     const oldHost = 'Environment="OLLAMA_HOST=0.0.0.0:11434"';
@@ -1193,14 +1205,14 @@ child_process.spawnSync = (cmd, args, opts) => {
   return originalSpawnSync(cmd, args, opts);
 };
 
-let tagsProbeCount = 0;
+const events = [];
 const shellCommands = [];
 
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("127.0.0.1:11434/api/tags")) {
-    tagsProbeCount += 1;
+    events.push("tags");
     return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
   }
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
@@ -1212,6 +1224,7 @@ runner.runCapture = (command) => {
 runner.run = () => ({ status: 0 });
 runner.runShell = (command) => {
   shellCommands.push(command);
+  if (command.includes("systemctl") && command.includes("restart ollama")) events.push("restart");
   return { status: 0 };
 };
 
@@ -1226,7 +1239,7 @@ const { setupNim } = require(${onboardPath});
   console.log = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, lines, shellCommands, tagsProbeCount }));
+    originalLog(JSON.stringify({ result, lines, shellCommands, events }));
   } finally {
     console.log = originalLog;
   }
@@ -1260,15 +1273,86 @@ const { setupNim } = require(${onboardPath});
       "already-loopback systemd Ollama still needs the persistent drop-in",
     );
     assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Configuring Ollama systemd loopback override"),
+      ),
+      "already-loopback repair should emit the visible loopback-override transcript",
+    );
+    assert.ok(
       !payload.shellCommands.some((command: string) =>
         command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
       ),
       "systemd restart success should not spawn a duplicate manual daemon",
     );
+    const restartIndex = payload.events.indexOf("restart");
+    assert.ok(restartIndex >= 0, "expected a systemd restart");
     assert.ok(
-      payload.tagsProbeCount >= 2,
+      payload.events.slice(restartIndex + 1).includes("tags"),
       "should re-probe after the systemd restart instead of trusting a stale loopback cache",
     );
+  });
+
+  it("fails closed instead of starting unmanaged Ollama when systemd restart stays unreachable", { timeout: 15_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-existing-systemd-restart-fail-"),
+    );
+    const scriptPath = path.join(tmpDir, "existing-systemd-restart-fail-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+
+let tagsProbeCount = 0;
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) {
+    tagsProbeCount += 1;
+    return tagsProbeCount === 1 ? JSON.stringify({ models: [{ name: "qwen3:8b" }] }) : "";
+  }
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  return "";
+};
+runner.runShell = (command) => {
+  if (command.includes("ollama serve")) console.error("manual-start");
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim(null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Ollama systemd restart did not recover/);
+    assert.doesNotMatch(result.stderr, /manual-start/);
   });
 
   it("fails closed when an existing Ollama systemd override cannot be applied", () => {
@@ -1294,7 +1378,7 @@ runner.runCapture = (command) => {
   return "";
 };
 runner.runShell = (command) => {
-  if (command.includes("sudo install -D -m 0644")) return { status: 1 };
+  if (command.includes("install -D -m 0644")) return { status: 1 };
   return { status: 0 };
 };
 
@@ -4314,7 +4398,7 @@ runner.runCapture = (command) => {
 };
 runner.runShell = (command) => {
   if (command.includes("ollama.com/install.sh")) return { status: 0 };
-  if (command.includes("sudo install -D -m 0644")) return { status: 1 };
+  if (command.includes("install -D -m 0644")) return { status: 1 };
   return { status: 0 };
 };
 

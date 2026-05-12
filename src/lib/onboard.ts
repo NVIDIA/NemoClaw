@@ -7212,8 +7212,10 @@ async function selectAndValidateOllamaModel(
   }
 }
 
-function ensureOllamaLoopbackSystemdOverride(): boolean {
-  if (process.platform !== "linux" || isWsl()) return false;
+type OllamaLoopbackSystemdOverrideState = "not-applicable" | "ready" | "failed";
+
+function ensureOllamaLoopbackSystemdOverride(): OllamaLoopbackSystemdOverrideState {
+  if (process.platform !== "linux" || isWsl()) return "not-applicable";
 
   const hasOllamaSystemdUnit = !!runCapture(
     [
@@ -7223,25 +7225,40 @@ function ensureOllamaLoopbackSystemdOverride(): boolean {
     ],
     { ignoreError: true },
   ).trim();
-  if (!hasOllamaSystemdUnit) return false;
+  if (!hasOllamaSystemdUnit) return "not-applicable";
 
   console.log("  Configuring Ollama systemd loopback override...");
-  const existingDropIn = runCapture(
-    [
-      "sh",
-      "-c",
-      `if sudo test -f ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)}; then sudo cat ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)}; fi`,
-    ],
-    { ignoreError: true },
+  const sudoPrefix = isNonInteractive() || !process.stdin.isTTY ? "sudo -n" : "sudo";
+  const existingDropInResult = runShell(
+    `if [ -e ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)} ]; then ${sudoPrefix} cat ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)}; fi`,
+    { ignoreError: true, suppressOutput: true, timeout: 30_000 },
   );
+  if (existingDropInResult.error || existingDropInResult.status !== 0) {
+    console.error("  Failed to inspect existing Ollama systemd override.");
+    console.error("  Refusing to continue because preserving existing Ollama settings is required.");
+    process.exit(1);
+  }
+  const existingDropIn = String(existingDropInResult.stdout || "");
   const dropInBody = mergeOllamaLoopbackSystemdOverride(existingDropIn);
   const tmpDropIn = secureTempFile("nemoclaw-ollama-override", ".conf");
   let overrideFailed = false;
   try {
     fs.writeFileSync(tmpDropIn, dropInBody, { mode: 0o644 });
     const overrideResult = runShell(
-      `sudo install -D -m 0644 ${shellQuote(tmpDropIn)} ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)} && sudo systemctl daemon-reload && sudo systemctl restart ollama`,
-      { ignoreError: true },
+      [
+        "set -e",
+        `pre_state=$(${sudoPrefix} systemctl show ollama --property=ActiveEnterTimestampMonotonic --property=MainPID --value 2>/dev/null | tr '\\n' ' ')`,
+        `${sudoPrefix} install -D -m 0644 ${shellQuote(tmpDropIn)} ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)}`,
+        `${sudoPrefix} systemctl daemon-reload`,
+        `${sudoPrefix} systemctl --no-block restart ollama`,
+        "for _ in $(seq 1 30); do",
+        `  current_state=$(${sudoPrefix} systemctl show ollama --property=ActiveEnterTimestampMonotonic --property=MainPID --value 2>/dev/null | tr '\\n' ' ')`,
+        `  if [ "$current_state" != "$pre_state" ] && ${sudoPrefix} systemctl is-active --quiet ollama; then exit 0; fi`,
+        "  sleep 1",
+        "done",
+        "exit 1",
+      ].join("\n"),
+      { ignoreError: true, timeout: 45_000 },
     );
     if (overrideResult.error || overrideResult.status !== 0) {
       overrideFailed = true;
@@ -7259,10 +7276,10 @@ function ensureOllamaLoopbackSystemdOverride(): boolean {
   // the readiness loop checks the daemon that systemd just restarted.
   resetOllamaHostCache();
   for (let i = 0; i < 10; i++) {
-    if (findReachableOllamaHost()) break;
+    if (findReachableOllamaHost()) return "ready";
     sleep(1);
   }
-  return true;
+  return "failed";
 }
 
 function mergeOllamaLoopbackSystemdOverride(existingDropIn: string): string {
@@ -8202,8 +8219,14 @@ async function setupNim(
       } else if (selected.key === "ollama") {
         if (!checkOllamaPortsOrWarn()) continue selectionLoop;
         let ollamaReady = ollamaRunning;
-        if (ensureOllamaLoopbackSystemdOverride()) {
-          ollamaReady = findReachableOllamaHost() !== null;
+        const overrideState = ensureOllamaLoopbackSystemdOverride();
+        if (overrideState === "ready") {
+          ollamaReady = true;
+        } else if (overrideState === "failed") {
+          console.error(
+            "  Ollama systemd restart did not recover after applying the loopback override.",
+          );
+          process.exit(1);
         }
         if (!ollamaReady) {
           console.log("  Starting Ollama...");
@@ -8352,10 +8375,15 @@ async function setupNim(
           // NemoClaw-created overrides that exposed raw Ollama on all interfaces.
           // WSL keeps Ollama's default binding. No-systemd / daemon failed to
           // start: manual launch with the loopback binding.
-          ensureOllamaLoopbackSystemdOverride();
-          // Fall back to manual start if systemd is unavailable or the daemon
-          // still isn't reachable after the restart.
-          if (!findReachableOllamaHost()) {
+          const overrideState = ensureOllamaLoopbackSystemdOverride();
+          if (overrideState === "failed") {
+            console.error(
+              "  Ollama systemd restart did not recover after applying the loopback override.",
+            );
+            process.exit(1);
+          }
+          // Fall back to manual start only when systemd is unavailable.
+          if (overrideState === "not-applicable" && !findReachableOllamaHost()) {
             console.log("  Starting Ollama...");
             const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} `;
             runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
