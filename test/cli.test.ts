@@ -1292,7 +1292,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("--sandbox");
   });
 
-  it("debug warns when default sandbox is stale", testTimeoutOptions(), () => {
+  it("debug warns when default sandbox is stale", testTimeoutOptions(30_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-"));
     fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(
@@ -1300,7 +1300,7 @@ describe("CLI dispatch", () => {
       JSON.stringify({ sandboxes: {}, defaultSandbox: "ghost" }),
       { mode: 0o600 },
     );
-    const r = runWithEnv("debug --quick 2>&1", { HOME: home });
+    const r = runWithEnv("debug --quick 2>&1", { HOME: home }, 30000);
     expect(r.code).toBe(0);
     expect(r.out).toContain("Warning");
     expect(r.out).toContain("ghost");

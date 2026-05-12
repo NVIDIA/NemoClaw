@@ -84,14 +84,30 @@ type OnboardTestInternals = {
   getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
   getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
   getBlueprintMaxOpenshellVersion: (rootDir?: string) => string | null;
-  getDockerDriverGatewayEnv: (versionOutput?: string | null) => Record<string, string>;
+  getDockerDriverGatewayEnv: (
+    versionOutput?: string | null,
+    platform?: NodeJS.Platform,
+  ) => Record<string, string>;
+  areRequiredDockerDriverBinariesPresent: (
+    platform?: NodeJS.Platform,
+    binaries?: {
+      gatewayBin?: string | null;
+      sandboxBin?: string | null;
+      vmDriverBin?: string | null;
+    },
+    arch?: NodeJS.Architecture,
+  ) => boolean;
+  shouldRequireDockerDriverEnv: (platform?: NodeJS.Platform) => boolean;
   getDockerDriverGatewayRuntimeDriftFromSnapshot: (snapshot: {
     processEnv: Record<string, string> | null;
     processExe: string | null;
     desiredEnv: Record<string, string>;
     gatewayBin?: string | null;
   }) => { reason: string } | null;
-  isLinuxDockerDriverGatewayEnabled: (platform?: NodeJS.Platform) => boolean;
+  isLinuxDockerDriverGatewayEnabled: (
+    platform?: NodeJS.Platform,
+    arch?: NodeJS.Architecture,
+  ) => boolean;
   isDockerDriverGatewayPortListener: (
     portCheck: {
       ok: boolean;
@@ -100,6 +116,7 @@ type OnboardTestInternals = {
     },
     opts?: {
       platform?: NodeJS.Platform;
+      arch?: NodeJS.Architecture;
       gatewayBin?: string | null;
       isPidAliveFn?: (pid: number) => boolean;
       isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
@@ -207,6 +224,8 @@ function isOnboardTestInternals(
     typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
     typeof value.getDockerDriverGatewayEnv === "function" &&
+    typeof value.areRequiredDockerDriverBinariesPresent === "function" &&
+    typeof value.shouldRequireDockerDriverEnv === "function" &&
     typeof value.getDockerDriverGatewayRuntimeDriftFromSnapshot === "function" &&
     typeof value.isLinuxDockerDriverGatewayEnabled === "function" &&
     typeof value.isDockerDriverGatewayPortListener === "function" &&
@@ -263,6 +282,8 @@ const {
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   getDockerDriverGatewayEnv,
+  areRequiredDockerDriverBinariesPresent,
+  shouldRequireDockerDriverEnv,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
   isLinuxDockerDriverGatewayEnabled,
   isDockerDriverGatewayPortListener,
@@ -403,18 +424,102 @@ network_policies:
     ]);
   });
 
-  it("models the Linux OpenShell Docker-driver gateway environment", () => {
+  it("models the OpenShell standalone gateway environment", () => {
     expect(isLinuxDockerDriverGatewayEnabled("linux")).toBe(true);
-    expect(isLinuxDockerDriverGatewayEnabled("darwin")).toBe(false);
-    const env = getDockerDriverGatewayEnv("openshell 0.0.37");
-    expect(env.OPENSHELL_DRIVERS).toBe("docker");
-    expect(env.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
-    expect(env.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
-    expect(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
+    expect(isLinuxDockerDriverGatewayEnabled("darwin", "arm64")).toBe(true);
+    expect(isLinuxDockerDriverGatewayEnabled("darwin", "x64")).toBe(false);
+    expect(isLinuxDockerDriverGatewayEnabled("win32")).toBe(false);
+    const linuxEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
+    expect(linuxEnv.OPENSHELL_DRIVERS).toBe("docker");
+    expect(linuxEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
+    expect(linuxEnv.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
+    expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
+
+    const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin");
+    expect(darwinEnv.OPENSHELL_DRIVERS).toBe("vm");
+    expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://host.containers.internal:8080");
+    expect(darwinEnv.OPENSHELL_VM_DRIVER_STATE_DIR).toContain("vm-driver");
+    expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBeUndefined();
+  });
+
+  it("requires platform-specific Docker-driver binaries", () => {
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+          vmDriverBin: "/tmp/openshell-driver-vm",
+        },
+        "arm64",
+      ),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/openshell-gateway",
+        sandboxBin: null,
+        vmDriverBin: null,
+      }),
+    ).toBe(false);
+    expect(
+      areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/openshell-gateway",
+        sandboxBin: "/tmp/openshell-sandbox",
+        vmDriverBin: null,
+      }),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+        },
+        "arm64",
+      ),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+          vmDriverBin: null,
+        },
+        "arm64",
+      ),
+    ).toBe(false);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: null,
+          sandboxBin: "/tmp/openshell-sandbox",
+          vmDriverBin: "/tmp/openshell-driver-vm",
+        },
+        "arm64",
+      ),
+    ).toBe(false);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: null,
+          sandboxBin: null,
+        },
+        "x64",
+      ),
+    ).toBe(true);
+  });
+
+  it("requires Docker-driver process env verification only where /proc is available", () => {
+    expect(shouldRequireDockerDriverEnv("linux")).toBe(true);
+    expect(shouldRequireDockerDriverEnv("darwin")).toBe(false);
+    expect(shouldRequireDockerDriverEnv("win32")).toBe(false);
   });
 
   it("detects stale Docker-driver gateway runtime state before reuse", () => {
-    const desiredEnv = getDockerDriverGatewayEnv("openshell 0.0.37");
+    const desiredEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
     const gatewayBin = process.execPath;
 
     expect(
@@ -478,7 +583,13 @@ network_policies:
     expect(
       isDockerDriverGatewayPortListener(
         { ok: false, process: "openshell", pid: 1234 },
-        { ...opts, platform: "darwin" },
+        { ...opts, platform: "darwin", arch: "arm64" },
+      ),
+    ).toBe(true);
+    expect(
+      isDockerDriverGatewayPortListener(
+        { ok: false, process: "openshell", pid: 1234 },
+        { ...opts, platform: "win32" },
       ),
     ).toBe(false);
     expect(
@@ -2484,7 +2595,7 @@ mod._load = function(req, parent, isMain) {
   }
   return origLoad.call(this, req, parent, isMain);
 };
-Object.defineProperty(process, "platform", { value: "darwin" });
+Object.defineProperty(process, "platform", { value: "freebsd" });
 const { startGateway } = require(${onboardPath});
 startGateway(null).catch(() => {});
 `;
