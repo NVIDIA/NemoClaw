@@ -60,7 +60,6 @@ REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
 FAKE_BASE_URL=""
 FAKE_MOCK_PID=""
 SURVIVOR_AGENT_PID=""
-SURVIVOR_AGENT_COUNTER_BEFORE="0"
 
 load_shell_path() {
   if [ -f "$HOME/.bashrc" ]; then
@@ -401,7 +400,6 @@ AGENT
     || fail "failed to start survivor agent before gateway upgrade"
   wait_for_survivor_agent_ready || fail "survivor agent did not become healthy before gateway upgrade"
   SURVIVOR_AGENT_PID="$(survivor_agent_pid)"
-  SURVIVOR_AGENT_COUNTER_BEFORE="$(survivor_agent_counter)"
   [ -n "$SURVIVOR_AGENT_PID" ] || fail "survivor agent pid was empty before gateway upgrade"
 
   pass "Old NemoClaw claw has live agent activity (pid ${SURVIVOR_AGENT_PID}) before gateway upgrade"

@@ -2920,11 +2920,15 @@ startGateway(null).catch(() => {});
 
   it("requires platform-specific Docker-driver binaries for onboard repair", () => {
     expect(
-      areRequiredDockerDriverBinariesPresent("darwin", {
-        gatewayBin: "/tmp/openshell-gateway",
-        sandboxBin: null,
-        vmDriverBin: "/tmp/openshell-driver-vm",
-      }),
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+          vmDriverBin: "/tmp/openshell-driver-vm",
+        },
+        "arm64",
+      ),
     ).toBe(true);
     expect(
       areRequiredDockerDriverBinariesPresent("linux", {
@@ -2941,11 +2945,15 @@ startGateway(null).catch(() => {});
       }),
     ).toBe(true);
     expect(
-      areRequiredDockerDriverBinariesPresent("darwin", {
-        gatewayBin: null,
-        sandboxBin: null,
-        vmDriverBin: null,
-      }),
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: null,
+          sandboxBin: null,
+          vmDriverBin: null,
+        },
+        "arm64",
+      ),
     ).toBe(false);
   });
 
