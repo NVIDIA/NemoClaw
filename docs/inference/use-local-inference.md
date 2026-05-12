@@ -102,9 +102,10 @@ token as its `OPENAI_API_KEY` credential.
 OpenShell's L7 proxy injects the token at egress, so the agent inside the
 sandbox never sees the token directly.
 
-`GET /api/tags` is exempt from authentication so container health checks
-continue to work.
-All other endpoints (including `POST /api/tags`) require the Bearer token.
+All proxy endpoints require the Bearer token, including `GET /api/tags`.
+Internal health and reachability checks run via the proxy treat any HTTP
+response (including `401`) as proof the proxy is alive — they only fail
+when nothing answers at all.
 
 If Ollama is already running on a non-loopback address when you start onboard,
 the wizard restarts it on `127.0.0.1:11434` so the proxy is the only network

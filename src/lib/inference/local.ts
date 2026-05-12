@@ -248,6 +248,11 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
     case "ollama-local":
       // Check the auth proxy port, not Ollama directly. The proxy listens
       // on 0.0.0.0 and is reachable from containers; Ollama is on 127.0.0.1.
+      // Use -w %{http_code} (instead of -sf) so an authenticated-but-401
+      // response still proves the network path works — the proxy now
+      // requires a Bearer token on every endpoint (#3338) and the ephemeral
+      // probe container doesn't carry one, but the goal here is connectivity
+      // not authorisation.
       return [
         "docker",
         "run",
@@ -259,7 +264,11 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
         "5",
         "--max-time",
         "10",
-        "-sf",
+        "-s",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
         `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
       ];
     default:

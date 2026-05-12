@@ -325,11 +325,15 @@ const providerModels: typeof import("./inference/provider-models") = require("./
 const sandboxCreateStream: typeof import("./sandbox/create-stream") = require("./sandbox/create-stream");
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const webSearch: typeof import("./inference/web-search") = require("./inference/web-search");
+const openshellInstallFlow: typeof import("./onboard/openshell-install") =
+  require("./onboard/openshell-install");
+const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-failure") =
+  require("./onboard/sandbox-create-failure");
 
 import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./adapters/http/probe";
 import type { GatewayReuseState } from "./state/gateway";
-import type { GatewayInference, ProviderSelectionConfig } from "./inference/config";
+import type { GatewayInference } from "./inference/config";
 import type { GpuInfo, ValidationResult } from "./inference/local";
 import {
   hydrateMessagingChannelConfig,
@@ -355,6 +359,10 @@ import type { TierDefinition, TierPreset } from "./policy/tiers";
 import type { SandboxCreateFailure, ValidationClassification } from "./validation";
 import type { ProbeRecovery } from "./validation-recovery";
 import type { WebSearchConfig } from "./inference/web-search";
+import type {
+  DockerDriverBinaryOverrides,
+  OpenShellInstallDeps,
+} from "./onboard/openshell-install";
 import type { SelectionDrift } from "./onboard/selection-drift";
 
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
@@ -2359,6 +2367,10 @@ function pruneStaleSandboxEntry(sandboxName: string): boolean {
   return liveExists;
 }
 
+function shouldRestoreLatestBackupOnRecreate(): boolean {
+  return process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
+}
+
 async function confirmRecreateForSelectionDrift(
   sandboxName: string,
   drift: SelectionDrift,
@@ -2710,6 +2722,7 @@ function patchStagedDockerfile(
   discordGuilds: LooseObject = {},
   baseImageRef: string | null = null,
   telegramConfig: LooseObject = {},
+  darwinVmCompat = false,
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -2759,6 +2772,10 @@ function patchStagedDockerfile(
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_BUILD_ID=.*$/m,
     `ARG NEMOCLAW_BUILD_ID=${buildId}`,
+  );
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_DARWIN_VM_COMPAT=.*$/m,
+    `ARG NEMOCLAW_DARWIN_VM_COMPAT=${darwinVmCompat ? "1" : "0"}`,
   );
   // Honor NEMOCLAW_CONTEXT_WINDOW / NEMOCLAW_MAX_TOKENS / NEMOCLAW_REASONING
   // so the user can tune model metadata without editing the Dockerfile.
@@ -3252,6 +3269,50 @@ function installOpenshell(): {
   };
 }
 
+function areRequiredDockerDriverBinariesPresent(
+  platform: NodeJS.Platform = process.platform,
+  binaries: DockerDriverBinaryOverrides = {},
+  arch: NodeJS.Architecture = process.arch,
+): boolean {
+  return openshellInstallFlow.areRequiredDockerDriverBinariesPresent(
+    getOpenShellInstallDeps(),
+    platform,
+    binaries,
+    arch,
+  );
+}
+
+function ensureOpenshellForOnboard(): {
+  installed?: boolean;
+  localBin: string | null;
+  futureShellPathHint: string | null;
+} {
+  return openshellInstallFlow.ensureOpenshellForOnboard(getOpenShellInstallDeps());
+}
+
+function getOpenShellInstallDeps(): OpenShellInstallDeps {
+  return {
+    isLinuxDockerDriverGatewayEnabled,
+    resolveOpenShellGatewayBinary,
+    resolveOpenShellSandboxBinary,
+    resolveOpenShellVmDriverBinary,
+    isOpenshellInstalled,
+    installOpenshell,
+    getInstalledOpenshellVersion,
+    getBlueprintMinOpenshellVersion,
+    getBlueprintMaxOpenshellVersion,
+    runCaptureOpenshell,
+    shouldUseOpenshellDevChannel,
+    isOpenshellDevVersion,
+    versionGte,
+    shouldAllowOpenshellAboveBlueprintMax,
+    cliDisplayName,
+    log: console.log,
+    error: console.error,
+    exit: process.exit,
+  };
+}
+
 function sleep(seconds: number): void {
   sleepSeconds(seconds);
 }
@@ -3307,6 +3368,40 @@ function stopDockerDriverGatewayProcess(): boolean {
   const stopped = terminateDockerDriverGatewayProcess(pid);
   fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
   return stopped;
+}
+
+function stopLegacyGatewayClusterContainer(): boolean {
+  const containerName = getGatewayClusterContainerName();
+  const inspectResult = dockerInspect(["--type", "container", containerName], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  if (inspectResult.status !== 0) return false;
+
+  dockerStop(containerName, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  dockerRm(containerName, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+
+  const postInspectResult = dockerInspect(["--type", "container", containerName], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  return postInspectResult.status !== 0;
+}
+
+function retireLegacyGatewayForDockerDriverUpgrade(): void {
+  runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+  stopDockerDriverGatewayProcess();
+  const stoppedLegacyContainer = stopLegacyGatewayClusterContainer();
+  removeDockerDriverGatewayRegistration();
+  if (stoppedLegacyContainer) {
+    console.log("  ✓ Legacy OpenShell gateway container stopped for Docker-driver upgrade");
+  }
 }
 
 function restartDockerDriverGatewayProcessForDrift(pid: number, reason: string): void {
@@ -3627,30 +3722,6 @@ function resolveOpenShellVmDriverBinary(): string | null {
     if (fs.existsSync(candidate)) return candidate;
   }
   return null;
-}
-
-function areRequiredDockerDriverBinariesPresent(
-  platform: NodeJS.Platform = process.platform,
-  binaries: {
-    gatewayBin?: string | null;
-    sandboxBin?: string | null;
-    vmDriverBin?: string | null;
-  } = {},
-  arch: NodeJS.Architecture = process.arch,
-): boolean {
-  if (!isLinuxDockerDriverGatewayEnabled(platform, arch)) return true;
-  const gatewayBin = Object.prototype.hasOwnProperty.call(binaries, "gatewayBin")
-    ? binaries.gatewayBin
-    : resolveOpenShellGatewayBinary();
-  const sandboxBin = Object.prototype.hasOwnProperty.call(binaries, "sandboxBin")
-    ? binaries.sandboxBin
-    : resolveOpenShellSandboxBinary();
-  const hasVmDriverBin = Object.prototype.hasOwnProperty.call(binaries, "vmDriverBin");
-  const vmDriverBin = hasVmDriverBin ? binaries.vmDriverBin : resolveOpenShellVmDriverBinary();
-  if (!gatewayBin) return false;
-  if (platform === "linux" && !sandboxBin) return false;
-  if (platform === "darwin" && hasVmDriverBin && !vmDriverBin) return false;
-  return true;
 }
 
 function getOpenShellDockerSupervisorImage(versionOutput: string | null = null): string {
@@ -4481,143 +4552,7 @@ async function preflight(
     }
   }
 
-  // OpenShell CLI — install if missing, upgrade if below minimum version.
-  // MIN_VERSION in install-openshell.sh handles the version gate; calling it
-  // when openshell already exists is safe (it exits early if version is OK).
-  let openshellInstall: {
-    installed?: boolean;
-    localBin: string | null;
-    futureShellPathHint: string | null;
-  } = {
-    localBin: null,
-    futureShellPathHint: null,
-  };
-  if (!isOpenshellInstalled()) {
-    console.log("  openshell CLI not found. Installing...");
-    openshellInstall = installOpenshell();
-    if (!openshellInstall.installed) {
-      console.error("  Failed to install openshell CLI.");
-      console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
-      process.exit(1);
-    }
-  } else {
-    // Ensure the installed version meets the minimum required by install-openshell.sh.
-    // The script itself is idempotent — it exits early if the version is already sufficient.
-    const currentVersion = getInstalledOpenshellVersion();
-    if (!currentVersion) {
-      console.log("  openshell version could not be determined. Reinstalling...");
-      openshellInstall = installOpenshell();
-      if (!openshellInstall.installed) {
-        console.error("  Failed to reinstall openshell CLI.");
-        console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
-        process.exit(1);
-      }
-    } else {
-      // Source of truth: min_openshell_version in nemoclaw-blueprint/blueprint.yaml.
-      // Fall back to the released Docker-driver floor (also MIN_VERSION in
-      // scripts/install-openshell.sh) if the blueprint cannot be read.
-      const minOpenshellVersion = getBlueprintMinOpenshellVersion() ?? "0.0.37";
-      const currentVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
-      const needsDevChannel =
-        isLinuxDockerDriverGatewayEnabled() &&
-        shouldUseOpenshellDevChannel() &&
-        !isOpenshellDevVersion(currentVersionOutput);
-      const needsDockerDriverBinaries =
-        isLinuxDockerDriverGatewayEnabled() && !areRequiredDockerDriverBinariesPresent();
-      const needsUpgrade =
-        !versionGte(currentVersion, minOpenshellVersion) ||
-        needsDevChannel ||
-        needsDockerDriverBinaries;
-      if (needsUpgrade) {
-        if (needsDevChannel) {
-          console.log("  OpenShell Docker-driver onboarding requires the dev channel. Upgrading...");
-        } else if (needsDockerDriverBinaries) {
-          const required =
-            process.platform === "linux"
-              ? "gateway and sandbox"
-              : process.platform === "darwin"
-                ? "gateway and VM driver"
-                : "gateway";
-          console.log(
-            `  OpenShell standalone gateway onboarding requires the ${required} binaries. Reinstalling...`,
-          );
-        } else {
-          console.log(
-            `  openshell ${currentVersion} is below minimum required version. Upgrading...`,
-          );
-        }
-        openshellInstall = installOpenshell();
-        if (!openshellInstall.installed) {
-          console.error("  Failed to upgrade openshell CLI.");
-          console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
-          process.exit(1);
-        }
-      }
-    }
-  }
-  const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
-  console.log(`  ✓ openshell CLI: ${openshellVersionOutput || "unknown"}`);
-  // Enforce nemoclaw-blueprint/blueprint.yaml's min_openshell_version. Without
-  // this check, users can complete a full onboard against an OpenShell that
-  // pre-dates required CLI surface (e.g. `sandbox exec`, `--upload`) and hit
-  // silent failures inside the sandbox at runtime. See #1317.
-  const installedOpenshellVersion = getInstalledOpenshellVersion(openshellVersionOutput);
-  const minOpenshellVersion = getBlueprintMinOpenshellVersion();
-  if (
-    installedOpenshellVersion &&
-    minOpenshellVersion &&
-    !versionGte(installedOpenshellVersion, minOpenshellVersion)
-  ) {
-    console.error("");
-    console.error(
-      `  ✗ openshell ${installedOpenshellVersion} is below the minimum required by this NemoClaw release.`,
-    );
-    console.error(`    blueprint.yaml min_openshell_version: ${minOpenshellVersion}`);
-    console.error("");
-    console.error("    Upgrade openshell and retry:");
-    console.error("      https://github.com/NVIDIA/OpenShell/releases");
-    console.error(
-      "    Or remove the existing binary so the installer can re-fetch a current build:",
-    );
-    console.error('      command -v openshell && rm -f "$(command -v openshell)"');
-    console.error("");
-    process.exit(1);
-  }
-  // Enforce nemoclaw-blueprint/blueprint.yaml's max_openshell_version. Newer
-  // OpenShell releases may change sandbox semantics that this NemoClaw version
-  // has not been validated against. Blocking early avoids silent runtime
-  // breakage. Users should upgrade NemoClaw to pick up support for newer
-  // OpenShell releases.
-  const maxOpenshellVersion = getBlueprintMaxOpenshellVersion();
-  if (
-    installedOpenshellVersion &&
-    maxOpenshellVersion &&
-    !versionGte(maxOpenshellVersion, installedOpenshellVersion) &&
-    !shouldAllowOpenshellAboveBlueprintMax(openshellVersionOutput)
-  ) {
-    console.error("");
-    console.error(
-      `  ✗ openshell ${installedOpenshellVersion} is above the maximum supported by this NemoClaw release.`,
-    );
-    console.error(`    blueprint.yaml max_openshell_version: ${maxOpenshellVersion}`);
-    console.error("");
-    console.error(
-      `    Upgrade ${cliDisplayName()} to a version that supports your OpenShell release,`,
-    );
-    console.error("    or install a supported OpenShell version:");
-    console.error("      https://github.com/NVIDIA/OpenShell/releases");
-    console.error("");
-    process.exit(1);
-  }
-  if (openshellInstall.futureShellPathHint) {
-    console.log(
-      `  Note: openshell was installed to ${openshellInstall.localBin} for this onboarding run.`,
-    );
-    console.log(`  Future shells may still need: ${openshellInstall.futureShellPathHint}`);
-    console.log(
-      "  Add that export to your shell profile, or open a new terminal before running openshell directly.",
-    );
-  }
+  ensureOpenshellForOnboard();
 
   // Clean up stale or unnamed NemoClaw gateway state before checking ports.
   // A healthy named gateway can be reused later in onboarding, so avoid
@@ -4689,8 +4624,13 @@ async function preflight(
 
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log(`  Cleaning up previous ${cliDisplayName()} session...`);
-    runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-    destroyGateway();
+    if (isLinuxDockerDriverGatewayEnabled()) {
+      retireLegacyGatewayForDockerDriverUpgrade();
+    } else {
+      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      destroyGateway();
+    }
+    gatewayReuseState = "missing";
     console.log("  ✓ Previous session cleaned up");
   }
 
@@ -5911,12 +5851,27 @@ async function createSandbox(
     }
   }
 
+  const existingRegistryEntryBeforePrune = registry.getSandbox(sandboxName);
+
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
 
   // Declared outside the liveExists block so it is accessible during
   // post-creation restore (the sandbox create path runs after the block).
   let pendingStateRestore: BackupResult | null = null;
+  let pendingStateRestoreBackupPath: string | null = null;
+
+  if (!liveExists && existingRegistryEntryBeforePrune && shouldRestoreLatestBackupOnRecreate()) {
+    const latestBackup = sandboxState.getLatestBackup(sandboxName);
+    if (latestBackup?.backupPath) {
+      pendingStateRestoreBackupPath = latestBackup.backupPath;
+      note(`  Found pre-upgrade backup for '${sandboxName}'; it will be restored after recreation.`);
+    } else {
+      note(
+        `  No pre-upgrade backup found for '${sandboxName}'. Recreated sandbox will start with fresh state.`,
+      );
+    }
+  }
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
@@ -6474,6 +6429,7 @@ async function createSandbox(
     discordGuilds,
     resolved ? resolved.ref : null,
     telegramConfig,
+    process.platform === "darwin",
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -6614,18 +6570,37 @@ async function createSandbox(
     if (i < readyAttempts - 1) sleep(2);
   }
 
+  const restoreBackupPath =
+    pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
+
   if (!ready) {
-    // Clean up the orphaned sandbox so the next onboard retry with the same
-    // name doesn't fail on "sandbox already exists".
+    const diagnostics = sandboxCreateFailureDiagnostics.collectSandboxCreateFailureDiagnostics(
+      sandboxName,
+      { backupPath: restoreBackupPath },
+    );
+    // Clean up the failed sandbox after preserving local diagnostics so the
+    // next onboard retry with the same name does not fail on "sandbox already exists".
     const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     console.error("");
     console.error(
       `  Sandbox '${sandboxName}' was created but did not become ready within ${SANDBOX_READY_TIMEOUT_SECS}s.`,
     );
+    if (diagnostics) {
+      console.error(`  Diagnostics saved: ${diagnostics.dir}`);
+      if (diagnostics.summaryLines.length > 0) {
+        console.error("  Recent OpenShell gateway failure:");
+        for (const line of diagnostics.summaryLines) {
+          console.error(`    ${line}`);
+        }
+      }
+      if (diagnostics.backupPath) {
+        console.error(`  State backup retained: ${diagnostics.backupPath}`);
+      }
+    }
     if (delResult.status === 0) {
-      console.error("  The orphaned sandbox has been removed — you can safely retry.");
+      console.error("  The failed sandbox has been removed; retry will recreate it.");
     } else {
-      console.error(`  Could not remove the orphaned sandbox. Manual cleanup:`);
+      console.error("  Could not remove the failed sandbox. Manual cleanup:");
       console.error(`    openshell sandbox delete "${sandboxName}"`);
     }
     console.error(`  Retry: ${cliName()} onboard`);
@@ -6739,21 +6714,21 @@ async function createSandbox(
   });
   registry.setDefault(sandboxName);
 
-  // Restore workspace state if we backed it up during credential rotation.
-  if (pendingStateRestore?.success && pendingStateRestore.manifest) {
-    note("  Restoring workspace state after credential rotation...");
-    const restore = sandboxState.restoreSandboxState(
-      sandboxName,
-      pendingStateRestore.manifest.backupPath,
+  // Restore workspace state if we backed it up during credential rotation or
+  // before a breaking OpenShell gateway upgrade.
+  if (restoreBackupPath) {
+    note(
+      pendingStateRestoreBackupPath
+        ? "  Restoring workspace state from pre-upgrade backup..."
+        : "  Restoring workspace state after credential rotation...",
     );
+    const restore = sandboxState.restoreSandboxState(sandboxName, restoreBackupPath);
     if (restore.success) {
       note(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
       );
     } else {
-      console.error(
-        `  Warning: partial restore. Manual recovery: ${pendingStateRestore.manifest.backupPath}`,
-      );
+      console.error(`  Warning: partial restore. Manual recovery: ${restoreBackupPath}`);
     }
   }
 
@@ -11167,9 +11142,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       }
       if (isLinuxDockerDriverGatewayEnabled() && gatewayReuseState !== "missing") {
         note("  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.");
-        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-        destroyGateway();
-        registry.clearAll();
+        retireLegacyGatewayForDockerDriverUpgrade();
+        gatewayReuseState = "missing";
       }
       startRecordedStep("gateway");
       await startGateway(gpu, { gpuPassthrough });
@@ -11737,6 +11711,7 @@ module.exports = {
   formatEnvAssignment,
   getFutureShellPathHint,
   areRequiredDockerDriverBinariesPresent,
+  ensureOpenshellForOnboard,
   shouldRequireDockerDriverEnv,
   getGatewayBootstrapRepairPlan,
   getGatewayLocalEndpoint,

@@ -20,8 +20,9 @@
 #   sandbox-survival-e2e     Sandbox survival across gateway restarts (onboard, inference,
 #                            gateway stop/start, verify sandbox + workspace + inference).
 #   openshell-gateway-upgrade-e2e
-#                            Validates stale Linux Docker-driver OpenShell gateway
-#                            processes are restarted after an OpenShell upgrade.
+#                            Validates real v0.0.36 curl install upgrade into
+#                            OpenShell 0.0.37 with pre-upgrade backup, restored
+#                            agent state, and the same agent type running.
 #   gateway-health-honest-e2e
 #                            Coverage guard for #3111: onboard must not log
 #                            "Docker-driver gateway is healthy" when the gateway
@@ -1257,9 +1258,9 @@ jobs:
           if-no-files-found: ignore
 
   # ── OpenShell gateway upgrade E2E ────────────────────────────
-  # Reproduces the old-install upgrade edge case for Linux Docker-driver
-  # gateways: a healthy gateway process with stale supervisor/runtime env must
-  # be restarted rather than reused after the current OpenShell install.
+  # Reproduces the old-install upgrade edge case: a working claw on the previous
+  # NemoClaw/OpenShell release must run through current curl-style install/onboard
+  # and keep the same in-sandbox agent process alive under the upgraded gateway.
   openshell-gateway-upgrade-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -1267,7 +1268,7 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade-e2e,'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -1291,8 +1292,12 @@ jobs:
           name: openshell-gateway-upgrade-logs
           path: |
             /tmp/nemoclaw-e2e-openshell-gateway-upgrade.log
+            /tmp/nemoclaw-e2e-openshell-gateway-install.log
+            /tmp/nemoclaw-e2e-openshell-gateway-old-install.log
+            /tmp/nemoclaw-e2e-openshell-gateway-current-install.log
             /tmp/nemoclaw-e2e-openshell-gateway-start.log
             /tmp/nemoclaw-e2e-openshell-gateway-process.log
+            /tmp/nemoclaw-e2e-openshell-gateway-compatible-mock.log
           if-no-files-found: ignore
 
   # ── Gateway health-honesty E2E ──────────────────────────────

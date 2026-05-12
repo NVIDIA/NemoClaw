@@ -80,14 +80,6 @@ type OnboardTestInternals = {
   getGatewayReuseState: ShimFn<string>;
   getPortConflictServiceHints: (platform?: string) => string[];
   getFutureShellPathHint: (binDir: string, pathValue?: string) => string | null;
-  getSandboxInferenceConfig: ShimFn<SandboxInferenceConfig>;
-  getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
-  getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
-  getBlueprintMaxOpenshellVersion: (rootDir?: string) => string | null;
-  getDockerDriverGatewayEnv: (
-    versionOutput?: string | null,
-    platform?: NodeJS.Platform,
-  ) => Record<string, string>;
   areRequiredDockerDriverBinariesPresent: (
     platform?: NodeJS.Platform,
     binaries?: {
@@ -97,6 +89,14 @@ type OnboardTestInternals = {
     },
     arch?: NodeJS.Architecture,
   ) => boolean;
+  getSandboxInferenceConfig: ShimFn<SandboxInferenceConfig>;
+  getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
+  getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
+  getBlueprintMaxOpenshellVersion: (rootDir?: string) => string | null;
+  getDockerDriverGatewayEnv: (
+    versionOutput?: string | null,
+    platform?: NodeJS.Platform,
+  ) => Record<string, string>;
   shouldRequireDockerDriverEnv: (platform?: NodeJS.Platform) => boolean;
   getDockerDriverGatewayRuntimeDriftFromSnapshot: (snapshot: {
     processEnv: Record<string, string> | null;
@@ -224,10 +224,10 @@ function isOnboardTestInternals(
     typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
     typeof value.getDockerDriverGatewayEnv === "function" &&
-    typeof value.areRequiredDockerDriverBinariesPresent === "function" &&
     typeof value.shouldRequireDockerDriverEnv === "function" &&
     typeof value.getDockerDriverGatewayRuntimeDriftFromSnapshot === "function" &&
     typeof value.isLinuxDockerDriverGatewayEnabled === "function" &&
+    typeof value.areRequiredDockerDriverBinariesPresent === "function" &&
     typeof value.isDockerDriverGatewayPortListener === "function" &&
     typeof value.findReadableNvidiaCdiSpecFiles === "function" &&
     typeof value.parseDockerCdiSpecDirs === "function" &&
@@ -277,12 +277,12 @@ const {
   getGatewayReuseState,
   getPortConflictServiceHints,
   getFutureShellPathHint,
+  areRequiredDockerDriverBinariesPresent,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   getDockerDriverGatewayEnv,
-  areRequiredDockerDriverBinariesPresent,
   shouldRequireDockerDriverEnv,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
   isLinuxDockerDriverGatewayEnabled,
@@ -442,7 +442,7 @@ network_policies:
     expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBeUndefined();
   });
 
-  it("requires platform-specific Docker-driver binaries", () => {
+  it("requires platform-specific standalone gateway binaries", () => {
     expect(
       areRequiredDockerDriverBinariesPresent(
         "darwin",
@@ -467,16 +467,6 @@ network_policies:
         sandboxBin: "/tmp/openshell-sandbox",
         vmDriverBin: null,
       }),
-    ).toBe(true);
-    expect(
-      areRequiredDockerDriverBinariesPresent(
-        "darwin",
-        {
-          gatewayBin: "/tmp/openshell-gateway",
-          sandboxBin: null,
-        },
-        "arm64",
-      ),
     ).toBe(true);
     expect(
       areRequiredDockerDriverBinariesPresent(
@@ -563,7 +553,7 @@ network_policies:
     ).toContain("process environment");
   });
 
-  it("recognizes an existing Docker-driver gateway listener on Linux", () => {
+  it("recognizes an existing Docker-driver gateway listener on Docker-driver platforms", () => {
     const opts = {
       platform: "linux" as NodeJS.Platform,
       isPidAliveFn: (pid: number) => pid === 1234,
@@ -1022,6 +1012,7 @@ network_policies:
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
         "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
       ].join("\n"),
     );
 
@@ -1039,6 +1030,47 @@ network_policies:
       assert.match(patched, /^ARG NEMOCLAW_PRIMARY_MODEL_REF=openai\/gpt-5\.4$/m);
       assert.match(patched, /^ARG CHAT_UI_URL=http:\/\/127\.0\.0\.1:19999$/m);
       assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=build-123$/m);
+      assert.match(patched, /^ARG NEMOCLAW_DARWIN_VM_COMPAT=0$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile for macOS VM rootfs ownership compatibility", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-darwin-vm-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-123",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        null,
+        {},
+        true,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_DARWIN_VM_COMPAT=1$/m);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -2926,6 +2958,45 @@ startGateway(null).catch(() => {});
         "/home/test/.local/bin:/usr/local/bin:/usr/bin",
       ),
     ).toBe(null);
+  });
+
+  it("requires platform-specific Docker-driver binaries for onboard repair", () => {
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+          vmDriverBin: "/tmp/openshell-driver-vm",
+        },
+        "arm64",
+      ),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/openshell-gateway",
+        sandboxBin: null,
+        vmDriverBin: "/tmp/openshell-driver-vm",
+      }),
+    ).toBe(false);
+    expect(
+      areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/openshell-gateway",
+        sandboxBin: "/tmp/openshell-sandbox",
+        vmDriverBin: null,
+      }),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: null,
+          sandboxBin: null,
+          vmDriverBin: null,
+        },
+        "arm64",
+      ),
+    ).toBe(false);
   });
 
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {

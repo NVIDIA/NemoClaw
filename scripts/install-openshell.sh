@@ -89,7 +89,89 @@ required_driver_bins_present() {
   esac
 }
 
+macos_vm_driver_bin() {
+  command -v openshell-driver-vm 2>/dev/null || true
+}
+
+macos_vm_driver_has_hypervisor_entitlement() {
+  local bin="$1"
+  [ "$OS" = "Darwin" ] || return 0
+  [ -n "$bin" ] && [ -x "$bin" ] || return 1
+  command -v codesign >/dev/null 2>&1 || return 1
+  codesign -d --entitlements :- "$bin" 2>/dev/null \
+    | grep -q "com.apple.security.hypervisor"
+}
+
+sign_macos_vm_driver() {
+  local bin="$1"
+  local use_sudo="${2:-0}"
+  local entitlements
+
+  [ "$OS" = "Darwin" ] || return 0
+  [ -n "$bin" ] && [ -x "$bin" ] || return 0
+
+  if macos_vm_driver_has_hypervisor_entitlement "$bin"; then
+    return 0
+  fi
+  command -v codesign >/dev/null 2>&1 \
+    || fail "codesign is required to prepare openshell-driver-vm for macOS Hypervisor.framework."
+
+  entitlements="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-openshell-driver-vm-entitlements.XXXXXX.plist")"
+  cat >"$entitlements" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.hypervisor</key>
+  <true/>
+</dict>
+</plist>
+EOF
+
+  info "Signing openshell-driver-vm with the macOS Hypervisor entitlement..."
+  if [ "$use_sudo" = "1" ]; then
+    sudo codesign --force --sign - --entitlements "$entitlements" "$bin" \
+      || {
+        rm -f "$entitlements"
+        fail "Failed to sign openshell-driver-vm with the macOS Hypervisor entitlement."
+      }
+  else
+    codesign --force --sign - --entitlements "$entitlements" "$bin" \
+      || {
+        rm -f "$entitlements"
+        fail "Failed to sign openshell-driver-vm with the macOS Hypervisor entitlement."
+      }
+  fi
+  rm -f "$entitlements"
+
+  macos_vm_driver_has_hypervisor_entitlement "$bin" \
+    || fail "openshell-driver-vm was signed but the macOS Hypervisor entitlement was not present afterward."
+}
+
+repair_existing_macos_vm_driver() {
+  local bin
+  [ "$OS" = "Darwin" ] || return 0
+  bin="$(macos_vm_driver_bin)"
+  [ -n "$bin" ] && [ -x "$bin" ] || return 1
+  if macos_vm_driver_has_hypervisor_entitlement "$bin"; then
+    return 0
+  fi
+
+  warn "openshell-driver-vm is missing the macOS Hypervisor entitlement — repairing..."
+  if [ -w "$bin" ]; then
+    sign_macos_vm_driver "$bin" 0
+    return 0
+  fi
+  if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ] && [ -t 0 ] && command -v sudo >/dev/null 2>&1; then
+    sign_macos_vm_driver "$bin" 1
+    return 0
+  fi
+  return 1
+}
+
+ACTIVE_OPENSHELL_BIN=""
 if command -v openshell >/dev/null 2>&1; then
+  ACTIVE_OPENSHELL_BIN="$(command -v openshell 2>/dev/null || true)"
   INSTALLED_VERSION_OUTPUT="$(openshell --version 2>&1 || true)"
   INSTALLED_VERSION="$(printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
   [ -n "$INSTALLED_VERSION" ] || INSTALLED_VERSION="0.0.0"
@@ -106,6 +188,8 @@ if command -v openshell >/dev/null 2>&1; then
       fi
       if ! required_driver_bins_present; then
         warn "openshell $INSTALLED_VERSION is missing Docker-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."
+      elif ! repair_existing_macos_vm_driver; then
+        warn "openshell $INSTALLED_VERSION has an unsigned macOS VM driver that could not be repaired in place — reinstalling pinned OpenShell ${PIN_VERSION}..."
       else
         info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION)"
         exit 0
@@ -209,6 +293,12 @@ for asset_name in "${ASSETS[@]}"; do
 done
 
 target_dir="/usr/local/bin"
+if [[ -n "$ACTIVE_OPENSHELL_BIN" && "$ACTIVE_OPENSHELL_BIN" = /* ]]; then
+  active_dir="$(dirname "$ACTIVE_OPENSHELL_BIN")"
+  if [ -d "$active_dir" ] && [ -w "$active_dir" ]; then
+    target_dir="$active_dir"
+  fi
+fi
 
 install_bins() {
   local dir="$1"
@@ -221,6 +311,7 @@ install_bins() {
   fi
   if [ -x "$tmpdir/openshell-driver-vm" ]; then
     install -m 755 "$tmpdir/openshell-driver-vm" "$dir/openshell-driver-vm"
+    sign_macos_vm_driver "$dir/openshell-driver-vm" 0
   fi
 }
 
@@ -243,6 +334,7 @@ else
   fi
   if [ -x "$tmpdir/openshell-driver-vm" ]; then
     sudo install -m 755 "$tmpdir/openshell-driver-vm" "$target_dir/openshell-driver-vm"
+    sign_macos_vm_driver "$target_dir/openshell-driver-vm" 1
   fi
 fi
 
