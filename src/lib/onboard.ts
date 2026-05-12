@@ -69,7 +69,6 @@ const {
 const {
   syncPresetSelection,
 }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
-const { getAgentBranding } = require("./cli/branding");
 const {
   HOST_QR_LOGIN_HANDLERS,
 } = require("./host-qr-handlers") as typeof import("./host-qr-handlers");

@@ -559,19 +559,20 @@ async function acquireHostQrChannel(
 
 export async function addSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
   const dryRun = args.includes("--dry-run");
-  const channelArg = args.find((arg) => !arg.startsWith("-"));
-  if (!channelArg) {
+  const rawChannelArg = args.find((arg) => !arg.startsWith("-"));
+  if (!rawChannelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
     process.exit(1);
   }
 
-  const channel = getChannelDef(channelArg);
+  const channel = getChannelDef(rawChannelArg);
   if (!channel) {
-    console.error(`  Unknown channel '${channelArg}'.`);
+    console.error(`  Unknown channel '${rawChannelArg}'.`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
     process.exit(1);
   }
+  const channelArg = rawChannelArg.trim().toLowerCase();
 
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${channelArg}' for '${sandboxName}'.`);
@@ -624,19 +625,20 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
 
 export async function removeSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
   const dryRun = args.includes("--dry-run");
-  const channelArg = args.find((arg) => !arg.startsWith("-"));
-  if (!channelArg) {
+  const rawChannelArg = args.find((arg) => !arg.startsWith("-"));
+  if (!rawChannelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels remove <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
     process.exit(1);
   }
 
-  const channel = getChannelDef(channelArg);
+  const channel = getChannelDef(rawChannelArg);
   if (!channel) {
-    console.error(`  Unknown channel '${channelArg}'.`);
+    console.error(`  Unknown channel '${rawChannelArg}'.`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
     process.exit(1);
   }
+  const channelArg = rawChannelArg.trim().toLowerCase();
 
   if (dryRun) {
     console.log(`  --dry-run: would remove channel '${channelArg}' for '${sandboxName}'.`);

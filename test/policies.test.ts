@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import type { Interface as ReadlineInterface } from "node:readline";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import policies from "../dist/lib/policy";
+import * as policies from "../dist/lib/policy";
 import { execTimeout } from "./helpers/timeouts";
 
 const requireForTest = createRequire(import.meta.url);

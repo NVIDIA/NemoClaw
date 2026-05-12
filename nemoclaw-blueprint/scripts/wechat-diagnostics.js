@@ -115,7 +115,7 @@
     mod[methodName] = function () {
       var info = describeRequest(arguments[0], arguments[1]);
       var req = original.apply(this, arguments);
-      if (info && isWechatHost(info.hostname) && req && typeof req.once === 'function') {
+      if (isWechatHost(info.hostname) && req && typeof req.once === 'function') {
         req.once('response', function (res) {
           maybeLogWechatReady(info, res && res.statusCode);
         });

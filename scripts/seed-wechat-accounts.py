@@ -195,7 +195,7 @@ def main() -> int:
 
     if account_id not in existing:
         existing.append(account_id)
-        _atomic_write(accounts_index, json.dumps(existing, indent=2) + "\n", 0o644)
+        _atomic_write(accounts_index, json.dumps(existing, indent=2) + "\n", 0o600)
 
     print(
         f"[seed-wechat-accounts] seeded {account_file} and registered {account_id} in {accounts_index}"
