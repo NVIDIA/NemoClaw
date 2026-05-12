@@ -80,7 +80,10 @@ type OnboardTestInternals = {
   getGatewayReuseState: ShimFn<string>;
   getPortConflictServiceHints: (platform?: string) => string[];
   getFutureShellPathHint: (binDir: string, pathValue?: string) => string | null;
-  areRequiredDockerDriverBinariesPresent: (platform?: NodeJS.Platform) => boolean;
+  areRequiredDockerDriverBinariesPresent: (
+    platform?: NodeJS.Platform,
+    binaries?: { gateway?: string | null; sandbox?: string | null },
+  ) => boolean;
   getSandboxInferenceConfig: ShimFn<SandboxInferenceConfig>;
   getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
   getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
@@ -2839,8 +2842,9 @@ startGateway(null).catch(() => {});
       process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN = "/tmp/openshell-sandbox";
       expect(areRequiredDockerDriverBinariesPresent("linux")).toBe(true);
 
-      delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN;
-      expect(areRequiredDockerDriverBinariesPresent("darwin")).toBe(false);
+      expect(
+        areRequiredDockerDriverBinariesPresent("darwin", { gateway: null, sandbox: null }),
+      ).toBe(false);
     } finally {
       if (oldGateway === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN;

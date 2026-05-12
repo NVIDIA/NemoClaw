@@ -4,10 +4,9 @@
 #
 # Regression coverage for PR #3001 upgrade installs:
 # 1. If a user already has a working claw on the previous OpenShell release,
-#    the current install/onboard path must upgrade OpenShell, restart the stale
-#    gateway on the current supervisor image, and keep the existing sandbox
-#    reachable. This guards the curl|bash upgrade shape that installs the new
-#    NemoClaw and then immediately runs onboarding against the existing claw.
+#    the current install/onboard path must back up the old claw before replacing
+#    the incompatible OpenShell gateway, recreate it under the current gateway,
+#    restore durable agent state, and leave the same agent type running.
 # 2. If a macOS arm64 user already has the OpenShell 0.0.37 CLI but not the
 #    standalone openshell-gateway binary, the installer must fetch the Darwin
 #    gateway asset instead of accepting the incomplete CLI-only install.
@@ -56,6 +55,7 @@ OLD_OPENSHELL_VERSION="${NEMOCLAW_OLD_OPENSHELL_VERSION:-0.0.36}"
 CURRENT_OPENSHELL_VERSION="${NEMOCLAW_CURRENT_OPENSHELL_VERSION:-0.0.37}"
 SURVIVOR_SANDBOX="${NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME:-e2e-gateway-upgrade-survivor}"
 SURVIVOR_MARKER="gateway-upgrade-survivor-$(date +%s)"
+SURVIVOR_MARKER_PATH="/sandbox/.openclaw/workspace/nemoclaw-gateway-upgrade-marker"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
 FAKE_BASE_URL=""
 FAKE_MOCK_PID=""
@@ -367,7 +367,7 @@ install_old_nemoclaw_and_claw() {
 start_survivor_agent_in_existing_claw() {
   info "Starting survivor agent inside old NemoClaw claw"
   openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
-    sh -lc "printf '%s\n' '$SURVIVOR_MARKER' >/tmp/nemoclaw-gateway-upgrade-marker" \
+    sh -lc "mkdir -p /sandbox/.openclaw/workspace && printf '%s\n' '$SURVIVOR_MARKER' >'$SURVIVOR_MARKER_PATH'" \
     || fail "failed to write survivor marker before gateway upgrade"
 
   local agent_payload remote_setup
@@ -398,7 +398,7 @@ AGENT
   SURVIVOR_AGENT_COUNTER_BEFORE="$(survivor_agent_counter)"
   [ -n "$SURVIVOR_AGENT_PID" ] || fail "survivor agent pid was empty before gateway upgrade"
 
-  pass "Old NemoClaw claw and agent pid ${SURVIVOR_AGENT_PID} are Ready before gateway upgrade"
+  pass "Old NemoClaw claw has live agent activity (pid ${SURVIVOR_AGENT_PID}) before gateway upgrade"
 }
 
 install_current_nemoclaw_upgrade() {
@@ -419,36 +419,36 @@ install_current_nemoclaw_upgrade() {
     fail "gateway server did not report OpenShell ${CURRENT_OPENSHELL_VERSION} after upgrade"
   fi
   pass "Gateway server reports OpenShell ${CURRENT_OPENSHELL_VERSION} after upgrade"
+
+  if grep -Fq "Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped" "$CURRENT_INSTALL_LOG"; then
+    pass "Current installer backed up the old running claw before replacing OpenShell"
+  else
+    diag "current installer backup lines:"
+    grep -n "Pre-upgrade backup\\|Backing up\\|Skipping '${SURVIVOR_SANDBOX}'" "$CURRENT_INSTALL_LOG" || true
+    fail "current installer did not back up the old running claw before replacing OpenShell"
+  fi
 }
 
 assert_survivor_sandbox_after_upgrade() {
-  local marker pid counter
+  local agent_check marker
   info "Verifying survivor sandbox after OpenShell gateway upgrade"
   wait_for_survivor_ready || fail "survivor sandbox is not Ready after gateway upgrade"
 
-  local marker
   marker="$(
     openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
-      cat /tmp/nemoclaw-gateway-upgrade-marker 2>/dev/null || true
+      cat "$SURVIVOR_MARKER_PATH" 2>/dev/null || true
   )"
   [ "$marker" = "$SURVIVOR_MARKER" ] \
     || fail "survivor marker changed after gateway upgrade: got '${marker}'"
+  pass "Durable OpenClaw workspace state was restored after gateway upgrade"
 
-  wait_for_survivor_agent_ready || fail "survivor agent is not healthy after gateway upgrade"
-  pid="$(survivor_agent_pid)"
-  [ "$pid" = "$SURVIVOR_AGENT_PID" ] \
-    || fail "survivor agent process changed across gateway upgrade: was ${SURVIVOR_AGENT_PID}, now ${pid}"
-  for _i in $(seq 1 30); do
-    counter="$(survivor_agent_counter)"
-    if [ "${counter:-0}" -gt "${SURVIVOR_AGENT_COUNTER_BEFORE:-0}" ]; then
-      pass "Same survivor agent pid ${pid} is still running after gateway upgrade"
-      break
-    fi
-    sleep 1
-  done
-  counter="$(survivor_agent_counter)"
-  [ "${counter:-0}" -gt "${SURVIVOR_AGENT_COUNTER_BEFORE:-0}" ] \
-    || fail "survivor agent heartbeat did not advance after gateway upgrade"
+  agent_check="$(
+    openshell sandbox exec --name "$SURVIVOR_SANDBOX" -- \
+      sh -lc 'command -v openclaw >/dev/null && test -s /sandbox/.openclaw/openclaw.json && openclaw --version 2>/dev/null' \
+      || true
+  )"
+  [ -n "$agent_check" ] || fail "OpenClaw agent is not installed/configured after gateway upgrade"
+  pass "OpenClaw agent is installed and configured after gateway upgrade"
 
   if [ -f "$REGISTRY_FILE" ] && grep -Fq "\"${SURVIVOR_SANDBOX}\"" "$REGISTRY_FILE"; then
     pass "NemoClaw registry retained survivor sandbox after gateway upgrade"
@@ -463,7 +463,7 @@ assert_survivor_sandbox_after_upgrade() {
     fail "nemoclaw list does not show survivor sandbox after gateway upgrade: ${list_output:0:200}"
   fi
 
-  pass "Survivor sandbox remained reachable after OpenShell gateway upgrade"
+  pass "Survivor claw state remained reachable after OpenShell gateway upgrade"
 }
 
 cd "$REPO_ROOT"
@@ -484,6 +484,6 @@ start_survivor_agent_in_existing_claw
 info "Running current NemoClaw installer/onboard against old working claw"
 install_current_nemoclaw_upgrade
 assert_survivor_sandbox_after_upgrade
-pass "Current NemoClaw installer upgraded old ${OLD_NEMOCLAW_REF} claw without replacing the running agent"
+pass "Current NemoClaw installer upgraded old ${OLD_NEMOCLAW_REF} claw, restored state, and kept OpenClaw running on OpenShell ${CURRENT_OPENSHELL_VERSION}"
 
 exercise_macos_gateway_installer_regression

@@ -2486,6 +2486,10 @@ function pruneStaleSandboxEntry(sandboxName: string): boolean {
   return liveExists;
 }
 
+function shouldRestoreLatestBackupOnRecreate(): boolean {
+  return process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
+}
+
 function findSelectionConfigPath(dir: string): string | null {
   if (!dir || !fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -3507,9 +3511,20 @@ function installOpenshell(): {
   };
 }
 
-function areRequiredDockerDriverBinariesPresent(platform: NodeJS.Platform = process.platform): boolean {
-  if (!resolveOpenShellGatewayBinary()) return false;
-  if (platform === "linux" && !resolveOpenShellSandboxBinary()) return false;
+function areRequiredDockerDriverBinariesPresent(
+  platform: NodeJS.Platform = process.platform,
+  binaries: { gateway?: string | null; sandbox?: string | null } = {},
+): boolean {
+  const gatewayBinary =
+    Object.prototype.hasOwnProperty.call(binaries, "gateway")
+      ? binaries.gateway
+      : resolveOpenShellGatewayBinary();
+  const sandboxBinary =
+    Object.prototype.hasOwnProperty.call(binaries, "sandbox")
+      ? binaries.sandbox
+      : resolveOpenShellSandboxBinary();
+  if (!gatewayBinary) return false;
+  if (platform === "linux" && !sandboxBinary) return false;
   return true;
 }
 
@@ -6124,12 +6139,27 @@ async function createSandbox(
     }
   }
 
+  const existingRegistryEntryBeforePrune = registry.getSandbox(sandboxName);
+
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
 
   // Declared outside the liveExists block so it is accessible during
   // post-creation restore (the sandbox create path runs after the block).
   let pendingStateRestore: BackupResult | null = null;
+  let pendingStateRestoreBackupPath: string | null = null;
+
+  if (!liveExists && existingRegistryEntryBeforePrune && shouldRestoreLatestBackupOnRecreate()) {
+    const latestBackup = sandboxState.getLatestBackup(sandboxName);
+    if (latestBackup?.backupPath) {
+      pendingStateRestoreBackupPath = latestBackup.backupPath;
+      note(`  Found pre-upgrade backup for '${sandboxName}'; it will be restored after recreation.`);
+    } else {
+      note(
+        `  No pre-upgrade backup found for '${sandboxName}'. Recreated sandbox will start with fresh state.`,
+      );
+    }
+  }
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
@@ -6952,21 +6982,22 @@ async function createSandbox(
   });
   registry.setDefault(sandboxName);
 
-  // Restore workspace state if we backed it up during credential rotation.
-  if (pendingStateRestore?.success && pendingStateRestore.manifest) {
-    note("  Restoring workspace state after credential rotation...");
-    const restore = sandboxState.restoreSandboxState(
-      sandboxName,
-      pendingStateRestore.manifest.backupPath,
+  const restoreBackupPath = pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
+  // Restore workspace state if we backed it up during credential rotation or
+  // before a breaking OpenShell gateway upgrade.
+  if (restoreBackupPath) {
+    note(
+      pendingStateRestoreBackupPath
+        ? "  Restoring workspace state from pre-upgrade backup..."
+        : "  Restoring workspace state after credential rotation...",
     );
+    const restore = sandboxState.restoreSandboxState(sandboxName, restoreBackupPath);
     if (restore.success) {
       note(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
       );
     } else {
-      console.error(
-        `  Warning: partial restore. Manual recovery: ${pendingStateRestore.manifest.backupPath}`,
-      );
+      console.error(`  Warning: partial restore. Manual recovery: ${restoreBackupPath}`);
     }
   }
 

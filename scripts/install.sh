@@ -827,6 +827,7 @@ ONBOARD_RAN=false
 # invoke the CLI directly so a stale PATH cache does not silently skip
 # auto-onboarding (#3276).
 _CLI_PATH=""
+_PREEXISTING_SANDBOX_COUNT=0
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
 # Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
@@ -1510,6 +1511,86 @@ verify_nemoclaw() {
   error "Installation failed: ${_CLI_BIN} binary not found."
 }
 
+registered_sandbox_count() {
+  local reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  if [ ! -f "$reg_file" ]; then
+    printf "0"
+    return
+  fi
+  python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(len(d.get('sandboxes', {})))
+except Exception:
+    print(0)
+" "$reg_file" 2>/dev/null || printf "0"
+}
+
+resolve_existing_cli_runner() {
+  local resolved_cli=""
+  if command_exists "$_CLI_BIN"; then
+    resolved_cli="$(command -v "$_CLI_BIN")"
+    if is_real_nemoclaw_cli "$resolved_cli" "$_CLI_BIN"; then
+      printf "%s" "$resolved_cli"
+      return 0
+    fi
+  fi
+
+  local npm_bin
+  npm_bin="$(resolve_npm_bin)" || true
+  if [[ -n "$npm_bin" && -x "$npm_bin/$_CLI_BIN" ]]; then
+    if is_real_nemoclaw_cli "$npm_bin/$_CLI_BIN" "$_CLI_BIN"; then
+      printf "%s" "$npm_bin/$_CLI_BIN"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+installed_openshell_version() {
+  command_exists openshell || return 1
+  openshell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+preinstall_backup_and_retire_legacy_gateway() {
+  local reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  [ -f "$reg_file" ] || return 0
+  command_exists openshell || return 0
+
+  local sandbox_count
+  sandbox_count="$(registered_sandbox_count)"
+  _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
+  [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
+
+  if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
+    error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
+  fi
+
+  local old_openshell_version=""
+  old_openshell_version="$(installed_openshell_version || true)"
+  local old_cli_runner=""
+  if ! old_cli_runner="$(resolve_existing_cli_runner)"; then
+    warn "Existing sandbox sessions detected, but no usable ${_CLI_BIN} CLI was found for pre-upgrade backup."
+    return 0
+  fi
+
+  info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
+  "$old_cli_runner" backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
+  export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
+
+  # OpenShell 0.0.37 is not compatible with pre-0.0.37 gateway state, and the
+  # 0.0.37 CLI no longer has lifecycle verbs for destroying that old gateway.
+  # Retire the old gateway while the old CLI can still do it, after backup.
+  if [[ -n "$old_openshell_version" ]] && ! version_gte "$old_openshell_version" "0.0.37"; then
+    info "Retiring OpenShell ${old_openshell_version} gateway before installing OpenShell 0.0.37…"
+    openshell gateway destroy -g nemoclaw >/dev/null 2>&1 \
+      || openshell gateway destroy >/dev/null 2>&1 \
+      || warn "Could not destroy the legacy OpenShell gateway before upgrade; onboarding will clean up stale runtime state."
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
@@ -1958,14 +2039,10 @@ main() {
   # `nemoclaw onboard` (the install-ollama / install-vllm branches).
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
+  preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw
 
-  # Pre-upgrade safety: back up all sandbox state before onboarding (which may
-  # upgrade OpenShell). If the upgrade destroys sandbox contents, the backups
-  # in ~/.nemoclaw/rebuild-backups/ let the user recover via `nemoclaw <name> rebuild`.
-  # Check the registry file directly to avoid shelling out to nemoclaw (which
-  # may be a stub in test environments).
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
   # shell PATH cache no longer suppresses auto-onboarding (#3276). Falls
   # back to PATH lookup as a safety net for unusual environments.
@@ -1974,23 +2051,6 @@ main() {
     _cli_runner="$_CLI_PATH"
   elif command_exists "$_CLI_BIN"; then
     _cli_runner="$_CLI_BIN"
-  fi
-
-  local _reg_file="${HOME}/.nemoclaw/sandboxes.json"
-  if [ -f "$_reg_file" ] && [ -n "$_cli_runner" ] && command_exists openshell; then
-    local _has_sandboxes
-    _has_sandboxes="$(python3 -c "
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(len(d.get('sandboxes', {})))
-except Exception:
-    print(0)
-" "$_reg_file" 2>/dev/null || echo 0)"
-    if [ "$_has_sandboxes" -gt 0 ]; then
-      info "Backing up $_has_sandboxes sandbox(es) before upgrade…"
-      "$_cli_runner" backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
-    fi
   fi
 
   step 3 "Onboarding"
@@ -2017,7 +2077,7 @@ except Exception:
       ONBOARD_RAN=true
       # After onboard, check for stale sandboxes that need rebuilding (#1904).
       # Uses --auto so it runs non-interactively in piped/CI contexts.
-      if [ "${_has_sandboxes:-0}" -gt 0 ] 2>/dev/null && [ -n "$_cli_runner" ]; then
+      if [ "${_PREEXISTING_SANDBOX_COUNT:-0}" -gt 0 ] 2>/dev/null && [ -n "$_cli_runner" ]; then
         info "Checking for sandboxes that need upgrading…"
         "$_cli_runner" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
       fi
