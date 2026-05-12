@@ -56,6 +56,7 @@ SURVIVOR_SANDBOX="${NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME:-e2e-gateway-upgrade-
 SURVIVOR_MARKER="gateway-upgrade-survivor-$(date +%s)"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
 OLD_OPENSHELL_DIR=""
+CURRENT_OPENSHELL_DIR=""
 SURVIVOR_AGENT_PID=""
 SURVIVOR_AGENT_COUNTER_BEFORE="0"
 
@@ -129,15 +130,15 @@ verify_release_asset() {
   fi
 }
 
-install_real_openshell_cli_release_to_dir() {
-  local version="$1" target_dir="$2" tmpdir arch_label asset_name checksum_file
+install_openshell_cli_release_to_dir() {
+  local version="$1" target_dir="$2" label="${3:-release}" tmpdir arch_label asset_name checksum_file
   mkdir -p "$target_dir"
   tmpdir="$(mktemp -d)"
   arch_label="$(linux_release_arch_label)"
   asset_name="openshell-${arch_label}-unknown-linux-musl.tar.gz"
   checksum_file="openshell-checksums-sha256.txt"
 
-  info "Installing real OpenShell ${version} CLI into temporary old-install bin"
+  info "Installing real OpenShell ${version} CLI into temporary ${label} bin"
   download_release_asset "v${version}" "$asset_name" "$tmpdir"
   download_release_asset "v${version}" "$checksum_file" "$tmpdir"
   verify_release_asset "$tmpdir" "$asset_name" "$checksum_file"
@@ -145,16 +146,16 @@ install_real_openshell_cli_release_to_dir() {
   install -m 755 "$tmpdir/openshell" "${target_dir}/openshell"
   rm -rf "$tmpdir"
 
-  pass "Temporary old OpenShell CLI ready: $("${target_dir}/openshell" --version)"
+  pass "Temporary ${label} OpenShell CLI ready: $("${target_dir}/openshell" --version)"
 }
 
 install_driver_bins_release_to_dir() {
-  local version="$1" target_dir="$2" tmpdir arch_label asset_name checksum_file
+  local version="$1" target_dir="$2" label="${3:-release}" tmpdir arch_label asset_name checksum_file
   mkdir -p "$target_dir"
   tmpdir="$(mktemp -d)"
   arch_label="$(linux_release_arch_label)"
 
-  info "Installing OpenShell ${version} Docker-driver binaries into temporary old-install bin"
+  info "Installing OpenShell ${version} Docker-driver binaries into temporary ${label} bin"
   for asset_name in \
     "openshell-gateway-${arch_label}-unknown-linux-gnu.tar.gz" \
     "openshell-sandbox-${arch_label}-unknown-linux-gnu.tar.gz"; do
@@ -172,7 +173,7 @@ install_driver_bins_release_to_dir() {
   install -m 755 "$tmpdir/openshell-gateway" "${target_dir}/openshell-gateway"
   install -m 755 "$tmpdir/openshell-sandbox" "${target_dir}/openshell-sandbox"
   rm -rf "$tmpdir"
-  pass "Temporary Docker-driver binaries ready for stale ${OLD_OPENSHELL_VERSION} runtime"
+  pass "Temporary ${label} Docker-driver binaries ready"
 }
 
 assert_current_openshell_selected() {
@@ -240,6 +241,7 @@ cleanup() {
   fi
   rm -f "$PID_FILE"
   [ -z "$OLD_OPENSHELL_DIR" ] || rm -rf "$OLD_OPENSHELL_DIR"
+  [ -z "$CURRENT_OPENSHELL_DIR" ] || rm -rf "$CURRENT_OPENSHELL_DIR"
 }
 trap cleanup EXIT
 
@@ -477,25 +479,28 @@ fi
 npm run build:cli
 
 OLD_OPENSHELL_DIR="$(mktemp -d)"
-install_real_openshell_cli_release_to_dir "$OLD_OPENSHELL_VERSION" "$OLD_OPENSHELL_DIR"
-install_driver_bins_release_to_dir "$CURRENT_OPENSHELL_VERSION" "$OLD_OPENSHELL_DIR"
+install_openshell_cli_release_to_dir "$OLD_OPENSHELL_VERSION" "$OLD_OPENSHELL_DIR" "old-install"
 export PATH="$OLD_OPENSHELL_DIR:$PATH"
 
 command -v openshell >/dev/null 2>&1 || fail "old openshell not found before upgrade"
-command -v openshell-gateway >/dev/null 2>&1 || fail "old openshell-gateway not found before upgrade"
-command -v openshell-sandbox >/dev/null 2>&1 || fail "old openshell-sandbox not found before upgrade"
 if ! openshell --version 2>&1 | grep -q "$OLD_OPENSHELL_VERSION"; then
   fail "test did not start from old OpenShell ${OLD_OPENSHELL_VERSION}"
 fi
 pass "E2E starts from real OpenShell CLI $(openshell --version)"
+
+CURRENT_OPENSHELL_DIR="$(mktemp -d)"
+install_openshell_cli_release_to_dir "$CURRENT_OPENSHELL_VERSION" "$CURRENT_OPENSHELL_DIR" "Docker-driver harness"
+install_driver_bins_release_to_dir "$CURRENT_OPENSHELL_VERSION" "$CURRENT_OPENSHELL_DIR" "Docker-driver harness"
 
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
 rm -f "$PID_FILE" "$START_LOG" "$GATEWAY_LOG"
 openshell gateway remove nemoclaw >/dev/null 2>&1 || true
 
-GATEWAY_BIN="$(command -v openshell-gateway)"
-SANDBOX_BIN="$(command -v openshell-sandbox)"
+GATEWAY_BIN="${CURRENT_OPENSHELL_DIR}/openshell-gateway"
+SANDBOX_BIN="${CURRENT_OPENSHELL_DIR}/openshell-sandbox"
+[ -x "$GATEWAY_BIN" ] || fail "current openshell-gateway harness not found"
+[ -x "$SANDBOX_BIN" ] || fail "current openshell-sandbox harness not found"
 STALE_GATEWAY_BIN="${STATE_DIR}/openshell-gateway-stale"
 cp "$GATEWAY_BIN" "$STALE_GATEWAY_BIN"
 chmod 700 "$STALE_GATEWAY_BIN"
@@ -533,7 +538,7 @@ openshell status >/dev/null 2>&1 || fail "stale gateway never became healthy"
 OLD_IMAGE="$(process_env_value "$OLD_PID" OPENSHELL_DOCKER_SUPERVISOR_IMAGE)"
 [ "$OLD_IMAGE" = "$STALE_IMAGE" ] || fail "stale gateway did not start with expected image"
 pass "Stale gateway is healthy with ${OLD_IMAGE}"
-create_survivor_sandbox
+PATH="$CURRENT_OPENSHELL_DIR:$PATH" create_survivor_sandbox
 
 info "Running onboard OpenShell upgrade preflight against old working install"
 XDG_BIN_HOME="$OLD_OPENSHELL_DIR" NEMOCLAW_NON_INTERACTIVE=1 \
