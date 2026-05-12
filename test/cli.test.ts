@@ -2330,6 +2330,17 @@ describe("CLI dispatch", () => {
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
+        // Return a healthy named-gateway status so the new gateway-health
+        // probe (#3386) does not flip the exit code to 1.
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
         '  if [ "$8" = "tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE \\"getUpdates conflict|409[[:space:]:]+Conflict\\" || true" ]; then',
         "    echo 1",
