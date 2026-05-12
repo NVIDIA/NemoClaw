@@ -11159,6 +11159,22 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       // previous session readable on disk.
       if (fresh) {
         onboardSession.clearSession();
+        // A previous failed onboard can leave a stale host-side gateway-forward
+        // process holding the dashboard port. Without this sweep, the next
+        // preflight detects the conflict, falls back to a different port, the
+        // build bakes the original port into CHAT_UI_URL, and the new sandbox
+        // never becomes reachable. Sweep before preflight so the port shows up
+        // free. See #3397, #3398. Protect the dashboard ports of currently
+        // registered sandboxes so a fresh onboard for a new name does not
+        // disrupt the forward of an existing sandbox.
+        const { stopStaleDashboardListeners } = require("./onboard/stale-gateway-cleanup") as {
+          stopStaleDashboardListeners: typeof import("./onboard/stale-gateway-cleanup").stopStaleDashboardListeners;
+        };
+        const protectedPorts = registry
+          .listSandboxes()
+          .sandboxes.map((sb) => sb.dashboardPort)
+          .filter((p): p is number => typeof p === "number" && Number.isFinite(p));
+        stopStaleDashboardListeners({}, { protectedPorts });
       }
       fromDockerfile = requestedFromDockerfile ? path.resolve(requestedFromDockerfile) : null;
       session = onboardSession.saveSession(
