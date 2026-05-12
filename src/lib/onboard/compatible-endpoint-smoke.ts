@@ -83,13 +83,17 @@ python3 - "$MODEL" >"$payload_file" <<'PYPAYLOAD'
 import json
 import sys
 
+# max_tokens=256 covers short reasoning-chain models (e.g. Qwen3.6 in thinking
+# mode via vLLM with --reasoning-parser) that would otherwise spend their entire
+# budget on the reasoning field and return content=null with finish_reason=length
+# during the smoke probe. See GH #3341.
 model = sys.argv[1]
 print(json.dumps({
     "model": model,
     "messages": [
         {"role": "user", "content": "Reply with exactly: PONG"}
     ],
-    "max_tokens": 32,
+    "max_tokens": 256,
 }))
 PYPAYLOAD
 
@@ -121,16 +125,39 @@ except Exception as exc:
     print("inference.local returned non-JSON response: %s; body=%s" % (exc, body), file=sys.stderr)
     sys.exit(1)
 
-content = (
-    data.get("choices", [{}])[0]
-    .get("message", {})
-    .get("content")
-)
-if not isinstance(content, str) or not content.strip():
-    print("inference.local response did not contain choices[0].message.content: %s" % json.dumps(data)[:1000], file=sys.stderr)
+choices = data.get("choices")
+if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+    print("inference.local response did not contain a choices[0] dict: %s" % json.dumps(data)[:1000], file=sys.stderr)
     sys.exit(1)
+message = choices[0].get("message", {})
+if not isinstance(message, dict):
+    message = {}
 
-print("INFERENCE_SMOKE_OK " + content.strip()[:200])
+content = message.get("content")
+if isinstance(content, str) and content.strip():
+    print("INFERENCE_SMOKE_OK " + content.strip()[:200])
+    sys.exit(0)
+
+# Some reasoning-mode models (e.g. Qwen3.6 via vLLM --reasoning-parser, OpenAI
+# o1-style endpoints) return content=null with the response carried under
+# "reasoning" or "reasoning_content". Treat that as a valid liveness signal for
+# the smoke probe: the endpoint round-tripped a chat completion, just under a
+# different field name. Pick the first non-empty string from either field so a
+# non-string value in one does not mask a valid string in the other. See GH #3341.
+reasoning_text = next(
+    (
+        value.strip()
+        for value in (message.get("reasoning"), message.get("reasoning_content"))
+        if isinstance(value, str) and value.strip()
+    ),
+    None,
+)
+if reasoning_text:
+    print("INFERENCE_SMOKE_OK (reasoning-only response, %d chars)" % len(reasoning_text))
+    sys.exit(0)
+
+print("inference.local response did not contain choices[0].message.content: %s" % json.dumps(data)[:1000], file=sys.stderr)
+sys.exit(1)
 PYRESP
 `.trim();
 }
