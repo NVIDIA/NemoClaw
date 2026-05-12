@@ -9901,7 +9901,12 @@ async function setupPoliciesWithSelection(
     supportOptions,
     customPresetNames,
   );
-  let chosen = selectedPresets
+  const filterSupportedPresetNames = (presetNames: string[]) =>
+    presetNames.filter(
+      (name) =>
+        customPresetNames.has(name) || policies.setupPolicyPresetSupported(name, supportOptions),
+    );
+  let chosen = selectedPresets !== null
     ? policies.clampSetupPolicyPresetNames(
         selectedPresets,
         selectablePresets,
@@ -9911,7 +9916,7 @@ async function setupPoliciesWithSelection(
     : null;
 
   // Resume path: caller supplies the preset list from a previous run.
-  if (selectedPresets && selectedPresets.length > 0) {
+  if (selectedPresets !== null) {
     const resumeSelection = chosen || [];
     if (onSelection) onSelection(resumeSelection);
     if (!waitForSandboxReady(sandboxName)) {
@@ -9945,15 +9950,16 @@ async function setupPoliciesWithSelection(
     }
 
     if (policyMode === "custom" || policyMode === "list") {
-      chosen = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
-      if (chosen.length === 0) {
+      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
+      if (envPresets.length === 0) {
         console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
         process.exit(1);
       }
+      chosen = filterSupportedPresetNames(envPresets);
       isAuthoritative = true;
     } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
       const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
-      if (envPresets.length > 0) chosen = envPresets;
+      if (envPresets.length > 0) chosen = filterSupportedPresetNames(envPresets);
     } else {
       // #2429: step 8/8 runs after the sandbox is created. Exiting here left
       // the sandbox with no presets. Warn, optionally suggest the intended
@@ -11704,8 +11710,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         policies.listCustomPresets(sandboxName).map((p: { name: string }) => p.name),
       ),
     );
+    const recordedPolicyPresetsHaveUnsupported =
+      Array.isArray(recordedPolicyPresets) &&
+      recordedPolicyPresetsForSupport.length !== recordedPolicyPresets.length;
     const resumePolicies =
-      resume && sandboxName && arePolicyPresetsApplied(sandboxName, recordedPolicyPresetsForSupport);
+      resume &&
+      sandboxName &&
+      !recordedPolicyPresetsHaveUnsupported &&
+      arePolicyPresetsApplied(sandboxName, recordedPolicyPresetsForSupport);
     if (resumePolicies) {
       skippedStepMessage("policies", recordedPolicyPresetsForSupport.join(", "));
       onboardSession.markStepComplete(
@@ -11726,7 +11738,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       });
       const appliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
         selectedPresets:
-          recordedPolicyPresetsForSupport.length > 0
+          Array.isArray(recordedPolicyPresets)
             ? recordedPolicyPresetsForSupport
             : null,
         enabledChannels:
