@@ -337,9 +337,9 @@ run_installer_payload() {
   load_shell_path
 }
 
-download_old_installer_payload() {
+download_old_curl_installer() {
   local target="$1"
-  curl -fsSL "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${OLD_NEMOCLAW_REF}/scripts/install.sh" \
+  curl -fsSL "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${OLD_NEMOCLAW_REF}/install.sh" \
     -o "$target"
   chmod 755 "$target"
 }
@@ -347,7 +347,7 @@ download_old_installer_payload() {
 install_old_nemoclaw_and_claw() {
   local installer
   installer="$(mktemp)"
-  download_old_installer_payload "$installer"
+  download_old_curl_installer "$installer"
   run_installer_payload "old ${OLD_NEMOCLAW_REF}" "$OLD_NEMOCLAW_REF" "$installer" "$OLD_INSTALL_LOG"
   rm -f "$installer"
 
