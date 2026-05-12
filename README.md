@@ -115,6 +115,10 @@ Status:      nemoclaw my-assistant status
 Logs:        nemoclaw my-assistant logs --follow
 ──────────────────────────────────────────────────
 
+To change settings later:
+  Model:       nemoclaw inference get
+               nemoclaw inference set --model <model> --provider <provider> --sandbox my-assistant
+
 [INFO]  === Installation complete ===
 ```
 

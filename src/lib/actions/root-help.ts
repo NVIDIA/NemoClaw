@@ -73,6 +73,7 @@ export function help(): void {
   lines.push("");
   lines.push(`  ${G}Reconfiguration (after onboard):${R}`);
   lines.push(
+    `    ${D}• Check inference route:   nemoclaw inference get${R}`,
     `    ${D}• Change inference model:  nemoclaw inference set --model <model> --provider <provider>${R}`,
   );
   lines.push(`    ${D}• Add network presets:     use the policy-add command on your sandbox${R}`);

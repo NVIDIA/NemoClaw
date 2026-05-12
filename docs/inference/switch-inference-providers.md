@@ -30,7 +30,7 @@ No restart is required.
 ## Prerequisites
 
 - A running NemoClaw sandbox.
-- The OpenShell CLI on your `PATH`.
+- The OpenShell CLI on your `PATH`, which NemoClaw uses under the hood.
 
 ## Switch to a Different Model
 
@@ -185,19 +185,25 @@ $ nemoclaw onboard --resume --recreate-sandbox
 
 ## Verify the Active Model
 
-Run the status command to confirm the change:
+Run the inference command to confirm the live gateway route:
+
+```console
+$ nemoclaw inference get
+```
+
+Add `--json` for machine-readable output:
+
+```console
+$ nemoclaw inference get --json
+```
+
+Run the status command when you also need sandbox, service, and messaging health:
 
 ```console
 $ nemoclaw <name> status
 ```
 
-Add the `--json` flag for machine-readable output:
-
-```console
-$ nemoclaw <name> status --json
-```
-
-The output includes the active provider, model, and endpoint.
+The status output includes the active provider, model, and endpoint with the rest of the sandbox state.
 
 ## Notes
 

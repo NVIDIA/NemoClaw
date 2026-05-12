@@ -557,6 +557,48 @@ describe("CLI dispatch", () => {
     expect(out).toMatch(/OpenClaw or Hermes\s+sandbox config/);
   });
 
+  it("inference get reports the live NemoClaw gateway route", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-get-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: nvidia/nemotron-3-super-120b-a12b'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const text = runWithEnv("inference get", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(text.code).toBe(0);
+      expect(text.out).toContain("Provider: nvidia-prod");
+      expect(text.out).toContain("Model:    nvidia/nemotron-3-super-120b-a12b");
+
+      const json = runWithEnv("inference get --json", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(json.code).toBe(0);
+      expect(JSON.parse(json.out)).toEqual({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("list --json emits structured empty inventory", () => {
     const r = run("list --json");
     expect(r.code).toBe(0);

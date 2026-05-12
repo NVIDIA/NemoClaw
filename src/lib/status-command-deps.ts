@@ -4,7 +4,7 @@
 
 import { spawnSync } from "node:child_process";
 
-import { parseGatewayInference } from "./inference/config";
+import { getLiveGatewayInference } from "./inference/live";
 import type { MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory";
 import { backfillMessagingChannels, findAllOverlaps } from "./messaging-conflict";
 import type { CaptureOpenshellResult } from "./adapters/openshell/client";
@@ -136,13 +136,13 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
   return {
     listSandboxes: () => registry.listSandboxes(),
     getLiveInference: () =>
-      parseGatewayInference(
-        stripAnsi(
-          captureOpenshell(rootDir, ["inference", "get"], {
-            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-          }).output,
-        ),
-      ),
+      getLiveGatewayInference(
+        (args, opts) =>
+          captureOpenshell(rootDir, args, {
+            timeout: opts?.timeout,
+          }),
+        { timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+      ).inference,
     showServiceStatus,
     getServiceStatuses,
     checkMessagingBridgeHealth: (sandboxName, channels) =>

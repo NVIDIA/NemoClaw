@@ -10692,8 +10692,9 @@ function printDashboard(
   console.log(`  ${"─".repeat(50)}`);
   console.log("");
   console.log("  To change settings later:");
+  console.log(`    Model:       ${cliName()} inference get`);
   console.log(
-    `    Model:       ${cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
+    `                 ${cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
   );
   console.log(`    Policies:    ${cliName()} ${sandboxName} policy-add`);
   console.log(`    Credentials: ${cliName()} credentials reset <KEY>  then  ${cliName()} onboard`);

@@ -7712,6 +7712,17 @@ const { setupInference } = require(${onboardPath});
     assert.equal(commands.length, 4);
   });
 
+  it("prints NemoClaw inference commands in the post-onboard settings summary", () => {
+    const source = fs.readFileSync(path.join(repoRoot, "src", "lib", "onboard.ts"), "utf8");
+    const summaryBlock = source.slice(source.indexOf('console.log("  To change settings later:");'));
+    assert.match(summaryBlock, /Model:\s+\$\{cliName\(\)\} inference get/);
+    assert.match(
+      summaryBlock,
+      /inference set --model <model> --provider <provider> --sandbox \$\{sandboxName\}/,
+    );
+    assert.doesNotMatch(summaryBlock, /openshell inference (get|set)/);
+  });
+
   it("accepts gateway inference output that omits the Route line", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-route-"));

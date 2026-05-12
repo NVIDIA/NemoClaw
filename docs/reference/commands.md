@@ -906,6 +906,16 @@ $ nemoclaw status
 $ nemoclaw status --json
 ```
 
+### `nemoclaw inference get`
+
+Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway.
+Use this command when you want the direct runtime route without the rest of the sandbox status output.
+
+```console
+$ nemoclaw inference get
+$ nemoclaw inference get --json
+```
+
 ### `nemoclaw inference set`
 
 Switch the active inference provider or model for a NemoClaw-managed OpenClaw or Hermes sandbox.
