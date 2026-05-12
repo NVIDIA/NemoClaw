@@ -222,6 +222,129 @@ exit 0`,
     }
   });
 
+  it("upgrades into the active writable openshell directory to avoid PATH shadowing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-active-dir-"));
+    try {
+      const activeBin = path.join(tmp, "active-bin");
+      const fakeBin = path.join(tmp, "fake-bin");
+      const installLog = path.join(tmp, "install.log");
+      fs.mkdirSync(activeBin);
+      fs.mkdirSync(fakeBin);
+
+      writeExecutable(
+        path.join(activeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi
+exit 99`,
+      );
+
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "x86_64"; else echo "Linux"; fi`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "gh"),
+        `#!/usr/bin/env bash
+exit 1`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+if [ -n "$out" ]; then
+  case "$(basename "$out")" in
+  openshell-checksums-sha256.txt)
+    printf '%s\n' 'ignored  openshell-x86_64-unknown-linux-musl.tar.gz' > "$out"
+    ;;
+  openshell-gateway-checksums-sha256.txt)
+    printf '%s\n' 'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' > "$out"
+    ;;
+  openshell-sandbox-checksums-sha256.txt)
+    printf '%s\n' 'ignored  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' > "$out"
+    ;;
+  *)
+    : > "$out"
+    ;;
+  esac
+fi
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "shasum"),
+        `#!/usr/bin/env bash
+cat >/dev/null
+echo "checksum OK"
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "tar"),
+        `#!/usr/bin/env bash
+outdir=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-C" ]; then
+    outdir="$arg"
+    break
+  fi
+  prev="$arg"
+done
+[ -n "$outdir" ] || exit 1
+case "$*" in
+*openshell-gateway*) name="openshell-gateway" ;;
+*openshell-sandbox*) name="openshell-sandbox" ;;
+*) name="openshell" ;;
+esac
+printf '#!/usr/bin/env bash\\nexit 0\\n' > "$outdir/$name"
+chmod 755 "$outdir/$name"
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "install"),
+        `#!/usr/bin/env bash
+dest="\${@: -1}"
+printf '%s\\n' "$dest" >> ${JSON.stringify(installLog)}
+mkdir -p "$(dirname "$dest")"
+case "$(basename "$dest")" in
+openshell)
+  printf '#!/usr/bin/env bash\\nif [ "$1" = "--version" ]; then echo "openshell 0.0.37"; else exit 0; fi\\n' > "$dest"
+  ;;
+*)
+  printf '#!/usr/bin/env bash\\nexit 0\\n' > "$dest"
+  ;;
+esac
+chmod 755 "$dest"
+exit 0`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:${activeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const installedTargets = fs.readFileSync(installLog, "utf-8");
+      expect(installedTargets).toContain(path.join(activeBin, "openshell"));
+      expect(installedTargets).toContain(path.join(activeBin, "openshell-gateway"));
+      expect(installedTargets).toContain(path.join(activeBin, "openshell-sandbox"));
+      expect(installedTargets).not.toContain("/usr/local/bin/openshell");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("triggers upgrade when openshell 0.0.36 is installed (below current floor)", () => {
     const result = runWithInstalledVersion("0.0.36", {}, { os: "Linux" });
     expect(result.status).not.toBe(0);

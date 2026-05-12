@@ -89,7 +89,9 @@ required_driver_bins_present() {
   esac
 }
 
+ACTIVE_OPENSHELL_BIN=""
 if command -v openshell >/dev/null 2>&1; then
+  ACTIVE_OPENSHELL_BIN="$(command -v openshell 2>/dev/null || true)"
   INSTALLED_VERSION_OUTPUT="$(openshell --version 2>&1 || true)"
   INSTALLED_VERSION="$(printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
   [ -n "$INSTALLED_VERSION" ] || INSTALLED_VERSION="0.0.0"
@@ -209,6 +211,12 @@ for asset_name in "${ASSETS[@]}"; do
 done
 
 target_dir="/usr/local/bin"
+if [[ -n "$ACTIVE_OPENSHELL_BIN" && "$ACTIVE_OPENSHELL_BIN" = /* ]]; then
+  active_dir="$(dirname "$ACTIVE_OPENSHELL_BIN")"
+  if [ -d "$active_dir" ] && [ -w "$active_dir" ]; then
+    target_dir="$active_dir"
+  fi
+fi
 
 install_bins() {
   local dir="$1"
