@@ -216,6 +216,23 @@ _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /s
 # inherit group=sandbox regardless of which UID created them, so the
 # agent keeps read access and shields-up locking still works the same.
 #
+# Keep the recovery baseline outside the mutable group-write contract. It is
+# readable by the sandbox group for restore, but only root should rewrite it.
+lock_openclaw_config_baseline_if_present() {
+  local config_dir="${1:-/sandbox/.openclaw}"
+  local baseline_file="$config_dir/openclaw.json.nemoclaw-baseline"
+
+  [ -f "$baseline_file" ] || return 0
+  [ "$(id -u)" -eq 0 ] || return 0
+
+  if [ -L "$config_dir" ] || [ -L "$baseline_file" ]; then
+    return 0
+  fi
+
+  chown root:sandbox "$baseline_file" 2>/dev/null || true
+  chmod 0440 "$baseline_file" 2>/dev/null || true
+}
+
 # Idempotent. Skips when shields are UP (config dir owned by root) so
 # the lock is not weakened.
 normalize_mutable_config_perms() {
@@ -234,6 +251,7 @@ normalize_mutable_config_perms() {
   find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
   chmod 2770 "$config_dir" 2>/dev/null || true
   chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
+  lock_openclaw_config_baseline_if_present "$config_dir"
 }
 
 openclaw_config_dir_owner() {
@@ -365,15 +383,19 @@ write_openclaw_config_baseline() {
     return 0
   fi
 
+  # Idempotent — only capture once per sandbox. Still re-lock an existing
+  # baseline because mutable permission normalization is intentionally broad.
+  if [ -f "$baseline_file" ]; then
+    lock_openclaw_config_baseline_if_present "$config_dir"
+    return 0
+  fi
+
   # Skip in shields-up mode — config is supposed to be locked, baseline
   # capture is unnecessary and the prepare/restore permission dance is
   # already owned by the override paths.
   if [ "$(openclaw_config_dir_owner "$config_dir")" = "root" ]; then
     return 0
   fi
-
-  # Idempotent — only capture once per sandbox.
-  [ -f "$baseline_file" ] && return 0
 
   # Refuse to capture broken state. grep -q '[^[:space:]]' is false for both
   # 0-byte and whitespace-only files.
@@ -385,16 +407,31 @@ write_openclaw_config_baseline() {
   # baseline a known-good restore target. openclaw.json is JSON5 (comments,
   # trailing commas) everywhere else in the stack — OpenClaw uses
   # JSON5.parse / parseJsonWithJson5Fallback, and migration-state.ts uses
-  # JSON5.parse — so the validator here matches that contract instead of
-  # rejecting JSON5 features as the strict json.load would.
-  if ! python3 - "$config_file" 2>/dev/null <<'PY_VALIDATE'; then
-import json, re, sys
-src = open(sys.argv[1]).read()
-src = re.sub(r'//[^\n]*', '', src)              # line comments
-src = re.sub(r'/\*[\s\S]*?\*/', '', src)        # block comments
-src = re.sub(r',(\s*[}\]])', r'\1', src)        # trailing commas
-json.loads(src)
-PY_VALIDATE
+  # JSON5.parse — so use the real JSON5 parser instead of approximating the
+  # grammar with regexes.
+  if ! node - "$config_file" 2>/dev/null <<'NODE_VALIDATE'; then
+  const fs = require("fs");
+
+  let JSON5;
+  for (const candidate of [
+    "/opt/nemoclaw/node_modules/json5",
+    "./nemoclaw/node_modules/json5",
+    "json5",
+  ]) {
+    try {
+      JSON5 = require(candidate);
+      break;
+    } catch {
+      // Try the next runtime location.
+    }
+  }
+
+  if (!JSON5) {
+    process.exit(1);
+  }
+
+  JSON5.parse(fs.readFileSync(process.argv[2], "utf8"));
+NODE_VALIDATE
     return 0
   fi
 
@@ -404,8 +441,7 @@ PY_VALIDATE
   # 0440 root:sandbox so the gateway/sandbox user can READ for recovery but
   # cannot truncate or rewrite the baseline through the same path that
   # corrupts the active config.
-  chown root:sandbox "$baseline_file" 2>/dev/null || true
-  chmod 0440 "$baseline_file" 2>/dev/null || true
+  lock_openclaw_config_baseline_if_present "$config_dir"
   printf '[config] Baseline snapshot created: %s\n' "$baseline_file" >&2
 }
 
