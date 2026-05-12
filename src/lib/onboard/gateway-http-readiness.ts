@@ -4,7 +4,7 @@
 /**
  * Host-level HTTP readiness probe for the OpenShell gateway.
  *
- * Hits `http://127.0.0.1:${GATEWAY_PORT}/` directly (no Docker dependency),
+ * Hits the local gateway HTTP endpoint directly (no Docker dependency),
  * which lets the reuse path verify the gateway is genuinely serving even when
  * the Docker daemon is flaky and openshell CLI metadata is stale. See #3258
  * (regression of #2020) for the original motivation.
@@ -12,6 +12,7 @@
 
 import http from "node:http";
 
+import { getGatewayHttpEndpoint } from "../core/gateway-address";
 import { GATEWAY_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 import { envInt } from "./env";
@@ -55,7 +56,7 @@ export function getGatewayReuseHealthWaitConfig(): { count: number; interval: nu
 }
 
 /**
- * Probe the host-level gateway HTTP endpoint at `http://127.0.0.1:${GATEWAY_PORT}/`.
+ * Probe the host-level gateway HTTP endpoint.
  *
  * Returns true when the gateway responds with a known-alive status code,
  * false on any other status (notably 5xx from a warming upstream) or any
@@ -69,7 +70,7 @@ export function getGatewayReuseHealthWaitConfig(): { count: number; interval: nu
  */
 export function isGatewayHttpReady(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
-  url = `http://127.0.0.1:${GATEWAY_PORT}/`,
+  url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
 ): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0

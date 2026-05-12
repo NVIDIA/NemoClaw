@@ -88,6 +88,7 @@ type OnboardTestInternals = {
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
   ) => Record<string, string>;
+  getGatewayStartEnv: () => Record<string, string>;
   areRequiredDockerDriverBinariesPresent: (
     platform?: NodeJS.Platform,
     binaries?: {
@@ -224,6 +225,7 @@ function isOnboardTestInternals(
     typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
     typeof value.getDockerDriverGatewayEnv === "function" &&
+    typeof value.getGatewayStartEnv === "function" &&
     typeof value.areRequiredDockerDriverBinariesPresent === "function" &&
     typeof value.shouldRequireDockerDriverEnv === "function" &&
     typeof value.getDockerDriverGatewayRuntimeDriftFromSnapshot === "function" &&
@@ -282,6 +284,7 @@ const {
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   getDockerDriverGatewayEnv,
+  getGatewayStartEnv,
   areRequiredDockerDriverBinariesPresent,
   shouldRequireDockerDriverEnv,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
@@ -431,15 +434,36 @@ network_policies:
     expect(isLinuxDockerDriverGatewayEnabled("win32")).toBe(false);
     const linuxEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
     expect(linuxEnv.OPENSHELL_DRIVERS).toBe("docker");
+    expect(linuxEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
     expect(linuxEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
+    expect(linuxEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
     expect(linuxEnv.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
     expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
 
     const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin");
     expect(darwinEnv.OPENSHELL_DRIVERS).toBe("vm");
+    expect(darwinEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
     expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://host.containers.internal:8080");
+    expect(darwinEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
     expect(darwinEnv.OPENSHELL_VM_DRIVER_STATE_DIR).toContain("vm-driver");
     expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBeUndefined();
+
+    const originalOverlayFix = process.env.NEMOCLAW_DISABLE_OVERLAY_FIX;
+    process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = "1";
+    try {
+      expect(getGatewayStartEnv()).toMatchObject({
+        OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+        OPENSHELL_SERVER_PORT: "8080",
+        OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+        OPENSHELL_SSH_GATEWAY_PORT: "8080",
+      });
+    } finally {
+      if (originalOverlayFix === undefined) {
+        delete process.env.NEMOCLAW_DISABLE_OVERLAY_FIX;
+      } else {
+        process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = originalOverlayFix;
+      }
+    }
   });
 
   it("requires platform-specific Docker-driver binaries", () => {
@@ -543,6 +567,18 @@ network_policies:
         gatewayBin,
       })?.reason,
     ).toContain("OPENSHELL_DOCKER_SUPERVISOR_IMAGE=");
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          ...desiredEnv,
+          OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+        },
+        processExe: gatewayBin,
+        desiredEnv,
+        gatewayBin,
+      })?.reason,
+    ).toContain("OPENSHELL_BIND_ADDRESS=");
 
     expect(
       getDockerDriverGatewayRuntimeDriftFromSnapshot({

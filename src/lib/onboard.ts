@@ -103,6 +103,13 @@ const {
   DASHBOARD_PORT_RANGE_START,
   DASHBOARD_PORT_RANGE_END,
 } = require("./core/ports");
+const {
+  GATEWAY_BIND_ADDRESS,
+  WILDCARD_GATEWAY_BIND_ADDRESS,
+  getGatewayConnectHost,
+  getGatewayHttpEndpoint,
+  getGatewayHttpsEndpoint,
+} = require("./core/gateway-address");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
   findReachableOllamaHost,
@@ -3466,7 +3473,9 @@ async function refreshDockerDriverGatewayReuseState(
     return gatewayReuseState;
   }
 
-  const portCheck = await checkPortAvailable(GATEWAY_PORT);
+  const portCheck = await checkPortAvailable(GATEWAY_PORT, {
+    host: GATEWAY_BIND_ADDRESS,
+  });
   const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck, {
     gatewayBin,
   });
@@ -3669,7 +3678,7 @@ function captureProcessArgs(pid: number): string {
 }
 
 function getGatewayLocalEndpoint(): string {
-  return `https://127.0.0.1:${GATEWAY_PORT}`;
+  return getGatewayHttpsEndpoint();
 }
 
 function isLinuxDockerDriverGatewayEnabled(
@@ -3686,7 +3695,7 @@ function isLinuxDockerDriverGatewayPlatform(
 }
 
 function getDockerDriverGatewayEndpoint(): string {
-  return `http://127.0.0.1:${GATEWAY_PORT}`;
+  return getGatewayHttpEndpoint();
 }
 
 function getDockerDriverGatewayStateDir(): string {
@@ -3801,7 +3810,7 @@ function getDockerDriverGatewayEnv(
   const stateDir = getDockerDriverGatewayStateDir();
   const env: Record<string, string> = {
     OPENSHELL_DRIVERS: platform === "darwin" ? "vm" : "docker",
-    OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+    OPENSHELL_BIND_ADDRESS: GATEWAY_BIND_ADDRESS,
     OPENSHELL_SERVER_PORT: String(GATEWAY_PORT),
     OPENSHELL_DISABLE_TLS: "true",
     OPENSHELL_DISABLE_GATEWAY_AUTH: "true",
@@ -3810,7 +3819,7 @@ function getDockerDriverGatewayEnv(
       platform === "darwin"
         ? `http://host.containers.internal:${GATEWAY_PORT}`
         : getDockerDriverGatewayEndpoint(),
-    OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+    OPENSHELL_SSH_GATEWAY_HOST: getGatewayConnectHost(),
     OPENSHELL_SSH_GATEWAY_PORT: String(GATEWAY_PORT),
   };
   if (platform === "darwin") {
@@ -4794,7 +4803,7 @@ async function preflight(
       // back before the OpenShell gateway upstream finishes warming up. Safe to
       // recreate because Docker is functional. See #3258.
       console.log(
-        `  Gateway container is running but http://127.0.0.1:${GATEWAY_PORT}/ is not responding. Recreating...`,
+        `  Gateway container is running but ${getDockerDriverGatewayEndpoint()}/ is not responding. Recreating...`,
       );
       runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
       destroyGateway();
@@ -4869,19 +4878,26 @@ async function preflight(
   // find a free port.
   const dashboardPortToCheck = _preflightDashboardPort ?? null;
   const requiredPorts = [
-    { port: GATEWAY_PORT, label: "OpenShell gateway", envVar: "NEMOCLAW_GATEWAY_PORT" },
+    {
+      port: GATEWAY_PORT,
+      label: "OpenShell gateway",
+      envVar: "NEMOCLAW_GATEWAY_PORT",
+      host: GATEWAY_BIND_ADDRESS,
+    },
     ...(dashboardPortToCheck !== null
       ? [
           {
             port: dashboardPortToCheck,
             label: `${cliDisplayName()} dashboard`,
             envVar: "NEMOCLAW_DASHBOARD_PORT",
+            host: undefined,
           },
         ]
       : []),
   ];
-  for (const { port, label, envVar } of requiredPorts) {
-    let portCheck = await checkPortAvailable(port);
+  for (const { port, label, envVar, host } of requiredPorts) {
+    const portCheckOptions = host ? { host } : undefined;
+    let portCheck = await checkPortAvailable(port, portCheckOptions);
     if (!portCheck.ok) {
       if ((port === GATEWAY_PORT || port === DASHBOARD_PORT) && gatewayReuseState === "healthy") {
         console.log(
@@ -4912,7 +4928,7 @@ async function preflight(
           );
           run(["kill", String(portCheck.pid)], { ignoreError: true });
           sleep(1);
-          portCheck = await checkPortAvailable(port);
+          portCheck = await checkPortAvailable(port, portCheckOptions);
           if (portCheck.ok) {
             console.log(`  ✓ Port ${port} available after orphaned forward cleanup (${label})`);
             continue;
@@ -4950,6 +4966,11 @@ async function preflight(
       process.exit(1);
     }
     console.log(`  ✓ Port ${port} available (${label})`);
+  }
+  if (GATEWAY_BIND_ADDRESS === WILDCARD_GATEWAY_BIND_ADDRESS) {
+    console.log(
+      "  ! OpenShell gateway bind address set to 0.0.0.0; the gateway may be reachable from other hosts on this network.",
+    );
   }
 
   // GPU
@@ -5066,7 +5087,7 @@ async function startGatewayWithOptions(
       return;
     }
     console.log(
-      `  Gateway metadata reports healthy but http://127.0.0.1:${GATEWAY_PORT}/ is not responding. Starting a fresh gateway...`,
+      `  Gateway metadata reports healthy but ${getDockerDriverGatewayEndpoint()}/ is not responding. Starting a fresh gateway...`,
     );
   }
 
@@ -5243,7 +5264,9 @@ async function startDockerDriverGateway({
     }
   }
 
-  const portCheck = await checkPortAvailable(GATEWAY_PORT);
+  const portCheck = await checkPortAvailable(GATEWAY_PORT, {
+    host: GATEWAY_BIND_ADDRESS,
+  });
   const portListenerPid = getDockerDriverGatewayPortListenerPid(portCheck, { gatewayBin });
   if (portListenerPid !== null) {
     const drift = getDockerDriverGatewayRuntimeDrift(portListenerPid, gatewayEnv, gatewayBin);
@@ -5355,7 +5378,12 @@ async function startGatewayForRecovery(_gpu: ReturnType<typeof nim.detectGpu>): 
 }
 
 function getGatewayStartEnv(): Record<string, string> {
-  const gatewayEnv: Record<string, string> = {};
+  const gatewayEnv: Record<string, string> = {
+    OPENSHELL_BIND_ADDRESS: GATEWAY_BIND_ADDRESS,
+    OPENSHELL_SERVER_PORT: String(GATEWAY_PORT),
+    OPENSHELL_SSH_GATEWAY_HOST: getGatewayConnectHost(),
+    OPENSHELL_SSH_GATEWAY_PORT: String(GATEWAY_PORT),
+  };
   const openshellVersion = getInstalledOpenshellVersion();
   const stableGatewayImage = openshellVersion
     ? `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`
@@ -11225,7 +11253,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           // `destroyGateway()` between attempts — which would tear down a
           // possibly-live gateway. Bail with an actionable error instead.
           console.log(
-            `  Error: could not verify gateway container state and http://127.0.0.1:${GATEWAY_PORT}/ is not responding.`,
+            `  Error: could not verify gateway container state and ${getDockerDriverGatewayEndpoint()}/ is not responding.`,
           );
           console.log(
             "  Refusing to proceed without a clear Docker signal — restarting Docker and re-running onboard is the safe path. See #3258 / #2020.",
@@ -11238,7 +11266,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         // back before the OpenShell gateway upstream finishes warming up. Safe to
         // recreate because Docker is functional. See #3258.
         console.log(
-          `  Gateway container is running but http://127.0.0.1:${GATEWAY_PORT}/ is not responding. Recreating...`,
+          `  Gateway container is running but ${getDockerDriverGatewayEndpoint()}/ is not responding. Recreating...`,
         );
         runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
         destroyGateway();
