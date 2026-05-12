@@ -59,4 +59,12 @@ describe("buildDockerGatewayDebEnvFile", () => {
     expect(next).not.toContain("OPENSHELL_BIND_ADDRESS=127.0.0.1");
     expect(next).not.toContain("OPENSHELL_DOCKER_SUPERVISOR_IMAGE=old");
   });
+
+  it("rejects multiline managed values", () => {
+    expect(() =>
+      buildDockerGatewayDebEnvFile("", {
+        OPENSHELL_BIND_ADDRESS: "127.0.0.1\nINJECTED=1",
+      }),
+    ).toThrow("line break");
+  });
 });

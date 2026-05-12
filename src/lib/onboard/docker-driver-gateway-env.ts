@@ -111,9 +111,33 @@ export function buildDockerGatewayDebEnvFile(
     .split("\n")
     .filter((line) => line.trim() && !managedKeyPattern.test(line));
   const managed = DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS.flatMap((key) =>
-    typeof override[key] === "string" ? [`${key}=${override[key]}`] : [],
+    typeof override[key] === "string"
+      ? [formatEnvironmentFileAssignment(key, override[key])]
+      : [],
   );
   return `${[...preserved, ...managed].join("\n")}\n`;
+}
+
+function formatEnvironmentFileAssignment(key: string, value: string): string {
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`Invalid OpenShell gateway env value for ${key}: contains a line break`);
+  }
+  return `${key}=${value}`;
+}
+
+function readTextFileIfPresent(filePath: string): string {
+  try {
+    return fs.readFileSync(filePath, "utf-8");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return "";
+    }
+    throw error;
+  }
 }
 
 export function writeDockerGatewayDebEnvOverride(
@@ -128,7 +152,7 @@ export function writeDockerGatewayDebEnvOverride(
   const override = getOverride();
   const envFile = path.join(os.homedir(), ".config", "openshell", "gateway.env");
   fs.mkdirSync(path.dirname(envFile), { recursive: true, mode: 0o700 });
-  const existing = fs.existsSync(envFile) ? fs.readFileSync(envFile, "utf-8") : "";
+  const existing = readTextFileIfPresent(envFile);
   fs.writeFileSync(envFile, buildDockerGatewayDebEnvFile(existing, override), {
     encoding: "utf-8",
     mode: 0o600,

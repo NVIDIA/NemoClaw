@@ -611,10 +611,14 @@ const { streamSandboxCreate } = sandboxCreateStream;
 
 /** Spawn `openshell gateway start` and stream its output with progress heartbeats. */
 function streamGatewayStart(
-  command: string,
+  command: string[],
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ status: number; output: string }> {
-  const child = spawn("bash", ["-lc", command], {
+  const [executable, ...args] = command;
+  if (!executable) {
+    throw new Error("streamGatewayStart requires a command");
+  }
+  const child = spawn(executable, args, {
     cwd: ROOT,
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -1642,6 +1646,21 @@ function runCaptureOpenshell(
   opts: RunnerOptions & { openshellBinary?: string } = {},
 ) {
   return runCapture(openshellArgv(args, opts), opts);
+}
+
+function safeOpenShellArgument(value: string, label: string): string {
+  if (!/^[A-Za-z0-9._~:/-]+$/.test(value)) {
+    throw new Error(`Invalid ${label}: contains characters unsafe for OpenShell CLI args`);
+  }
+  return value;
+}
+
+function getGatewayPortArg(): string {
+  return safeOpenShellArgument(String(GATEWAY_PORT), "gateway port");
+}
+
+function getDockerDriverGatewayEndpointArg(): string {
+  return safeOpenShellArgument(getDockerDriverGatewayEndpoint(), "gateway endpoint");
 }
 
 /**
@@ -4040,13 +4059,13 @@ function registerDockerDriverGatewayEndpoint(): boolean {
   }
 
   let addResult = runOpenshell(
-    ["gateway", "add", "--local", "--name", GATEWAY_NAME, getDockerDriverGatewayEndpoint()],
+    ["gateway", "add", "--local", "--name", GATEWAY_NAME, getDockerDriverGatewayEndpointArg()],
     { ignoreError: true, suppressOutput: true },
   );
   if (addResult.status !== 0) {
     removeDockerDriverGatewayRegistration();
     addResult = runOpenshell(
-      ["gateway", "add", "--local", "--name", GATEWAY_NAME, getDockerDriverGatewayEndpoint()],
+      ["gateway", "add", "--local", "--name", GATEWAY_NAME, getDockerDriverGatewayEndpointArg()],
       { ignoreError: true, suppressOutput: true },
     );
   }
@@ -5037,7 +5056,7 @@ async function startGatewayWithOptions(
     }
   }
 
-  const gwArgs = ["--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)];
+  const gwArgs = ["--name", GATEWAY_NAME, "--port", getGatewayPortArg()];
   // On NVIDIA hosts, pass --gpu unless the user explicitly opted out. This
   // makes direct CUDA tools available in the sandbox by default while still
   // supporting host-side inference providers.
@@ -5059,7 +5078,7 @@ async function startGatewayWithOptions(
     await pRetry(
       async () => {
         const startResult = await streamGatewayStart(
-          openshellShellCommand(["gateway", "start", ...gwArgs]),
+          openshellArgv(["gateway", "start", ...gwArgs]),
           {
             ...process.env,
             ...gatewayEnv,
@@ -5421,7 +5440,7 @@ async function recoverGatewayRuntime() {
   }
 
   const startResult = runOpenshell(
-    ["gateway", "start", "--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)],
+    ["gateway", "start", "--name", GATEWAY_NAME, "--port", getGatewayPortArg()],
     {
       ignoreError: true,
       env: getGatewayStartEnv(),

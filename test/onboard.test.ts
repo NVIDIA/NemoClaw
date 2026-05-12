@@ -2507,13 +2507,13 @@ const { loadAgent } = require(${agentDefsPath});
     // Primary start path (startGatewayWithOptions) builds gwArgs with --port.
     assert.match(
       source,
-      /const gwArgs = \["--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+      /const gwArgs = \["--name", GATEWAY_NAME, "--port", getGatewayPortArg\(\)\]/,
     );
 
     // Recovery start path (recoverGatewayRuntime) also passes --port.
     assert.match(
       source,
-      /runOpenshell\(\s*\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+      /runOpenshell\(\s*\["gateway", "start", "--name", GATEWAY_NAME, "--port", getGatewayPortArg\(\)\]/,
     );
   });
 
