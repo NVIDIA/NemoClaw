@@ -51,8 +51,9 @@ export function defaultShareMountDir(sandboxName: string): string {
  * Pre-flight: confirm the remote source path actually exists inside the
  * sandbox. sshfs exits non-zero with empty stderr when the remote path is
  * missing (e.g. a typo), and the bare "SSHFS mount failed." line we used to
- * emit left the user with nothing actionable. Returns true when the path
- * exists; emits a structured error and exits non-zero when it does not.
+ * emit left the user with nothing actionable. Returns normally when the path
+ * can be verified; emits a structured error and exits the process non-zero
+ * when it cannot. The success path has no return value.
  * Exported so the behavior is testable without driving the full sshfs
  * lifecycle. See #3414.
  */
