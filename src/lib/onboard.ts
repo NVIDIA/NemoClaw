@@ -5719,6 +5719,24 @@ function getSandboxPromptDefault(agent: AgentDefinition | null | undefined): str
   }
 }
 
+function getProtectedDashboardPortsForFreshCleanup(sandboxName: string): number[] {
+  return registry
+    .listSandboxes()
+    .sandboxes.filter((sb) => sb.name !== sandboxName)
+    .map((sb) => sb.dashboardPort)
+    .filter((p): p is number => typeof p === "number" && Number.isFinite(p));
+}
+
+function stopStaleDashboardListenersForFreshSandbox(sandboxName: string): void {
+  const { stopStaleDashboardListeners } = require("./onboard/stale-gateway-cleanup") as {
+    stopStaleDashboardListeners: typeof import("./onboard/stale-gateway-cleanup").stopStaleDashboardListeners;
+  };
+  stopStaleDashboardListeners(
+    {},
+    { protectedPorts: getProtectedDashboardPortsForFreshCleanup(sandboxName) },
+  );
+}
+
 function getEffectiveSandboxAgent(agent: AgentDefinition | null | undefined): AgentDefinition {
   return agent || agentDefs.loadAgent("openclaw");
 }
@@ -11159,31 +11177,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       // previous session readable on disk.
       if (fresh) {
         onboardSession.clearSession();
-        // A previous failed onboard can leave a stale host-side gateway-forward
-        // process holding the dashboard port. Without this sweep, the next
-        // preflight detects the conflict, falls back to a different port, the
-        // build bakes the original port into CHAT_UI_URL, and the new sandbox
-        // never becomes reachable. Sweep before preflight so the port shows up
-        // free. See #3397, #3398. Protect the dashboard ports of OTHER
-        // registered sandboxes so a fresh onboard for a different name does
-        // not disrupt their forwards; the target sandbox's own port stays
-        // unprotected so we can recover the upgrade/same-name case where the
-        // stale process is holding the exact port we're rebuilding on.
-        const { stopStaleDashboardListeners } = require("./onboard/stale-gateway-cleanup") as {
-          stopStaleDashboardListeners: typeof import("./onboard/stale-gateway-cleanup").stopStaleDashboardListeners;
-        };
-        // Only unprotect the target sandbox's own port when the user gave us
-        // an explicit name (--name or NEMOCLAW_SANDBOX_NAME). Without one, we
-        // do not yet know which sandbox the operator means to rebuild — the
-        // default registry sandbox could be a live, different one — so we
-        // protect every registered dashboard port. The upgrade/same-name
-        // recovery case is therefore opt-in via `--name <existing>`.
-        const sandboxRegistry = registry.listSandboxes();
-        const protectedPorts = sandboxRegistry.sandboxes
-          .filter((sb) => sb.name !== requestedSandboxName)
-          .map((sb) => sb.dashboardPort)
-          .filter((p): p is number => typeof p === "number" && Number.isFinite(p));
-        stopStaleDashboardListeners({}, { protectedPorts });
       }
       fromDockerfile = requestedFromDockerfile ? path.resolve(requestedFromDockerfile) : null;
       session = onboardSession.saveSession(
@@ -11750,9 +11743,20 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         current.messagingChannelConfig = messagingChannelConfig;
         return current;
       });
+      if (!sandboxName) {
+        sandboxName = await promptValidatedSandboxName(agent);
+      }
       if (typeof model !== "string" || typeof provider !== "string") {
         console.error("  Inference selection is incomplete; cannot create sandbox.");
         process.exit(1);
+      }
+      if (fresh) {
+        // A previous failed onboard can leave a stale host-side gateway-forward
+        // process holding the dashboard port. Run the sweep after the sandbox
+        // name is resolved, but before createSandbox() allocates the dashboard
+        // port, so no-name --fresh / Express installs can recover the target
+        // sandbox while still protecting every other registered sandbox.
+        stopStaleDashboardListenersForFreshSandbox(sandboxName);
       }
       sandboxName = await createSandbox(
         gpu,

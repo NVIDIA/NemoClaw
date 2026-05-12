@@ -4878,6 +4878,37 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
+  it("runs fresh stale-gateway cleanup after the sandbox name is known but before createSandbox", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const promptPos = source.indexOf(
+      "if (!sandboxName) {\n        sandboxName = await promptValidatedSandboxName(agent);",
+    );
+    const cleanupPos = source.indexOf(
+      "stopStaleDashboardListenersForFreshSandbox(sandboxName);",
+      promptPos,
+    );
+    const createPos = source.indexOf("sandboxName = await createSandbox(", promptPos);
+
+    assert.ok(promptPos !== -1, "sandbox-name resolution block not found");
+    assert.ok(cleanupPos > promptPos, "fresh cleanup should run after sandboxName is known");
+    assert.ok(cleanupPos < createPos, "fresh cleanup should run before createSandbox allocates a port");
+  });
+
+  it("protects other registered dashboard ports during fresh stale-gateway cleanup", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(
+      source,
+      /function getProtectedDashboardPortsForFreshCleanup\(sandboxName: string\): number\[] \{[\s\S]*?\.filter\(\(sb\) => sb\.name !== sandboxName\)[\s\S]*?\.map\(\(sb\) => sb\.dashboardPort\)/,
+    );
+  });
+
   it("defaults GPU passthrough on for detected NVIDIA GPUs unless opted out", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
