@@ -22,20 +22,18 @@ function writeExecutable(target: string, contents: string) {
 function runWithInstalledVersion(
   version: string,
   extraEnv: NodeJS.ProcessEnv = {},
-  options: { driverBins?: boolean; os?: string; arch?: string } = {},
+  options: { driverBins?: boolean | "gateway" | "gateway-vm"; os?: string; arch?: string } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-ver-"));
   try {
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
 
-    if (options.os || options.arch) {
-      writeExecutable(
-        path.join(fakeBin, "uname"),
-        `#!/usr/bin/env bash
+    writeExecutable(
+      path.join(fakeBin, "uname"),
+      `#!/usr/bin/env bash
 if [ "\${1:-}" = "-m" ]; then echo "${options.arch ?? "x86_64"}"; else echo "${options.os ?? "Linux"}"; fi`,
-      );
-    }
+    );
 
     // Fake openshell that reports the given version
     writeExecutable(
@@ -51,8 +49,17 @@ exit 99`,
         `#!/usr/bin/env bash
 exit 0`,
       );
+    }
+    if (options.driverBins !== false && options.driverBins !== "gateway") {
       writeExecutable(
         path.join(fakeBin, "openshell-sandbox"),
+        `#!/usr/bin/env bash
+exit 0`,
+      );
+    }
+    if (options.driverBins === "gateway-vm") {
+      writeExecutable(
+        path.join(fakeBin, "openshell-driver-vm"),
         `#!/usr/bin/env bash
 exit 0`,
       );
@@ -101,7 +108,17 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.37'/);
   });
 
-  it("triggers reinstall on macOS when openshell 0.0.37 is missing the gateway binary", () => {
+  it("accepts macOS openshell 0.0.37 when the gateway and VM driver binaries are installed", () => {
+    const result = runWithInstalledVersion("0.0.37", {}, {
+      driverBins: "gateway-vm",
+      os: "Darwin",
+      arch: "arm64",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/already installed.*0\.0\.37/);
+  });
+
+  it("triggers reinstall on macOS when openshell 0.0.37 is missing required gateway binaries", () => {
     const result = runWithInstalledVersion("0.0.37", {}, {
       driverBins: false,
       os: "Darwin",
@@ -109,12 +126,14 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     });
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/missing Docker-driver binaries/);
+    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.37'/);
   });
 
-  it("includes the macOS arm64 gateway asset in the install payload", () => {
-    expect(fs.readFileSync(SCRIPT, "utf8")).toMatch(
-      /openshell-gateway-aarch64-apple-darwin\.tar\.gz/,
-    );
+  it("declares the macOS arm64 gateway and VM helper assets", () => {
+    const source = fs.readFileSync(SCRIPT, "utf8");
+    expect(source).toContain("openshell-gateway-aarch64-apple-darwin.tar.gz");
+    expect(source).toContain("openshell-driver-vm-aarch64-apple-darwin.tar.gz");
+    expect(source).toContain("openshell-gateway-checksums-sha256.txt");
   });
 
   it("triggers upgrade when openshell 0.0.36 is installed (below current floor)", () => {

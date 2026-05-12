@@ -198,9 +198,15 @@ EOF
     rm -rf "$tmp"
     fail "macOS installer did not request the Darwin openshell-gateway asset"
   fi
+  if ! grep -q "openshell-driver-vm-aarch64-apple-darwin.tar.gz" "$curl_log"; then
+    diag "curl log:"
+    cat "$curl_log" 2>/dev/null || true
+    rm -rf "$tmp"
+    fail "macOS installer did not request the Darwin openshell-driver-vm asset"
+  fi
 
   rm -rf "$tmp"
-  pass "macOS OpenShell 0.0.37 incomplete install fetches the Darwin gateway asset"
+  pass "macOS OpenShell 0.0.37 incomplete install fetches Darwin gateway and VM driver assets"
 }
 
 wait_for_survivor_ready() {

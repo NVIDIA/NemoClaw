@@ -81,7 +81,7 @@ required_driver_bins_present() {
       command -v openshell-gateway >/dev/null 2>&1 && command -v openshell-sandbox >/dev/null 2>&1
       ;;
     Darwin)
-      command -v openshell-gateway >/dev/null 2>&1
+      command -v openshell-gateway >/dev/null 2>&1 && command -v openshell-driver-vm >/dev/null 2>&1
       ;;
     *)
       return 0
@@ -140,10 +140,12 @@ case "$OS" in
     case "$ARCH_LABEL" in
       aarch64)
         ASSETS+=("openshell-gateway-aarch64-apple-darwin.tar.gz")
+        ASSETS+=("openshell-driver-vm-aarch64-apple-darwin.tar.gz")
         CHECKSUM_FILES+=("openshell-gateway-checksums-sha256.txt")
+        CHECKSUM_FILES+=("openshell-checksums-sha256.txt")
         ;;
       x86_64)
-        fail "OpenShell ${PIN_VERSION} does not publish a macOS x86_64 Docker-driver gateway asset."
+        fail "OpenShell ${PIN_VERSION} does not publish macOS x86_64 standalone gateway assets."
         ;;
     esac
     ;;
@@ -217,6 +219,9 @@ install_bins() {
   if [ -x "$tmpdir/openshell-sandbox" ]; then
     install -m 755 "$tmpdir/openshell-sandbox" "$dir/openshell-sandbox"
   fi
+  if [ -x "$tmpdir/openshell-driver-vm" ]; then
+    install -m 755 "$tmpdir/openshell-driver-vm" "$dir/openshell-driver-vm"
+  fi
 }
 
 if [ -w "$target_dir" ]; then
@@ -235,6 +240,9 @@ else
   fi
   if [ -x "$tmpdir/openshell-sandbox" ]; then
     sudo install -m 755 "$tmpdir/openshell-sandbox" "$target_dir/openshell-sandbox"
+  fi
+  if [ -x "$tmpdir/openshell-driver-vm" ]; then
+    sudo install -m 755 "$tmpdir/openshell-driver-vm" "$target_dir/openshell-driver-vm"
   fi
 fi
 
