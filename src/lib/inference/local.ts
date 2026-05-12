@@ -545,8 +545,9 @@ export function validateOllamaModel(
   // On DGX Spark (128 GB unified memory), loading a large model from disk can take >2 min.
   // Only retry with a 300 s timeout when the initial probe genuinely timed out — fast
   // failures (connection refused, Ollama not running) surface immediately. (#3251)
-  if (!output && isSpark() && probeResult.timedOut) {
-    output = capture(getOllamaProbeCommand(model, 300), { ignoreError: true });
+  if (isSpark() && probeResult.timedOut) {
+    const retryResult = captureEx(getOllamaProbeCommand(model, 300));
+    output = retryResult.stdout;
   }
   if (!output) {
     return {

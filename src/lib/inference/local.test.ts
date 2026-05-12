@@ -507,20 +507,17 @@ describe("local inference helpers", () => {
   it("retries with extended timeout when first probe returns empty (slow model load on unified-memory host)", () => {
     // Simulate Spark: first probe times out (curl exit 28), retry with 300s timeout succeeds.
     const commands: string[] = [];
-    let callCount = 0;
-    const capture = (cmd: string | string[]) => {
-      callCount++;
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
-      commands.push(c);
-      return JSON.stringify({ response: "Hi" });
-    };
+    let captureExCallCount = 0;
     const captureEx = (cmd: string[]) => {
+      captureExCallCount++;
       commands.push(cmd.join(" "));
-      return { stdout: "", exitCode: 28, timedOut: true };
+      // First call: initial probe times out; second call: 300s retry succeeds.
+      if (captureExCallCount === 1) return { stdout: "", exitCode: 28, timedOut: true };
+      return { stdout: JSON.stringify({ response: "Hi" }), exitCode: 0, timedOut: false };
     };
-    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => true, captureEx);
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => true, captureEx);
     expect(result.ok).toBe(true);
-    expect(callCount).toBe(1);
+    expect(captureExCallCount).toBe(2);
     expect(commands[1]).toMatch(/--max-time.*300|300.*--max-time/);
   });
 
@@ -552,14 +549,19 @@ describe("local inference helpers", () => {
   it("passes when first probe times out then retry returns OOM error but total RAM is sufficient", () => {
     // Composite: mode 2 (first probe timeout) + mode 1 (retry returns OOM error).
     const freeOutput = "               total        used        free\nMem:          131072       120000       1000";
-    let callCount = 0;
+    const oomPayload = JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
+    let captureExCallCount = 0;
+    const captureEx = (cmd: string[]) => {
+      captureExCallCount++;
+      // First call: initial probe times out; second call: 300s retry returns OOM error.
+      if (captureExCallCount === 1) return { stdout: "", exitCode: 28, timedOut: true };
+      return { stdout: oomPayload, exitCode: 0, timedOut: false };
+    };
     const capture = (cmd: string | string[]) => {
-      callCount++;
       const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
       if (c.includes("free")) return freeOutput;
-      return JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
+      return "";
     };
-    const captureEx = () => ({ stdout: "", exitCode: 28, timedOut: true });
     const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => true, captureEx);
     expect(result.ok).toBe(true);
   });
