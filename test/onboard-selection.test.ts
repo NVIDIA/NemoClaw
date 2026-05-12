@@ -1116,7 +1116,7 @@ runner.runShell = (command, opts = {}) => {
       ].join("\\n"),
     };
   }
-  const match = command.match(/sudo(?: -n)? install -D -m 0644 '([^']+)'/);
+  const match = command.match(/(?:sudo(?: -n)? )?install -D -m 0644 '([^']+)'/);
   if (match) installedBody = fs.readFileSync(match[1], "utf8");
   return { status: 0 };
 };
@@ -1162,6 +1162,12 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'));
     assert.ok(payload.installedBody.includes("[Install]"));
     assert.ok(payload.installedBody.includes("WantedBy=multi-user.target"));
+    assert.ok(
+      payload.shellCommands.some((command: string) =>
+        command.includes("sudo -n install -D -m 0644"),
+      ),
+      "non-interactive systemd drop-in install should use sudo -n",
+    );
     const catCall = payload.shellCalls.find(
       (call: { command: string }) =>
         call.command.includes("cat") && call.command.includes("ollama.service.d/override.conf"),
@@ -1378,6 +1384,7 @@ runner.runCapture = (command) => {
   return "";
 };
 runner.runShell = (command) => {
+  if (command.includes("ollama serve")) console.error("manual-start");
   if (command.includes("install -D -m 0644")) return { status: 1 };
   return { status: 0 };
 };
@@ -1411,6 +1418,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Failed to apply Ollama systemd loopback override/);
     assert.match(result.stderr, /Refusing to continue/);
+    assert.doesNotMatch(result.stderr, /manual-start/);
   });
 
   it("returns to provider selection when Ollama manual entry chooses back", () => {
@@ -4398,6 +4406,7 @@ runner.runCapture = (command) => {
 };
 runner.runShell = (command) => {
   if (command.includes("ollama.com/install.sh")) return { status: 0 };
+  if (command.includes("ollama serve")) console.error("manual-start");
   if (command.includes("install -D -m 0644")) return { status: 1 };
   return { status: 0 };
 };
@@ -4428,6 +4437,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Failed to apply Ollama systemd loopback override/);
     assert.match(result.stderr, /Refusing to continue/);
+    assert.doesNotMatch(result.stderr, /manual-start/);
   });
 
   it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", { timeout: 10_000 }, () => {
