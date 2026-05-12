@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Regression coverage for PR #3001 upgrade installs:
-# 1. If a macOS arm64 user already has the OpenShell 0.0.37 CLI but not the
-#    standalone openshell-gateway binary, the installer must fetch the Darwin
-#    gateway asset instead of accepting the incomplete CLI-only install.
-# 2. If a user already has a working claw on the previous OpenShell release,
+# 1. If a user already has a working claw on the previous OpenShell release,
 #    the current install/onboard path must upgrade OpenShell, restart the stale
 #    gateway on the current supervisor image, and keep the existing sandbox
 #    reachable. This guards the curl|bash upgrade shape that installs the new
 #    NemoClaw and then immediately runs onboarding against the existing claw.
+# 2. If a macOS arm64 user already has the OpenShell 0.0.37 CLI but not the
+#    standalone openshell-gateway binary, the installer must fetch the Darwin
+#    gateway asset instead of accepting the incomplete CLI-only install.
 
 set -euo pipefail
 
@@ -97,22 +97,82 @@ remove_path_entry() {
   export PATH="$new_path"
 }
 
-create_old_openshell_install_from_current() {
-  local version="$1" target_dir="$2" current_openshell="$3" current_gateway="$4" current_sandbox="$5"
-  mkdir -p "$target_dir"
-  cat >"${target_dir}/openshell" <<EOF
-#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ] || [ "\${1:-}" = "-V" ]; then
-  printf 'openshell ${version}\n'
-  exit 0
-fi
-exec "${current_openshell}" "\$@"
-EOF
-  chmod 755 "${target_dir}/openshell"
-  install -m 755 "$current_gateway" "${target_dir}/openshell-gateway"
-  install -m 755 "$current_sandbox" "${target_dir}/openshell-sandbox"
+linux_release_arch_label() {
+  case "$(uname -m)" in
+    x86_64 | amd64) printf 'x86_64' ;;
+    aarch64 | arm64) printf 'aarch64' ;;
+    *) fail "unsupported Linux architecture: $(uname -m)" ;;
+  esac
+}
 
-  pass "Temporary old OpenShell install ready: $("${target_dir}/openshell" --version)"
+download_release_asset() {
+  local release_tag="$1" asset_name="$2" dest_dir="$3"
+  if command -v gh >/dev/null 2>&1; then
+    if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" \
+      gh release download "$release_tag" --repo NVIDIA/OpenShell \
+        --pattern "$asset_name" --dir "$dest_dir" --clobber 2>/dev/null; then
+      return 0
+    fi
+  fi
+  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/${release_tag}/${asset_name}" \
+    -o "${dest_dir}/${asset_name}"
+}
+
+verify_release_asset() {
+  local tmpdir="$1" asset_name="$2" checksum_file="$3"
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | sha256sum -c -) \
+      || fail "SHA-256 checksum verification failed for ${asset_name}"
+  else
+    (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | shasum -a 256 -c -) \
+      || fail "SHA-256 checksum verification failed for ${asset_name}"
+  fi
+}
+
+install_real_openshell_cli_release_to_dir() {
+  local version="$1" target_dir="$2" tmpdir arch_label asset_name checksum_file
+  mkdir -p "$target_dir"
+  tmpdir="$(mktemp -d)"
+  arch_label="$(linux_release_arch_label)"
+  asset_name="openshell-${arch_label}-unknown-linux-musl.tar.gz"
+  checksum_file="openshell-checksums-sha256.txt"
+
+  info "Installing real OpenShell ${version} CLI into temporary old-install bin"
+  download_release_asset "v${version}" "$asset_name" "$tmpdir"
+  download_release_asset "v${version}" "$checksum_file" "$tmpdir"
+  verify_release_asset "$tmpdir" "$asset_name" "$checksum_file"
+  tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
+  install -m 755 "$tmpdir/openshell" "${target_dir}/openshell"
+  rm -rf "$tmpdir"
+
+  pass "Temporary old OpenShell CLI ready: $("${target_dir}/openshell" --version)"
+}
+
+install_driver_bins_release_to_dir() {
+  local version="$1" target_dir="$2" tmpdir arch_label asset_name checksum_file
+  mkdir -p "$target_dir"
+  tmpdir="$(mktemp -d)"
+  arch_label="$(linux_release_arch_label)"
+
+  info "Installing OpenShell ${version} Docker-driver binaries into temporary old-install bin"
+  for asset_name in \
+    "openshell-gateway-${arch_label}-unknown-linux-gnu.tar.gz" \
+    "openshell-sandbox-${arch_label}-unknown-linux-gnu.tar.gz"; do
+    case "$asset_name" in
+      openshell-gateway-*) checksum_file="openshell-gateway-checksums-sha256.txt" ;;
+      openshell-sandbox-*) checksum_file="openshell-sandbox-checksums-sha256.txt" ;;
+      *) fail "unknown driver asset ${asset_name}" ;;
+    esac
+    download_release_asset "v${version}" "$asset_name" "$tmpdir"
+    download_release_asset "v${version}" "$checksum_file" "$tmpdir"
+    verify_release_asset "$tmpdir" "$asset_name" "$checksum_file"
+    tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
+  done
+
+  install -m 755 "$tmpdir/openshell-gateway" "${target_dir}/openshell-gateway"
+  install -m 755 "$tmpdir/openshell-sandbox" "${target_dir}/openshell-sandbox"
+  rm -rf "$tmpdir"
+  pass "Temporary Docker-driver binaries ready for stale ${OLD_OPENSHELL_VERSION} runtime"
 }
 
 assert_current_openshell_selected() {
@@ -302,10 +362,10 @@ COPY nemoclaw-e2e-agent /usr/local/bin/nemoclaw-e2e-agent
 RUN chmod 755 /usr/local/bin/nemoclaw-e2e-agent
 USER sandbox
 WORKDIR /sandbox
-CMD ["sh", "-lc", "sleep infinity"]
+CMD ["sh", "-lc", "tail -f /dev/null"]
 DOCKERFILE
 
-  openshell sandbox create --name "$SURVIVOR_SANDBOX" --from "${testdir}/Dockerfile" --gateway nemoclaw --no-tty -- true \
+  openshell sandbox create --name "$SURVIVOR_SANDBOX" --from "${testdir}/Dockerfile" --gateway nemoclaw --no-tty \
     || {
       rm -rf "$testdir"
       fail "failed to create survivor sandbox before gateway upgrade"
@@ -402,9 +462,9 @@ assert_survivor_sandbox_after_upgrade() {
 
 cd "$REPO_ROOT"
 load_shell_path
-exercise_macos_gateway_installer_regression
 
 if [ "$(uname -s)" != "Linux" ]; then
+  exercise_macos_gateway_installer_regression
   pass "Skipping live Docker-driver gateway restart regression on non-Linux host"
   exit 0
 fi
@@ -415,23 +475,10 @@ if [ ! -d node_modules ]; then
   npm ci --ignore-scripts
 fi
 npm run build:cli
-bash scripts/install-openshell.sh
-load_shell_path
-
-command -v openshell >/dev/null 2>&1 || fail "current openshell not found before old-install setup"
-command -v openshell-gateway >/dev/null 2>&1 || fail "current openshell-gateway not found before old-install setup"
-command -v openshell-sandbox >/dev/null 2>&1 || fail "current openshell-sandbox not found before old-install setup"
-CURRENT_OPENSHELL_BIN="$(command -v openshell)"
-CURRENT_GATEWAY_BIN="$(command -v openshell-gateway)"
-CURRENT_SANDBOX_BIN="$(command -v openshell-sandbox)"
 
 OLD_OPENSHELL_DIR="$(mktemp -d)"
-create_old_openshell_install_from_current \
-  "$OLD_OPENSHELL_VERSION" \
-  "$OLD_OPENSHELL_DIR" \
-  "$CURRENT_OPENSHELL_BIN" \
-  "$CURRENT_GATEWAY_BIN" \
-  "$CURRENT_SANDBOX_BIN"
+install_real_openshell_cli_release_to_dir "$OLD_OPENSHELL_VERSION" "$OLD_OPENSHELL_DIR"
+install_driver_bins_release_to_dir "$CURRENT_OPENSHELL_VERSION" "$OLD_OPENSHELL_DIR"
 export PATH="$OLD_OPENSHELL_DIR:$PATH"
 
 command -v openshell >/dev/null 2>&1 || fail "old openshell not found before upgrade"
@@ -440,6 +487,7 @@ command -v openshell-sandbox >/dev/null 2>&1 || fail "old openshell-sandbox not 
 if ! openshell --version 2>&1 | grep -q "$OLD_OPENSHELL_VERSION"; then
   fail "test did not start from old OpenShell ${OLD_OPENSHELL_VERSION}"
 fi
+pass "E2E starts from real OpenShell CLI $(openshell --version)"
 
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
@@ -548,3 +596,5 @@ fi
 openshell status >/dev/null 2>&1 || fail "replacement gateway is not healthy"
 assert_survivor_sandbox_after_upgrade
 pass "NemoClaw restarted stale gateway with ${NEW_IMAGE}"
+
+exercise_macos_gateway_installer_regression
