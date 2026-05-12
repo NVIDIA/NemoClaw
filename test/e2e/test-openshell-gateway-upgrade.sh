@@ -295,7 +295,7 @@ EOF
 exercise_macos_vm_rootfs_permission_regression() {
   grep -q "ARG NEMOCLAW_DARWIN_VM_COMPAT=0" Dockerfile \
     || fail "Dockerfile is missing the macOS VM rootfs compatibility ARG"
-  grep -q 'NEMOCLAW_DARWIN_VM_COMPAT=${darwinVmCompat' src/lib/onboard.ts \
+  grep -Fq "NEMOCLAW_DARWIN_VM_COMPAT=\${darwinVmCompat" src/lib/onboard.ts \
     || fail "onboard does not patch the macOS VM rootfs compatibility ARG"
   grep -q 'process.platform === "darwin"' src/lib/onboard.ts \
     || fail "onboard does not enable macOS VM rootfs compatibility for Darwin sandbox builds"

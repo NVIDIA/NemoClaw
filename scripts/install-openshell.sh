@@ -131,10 +131,16 @@ EOF
   info "Signing openshell-driver-vm with the macOS Hypervisor entitlement..."
   if [ "$use_sudo" = "1" ]; then
     sudo codesign --force --sign - --entitlements "$entitlements" "$bin" \
-      || { rm -f "$entitlements"; fail "Failed to sign openshell-driver-vm with the macOS Hypervisor entitlement."; }
+      || {
+        rm -f "$entitlements"
+        fail "Failed to sign openshell-driver-vm with the macOS Hypervisor entitlement."
+      }
   else
     codesign --force --sign - --entitlements "$entitlements" "$bin" \
-      || { rm -f "$entitlements"; fail "Failed to sign openshell-driver-vm with the macOS Hypervisor entitlement."; }
+      || {
+        rm -f "$entitlements"
+        fail "Failed to sign openshell-driver-vm with the macOS Hypervisor entitlement."
+      }
   fi
   rm -f "$entitlements"
 
