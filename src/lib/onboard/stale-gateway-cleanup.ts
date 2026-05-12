@@ -157,7 +157,10 @@ function pidCmdlineMatches(pid: number, deps: StaleGatewayDeps): boolean {
 }
 
 function lsofPidsForPort(port: number, deps: StaleGatewayDeps): number[] {
-  const result = deps.run("lsof", ["-ti", `:${port}`], { env: deps.env });
+  // Restrict to listening sockets so we never kill a process that is only
+  // an in-flight client of the port (matches the `-sTCP:LISTEN` pattern in
+  // preflight). Anything else under SIGTERM/SIGKILL would be unsafe.
+  const result = deps.run("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], { env: deps.env });
   if (result.status !== 0 && result.status !== 1) {
     // Status 1 from lsof is "no listeners" — normal. Anything else is a real error.
     const warn = deps.warn ?? ((m: string) => console.warn(m));

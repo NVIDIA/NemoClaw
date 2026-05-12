@@ -11172,11 +11172,15 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         const { stopStaleDashboardListeners } = require("./onboard/stale-gateway-cleanup") as {
           stopStaleDashboardListeners: typeof import("./onboard/stale-gateway-cleanup").stopStaleDashboardListeners;
         };
+        // Only unprotect the target sandbox's own port when the user gave us
+        // an explicit name (--name or NEMOCLAW_SANDBOX_NAME). Without one, we
+        // do not yet know which sandbox the operator means to rebuild — the
+        // default registry sandbox could be a live, different one — so we
+        // protect every registered dashboard port. The upgrade/same-name
+        // recovery case is therefore opt-in via `--name <existing>`.
         const sandboxRegistry = registry.listSandboxes();
-        const targetSandboxName =
-          requestedSandboxName ?? sandboxRegistry.defaultSandbox ?? null;
         const protectedPorts = sandboxRegistry.sandboxes
-          .filter((sb) => sb.name !== targetSandboxName)
+          .filter((sb) => sb.name !== requestedSandboxName)
           .map((sb) => sb.dashboardPort)
           .filter((p): p is number => typeof p === "number" && Number.isFinite(p));
         stopStaleDashboardListeners({}, { protectedPorts });
