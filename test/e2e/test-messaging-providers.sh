@@ -578,7 +578,7 @@ fi
 # listener sees the raw Bolt-shape placeholder; if it only canonicalizes the
 # body, the listener sees the canonical body token that caused #3315.
 info "Probing rewriter via auth.test-shaped loopback listener (proves body token is stripped)..."
-sl_loopback=$(sandbox_exec 'node -e "
+sl_loopback=$(sandbox_exec 'NODE_NO_WARNINGS=1 node -e "
 const http = require(\"http\");
 const server = http.createServer((req, res) => {
   let body = \"\";
@@ -624,9 +624,9 @@ server.listen(0, \"127.0.0.1\", () => {
 info "Loopback echoed request: ${sl_loopback:0:300}"
 if echo "$sl_loopback" | grep -qF 'OPENSHELL-RESOLVE-ENV-'; then
   fail "M-S5h: rewriter did NOT translate Bolt-shape on http.request/write/end — the preload is loaded but incomplete or a no-op"
-elif echo "$sl_loopback" | grep -qE '"body"\s*:\s*"token=openshell:resolve:env:SLACK_BOT_TOKEN'; then
+elif echo "$sl_loopback" | grep -qE '"body"\s*:\s*"token=openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN'; then
   fail "M-S5h: rewriter canonicalized the redundant auth.test body token instead of stripping it (#3315 regression)"
-elif echo "$sl_loopback" | grep -qE '"authorization"\s*:\s*"Bearer openshell:resolve:env:SLACK_BOT_TOKEN' \
+elif echo "$sl_loopback" | grep -qE '"authorization"\s*:\s*"Bearer openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN' \
   && echo "$sl_loopback" | grep -qE '"content-length"\s*:\s*"0"' \
   && echo "$sl_loopback" | grep -qE '"body"\s*:\s*""'; then
   pass "M-S5h: rewriter wraps http.request/write/end — auth.test body token was stripped before egress"
@@ -1210,21 +1210,33 @@ fi
 
 # M17: Discord users/@me with placeholder token
 info "Calling discord.com/api/v10/users/@me from inside sandbox..."
-dc_api=$(sandbox_exec 'node -e "
+dc_api=$(sandbox_exec 'NODE_NO_WARNINGS=1 node -e "
 const https = require(\"https\");
 const token = process.env.DISCORD_BOT_TOKEN || \"missing\";
-const options = {
-  hostname: \"discord.com\",
-  path: \"/api/v10/users/@me\",
-  headers: { \"Authorization\": \"Bot \" + token },
-};
-const req = https.get(options, (res) => {
-  let body = \"\";
-  res.on(\"data\", (d) => body += d);
-  res.on(\"end\", () => console.log(res.statusCode + \" \" + body.slice(0, 300)));
-});
-req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
-req.setTimeout(30000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+const maxAttempts = 5;
+let attempt = 0;
+function probe() {
+  attempt += 1;
+  const options = {
+    hostname: \"discord.com\",
+    path: \"/api/v10/users/@me\",
+    headers: { \"Authorization\": \"Bot \" + token },
+  };
+  const req = https.get(options, (res) => {
+    let body = \"\";
+    res.on(\"data\", (d) => body += d);
+    res.on(\"end\", () => {
+      if (res.statusCode === 503 && attempt < maxAttempts) {
+        setTimeout(probe, 2000);
+        return;
+      }
+      console.log(res.statusCode + \" \" + body.slice(0, 300));
+    });
+  });
+  req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
+  req.setTimeout(30000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+}
+probe();
 "' 2>/dev/null || true)
 
 info "Discord API response: ${dc_api:0:300}"
@@ -1300,29 +1312,26 @@ else
 fi
 
 # M-S15b: L7 proxy substitution for SLACK_BOT_TOKEN, isolated from the
-# rewriter. Sends the canonical openshell:resolve:env:SLACK_BOT_TOKEN
-# placeholder directly (no Bolt-shape, so the rewriter is a no-op for
-# this request). If the L7 proxy substitutes correctly, the fake xoxb-
-# token reaches slack.com which returns invalid_auth. If the proxy
-# doesn't substitute, slack.com sees the literal placeholder and STILL
-# returns invalid_auth — same response shape as M-S15. To distinguish,
-# we additionally call with an env var that does NOT exist in the
-# sandbox (DEFINITELY_NOT_SET_XYZ); the L7 proxy's behavior on an
-# unset var differs from a successful substitution.
+# rewriter. Sends the active OpenShell placeholder from the sandbox env
+# directly (no Bolt-shape, so the rewriter is a no-op for this request).
+# Newer OpenShell builds scope provider placeholders by revision
+# (openshell:resolve:env:vNN_KEY), while older builds use the canonical
+# openshell:resolve:env:KEY form.
 #
 # Mirrors the proof technique already used by Telegram M15 and Discord
 # M17 (they get 401/404 from the real APIs because the L7 proxy
-# substituted the canonical form into a real fake-token-shape value).
-info "Probing L7 proxy substitution for SLACK_BOT_TOKEN (canonical placeholder, bypasses rewriter)..."
+# substituted the active placeholder into a real fake-token-shape value).
+info "Probing L7 proxy substitution for SLACK_BOT_TOKEN (active provider placeholder, bypasses rewriter)..."
 sl_canonical=$(sandbox_exec 'node -e "
 const https = require(\"https\");
 const data = \"\";
+const token = process.env.SLACK_BOT_TOKEN || \"openshell:resolve:env:SLACK_BOT_TOKEN\";
 const options = {
   hostname: \"slack.com\",
   path: \"/api/auth.test\",
   method: \"POST\",
   headers: {
-    \"Authorization\": \"Bearer openshell:resolve:env:SLACK_BOT_TOKEN\",
+    \"Authorization\": \"Bearer \" + token,
     \"Content-Type\": \"application/x-www-form-urlencoded\",
     \"Content-Length\": data.length,
   },
@@ -1342,11 +1351,11 @@ info "Slack auth.test (canonical) response: ${sl_canonical:0:300}"
 sl_canon_status=$(echo "$sl_canonical" | grep -E '^[0-9]' | head -1 | awk '{print $1}')
 
 if [ "$sl_canon_status" = "200" ] && echo "$sl_canonical" | grep -qE 'invalid_auth|not_authed'; then
-  pass "M-S15b: L7 proxy substitutes openshell:resolve:env:SLACK_BOT_TOKEN at egress (parallels Telegram M15 / Discord M17)"
+  pass "M-S15b: L7 proxy substitutes the active SLACK_BOT_TOKEN placeholder at egress (parallels Telegram M15 / Discord M17)"
 elif echo "$sl_canonical" | grep -q "TIMEOUT"; then
-  skip "M-S15b: canonical-placeholder probe timed out"
+  skip "M-S15b: active-placeholder probe timed out"
 elif echo "$sl_canonical" | grep -qF 'openshell:resolve:env:' || echo "$sl_canonical" | grep -qiF 'invalid token'; then
-  fail "M-S15b: L7 proxy passed canonical placeholder through unchanged — substitution not happening for SLACK_BOT_TOKEN"
+  fail "M-S15b: L7 proxy passed provider placeholder through unchanged — substitution not happening for SLACK_BOT_TOKEN"
 else
   fail "M-S15b: Unexpected response (status=$sl_canon_status): ${sl_canonical:0:200}"
 fi
@@ -1447,18 +1456,19 @@ else
 fi
 
 # M-S16b: L7 proxy substitution for SLACK_APP_TOKEN, isolated. Same
-# rationale as M-S15b — sends the canonical placeholder directly so the
-# rewriter is a no-op and only the L7 proxy substitution is exercised.
-info "Probing L7 proxy substitution for SLACK_APP_TOKEN (canonical placeholder)..."
+# rationale as M-S15b — sends the active provider placeholder directly so
+# the rewriter is a no-op and only the L7 proxy substitution is exercised.
+info "Probing L7 proxy substitution for SLACK_APP_TOKEN (active provider placeholder)..."
 sl_app_canonical=$(sandbox_exec 'node -e "
 const https = require(\"https\");
 const data = \"\";
+const token = process.env.SLACK_APP_TOKEN || \"openshell:resolve:env:SLACK_APP_TOKEN\";
 const options = {
   hostname: \"slack.com\",
   path: \"/api/apps.connections.open\",
   method: \"POST\",
   headers: {
-    \"Authorization\": \"Bearer openshell:resolve:env:SLACK_APP_TOKEN\",
+    \"Authorization\": \"Bearer \" + token,
     \"Content-Type\": \"application/x-www-form-urlencoded\",
     \"Content-Length\": data.length,
   },
@@ -1474,7 +1484,7 @@ req.write(data);
 req.end();
 "' 2>/dev/null || true)
 
-info "Slack apps.connections.open (canonical) response: ${sl_app_canonical:0:300}"
+info "Slack apps.connections.open (active placeholder) response: ${sl_app_canonical:0:300}"
 sl_app_canon_status=$(echo "$sl_app_canonical" | grep -E '^[0-9]' | head -1 | awk '{print $1}')
 
 info "Probing L7 proxy substitution for an unset app-token env var (negative control)..."
@@ -1505,7 +1515,7 @@ req.end();
 info "Slack apps.connections.open (unset env) response: ${sl_app_unset:0:300}"
 if [ "$sl_app_canon_status" = "200" ] && echo "$sl_app_canonical" | grep -qE 'invalid_auth|not_authed|not_allowed_token_type'; then
   if echo "$sl_app_unset" | grep -qE 'ERROR:.*(socket hang up|ECONNRESET|EPIPE|hang up|reset)'; then
-    pass "M-S16b: L7 proxy substitutes openshell:resolve:env:SLACK_APP_TOKEN at egress (unset-var control diverged)"
+    pass "M-S16b: L7 proxy substitutes the active SLACK_APP_TOKEN placeholder at egress (unset-var control diverged)"
   elif echo "$sl_app_unset" | grep -qE '^200\b'; then
     fail "M-S16b: unset app-token env returned HTTP 200 — proxy may be passing canonical placeholders through unchanged"
   elif [ -z "$sl_app_unset" ] || echo "$sl_app_unset" | grep -q "TIMEOUT"; then
@@ -1514,9 +1524,9 @@ if [ "$sl_app_canon_status" = "200" ] && echo "$sl_app_canonical" | grep -qE 'in
     skip "M-S16b: unset app-token control produced an unclassified result: ${sl_app_unset:0:200}"
   fi
 elif echo "$sl_app_canonical" | grep -q "TIMEOUT"; then
-  skip "M-S16b: canonical-placeholder probe timed out"
+  skip "M-S16b: active-placeholder probe timed out"
 elif echo "$sl_app_canonical" | grep -qF 'openshell:resolve:env:'; then
-  fail "M-S16b: L7 proxy passed canonical placeholder through unchanged for SLACK_APP_TOKEN"
+  fail "M-S16b: L7 proxy passed provider placeholder through unchanged for SLACK_APP_TOKEN"
 else
   fail "M-S16b: Unexpected response (status=$sl_app_canon_status): ${sl_app_canonical:0:200}"
 fi

@@ -45,7 +45,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--agent <name>] [--control-ui-port <N>] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--yes-i-accept-third-party-software]
 ```
 
 > **Warning:** For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
@@ -229,6 +229,8 @@ $ nemoclaw onboard --from ./Dockerfile.custom
 When `nemoclaw onboard` detects an NVIDIA GPU on the host (`nvidia-smi` succeeds), it enables OpenShell GPU passthrough at both the gateway and sandbox level by default.
 Use `--no-gpu` to opt out when you want host-side inference providers only and do not need direct GPU access inside the sandbox.
 Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not detected.
+Use `--sandbox-gpu` or `--no-sandbox-gpu` to control only direct NVIDIA GPU access inside the sandbox.
+Use `--sandbox-gpu-device <device>` to pass a specific OpenShell GPU device selector to `openshell sandbox create`.
 
 Prerequisites:
 
@@ -246,7 +248,7 @@ Sandboxes with an active SSH session are marked with a `●` indicator so you ca
 When a sandbox has a recorded dashboard port, the output includes its local dashboard URL.
 
 ```console
-$ nemoclaw list
+$ nemoclaw list [--json]
 $ nemoclaw list --json
 ```
 
@@ -281,8 +283,11 @@ After a host reboot, the OpenShell gateway rotates its SSH host keys.
 You no longer need to re-run `nemoclaw onboard` after a reboot in this case.
 
 ```console
-$ nemoclaw my-assistant connect
+$ nemoclaw my-assistant connect [--probe-only]
 ```
+
+The `--probe-only` flag verifies the sandbox is reachable over SSH and exits without opening a shell.
+Use it for health checks and scripted readiness probes.
 
 ### `nemoclaw <name> recover`
 
@@ -406,9 +411,11 @@ For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently load
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
+By default, `destroy` preserves the shared NemoClaw gateway.
+Pass `--cleanup-gateway` to remove the shared gateway when destroying the last sandbox, or `--no-cleanup-gateway` to force preservation when environment defaults request cleanup.
 
 ```console
-$ nemoclaw my-assistant destroy
+$ nemoclaw my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]
 ```
 
 ### `nemoclaw <name> policy-add`
@@ -493,6 +500,41 @@ If the preset is unknown or not currently applied, the command exits non-zero wi
 | `--dry-run` | Preview which endpoints would be removed without applying changes |
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
+
+### `nemoclaw <name> hosts-add`
+
+Add a host alias to the sandbox pod template.
+Use this when a sandbox needs a stable LAN-only name, such as a local SearXNG or internal model endpoint, without dropping to `docker exec` and `kubectl patch`.
+
+```console
+$ nemoclaw my-assistant hosts-add searxng.local 192.168.1.105
+```
+
+The command validates the hostname and IP address, rejects duplicate hostnames, and patches `spec.podTemplate.spec.hostAliases` on the sandbox resource.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Print the JSON patch for the resulting `hostAliases` list without applying it |
+
+### `nemoclaw <name> hosts-list`
+
+List host aliases configured on the sandbox resource.
+
+```console
+$ nemoclaw my-assistant hosts-list
+```
+
+### `nemoclaw <name> hosts-remove`
+
+Remove a hostname from the sandbox `hostAliases` list.
+
+```console
+$ nemoclaw my-assistant hosts-remove searxng.local
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Print the JSON patch for the resulting `hostAliases` list without applying it |
 
 ### `nemoclaw <name> channels list`
 
@@ -609,6 +651,28 @@ The sandbox must be running for the backup step to succeed.
 If an archive command reports partial output while still producing usable data, `rebuild` keeps the captured backup entries and reports only the manifest-defined paths that could not be archived.
 If any required state path still cannot be backed up, `rebuild` exits before destroying the original sandbox.
 After restore, the command runs `openclaw doctor --fix` for cross-version structure repair.
+
+### `nemoclaw update`
+
+Check for a NemoClaw CLI update and, when requested, run the maintained installer flow.
+This command is a discoverable CLI wrapper around the supported installer path:
+
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+```console
+$ nemoclaw update [--check] [--yes|-y]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything |
+| `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow |
+
+`nemoclaw update` updates the host-side NemoClaw installation.
+It does not replace `nemoclaw upgrade-sandboxes`; use that command to inspect or rebuild existing sandboxes after the CLI has been updated.
+When the command is running from a source checkout, it reports that state and does not replace the checkout with a global package install.
 
 ### `nemoclaw upgrade-sandboxes`
 
@@ -806,12 +870,28 @@ $ nemoclaw status
 $ nemoclaw status --json
 ```
 
+### `nemoclaw inference set`
+
+Switch the active inference provider or model for a NemoClaw-managed OpenClaw or Hermes sandbox.
+The command updates the OpenShell gateway route, patches the selected running agent config so it matches the route, recomputes the config hash, and updates the NemoClaw registry.
+For Hermes, the patch updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, and `model.provider: custom`) and does not rebuild or restart the gateway.
+
+By default, the command syncs the default registered sandbox.
+Under the `nemohermes` alias, it uses the registered Hermes sandbox when exactly one exists; otherwise pass `--sandbox <name>` to target one explicitly.
+
+```console
+$ nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify]
+```
+
+Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
+Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
+
 ### `nemoclaw setup`
 
 > **Warning:** The `nemoclaw setup` command is deprecated.
 > Use `nemoclaw onboard` instead.
 
-This command remains as a compatibility alias to `nemoclaw onboard`.
+This command remains as a compatibility alias to `nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--yes-i-accept-third-party-software`.
 
 ```console
 $ nemoclaw setup
@@ -822,7 +902,7 @@ $ nemoclaw setup
 > **Warning:** The `nemoclaw setup-spark` command is deprecated.
 > Use the standard installer and run `nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 
-This command remains as a compatibility alias to `nemoclaw onboard`.
+This command remains as a compatibility alias to `nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--yes-i-accept-third-party-software`.
 
 ```console
 $ nemoclaw setup-spark
@@ -901,9 +981,10 @@ For Local Ollama setups, uninstall also stops matching Ollama auth proxy process
 | `--yes` | Skip the confirmation prompt |
 | `--keep-openshell` | Leave the `openshell` binary installed |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models |
+| `--gateway <name>` | Override the gateway name to remove (default: `nemoclaw`) |
 
 ```console
-$ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
+$ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <name>]
 ```
 
 #### `nemoclaw uninstall` vs. the hosted `uninstall.sh`
@@ -922,7 +1003,7 @@ Use the hosted `curl … | bash` form only when the CLI is broken or already par
 
 ## Environment Variables
 
-NemoClaw reads the following environment variables to configure service ports.
+NemoClaw reads the following environment variables to configure service ports, onboarding behavior, and lifecycle defaults.
 Set them before running `nemoclaw onboard` or any command that starts services.
 All ports must be non-privileged integers between 1024 and 65535.
 
@@ -948,9 +1029,67 @@ Defaults are unchanged when no variable is set.
 If `NEMOCLAW_DASHBOARD_PORT` or the port from `CHAT_UI_URL` is already occupied by another sandbox, onboarding scans `18789` through `18799` and uses the next free dashboard port.
 Pass `--control-ui-port <N>` to require a specific port.
 
-### Onboard timeouts
+### Onboarding Configuration
 
-The following environment variables tune onboard-time wall-clock limits. Set them before running `nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
+These variables let you tune onboarding without editing the Dockerfile or passing repeated flags.
+Set them before running `nemoclaw onboard`.
+
+| Variable | Format | Effect |
+|----------|--------|--------|
+| `NEMOCLAW_PROVIDER` | provider key (e.g. `nvidia`, `openai`, `anthropic`, `ollama`, `vllm`, `compatible`) | Selects the inference provider in non-interactive onboarding. Must match one of the keys the wizard would prompt for. |
+| `NEMOCLAW_HERMES_AUTH_METHOD` | `oauth` | Selects Hermes Provider authentication in non-interactive onboarding. Valid values: `oauth`, `nous-portal-oauth`, `api-key`, `nous-api-key`. |
+| `NEMOCLAW_HERMES_AUTH` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Back-compatible alias for Hermes Provider authentication selection. |
+| `NEMOCLAW_NOUS_AUTH_METHOD` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Nous-specific alias for Hermes Provider authentication selection. |
+| `NEMOCLAW_ENDPOINT_URL` | URL | Custom OpenAI-compatible endpoint URL. Used together with `NEMOCLAW_PROVIDER=compatible`. |
+| `NEMOCLAW_PREFERRED_API` | `completions` (currently the only honored value) | Forces the validation probe to use the `/v1/chat/completions` API path instead of the newer `/v1/responses` API. |
+| `NEMOCLAW_INFERENCE_INPUTS` | comma-separated list of `text` and/or `image` | Declares model input modalities for vision-capable models. Validated strictly; unknown tokens are ignored. |
+| `NEMOCLAW_AGENT_TIMEOUT` | positive integer (seconds) | Overrides `agents.defaults.timeoutSeconds` in the built OpenClaw config. Raise for slow inference. |
+| `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
+| `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
+| `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
+| `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
+| `NEMOCLAW_OLLAMA_REQUIRE_TOOLS` | `0` to disable, anything else to keep the default | When set to `0`, skips the Ollama tool-calling capability check during local-inference onboarding. |
+| `NEMOCLAW_PROXY_HOST` | hostname or IP | Overrides the sandbox-side outbound HTTP proxy host. Defaults to `10.200.0.1`. |
+| `NEMOCLAW_PROXY_PORT` | integer port | Overrides the sandbox-side outbound HTTP proxy port. Defaults to `3128`. |
+| `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
+| `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used by `services` and `debug` lookups when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
+| `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
+| `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Overridden by the `--install-tag` flag. |
+
+### Onboarding Behavior Flags
+
+These flags toggle optional behaviors during onboarding; set them before running `nemoclaw onboard`.
+
+| Variable | Format | Effect |
+|----------|--------|--------|
+| `NEMOCLAW_YES` | `1` to enable | Auto-accepts confirmation prompts (`--yes` equivalent) including in helpers like the Ollama proxy auth setup. |
+| `NEMOCLAW_NO_EXPRESS` | `1` to enable | Installer-only. Skips the DGX Spark and DGX Station express install prompt and continues with the normal interactive onboarding flow. |
+| `NEMOCLAW_EXPERIMENTAL` | `1` to enable | Surfaces experimental providers and flows in onboarding. |
+| `NEMOCLAW_IGNORE_RUNTIME_RESOURCES` | `1` to enable | Suppresses the under-provisioned runtime warning during preflight. Use only when you know the sandbox host meets the minimums. |
+| `NEMOCLAW_DISABLE_OVERLAY_FIX` | `1` to enable | Skips the Docker overlay-fix step during sandbox build. For environments where the fix is incompatible. |
+| `NEMOCLAW_OVERLAY_SNAPSHOTTER` | snapshotter name | Selects the containerd overlay snapshotter for sandbox builds. Empty (default) preserves containerd's choice. |
+| `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY` | `1` to enable | Skips the Telegram bot reachability probe during onboard (useful in restricted networks). |
+| `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | `1` to enable | Accepts a new sandbox config path without an interactive prompt when the stored path differs from the discovered one. |
+| `NEMOCLAW_SANDBOX_GPU` | `auto`, `1`, or `0` | Controls sandbox GPU passthrough during onboarding. `auto` enables GPU passthrough when an NVIDIA GPU is detected, `1` requires GPU passthrough, and `0` forces CPU-only sandbox creation. |
+| `NEMOCLAW_SANDBOX_GPU_DEVICE` | OpenShell GPU device selector | Selects the GPU device passed with `openshell sandbox create --gpu-device`. Setting this value enables sandbox GPU passthrough unless `NEMOCLAW_SANDBOX_GPU=0` is also set, which is rejected. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by the Linux Docker-driver gateway. Defaults to the binary next to `openshell`, then common install paths. |
+| `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary passed to the Linux Docker-driver gateway supervisor. Defaults to the binary next to `openshell`, then common install paths. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway pid file and SQLite state directory. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |
+
+### Probe Timeouts
+
+These tune how long internal probes wait before giving up.
+Defaults are sized for typical hardware; override only if you see false-positive timeouts.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
+| `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
+
+### Onboard Timeouts
+
+The following environment variables tune onboard-time wall-clock limits.
+Set them before running `nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -969,6 +1108,7 @@ These flags change defaults for commands that manage existing sandboxes.
 
 | Variable | Format | Effect |
 |----------|--------|--------|
+| `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Sets the default for whether `nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `nemoclaw <name> connect` and `nemoclaw <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
 
 ## NemoHermes Alias

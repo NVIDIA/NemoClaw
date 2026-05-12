@@ -3,7 +3,7 @@
 #
 # Hermes sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:22-slim (OpenShell needs Node), apt packages, gosu,
+# Contains: node:22-trixie-slim (OpenShell needs Node), apt packages, gosu,
 # user/group setup, .hermes directory structure, Hermes CLI, and the
 # dependencies for NemoClaw-supported Hermes integrations.
 #
@@ -14,11 +14,11 @@
 #   1. Hermes version bump      — change the HERMES_VERSION below
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. gosu upgrade             — update URL, checksum, and version
-#   4. node:22-slim digest rot  — update-docker-pin.sh updates both
+#   4. node:22-trixie-slim digest rot — update-docker-pin.sh updates all
 #   5. New .hermes subdirectory — add mkdir below
 # ────────────────────────────────────────────────────────────────
 
-FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
+FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -30,22 +30,23 @@ ARG HERMES_UV_EXTRAS="messaging web"
 ARG UV_VERSION=0.11.8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3=3.11.2-1+b1 \
-        python3-pip=23.0.1+dfsg-1 \
-        python3-venv=3.11.2-1+b1 \
-        curl=7.88.1-10+deb12u14 \
-        git=1:2.39.5-0+deb12u3 \
-    gnupg=2.2.40-1.1+deb12u2 \
-        ca-certificates=20230311+deb12u1 \
-        iproute2=6.1.0-3 \
-        iptables=1.8.9-2 \
-        libcap2-bin=1:2.66-4+deb12u2+b2 \
-    procps=2:4.0.2-3 \
-    openssh-sftp-server=1:9.2p1-2+deb12u9 \
-        socat=1.7.4.4-2 \
-        dos2unix=7.4.3-1 \
-        jq=1.6-2.1+deb12u1 \
-        vim-tiny=2:9.0.1378-2+deb12u2 \
+        python3=3.13.5-1 \
+        python3-pip=25.1.1+dfsg-1 \
+        python3-venv=3.13.5-1 \
+        curl=8.14.1-2+deb13u2 \
+        git=1:2.47.3-0+deb13u1 \
+        gnupg=2.4.7-21+deb13u1 \
+        ca-certificates=20250419 \
+        iproute2=6.15.0-1 \
+        iptables=1.8.11-2 \
+        libcap2-bin=1:2.75-10+b8 \
+        procps=2:4.0.4-9 \
+        e2fsprogs=1.47.2-3+b10 \
+        openssh-sftp-server=1:10.0p1-7+deb13u2 \
+        socat=1.8.0.3-1 \
+        "dos2unix=7.5.2-1*" \
+        jq=1.7.1-6+deb13u1 \
+        vim-tiny=2:9.1.1230-2 \
     && rm -rf /var/lib/apt/lists/*
 
 # gosu for privilege separation (gateway vs sandbox user).

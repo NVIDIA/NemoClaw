@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // slack-token-rewriter.js — translates the Bolt-compatible placeholder
-// (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR into the canonical
-// openshell:resolve:env:VAR form on outbound HTTP, so Slack tokens travel
-// the same OpenShell substitution path Discord / Telegram / Brave already
-// use without any real token touching openclaw.json.
+// (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR into the active OpenShell
+// openshell:resolve:env:* placeholder on outbound HTTP, so Slack tokens
+// travel the same OpenShell substitution path Discord / Telegram / Brave
+// already use without any real token touching openclaw.json.
 //
 // Why this preload exists:
 //   Slack's Bolt SDK validates token shape (^xoxb-[A-Za-z0-9_-]+$ /
 //   ^xapp-…$) at App construction, before any HTTP call leaves the
-//   process — so the canonical openshell:resolve:env:VAR placeholder is
-//   rejected synchronously and the gateway crashes. We emit a Bolt-shape
-//   placeholder into openclaw.json (which Bolt accepts), then translate
-//   it back to canonical form here, just before the bytes hit the wire,
+//   process — so OpenShell's openshell:resolve:env:* placeholder is rejected
+//   synchronously and the gateway crashes. We emit a Bolt-shape placeholder
+//   into openclaw.json (which Bolt accepts), then translate it back to the
+//   current OpenShell placeholder here, just before the bytes hit the wire,
 //   where OpenShell's L7 proxy substitutes the real token from env.
 //
 // Wraps http.request / https.request — every Node HTTP client bottoms
@@ -29,7 +29,9 @@
 // canonical placeholder. Other body placeholders continue to be translated.
 //
 // Invariants:
-//   - No env reads. Translation is purely structural.
+//   - Env reads are used only when they contain OpenShell placeholder values.
+//     Raw env values are ignored so real tokens never enter outbound request
+//     objects through this preload.
 //   - Mutates options/headers in place. axios reuses the headers object
 //     after request creation, so cloning would break the request lifecycle.
 //   - Idempotent. The output (openshell:resolve:env:VAR) does not match
@@ -56,14 +58,32 @@
   var BOLT_SLACK_CREDENTIAL =
     /\b(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-SLACK_(?:BOT|APP)_TOKEN\b/;
   var CANONICAL_SLACK_CREDENTIAL =
-    /\bopenshell:resolve:env:SLACK_(?:BOT|APP)_TOKEN\b/;
-  var CANONICAL_SLACK_FAST_PATH = 'openshell:resolve:env:SLACK_';
+    /\bopenshell:resolve:env:(?:v[0-9]+_)?SLACK_(?:BOT|APP)_TOKEN\b/;
+  var CANONICAL_SLACK_FAST_PATH = 'openshell:resolve:env:';
   var FAST_PATH = 'OPENSHELL-RESOLVE-ENV-';
+  var OPENSHELL_PLACEHOLDER_PREFIX = 'openshell:resolve:env:';
+
+  function placeholderForEnvKey(envKey) {
+    var value = '';
+    try {
+      if (typeof process !== 'undefined' && process && process.env) {
+        value = process.env[envKey];
+      }
+    } catch (_) {
+      value = '';
+    }
+    if (typeof value === 'string' && value.indexOf(OPENSHELL_PLACEHOLDER_PREFIX) === 0) {
+      return value;
+    }
+    return OPENSHELL_PLACEHOLDER_PREFIX + envKey;
+  }
 
   function rewriteString(s) {
     if (typeof s !== 'string') return s;
     if (s.indexOf(FAST_PATH) === -1) return s;
-    return s.replace(BOLT_PLACEHOLDER, 'openshell:resolve:env:$1');
+    return s.replace(BOLT_PLACEHOLDER, function (_match, envKey) {
+      return placeholderForEnvKey(envKey);
+    });
   }
 
   function rewriteHeaders(headers) {
@@ -123,27 +143,59 @@
     return p === '/api' || p.indexOf('/api/') === 0;
   }
 
-  function isSlackWebApiUrl(value) {
-    if (typeof value !== 'string' && !(value instanceof URL)) return false;
+  function targetFromUrl(value) {
+    if (typeof value !== 'string' && !(value instanceof URL)) return null;
     try {
       var url = value instanceof URL ? value : new URL(value);
-      return isSlackWebApiHost(url.hostname) && isSlackWebApiPath(url.pathname);
+      return { host: url.hostname, path: url.pathname + url.search };
     } catch (_e) {
-      return false;
+      return null;
     }
+  }
+
+  function isAbsoluteHttpUrl(value) {
+    return typeof value === 'string' && /^https?:\/\//i.test(value);
+  }
+
+  function targetMatchesSlackWebApi(target) {
+    return !!target && isSlackWebApiHost(target.host) && isSlackWebApiPath(target.path);
+  }
+
+  function applyTargetOptionOverrides(target, options) {
+    if (!target || !options || typeof options !== 'object') return target;
+    var pathIsAbsoluteTarget = false;
+    var replacement = isAbsoluteHttpUrl(options.path) ? targetFromUrl(options.path) : null;
+    if (replacement) {
+      target = replacement;
+      pathIsAbsoluteTarget = true;
+    }
+    if (!pathIsAbsoluteTarget && options.hostname !== undefined && options.hostname !== null) {
+      target.host = options.hostname;
+    } else if (!pathIsAbsoluteTarget && options.host !== undefined && options.host !== null) {
+      target.host = options.host;
+    }
+    if (typeof options.path === 'string' && !isAbsoluteHttpUrl(options.path)) {
+      target.path = options.path;
+    }
+    return target;
   }
 
   function optionsTargetSlackWebApi(options) {
     if (!options || typeof options !== 'object') return false;
-    if (typeof options.href === 'string' && isSlackWebApiUrl(options.href)) return true;
-    if (typeof options.path === 'string' && isSlackWebApiUrl(options.path)) return true;
-    var host = options.hostname || options.host;
-    var path = options.path || options.pathname || '';
-    return isSlackWebApiHost(host) && isSlackWebApiPath(path);
+    var target = isAbsoluteHttpUrl(options.path) ? targetFromUrl(options.path) : null;
+    if (!target) target = { host: '', path: '' };
+    target = applyTargetOptionOverrides(target, options);
+    return targetMatchesSlackWebApi(target);
   }
 
   function requestTargetsSlackWebApi(arg1, arg2) {
-    if (isSlackWebApiUrl(arg1)) return true;
+    var target = targetFromUrl(arg1);
+    if (target) {
+      if (arg2 && typeof arg2 === 'object' && !(arg2 instanceof URL)) {
+        target = applyTargetOptionOverrides(target, arg2);
+      }
+      return targetMatchesSlackWebApi(target);
+    }
     if (arg1 && typeof arg1 === 'object' && !(arg1 instanceof URL)) {
       if (optionsTargetSlackWebApi(arg1)) return true;
     }

@@ -106,6 +106,8 @@ inference:
   base_url_config_key: "model.base_url"
   model_config_key: "model.default"
   proxy_support: implicit  # via httpx (OpenAI SDK dep)
+  provider_options:
+    - hermesProvider
 
 # ── Phone-home hosts ───────────────────────────────────────────
 # Agent-specific egress endpoints needed for updates, auth, etc.

@@ -6,15 +6,20 @@ import { Args, Command, Flags } from "@oclif/core";
 import { logsSinceDurationFlag } from "../../cli/duration-flags";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import { DEFAULT_SANDBOX_LOG_LINES } from "../../domain/sandbox/log-options";
-import { showSandboxLogs } from "../../actions/sandbox/runtime";
-
 type SandboxLogsRuntimeBridge = {
   sandboxLogs: (sandboxName: string, options: SandboxLogsOptions) => void;
 };
 
 const DEFAULT_SANDBOX_LOG_LINE_COUNT = Number(DEFAULT_SANDBOX_LOG_LINES);
 
-let runtimeBridgeFactory = (): SandboxLogsRuntimeBridge => ({ sandboxLogs: showSandboxLogs });
+let runtimeBridgeFactory = (): SandboxLogsRuntimeBridge => ({
+  sandboxLogs: (sandboxName, options) => {
+    const { showSandboxLogs } = require("../../actions/sandbox/logs") as {
+      showSandboxLogs: (sandboxName: string, options: SandboxLogsOptions) => void;
+    };
+    showSandboxLogs(sandboxName, options);
+  },
+});
 
 export function setSandboxLogsRuntimeBridgeFactoryForTest(
   factory: () => SandboxLogsRuntimeBridge,

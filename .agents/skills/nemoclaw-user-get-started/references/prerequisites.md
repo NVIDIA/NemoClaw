@@ -20,7 +20,11 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 |------------|----------------------------------|
 | Node.js    | 22.16 or later |
 | npm        | 10 or later |
+| Docker     | Docker Engine, Docker Desktop, or Colima on a tested platform |
 | Platform   | See [Platforms](#platforms) below |
+
+On Linux, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
+If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
 
 :::{warning} OpenShell Lifecycle
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.

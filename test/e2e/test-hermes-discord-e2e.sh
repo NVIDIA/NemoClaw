@@ -372,20 +372,24 @@ fi
 env_probe=$(
   sandbox_exec_stdin "EXPECTED_ALLOWED_USERS=$expected_allowed_users EXPECTED_GUILD_IDS=$expected_guild_ids python3 -" <<'PY'
 import os
+import re
 from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
+lines = set(text.splitlines())
 errors = []
+token_pattern = re.compile(r"^DISCORD_BOT_TOKEN=openshell:resolve:env:(?:v[0-9]+_)?DISCORD_BOT_TOKEN$")
+if not any(token_pattern.match(line) for line in lines):
+    errors.append("missing DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN")
 required = [
-    "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
     "DISCORD_PROXY=http://127.0.0.1:3129",
     "NEMOCLAW_DISCORD_FACADE_URL=http://127.0.0.1:3130",
     f"NEMOCLAW_DISCORD_GUILD_IDS={os.environ['EXPECTED_GUILD_IDS']}",
     f"DISCORD_ALLOWED_USERS={os.environ['EXPECTED_ALLOWED_USERS']}",
 ]
 for line in required:
-    if line not in text.splitlines():
+    if line not in lines:
         errors.append(f"missing {line}")
-if "API_SERVER_PORT=18642" not in text.splitlines():
+if "API_SERVER_PORT=18642" not in lines:
     errors.append("missing API_SERVER_PORT")
 if errors:
     print("FAIL " + "; ".join(errors))
@@ -552,29 +556,49 @@ section "Phase 6: Discord REST placeholder egress"
 dc_api=$(sandbox_exec 'NODE_NO_WARNINGS=1 node -e "
 const fs = require(\"fs\");
 const https = require(\"https\");
-const env = fs.readFileSync(\"/sandbox/.hermes/.env\", \"utf8\");
-const line = env.split(/\\n/).find((entry) => entry.startsWith(\"DISCORD_BOT_TOKEN=\"));
-const token = line ? line.slice(\"DISCORD_BOT_TOKEN=\".length) : \"\";
+let token = \"\";
+const runtimeToken = process.env.DISCORD_BOT_TOKEN || \"\";
+if (runtimeToken.startsWith(\"openshell:resolve:env:\")) {
+  token = runtimeToken;
+}
+if (!token) {
+  const env = fs.readFileSync(\"/sandbox/.hermes/.env\", \"utf8\");
+  const line = env.split(/\\n/).find((entry) => entry.startsWith(\"DISCORD_BOT_TOKEN=\"));
+  token = line ? line.slice(\"DISCORD_BOT_TOKEN=\".length) : runtimeToken;
+}
 if (!token) {
   console.log(JSON.stringify({ error: \"missing_token\" }));
   process.exit(0);
 }
-const req = https.request({
-  hostname: \"discord.com\",
-  path: \"/api/v10/users/@me\",
-  method: \"GET\",
-  headers: { \"Authorization\": \"Bot \" + token },
-}, (res) => {
-  let body = \"\";
-  res.on(\"data\", (d) => body += d);
-  res.on(\"end\", () => console.log(JSON.stringify({
-    statusCode: res.statusCode,
-    body: body.slice(0, 200),
-  })));
-});
-req.on(\"error\", (e) => console.log(JSON.stringify({ error: e.message })));
-req.setTimeout(20000, () => { req.destroy(); console.log(JSON.stringify({ error: \"timeout\" })); });
-req.end();
+const maxAttempts = 5;
+let attempt = 0;
+function probe() {
+  attempt += 1;
+  const req = https.request({
+    hostname: \"discord.com\",
+    path: \"/api/v10/users/@me\",
+    method: \"GET\",
+    headers: { \"Authorization\": \"Bot \" + token },
+  }, (res) => {
+    let body = \"\";
+    res.on(\"data\", (d) => body += d);
+    res.on(\"end\", () => {
+      if (res.statusCode === 503 && attempt < maxAttempts) {
+        setTimeout(probe, 2000);
+        return;
+      }
+      console.log(JSON.stringify({
+        statusCode: res.statusCode,
+        body: body.slice(0, 200),
+        attempt,
+      }));
+    });
+  });
+  req.on(\"error\", (e) => console.log(JSON.stringify({ error: e.message, attempt })));
+  req.setTimeout(20000, () => { req.destroy(); console.log(JSON.stringify({ error: \"timeout\", attempt })); });
+  req.end();
+}
+probe();
 "' 2>/dev/null || true)
 
 info "Discord users/@me response: ${dc_api:0:300}"

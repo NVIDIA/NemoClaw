@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getSandboxInventory, renderSandboxInventoryText } from "../inventory-commands";
+import { getSandboxInventory, renderSandboxInventoryText } from "../inventory";
 import { NemoClawCommand } from "../cli/nemoclaw-oclif-command";
 import { buildListCommandDeps } from "../list-command-deps";
 

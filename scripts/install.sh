@@ -507,9 +507,9 @@ print_done() {
     else
       printf "  ${C_GREEN}%s CLI is installed.${C_RESET}\n" "$_CLI_DISPLAY"
     fi
-    printf "  ${C_DIM}Onboarding has not run yet.${C_RESET}\n"
+    printf "  ${C_YELLOW}${C_BOLD}Onboarding did not run.${C_RESET}\n"
     printf "\n"
-    printf "  ${C_GREEN}Next:${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD}To finish setup, run:${C_RESET}\n"
     if [[ "$_needs_cli_refresh" == true ]]; then
       print_cli_path_refresh_actions
     else
@@ -518,9 +518,9 @@ print_done() {
     printf "  %s$%s %s onboard\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN"
   else
     printf "  ${C_YELLOW}%s CLI is installed, but this shell cannot resolve '%s' yet.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
-    printf "  ${C_DIM}Onboarding did not run.${C_RESET}\n"
+    printf "  ${C_YELLOW}${C_BOLD}Onboarding did not run.${C_RESET}\n"
     printf "\n"
-    printf "  ${C_GREEN}Next:${C_RESET}\n"
+    printf "  ${C_GREEN}${C_BOLD}To finish setup, run:${C_RESET}\n"
     print_cli_path_refresh_actions
     printf "  %s$%s %s onboard\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN"
   fi
@@ -555,6 +555,7 @@ usage() {
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
+  printf "                                  | hermes-provider\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -820,6 +821,12 @@ NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH=false
 NEMOCLAW_INSTALLER_INITIAL_PATH="${PATH:-}"
 NEMOCLAW_SOURCE_ROOT="$(resolve_repo_root)"
 ONBOARD_RAN=false
+# Absolute path to the just-installed CLI binary. Populated by
+# verify_nemoclaw whenever the binary is found on disk, even when the
+# current shell's PATH does not yet resolve $_CLI_BIN. Lets the installer
+# invoke the CLI directly so a stale PATH cache does not silently skip
+# auto-onboarding (#3276).
+_CLI_PATH=""
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
 # Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
@@ -1434,6 +1441,7 @@ verify_nemoclaw() {
     resolved_cli="$(command -v "$_CLI_BIN")"
     if is_real_nemoclaw_cli "$resolved_cli" "$_CLI_BIN"; then
       NEMOCLAW_READY_NOW=true
+      _CLI_PATH="$resolved_cli"
       npm_bin="$(resolve_npm_bin)" || true
       ensure_nemoclaw_shim || true
       record_cli_resolution_state "$resolved_cli" "$npm_bin"
@@ -1456,19 +1464,28 @@ verify_nemoclaw() {
         local resolved_cli
         resolved_cli="$(command -v "$_CLI_BIN")"
         NEMOCLAW_READY_NOW=true
+        _CLI_PATH="$resolved_cli"
         record_cli_resolution_state "$resolved_cli" "$npm_bin"
         info "Verified: ${_CLI_BIN} is available at $resolved_cli"
         return 0
       fi
 
+      # PATH still can't resolve $_CLI_BIN even after shim creation. Record
+      # the absolute path so the rest of the installer can invoke the CLI
+      # directly — auto-onboarding must not silently skip just because the
+      # current shell's PATH cache is stale. The user-facing PATH-refresh
+      # hint is still emitted so future shells pick the binary up by name
+      # (#3276).
+      _CLI_PATH="$npm_bin/$_CLI_BIN"
+      NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH=true
       NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
       if [[ -x "$NEMOCLAW_SHIM_DIR/$_CLI_BIN" ]]; then
         NEMOCLAW_RECOVERY_EXPORT_DIR="$NEMOCLAW_SHIM_DIR"
       else
         NEMOCLAW_RECOVERY_EXPORT_DIR="$npm_bin"
       fi
-      warn "Found ${_CLI_BIN} at $npm_bin/$_CLI_BIN but this shell still cannot resolve it."
-      warn "Onboarding will be skipped until PATH is updated."
+      warn "Found ${_CLI_BIN} at $_CLI_PATH but this shell's PATH does not yet resolve it."
+      warn "Running onboarding via the absolute path; refresh your shell PATH afterwards (commands below)."
       return 0
     else
       warn "Found ${_CLI_BIN} at $npm_bin/$_CLI_BIN but it is not the real ${_CLI_DISPLAY} CLI."
@@ -1476,7 +1493,19 @@ verify_nemoclaw() {
     fi
   fi
 
-  warn "Could not locate the ${_CLI_BIN} executable."
+  warn "Could not locate the ${_CLI_BIN} executable after install. Searched:"
+  if command_exists "$_CLI_BIN"; then
+    warn "  - PATH lookup ('command -v ${_CLI_BIN}'):  $(command -v "$_CLI_BIN")  (rejected — not the real CLI)"
+  else
+    warn "  - PATH lookup ('command -v ${_CLI_BIN}'):  not found"
+  fi
+  if [[ -n "$npm_bin" ]]; then
+    warn "  - npm prefix bin:                          ${npm_bin}/${_CLI_BIN}"
+  else
+    warn "  - npm prefix bin:                          (npm not configured)"
+  fi
+  warn "  - User shim dir:                           ${NEMOCLAW_SHIM_DIR}/${_CLI_BIN}"
+  warn "  Active PATH: ${PATH:-(empty)}"
   warn "Try re-running:  curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
   error "Installation failed: ${_CLI_BIN} binary not found."
 }
@@ -1650,6 +1679,11 @@ run_onboard() {
       skip | *) ;;
     esac
   fi
+  # Prefer the absolute path so a stale shell PATH cache cannot silently
+  # skip auto-onboarding (#3276). _CLI_PATH is populated by verify_nemoclaw
+  # whenever the binary is found on disk; if it is empty the caller has
+  # already errored out via verify_nemoclaw's "binary not found" branch.
+  local cli_invoke="${_CLI_PATH:-$_CLI_BIN}"
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     onboard_cmd+=(--non-interactive)
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
@@ -1659,18 +1693,195 @@ run_onboard() {
     # forward --yes so the Ollama size-confirmation gate does not abort
     # the unattended download (the size is still printed to logs).
     onboard_cmd+=(--yes)
-    "${_CLI_BIN}" "${onboard_cmd[@]}"
+    "$cli_invoke" "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
-    "${_CLI_BIN}" "${onboard_cmd[@]}"
+    "$cli_invoke" "${onboard_cmd[@]}"
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
     local status=0
-    "${_CLI_BIN}" "${onboard_cmd[@]}" <&3 || status=$?
+    "$cli_invoke" "${onboard_cmd[@]}" <&3 || status=$?
     exec 3<&-
     return "$status"
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
   fi
+}
+
+# Make sure Docker is installed and the current user can run it without
+# sudo. If we install Docker or add the user to the docker group, exit with
+# instructions to relogin/newgrp — Linux only loads group membership at
+# login, so the rest of this script (onboard, etc.) would fail otherwise.
+# Skipped on macOS (Docker Desktop) and inside WSL (host-managed Docker).
+ensure_docker() {
+  case "$(uname -s)" in
+    Darwin | MINGW* | MSYS*) return 0 ;;
+  esac
+  if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
+    return 0
+  fi
+  # Fast path: docker info works → already set up (root, or already-active group).
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local needs_group_refresh=0
+
+  if ! command -v docker >/dev/null 2>&1; then
+    info "Docker is not installed."
+    info "The next step uses sudo to install Docker system-wide via the official convenience script. You may be prompted for your password."
+    local docker_tmp
+    docker_tmp="$(mktemp)"
+    if ! curl -fsSL https://get.docker.com -o "$docker_tmp"; then
+      rm -f "$docker_tmp"
+      error "Failed to download the Docker convenience script from https://get.docker.com"
+    fi
+    verify_downloaded_script "$docker_tmp" "Docker installer"
+    if ! sudo sh "$docker_tmp"; then
+      rm -f "$docker_tmp"
+      error "Docker install failed. Install Docker manually and re-run."
+    fi
+    rm -f "$docker_tmp"
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 \
+    && ! sudo -n systemctl is-active --quiet docker 2>/dev/null \
+    && ! systemctl is-active --quiet docker 2>/dev/null; then
+    info "The Docker daemon is not running."
+    info "The next step uses sudo to enable and start the docker.service unit. You may be prompted for your password."
+    if ! sudo systemctl enable --now docker 2>/dev/null; then
+      warn "Could not enable docker.service — will verify daemon accessibility below."
+    fi
+  fi
+
+  # Root can use the docker socket without being in the docker group, so
+  # skip the group setup entirely and just verify the daemon is reachable.
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! docker info >/dev/null 2>&1; then
+      error "Docker is installed but not reachable. Try: systemctl start docker"
+    fi
+    return 0
+  fi
+
+  # Use the effective UID's account name rather than $USER, which can be
+  # unset, stale, or overridden by env wrappers.
+  local current_user
+  current_user="$(id -un)"
+
+  # Persisted group membership (NSS / /etc/group). Determines whether we
+  # need to run usermod.
+  if ! id -nG "$current_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    info "Your user '$current_user' is not in the docker group."
+    info "The next step uses sudo to add you to the group so docker works without sudo. You may be prompted for your password."
+    sudo usermod -aG docker "$current_user"
+    needs_group_refresh=1
+  fi
+
+  # Active group list of the current shell (set at login, refreshed only by
+  # new login or `newgrp`). If docker isn't here yet, this session can't
+  # talk to /var/run/docker.sock even though NSS says we're a member.
+  if ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    needs_group_refresh=1
+  fi
+
+  if [ "$needs_group_refresh" = "1" ]; then
+    printf "\n"
+    info "Docker group membership is not active in this shell yet. To finish:"
+    info "  1) Run: newgrp docker   (or log out and log back in)"
+    info "  2) Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
+    exit 0
+  fi
+
+  if ! docker info >/dev/null 2>&1; then
+    error "Docker is installed but not reachable. Try: sudo systemctl start docker"
+  fi
+}
+
+# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback).
+# Echoes "DGX Spark", "DGX Station", or empty. Used to gate the express
+# install prompt; only platforms with a known sensible default are offered.
+detect_express_platform() {
+  local model=""
+  if [ -r /sys/class/dmi/id/product_name ]; then
+    model="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
+  fi
+  if [ -z "$model" ] && [ -r /sys/firmware/devicetree/base/model ]; then
+    model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
+  fi
+  case "$model" in
+    *DGX*Spark*) printf "DGX Spark" ;;
+    *DGX*Station*) printf "DGX Station" ;;
+    *) ;;
+  esac
+}
+
+# Prompt the user to opt into express install on Spark/Station. Sets the
+# non-interactive + provider/model env vars when accepted. Skipped when
+# the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
+# no TTY.
+maybe_offer_express_install() {
+  local platform
+  platform="$(detect_express_platform)"
+  # Not on a platform we have an express recipe for — say nothing.
+  if [ -z "$platform" ]; then
+    return 0
+  fi
+  # On a supported platform but a skip condition applies — explain why so
+  # the user understands they could have gotten express otherwise.
+  if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_NO_EXPRESS=1)."
+    return 0
+  fi
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    info "Detected ${platform}. Skipping express prompt (--non-interactive set)."
+    return 0
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
+    return 0
+  fi
+  local reply=""
+  if [ -t 0 ]; then
+    info "Detected ${platform}."
+    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    if ! IFS= read -r reply; then
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    info "Detected ${platform}."
+    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    if ! IFS= read -r reply <&3; then
+      exec 3<&-
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
+    exec 3<&-
+  else
+    info "Detected ${platform}. Skipping express prompt (no TTY)."
+    return 0
+  fi
+  reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
+  case "$reply" in
+    "" | y | yes)
+      info "Using express install for ${platform}."
+      NON_INTERACTIVE=1
+      export NEMOCLAW_NON_INTERACTIVE=1
+      export NEMOCLAW_YES=1
+      export NEMOCLAW_POLICY_MODE=suggested
+      case "$platform" in
+        "DGX Spark")
+          export NEMOCLAW_PROVIDER=install-ollama
+          export NEMOCLAW_MODEL=qwen3.6:35b
+          ;;
+        "DGX Station")
+          export NEMOCLAW_PROVIDER=install-vllm
+          ;;
+      esac
+      ;;
+    *)
+      info "Skipping express install. Continuing with interactive flow."
+      ;;
+  esac
 }
 
 # Main
@@ -1725,6 +1936,15 @@ main() {
   # still collect acceptance before Node.js or the CLI are installed.
   preflight_usage_notice_prompt
 
+  ensure_docker
+
+  # Offer express install on supported platforms (DGX Spark / Station). Runs
+  # AFTER the third-party notice so the user has explicitly accepted the
+  # license before opting into the unattended path. Express only sets the
+  # provider/model/policy + non-interactive vars; license acceptance is
+  # already recorded by preflight above.
+  maybe_offer_express_install
+
   _INSTALL_START=$SECONDS
   print_banner
   bash "${SCRIPT_DIR}/setup-jetson.sh"
@@ -1746,8 +1966,18 @@ main() {
   # in ~/.nemoclaw/rebuild-backups/ let the user recover via `nemoclaw <name> rebuild`.
   # Check the registry file directly to avoid shelling out to nemoclaw (which
   # may be a stub in test environments).
+  # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
+  # shell PATH cache no longer suppresses auto-onboarding (#3276). Falls
+  # back to PATH lookup as a safety net for unusual environments.
+  local _cli_runner=""
+  if [[ -n "$_CLI_PATH" && -x "$_CLI_PATH" ]]; then
+    _cli_runner="$_CLI_PATH"
+  elif command_exists "$_CLI_BIN"; then
+    _cli_runner="$_CLI_BIN"
+  fi
+
   local _reg_file="${HOME}/.nemoclaw/sandboxes.json"
-  if [ -f "$_reg_file" ] && command_exists "$_CLI_BIN" && command_exists openshell; then
+  if [ -f "$_reg_file" ] && [ -n "$_cli_runner" ] && command_exists openshell; then
     local _has_sandboxes
     _has_sandboxes="$(python3 -c "
 import json, sys
@@ -1759,12 +1989,12 @@ except Exception:
 " "$_reg_file" 2>/dev/null || echo 0)"
     if [ "$_has_sandboxes" -gt 0 ]; then
       info "Backing up $_has_sandboxes sandbox(es) before upgrade…"
-      "$_CLI_BIN" backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
+      "$_cli_runner" backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
     fi
   fi
 
   step 3 "Onboarding"
-  if command_exists "$_CLI_BIN"; then
+  if [ -n "$_cli_runner" ]; then
     if [[ -f "${HOME}/.nemoclaw/sandboxes.json" ]] && node -e '
       const fs = require("fs");
       try {
@@ -1787,16 +2017,16 @@ except Exception:
       ONBOARD_RAN=true
       # After onboard, check for stale sandboxes that need rebuilding (#1904).
       # Uses --auto so it runs non-interactively in piped/CI contexts.
-      if [ "${_has_sandboxes:-0}" -gt 0 ] 2>/dev/null && command_exists "$_CLI_BIN"; then
+      if [ "${_has_sandboxes:-0}" -gt 0 ] 2>/dev/null && [ -n "$_cli_runner" ]; then
         info "Checking for sandboxes that need upgrading…"
-        "$_CLI_BIN" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
+        "$_cli_runner" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
       fi
       restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
     else
       warn "Skipping onboarding until the host prerequisites above are fixed."
     fi
   else
-    warn "Skipping onboarding — this shell still cannot resolve '${_CLI_BIN}'."
+    warn "Skipping onboarding — could not locate the ${_CLI_BIN} executable on disk."
   fi
 
   print_done

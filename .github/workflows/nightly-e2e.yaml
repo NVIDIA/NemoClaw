@@ -19,12 +19,26 @@
 #                            Discord + Slack coverage with cross-talk assertions. See issue #1903.
 #   sandbox-survival-e2e     Sandbox survival across gateway restarts (onboard, inference,
 #                            gateway stop/start, verify sandbox + workspace + inference).
+#   openshell-gateway-upgrade-e2e
+#                            Validates stale Linux Docker-driver OpenShell gateway
+#                            processes are restarted after an OpenShell upgrade.
+#   gateway-health-honest-e2e
+#                            Coverage guard for #3111: onboard must not log
+#                            "Docker-driver gateway is healthy" when the gateway
+#                            binary crashes on startup (detached-zombie + metadata-
+#                            only health check regression).
 #   hermes-e2e               Hermes Agent E2E — install → onboard --agent hermes → health
 #                            probe → live inference. Validates the multi-agent architecture.
+#   hermes-inference-switch-e2e
+#                            Switches a running Hermes sandbox with `nemohermes inference set`
+#                            and verifies route, config.yaml, hashes, and live requests.
 #   hermes-discord-e2e       Hermes Discord onboarding — validates the top-level Hermes
 #                            Discord schema plus OpenShell placeholder/token isolation.
 #   hermes-slack-e2e         Hermes Slack onboarding — validates the Hermes Slack policy,
 #                            Slack providers, and Python placeholder egress path.
+#   openclaw-inference-switch-e2e
+#                            Switches a running OpenClaw sandbox with `nemoclaw inference set`
+#                            and verifies route, openclaw.json, hashes, and live requests.
 #   credential-migration-e2e Validates legacy ~/.nemoclaw/credentials.json migration to the
 #                            OpenShell gateway, secure zero-fill on unlink, allowlist filter
 #                            on non-credential env keys, and symlink-safe deletion.
@@ -58,8 +72,11 @@ on:
           messaging-compatible-endpoint-e2e,
           kimi-inference-compat-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
-          issue-2478-crash-loop-recovery-e2e, hermes-e2e, hermes-discord-e2e,
+          openshell-gateway-upgrade-e2e, gateway-health-honest-e2e,
+          issue-2478-crash-loop-recovery-e2e, hermes-e2e,
+          hermes-inference-switch-e2e, hermes-discord-e2e,
           hermes-slack-e2e, sandbox-operations-e2e, inference-routing-e2e,
+          openclaw-inference-switch-e2e,
           network-policy-e2e, deployment-services-e2e, diagnostics-e2e,
           credential-migration-e2e,
           snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
@@ -68,7 +85,8 @@ on:
           onboard-repair-e2e, onboard-resume-e2e, runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, device-auth-health-e2e,
-          launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e
+          launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
+          brave-search-e2e
         required: false
         type: string
         default: ""
@@ -318,6 +336,49 @@ jobs:
           path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
           if-no-files-found: ignore
 
+  # ── Brave Search E2E (#2687) ─────────────────────────────────
+  # Validates the full Brave Search path with a real BRAVE_API_KEY:
+  # non-interactive onboard auto-enables web search, the brave network
+  # policy preset is applied, the real key never lands on disk in the
+  # sandbox-readable openclaw.json (placeholder only), and the openclaw
+  # agent + a placeholder-header curl each return real Brave results.
+  # ~3 Brave queries per run (1 onboard validation + 1 agent + 1 curl).
+  brave-search-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',brave-search-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Brave Search E2E test
+        env:
+          # secrets.BRAVE_API_KEY is the only place the real key appears
+          # in this file. GitHub auto-masks any string matching it in
+          # workflow logs; the script also pipes diagnostic output
+          # through redact_stream "$BRAVE_API_KEY" as defence in depth.
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-brave-search"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-brave-search-e2e.sh
+
+      - name: Upload onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-brave-search
+          # The script scrubs $BRAVE_API_KEY from this log in place
+          # before the artifact is uploaded.
+          path: /tmp/nemoclaw-e2e-brave-search-onboard.log
+          if-no-files-found: ignore
+
   # ── Kimi inference compatibility regression (#2620) ───────────
   # Hermetic OpenAI-compatible endpoint path. The mock emits one combined
   # Kimi exec tool call (`hostname; date; uptime`) and the test asserts the
@@ -505,6 +566,41 @@ jobs:
         with:
           name: hermes-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-install.log
+          if-no-files-found: ignore
+
+  # ── Hermes inference switch E2E ─────────────────────────────────
+  # Validates `nemohermes inference set` against a running Hermes sandbox:
+  # OpenShell route, config.yaml patch, config hashes, no automatic restart,
+  # and live requests after the switch.
+  hermes-inference-switch-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',hermes-inference-switch-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Hermes inference switch E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-hermes-inference-switch"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_AGENT: "hermes"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-hermes-inference-switch.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-inference-switch-install-log
+          path: /tmp/nemoclaw-e2e-hermes-inference-switch-install.log
           if-no-files-found: ignore
 
   # ── Hermes Discord E2E ───────────────────────────────────────
@@ -863,6 +959,40 @@ jobs:
           path: test-inference-routing-*.log
           if-no-files-found: ignore
 
+  # ── OpenClaw inference switch E2E ───────────────────────────────
+  # Validates `nemoclaw inference set` against a running OpenClaw sandbox:
+  # OpenShell route, openclaw.json patch, config hash, no automatic restart,
+  # and live requests after the switch.
+  openclaw-inference-switch-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-inference-switch-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run OpenClaw inference switch E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-inference-switch"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-openclaw-inference-switch.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-inference-switch-install-log
+          path: /tmp/nemoclaw-e2e-openclaw-inference-switch-install.log
+          if-no-files-found: ignore
+
   # ── Network policy E2E ───────────────────────────────────────
   # TC-NET-01..07, TC-NET-09: deny-by-default, whitelist, live policy-add,
   # dry-run, hot-reload, inference exemption, permissive mode, SSRF validation.
@@ -1126,6 +1256,97 @@ jobs:
             /tmp/nemoclaw-e2e-upgrade-install.log
           if-no-files-found: ignore
 
+  # ── OpenShell gateway upgrade E2E ────────────────────────────
+  # Reproduces the old-install upgrade edge case for Linux Docker-driver
+  # gateways: a healthy gateway process with stale supervisor/runtime env must
+  # be restarted rather than reused after the current OpenShell install.
+  openshell-gateway-upgrade-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Run OpenShell gateway upgrade E2E test
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-openshell-gateway-upgrade.sh
+
+      - name: Upload gateway upgrade logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openshell-gateway-upgrade-logs
+          path: |
+            /tmp/nemoclaw-e2e-openshell-gateway-upgrade.log
+            /tmp/nemoclaw-e2e-openshell-gateway-start.log
+            /tmp/nemoclaw-e2e-openshell-gateway-process.log
+          if-no-files-found: ignore
+
+  # ── Gateway health-honesty E2E ──────────────────────────────
+  # Coverage guard for #3111. Issue #3111 reported that onboard prints
+  # "✓ Docker-driver gateway is healthy" on Ubuntu 22.04 even though the
+  # shipped openshell-gateway binary (GNU-linked against GLIBC 2.38/2.39)
+  # crashes immediately on a 22.04 host (GLIBC 2.35).
+  #
+  # Root cause is platform-independent: the detached child remains a
+  # zombie so isPidAlive() returns true, registerDockerDriverGatewayEndpoint()
+  # writes metadata without any TCP probe, and isGatewayHealthy() is a
+  # string match on openshell CLI output rather than a real health check.
+  # Any scenario where the gateway binary fails before serving connections
+  # will surface the same false-positive log on ANY Linux host — not just
+  # Ubuntu 22.04.
+  #
+  # This test sabotages the gateway binary with a shim that matches the
+  # #3111 failure mode (immediate exit with GLIBC-style stderr) and asserts
+  # that onboard does NOT log "healthy" and exits non-zero.
+  gateway-health-honest-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',gateway-health-honest-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Run gateway health-honesty E2E test
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-gateway-health-honest.sh
+
+      - name: Upload gateway health-honesty logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-health-honest-logs
+          path: |
+            /tmp/nemoclaw-e2e-gateway-health-honest.log
+            /tmp/nemoclaw-e2e-gateway-health-honest-start.log
+            /tmp/nemoclaw-e2e-gateway-health-honest-process.log
+          if-no-files-found: ignore
+
   # ── Hermes rebuild upgrade E2E ──────────────────────────────
   # Same upgrade scenario as OpenClaw but for Hermes Agent.
   rebuild-hermes-e2e:
@@ -1209,12 +1430,14 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-double-install"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run double onboard E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_E2E_INSTALL_SANDBOX_NAME: "e2e-double-install"
         run: |
           [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
           export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -1246,12 +1469,14 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-repair-install"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run onboard repair E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_E2E_INSTALL_SANDBOX_NAME: "e2e-repair-install"
         run: |
           [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
           export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -1672,15 +1897,18 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        brave-search-e2e,
         kimi-inference-compat-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
+        hermes-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
+        openclaw-inference-switch-e2e,
         network-policy-e2e,
         deployment-services-e2e,
         diagnostics-e2e,
@@ -1689,6 +1917,8 @@ jobs:
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
+        openshell-gateway-upgrade-e2e,
+        gateway-health-honest-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,
@@ -1759,15 +1989,18 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        brave-search-e2e,
         kimi-inference-compat-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
+        hermes-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
+        openclaw-inference-switch-e2e,
         network-policy-e2e,
         deployment-services-e2e,
         diagnostics-e2e,
@@ -1776,6 +2009,8 @@ jobs:
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
+        openshell-gateway-upgrade-e2e,
+        gateway-health-honest-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,
@@ -1894,15 +2129,18 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        brave-search-e2e,
         kimi-inference-compat-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
+        hermes-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
+        openclaw-inference-switch-e2e,
         network-policy-e2e,
         deployment-services-e2e,
         diagnostics-e2e,
@@ -1911,6 +2149,8 @@ jobs:
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
+        openshell-gateway-upgrade-e2e,
+        gateway-health-honest-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,

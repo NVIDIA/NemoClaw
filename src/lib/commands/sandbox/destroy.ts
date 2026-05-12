@@ -4,7 +4,7 @@
 import { Args, Flags } from "@oclif/core";
 
 import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
-import { destroySandbox } from "../../actions/sandbox/runtime";
+import { destroySandbox } from "../../actions/sandbox/destroy";
 
 export default class DestroyCliCommand extends NemoClawCommand {
   static id = "sandbox:destroy";

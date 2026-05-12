@@ -55,6 +55,10 @@ export interface ForwardEntry {
 // Pure classifiers — parse CLI output, no I/O
 // ---------------------------------------------------------------------------
 
+function stripAnsi(value: string): string {
+  return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
 /**
  * Parse `openshell forward list` output into structured forward entries.
  *
@@ -68,7 +72,7 @@ export function parseForwardList(output: string | null | undefined): ForwardEntr
   if (!output || typeof output !== "string") return [];
 
   const entries: ForwardEntry[] = [];
-  const lines = output
+  const lines = stripAnsi(output)
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
