@@ -587,6 +587,7 @@ describe("sandbox test image fixtures", () => {
   it("clears production config recovery artifacts after writing the legacy fixture", () => {
     expect(src).toContain("/sandbox/.openclaw/openclaw.json.bak*");
     expect(src).toContain("/sandbox/.openclaw/openclaw.json.last-good");
+    expect(src).toContain("/sandbox/.openclaw/openclaw.json.nemoclaw-baseline");
     expect(src).toContain("/sandbox/.openclaw-data/logs/config-health.json");
   });
 });
