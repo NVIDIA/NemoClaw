@@ -906,6 +906,10 @@ $ nemoclaw status
 $ nemoclaw status --json
 ```
 
+When at least one sandbox is registered and the named NemoClaw gateway is unreachable, unhealthy, or attached to a different sandbox, the command prints a `gateway: down [state] (reason)` line between the sandbox list and the host-service list, suggests `openshell gateway start --name nemoclaw` or `nemoclaw onboard --resume` to recover, and exits with code `1` so shell scripts and CI can detect the degraded state from `$?`.
+The exit code is set after the report is generated, so JSON callers (`--json`) and the rest of the listing keep working.
+A clean machine with no registered sandboxes keeps the legacy `0` exit because no gateway is expected to be configured yet.
+
 ### `nemoclaw inference set`
 
 Switch the active inference provider or model for a NemoClaw-managed OpenClaw or Hermes sandbox.
