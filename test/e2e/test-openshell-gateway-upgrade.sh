@@ -326,10 +326,10 @@ run_installer_payload() {
     CHAT_UI_URL= \
     bash "$installer" --non-interactive --yes-i-accept-third-party-software \
     >"$log_file" 2>&1 || {
-      diag "${label} installer log tail:"
-      tail -120 "$log_file" 2>/dev/null || true
-      fail "${label} NemoClaw installer failed"
-    }
+    diag "${label} installer log tail:"
+    tail -120 "$log_file" 2>/dev/null || true
+    fail "${label} NemoClaw installer failed"
+  }
   load_shell_path
 }
 
