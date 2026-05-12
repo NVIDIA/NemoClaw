@@ -418,45 +418,12 @@ write_openclaw_config_baseline() {
   local _json5_rc=0
   node - "$config_file" <<'NODE_VALIDATE' || _json5_rc=$?
   const fs = require("fs");
-  const path = require("path");
-  const { execFileSync } = require("child_process");
 
   const configPath = process.argv[2];
 
-  function addResolved(candidates, specifier, roots) {
-    for (const root of roots) {
-      if (!root) continue;
-      try {
-        candidates.push(require.resolve(specifier, { paths: [root] }));
-      } catch {
-        // Try the next root.
-      }
-    }
-  }
-
-  function addExisting(candidates, candidatePath) {
-    if (candidatePath && fs.existsSync(candidatePath)) {
-      candidates.push(candidatePath);
-    }
-  }
-
-  const candidates = [];
-  const repoPluginRoot = path.resolve(process.cwd(), "nemoclaw");
-  addResolved(candidates, "json5", ["/opt/nemoclaw", repoPluginRoot, process.cwd()]);
-  addExisting(candidates, "/opt/nemoclaw/node_modules/json5");
-  addExisting(candidates, path.join(repoPluginRoot, "node_modules", "json5"));
-
-  try {
-    const globalRoot = execFileSync("npm", ["root", "-g"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    addResolved(candidates, "json5", [globalRoot]);
-    addExisting(candidates, path.join(globalRoot, "json5"));
-    addExisting(candidates, path.join(globalRoot, "openclaw", "node_modules", "json5"));
-  } catch {
-    // npm may be absent in minimal runtimes; packaged /opt/nemoclaw remains primary.
-  }
+  // The entrypoint runs this validator as root. Only load the parser from the
+  // packaged plugin tree, never from sandbox-writable cwd or npm global roots.
+  const candidates = ["/opt/nemoclaw/node_modules/json5"];
 
   const attempted = [];
   let JSON5;

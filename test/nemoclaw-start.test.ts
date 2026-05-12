@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "scripts");
+const JSON5_MODULE = path.join(import.meta.dirname, "..", "nemoclaw", "node_modules", "json5");
 
 function configureGuardBlock(src: string): string {
   const start = src.indexOf("# nemoclaw-configure-guard begin");
@@ -2373,12 +2374,20 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     asRoot?: boolean;
     failBaselineChown?: boolean;
     failBaselineChmod?: boolean;
+    omitPackagedJson5?: boolean;
   };
 
   function runWriteBaseline(fixture: BaselineFixture) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-baseline-"));
     const openclawDir = path.join(root, ".openclaw");
+    const optNemoclaw = path.join(root, "opt", "nemoclaw");
     fs.mkdirSync(openclawDir, { recursive: true });
+    fs.mkdirSync(path.join(optNemoclaw, "node_modules"), { recursive: true });
+    if (!fixture.omitPackagedJson5) {
+      fs.cpSync(JSON5_MODULE, path.join(optNemoclaw, "node_modules", "json5"), {
+        recursive: true,
+      });
+    }
     const configPath = path.join(openclawDir, "openclaw.json");
     const baselinePath = path.join(openclawDir, "openclaw.json.nemoclaw-baseline");
     const baselineName = path.basename(baselinePath);
@@ -2394,10 +2403,9 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     ]
       .join("\n")
       .replaceAll("/sandbox", root);
-    const fn = extractShellFunction("write_openclaw_config_baseline").replaceAll(
-      "/sandbox",
-      root,
-    );
+    const fn = extractShellFunction("write_openclaw_config_baseline")
+      .replaceAll("/sandbox", root)
+      .replaceAll("/opt/nemoclaw", optNemoclaw);
     const owner = fixture.dirOwner ?? "sandbox";
     const uid = fixture.asRoot === false ? 1000 : 0;
 
@@ -2496,6 +2504,17 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     expect(result.status).toBe(0);
     expect(baselineExists).toBe(true);
     expect(baselineContent).toBe(config);
+  });
+
+  it("fails closed when the packaged JSON5 parser is unavailable", () => {
+    const config = JSON.stringify({ ok: true });
+    const { result, baselineExists } = runWriteBaseline({
+      configContent: config,
+      omitPackagedJson5: true,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("JSON5 baseline validator failed");
+    expect(baselineExists).toBe(false);
   });
 
   it("skips baseline write in shields-up mode (config dir owned by root)", () => {
