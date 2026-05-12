@@ -16,7 +16,7 @@ function writeExecutable(target: string, contents: string): void {
 
 function runPreinstallUpgradeGuard(
   env: Record<string, string> = {},
-  options: { hasCli?: boolean } = {},
+  options: { backupSucceeds?: boolean; hasCli?: boolean; supportsBackupAll?: boolean } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-upgrade-prompt-"));
   const home = path.join(tmp, "home");
@@ -28,10 +28,23 @@ function runPreinstallUpgradeGuard(
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), '{"sandboxes":{"alpha":{}}}');
+  const supportsBackupAll = options.supportsBackupAll === false ? "0" : "1";
+  const backupSucceeds = options.backupSucceeds === false ? "0" : "1";
   writeExecutable(
     fakeCli,
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${cliLog}"
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+  if [ "${supportsBackupAll}" = "1" ]; then
+    printf 'nemoclaw backup-all\\n'
+  else
+    printf 'nemoclaw onboard\\n'
+  fi
+  exit 0
+fi
+if [ "$1" = "backup-all" ] && [ "\${2:-}" != "--help" ] && [ "${backupSucceeds}" != "1" ]; then
+  exit 3
+fi
 exit 0
 `,
   );
@@ -75,7 +88,26 @@ describe("install.sh OpenShell 0.0.37 gateway upgrade prompt", () => {
     expect(result.stdout + result.stderr).toContain(
       "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash",
     );
-    expect(cliLog).not.toContain("backup-all");
+    expect(cliLog).toContain("--help");
+    expect(cliLog.split(/\r?\n/)).not.toContain("backup-all");
+    expect(openshellLog).toBe("");
+  });
+
+  it("aborts before opt-in when the existing CLI cannot back up sandboxes", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
+      },
+      { supportsBackupAll: false },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("does not support 'nemoclaw backup-all'");
+    expect(result.stdout + result.stderr).not.toContain("Accepted experimental OpenShell gateway upgrade");
+    expect(result.stdout + result.stderr).not.toContain("NemoClaw can run the new automatic upgrade path now");
+    expect(cliLog).toContain("--help");
+    expect(cliLog.split(/\r?\n/)).not.toContain("backup-all");
     expect(openshellLog).toBe("");
   });
 
@@ -88,8 +120,25 @@ describe("install.sh OpenShell 0.0.37 gateway upgrade prompt", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Accepted experimental OpenShell gateway upgrade");
     expect(result.stdout).toContain("RESTORE=1");
+    expect(cliLog).toContain("--help");
     expect(cliLog).toContain("backup-all");
     expect(openshellLog).toContain("gateway destroy -g nemoclaw");
+  });
+
+  it("aborts before retiring the legacy gateway when backup fails", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
+      },
+      { backupSucceeds: false },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("Pre-upgrade backup failed");
+    expect(cliLog).toContain("--help");
+    expect(cliLog.split(/\r?\n/)).toContain("backup-all");
+    expect(openshellLog).toBe("");
   });
 
   it("continues after the user manually prepared the old gateway state", () => {

@@ -1570,6 +1570,13 @@ legacy_openshell_gateway_upgrade_needed() {
   [[ -n "$version" ]] && ! version_gte "$version" "0.0.37"
 }
 
+existing_cli_supports_backup_all() {
+  local cli_runner="$1" help_output
+  [[ -n "$cli_runner" ]] || return 1
+  help_output="$("$cli_runner" --help 2>/dev/null || true)"
+  grep -Eq '(^|[[:space:]])backup-all([[:space:]]|$)' <<<"$help_output"
+}
+
 installer_non_interactive() {
   [[ "${NON_INTERACTIVE:-}" == "1" || "${NEMOCLAW_NON_INTERACTIVE:-}" == "1" ]]
 }
@@ -1585,6 +1592,19 @@ print_openshell_upgrade_manual_commands() {
   Use NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to allow the installer
   to run the backup, gateway retirement, and restore preparation automatically.
 EOF
+}
+
+abort_unsupported_automatic_openshell_upgrade() {
+  local old_openshell_version="$1"
+  warn "Existing sandbox sessions use OpenShell ${old_openshell_version}, but the current ${_CLI_BIN} CLI does not support '${_CLI_BIN} backup-all'."
+  cat <<EOF
+  The automatic OpenShell 0.0.37 gateway upgrade is disabled for this install.
+  Upgrade from a ${_CLI_BIN} version that supports '${_CLI_BIN} backup-all', or
+  manually preserve sandbox state before retiring the old OpenShell gateway.
+
+EOF
+  print_openshell_upgrade_manual_commands
+  error "Aborting before OpenShell gateway upgrade. Existing gateway and sandboxes were left unchanged."
 }
 
 confirm_experimental_openshell_gateway_upgrade() {
@@ -1681,13 +1701,21 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
 
   if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
+    if ! existing_cli_supports_backup_all "$old_cli_runner"; then
+      abort_unsupported_automatic_openshell_upgrade "$old_openshell_version"
+    fi
     if ! confirm_experimental_openshell_gateway_upgrade "$sandbox_count" "$old_openshell_version"; then
       return 0
     fi
   fi
 
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
-  "$old_cli_runner" backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
+  if ! "$old_cli_runner" backup-all 2>&1; then
+    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
+      error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
+    fi
+    warn "Pre-upgrade backup failed (non-fatal). Continuing."
+  fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
   # OpenShell 0.0.37 is not compatible with pre-0.0.37 gateway state, and the
