@@ -109,7 +109,7 @@ flowchart TB
 * - Filesystem
   - System binary tampering, credential theft, config manipulation.
   - Landlock LSM + container mounts
-  - No. Requires sandbox re-creation.
+  - Landlock layout: no. Requires sandbox re-creation. Config lockdown posture: yes, with host-side shields commands.
 
 * - Process
   - Privilege escalation, fork bombs, syscall abuse.
@@ -249,6 +249,21 @@ For sensitive workloads, use a reviewed host-side immutability workflow after in
 | What you can change | Apply a reviewed host-side immutability workflow to lock config and state directories with DAC permissions and the immutable flag where available. |
 | Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
 | Recommendation | For always-on assistants handling sensitive workloads, lock config after initial setup. For development workflows, the writable default is appropriate. |
+
+### Locking Config with Shields
+
+NemoClaw exposes the reviewed host-side immutability workflow through shields commands:
+
+| Command | Purpose |
+|---|---|
+| `nemoclaw <name> shields status` | Show whether the sandbox is in default mutable mode, locked mode, or temporarily unlocked mode. |
+| `nemoclaw <name> shields up` | Opt into lockdown for sensitive workloads by locking config and state entry points with root ownership, read-only modes, and the immutable flag where available. |
+| `nemoclaw <name> shields down --timeout 5m --reason "<reason>"` | Temporarily return a previously locked sandbox to the mutable default for maintenance, then auto-restore lockdown. |
+
+Run shields commands from the host.
+They use privileged OpenShell and Kubernetes paths that do not inherit the sandbox process's Landlock context.
+Landlock itself stays fixed at sandbox creation; `shields up` does not rewrite the Landlock policy.
+Instead, it layers DAC permissions and `chattr +i` over paths that the default Landlock policy intentionally leaves writable.
 
 ### Writable Paths
 

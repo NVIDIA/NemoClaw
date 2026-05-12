@@ -1551,7 +1551,7 @@ function validateSandboxGpuPreflight(config: SandboxGpuConfig): void {
     process.exit(1);
   }
   if (!config.sandboxGpuEnabled) return;
-  if (!isLinuxDockerDriverGatewayEnabled()) return;
+  if (!isLinuxDockerDriverGatewayPlatform()) return;
 
   const cdiSpecDirs = getDockerCdiSpecDirs();
   const cdiSpecFiles = findReadableNvidiaCdiSpecFiles(cdiSpecDirs);
@@ -3788,6 +3788,13 @@ function getGatewayLocalEndpoint(): string {
 
 function isLinuxDockerDriverGatewayEnabled(
   platform: NodeJS.Platform = process.platform,
+  arch: NodeJS.Architecture = process.arch,
+): boolean {
+  return platform === "linux" || (platform === "darwin" && arch === "arm64");
+}
+
+function isLinuxDockerDriverGatewayPlatform(
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
   return platform === "linux";
 }
@@ -3844,6 +3851,51 @@ function resolveOpenShellSandboxBinary(): string | null {
   return null;
 }
 
+function resolveOpenShellVmDriverBinary(): string | null {
+  const configuredDir = process.env.OPENSHELL_DRIVER_DIR;
+  if (configuredDir && configuredDir.trim()) {
+    const configured = path.join(path.resolve(configuredDir.trim()), "openshell-driver-vm");
+    if (fs.existsSync(configured)) return configured;
+  }
+  const sibling = resolveSiblingBinary("openshell-driver-vm");
+  if (sibling) return sibling;
+  for (const candidate of [
+    path.join(os.homedir(), ".local", "bin", "openshell-driver-vm"),
+    path.join(os.homedir(), ".local", "libexec", "openshell", "openshell-driver-vm"),
+    "/usr/local/bin/openshell-driver-vm",
+    "/usr/local/libexec/openshell/openshell-driver-vm",
+    "/usr/local/libexec/openshell-driver-vm",
+    "/usr/bin/openshell-driver-vm",
+  ]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function areRequiredDockerDriverBinariesPresent(
+  platform: NodeJS.Platform = process.platform,
+  binaries: {
+    gatewayBin?: string | null;
+    sandboxBin?: string | null;
+    vmDriverBin?: string | null;
+  } = {},
+  arch: NodeJS.Architecture = process.arch,
+): boolean {
+  if (!isLinuxDockerDriverGatewayEnabled(platform, arch)) return true;
+  const gatewayBin = Object.prototype.hasOwnProperty.call(binaries, "gatewayBin")
+    ? binaries.gatewayBin
+    : resolveOpenShellGatewayBinary();
+  const sandboxBin = Object.prototype.hasOwnProperty.call(binaries, "sandboxBin")
+    ? binaries.sandboxBin
+    : resolveOpenShellSandboxBinary();
+  const hasVmDriverBin = Object.prototype.hasOwnProperty.call(binaries, "vmDriverBin");
+  const vmDriverBin = hasVmDriverBin ? binaries.vmDriverBin : resolveOpenShellVmDriverBinary();
+  if (!gatewayBin) return false;
+  if (platform === "linux" && !sandboxBin) return false;
+  if (platform === "darwin" && hasVmDriverBin && !vmDriverBin) return false;
+  return true;
+}
+
 function getOpenShellDockerSupervisorImage(versionOutput: string | null = null): string {
   if (process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) {
     return process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
@@ -3858,25 +3910,37 @@ function getOpenShellDockerSupervisorImage(versionOutput: string | null = null):
 
 function getDockerDriverGatewayEnv(
   versionOutput: string | null = null,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
   const stateDir = getDockerDriverGatewayStateDir();
   const env: Record<string, string> = {
-    OPENSHELL_DRIVERS: "docker",
+    OPENSHELL_DRIVERS: platform === "darwin" ? "vm" : "docker",
     OPENSHELL_BIND_ADDRESS: "127.0.0.1",
     OPENSHELL_SERVER_PORT: String(GATEWAY_PORT),
     OPENSHELL_DISABLE_TLS: "true",
     OPENSHELL_DISABLE_GATEWAY_AUTH: "true",
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
-    OPENSHELL_GRPC_ENDPOINT: getDockerDriverGatewayEndpoint(),
+    OPENSHELL_GRPC_ENDPOINT:
+      platform === "darwin"
+        ? `http://host.containers.internal:${GATEWAY_PORT}`
+        : getDockerDriverGatewayEndpoint(),
     OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
     OPENSHELL_SSH_GATEWAY_PORT: String(GATEWAY_PORT),
-    OPENSHELL_DOCKER_NETWORK_NAME:
-      process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
-    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: getOpenShellDockerSupervisorImage(versionOutput),
   };
-  const sandboxBin = resolveOpenShellSandboxBinary();
-  if (sandboxBin) {
-    env.OPENSHELL_DOCKER_SUPERVISOR_BIN = sandboxBin;
+  if (platform === "darwin") {
+    env.OPENSHELL_VM_DRIVER_STATE_DIR = path.join(stateDir, "vm-driver");
+    const vmDriverBin = resolveOpenShellVmDriverBinary();
+    if (vmDriverBin) {
+      env.OPENSHELL_DRIVER_DIR = path.dirname(vmDriverBin);
+    }
+  } else {
+    env.OPENSHELL_DOCKER_NETWORK_NAME =
+      process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker";
+    env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE = getOpenShellDockerSupervisorImage(versionOutput);
+    const sandboxBin = resolveOpenShellSandboxBinary();
+    if (sandboxBin) {
+      env.OPENSHELL_DOCKER_SUPERVISOR_BIN = sandboxBin;
+    }
   }
   return env;
 }
@@ -3950,6 +4014,10 @@ function normalizeGatewayExecutablePath(value: string | null | undefined): strin
 
 type DockerDriverGatewayRuntimeDrift = { reason: string };
 
+function shouldRequireDockerDriverEnv(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "linux";
+}
+
 const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_DRIVERS",
   "OPENSHELL_BIND_ADDRESS",
@@ -4006,7 +4074,9 @@ function getDockerDriverGatewayRuntimeDrift(
   pid: number,
   desiredEnv: Record<string, string>,
   gatewayBin?: string | null,
+  platform: NodeJS.Platform = process.platform,
 ): DockerDriverGatewayRuntimeDrift | null {
+  if (!shouldRequireDockerDriverEnv(platform)) return null;
   return getDockerDriverGatewayRuntimeDriftFromSnapshot({
     processEnv: readProcessEnv(pid),
     processExe: readProcessExe(pid),
@@ -4045,7 +4115,7 @@ function isDockerDriverGatewayProcessAlive(): boolean {
   const pid = getDockerDriverGatewayPid();
   if (pid === null || !isPidAlive(pid)) return false;
   if (!isDockerDriverGatewayProcess(pid, resolveOpenShellGatewayBinary(), {
-    requireDockerDriverEnv: true,
+    requireDockerDriverEnv: shouldRequireDockerDriverEnv(),
   })) {
     fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
     return false;
@@ -4067,13 +4137,20 @@ function getDockerDriverGatewayPortListenerPid(
   portCheck: import("./onboard/preflight").PortProbeResult,
   opts: {
     platform?: NodeJS.Platform;
+    arch?: NodeJS.Architecture;
     gatewayBin?: string | null;
     isPidAliveFn?: (pid: number) => boolean;
     isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
   } = {},
 ): number | null {
   if (portCheck.ok) return null;
-  if (!isLinuxDockerDriverGatewayEnabled(opts.platform ?? process.platform)) return null;
+  if (
+    !isLinuxDockerDriverGatewayEnabled(
+      opts.platform ?? process.platform,
+      opts.arch ?? process.arch,
+    )
+  )
+    return null;
   const pid = Number(portCheck.pid);
   if (!Number.isInteger(pid) || pid <= 0) return null;
   const proc = String(portCheck.process || "").toLowerCase();
@@ -4083,7 +4160,9 @@ function getDockerDriverGatewayPortListenerPid(
   const isGateway =
     opts.isDockerDriverGatewayProcessFn ??
     ((candidatePid: number, gatewayBin?: string | null) =>
-      isDockerDriverGatewayProcess(candidatePid, gatewayBin, { requireDockerDriverEnv: true }));
+      isDockerDriverGatewayProcess(candidatePid, gatewayBin, {
+        requireDockerDriverEnv: shouldRequireDockerDriverEnv(opts.platform ?? process.platform),
+      }));
   if (!isGateway(pid, opts.gatewayBin)) return null;
   return pid;
 }
@@ -4588,7 +4667,7 @@ async function preflight(
   if (host.runtime !== "unknown") {
     console.log(`  ✓ Container runtime: ${host.runtime}`);
   }
-  if (isLinuxDockerDriverGatewayEnabled() && host.runtime === "podman") {
+  if (isLinuxDockerDriverGatewayPlatform() && host.runtime === "podman") {
     console.error("  ✗ NemoClaw Linux onboarding now uses OpenShell's Docker driver.");
     console.error("    Podman is not supported for this NemoClaw integration path.");
     console.error("    Switch to Docker Engine and rerun onboarding.");
@@ -4687,8 +4766,7 @@ async function preflight(
         shouldUseOpenshellDevChannel() &&
         !isOpenshellDevVersion(currentVersionOutput);
       const needsDockerDriverBinaries =
-        isLinuxDockerDriverGatewayEnabled() &&
-        (!resolveOpenShellGatewayBinary() || !resolveOpenShellSandboxBinary());
+        isLinuxDockerDriverGatewayEnabled() && !areRequiredDockerDriverBinariesPresent();
       const needsUpgrade =
         !versionGte(currentVersion, minOpenshellVersion) ||
         needsDevChannel ||
@@ -4697,8 +4775,14 @@ async function preflight(
         if (needsDevChannel) {
           console.log("  OpenShell Docker-driver onboarding requires the dev channel. Upgrading...");
         } else if (needsDockerDriverBinaries) {
+          const required =
+            process.platform === "linux"
+              ? "gateway and sandbox"
+              : process.platform === "darwin"
+                ? "gateway and VM driver"
+                : "gateway";
           console.log(
-            "  OpenShell Docker-driver onboarding requires the gateway and sandbox binaries. Reinstalling...",
+            `  OpenShell standalone gateway onboarding requires the ${required} binaries. Reinstalling...`,
           );
         } else {
           console.log(
@@ -5700,7 +5784,11 @@ function getSandboxRuntimeRegistryFields(
     sandboxGpuEnabled: config.sandboxGpuEnabled,
     sandboxGpuMode: config.mode,
     sandboxGpuDevice: config.sandboxGpuDevice,
-    openshellDriver: isLinuxDockerDriverGatewayEnabled() ? "docker" : "kubernetes",
+    openshellDriver: isLinuxDockerDriverGatewayEnabled()
+      ? process.platform === "darwin"
+        ? "vm"
+        : "docker"
+      : "kubernetes",
     openshellVersion: getInstalledOpenshellVersion(
       runCaptureOpenshell(["--version"], { ignoreError: true }),
     ),
@@ -6926,7 +7014,7 @@ async function createSandbox(
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
   // sandbox namespace can resolve hostnames (fixes #626).
-  if (!isLinuxDockerDriverGatewayEnabled()) {
+  if (!isLinuxDockerDriverGatewayPlatform()) {
     console.log("  Setting up sandbox DNS proxy...");
     runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
       ignoreError: true,
@@ -11969,6 +12057,8 @@ module.exports = {
   ensureValidatedBraveSearchCredential,
   formatEnvAssignment,
   getFutureShellPathHint,
+  areRequiredDockerDriverBinariesPresent,
+  shouldRequireDockerDriverEnv,
   getGatewayBootstrapRepairPlan,
   getGatewayLocalEndpoint,
   getGatewayStartEnv,
