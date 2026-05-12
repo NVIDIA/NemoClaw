@@ -317,7 +317,7 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
           // Match both the source path AND the link target — a whitelisted
           // path with a tampered target falls through to the normal
           // containment check.
-          const relFromDir = path.relative(dirPath, fullPath);
+          const relFromDir = path.relative(dirPath, fullPath).split(path.sep).join("/");
           const expectedTarget = AUDIT_SYMLINK_WHITELIST.get(relFromDir);
           if (expectedTarget !== undefined && expectedTarget === linkTarget) {
             continue;
