@@ -27,10 +27,17 @@ const {
   spawnOutputToString,
 }: typeof import("./onboard/compatible-endpoint-smoke") = require("./onboard/compatible-endpoint-smoke");
 const {
+  buildSandboxConfigSyncScript,
+  writeSandboxConfigSyncFile,
+}: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
+const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
   prepareInitialSandboxCreatePolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
+const {
+  getSelectionDrift,
+}: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -348,6 +355,7 @@ import type { TierDefinition, TierPreset } from "./policy/tiers";
 import type { SandboxCreateFailure, ValidationClassification } from "./validation";
 import type { ProbeRecovery } from "./validation-recovery";
 import type { WebSearchConfig } from "./inference/web-search";
+import type { SelectionDrift } from "./onboard/selection-drift";
 
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -2097,15 +2105,6 @@ type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
 
-type SelectionDrift = {
-  changed: boolean;
-  providerChanged: boolean;
-  modelChanged: boolean;
-  existingProvider: string | null;
-  existingModel: string | null;
-  unknown: boolean;
-};
-
 function verifyDirectSandboxGpu(sandboxName: string): void {
   console.log("  Verifying direct sandbox GPU access...");
   for (const proof of buildDirectSandboxGpuProofCommands(sandboxName)) {
@@ -2360,102 +2359,6 @@ function pruneStaleSandboxEntry(sandboxName: string): boolean {
   return liveExists;
 }
 
-function findSelectionConfigPath(dir: string): string | null {
-  if (!dir || !fs.existsSync(dir)) return null;
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      const found = findSelectionConfigPath(fullPath);
-      if (found) return found;
-      continue;
-    }
-    if (entry.name === "config.json") {
-      return fullPath;
-    }
-  }
-  return null;
-}
-
-function readSandboxSelectionConfig(sandboxName: string): ProviderSelectionConfig | null {
-  if (!sandboxName) return null;
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-selection-"));
-  try {
-    const result = runOpenshell(
-      [
-        "sandbox",
-        "download",
-        sandboxName,
-        "/sandbox/.nemoclaw/config.json",
-        `${tmpDir}${path.sep}`,
-      ],
-      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
-    );
-    if (result.status !== 0) return null;
-    const configPath = findSelectionConfigPath(tmpDir);
-    if (!configPath) return null;
-    try {
-      const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      return parsed && typeof parsed === "object" ? parsed : null;
-    } catch {
-      return null;
-    }
-  } catch {
-    return null;
-  } finally {
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // ignore cleanup errors
-    }
-  }
-}
-
-function getSelectionDrift(
-  sandboxName: string,
-  requestedProvider: string | null,
-  requestedModel: string | null,
-): SelectionDrift {
-  const existing = readSandboxSelectionConfig(sandboxName);
-  if (!existing) {
-    return {
-      changed: true,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider: null,
-      existingModel: null,
-      unknown: true,
-    };
-  }
-
-  const existingProvider = typeof existing.provider === "string" ? existing.provider : null;
-  const existingModel = typeof existing.model === "string" ? existing.model : null;
-  if (!existingProvider || !existingModel) {
-    return {
-      changed: true,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider,
-      existingModel,
-      unknown: true,
-    };
-  }
-
-  const providerChanged = Boolean(
-    existingProvider && requestedProvider && existingProvider !== requestedProvider,
-  );
-  const modelChanged = Boolean(existingModel && requestedModel && existingModel !== requestedModel);
-
-  return {
-    changed: providerChanged || modelChanged,
-    providerChanged,
-    modelChanged,
-    existingProvider,
-    existingModel,
-    unknown: false,
-  };
-}
-
 async function confirmRecreateForSelectionDrift(
   sandboxName: string,
   drift: SelectionDrift,
@@ -2483,40 +2386,8 @@ async function confirmRecreateForSelectionDrift(
   return isAffirmativeAnswer(answer);
 }
 
-function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
-  // Do not rewrite openclaw.json at runtime. Model routing is handled by the
-  // host-side gateway (`openshell inference set` in Step 5), not from inside
-  // the sandbox. We write the NemoClaw selection config and normalize the
-  // mutable-default OpenClaw config permissions after the gateway has had a
-  // chance to perform its own startup initialization.
-  return `
-set -euo pipefail
-mkdir -p ~/.nemoclaw
-cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
-${JSON.stringify(selectionConfig, null, 2)}
-EOF_NEMOCLAW_CFG
-config_dir=/sandbox/.openclaw
-if [ -d "$config_dir" ]; then
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
-  if [ "$config_dir_owner" != "root" ]; then
-    chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
-    find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
-    chmod 2770 "$config_dir" 2>/dev/null || true
-    chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
-  fi
-fi
-exit
-`.trim();
-}
-
 function isOpenclawReady(sandboxName: string): boolean {
   return Boolean(fetchGatewayAuthTokenFromSandbox(sandboxName));
-}
-
-function writeSandboxConfigSyncFile(script: string): string {
-  const scriptFile = secureTempFile("nemoclaw-sync", ".sh");
-  fs.writeFileSync(scriptFile, `${script}\n`, { mode: 0o600 });
-  return scriptFile;
 }
 
 function encodeDockerJsonArg(value: LooseValue): string {
@@ -6093,7 +5964,7 @@ async function createSandbox(
     const needsProviderMigration =
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
-    const selectionDrift = getSelectionDrift(sandboxName, provider, model);
+    const selectionDrift = getSelectionDrift(sandboxName, provider, model, { runOpenshell });
     const confirmedSelectionDrift = selectionDrift.changed && !selectionDrift.unknown;
     const sandboxGpuDrift = hasSandboxGpuDrift(sandboxName, effectiveSandboxGpuConfig);
 
@@ -7317,29 +7188,23 @@ async function setupNim(
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
     options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
   }
-  // vLLM: profiles in inference/vllm.ts surface as menu entries only when
-  // the user explicitly opts in via NEMOCLAW_PROVIDER, or when
-  // NEMOCLAW_EXPERIMENTAL=1 is set.
+  // vLLM: an already-running local server is safe to offer in-place because
+  // selecting it is an explicit user action. Managed install/start remains
+  // gated by NEMOCLAW_PROVIDER=install-vllm or NEMOCLAW_EXPERIMENTAL because it
+  // pulls images and starts containers.
   // Read NEMOCLAW_PROVIDER directly so interactive runs with an explicit
   // env-var opt-in surface the menu entry too — requestedProvider is null
   // outside non-interactive mode.
   const explicitProvider = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
-  const userChoseVllm = explicitProvider === "vllm" || explicitProvider === "install-vllm";
-  if (vllmProfile && (userChoseVllm || EXPERIMENTAL)) {
-    if (vllmRunning) {
-      options.push({
-        key: "vllm",
-        label: `Local vLLM (localhost:${VLLM_PORT}) — running (suggested)`,
-      });
-    } else {
-      const verb = hasVllmImage ? "Start" : "Install";
-      options.push({ key: "install-vllm", label: `${verb} vLLM (${vllmProfile.name})` });
-    }
-  } else if (EXPERIMENTAL && vllmRunning) {
+  const userChoseManagedVllm = explicitProvider === "install-vllm";
+  if (vllmRunning) {
     options.push({
       key: "vllm",
-      label: "Local vLLM [experimental] — running",
+      label: `Local vLLM [experimental] (localhost:${VLLM_PORT}) — running (suggested)`,
     });
+  } else if (vllmProfile && (userChoseManagedVllm || EXPERIMENTAL)) {
+    const verb = hasVllmImage ? "Start" : "Install";
+    options.push({ key: "install-vllm", label: `${verb} vLLM (${vllmProfile.name})` });
   }
   // Skipped when Windows-host already won the cache: the running entry
   // above already covers that case.
@@ -7476,15 +7341,13 @@ async function setupNim(
         }
         selected = options.find((o) => o.key === providerKey);
         if (!selected) {
-          // Action keys fall back to the equivalent running-provider key
-          // when the menu only emits the running entry (the install would
+          // Install action keys fall back to the equivalent running-provider
+          // key when the menu only emits the running entry (the install would
           // have been a no-op anyway).
           if (providerKey === "install-ollama") {
             selected = options.find((o) => o.key === "ollama");
           } else if (providerKey === "install-vllm") {
             selected = options.find((o) => o.key === "vllm");
-          } else if (providerKey === "vllm") {
-            selected = options.find((o) => o.key === "install-vllm");
           } else if (providerKey === "ollama") {
             selected = options.find((o) => o.key === "install-ollama");
           }

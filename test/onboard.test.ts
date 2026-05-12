@@ -7028,15 +7028,19 @@ const { createSandbox } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
+    const selectionSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "selection-drift.ts"),
+      "utf-8",
+    );
     assert.match(
       source,
-      /const selectionDrift = getSelectionDrift\(sandboxName, provider, model\);/,
+      /const selectionDrift = getSelectionDrift\(sandboxName, provider, model, \{ runOpenshell \}\);/,
     );
     assert.match(
       source,
       /const confirmedSelectionDrift = selectionDrift\.changed && !selectionDrift\.unknown;/,
     );
-    assert.match(source, /unknown:\s*true/);
+    assert.match(selectionSource, /unknown:\s*true/);
     assert.match(source, /if \(confirmedSelectionDrift\)/);
     assert.match(source, /Recreating sandbox due to provider\/model drift/);
     assert.match(
