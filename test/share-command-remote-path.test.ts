@@ -63,7 +63,13 @@ describe("assertSandboxPathExistsOrExit (#3414)", () => {
     expect(pathChecked).toEqual({ sandboxName: "my-assistant", remotePath: "/sandbox/typo" });
 
     const errorOutput = errSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-    expect(errorOutput).toContain("Sandbox path '/sandbox/typo' does not exist in sandbox 'my-assistant'");
+    // The headline is phrased as a verification failure rather than a
+    // definitive missing-path claim because the dep returns false for both
+    // missing paths and probe failures (CR feedback on #3415).
+    expect(errorOutput).toContain(
+      "Could not verify sandbox path '/sandbox/typo' in sandbox 'my-assistant'",
+    );
+    expect(errorOutput).toContain("missing path or probe failure");
     expect(errorOutput).toContain("Verify the path with: nemoclaw my-assistant connect");
     expect(errorOutput).toContain("ls /sandbox/typo");
     expect(errorOutput).toContain("check for typos");

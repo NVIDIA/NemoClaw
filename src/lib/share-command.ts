@@ -62,7 +62,13 @@ export function assertSandboxPathExistsOrExit(
   remotePath: string,
 ): void {
   if (deps.checkSandboxPathExists(sandboxName, remotePath)) return;
-  console.error(`  Sandbox path '${remotePath}' does not exist in sandbox '${sandboxName}'.`);
+  // The probe returns false for both "path is missing" and "exec itself
+  // failed" (transient gRPC, sandbox just restarted, etc.), so phrase the
+  // headline as a verification failure rather than a definitive claim that
+  // the path is missing.
+  console.error(
+    `  Could not verify sandbox path '${remotePath}' in sandbox '${sandboxName}' (missing path or probe failure).`,
+  );
   console.error(
     `  Verify the path with: ${deps.cliName} ${sandboxName} connect, then ls ${remotePath}`,
   );
