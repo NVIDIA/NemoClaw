@@ -140,7 +140,7 @@ Run the following command to install NemoClaw and run your first sandboxed agent
 </div>
 ```
 
-To find detailed instruction on the installation process, refer to the [Quickstart](get-started/quickstart.md) guide.
+To find detailed instructions on the installation process, refer to the [Quickstart](get-started/quickstart.md) guide.
 
 To learn more about NemoClaw at a high level, refer to the [NemoClaw Overview](about/overview.md), [Architecture Overview](about/how-it-works.md), and [Ecosystem](about/ecosystem.md) pages.
 
