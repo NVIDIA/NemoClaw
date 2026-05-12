@@ -48,6 +48,29 @@ export function defaultShareMountDir(sandboxName: string): string {
 }
 
 /**
+ * Pre-flight: confirm the remote source path actually exists inside the
+ * sandbox. sshfs exits non-zero with empty stderr when the remote path is
+ * missing (e.g. a typo), and the bare "SSHFS mount failed." line we used to
+ * emit left the user with nothing actionable. Returns true when the path
+ * exists; emits a structured error and exits non-zero when it does not.
+ * Exported so the behavior is testable without driving the full sshfs
+ * lifecycle. See #3414.
+ */
+export function assertSandboxPathExistsOrExit(
+  deps: ShareCommandDeps,
+  sandboxName: string,
+  remotePath: string,
+): void {
+  if (deps.checkSandboxPathExists(sandboxName, remotePath)) return;
+  console.error(`  Sandbox path '${remotePath}' does not exist in sandbox '${sandboxName}'.`);
+  console.error(
+    `  Verify the path with: ${deps.cliName} ${sandboxName} connect, then ls ${remotePath}`,
+  );
+  console.error(`  The default is /sandbox; check for typos in any custom path you passed.`);
+  process.exit(1);
+}
+
+/**
  * Resolve the fusermount binary for Linux. FUSE 3 ships `fusermount3`;
  * older FUSE 2 ships `fusermount`. Probe both, preferring v3.
  */
@@ -114,6 +137,9 @@ export async function runShareMount(
 
   // Verify sandbox is running
   await deps.ensureLive(sandboxName);
+
+  // Pre-flight: confirm the remote source path actually exists. See #3414.
+  assertSandboxPathExistsOrExit(deps, sandboxName, remotePath);
 
   // Get SSH config
   const sshConfigResult = deps.getSshConfig(sandboxName);
