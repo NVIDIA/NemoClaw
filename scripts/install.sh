@@ -1627,13 +1627,13 @@ confirm_experimental_openshell_gateway_upgrade() {
   This release upgrades OpenShell to 0.0.37, which uses a different gateway layout.
 
   NemoClaw can run the new automatic upgrade path now:
-    1. back up registered claws
+    1. back up registered sandbox state
     2. retire the old OpenShell gateway while the old CLI is still available
     3. install OpenShell 0.0.37
-    4. recreate and restore the claw during onboarding
+    4. recreate and restore the registered sandbox during onboarding
 
-  This upgrade path is new. Durable workspace and configuration state should be
-  preserved, but running processes may be interrupted.
+  This upgrade path is new. Durable workspace and agent configuration state
+  should be preserved, but running processes may be interrupted.
 
 EOF
   print_openshell_upgrade_manual_commands
