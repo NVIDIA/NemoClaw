@@ -20,8 +20,9 @@
 #   sandbox-survival-e2e     Sandbox survival across gateway restarts (onboard, inference,
 #                            gateway stop/start, verify sandbox + workspace + inference).
 #   openshell-gateway-upgrade-e2e
-#                            Validates old OpenShell install upgrade, stale gateway
-#                            restart, and same running agent survival.
+#                            Validates real v0.0.36 curl install upgrade into
+#                            OpenShell 0.0.37 with pre-upgrade backup, restored
+#                            agent state, and the same agent type running.
 #   gateway-health-honest-e2e
 #                            Coverage guard for #3111: onboard must not log
 #                            "Docker-driver gateway is healthy" when the gateway
