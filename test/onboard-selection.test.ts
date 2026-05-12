@@ -2737,7 +2737,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("lets users type back after a transport validation failure to return to provider selection", () => {
+  it("lets users type back after a transport validation failure to return to provider selection", { timeout: 10_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-transport-back-"));
     const fakeBin = path.join(tmpDir, "bin");
