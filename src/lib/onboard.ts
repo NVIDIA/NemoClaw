@@ -3704,6 +3704,40 @@ function stopDockerDriverGatewayProcess(): boolean {
   return stopped;
 }
 
+function stopLegacyGatewayClusterContainer(): boolean {
+  const containerName = getGatewayClusterContainerName();
+  const inspectResult = dockerInspect(["--type", "container", containerName], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  if (inspectResult.status !== 0) return false;
+
+  dockerStop(containerName, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  dockerRm(containerName, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+
+  const postInspectResult = dockerInspect(["--type", "container", containerName], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  return postInspectResult.status !== 0;
+}
+
+function retireLegacyGatewayForDockerDriverUpgrade(): void {
+  runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+  stopDockerDriverGatewayProcess();
+  const stoppedLegacyContainer = stopLegacyGatewayClusterContainer();
+  removeDockerDriverGatewayRegistration();
+  if (stoppedLegacyContainer) {
+    console.log("  ✓ Legacy OpenShell gateway container stopped for Docker-driver upgrade");
+  }
+}
+
 function restartDockerDriverGatewayProcessForDrift(pid: number, reason: string): void {
   console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
   terminateDockerDriverGatewayProcess(pid);
@@ -4855,8 +4889,13 @@ async function preflight(
 
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log(`  Cleaning up previous ${cliDisplayName()} session...`);
-    runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-    destroyGateway();
+    if (isLinuxDockerDriverGatewayEnabled()) {
+      retireLegacyGatewayForDockerDriverUpgrade();
+    } else {
+      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      destroyGateway();
+    }
+    gatewayReuseState = "missing";
     console.log("  ✓ Previous session cleaned up");
   }
 
@@ -11334,9 +11373,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       }
       if (isLinuxDockerDriverGatewayEnabled() && gatewayReuseState !== "missing") {
         note("  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.");
-        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-        destroyGateway();
-        registry.clearAll();
+        retireLegacyGatewayForDockerDriverUpgrade();
+        gatewayReuseState = "missing";
       }
       startRecordedStep("gateway");
       await startGateway(gpu, { gpuPassthrough });
