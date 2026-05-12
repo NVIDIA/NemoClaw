@@ -837,6 +837,20 @@ describe("policies", () => {
       expect(discordMutationRules.some((rule) => rule.path === "/**")).toBe(false);
     });
 
+    it("Hermes GitHub policy does not whitelist the absent gh CLI (#2179)", () => {
+      const content = fs.readFileSync(
+        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
+        "utf8",
+      );
+      const parsed = YAML.parse(content);
+      const githubPolicy = parsed.network_policies?.github as
+        | { binaries?: Array<{ path?: string }> }
+        | undefined;
+      const binaries = (githubPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(["/opt/hermes/.venv/bin/python", "/usr/bin/git"]);
+      expect(binaries).not.toContain("/usr/bin/gh");
+    });
+
     it("REST policy YAML avoids deprecated tls: terminate", () => {
       const agentsDir = path.join(REPO_ROOT, "agents");
       const agentPolicyFiles = fs.existsSync(agentsDir)
