@@ -114,19 +114,18 @@ RUN mkdir -p /sandbox/.hermes/memories \
     done
 
 # Pre-create shell init files for the sandbox user.
-# The /sandbox home directory is Landlock read-only at runtime (#804), so these
-# files must exist at build time. The Hermes entrypoint writes proxy vars and
+# The Hermes entrypoint writes proxy vars and
 # HERMES_HOME to /tmp/nemoclaw-proxy-env.sh (root-owned, mode 444); these rc
 # files source it on every interactive `openshell sandbox connect` session.
 # Ref: #2376.
 # hadolint ignore=SC2016,SC2028
 RUN printf '%s\n' \
-        '# Source runtime proxy + HERMES_HOME config (Landlock read-only home, #804)' \
+        '# Source runtime proxy + HERMES_HOME config' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
         'export PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"' \
         > /sandbox/.bashrc \
     && printf '%s\n' \
-        '# Source runtime proxy + HERMES_HOME config (Landlock read-only home, #804)' \
+        '# Source runtime proxy + HERMES_HOME config' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
         'export PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"' \
         > /sandbox/.profile \

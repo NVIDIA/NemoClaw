@@ -368,12 +368,15 @@ openclaw agent --agent main --local -m "hello" --session-id test
 
 ## Next Steps
 
-- [NemoHermes Quickstart](quickstart-hermes.md) to launch Hermes instead of the default OpenClaw agent.
+Navigate to the following topics to learn more about NemoClaw.
+
+- [NemoClaw Overview](../about/overview.md) to learn what NemoClaw is and its capabilities.
+- [Architecture Overview](../about/how-it-works.md) to understand how NemoClaw works.
+- [Ecosystem](../about/ecosystem.md) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+
+Use the following topics to learn how to use NemoClaw.
+
 - [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle.md) for port forwards, rebuilds, upgrades, and uninstall.
-- [Switch inference providers](../inference/switch-inference-providers.md) to use a different model or endpoint.
-- [Approve or deny network requests](../network-policy/approve-network-requests.md) when the agent tries to reach external hosts.
-- [Customize the network policy](../network-policy/customize-network-policy.md) to pre-approve trusted domains.
-- [Common integration policy examples](../network-policy/integration-policy-examples.md) for maintained policy presets such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
-- [Deploy to a remote GPU instance](../deployment/deploy-to-remote-gpu.md) for always-on operation.
-- [Monitor sandbox activity](../monitoring/monitor-sandbox-activity.md) through the OpenShell TUI.
-- [Consult the troubleshooting guide](../reference/troubleshooting.md) for common error messages and resolution steps.
+- [Inference Options](../inference/inference-options.md) to use a different model or endpoint.
+- [Network Policies](../network-policy/approve-network-requests.md) to manage egress approvals.
+- [Troubleshooting](../reference/troubleshooting.md) for common error messages and resolution steps.

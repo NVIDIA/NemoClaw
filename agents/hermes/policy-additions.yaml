@@ -76,7 +76,9 @@ network_policies:
         port: 443
         access: full
     binaries:
-      - { path: /usr/bin/gh }
+      # `gh` was historically whitelisted here, but the Hermes sandbox base
+      # image (agents/hermes/Dockerfile.base) only apt-installs `git`, not
+      # `gh`, so the entry was a phantom — see #2179.
       - { path: /usr/bin/git }
       - { path: /opt/hermes/.venv/bin/python }
 
