@@ -160,6 +160,9 @@ function lsofPidsForPort(port: number, deps: StaleGatewayDeps): number[] {
   const result = deps.run("lsof", ["-ti", `:${port}`], { env: deps.env });
   if (result.status !== 0 && result.status !== 1) {
     // Status 1 from lsof is "no listeners" — normal. Anything else is a real error.
+    const warn = deps.warn ?? ((m: string) => console.warn(m));
+    const detail = result.stderr.trim() || `status ${String(result.status)}`;
+    warn(`lsof failed while scanning dashboard port ${port}: ${detail}`);
     return [];
   }
   return parsePidLines(result.stdout);

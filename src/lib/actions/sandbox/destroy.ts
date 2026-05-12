@@ -70,7 +70,7 @@ function dockerDriverGatewayPidFile(): string {
 function isDockerDriverGatewayPid(pid: number): boolean {
   try {
     const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8").replace(/\0/g, " ");
-    return cmdline.includes("openshell-gateway");
+    return cmdline.includes("openshell-gateway") || cmdline.includes("openclaw-gateway");
   } catch {
     return false;
   }
