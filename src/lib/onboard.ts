@@ -3507,6 +3507,146 @@ function installOpenshell(): {
   };
 }
 
+function areRequiredDockerDriverBinariesPresent(platform: NodeJS.Platform = process.platform): boolean {
+  if (!resolveOpenShellGatewayBinary()) return false;
+  if (platform === "linux" && !resolveOpenShellSandboxBinary()) return false;
+  return true;
+}
+
+function ensureOpenshellForOnboard(): {
+  installed?: boolean;
+  localBin: string | null;
+  futureShellPathHint: string | null;
+} {
+  // OpenShell CLI: install if missing, upgrade if below minimum, and repair
+  // incomplete Docker-driver installs before gateway start.
+  let openshellInstall: {
+    installed?: boolean;
+    localBin: string | null;
+    futureShellPathHint: string | null;
+  } = {
+    localBin: null,
+    futureShellPathHint: null,
+  };
+  if (!isOpenshellInstalled()) {
+    console.log("  openshell CLI not found. Installing...");
+    openshellInstall = installOpenshell();
+    if (!openshellInstall.installed) {
+      console.error("  Failed to install openshell CLI.");
+      console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+      process.exit(1);
+    }
+  } else {
+    const currentVersion = getInstalledOpenshellVersion();
+    if (!currentVersion) {
+      console.log("  openshell version could not be determined. Reinstalling...");
+      openshellInstall = installOpenshell();
+      if (!openshellInstall.installed) {
+        console.error("  Failed to reinstall openshell CLI.");
+        console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+        process.exit(1);
+      }
+    } else {
+      const minOpenshellVersion = getBlueprintMinOpenshellVersion() ?? "0.0.37";
+      const currentVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
+      const needsDevChannel =
+        isLinuxDockerDriverGatewayEnabled() &&
+        shouldUseOpenshellDevChannel() &&
+        !isOpenshellDevVersion(currentVersionOutput);
+      const needsDockerDriverBinaries =
+        isLinuxDockerDriverGatewayEnabled() && !areRequiredDockerDriverBinariesPresent();
+      const needsUpgrade =
+        !versionGte(currentVersion, minOpenshellVersion) ||
+        needsDevChannel ||
+        needsDockerDriverBinaries;
+      if (needsUpgrade) {
+        if (needsDevChannel) {
+          console.log("  OpenShell Docker-driver onboarding requires the dev channel. Upgrading...");
+        } else if (needsDockerDriverBinaries) {
+          const required = process.platform === "linux" ? "gateway and sandbox" : "gateway";
+          console.log(
+            `  OpenShell Docker-driver onboarding requires the ${required} binaries. Reinstalling...`,
+          );
+        } else {
+          console.log(
+            `  openshell ${currentVersion} is below minimum required version. Upgrading...`,
+          );
+        }
+        openshellInstall = installOpenshell();
+        if (!openshellInstall.installed) {
+          console.error("  Failed to upgrade openshell CLI.");
+          console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+          process.exit(1);
+        }
+      }
+    }
+  }
+  const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
+  console.log(`  ✓ openshell CLI: ${openshellVersionOutput || "unknown"}`);
+  // Enforce nemoclaw-blueprint/blueprint.yaml's min_openshell_version. Without
+  // this check, users can complete a full onboard against an OpenShell that
+  // pre-dates required CLI surface (e.g. `sandbox exec`, `--upload`) and hit
+  // silent failures inside the sandbox at runtime. See #1317.
+  const installedOpenshellVersion = getInstalledOpenshellVersion(openshellVersionOutput);
+  const minOpenshellVersion = getBlueprintMinOpenshellVersion();
+  if (
+    installedOpenshellVersion &&
+    minOpenshellVersion &&
+    !versionGte(installedOpenshellVersion, minOpenshellVersion)
+  ) {
+    console.error("");
+    console.error(
+      `  ✗ openshell ${installedOpenshellVersion} is below the minimum required by this NemoClaw release.`,
+    );
+    console.error(`    blueprint.yaml min_openshell_version: ${minOpenshellVersion}`);
+    console.error("");
+    console.error("    Upgrade openshell and retry:");
+    console.error("      https://github.com/NVIDIA/OpenShell/releases");
+    console.error(
+      "    Or remove the existing binary so the installer can re-fetch a current build:",
+    );
+    console.error('      command -v openshell && rm -f "$(command -v openshell)"');
+    console.error("");
+    process.exit(1);
+  }
+  // Enforce nemoclaw-blueprint/blueprint.yaml's max_openshell_version. Newer
+  // OpenShell releases may change sandbox semantics that this NemoClaw version
+  // has not been validated against. Blocking early avoids silent runtime
+  // breakage. Users should upgrade NemoClaw to pick up support for newer
+  // OpenShell releases.
+  const maxOpenshellVersion = getBlueprintMaxOpenshellVersion();
+  if (
+    installedOpenshellVersion &&
+    maxOpenshellVersion &&
+    !versionGte(maxOpenshellVersion, installedOpenshellVersion) &&
+    !shouldAllowOpenshellAboveBlueprintMax(openshellVersionOutput)
+  ) {
+    console.error("");
+    console.error(
+      `  ✗ openshell ${installedOpenshellVersion} is above the maximum supported by this NemoClaw release.`,
+    );
+    console.error(`    blueprint.yaml max_openshell_version: ${maxOpenshellVersion}`);
+    console.error("");
+    console.error(
+      `    Upgrade ${cliDisplayName()} to a version that supports your OpenShell release,`,
+    );
+    console.error("    or install a supported OpenShell version:");
+    console.error("      https://github.com/NVIDIA/OpenShell/releases");
+    console.error("");
+    process.exit(1);
+  }
+  if (openshellInstall.futureShellPathHint) {
+    console.log(
+      `  Note: openshell was installed to ${openshellInstall.localBin} for this onboarding run.`,
+    );
+    console.log(`  Future shells may still need: ${openshellInstall.futureShellPathHint}`);
+    console.log(
+      "  Add that export to your shell profile, or open a new terminal before running openshell directly.",
+    );
+  }
+  return openshellInstall;
+}
+
 function sleep(seconds: number): void {
   sleepSeconds(seconds);
 }
@@ -4643,138 +4783,7 @@ async function preflight(
     }
   }
 
-  // OpenShell CLI — install if missing, upgrade if below minimum version.
-  // MIN_VERSION in install-openshell.sh handles the version gate; calling it
-  // when openshell already exists is safe (it exits early if version is OK).
-  let openshellInstall: {
-    installed?: boolean;
-    localBin: string | null;
-    futureShellPathHint: string | null;
-  } = {
-    localBin: null,
-    futureShellPathHint: null,
-  };
-  if (!isOpenshellInstalled()) {
-    console.log("  openshell CLI not found. Installing...");
-    openshellInstall = installOpenshell();
-    if (!openshellInstall.installed) {
-      console.error("  Failed to install openshell CLI.");
-      console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
-      process.exit(1);
-    }
-  } else {
-    // Ensure the installed version meets the minimum required by install-openshell.sh.
-    // The script itself is idempotent — it exits early if the version is already sufficient.
-    const currentVersion = getInstalledOpenshellVersion();
-    if (!currentVersion) {
-      console.log("  openshell version could not be determined. Reinstalling...");
-      openshellInstall = installOpenshell();
-      if (!openshellInstall.installed) {
-        console.error("  Failed to reinstall openshell CLI.");
-        console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
-        process.exit(1);
-      }
-    } else {
-      // Source of truth: min_openshell_version in nemoclaw-blueprint/blueprint.yaml.
-      // Fall back to the released Docker-driver floor (also MIN_VERSION in
-      // scripts/install-openshell.sh) if the blueprint cannot be read.
-      const minOpenshellVersion = getBlueprintMinOpenshellVersion() ?? "0.0.37";
-      const currentVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
-      const needsDevChannel =
-        isLinuxDockerDriverGatewayEnabled() &&
-        shouldUseOpenshellDevChannel() &&
-        !isOpenshellDevVersion(currentVersionOutput);
-      const needsDockerDriverBinaries =
-        isLinuxDockerDriverGatewayEnabled() &&
-        (!resolveOpenShellGatewayBinary() || !resolveOpenShellSandboxBinary());
-      const needsUpgrade =
-        !versionGte(currentVersion, minOpenshellVersion) ||
-        needsDevChannel ||
-        needsDockerDriverBinaries;
-      if (needsUpgrade) {
-        if (needsDevChannel) {
-          console.log("  OpenShell Docker-driver onboarding requires the dev channel. Upgrading...");
-        } else if (needsDockerDriverBinaries) {
-          console.log(
-            "  OpenShell Docker-driver onboarding requires the gateway and sandbox binaries. Reinstalling...",
-          );
-        } else {
-          console.log(
-            `  openshell ${currentVersion} is below minimum required version. Upgrading...`,
-          );
-        }
-        openshellInstall = installOpenshell();
-        if (!openshellInstall.installed) {
-          console.error("  Failed to upgrade openshell CLI.");
-          console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
-          process.exit(1);
-        }
-      }
-    }
-  }
-  const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
-  console.log(`  ✓ openshell CLI: ${openshellVersionOutput || "unknown"}`);
-  // Enforce nemoclaw-blueprint/blueprint.yaml's min_openshell_version. Without
-  // this check, users can complete a full onboard against an OpenShell that
-  // pre-dates required CLI surface (e.g. `sandbox exec`, `--upload`) and hit
-  // silent failures inside the sandbox at runtime. See #1317.
-  const installedOpenshellVersion = getInstalledOpenshellVersion(openshellVersionOutput);
-  const minOpenshellVersion = getBlueprintMinOpenshellVersion();
-  if (
-    installedOpenshellVersion &&
-    minOpenshellVersion &&
-    !versionGte(installedOpenshellVersion, minOpenshellVersion)
-  ) {
-    console.error("");
-    console.error(
-      `  ✗ openshell ${installedOpenshellVersion} is below the minimum required by this NemoClaw release.`,
-    );
-    console.error(`    blueprint.yaml min_openshell_version: ${minOpenshellVersion}`);
-    console.error("");
-    console.error("    Upgrade openshell and retry:");
-    console.error("      https://github.com/NVIDIA/OpenShell/releases");
-    console.error(
-      "    Or remove the existing binary so the installer can re-fetch a current build:",
-    );
-    console.error('      command -v openshell && rm -f "$(command -v openshell)"');
-    console.error("");
-    process.exit(1);
-  }
-  // Enforce nemoclaw-blueprint/blueprint.yaml's max_openshell_version. Newer
-  // OpenShell releases may change sandbox semantics that this NemoClaw version
-  // has not been validated against. Blocking early avoids silent runtime
-  // breakage. Users should upgrade NemoClaw to pick up support for newer
-  // OpenShell releases.
-  const maxOpenshellVersion = getBlueprintMaxOpenshellVersion();
-  if (
-    installedOpenshellVersion &&
-    maxOpenshellVersion &&
-    !versionGte(maxOpenshellVersion, installedOpenshellVersion) &&
-    !shouldAllowOpenshellAboveBlueprintMax(openshellVersionOutput)
-  ) {
-    console.error("");
-    console.error(
-      `  ✗ openshell ${installedOpenshellVersion} is above the maximum supported by this NemoClaw release.`,
-    );
-    console.error(`    blueprint.yaml max_openshell_version: ${maxOpenshellVersion}`);
-    console.error("");
-    console.error(
-      `    Upgrade ${cliDisplayName()} to a version that supports your OpenShell release,`,
-    );
-    console.error("    or install a supported OpenShell version:");
-    console.error("      https://github.com/NVIDIA/OpenShell/releases");
-    console.error("");
-    process.exit(1);
-  }
-  if (openshellInstall.futureShellPathHint) {
-    console.log(
-      `  Note: openshell was installed to ${openshellInstall.localBin} for this onboarding run.`,
-    );
-    console.log(`  Future shells may still need: ${openshellInstall.futureShellPathHint}`);
-    console.log(
-      "  Add that export to your shell profile, or open a new terminal before running openshell directly.",
-    );
-  }
+  ensureOpenshellForOnboard();
 
   // Clean up stale or unnamed NemoClaw gateway state before checking ports.
   // A healthy named gateway can be reused later in onboarding, so avoid
@@ -11888,6 +11897,8 @@ module.exports = {
   ensureValidatedBraveSearchCredential,
   formatEnvAssignment,
   getFutureShellPathHint,
+  areRequiredDockerDriverBinariesPresent,
+  ensureOpenshellForOnboard,
   getGatewayBootstrapRepairPlan,
   getGatewayLocalEndpoint,
   getGatewayStartEnv,

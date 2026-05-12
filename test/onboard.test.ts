@@ -80,6 +80,7 @@ type OnboardTestInternals = {
   getGatewayReuseState: ShimFn<string>;
   getPortConflictServiceHints: (platform?: string) => string[];
   getFutureShellPathHint: (binDir: string, pathValue?: string) => string | null;
+  areRequiredDockerDriverBinariesPresent: (platform?: NodeJS.Platform) => boolean;
   getSandboxInferenceConfig: ShimFn<SandboxInferenceConfig>;
   getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
   getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
@@ -209,6 +210,7 @@ function isOnboardTestInternals(
     typeof value.getDockerDriverGatewayEnv === "function" &&
     typeof value.getDockerDriverGatewayRuntimeDriftFromSnapshot === "function" &&
     typeof value.isLinuxDockerDriverGatewayEnabled === "function" &&
+    typeof value.areRequiredDockerDriverBinariesPresent === "function" &&
     typeof value.isDockerDriverGatewayPortListener === "function" &&
     typeof value.findReadableNvidiaCdiSpecFiles === "function" &&
     typeof value.parseDockerCdiSpecDirs === "function" &&
@@ -258,6 +260,7 @@ const {
   getGatewayReuseState,
   getPortConflictServiceHints,
   getFutureShellPathHint,
+  areRequiredDockerDriverBinariesPresent,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
@@ -2822,6 +2825,34 @@ startGateway(null).catch(() => {});
         "/home/test/.local/bin:/usr/local/bin:/usr/bin",
       ),
     ).toBe(null);
+  });
+
+  it("requires platform-specific Docker-driver binaries for onboard repair", () => {
+    const oldGateway = process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN;
+    const oldSandbox = process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN;
+    try {
+      process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN = "/tmp/openshell-gateway";
+      delete process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN;
+      expect(areRequiredDockerDriverBinariesPresent("darwin")).toBe(true);
+      expect(areRequiredDockerDriverBinariesPresent("linux")).toBe(false);
+
+      process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN = "/tmp/openshell-sandbox";
+      expect(areRequiredDockerDriverBinariesPresent("linux")).toBe(true);
+
+      delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN;
+      expect(areRequiredDockerDriverBinariesPresent("darwin")).toBe(false);
+    } finally {
+      if (oldGateway === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN = oldGateway;
+      }
+      if (oldSandbox === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN = oldSandbox;
+      }
+    }
   });
 
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {

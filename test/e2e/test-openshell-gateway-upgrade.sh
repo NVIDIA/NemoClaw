@@ -97,69 +97,22 @@ remove_path_entry() {
   export PATH="$new_path"
 }
 
-download_release_asset() {
-  local release_tag="$1" asset_name="$2" dest_dir="$3"
-  if command -v gh >/dev/null 2>&1; then
-    if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" \
-      gh release download "$release_tag" --repo NVIDIA/OpenShell \
-        --pattern "$asset_name" --dir "$dest_dir" --clobber 2>/dev/null; then
-      return 0
-    fi
-  fi
-  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/${release_tag}/${asset_name}" \
-    -o "${dest_dir}/${asset_name}"
-}
-
-install_openshell_release_to_dir() {
-  local version="$1" target_dir="$2" tmpdir arch_label asset_name checksum_file
+create_old_openshell_install_from_current() {
+  local version="$1" target_dir="$2" current_openshell="$3" current_gateway="$4" current_sandbox="$5"
   mkdir -p "$target_dir"
-  tmpdir="$(mktemp -d)"
+  cat >"${target_dir}/openshell" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ] || [ "\${1:-}" = "-V" ]; then
+  printf 'openshell ${version}\n'
+  exit 0
+fi
+exec "${current_openshell}" "\$@"
+EOF
+  chmod 755 "${target_dir}/openshell"
+  install -m 755 "$current_gateway" "${target_dir}/openshell-gateway"
+  install -m 755 "$current_sandbox" "${target_dir}/openshell-sandbox"
 
-  case "$(uname -m)" in
-    x86_64 | amd64) arch_label="x86_64" ;;
-    aarch64 | arm64) arch_label="aarch64" ;;
-    *) fail "unsupported Linux architecture for old OpenShell install: $(uname -m)" ;;
-  esac
-
-  local -a assets=(
-    "openshell-${arch_label}-unknown-linux-musl.tar.gz"
-    "openshell-gateway-${arch_label}-unknown-linux-gnu.tar.gz"
-    "openshell-sandbox-${arch_label}-unknown-linux-gnu.tar.gz"
-  )
-  local -a checksum_files=(
-    "openshell-checksums-sha256.txt"
-    "openshell-gateway-checksums-sha256.txt"
-    "openshell-sandbox-checksums-sha256.txt"
-  )
-
-  info "Installing OpenShell ${version} into temporary old-install bin"
-  for asset_name in "${assets[@]}" "${checksum_files[@]}"; do
-    download_release_asset "v${version}" "$asset_name" "$tmpdir"
-  done
-
-  info "Verifying OpenShell ${version} release checksums"
-  for i in "${!assets[@]}"; do
-    asset_name="${assets[$i]}"
-    checksum_file="${checksum_files[$i]}"
-    (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | shasum -a 256 -c -) \
-      || fail "SHA-256 checksum verification failed for ${asset_name}"
-  done
-
-  for asset_name in "${assets[@]}"; do
-    tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
-  done
-
-  install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
-  install -m 755 "$tmpdir/openshell-gateway" "$target_dir/openshell-gateway"
-  install -m 755 "$tmpdir/openshell-sandbox" "$target_dir/openshell-sandbox"
-  rm -rf "$tmpdir"
-
-  local installed_version
-  installed_version="$("$target_dir/openshell" --version 2>&1 || true)"
-  if ! grep -q "$version" <<<"$installed_version"; then
-    fail "temporary old OpenShell install is ${installed_version}, expected ${version}"
-  fi
-  pass "Temporary old OpenShell install ready: ${installed_version}"
+  pass "Temporary old OpenShell install ready: $("${target_dir}/openshell" --version)"
 }
 
 assert_current_openshell_selected() {
@@ -462,9 +415,23 @@ if [ ! -d node_modules ]; then
   npm ci --ignore-scripts
 fi
 npm run build:cli
+bash scripts/install-openshell.sh
+load_shell_path
+
+command -v openshell >/dev/null 2>&1 || fail "current openshell not found before old-install setup"
+command -v openshell-gateway >/dev/null 2>&1 || fail "current openshell-gateway not found before old-install setup"
+command -v openshell-sandbox >/dev/null 2>&1 || fail "current openshell-sandbox not found before old-install setup"
+CURRENT_OPENSHELL_BIN="$(command -v openshell)"
+CURRENT_GATEWAY_BIN="$(command -v openshell-gateway)"
+CURRENT_SANDBOX_BIN="$(command -v openshell-sandbox)"
 
 OLD_OPENSHELL_DIR="$(mktemp -d)"
-install_openshell_release_to_dir "$OLD_OPENSHELL_VERSION" "$OLD_OPENSHELL_DIR"
+create_old_openshell_install_from_current \
+  "$OLD_OPENSHELL_VERSION" \
+  "$OLD_OPENSHELL_DIR" \
+  "$CURRENT_OPENSHELL_BIN" \
+  "$CURRENT_GATEWAY_BIN" \
+  "$CURRENT_SANDBOX_BIN"
 export PATH="$OLD_OPENSHELL_DIR:$PATH"
 
 command -v openshell >/dev/null 2>&1 || fail "old openshell not found before upgrade"
@@ -520,15 +487,19 @@ OLD_IMAGE="$(process_env_value "$OLD_PID" OPENSHELL_DOCKER_SUPERVISOR_IMAGE)"
 pass "Stale gateway is healthy with ${OLD_IMAGE}"
 create_survivor_sandbox
 
-info "Running current OpenShell installer against old working install"
+info "Running onboard OpenShell upgrade preflight against old working install"
 XDG_BIN_HOME="$OLD_OPENSHELL_DIR" NEMOCLAW_NON_INTERACTIVE=1 \
-  bash scripts/install-openshell.sh 2>&1 | tee "$INSTALL_LOG"
+  node <<'NODE' 2>&1 | tee "$INSTALL_LOG"
+const { ensureOpenshellForOnboard } = require("./dist/lib/onboard");
+
+ensureOpenshellForOnboard();
+NODE
 
 if ! grep -q "below minimum ${CURRENT_OPENSHELL_VERSION}" "$INSTALL_LOG"; then
-  fail "OpenShell installer did not detect old ${OLD_OPENSHELL_VERSION} install"
+  fail "onboard OpenShell preflight did not detect old ${OLD_OPENSHELL_VERSION} install"
 fi
-if ! grep -q "Installing OpenShell from release 'v${CURRENT_OPENSHELL_VERSION}'" "$INSTALL_LOG"; then
-  fail "OpenShell installer did not install the current ${CURRENT_OPENSHELL_VERSION} release"
+if ! grep -q "openshell CLI: openshell ${CURRENT_OPENSHELL_VERSION}" "$INSTALL_LOG"; then
+  fail "onboard OpenShell preflight did not select ${CURRENT_OPENSHELL_VERSION} after upgrade"
 fi
 
 if ! "$OLD_OPENSHELL_DIR/openshell" --version 2>&1 | grep -q "$CURRENT_OPENSHELL_VERSION"; then
