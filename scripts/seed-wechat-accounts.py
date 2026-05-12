@@ -137,6 +137,12 @@ def _patch_openclaw_config(account_id: str) -> None:
             file=sys.stderr,
         )
         return
+    if not isinstance(cfg, dict):
+        print(
+            f"[seed-wechat-accounts] {cfg_path} root is not a JSON object; cannot register channel",
+            file=sys.stderr,
+        )
+        return
 
     channels = cfg.setdefault("channels", {})
     weixin = channels.setdefault("openclaw-weixin", {})
@@ -210,8 +216,8 @@ def main() -> int:
         _patch_openclaw_config(account_id)
     else:
         print(
-            f"[seed-wechat-accounts] wechat not in active channels; preserving account "
-            f"state files but skipping openclaw.json channel registration."
+            "[seed-wechat-accounts] wechat not in active channels; preserving account "
+            "state files but skipping openclaw.json channel registration."
         )
     return 0
 

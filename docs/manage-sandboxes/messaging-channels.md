@@ -6,7 +6,7 @@ description:
   main: "Connect Telegram, Discord, Slack, or WeChat to your sandboxed OpenClaw agent using OpenShell-managed channel messaging."
   agent: >-
     Explains how Telegram, Discord, Slack, and WeChat reach the sandboxed OpenClaw agent through OpenShell-managed processes and NemoClaw channel commands.
-    Use when setting up messaging channels, chat interfaces, or integrations without relying on nemoclaw tunnel start for bridges.
+    Use when setting up messaging channels, chat interfaces, or integrations without relying on `nemoclaw tunnel start` for bridges.
 keywords: ["nemoclaw messaging channels", "nemoclaw telegram", "nemoclaw discord", "nemoclaw slack", "nemoclaw wechat", "openshell channel messaging"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "telegram", "discord", "slack", "wechat", "messaging", "deployment", "nemoclaw"]
