@@ -21,6 +21,7 @@ Generate a comprehensive health report covering nightly E2E test results, merges
 The NemoClaw repo has a rich E2E testing infrastructure:
 
 ### Nightly E2E Workflow (`.github/workflows/nightly-e2e.yaml`)
+
 Runs on `schedule` (cron `0 0 * * *` UTC) and `workflow_dispatch`. Jobs run in parallel on `ubuntu-latest`:
 
 | Job ID | What it tests |
@@ -46,6 +47,7 @@ Runs on `schedule` (cron `0 0 * * *` UTC) and `workflow_dispatch`. Jobs run in p
 **Concurrency:** `group: nightly-e2e`, `cancel-in-progress: true` — a `workflow_dispatch` run will cancel a running `schedule` run (this is a known issue).
 
 ### Other E2E Workflows
+
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `e2e-brev.yaml` | `workflow_dispatch` / `workflow_call` | Ephemeral Brev cloud instance E2E (full, credential-sanitization, telegram-injection, messaging-providers) |
@@ -54,9 +56,11 @@ Runs on `schedule` (cron `0 0 * * *` UTC) and `workflow_dispatch`. Jobs run in p
 | `sandbox-images-and-e2e.yaml` | `workflow_call` from `main.yaml` | Build sandbox images + run E2E on every push to main |
 
 ### Main CI Gate (`.github/workflows/main.yaml`)
+
 On every push to main: runs `checks` job (basic checks), then `sandbox-images-and-e2e` (builds images + runs E2E). Failures here mean a merge broke main.
 
 ### E2E Test Scripts (`test/e2e/`)
+
 Shell-based test scripts. Each follows a pattern: Phase 0 (prerequisites), Phase 1 (pre-cleanup/install), Phase 2+ (test cases), final cleanup.
 
 ## Step 1: Identify the Repo
@@ -81,11 +85,20 @@ gh run list --repo "$REPO" --workflow=nightly-e2e.yaml --limit 50 \
 # Separate schedule vs dispatch
 jq '[.[] | select(.event == "schedule")] | .[:3]' /tmp/nightly-runs.json > /tmp/nightly-schedule.json
 jq '[.[] | select(.event == "workflow_dispatch" and .headBranch == "main")] | .[:3]' /tmp/nightly-runs.json > /tmp/nightly-dispatch-main.json
+
+# Build the final prioritized set of 3 runs:
+# - take up to 3 schedule runs first
+# - fill any remaining slots from workflow_dispatch on main
+jq -n \
+  --slurpfile s /tmp/nightly-schedule.json \
+  --slurpfile d /tmp/nightly-dispatch-main.json \
+  '($s[0] + $d[0])[:3]' \
+  > /tmp/nightly-selected.json
 ```
 
 ### 2a: Get job-level results for each run
 
-For each of the identified runs, fetch job-level details:
+For each run in `/tmp/nightly-selected.json`, fetch job-level details:
 
 ```bash
 # For each run ID:
@@ -107,7 +120,7 @@ Look across the 3 runs for repeating failures. If a job fails in 2+ of the 3 run
 
 Present a summary table:
 
-```
+```markdown
 | Job | Night 1 (date) | Night 2 (date) | Night 3 (date) | Pattern |
 ```
 
@@ -170,7 +183,7 @@ gh run list --repo "$REPO" --workflow=wsl-e2e.yaml --branch main --limit 10 \
 ```
 
 Present a timeline:
-```
+```markdown
 | Date | Commit/PR | What Failed | Fixed By | Time to Fix |
 ```
 
@@ -286,7 +299,7 @@ Provide 3-5 actionable recommendations prioritized by impact, such as:
 
 Use markdown with clear section headers, tables, emoji indicators, and callout blocks. The full output should read as a single health report:
 
-```
+```markdown
 # NemoClaw E2E Health Report
 **Date:** <today> | **Repo:** NVIDIA/NemoClaw
 

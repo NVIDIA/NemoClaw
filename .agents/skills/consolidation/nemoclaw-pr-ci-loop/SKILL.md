@@ -217,7 +217,7 @@ After PR CI is green, check for CodeRabbit's E2E recommendations.
 ```bash
 # Look for CodeRabbit comments recommending E2E tests
 gh pr view "$PR_NUMBER" --repo "$REPO" --json comments \
-  --jq '.comments[] | select(.author.login == "coderabbitai") | .body' \
+  --jq '.comments[] | select((.author.login // "") | test("(?i)coderabbit")) | .body' \
   | grep -i "e2e\|nightly\|workflow"
 ```
 

@@ -489,7 +489,7 @@ git commit -m "test(e2e): add <slug> coverage guard
 
 Adds a failing E2E test that demonstrates the bug tracked by $FIX_REF.
 
-Until the fix lands, the nightly <slug>-e2e job will fail. This is
+Until the fix lands, the regression-e2e `<slug>-e2e` job will fail. This is
 intentional — the failing test is the proof of coverage and the
 executable acceptance criterion for $FIX_REF.
 
@@ -519,10 +519,10 @@ Record `pr_b` number in the checkpoint.
 Because the new regression job does not exist on `main` until PR-B merges, dispatch `regression-e2e.yaml` against the PR-B branch (whose code should otherwise be based on `origin/main`). This verifies the guard is red against main-equivalent unfixed code without touching scheduled nightly.
 
 ```bash
-gh workflow run regression-e2e.yaml -f jobs=<slug>-e2e --ref <pr_b_branch>
+gh workflow run regression-e2e.yaml --repo NVIDIA/NemoClaw -f jobs=<slug>-e2e --ref <pr_b_branch>
 # Capture the run ID
 sleep 10
-RUN_ID=$(gh run list --workflow=regression-e2e.yaml --branch <pr_b_branch> --limit 1 --json databaseId --jq '.[0].databaseId')
+RUN_ID=$(gh run list --repo NVIDIA/NemoClaw --workflow=regression-e2e.yaml --branch <pr_b_branch> --limit 1 --json databaseId --jq '.[0].databaseId')
 ```
 
 Record in checkpoint `dispatches[]`.
@@ -611,7 +611,7 @@ Before handing back to the user, append a "Definition of done" block to the kick
 Regression job `<slug>-e2e` (added by coverage-guard PR #<PR_B> in `regression-e2e.yaml`) must flip from
 red on unfixed code to green on the fix branch. Dispatch with:
 
-    gh workflow run regression-e2e.yaml -f jobs=<slug>-e2e --ref <branch>
+    gh workflow run regression-e2e.yaml --repo NVIDIA/NemoClaw -f jobs=<slug>-e2e --ref <branch>
 
 Expected failing assertion on main:
     <one-line fragment from Phase 3 log>
@@ -660,9 +660,9 @@ If PR-A's author is not you and the branch is not in your fork, post a comment a
 ### 5.2 — Dispatch targeted test against PR-A's branch
 
 ```bash
-gh workflow run regression-e2e.yaml -f jobs=<slug>-e2e --ref <pr_a_branch>
+gh workflow run regression-e2e.yaml --repo NVIDIA/NemoClaw -f jobs=<slug>-e2e --ref <pr_a_branch>
 sleep 10
-RUN_ID=$(gh run list --workflow=regression-e2e.yaml --branch <pr_a_branch> --limit 1 --json databaseId --jq '.[0].databaseId')
+RUN_ID=$(gh run list --repo NVIDIA/NemoClaw --workflow=regression-e2e.yaml --branch <pr_a_branch> --limit 1 --json databaseId --jq '.[0].databaseId')
 ```
 
 ### 5.3 — Poll (30–45 min)

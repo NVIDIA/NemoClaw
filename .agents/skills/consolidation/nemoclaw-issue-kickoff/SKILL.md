@@ -31,6 +31,10 @@ Use any existing NemoClaw worktree under the working directory to run `gh` comma
 ```bash
 WORKTREE_BASE="${NEMOCLAW_WORKTREE_BASE}"
 EXISTING_WORKTREE=$(ls -d "${WORKTREE_BASE}"/*/ 2>/dev/null | head -1)
+if [ -z "$EXISTING_WORKTREE" ]; then
+  echo "No existing NemoClaw worktree found under $WORKTREE_BASE; set NEMOCLAW_WORKTREE_BASE or clone/create a worktree first" >&2
+  exit 1
+fi
 cd "$EXISTING_WORKTREE"
 
 gh issue view <ISSUE_NUMBER> --repo NVIDIA/NemoClaw

@@ -23,6 +23,8 @@ Use this when the user wants to keep all personal NemoClaw PRs healthy: reviewer
 ## Constants
 
 ```bash
+: "${NEMOCLAW_WORKTREE_BASE:?NEMOCLAW_WORKTREE_BASE must be set}"
+: "${NEMOCLAW_REPO:?NEMOCLAW_REPO must be set}"
 WORKTREE_BASE="${NEMOCLAW_WORKTREE_BASE}"
 MAIN_REPO="${NEMOCLAW_REPO}"
 REPO="NVIDIA/NemoClaw"

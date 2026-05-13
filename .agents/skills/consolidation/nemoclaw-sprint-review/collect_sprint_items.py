@@ -2,18 +2,22 @@
 """Collect all items for a given sprint from the NemoClaw Development Tracker (GitHub Project #199).
 
 Usage:
-    python3 collect_sprint_items.py "Sprint 3" > /tmp/sprint_data.json
+    python3 collect_sprint_items.py "Sprint 3" [repo-path] > /tmp/sprint_data.json
 
 Outputs JSON array of sprint items to stdout. Progress to stderr.
 """
-import subprocess, json, sys
+import json
+import os
+import subprocess
+import sys
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: collect_sprint_items.py <sprint-title>", file=sys.stderr)
+        print("Usage: collect_sprint_items.py <sprint-title> [repo-path]", file=sys.stderr)
         sys.exit(1)
 
     target_sprint = sys.argv[1]
+    repo_path = sys.argv[2] if len(sys.argv) > 2 else os.environ.get('NEMOCLAW_REPO', os.getcwd())
     all_items = []
     cursor = None
     page = 0
@@ -73,7 +77,7 @@ def main():
         result = subprocess.run(
             ['gh', 'api', 'graphql', '-f', f'query={query}'],
             capture_output=True, text=True,
-            cwd='${NEMOCLAW_REPO}'
+            cwd=repo_path
         )
 
         if result.returncode != 0:
@@ -102,7 +106,7 @@ def main():
                 title = content.get('title', '?')
                 state = content.get('state', '?')
                 assignees = [a['login'] for a in content.get('assignees', {}).get('nodes', [])]
-                labels = [l['name'] for l in content.get('labels', {}).get('nodes', [])]
+                labels = [label['name'] for label in content.get('labels', {}).get('nodes', [])]
                 is_pr = 'author' in content
                 author = content.get('author', {}).get('login', '') if is_pr else ''
 

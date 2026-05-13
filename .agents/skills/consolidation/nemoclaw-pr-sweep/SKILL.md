@@ -19,7 +19,7 @@ Iterate over all active PR worktrees in NemoClaw-working, perform routine mainte
 
 ## Constants
 
-```
+```bash
 WORKTREE_BASE="${NEMOCLAW_WORKTREE_BASE}"
 MAIN_REPO="${NEMOCLAW_REPO}"
 REPO="NVIDIA/NemoClaw"
@@ -134,9 +134,33 @@ fi
 Check for unresolved CodeRabbit review comments:
 
 ```bash
-# Get review comments from CodeRabbit (bot username: coderabbitai)
-gh api "repos/$REPO/pulls/$PR_NUMBER/comments" --paginate \
-  --jq '[.[] | select(.user.login == "coderabbitai") | select(.resolved != true) | {id: .id, path: .path, line: .line, body: .body}]'
+# Get unresolved CodeRabbit review-thread comments via GraphQL.
+gh api graphql -f query='
+query($owner: String!, $repo: String!, $pr: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reviewThreads(first: 100) {
+        nodes {
+          isResolved
+          comments(first: 20) {
+            nodes {
+              id
+              author { login }
+              path
+              line
+              body
+            }
+          }
+        }
+      }
+    }
+  }
+}' -f owner=NVIDIA -f repo=NemoClaw -F pr="$PR_NUMBER" \
+  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+         | select(.isResolved == false)
+         | .comments.nodes[]
+         | select((.author.login // "") | test("(?i)coderabbit"))
+         | {id, path, line, body}]'
 ```
 
 For each unresolved CodeRabbit comment:
@@ -156,7 +180,7 @@ Check for unresolved human review comments:
 ```bash
 # Get review threads
 gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
-  --jq '[.[] | select(.state == "CHANGES_REQUESTED" or .state == "COMMENTED") | select(.user.login != "coderabbitai") | {user: .user.login, state: .state, body: .body}]'
+  --jq '[.[] | select(.state == "CHANGES_REQUESTED" or .state == "COMMENTED") | select((.user.login // "") | test("(?i)coderabbit") | not) | {user: .user.login, state: .state, body: .body}]'
 
 # Get unresolved comment threads
 gh api graphql -f query='
@@ -226,11 +250,11 @@ HEAD_SHA=$(git rev-parse HEAD)
 
 # Check if any recent workflow runs targeted this SHA or branch
 gh run list --repo "$REPO" -w nightly-e2e --limit 20 --json headSha,conclusion,createdAt \
-  --jq "[.[] | select(.headSha == \"$HEAD_SHA\")] | length"
+  --jq "[.[] | select(.headSha == \"$HEAD_SHA\" and .conclusion == \"success\")] | length"
 
 # Also check Brev E2E
 gh run list --repo "$REPO" -w e2e-brev --limit 10 --json headSha,conclusion,createdAt \
-  --jq "[.[] | select(.headSha == \"$HEAD_SHA\")] | length"
+  --jq "[.[] | select(.headSha == \"$HEAD_SHA\" and .conclusion == \"success\")] | length"
 ```
 
 **Only trigger E2E if:**
