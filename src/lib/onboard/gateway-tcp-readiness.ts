@@ -4,7 +4,7 @@
 /**
  * Host-level TCP readiness probe for the OpenShell Docker-driver gateway.
  *
- * Plain TCP connect to `127.0.0.1:${GATEWAY_PORT}` — semantic-free, just asks
+ * Plain TCP connect to the local gateway endpoint — semantic-free, just asks
  * "is anyone listening?". Used by `startDockerDriverGateway` in `onboard.ts`
  * to gate the "✓ Docker-driver gateway is healthy" log against the class of
  * bug reported in #3111, where the openshell-gateway binary crashed on
@@ -50,6 +50,7 @@
 
 import net from "node:net";
 
+import { getGatewayConnectHost } from "../core/gateway-address";
 import { GATEWAY_PORT } from "../core/ports";
 
 const ISGATEWAY_TCP_READY_DEFAULT_TIMEOUT_MS = 500;
@@ -63,7 +64,7 @@ const ISGATEWAY_TCP_READY_DEFAULT_TIMEOUT_MS = 500;
 const ISGATEWAY_TCP_READY_MIN_TIMEOUT_MS = 50;
 
 /**
- * Probe a TCP endpoint on localhost to verify something is actually
+ * Probe a TCP endpoint on the local gateway host to verify something is actually
  * listening and accepting connections on the gateway port.
  *
  * Resolves true on a successful TCP connect. Resolves false on connection
@@ -74,14 +75,14 @@ const ISGATEWAY_TCP_READY_MIN_TIMEOUT_MS = 50;
  * @param timeoutMs Per-connect timeout. Clamped to a 50 ms minimum so the
  *                  probe can't spin or return instantly when a caller
  *                  passes 0.
- * @param host      Target host. Defaults to `127.0.0.1`; overridable only
- *                  for unit testing (exercising the timeout path against
- *                  a non-routable address).
+ * @param host      Target host. Defaults to the local connect host derived
+ *                  from the configured bind address; overridable for unit
+ *                  testing.
  */
 export function isGatewayTcpReady(
   port: number = GATEWAY_PORT,
   timeoutMs: number = ISGATEWAY_TCP_READY_DEFAULT_TIMEOUT_MS,
-  host = "127.0.0.1",
+  host = getGatewayConnectHost(),
 ): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > ISGATEWAY_TCP_READY_MIN_TIMEOUT_MS

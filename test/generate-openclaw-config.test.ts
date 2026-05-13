@@ -130,6 +130,28 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18789"]);
   });
 
+  it("#3256: emits gateway.port from a non-default CHAT_UI_URL port", () => {
+    const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18790" });
+    expect(config.gateway.port).toBe(18790);
+    expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18790"]);
+  });
+
+  it("#3256: lets NEMOCLAW_DASHBOARD_PORT drive gateway.port when set", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "",
+      NEMOCLAW_DASHBOARD_PORT: "18790",
+    });
+    expect(config.gateway.port).toBe(18790);
+    expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18790"]);
+  });
+
+  it("rejects an invalid NEMOCLAW_DASHBOARD_PORT", () => {
+    const result = runConfigScriptRaw({ NEMOCLAW_DASHBOARD_PORT: "18790x" });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("NEMOCLAW_DASHBOARD_PORT");
+    expect(result.stderr).toContain("1024 and 65535");
+  });
+
   it("includes portless origin for reverse-proxy access (Fixes #3000)", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "https://nemoclaw0-abc123.brevlab.com:18789",

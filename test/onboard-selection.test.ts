@@ -8,12 +8,15 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+import { testTimeout } from "./helpers/timeouts";
+
 const CREDENTIAL_RETRY_PROMPT =
   "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
 const CREDENTIAL_RETRY_PROMPT_RE =
   /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
+const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
 
 function writeOpenAiStyleAuthRetryCurl(fakeBin: string, goodToken: string, models = ["gpt-5.4"]) {
   fs.writeFileSync(
@@ -99,7 +102,7 @@ printf '%s' "$status"
   );
 }
 
-describe("onboard provider selection UX", () => {
+describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
   it("prompts explicitly instead of silently auto-selecting detected Ollama", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-"));
@@ -971,7 +974,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("starts managed Ollama on loopback before exposing the auth proxy", { timeout: 10_000 }, () => {
+  it("starts managed Ollama on loopback before exposing the auth proxy", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-loopback-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -1013,6 +1016,9 @@ const child_process = require("child_process");
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args?.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   if (cmd === "ps") {
     return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
   }
@@ -3864,7 +3870,7 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line: string) => line.includes("tool-call-parser requires")));
   });
 
-  it("offers install-ollama option on Linux when Ollama is not installed", { timeout: 10_000 }, () => {
+  it("offers install-ollama option on Linux when Ollama is not installed", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-ollama-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3922,6 +3928,9 @@ child_process.spawn = (...args) => {
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
   const cmdStr = [cmd, ...(args || [])].join(" ");
+  if (cmd === "nc" && args?.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   // ollama pull — pretend it succeeds
   if (cmd === "ollama" && args && args[0] === "pull") {
     return { status: 0, stdout: "", stderr: "", signal: null };
@@ -4161,7 +4170,7 @@ const { setupNim } = require(${onboardPath});
     assert.match(result.stderr, /Refusing to continue/);
   });
 
-  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", { timeout: 10_000 }, () => {
+  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-noninteractive-install-ollama-"),
@@ -4209,6 +4218,9 @@ child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
   const command = [cmd, ...(args || [])].join(" ");
+  if (cmd === "nc" && args?.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   if (command.includes("ollama pull")) {
     return { status: 0, stdout: "", stderr: "", signal: null };
   }

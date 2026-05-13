@@ -15,6 +15,7 @@ import { loadAgent } from "../dist/lib/agent/defs.js";
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard/contract.js";
 import { NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 type ShimScalar = string | number | boolean | null | undefined;
 type ShimCallable = (...args: readonly string[]) => ShimValue;
@@ -97,6 +98,7 @@ type OnboardTestInternals = {
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
   ) => Record<string, string>;
+  getGatewayStartEnv: () => Record<string, string>;
   shouldRequireDockerDriverEnv: (platform?: NodeJS.Platform) => boolean;
   getDockerDriverGatewayRuntimeDriftFromSnapshot: (snapshot: {
     processEnv: Record<string, string> | null;
@@ -224,6 +226,7 @@ function isOnboardTestInternals(
     typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
     typeof value.getDockerDriverGatewayEnv === "function" &&
+    typeof value.getGatewayStartEnv === "function" &&
     typeof value.shouldRequireDockerDriverEnv === "function" &&
     typeof value.getDockerDriverGatewayRuntimeDriftFromSnapshot === "function" &&
     typeof value.isLinuxDockerDriverGatewayEnabled === "function" &&
@@ -283,6 +286,7 @@ const {
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   getDockerDriverGatewayEnv,
+  getGatewayStartEnv,
   shouldRequireDockerDriverEnv,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
   isLinuxDockerDriverGatewayEnabled,
@@ -383,31 +387,39 @@ describe("onboard helpers", () => {
     ).toEqual(["--gpu", "--gpu-device", "nvidia.com/gpu=0"]);
   });
 
-  it("keeps /proc read-only and narrows GPU proc writes to comm", () => {
-    const basePolicy = fs.readFileSync(
-      path.join(repoRoot, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-      "utf-8",
-    );
-    const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy);
-    const baseDoc = YAML.parse(basePolicy);
-    const gpuDoc = YAML.parse(gpuPolicy);
+  it(
+    "removes /proc from direct GPU create policy so OpenShell can own GPU enrichment",
+    () => {
+      const basePolicy = fs.readFileSync(
+        path.join(repoRoot, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        "utf-8",
+      );
+      const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy);
+      const baseDoc = YAML.parse(basePolicy);
+      const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(baseDoc.filesystem_policy.read_only).toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_only).toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_write).toContain("/proc/self/task/*/comm");
-  });
+      // /proc is added at runtime by OpenShell's GPU enrichment;
+      // create-time must not pre-declare it.
+      expect(baseDoc.filesystem_policy.read_only).toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
+    },
+  );
 
-  it("removes stale broad /proc write entries from GPU policy input", () => {
+  it("removes stale proc entries from GPU policy input", () => {
     const gpuPolicy = buildDirectGpuPolicyYaml(`
 version: 1
 filesystem_policy:
   include_workdir: true
   read_only:
     - /usr
+    - /proc
+    - /proc/self/task/*/comm
   read_write:
     - /tmp
     - /proc
+    - /proc/self/task/*/comm
 network_policies:
   nvidia:
     name: nvidia
@@ -417,11 +429,8 @@ network_policies:
 `);
     const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(gpuDoc.filesystem_policy.read_only).toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_write).toEqual([
-      "/tmp",
-      "/proc/self/task/*/comm",
-    ]);
+    expect(gpuDoc.filesystem_policy.read_only).toEqual(["/usr"]);
+    expect(gpuDoc.filesystem_policy.read_write).toEqual(["/tmp"]);
   });
 
   it("models the OpenShell standalone gateway environment", () => {
@@ -431,15 +440,36 @@ network_policies:
     expect(isLinuxDockerDriverGatewayEnabled("win32")).toBe(false);
     const linuxEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
     expect(linuxEnv.OPENSHELL_DRIVERS).toBe("docker");
+    expect(linuxEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
     expect(linuxEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
+    expect(linuxEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
     expect(linuxEnv.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
     expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
 
     const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin");
     expect(darwinEnv.OPENSHELL_DRIVERS).toBe("vm");
+    expect(darwinEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
     expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://host.containers.internal:8080");
+    expect(darwinEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
     expect(darwinEnv.OPENSHELL_VM_DRIVER_STATE_DIR).toContain("vm-driver");
     expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBeUndefined();
+
+    const originalOverlayFix = process.env.NEMOCLAW_DISABLE_OVERLAY_FIX;
+    process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = "1";
+    try {
+      expect(getGatewayStartEnv()).toMatchObject({
+        OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+        OPENSHELL_SERVER_PORT: "8080",
+        OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+        OPENSHELL_SSH_GATEWAY_PORT: "8080",
+      });
+    } finally {
+      if (originalOverlayFix === undefined) {
+        delete process.env.NEMOCLAW_DISABLE_OVERLAY_FIX;
+      } else {
+        process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = originalOverlayFix;
+      }
+    }
   });
 
   it("requires platform-specific standalone gateway binaries", () => {
@@ -533,6 +563,18 @@ network_policies:
         gatewayBin,
       })?.reason,
     ).toContain("OPENSHELL_DOCKER_SUPERVISOR_IMAGE=");
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          ...desiredEnv,
+          OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+        },
+        processExe: gatewayBin,
+        desiredEnv,
+        gatewayBin,
+      })?.reason,
+    ).toContain("OPENSHELL_BIND_ADDRESS=");
 
     expect(
       getDockerDriverGatewayRuntimeDriftFromSnapshot({
@@ -640,12 +682,18 @@ network_policies:
     const commands = buildDirectSandboxGpuProofCommands("alpha");
     expect(commands.map((entry) => entry.label)).toEqual([
       "nvidia-smi",
-      "/proc/self/task/<tid>/comm write",
+      "/proc/<pid>/task/<tid>/comm write",
       "cuInit(0) via libcuda.so.1",
     ]);
     expect(commands[0].args).toEqual(["sandbox", "exec", "-n", "alpha", "--", "nvidia-smi"]);
-    expect(commands[1].args.join(" ")).toContain("/proc/self/task/${tid}/comm");
+    expect(commands[1].args.join(" ")).toContain("/proc/$$/task/$$/comm");
+    expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
     expect(commands[2].args.join(" ")).toContain("cuInit(0)");
+    for (const command of commands) {
+      for (const arg of command.args) {
+        assert.doesNotMatch(arg, /[\r\n]/);
+      }
+    }
   });
 
   it("uses Hermes-oriented sandbox defaults when NemoHermes selects Hermes", () => {
@@ -2503,13 +2551,13 @@ const { loadAgent } = require(${agentDefsPath});
     // Primary start path (startGatewayWithOptions) builds gwArgs with --port.
     assert.match(
       source,
-      /const gwArgs = \["--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+      /const gwArgs = \["--name", GATEWAY_NAME, "--port", getGatewayPortArg\(\)\]/,
     );
 
     // Recovery start path (recoverGatewayRuntime) also passes --port.
     assert.match(
       source,
-      /runOpenshell\(\s*\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+      /runOpenshell\(\s*\["gateway", "start", "--name", GATEWAY_NAME, "--port", getGatewayPortArg\(\)\]/,
     );
   });
 
@@ -3666,7 +3714,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
     });
   });
 
-  it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", () => {
+  it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-venv-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3688,7 +3736,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
         path.join(fakeBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "path-router %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -3699,17 +3747,17 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
         [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "python3 %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
           '  venv_dir="$3"',
           '  mkdir -p "$venv_dir/bin"',
           '  cat > "$venv_dir/bin/python" <<\'PY\'',
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "venv-python %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "venv-python %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
           '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
-          '  cp "$FAKE_ROUTER_SOURCE" "$venv_bin/model-router"',
+          `  cp ${JSON.stringify(fakeRouterSource)} "$venv_bin/model-router"`,
           '  chmod +x "$venv_bin/model-router"',
           "  exit 0",
           "fi",
@@ -3906,7 +3954,7 @@ const { setupInference } = require(${onboardPath});
         path.join(fakeBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "path-router %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -3920,7 +3968,7 @@ const { setupInference } = require(${onboardPath});
           'const http = require("http");',
           'const path = require("path");',
           "const args = process.argv.slice(2);",
-          'if (process.env.ROUTER_SETUP_LOG) fs.appendFileSync(process.env.ROUTER_SETUP_LOG, `managed ${args[0]}\\n`);',
+          `fs.appendFileSync(${JSON.stringify(setupLog)}, \`managed \${args[0]}\\n\`);`,
           'if (args[0] === "proxy-config") {',
           '  const output = args[args.indexOf("--output") + 1];',
           "  fs.mkdirSync(path.dirname(output), { recursive: true });",
@@ -4088,7 +4136,7 @@ const { setupInference } = require(${onboardPath});
         path.join(fakeBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "path-router %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -4099,17 +4147,17 @@ const { setupInference } = require(${onboardPath});
         [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "python3 %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
           '  venv_dir="$3"',
           '  mkdir -p "$venv_dir/bin"',
           '  cat > "$venv_dir/bin/python" <<\'PY\'',
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "venv-python %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "venv-python %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
           '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
-          '  cp "$FAKE_ROUTER_SOURCE" "$venv_bin/model-router"',
+          `  cp ${JSON.stringify(fakeRouterSource)} "$venv_bin/model-router"`,
           '  chmod +x "$venv_bin/model-router"',
           "  exit 0",
           "fi",
@@ -4127,7 +4175,7 @@ const { setupInference } = require(${onboardPath});
         path.join(venvBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "stale-managed %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "stale-managed %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -4144,7 +4192,7 @@ const { setupInference } = require(${onboardPath});
           'const http = require("http");',
           'const path = require("path");',
           "const args = process.argv.slice(2);",
-          'if (process.env.ROUTER_SETUP_LOG) fs.appendFileSync(process.env.ROUTER_SETUP_LOG, `fresh ${args[0]}\\n`);',
+          `fs.appendFileSync(${JSON.stringify(setupLog)}, \`fresh \${args[0]}\\n\`);`,
           'if (args[0] === "proxy-config") {',
           '  const output = args[args.indexOf("--output") + 1];',
           "  fs.mkdirSync(path.dirname(output), { recursive: true });",
@@ -6257,6 +6305,165 @@ const { createSandbox } = require(${onboardPath});
         SLACK_BOT_TOKEN: "hash-slack-bot",
         SLACK_APP_TOKEN: "hash-slack-app",
       });
+    },
+  );
+
+  it(
+    "preserves disabled channels in the registry after a recreate so `channels start` can re-enable them (#3381)",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-disabled-channels-preserve-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "disabled-channels-preserve.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+
+const commands = [];
+const registerCalls = [];
+registry.registerSandbox({
+  name: "my-assistant",
+  messagingChannels: ["telegram"],
+  disabledChannels: ["telegram"],
+  providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-telegram" },
+});
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get my-assistant-telegram-bridge")) return { status: 0 };
+  if (normalized.includes("provider get")) return { status: 1 };
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  return "";
+};
+registry.registerSandbox = (entry) => {
+  registerCalls.push(entry);
+  return true;
+};
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const command = _n(args[1][1]);
+  const entry = { command, env: args[2]?.env || null };
+  const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
+  if (dockerfileMatch) {
+    try {
+      entry.dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
+    } catch (error) {
+      entry.dockerfileReadError = String(error);
+    }
+  }
+  commands.push(entry);
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"],
+  );
+  console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          TELEGRAM_BOT_TOKEN: "",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      const createCommand = payload.commands.find((entry: CommandEntry) =>
+        entry.command.includes("sandbox create"),
+      );
+      assert.ok(createCommand, "expected sandbox create command");
+      assert.equal(createCommand.dockerfileReadError, undefined);
+
+      const channelsLine = createCommand.dockerfileContent
+        ?.split("\n")
+        .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
+      assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
+      const bakedChannels = JSON.parse(
+        Buffer.from(channelsLine.split("=")[1], "base64").toString(),
+      );
+      assert.deepEqual(bakedChannels, [], "disabled channel must not be baked into the image");
+      assert.doesNotMatch(
+        createCommand.command,
+        /--provider my-assistant-telegram-bridge/,
+        "disabled channel's bridge must not be attached to the new sandbox",
+      );
+
+      assert.deepEqual(
+        payload.registerCalls[0]?.messagingChannels,
+        ["telegram"],
+        "registry.messagingChannels must keep the disabled-but-configured channel so `channels start` can recover it",
+      );
+      assert.deepEqual(
+        payload.registerCalls[0]?.disabledChannels,
+        ["telegram"],
+        "registry.disabledChannels must round-trip through the rebuild",
+      );
     },
   );
 

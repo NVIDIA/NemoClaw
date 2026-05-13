@@ -2906,7 +2906,7 @@ describe("installer express install prompt (sourced)", () => {
   function runExpressPromptWithTty(answer: string, stdinMode: "pipe" | "tty") {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
     const python =
-      spawnSync("bash", ["-lc", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
+      spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
       "python3";
     const ptyRunner = `
 import os
@@ -3470,7 +3470,7 @@ exit 0`,
     );
 
     const python =
-      spawnSync("bash", ["-lc", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
+      spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
       "python3";
     const ptyRunner = `
 import os

@@ -142,11 +142,14 @@ EOF
 
   cat >"$fake_bin/openshell" <<'EOF'
 #!/usr/bin/env bash
+# request-body-credential-rewrite
+# websocket-credential-rewrite
 if [ "${1:-}" = "--version" ]; then
   printf 'openshell 0.0.39\n'
   exit 0
 fi
 exit 99
+# request-body-credential-rewrite websocket-credential-rewrite
 EOF
 
   cat >"$fake_bin/gh" <<'EOF'
@@ -229,11 +232,14 @@ EOF
 
   cat >"$fake_bin/openshell" <<'EOF'
 #!/usr/bin/env bash
+# request-body-credential-rewrite
+# websocket-credential-rewrite
 if [ "${1:-}" = "--version" ]; then
   printf 'openshell 0.0.39\n'
   exit 0
 fi
 exit 99
+# request-body-credential-rewrite websocket-credential-rewrite
 EOF
 
   cat >"$fake_bin/openshell-gateway" <<'EOF'
