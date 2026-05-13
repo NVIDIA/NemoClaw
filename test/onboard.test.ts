@@ -80,14 +80,6 @@ type OnboardTestInternals = {
   getGatewayReuseState: ShimFn<string>;
   getPortConflictServiceHints: (platform?: string) => string[];
   getFutureShellPathHint: (binDir: string, pathValue?: string) => string | null;
-  getSandboxInferenceConfig: ShimFn<SandboxInferenceConfig>;
-  getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
-  getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
-  getBlueprintMaxOpenshellVersion: (rootDir?: string) => string | null;
-  getDockerDriverGatewayEnv: (
-    versionOutput?: string | null,
-    platform?: NodeJS.Platform,
-  ) => Record<string, string>;
   areRequiredDockerDriverBinariesPresent: (
     platform?: NodeJS.Platform,
     binaries?: {
@@ -97,6 +89,14 @@ type OnboardTestInternals = {
     },
     arch?: NodeJS.Architecture,
   ) => boolean;
+  getSandboxInferenceConfig: ShimFn<SandboxInferenceConfig>;
+  getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
+  getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
+  getBlueprintMaxOpenshellVersion: (rootDir?: string) => string | null;
+  getDockerDriverGatewayEnv: (
+    versionOutput?: string | null,
+    platform?: NodeJS.Platform,
+  ) => Record<string, string>;
   shouldRequireDockerDriverEnv: (platform?: NodeJS.Platform) => boolean;
   getDockerDriverGatewayRuntimeDriftFromSnapshot: (snapshot: {
     processEnv: Record<string, string> | null;
@@ -224,10 +224,10 @@ function isOnboardTestInternals(
     typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
     typeof value.getDockerDriverGatewayEnv === "function" &&
-    typeof value.areRequiredDockerDriverBinariesPresent === "function" &&
     typeof value.shouldRequireDockerDriverEnv === "function" &&
     typeof value.getDockerDriverGatewayRuntimeDriftFromSnapshot === "function" &&
     typeof value.isLinuxDockerDriverGatewayEnabled === "function" &&
+    typeof value.areRequiredDockerDriverBinariesPresent === "function" &&
     typeof value.isDockerDriverGatewayPortListener === "function" &&
     typeof value.findReadableNvidiaCdiSpecFiles === "function" &&
     typeof value.parseDockerCdiSpecDirs === "function" &&
@@ -277,12 +277,12 @@ const {
   getGatewayReuseState,
   getPortConflictServiceHints,
   getFutureShellPathHint,
+  areRequiredDockerDriverBinariesPresent,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   getDockerDriverGatewayEnv,
-  areRequiredDockerDriverBinariesPresent,
   shouldRequireDockerDriverEnv,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
   isLinuxDockerDriverGatewayEnabled,
@@ -442,7 +442,7 @@ network_policies:
     expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBeUndefined();
   });
 
-  it("requires platform-specific Docker-driver binaries", () => {
+  it("requires platform-specific standalone gateway binaries", () => {
     expect(
       areRequiredDockerDriverBinariesPresent(
         "darwin",
@@ -467,16 +467,6 @@ network_policies:
         sandboxBin: "/tmp/openshell-sandbox",
         vmDriverBin: null,
       }),
-    ).toBe(true);
-    expect(
-      areRequiredDockerDriverBinariesPresent(
-        "darwin",
-        {
-          gatewayBin: "/tmp/openshell-gateway",
-          sandboxBin: null,
-        },
-        "arm64",
-      ),
     ).toBe(true);
     expect(
       areRequiredDockerDriverBinariesPresent(
@@ -563,7 +553,7 @@ network_policies:
     ).toContain("process environment");
   });
 
-  it("recognizes an existing Docker-driver gateway listener on Linux", () => {
+  it("recognizes an existing Docker-driver gateway listener on Docker-driver platforms", () => {
     const opts = {
       platform: "linux" as NodeJS.Platform,
       isPidAliveFn: (pid: number) => pid === 1234,
@@ -607,17 +597,17 @@ network_policies:
     ]);
     expect(parseDockerCdiSpecDirs("")).toEqual([]);
     expect(
-      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.38.dev1+gabcdef", "linux", {
+      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40.dev1+gabcdef", "linux", {
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       }),
     ).toBe(true);
     expect(
-      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.38.dev1+gabcdef", "linux", {
+      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40.dev1+gabcdef", "linux", {
         NEMOCLAW_OPENSHELL_CHANNEL: "auto",
       }),
     ).toBe(false);
     expect(
-      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.38", "linux", {
+      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40", "linux", {
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       }),
     ).toBe(false);
@@ -1022,6 +1012,7 @@ network_policies:
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
         "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
       ].join("\n"),
     );
 
@@ -1039,6 +1030,47 @@ network_policies:
       assert.match(patched, /^ARG NEMOCLAW_PRIMARY_MODEL_REF=openai\/gpt-5\.4$/m);
       assert.match(patched, /^ARG CHAT_UI_URL=http:\/\/127\.0\.0\.1:19999$/m);
       assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=build-123$/m);
+      assert.match(patched, /^ARG NEMOCLAW_DARWIN_VM_COMPAT=0$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile for macOS VM rootfs ownership compatibility", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-darwin-vm-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-123",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        null,
+        {},
+        true,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_DARWIN_VM_COMPAT=1$/m);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -2481,6 +2513,45 @@ const { loadAgent } = require(${agentDefsPath});
     );
   });
 
+  it("fails closed when gateway lifecycle support is not proven", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "gateway-lifecycle.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /normalized\.trim\(\)\.length > 0/);
+    assert.doesNotMatch(source, /!normalized\.trim\(\)\s*\|\|/);
+  });
+
+  it("keeps registry state unless gateway destruction succeeds", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /function destroyGateway\(\): boolean/);
+    assert.match(source, /const gatewayRemoved = dockerDriver/);
+    assert.match(source, /if \(gatewayRemoved\) {\s*registry\.clearAll\(\);\s*}/);
+    assert.match(source, /return gatewayRemoved;/);
+    assert.doesNotMatch(
+      source,
+      /destroyGateway\(\);\s*registry\.clearAll\(\);\s*gatewayReuseState = "missing"/,
+    );
+  });
+
+  it("prints package-managed gateway registration hints with the local HTTPS endpoint", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(
+      source,
+      /"gateway",\s*"add",\s*getGatewayLocalEndpoint\(\),\s*"--local",\s*"--name",\s*GATEWAY_NAME/,
+    );
+    assert.doesNotMatch(source, /openshell gateway add http:\/\/127\.0\.0\.1:\$\{GATEWAY_PORT\}/);
+  });
+
   it("allows slow sandbox create recovery to wait beyond 60 seconds", () => {
     const envSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard", "env.ts"),
@@ -2560,6 +2631,10 @@ if [[ "$*" == *"doctor"*"logs"* ]]; then
   printf "\\033[31mERROR\\033[0m k3s cluster crashed: OOMKilled\\r\\n"
   printf "  Container nemoclaw_k3s ran out of memory\\r\\n"
   printf "  Gateway auth token: nvapi-fakecredential-9999\\r\\n"
+  exit 0
+fi
+if [[ "$*" == "gateway --help" ]]; then
+  printf "Commands: start destroy\\n"
   exit 0
 fi
 if [[ "$*" == *"gateway"*"start"* ]]; then
@@ -2926,6 +3001,45 @@ startGateway(null).catch(() => {});
         "/home/test/.local/bin:/usr/local/bin:/usr/bin",
       ),
     ).toBe(null);
+  });
+
+  it("requires platform-specific Docker-driver binaries for onboard repair", () => {
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+          vmDriverBin: "/tmp/openshell-driver-vm",
+        },
+        "arm64",
+      ),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/openshell-gateway",
+        sandboxBin: null,
+        vmDriverBin: "/tmp/openshell-driver-vm",
+      }),
+    ).toBe(false);
+    expect(
+      areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/openshell-gateway",
+        sandboxBin: "/tmp/openshell-sandbox",
+        vmDriverBin: null,
+      }),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: null,
+          sandboxBin: null,
+          vmDriverBin: null,
+        },
+        "arm64",
+      ),
+    ).toBe(false);
   });
 
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {
@@ -4878,6 +4992,25 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
+  it("runs fresh stale-gateway cleanup after the sandbox name is known but before createSandbox", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const promptPos = source.indexOf(
+      "if (!sandboxName) {\n        sandboxName = await promptValidatedSandboxName(agent);",
+    );
+    const cleanupPos = source.indexOf(
+      "stopStaleDashboardListenersForSandbox(registry.listSandboxes().sandboxes, sandboxName);",
+      promptPos,
+    );
+    const createPos = source.indexOf("sandboxName = await createSandbox(", promptPos);
+
+    assert.ok(promptPos !== -1, "sandbox-name resolution block not found");
+    assert.ok(cleanupPos > promptPos, "fresh cleanup should run after sandboxName is known");
+    assert.ok(cleanupPos < createPos, "fresh cleanup should run before createSandbox allocates a port");
+  });
+
   it("defaults GPU passthrough on for detected NVIDIA GPUs unless opted out", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -5696,14 +5829,16 @@ const { createSandbox } = require(${onboardPath});
       assert.match(createCommand.policyContent || "", /slack:/);
       assert.match(createCommand.policyContent || "", /wss-primary\.slack\.com/);
 
-      // Discord and Telegram tokens must NOT appear in the sandbox create command
+      // Messaging tokens must NOT appear in the sandbox create command
       // (they flow exclusively through the openshell provider credential system).
       assert.doesNotMatch(createCommand.command, /test-discord-token-value/);
       assert.doesNotMatch(createCommand.command, /123456:ABC-test-telegram-token/);
-      // Slack tokens ARE injected as --env args so the baked openclaw.json
-      // openshell:resolve:env: placeholders resolve inside the container.
-      assert.match(createCommand.command, /SLACK_BOT_TOKEN=xoxb-test-slack-token-value/);
-      assert.match(createCommand.command, /SLACK_APP_TOKEN=xapp-test-slack-app-token-value/);
+      assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /TELEGRAM_BOT_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /xoxb-test-slack-token-value/);
+      assert.doesNotMatch(createCommand.command, /xapp-test-slack-app-token-value/);
+      assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /SLACK_APP_TOKEN=/);
 
       // Verify blocked credentials are NOT in the sandbox spawn environment
       assert.ok(createCommand.env, "expected env to be captured from spawn call");
@@ -7028,15 +7163,19 @@ const { createSandbox } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
+    const selectionSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "selection-drift.ts"),
+      "utf-8",
+    );
     assert.match(
       source,
-      /const selectionDrift = getSelectionDrift\(sandboxName, provider, model\);/,
+      /const selectionDrift = getSelectionDrift\(sandboxName, provider, model, \{ runOpenshell \}\);/,
     );
     assert.match(
       source,
       /const confirmedSelectionDrift = selectionDrift\.changed && !selectionDrift\.unknown;/,
     );
-    assert.match(source, /unknown:\s*true/);
+    assert.match(selectionSource, /unknown:\s*true/);
     assert.match(source, /if \(confirmedSelectionDrift\)/);
     assert.match(source, /Recreating sandbox due to provider\/model drift/);
     assert.match(
@@ -7710,6 +7849,17 @@ const { setupInference } = require(${onboardPath});
     const commands = parseStdoutJson<string[]>(result.stdout);
     // gateway select + provider get + provider update + inference set
     assert.equal(commands.length, 4);
+  });
+
+  it("prints NemoClaw inference commands in the post-onboard settings summary", () => {
+    const source = fs.readFileSync(path.join(repoRoot, "src", "lib", "onboard.ts"), "utf8");
+    const summaryBlock = source.slice(source.indexOf('console.log("  To change settings later:");'));
+    assert.match(summaryBlock, /Model:\s+\$\{cliName\(\)\} inference get/);
+    assert.match(
+      summaryBlock,
+      /inference set --model <model> --provider <provider> --sandbox \$\{sandboxName\}/,
+    );
+    assert.doesNotMatch(summaryBlock, /openshell inference (get|set)/);
   });
 
   it("accepts gateway inference output that omits the Route line", () => {

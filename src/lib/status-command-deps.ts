@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { spawnSync } from "node:child_process";
 
 import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
-import { parseGatewayInference } from "./inference/config";
+import { getLiveGatewayInference } from "./inference/live";
 import type { GatewayHealth, MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory";
 import { backfillMessagingChannels, findAllOverlaps } from "./messaging-conflict";
 import type { CaptureOpenshellResult } from "./adapters/openshell/client";
@@ -162,13 +161,13 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
   return {
     listSandboxes: () => registry.listSandboxes(),
     getLiveInference: () =>
-      parseGatewayInference(
-        stripAnsi(
-          captureOpenshell(rootDir, ["inference", "get"], {
-            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-          }).output,
-        ),
-      ),
+      getLiveGatewayInference(
+        (args, opts) =>
+          captureOpenshell(rootDir, args, {
+            timeout: opts?.timeout,
+          }),
+        { timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+      ).inference,
     showServiceStatus,
     getServiceStatuses,
     getGatewayHealth: probeGatewayHealth,

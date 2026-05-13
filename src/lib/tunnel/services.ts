@@ -16,6 +16,7 @@ import {
 import { join } from "node:path";
 
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME } from "../cli/branding";
+import { renderBox } from "../cli/banner";
 import { dockerSpawnSync } from "../adapters/docker";
 import { DASHBOARD_PORT } from "../core/ports";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
@@ -481,12 +482,6 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     }
   }
 
-  // Banner
-  console.log("");
-  console.log("  ┌─────────────────────────────────────────────────────┐");
-  console.log(`  │  ${(CLI_DISPLAY_NAME + " Services").padEnd(52)}│`);
-  console.log("  │                                                     │");
-
   let tunnelUrl = "";
   const cfLogFile = join(pidDir, "cloudflared.log");
   if (isRunning(pidDir, "cloudflared") && existsSync(cfLogFile)) {
@@ -497,15 +492,19 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     }
   }
 
-  if (tunnelUrl) {
-    console.log(`  │  Public URL:  ${tunnelUrl.padEnd(40)}│`);
+  const bannerLines = [
+    `  ${CLI_DISPLAY_NAME} Services`,
+    null,
+    ...(tunnelUrl ? [`  Public URL:  ${tunnelUrl}`] : []),
+    `  Messaging:   via ${AGENT_PRODUCT_NAME} native channels (if configured)`,
+    null,
+    "  Run 'openshell term' to monitor egress approvals",
+  ];
+
+  console.log("");
+  for (const line of renderBox(bannerLines)) {
+    console.log(line);
   }
-
-  console.log(`  │  ${("Messaging:   via " + AGENT_PRODUCT_NAME + " native channels (if configured)").padEnd(52)}│`);
-
-  console.log("  │                                                     │");
-  console.log("  │  Run 'openshell term' to monitor egress approvals   │");
-  console.log("  └─────────────────────────────────────────────────────┘");
   console.log("");
 }
 

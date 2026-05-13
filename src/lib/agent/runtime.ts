@@ -143,30 +143,7 @@ function gatewayLaunchCommand(command: string, runAsUser?: string): string {
 }
 
 function hermesGatewayEnvPrefix(): string {
-  const decodeProxy = "http://127.0.0.1:3129";
-  const discordFacade = "http://127.0.0.1:3130";
-  return [
-    "HERMES_HOME=/sandbox/.hermes",
-    `DISCORD_PROXY=${decodeProxy}`,
-    `NEMOCLAW_DISCORD_FACADE_URL=${discordFacade}`,
-    "PYTHONPATH=/opt/nemoclaw-hermes-discord-preload${PYTHONPATH:+:${PYTHONPATH}}",
-    `HTTPS_PROXY=${decodeProxy}`,
-    `HTTP_PROXY=${decodeProxy}`,
-    `https_proxy=${decodeProxy}`,
-    `http_proxy=${decodeProxy}`,
-  ].join(" ");
-}
-
-function hermesDecodeProxyRecoveryCommand(): string {
-  const hermesVenvPython = "/opt/hermes/.venv/bin/python";
-  const decodeProxyListening = 'ss -tln 2>/dev/null | grep -Eq "127\\.0\\.0\\.1:3129([[:space:]]|$)"';
-  const facadeListening = 'ss -tln 2>/dev/null | grep -Eq "127\\.0\\.0\\.1:3130([[:space:]]|$)"';
-  const primaryFacadeLog = "/tmp/discord-facade.log";
-  const fallbackFacadeLog = "/tmp/discord-facade-recovery.log";
-  const facadeLogSetup = `${buildNoFollowLogSetupCommand(primaryFacadeLog, undefined, "0o600")} || exit 1; _DISCORD_FACADE_LOG=${shellQuote(primaryFacadeLog)}; if ! : >> "$_DISCORD_FACADE_LOG" 2>/dev/null; then ${buildNoFollowLogSetupCommand(fallbackFacadeLog, undefined, "0o600")} || exit 1; _DISCORD_FACADE_LOG=${shellQuote(fallbackFacadeLog)}; : >> "$_DISCORD_FACADE_LOG" 2>/dev/null || exit 1; fi`;
-  const facadeLaunch =
-    `nohup env -u NEMOCLAW_DISCORD_FACADE_URL -u PYTHONPATH DISCORD_PROXY=http://127.0.0.1:3129 HTTPS_PROXY=http://127.0.0.1:3129 HTTP_PROXY=http://127.0.0.1:3129 NEMOCLAW_DISCORD_FACADE_PORT=3130 DISCORD_FACADE_LOG="$_DISCORD_FACADE_LOG" sh -c 'umask 0007; exec "$@" >>"$DISCORD_FACADE_LOG" 2>&1' sh ${hermesVenvPython} /usr/local/bin/nemoclaw-discord-facade &`;
-  return `if ! command -v ss >/dev/null 2>&1 || ! ${decodeProxyListening}; then nohup ${hermesVenvPython} /usr/local/bin/nemoclaw-decode-proxy >/dev/null 2>&1 & for _i in 1 2 3 4 5 6 7 8 9 10; do command -v ss >/dev/null 2>&1 && ${decodeProxyListening} && break; sleep 0.5; done; fi; if ! command -v ss >/dev/null 2>&1 || ! ${facadeListening}; then ${facadeLogSetup}; ${facadeLaunch} for _i in 1 2 3 4 5 6 7 8 9 10; do command -v ss >/dev/null 2>&1 && ${facadeListening} && break; sleep 0.5; done; fi;`;
+  return "HERMES_HOME=/sandbox/.hermes";
 }
 
 /**
@@ -235,7 +212,7 @@ export function buildRecoveryScript(agent: AgentDefinition | null, port: number)
 
   // Source /tmp/nemoclaw-proxy-env.sh immediately before launching. That file
   // is the single source of truth for NODE_OPTIONS preload guards (safety-net,
-  // ciao networkInterfaces, slack, http-proxy, ws-proxy, nemotron). Recovery
+  // ciao networkInterfaces, slack, http-proxy, nemotron). Recovery
   // also stops stale launcher/gateway processes that may have respawned
   // between the health probe and relaunch. A missing env file remains warning-
   // only; a present env file that does not install required guards is a hard
@@ -253,7 +230,6 @@ export function buildRecoveryScript(agent: AgentDefinition | null, port: number)
     'if [ "$_PE_MISSING" = "0" ]; then case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _SN_MISSING=0 ;; *) _SN_MISSING=1 ;; esac; case "${NODE_OPTIONS:-}" in *nemoclaw-ciao-network-guard*) _CIAO_MISSING=0 ;; *) _CIAO_MISSING=1 ;; esac; if [ "$_SN_MISSING" = "0" ] && [ "$_CIAO_MISSING" = "0" ]; then _GUARDS_MISSING=0; else _GUARDS_MISSING=1; fi; else _GUARDS_MISSING=0; fi;',
     '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing - gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> "$_GATEWAY_LOG"; };',
     '[ "$_PE_MISSING" = "0" ] && [ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: /tmp/nemoclaw-proxy-env.sh present but NODE_OPTIONS missing safety-net preload or ciao preload - refusing unguarded gateway relaunch (#2478)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
-    isHermes ? hermesDecodeProxyRecoveryCommand() : "",
     launchCommand,
     "GPID=$!; sleep 2;",
     'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; tail -5 "$_GATEWAY_LOG" 2>/dev/null; fi',
@@ -286,6 +262,5 @@ export function buildManualRecoveryCommand(agent: AgentDefinition | null, port: 
   const isHermes = agent?.name === "hermes";
   const envPrefix = isHermes ? `${hermesGatewayEnvPrefix()} ` : "";
   const portFlag = isHermes ? "" : ` --port ${port}`;
-  const decodeProxySetup = isHermes ? `${hermesDecodeProxyRecoveryCommand()} ` : "";
-  return `${buildGatewayLogSelection()} ${decodeProxySetup}${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;
+  return `${buildGatewayLogSelection()} ${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;
 }

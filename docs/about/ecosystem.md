@@ -28,18 +28,8 @@ This page describes how the ecosystem is formed across projects, where NemoClaw 
 
 ## How the Stack Fits Together
 
-Three pieces usually appear together in a NemoClaw deployment, each with a distinct scope:
-
-| Project | Scope |
-|---------|--------|
-| [OpenClaw](https://openclaw.ai) | The assistant: runtime, tools, memory, and behavior inside the container. It does not define the sandbox or the host gateway. |
-| [OpenShell](https://github.com/NVIDIA/OpenShell) | The execution environment: sandbox lifecycle, network, filesystem, and process policy, inference routing, and the operator-facing `openshell` CLI for those primitives. |
-| NemoClaw | The NVIDIA reference stack that implements the definition above on the host: `nemoclaw` CLI and plugin, versioned blueprint, channel messaging configured for OpenShell-managed delivery, and state migration helpers so OpenClaw runs inside OpenShell in a documented, repeatable way. |
-
-NemoClaw sits above OpenShell in the operator workflow.
-It drives OpenShell APIs and CLI to create and configure the sandbox that runs OpenClaw.
-Models and endpoints sit behind OpenShell's inference routing.
-NemoClaw onboarding wires provider choice into that routing.
+There are three pieces that are put together in a NemoClaw deployment: OpenClaw, OpenShell, and NemoClaw, each with a distinct scope.
+The following diagram shows how they fit together.
 
 ```{mermaid}
 flowchart TB
@@ -61,6 +51,19 @@ flowchart TB
     linkStyle 0 stroke:#76b900,stroke-width:2px
     linkStyle 1 stroke:#76b900,stroke-width:2px
 ```
+
+NemoClaw sits above OpenShell in the operator workflow.
+It drives OpenShell APIs and CLI to create and configure the sandbox that runs OpenClaw.
+Models and endpoints sit behind OpenShell's inference routing.
+NemoClaw onboarding wires provider choice into that routing.
+
+The following table shows the scope of each component in the stack.
+
+| Project | Scope |
+|---------|--------|
+| [OpenClaw](https://openclaw.ai) | The assistant: runtime, tools, memory, and behavior inside the container. It does not define the sandbox or the host gateway. |
+| [OpenShell](https://github.com/NVIDIA/OpenShell) | The execution environment: sandbox lifecycle, network, filesystem, and process policy, inference routing, and the operator-facing `openshell` CLI for those primitives. |
+| NemoClaw | The NVIDIA reference stack that implements the definition above on the host: `nemoclaw` CLI and plugin, versioned blueprint, channel messaging configured for OpenShell-managed delivery, and state migration helpers so OpenClaw runs inside OpenShell in a documented, repeatable way. |
 
 ## NemoClaw Path versus OpenShell Path
 

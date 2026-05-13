@@ -146,6 +146,7 @@ export interface StatusReport {
     provider: string | null;
     model: string | null;
   } | null;
+  gatewayHealth: GatewayHealth | null;
   sandboxes: StatusSandboxRow[];
   services: StatusServiceRow[];
 }
@@ -343,10 +344,21 @@ function normalizeServiceStatus(service: StatusServiceRow): StatusServiceRow {
   };
 }
 
+function normalizeGatewayHealth(health: GatewayHealth | null | undefined): GatewayHealth | null {
+  if (!health) return null;
+  return {
+    healthy: health.healthy === true,
+    state: safeStatusString(health.state) || "unknown",
+    ...(health.reason ? { reason: safeStatusString(health.reason) || "unknown" } : {}),
+  };
+}
+
 export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
   const { sandboxes, defaultSandbox } = deps.listSandboxes();
   const resolvedDefault = defaultSandbox || null;
   const liveInference = sandboxes.length > 0 ? deps.getLiveInference() : null;
+  const gatewayHealth =
+    deps.getGatewayHealth && sandboxes.length > 0 ? deps.getGatewayHealth() : null;
   const services =
     deps.getServiceStatuses?.({ sandboxName: resolvedDefault || undefined }).map(
       normalizeServiceStatus,
@@ -361,6 +373,7 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
           model: safeStatusString(liveInference.model),
         }
       : null,
+    gatewayHealth: normalizeGatewayHealth(gatewayHealth),
     sandboxes: sandboxes.map((sandbox) =>
       buildStatusSandboxRow(sandbox, resolvedDefault, liveInference),
     ),

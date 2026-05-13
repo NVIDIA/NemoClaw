@@ -22,14 +22,18 @@ network_policies:
           # Reaction DELETE requires an extra path segment: /reactions/{emoji}/@me or /{user_id}
           - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*" }
           - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*/reactions/*/*" }
-      # WebSocket gateway — pure L4 CONNECT tunnel. OpenShell v0.0.15+
-      # auto-terminates TLS unconditionally (NVIDIA/OpenShell#544), which
-      # also applies to WSS. tls: skip restores the pre-v0.0.15 pass-
-      # through behaviour needed here.
+      # WebSocket gateway. OpenShell's WebSocket L7 relay validates the
+      # upgrade, allows client text frames on the upgraded path, and rewrites
+      # the sandbox placeholder token in Discord IDENTIFY at the relay
+      # boundary.
       - host: gateway.discord.gg
         port: 443
-        access: full
-        tls: skip
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
       - host: cdn.discordapp.com
         port: 443
         protocol: rest

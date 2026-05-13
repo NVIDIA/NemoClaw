@@ -27,7 +27,7 @@ status: published
 Use NemoHermes when you want NemoClaw to create an OpenShell sandbox that runs Hermes instead of the default OpenClaw agent.
 The `nemohermes` command is an alias for `nemoclaw` with the Hermes agent pre-selected.
 
-:::{warning}
+:::{admonition} Experimental Feature
 The Hermes agent option is experimental.
 Interfaces, defaults, and supported features may change without notice, and it is not recommended for production use.
 :::
