@@ -518,26 +518,15 @@ if grep -Fq "OpenClaw local inference will use direct sandbox URL" "$INSTALL_LOG
   SANDBOX_INFERENCE_URL="http://127.0.0.1:${OLLAMA_HOST_PORT}/v1/chat/completions"
 fi
 info "[LOCAL] Sandbox inference test → ${SANDBOX_INFERENCE_URL} → Ollama on GPU..."
-ssh_config="$(mktemp)"
 sandbox_response=""
-
-if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
-  TIMEOUT_CMD=""
-  command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 120"
-  sandbox_response=$($TIMEOUT_CMD ssh -F "$ssh_config" \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=10 \
-    -o LogLevel=ERROR \
-    "openshell-${SANDBOX_NAME}" \
-    "curl -s --max-time 90 ${SANDBOX_INFERENCE_URL} \
-      -H 'Content-Type: application/json' \
-      -d '{\"model\":\"$CONFIGURED_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":200}'" \
-    2>&1) || true
-else
-  fail "openshell sandbox ssh-config failed"
-fi
-rm -f "$ssh_config"
+TIMEOUT_CMD=""
+command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 120"
+sandbox_payload=$(python3 -c 'import json, sys; print(json.dumps({"model": sys.argv[1], "messages": [{"role": "user", "content": "Reply with exactly one word: PONG"}], "max_tokens": 200}))' "$CONFIGURED_MODEL")
+sandbox_curl_cmd=$(printf "curl -s --max-time 90 %q -H %q -d %q" \
+  "$SANDBOX_INFERENCE_URL" \
+  "Content-Type: application/json" \
+  "$sandbox_payload")
+sandbox_response=$($TIMEOUT_CMD openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$sandbox_curl_cmd" 2>&1) || true
 
 if [ -n "$sandbox_response" ]; then
   sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
@@ -548,7 +537,7 @@ if [ -n "$sandbox_response" ]; then
     fail "[LOCAL] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}"
   fi
 else
-  fail "[LOCAL] Sandbox inference: no response from inference.local inside sandbox"
+  fail "[LOCAL] Sandbox inference: no response from ${SANDBOX_INFERENCE_URL} inside sandbox"
 fi
 
 # ══════════════════════════════════════════════════════════════════
