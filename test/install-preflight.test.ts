@@ -2187,6 +2187,61 @@ describe("installer pure helpers", () => {
     });
   }
 
+  it("ensure_cli_shim does not log again when the expected shim already exists", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-shim-idempotent-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const prefixBin = path.join(prefix, "bin");
+    const shimDir = path.join(tmp, ".local", "bin");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(prefixBin, { recursive: true });
+
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+exit 0
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
+  echo "$NPM_PREFIX"
+  exit 0
+fi
+exit 1
+`,
+    );
+    writeExecutable(
+      path.join(prefixBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+exit 0
+`,
+    );
+
+    const result = callInstallerPayloadFn(
+      `
+ensure_local_bin_in_profile() { :; }
+NEMOCLAW_SHIM_DIR=${JSON.stringify(shimDir)}
+_CLI_BIN=nemoclaw
+ensure_cli_shim nemoclaw
+ensure_cli_shim nemoclaw
+`,
+      {
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NPM_PREFIX: prefix,
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+    const shimPath = path.join(shimDir, "nemoclaw");
+
+    expect(result.status, output).toBe(0);
+    expect(fs.readFileSync(shimPath, "utf-8")).toContain(`export PATH="${fakeBin}:$PATH"`);
+    expect(fs.readFileSync(shimPath, "utf-8")).toContain(path.join(prefixBin, "nemoclaw"));
+    expect(output.match(/Created user-local shim/g) ?? []).toHaveLength(1);
+  });
+
   it("verify_nemoclaw checks the active CLI alias", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-verify-cli-"));
     const fakeBin = path.join(tmp, "bin");
