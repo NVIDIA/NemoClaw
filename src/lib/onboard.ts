@@ -272,6 +272,8 @@ const {
 } = require("./onboard/gateway-http-readiness") as typeof import("./onboard/gateway-http-readiness");
 const { isGatewayTcpReady } =
   require("./onboard/gateway-tcp-readiness") as typeof import("./onboard/gateway-tcp-readiness");
+const { isSandboxBridgeGatewayReachable, formatSandboxBridgeUnreachableMessage } =
+  require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
 const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
 const { reportDockerDriverGatewayStartFailure } =
@@ -4562,6 +4564,20 @@ async function startDockerDriverGateway({
       isGatewayHealthy(status, namedInfo, currentInfo) &&
       (await isGatewayTcpReady())
     ) {
+      // Host loopback works — also verify the path real sandboxes take
+      // (bridge → host INPUT). On UFW-active hosts the gateway listens
+      // fine but sandbox containers can't reach it. See
+      // ./onboard/gateway-sandbox-reachability.
+      const reach = await isSandboxBridgeGatewayReachable();
+      if (!reach.ok) {
+        console.error(formatSandboxBridgeUnreachableMessage(reach));
+        if (exitOnFailure) {
+          process.exit(1);
+        }
+        throw new Error(
+          `Docker-driver sandbox-bridge unreachable (${reach.reason})`,
+        );
+      }
       console.log("  ✓ Docker-driver gateway is healthy");
       return;
     }
