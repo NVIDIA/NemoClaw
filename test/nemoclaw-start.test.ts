@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "scripts");
+const JSON5_MODULE = path.join(import.meta.dirname, "..", "nemoclaw", "node_modules", "json5");
 
 function configureGuardBlock(src: string): string {
   const start = src.indexOf("# nemoclaw-configure-guard begin");
@@ -2229,33 +2230,107 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
   });
 
   // ── write_openclaw_config_baseline ────────────────────────────────────────
+  function runNormalizeMutableConfigPermsWithBaseline(
+    fixture: { failBaselineChown?: boolean; failBaselineChmod?: boolean } = {},
+  ) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-baseline-lock-"));
+    const openclawDir = path.join(root, ".openclaw");
+    fs.mkdirSync(openclawDir, { recursive: true });
+    const configPath = path.join(openclawDir, "openclaw.json");
+    const hashPath = path.join(openclawDir, ".config-hash");
+    const baselinePath = path.join(openclawDir, "openclaw.json.nemoclaw-baseline");
+    const baselineName = path.basename(baselinePath);
+
+    fs.writeFileSync(configPath, "{}");
+    fs.writeFileSync(hashPath, "oldhash\n");
+    fs.writeFileSync(baselinePath, JSON.stringify({ source: "baseline" }));
+    fs.chmodSync(openclawDir, 0o2770);
+    fs.chmodSync(configPath, 0o660);
+    fs.chmodSync(hashPath, 0o660);
+    fs.chmodSync(baselinePath, 0o460);
+
+    const wrapper = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "id() { echo 0; }",
+      fixture.failBaselineChown
+        ? `chown() { case "$*" in *${baselineName}*) return 1 ;; esac; return 0; }`
+        : "chown() { return 0; }",
+      fixture.failBaselineChmod
+        ? `chmod() { case "$*" in *${baselineName}*) return 1 ;; esac; command chmod "$@"; }`
+        : "",
+      `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo sandbox; return 0; fi; command stat "$@"; }`,
+      extractShellFunction("lock_openclaw_config_baseline_if_present").replaceAll(
+        "/sandbox",
+        root,
+      ),
+      extractShellFunction("normalize_mutable_config_perms").replaceAll("/sandbox", root),
+      "normalize_mutable_config_perms",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const script = path.join(root, "run.sh");
+    fs.writeFileSync(script, wrapper, { mode: 0o700 });
+    const result = spawnSync("bash", [script], { encoding: "utf-8" });
+    const baselineMode = fs.statSync(baselinePath).mode & 0o777;
+    fs.rmSync(root, { recursive: true, force: true });
+    return { result, baselineMode };
+  }
+
+  it("keeps the baseline read-only after mutable permission normalization", () => {
+    const { result, baselineMode } = runNormalizeMutableConfigPermsWithBaseline();
+    expect(result.status).toBe(0);
+    expect(baselineMode).toBe(0o440);
+  });
+
+  it("fails closed when mutable permission normalization cannot re-lock the baseline", () => {
+    const { result } = runNormalizeMutableConfigPermsWithBaseline({
+      failBaselineChmod: true,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Failed to set permissions");
+  });
+
   type BaselineFixture = {
     configContent: string;
     baselineExists?: boolean;
     /** Owner returned by stat — "sandbox" = mutable mode, "root" = shields-up */
     dirOwner?: "sandbox" | "root";
     asRoot?: boolean;
+    failBaselineChown?: boolean;
+    failBaselineChmod?: boolean;
+    omitPackagedJson5?: boolean;
   };
 
   function runWriteBaseline(fixture: BaselineFixture) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-baseline-"));
     const openclawDir = path.join(root, ".openclaw");
+    const optNemoclaw = path.join(root, "opt", "nemoclaw");
     fs.mkdirSync(openclawDir, { recursive: true });
+    fs.mkdirSync(path.join(optNemoclaw, "node_modules"), { recursive: true });
+    if (!fixture.omitPackagedJson5) {
+      fs.cpSync(JSON5_MODULE, path.join(optNemoclaw, "node_modules", "json5"), {
+        recursive: true,
+      });
+    }
     const configPath = path.join(openclawDir, "openclaw.json");
     const baselinePath = path.join(openclawDir, "openclaw.json.nemoclaw-baseline");
+    const baselineName = path.basename(baselinePath);
 
     fs.writeFileSync(configPath, fixture.configContent);
     if (fixture.baselineExists) {
       fs.writeFileSync(baselinePath, JSON.stringify({ stale: true }));
     }
 
-    const helperFns = [extractShellFunction("openclaw_config_dir_owner")]
+    const helperFns = [
+      extractShellFunction("openclaw_config_dir_owner"),
+      extractShellFunction("lock_openclaw_config_baseline_if_present"),
+    ]
       .join("\n")
       .replaceAll("/sandbox", root);
-    const fn = extractShellFunction("write_openclaw_config_baseline").replaceAll(
-      "/sandbox",
-      root,
-    );
+    const fn = extractShellFunction("write_openclaw_config_baseline")
+      .replaceAll("/sandbox", root)
+      .replaceAll("/opt/nemoclaw", optNemoclaw);
     const owner = fixture.dirOwner ?? "sandbox";
     const uid = fixture.asRoot === false ? 1000 : 0;
 
@@ -2263,19 +2338,27 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `id() { echo ${uid}; }`,
-      "chown() { return 0; }",
+      fixture.failBaselineChown
+        ? `chown() { case "$*" in *${baselineName}*) return 1 ;; esac; return 0; }`
+        : "chown() { return 0; }",
+      fixture.failBaselineChmod
+        ? `chmod() { case "$*" in *${baselineName}*) return 1 ;; esac; command chmod "$@"; }`
+        : "",
       `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo ${owner}; return 0; fi; command stat "$@"; }`,
       helperFns,
       fn,
       "write_openclaw_config_baseline",
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
     const script = path.join(root, "run.sh");
     fs.writeFileSync(script, wrapper, { mode: 0o700 });
     const result = spawnSync("bash", [script], { encoding: "utf-8" });
     const baselineExists = fs.existsSync(baselinePath);
     const baselineContent = baselineExists ? fs.readFileSync(baselinePath, "utf-8") : "";
+    const baselineMode = baselineExists ? fs.statSync(baselinePath).mode & 0o777 : undefined;
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, baselineExists, baselineContent };
+    return { result, baselineExists, baselineContent, baselineMode };
   }
 
   it("captures baseline snapshot when openclaw.json is valid and no baseline exists", () => {
@@ -2288,14 +2371,25 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     expect(baselineContent).toBe(config);
   });
 
-  it("is idempotent — does not overwrite an existing baseline", () => {
+  it("fails closed when a newly captured baseline cannot be locked", () => {
+    const config = JSON.stringify({ agents: { defaults: { model: { primary: "x" } } } });
+    const { result } = runWriteBaseline({
+      configContent: config,
+      failBaselineChown: true,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Failed to set ownership");
+  });
+
+  it("is idempotent and re-locks an existing baseline", () => {
     const config = JSON.stringify({ source: "current" });
-    const { result, baselineContent } = runWriteBaseline({
+    const { result, baselineContent, baselineMode } = runWriteBaseline({
       configContent: config,
       baselineExists: true,
     });
     expect(result.status).toBe(0);
     expect(baselineContent).toBe(JSON.stringify({ stale: true }));
+    expect(baselineMode).toBe(0o440);
   });
 
   it("refuses to capture an empty openclaw.json as baseline", () => {
@@ -2324,9 +2418,9 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     const config = [
       "{",
       '  // primary model',
-      '  "agents": { "defaults": { "model": { "primary": "x" } } },',
+      "  agents: { defaults: { model: { primary: 'x' } } },",
       "  /* trailing comma below is JSON5-only */",
-      '  "models": { "providers": { "inference": {} } },',
+      "  models: { providers: { inference: {} } },",
       "}",
     ].join("\n");
     const { result, baselineExists, baselineContent } = runWriteBaseline({
@@ -2337,6 +2431,17 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     expect(baselineContent).toBe(config);
   });
 
+  it("fails closed when the packaged JSON5 parser is unavailable", () => {
+    const config = JSON.stringify({ ok: true });
+    const { result, baselineExists } = runWriteBaseline({
+      configContent: config,
+      omitPackagedJson5: true,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("JSON5 baseline validator failed");
+    expect(baselineExists).toBe(false);
+  });
+
   it("skips baseline write in shields-up mode (config dir owned by root)", () => {
     const config = JSON.stringify({ ok: true });
     const { result, baselineExists } = runWriteBaseline({
@@ -2345,6 +2450,18 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     });
     expect(result.status).toBe(0);
     expect(baselineExists).toBe(false);
+  });
+
+  it("re-locks an existing baseline even when shields are up", () => {
+    const config = JSON.stringify({ ok: true });
+    const { result, baselineContent, baselineMode } = runWriteBaseline({
+      configContent: config,
+      baselineExists: true,
+      dirOwner: "root",
+    });
+    expect(result.status).toBe(0);
+    expect(baselineContent).toBe(JSON.stringify({ stale: true }));
+    expect(baselineMode).toBe(0o440);
   });
 
   it("skips baseline write when not running as root", () => {
