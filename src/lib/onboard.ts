@@ -6058,6 +6058,7 @@ async function createSandbox(
   let dockerGpuPatchResult: import("./onboard/docker-gpu-patch").DockerGpuPatchResult | null =
     null;
   let dockerGpuPatchError: unknown = null;
+  let dockerGpuPatchNeedsSupervisorWait = false;
   const maybeApplyDockerGpuPatchDuringCreate = () => {
     if (!useDockerGpuPatch || dockerGpuPatchResult || dockerGpuPatchError) return;
     const containerIds = dockerGpuPatch.findOpenShellDockerSandboxContainerIds(sandboxName);
@@ -6071,9 +6072,11 @@ async function createSandbox(
           sandboxName,
           gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
           timeoutSecs: sandboxReadyTimeoutSecs,
+          waitForSupervisor: false,
         },
-        { runOpenshell, runCaptureOpenshell, sleep },
+        { runCaptureOpenshell, sleep },
       );
+      dockerGpuPatchNeedsSupervisorWait = true;
       console.log(`  ✓ Docker GPU mode selected: ${dockerGpuPatchResult.mode.label}`);
     } catch (error) {
       dockerGpuPatchError = error;
@@ -6144,6 +6147,21 @@ async function createSandbox(
       },
       { runOpenshell, runCaptureOpenshell, sleep },
     );
+  }
+  if (dockerGpuPatchNeedsSupervisorWait) {
+    console.log("  Waiting for OpenShell supervisor to reconnect to the GPU-enabled container...");
+    const supervisorReady = dockerGpuPatch.waitForOpenShellSupervisorReconnect(
+      sandboxName,
+      sandboxReadyTimeoutSecs,
+      { runOpenshell, sleep },
+    );
+    if (!supervisorReady) {
+      dockerGpuPatch.printDockerGpuPatchFailureAndExit(
+        sandboxName,
+        new Error("OpenShell supervisor did not reconnect to the GPU-enabled container."),
+        { runCaptureOpenshell },
+      );
+    }
   }
 
   // Wait for OpenShell to report the sandbox Ready before registering.

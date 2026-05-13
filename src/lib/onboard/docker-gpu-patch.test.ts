@@ -214,4 +214,32 @@ describe("docker-gpu-patch", () => {
       expect.objectContaining({ ignoreError: true }),
     );
   });
+
+  it("can recreate during sandbox create before supervisor exec is allowed", () => {
+    const dockerCapture = vi.fn((args: readonly string[]) => {
+      if (args[0] === "ps") return "old-container-id\n";
+      if (args[0] === "inspect") return JSON.stringify([inspectFixture()]);
+      if (args[0] === "info") return "";
+      return "";
+    });
+    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "phase: Provisioning" }));
+
+    const result = recreateOpenShellDockerSandboxWithGpu(
+      { sandboxName: "alpha", timeoutSecs: 1, waitForSupervisor: false },
+      {
+        dockerCapture,
+        dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+        dockerRunDetached: vi.fn(() => ({ status: 0, stdout: "new-container-id\n" })),
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        runOpenshell,
+        sleep: vi.fn(),
+        now: () => new Date("2026-05-12T00:00:00Z"),
+      },
+    );
+
+    expect(result.newContainerId).toBe("new-container-id");
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
 });

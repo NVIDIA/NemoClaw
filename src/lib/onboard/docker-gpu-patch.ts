@@ -555,6 +555,8 @@ function waitForOpenShellSandboxExec(
   return false;
 }
 
+export const waitForOpenShellSupervisorReconnect = waitForOpenShellSandboxExec;
+
 function decoratePatchError<T extends Error>(
   error: T,
   context: DockerGpuPatchFailureContext,
@@ -577,6 +579,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     sandboxName: string;
     gpuDevice?: string | null;
     timeoutSecs?: number;
+    waitForSupervisor?: boolean;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
@@ -655,13 +658,15 @@ export function recreateOpenShellDockerSandboxWithGpu(
     }
     context.newContainerId = newContainerId;
 
-    const execReady = waitForOpenShellSandboxExec(
-      options.sandboxName,
-      options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
-      deps,
-    );
-    if (!execReady) {
-      throw new Error("OpenShell supervisor did not reconnect to the GPU-enabled container.");
+    if (options.waitForSupervisor !== false) {
+      const execReady = waitForOpenShellSandboxExec(
+        options.sandboxName,
+        options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
+        deps,
+      );
+      if (!execReady) {
+        throw new Error("OpenShell supervisor did not reconnect to the GPU-enabled container.");
+      }
     }
 
     d.dockerRm(backupContainerName, {
