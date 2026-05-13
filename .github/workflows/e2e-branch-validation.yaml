@@ -174,6 +174,8 @@ jobs:
     # if: github.repository == 'NVIDIA/NemoClaw'  # Disabled for fork testing — re-enable before merge
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      BREV_E2E_INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Resolve branch from PR number
         if: inputs.pr_number != ''
@@ -252,7 +254,7 @@ jobs:
           BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
-          INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
+          INSTANCE_NAME: ${{ env.BREV_E2E_INSTANCE_NAME }}
           TEST_SUITE: ${{ inputs.test_suite }}
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
           LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
@@ -290,7 +292,7 @@ jobs:
             EMOJI="❌"
             STATUS="FAILED"
           fi
-          INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
+          INSTANCE="${{ env.BREV_E2E_INSTANCE_NAME }}"
           BRANCH="${RESOLVED_BRANCH:-${{ inputs.branch || 'main' }}}"
           BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${BRANCH}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           if [ "${{ inputs.keep_alive }}" = "true" ]; then
@@ -312,7 +314,7 @@ jobs:
         if: failure()
         continue-on-error: true
         run: |
-          INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
+          INSTANCE="${{ env.BREV_E2E_INSTANCE_NAME }}"
           mkdir -p brev-debug-bundle
           brev refresh >/dev/null 2>&1 || true
           ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR \
