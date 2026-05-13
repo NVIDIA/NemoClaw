@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 
 const root = process.cwd();
 const advisorRoot = process.env.GITHUB_WORKSPACE || root;
@@ -22,15 +22,21 @@ const finalResultPath = path.join(outDir, "e2e-advisor-final-result.json");
 const piSummaryPath = path.join(outDir, "e2e-advisor-pi-summary.md");
 // Keep generated Pi credential config outside uploaded artifacts.
 const piConfigDir = process.env.PI_E2E_ADVISOR_CONFIG_DIR || path.join("/tmp", `nemoclaw-e2e-advisor-pi-config-${process.pid}`);
-const timeoutMs = Number.parseInt(process.env.PI_E2E_ADVISOR_TIMEOUT_MS || "900000", 10);
+const timeoutMs = parsePositiveInt(process.env.PI_E2E_ADVISOR_TIMEOUT_MS, 900000);
+const heartbeatMs = parsePositiveInt(process.env.PI_E2E_ADVISOR_HEARTBEAT_MS, 60000);
+const maxCaptureBytes = parsePositiveInt(process.env.PI_E2E_ADVISOR_MAX_CAPTURE_BYTES, 5 * 1024 * 1024);
 
 fs.mkdirSync(outDir, { recursive: true });
 
+logProgress(`Starting advisor analysis: base=${baseRef} head=${headRef} outDir=${outDir}`);
 const schema = readJson(schemaPath);
 const changedFiles = getChangedFiles(baseRef, headRef);
+logProgress(`Detected ${changedFiles.length} changed file(s)`);
 const diff = getDiff(baseRef, headRef, 120000);
+logProgress(`Collected diff: ${diff.length} character(s) after truncation`);
 const prompt = buildPrompt({ baseRef, headRef, changedFiles, schema, diff });
 fs.writeFileSync(promptPath, prompt);
+logProgress(`Wrote Pi prompt: ${prompt.length} character(s) at ${promptPath}`);
 
 if (process.env.PI_E2E_ADVISOR_RUN_PI === "0") {
   writeUnavailable("PI_E2E_ADVISOR_RUN_PI=0");
@@ -68,18 +74,27 @@ const childEnv = {
   PI_SKIP_VERSION_CHECK: process.env.PI_SKIP_VERSION_CHECK || "1",
 };
 preparePiConfig(childEnv, provider, model);
+logProgress(`Launching Pi: provider=${provider || "<default>"} model=${model || "<default>"} timeoutMs=${timeoutMs} heartbeatMs=${heartbeatMs}`);
+logProgress("Pi tools enabled: read,grep,find,ls; repository commands remain disabled by prompt policy");
 
-const child = spawnSync(process.env.PI_BIN || "pi", piArgs, {
+const child = await runPi(process.env.PI_BIN || "pi", piArgs, {
   cwd: root,
-  encoding: "utf8",
-  timeout: timeoutMs,
-  maxBuffer: 20 * 1024 * 1024,
-  input: prompt,
   env: childEnv,
+  input: prompt,
+  timeoutMs,
+  heartbeatMs,
+  maxCaptureBytes,
 });
 
-const combinedOutput = [child.stdout || "", child.stderr ? `\n--- STDERR ---\n${child.stderr}` : ""].join("");
+const capturedStdout = child.stdoutDroppedBytes > 0
+  ? `<stdout truncated; dropped ${child.stdoutDroppedBytes} byte(s)>\n${child.stdout}`
+  : child.stdout;
+const capturedStderr = child.stderrDroppedBytes > 0
+  ? `<stderr truncated; dropped ${child.stderrDroppedBytes} byte(s)>\n${child.stderr}`
+  : child.stderr;
+const combinedOutput = [capturedStdout || "", capturedStderr ? `\n--- STDERR ---\n${capturedStderr}` : ""].join("");
 fs.writeFileSync(rawPath, combinedOutput);
+logProgress(`Pi finished: status=${child.status ?? "<none>"} signal=${child.signal || "<none>"} stdoutBytes=${Buffer.byteLength(child.stdout || "")} stderrBytes=${Buffer.byteLength(child.stderr || "")} stdoutDroppedBytes=${child.stdoutDroppedBytes} stderrDroppedBytes=${child.stderrDroppedBytes}`);
 
 if (child.error) {
   writeFailure(`pi execution failed: ${child.error.message}`);
@@ -103,13 +118,107 @@ fs.writeFileSync(finalResultPath, `${JSON.stringify(result, null, 2)}\n`);
 fs.writeFileSync(piSummaryPath, renderSummary(result));
 console.log(renderSummary(result));
 
+function logProgress(message) {
+  console.log(`[e2e-advisor] ${new Date().toISOString()} ${message}`);
+}
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function runPi(command, commandArgs, { cwd, env, input, timeoutMs, heartbeatMs, maxCaptureBytes }) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const child = spawn(command, commandArgs, {
+      cwd,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let stdoutDroppedBytes = 0;
+    let stderrDroppedBytes = 0;
+    let spawnError;
+    let timedOut = false;
+
+    const heartbeat = setInterval(() => {
+      const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
+      logProgress(`Pi still running: elapsed=${elapsedSeconds}s timeout=${Math.round(timeoutMs / 1000)}s`);
+    }, Math.max(heartbeatMs, 1000));
+    heartbeat.unref?.();
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      logProgress(`Pi exceeded timeoutMs=${timeoutMs}; sending SIGTERM`);
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (child.exitCode === null) {
+          logProgress("Pi did not exit after SIGTERM; sending SIGKILL");
+          child.kill("SIGKILL");
+        }
+      }, 5000).unref?.();
+    }, timeoutMs);
+    timeout.unref?.();
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      const captured = appendCapped(stdout, chunk, maxCaptureBytes, stdoutDroppedBytes);
+      stdout = captured.text;
+      stdoutDroppedBytes = captured.droppedBytes;
+    });
+    child.stderr.on("data", (chunk) => {
+      const captured = appendCapped(stderr, chunk, maxCaptureBytes, stderrDroppedBytes);
+      stderr = captured.text;
+      stderrDroppedBytes = captured.droppedBytes;
+    });
+    child.on("error", (error) => {
+      spawnError = error;
+    });
+    child.on("close", (status, signal) => {
+      clearInterval(heartbeat);
+      clearTimeout(timeout);
+      const error = timedOut
+        ? new Error(`timed out after ${timeoutMs} ms`)
+        : spawnError;
+      resolve({ stdout, stderr, stdoutDroppedBytes, stderrDroppedBytes, status, signal, error });
+    });
+
+    child.stdin.end(input);
+  });
+}
+
+function appendCapped(current, chunk, maxBytes, droppedBytes) {
+  let next = current + chunk;
+  let nextDroppedBytes = droppedBytes;
+  let nextBytes = Buffer.byteLength(next, "utf8");
+  if (nextBytes <= maxBytes) {
+    return { text: next, droppedBytes: nextDroppedBytes };
+  }
+
+  let removeChars = Math.min(next.length, Math.max(1, nextBytes - maxBytes));
+  while (removeChars < next.length && Buffer.byteLength(next.slice(removeChars), "utf8") > maxBytes) {
+    removeChars += 1;
+  }
+  nextDroppedBytes += Buffer.byteLength(next.slice(0, removeChars), "utf8");
+  next = next.slice(removeChars);
+  return { text: next, droppedBytes: nextDroppedBytes };
+}
+
 function parseArgs(argv) {
   const parsed = {};
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg.startsWith("--")) {
       const key = arg.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
-      parsed[key] = argv[i + 1];
+      const next = argv[i + 1];
+      if (!next || next.startsWith("--")) {
+        parsed[key] = undefined;
+        continue;
+      }
+      parsed[key] = next;
       i += 1;
     }
   }

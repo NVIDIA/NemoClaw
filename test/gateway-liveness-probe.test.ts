@@ -133,6 +133,31 @@ describe("gateway liveness probe (#2020)", () => {
     );
   });
 
+  it("Docker-driver gateway startup verifies sandbox bridge reachability before successful returns", () => {
+    const dockerStart = content.indexOf("async function startDockerDriverGateway(");
+    const dockerEnd = content.indexOf("\nasync function startGateway(", dockerStart);
+    expect(dockerStart).toBeGreaterThanOrEqual(0);
+    expect(dockerEnd).toBeGreaterThan(dockerStart);
+    const dockerSection = content.slice(dockerStart, dockerEnd);
+    const calls = dockerSection.match(
+      /verifySandboxBridgeGatewayReachableOrExit\(exitOnFailure\)/g,
+    );
+    expect(calls?.length).toBeGreaterThanOrEqual(3);
+
+    for (const marker of [
+      "Reusing existing Docker-driver gateway",
+      "Reusing existing Docker-driver gateway process",
+      "Docker-driver gateway is healthy",
+    ]) {
+      const markerIdx = dockerSection.indexOf(marker);
+      expect(markerIdx).toBeGreaterThan(0);
+      const before = dockerSection.slice(0, markerIdx);
+      expect(
+        before.lastIndexOf("verifySandboxBridgeGatewayReachableOrExit(exitOnFailure)"),
+      ).toBeGreaterThan(0);
+    }
+  });
+
   it("does not modify isGatewayHealthy() in src/lib/state/gateway.ts", () => {
     // isGatewayHealthy() must remain a pure function — no I/O.
     // Scope the check to the function body so unrelated helpers don't cause false failures.

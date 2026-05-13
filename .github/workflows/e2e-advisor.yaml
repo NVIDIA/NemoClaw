@@ -49,6 +49,10 @@ on:
 
 permissions:
   contents: read
+  # `actions: write` lets the trusted advisor dispatcher trigger the selected
+  # E2E workflow for eligible NVIDIA-owned PRs after validating the requested
+  # jobs against the target workflow's own selective-dispatch predicates.
+  actions: write
   # `pull-requests: write` is required for the advisor to post (or update) a
   # comment on a PR via POST /repos/:o/:r/issues/:n/comments. Even though the
   # endpoint lives under `/issues/`, for GITHUB_TOKEN the permission that
@@ -68,19 +72,26 @@ jobs:
     name: Pi semantic E2E recommendation
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       # Pin the Pi coding agent to a known-good version. Updates should go through
       # the normal dependency-review path (e.g. Dependabot) so a compromised
       # upstream release cannot execute automatically in this secret-bearing job.
       PI_AGENT_VERSION: "0.73.1"
+      # Keep Pi's own timeout shorter than the GitHub job timeout so the
+      # analyzer can write failure artifacts, summaries, and PR comments.
+      PI_E2E_ADVISOR_TIMEOUT_MS: "900000"
+      PI_E2E_ADVISOR_HEARTBEAT_MS: "60000"
+      # Cap automatic fan-out from noisy/flaky advisor recommendations until
+      # the dispatcher has enough production history to justify a higher limit.
+      E2E_ADVISOR_AUTO_DISPATCH_MAX_JOBS: "6"
       # The trusted checkout always lives at this path and is the only source
       # of code executed in this job. The PR content, if any, is mounted as
       # read-only analysis data under PR_WORKDIR.
       ADVISOR_DIR: ${{ github.workspace }}/advisor
     steps:
       # Trusted-code boundary: the advisor implementation (pi-analyze.mjs,
-      # comment.mjs, schema.json, pi-models.template.json) is always fetched
+      # dispatch.mts, comment.mts, schema.json, pi-models.template.json) is always fetched
       # from the main branch of this repo, regardless of what the PR changed.
       # This prevents a future PR from modifying advisor code and executing
       # arbitrary Node in a job that holds API keys and a write-scoped token.
@@ -181,6 +192,30 @@ jobs:
             printf '# Pi Semantic E2E Advisor\n\nPi analysis did not produce a summary. See raw artifacts/logs.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Auto-dispatch required E2E jobs
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DISPATCH_RESULT="$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-dispatch-result.json"
+          DISPATCH_SUMMARY="$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-dispatch-summary.md"
+          if [ -f "$ADVISOR_DIR/tools/e2e-advisor/dispatch.mts" ]; then
+            node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/dispatch.mts" \
+              --result "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-final-result.json" \
+              --workflow nightly-e2e.yaml \
+              --workflow-path "$ADVISOR_DIR/.github/workflows/nightly-e2e.yaml" \
+              --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
+          else
+            echo "Skipping E2E auto-dispatch: trusted main checkout does not yet contain dispatch.mts"
+            mkdir -p "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
+            printf '{\n  "status": "skipped",\n  "reason": "trusted main checkout does not yet contain dispatch.mts",\n  "workflow": "nightly-e2e.yaml"\n}\n' > "$DISPATCH_RESULT"
+            printf '# E2E Advisor Auto-dispatch\n\nStatus: **skipped**\nReason: trusted main checkout does not yet contain dispatch.mts\nWorkflow: `nightly-e2e.yaml`\n' > "$DISPATCH_SUMMARY"
+          fi
+          if [ -f "$DISPATCH_SUMMARY" ]; then
+            cat "$DISPATCH_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Post E2E advisor PR comment
         if: ${{ always() && github.event_name == 'pull_request' }}
         continue-on-error: true
@@ -188,11 +223,20 @@ jobs:
           GH_TOKEN: ${{ secrets.E2E_ADVISOR_GITHUB_TOKEN || github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          node "$ADVISOR_DIR/tools/e2e-advisor/comment.mjs" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pr "$PR_NUMBER" \
-            --summary "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-pi-summary.md" \
+          COMMENT_ARGS=(
+            --repo "$GITHUB_REPOSITORY"
+            --pr "$PR_NUMBER"
+            --summary "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-pi-summary.md"
             --result "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-final-result.json"
+            --dispatch "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-dispatch-result.json"
+          )
+          if [ -f "$ADVISOR_DIR/tools/e2e-advisor/comment.mts" ]; then
+            node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/comment.mts" "${COMMENT_ARGS[@]}"
+          elif [ -f "$ADVISOR_DIR/tools/e2e-advisor/comment.mjs" ]; then
+            node "$ADVISOR_DIR/tools/e2e-advisor/comment.mjs" "${COMMENT_ARGS[@]}"
+          else
+            echo "Skipping E2E advisor comment: trusted main checkout does not contain comment.mts or comment.mjs"
+          fi
 
       - name: Upload advisor artifacts
         if: always()
