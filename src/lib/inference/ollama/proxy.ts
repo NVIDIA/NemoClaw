@@ -12,6 +12,7 @@ const { spawn, spawnSync } = require("child_process");
 const http = require("http");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("../../runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
+const { waitForPort } = require("../../core/wait");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -157,7 +158,12 @@ function startOllamaAuthProxy(): boolean {
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
   const pid = spawnOllamaAuthProxy(proxyToken);
-  sleep(1);
+  if (!waitForPort(OLLAMA_PROXY_PORT, 2)) {
+    console.error(
+      `  Error: Ollama auth proxy did not become ready on :${OLLAMA_PROXY_PORT} within timeout.`,
+    );
+    return false;
+  }
   if (!isOllamaProxyProcess(pid)) {
     console.error(`  Error: Ollama auth proxy failed to start on :${OLLAMA_PROXY_PORT}`);
     console.error(`  Containers will not be able to reach Ollama without the proxy.`);

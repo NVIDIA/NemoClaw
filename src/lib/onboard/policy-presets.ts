@@ -3,6 +3,7 @@
 
 import { getCredential } from "../credentials/store";
 import type { WebSearchConfig } from "../inference/web-search";
+import { isExperimentalChannelGateEnabled } from "./messaging-state";
 
 const { LOCAL_INFERENCE_PROVIDERS } = require("./providers") as {
   LOCAL_INFERENCE_PROVIDERS: string[];
@@ -13,6 +14,7 @@ export interface SuggestedPolicyPresetOptions {
   webSearchConfig?: WebSearchConfig | null;
   provider?: string | null;
   isNonInteractive?: () => boolean;
+  experimentalEnabled?: boolean;
 }
 
 export function getSuggestedPolicyPresets({
@@ -20,6 +22,7 @@ export function getSuggestedPolicyPresets({
   webSearchConfig = null,
   provider = null,
   isNonInteractive,
+  experimentalEnabled = isExperimentalChannelGateEnabled(),
 }: SuggestedPolicyPresetOptions = {}): string[] {
   const suggestions = ["pypi", "npm"];
 
@@ -47,7 +50,9 @@ export function getSuggestedPolicyPresets({
   maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
   maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
   maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
-  maybeSuggestMessagingPreset("whatsapp", null);
+  if (experimentalEnabled) {
+    maybeSuggestMessagingPreset("whatsapp", null);
+  }
 
   if (webSearchConfig) suggestions.push("brave");
 

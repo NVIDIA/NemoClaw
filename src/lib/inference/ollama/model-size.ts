@@ -11,6 +11,7 @@ const MANIFEST_ACCEPT_HEADER =
 const FALLBACK_SIZE_BYTES: Readonly<Record<string, number>> = {
   "qwen2.5:7b": 4_683_073_184,
   "nemotron-3-nano:30b": 19_000_000_000,
+  "qwen3.6:35b": 24_000_000_000,
 };
 
 export type CaptureFn = (cmd: readonly string[], opts?: { ignoreError?: boolean }) => string;

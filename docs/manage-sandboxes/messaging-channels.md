@@ -26,6 +26,7 @@ status: published
 
 Telegram, Discord, Slack, and WhatsApp reach your agent through OpenShell-managed processes and gateway constructs.
 For token-based channels, NemoClaw registers credentials with OpenShell providers; WhatsApp pairs inside the sandbox via QR scan and stores session state there.
+WhatsApp is experimental and is only surfaced to the onboard wizard and `channels add` when `NEMOCLAW_EXPERIMENTAL=1` is set; without the flag the picker and `channels list` hide it.
 NemoClaw bakes the selected channel configuration into the sandbox image and keeps runtime delivery under OpenShell control.
 
 You can enable channels during `nemoclaw onboard` or add them later with host-side `nemoclaw <sandbox> channels` commands.
@@ -121,6 +122,8 @@ $ nemoclaw my-assistant channels add slack
 
 `channels add` prompts for missing credentials, registers the bridge with the OpenShell gateway, updates the sandbox registry, and asks whether to rebuild immediately.
 Choose the rebuild so the running sandbox image picks up the new channel.
+If the matching network policy preset (`telegram`, `discord`, `slack`, or `whatsapp`) is not yet applied to the sandbox, `channels add` prints a hint to run `nemoclaw <sandbox> policy-add <channel>` first.
+Apply the preset before the rebuild so the channel can reach its provider API; otherwise the bridge will start but its egress requests will be denied.
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, or `DISCORD_REQUIRE_MENTION`, export them before the rebuild starts.
 If you defer the rebuild, apply the change later:
 

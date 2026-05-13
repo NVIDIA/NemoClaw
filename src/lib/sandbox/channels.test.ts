@@ -8,6 +8,7 @@ import {
   channelUsesQrPairing,
   getChannelDef,
   getChannelTokenKeys,
+  isChannelExperimental,
   knownChannelNames,
   listChannels,
 } from "./channels";
@@ -54,6 +55,13 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
   it("returns undefined for unknown channel names", () => {
     expect(getChannelDef("mattermost")).toBeUndefined();
     expect(getChannelDef("")).toBeUndefined();
+  });
+
+  it("flags whatsapp as experimental and leaves token-based channels stable", () => {
+    expect(isChannelExperimental(KNOWN_CHANNELS.whatsapp)).toBe(true);
+    expect(isChannelExperimental(KNOWN_CHANNELS.telegram)).toBe(false);
+    expect(isChannelExperimental(KNOWN_CHANNELS.discord)).toBe(false);
+    expect(isChannelExperimental(KNOWN_CHANNELS.slack)).toBe(false);
   });
 });
 

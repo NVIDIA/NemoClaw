@@ -22,9 +22,11 @@ import {
   clearChannelTokens,
   getChannelDef,
   getChannelTokenKeys,
+  isChannelExperimental,
   knownChannelNames,
   persistChannelTokens,
 } from "../../sandbox/channels";
+import { isExperimentalChannelGateEnabled } from "../../onboard/messaging-state";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -245,9 +247,11 @@ export function listSandboxPolicies(sandboxName: string) {
 // ── Messaging channels ───────────────────────────────────────────
 
 export function listSandboxChannels(sandboxName: string) {
+  const experimental = isExperimentalChannelGateEnabled();
   console.log("");
   console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
   for (const [name, channel] of Object.entries(KNOWN_CHANNELS)) {
+    if (isChannelExperimental(channel) && !experimental) continue;
     console.log(`    ${name} — ${channel.description}`);
   }
   console.log("");
@@ -417,6 +421,13 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
   }
   const canonical = channelArg.trim().toLowerCase();
 
+  if (isChannelExperimental(channel) && !isExperimentalChannelGateEnabled()) {
+    console.error(
+      `  Channel '${canonical}' is experimental. Set NEMOCLAW_EXPERIMENTAL=1 to enable it.`,
+    );
+    process.exit(1);
+  }
+
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
     return;
@@ -429,6 +440,7 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
     console.log(
       `  ${G}✓${R} Enabled ${canonical} channel. Complete QR pairing from inside the sandbox after rebuild.`,
     );
+    maybeHintPolicyPresetForChannel(sandboxName, canonical);
     await promptAndRebuild(sandboxName, `add '${canonical}'`);
     return;
   }
@@ -469,7 +481,19 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
   // the rebuild used to drop the queued token.
   await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, acquired);
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
+  maybeHintPolicyPresetForChannel(sandboxName, canonical);
   await promptAndRebuild(sandboxName, `add '${canonical}'`);
+}
+
+function maybeHintPolicyPresetForChannel(sandboxName: string, channelName: string): void {
+  const presetExists = policies.listPresets().some((p) => p.name === channelName);
+  if (!presetExists) return;
+  const applied = policies.getAppliedPresets(sandboxName);
+  if (applied.includes(channelName)) return;
+  console.log(
+    `  Hint: the ${channelName} network preset is not applied to '${sandboxName}'. ` +
+      `Run \`${CLI_NAME} ${sandboxName} policy-add ${channelName}\` so the rebuilt sandbox can reach the ${channelName} service.`,
+  );
 }
 
 export async function removeSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
@@ -495,16 +519,17 @@ export async function removeSandboxChannel(sandboxName: string, args: string[] =
   }
 
   clearChannelTokens(channel);
+  const tokenKeys = getChannelTokenKeys(channel);
   // Same rationale as channels-add: tear down the gateway providers and
   // drop the channel from the registry NOW so a deferred rebuild does
   // not leave a stale bridge running against a token NemoClaw has
   // already "removed" from the user's perspective.
-  await applyChannelRemoveToGatewayAndRegistry(
-    sandboxName,
-    canonical,
-    getChannelTokenKeys(channel),
-  );
-  console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
+  await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys);
+  if (tokenKeys.length > 0) {
+    console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
+  } else {
+    console.log(`  ${G}✓${R} Removed ${canonical} channel.`);
+  }
   await promptAndRebuild(sandboxName, `remove '${canonical}'`);
 }
 

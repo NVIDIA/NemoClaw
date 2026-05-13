@@ -24,6 +24,7 @@ export interface ChannelDef {
   tokenFormatHint?: string;
   appTokenFormat?: RegExp;
   appTokenFormatHint?: string;
+  experimental?: boolean;
 }
 
 export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
@@ -80,8 +81,13 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     description: "WhatsApp Web messaging (QR pairing)",
     help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, run `openshell term <sandbox>` and then `openclaw channels login --channel whatsapp` to display the QR.",
     label: "WhatsApp",
+    experimental: true,
   },
 };
+
+export function isChannelExperimental(channel: ChannelDef): boolean {
+  return channel.experimental === true;
+}
 
 export function getChannelDef(name: string): ChannelDef | undefined {
   return KNOWN_CHANNELS[name.trim().toLowerCase()];

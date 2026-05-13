@@ -13,12 +13,18 @@ import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { redactFull } from "../security/redact";
 import { ensureConfigDir } from "../state/config-io";
+import { resolveNemoclawStateDir } from "../state/paths";
 
-const AUDIT_DIR = join(process.env.HOME ?? "/tmp", ".nemoclaw", "state");
+const AUDIT_DIR = resolveNemoclawStateDir();
 const AUDIT_FILE = join(AUDIT_DIR, "shields-audit.jsonl");
 
 export interface ShieldsAuditEntry {
-  action: "shields_down" | "shields_up" | "shields_auto_restore" | "shields_up_failed";
+  action:
+    | "shields_down"
+    | "shields_up"
+    | "shields_auto_restore"
+    | "shields_up_failed"
+    | "shields_auto_restore_lock_warning";
   sandbox: string;
   timestamp: string;
   timeout_seconds?: number;
@@ -26,9 +32,12 @@ export interface ShieldsAuditEntry {
   policy_applied?: string;
   policy_snapshot?: string;
   restored_at?: string;
+  scheduled_restore_at?: string;
   restored_by?: "operator" | "auto_timer";
   duration_seconds?: number;
   error?: string;
+  warning?: string;
+  lock_verified?: boolean;
 }
 
 /**
