@@ -16,6 +16,7 @@ import * as onboardSession from "../../state/onboard-session";
 import type { Session } from "../../state/onboard-session";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../core/ports";
+import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -69,7 +70,7 @@ function dockerDriverGatewayPidFile(): string {
 function isDockerDriverGatewayPid(pid: number): boolean {
   try {
     const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8").replace(/\0/g, " ");
-    return cmdline.includes("openshell-gateway");
+    return cmdline.includes("openshell-gateway") || cmdline.includes("openclaw-gateway");
   } catch {
     return false;
   }
@@ -112,6 +113,11 @@ function cleanupGatewayAfterLastSandbox(): void {
     ignoreError: true,
     stdio: ["ignore", "ignore", "ignore"],
   });
+  // After the cooperative forward-stop, sweep the dashboard port range for
+  // stale host-side gateway-forward processes (#3397, #3398). The forward-stop
+  // above releases ports the live openshell tracks; this catches orphans whose
+  // openshell record was lost across upgrades or failed onboards.
+  stopStaleDashboardListeners();
   if (process.platform === "linux") {
     stopDockerDriverGatewayProcess();
     const removeResult = runOpenshell(["gateway", "remove", NEMOCLAW_GATEWAY_NAME], {

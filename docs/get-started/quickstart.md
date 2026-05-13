@@ -322,6 +322,10 @@ Status:      nemoclaw my-gpt-claw status
 Logs:        nemoclaw my-gpt-claw logs --follow
 ──────────────────────────────────────────────────
 
+To change settings later:
+  Model:       nemoclaw inference get
+               nemoclaw inference set --model <model> --provider <provider> --sandbox my-gpt-claw
+
 [INFO]  === Installation complete ===
 ```
 

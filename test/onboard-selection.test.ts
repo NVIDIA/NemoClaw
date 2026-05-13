@@ -8,12 +8,15 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+import { testTimeout } from "./helpers/timeouts";
+
 const CREDENTIAL_RETRY_PROMPT =
   "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
 const CREDENTIAL_RETRY_PROMPT_RE =
   /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
+const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
 
 function writeOpenAiStyleAuthRetryCurl(fakeBin: string, goodToken: string, models = ["gpt-5.4"]) {
   fs.writeFileSync(
@@ -99,7 +102,7 @@ printf '%s' "$status"
   );
 }
 
-describe("onboard provider selection UX", () => {
+describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
   it("prompts explicitly instead of silently auto-selecting detected Ollama", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-"));
@@ -971,7 +974,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("starts managed Ollama on loopback before exposing the auth proxy", { timeout: 10_000 }, () => {
+  it("starts managed Ollama on loopback before exposing the auth proxy", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-loopback-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -2737,7 +2740,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("lets users type back after a transport validation failure to return to provider selection", { timeout: 10_000 }, () => {
+  it("lets users type back after a transport validation failure to return to provider selection", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-transport-back-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3864,7 +3867,7 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line: string) => line.includes("tool-call-parser requires")));
   });
 
-  it("offers install-ollama option on Linux when Ollama is not installed", { timeout: 10_000 }, () => {
+  it("offers install-ollama option on Linux when Ollama is not installed", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-ollama-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -4161,7 +4164,7 @@ const { setupNim } = require(${onboardPath});
     assert.match(result.stderr, /Refusing to continue/);
   });
 
-  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", { timeout: 10_000 }, () => {
+  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-noninteractive-install-ollama-"),

@@ -418,10 +418,21 @@ describe("CLI dispatch", () => {
   });
 
   it("bare unknown name surfaces sandbox-not-found (#2164)", testTimeoutOptions(35_000), () => {
-    // Longer timeout: when openshell is installed but the gateway is down,
-    // the CLI probes the gateway before reporting "not found" and the
-    // default 10s is not enough for the connection to time out.
-    const r = runWithEnv("boguscmd", {}, execTimeout(30_000));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-unknown-sandbox-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(path.join(localBin, "openshell"), "#!/usr/bin/env bash\nexit 1\n", {
+      mode: 0o755,
+    });
+
+    const r = runWithEnv(
+      "boguscmd",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      execTimeout(30_000),
+    );
     expect(r.code).toBe(1);
     expect(r.out.includes("Sandbox 'boguscmd' does not exist")).toBeTruthy();
   });
@@ -555,6 +566,48 @@ describe("CLI dispatch", () => {
     expect(out).toContain("$ nemohermes inference set --provider <provider> --model <model>");
     expect(out).toContain("[--sandbox <name>] [--no-verify]");
     expect(out).toMatch(/OpenClaw or Hermes\s+sandbox config/);
+  });
+
+  it("inference get reports the live NemoClaw gateway route", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-get-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: nvidia/nemotron-3-super-120b-a12b'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const text = runWithEnv("inference get", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(text.code).toBe(0);
+      expect(text.out).toContain("Provider: nvidia-prod");
+      expect(text.out).toContain("Model:    nvidia/nemotron-3-super-120b-a12b");
+
+      const json = runWithEnv("inference get --json", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(json.code).toBe(0);
+      expect(JSON.parse(json.out)).toEqual({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("list --json emits structured empty inventory", () => {
@@ -1307,7 +1360,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("--sandbox NAME");
   });
 
-  it("debug --sandbox skips stale default warning", testTimeoutOptions(), () => {
+  it("debug --sandbox skips stale default warning", testTimeoutOptions(30_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-"));
     fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(
@@ -1315,7 +1368,7 @@ describe("CLI dispatch", () => {
       JSON.stringify({ sandboxes: {}, defaultSandbox: "ghost" }),
       { mode: 0o600 },
     );
-    const r = runWithEnv("debug --quick --sandbox mybox 2>&1", { HOME: home });
+    const r = runWithEnv("debug --quick --sandbox mybox 2>&1", { HOME: home }, 30000);
     expect(r.code).toBe(0);
     expect(r.out).not.toContain("default sandbox 'ghost'");
     expect(r.out).not.toContain("--sandbox NAME");

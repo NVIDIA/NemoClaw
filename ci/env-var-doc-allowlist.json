@@ -8,6 +8,10 @@
     "reason": "Internal developer/test override for the managed Model Router virtualenv path. Production users should use the default ~/.nemoclaw/model-router-venv."
   },
   {
+    "name": "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
+    "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
+  },
+  {
     "name": "NEMOCLAW_TEST_NO_SLEEP",
     "reason": "Test sentinel that bypasses real-time sleep() calls in onboard inference probes. Set to '1' only by Vitest tests; never user-set."
   }

@@ -905,38 +905,6 @@ PYPLACEHOLDERS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
-# ── Slack token rewriter (Bolt-shape → canonical placeholder) ────
-# Installs a Node preload that translates the Bolt-compatible placeholder
-# (xoxb|xapp)-OPENSHELL-RESOLVE-ENV-VAR — emitted into openclaw.json by
-# generate-openclaw-config.py — into the active openshell:resolve:env:*
-# placeholder on outbound HTTP. OpenShell's L7 proxy then substitutes the
-# real token from env on the wire, the same path Discord/Telegram/Brave
-# already take. No real Slack token ever touches openclaw.json, /tmp, or
-# any other disk surface readable by the sandbox uid.
-#
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2085
-
-_SLACK_REWRITER_SCRIPT="/tmp/nemoclaw-slack-token-rewriter.js"
-_SLACK_REWRITER_SOURCE="/usr/local/lib/nemoclaw/preloads/slack-token-rewriter.js"
-
-install_slack_token_rewriter() {
-  local config_file="/sandbox/.openclaw/openclaw.json"
-
-  # Only install if a Slack channel placeholder is present in the config.
-  # Same conditional shape as install_slack_channel_guard — both are no-ops
-  # for sandboxes without Slack configured.
-  if ! grep -q 'OPENSHELL-RESOLVE-ENV-SLACK_' "$config_file" 2>/dev/null; then
-    return 0
-  fi
-
-  printf '[channels] Installing Slack token rewriter (Bolt-shape → OpenShell placeholder)\n' >&2
-
-  emit_sandbox_sourced_file "$_SLACK_REWRITER_SCRIPT" <"$_SLACK_REWRITER_SOURCE"
-
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_REWRITER_SCRIPT"
-  printf '[channels] Slack token rewriter installed (NODE_OPTIONS updated)\n' >&2
-}
-
 # ── Slack secrets-on-disk tripwire ────────────────────────────────
 # Defense-in-depth: refuse to serve if a real Slack token (anything
 # starting with xoxb- or xapp- that is NOT the OPENSHELL-RESOLVE-ENV-
@@ -1524,8 +1492,6 @@ GUARDENVEOF
     # by install_slack_channel_guard() — conditional on the file existing at
     # source-time so connect sessions started before Slack is configured are safe.
     echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
-    # Slack token rewriter for connect sessions — same conditional pattern.
-    echo "[ -f \"$_SLACK_REWRITER_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_REWRITER_SCRIPT\""
     # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
     echo '# Tool cache redirects — keep transient tool state under /tmp'
     for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -1949,7 +1915,6 @@ if [ "$(id -u)" -ne 0 ]; then
 
   configure_messaging_channels
   install_telegram_diagnostics
-  install_slack_token_rewriter
   install_slack_channel_guard
   verify_no_slack_secrets_on_disk
 
@@ -1993,7 +1958,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_SLACK_REWRITER_SCRIPT"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
@@ -2051,7 +2016,6 @@ lock_rc_files "$_SANDBOX_HOME"
 # BEFORE chattr +i (which locks the config permanently).
 configure_messaging_channels
 install_telegram_diagnostics
-install_slack_token_rewriter
 install_slack_channel_guard
 verify_no_slack_secrets_on_disk
 
@@ -2167,7 +2131,7 @@ gosu sandbox bash -c "$(declare -f seed_default_workspace_templates); seed_defau
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_SLACK_REWRITER_SCRIPT"
+validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
