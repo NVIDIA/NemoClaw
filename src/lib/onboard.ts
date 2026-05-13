@@ -4185,7 +4185,7 @@ async function startGatewayWithOptions(
   step(2, 8, "Starting OpenShell gateway");
 
   if (isLinuxDockerDriverGatewayEnabled()) {
-    return startDockerDriverGateway({ exitOnFailure });
+    return startDockerDriverGateway({ exitOnFailure, skipSandboxBridgeReachability: gpuPassthrough && process.env.NEMOCLAW_DOCKER_GPU_PATCH !== "0" && dockerGpuPatch.getDockerGpuPatchNetworkMode(process.env) === "host" });
   }
 
   const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
@@ -4377,9 +4377,7 @@ async function startGatewayWithOptions(
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
-async function startDockerDriverGateway({
-  exitOnFailure = true,
-}: { exitOnFailure?: boolean } = {}): Promise<void> {
+async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridgeReachability = false }: { exitOnFailure?: boolean; skipSandboxBridgeReachability?: boolean } = {}): Promise<void> {
   dockerDriverGatewayEnv.writeDockerGatewayDebEnvOverride(() => getDockerDriverGatewayEnv());
   const gatewayBin = resolveOpenShellGatewayBinary();
   const openshellVersionOutput = runCaptureOpenshell(["--version"], {
@@ -4410,7 +4408,7 @@ async function startDockerDriverGateway({
     if (drift) {
       restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
     } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure); console.log("  ✓ Reusing existing Docker-driver gateway");
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, { skip: skipSandboxBridgeReachability }); console.log("  ✓ Reusing existing Docker-driver gateway");
       return;
     } else {
       console.log(
@@ -4443,7 +4441,7 @@ async function startDockerDriverGateway({
         isGatewayHealthy(adoptedStatus, adoptedGwInfo, adoptedActiveGatewayInfo) &&
         (await isDockerDriverGatewayHttpReady())
       ) {
-        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure); console.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
+        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, { skip: skipSandboxBridgeReachability }); console.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
         return;
       }
     }
@@ -4516,7 +4514,7 @@ async function startDockerDriverGateway({
       isGatewayHealthy(status, namedInfo, currentInfo) &&
       (await isGatewayTcpReady())
     ) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure); console.log("  ✓ Docker-driver gateway is healthy");
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, { skip: skipSandboxBridgeReachability }); console.log("  ✓ Docker-driver gateway is healthy");
       return;
     }
     if (i < pollCount - 1) sleep(pollInterval);
