@@ -525,6 +525,34 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Did you mean: nemoclaw alpha connect?");
   });
 
+  it("points openshell-only commands at the openshell invocation", () => {
+    const cases = [
+      ["term", "openshell term"],
+      ["policy set", "openshell policy set --policy <policy-file> <sandbox-name>"],
+      ["gateway stop", "openshell gateway stop -g nemoclaw"],
+    ];
+
+    for (const [args, invocation] of cases) {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-openshell-hint-"));
+      const localBin = path.join(home, "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.writeFileSync(path.join(localBin, "openshell"), "#!/usr/bin/env bash\nexit 1\n", {
+        mode: 0o755,
+      });
+      const r = runWithEnv(args, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "0",
+      });
+
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("This command lives under openshell. Run:");
+      expect(r.out).toContain(invocation);
+      expect(r.out).toContain("See `nemoclaw --help`");
+      expect(r.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
+    }
+  });
+
   it("list exits 0", () => {
     const r = run("list");
     expect(r.code).toBe(0);

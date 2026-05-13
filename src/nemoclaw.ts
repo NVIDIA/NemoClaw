@@ -63,6 +63,22 @@ function hasHelpFlag(args: readonly string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
 
+function openshellOnlyCommandHint(argv: readonly string[]): string | null {
+  const [cmd, sub] = argv;
+  if (cmd === "term") return "openshell term";
+  if (cmd === "policy" && sub === "set") {
+    return "openshell policy set --policy <policy-file> <sandbox-name>";
+  }
+  if (cmd === "gateway" && sub === "stop") return "openshell gateway stop -g nemoclaw";
+  return null;
+}
+
+function printOpenshellOnlyCommandHint(invocation: string): void {
+  console.error("  This command lives under openshell. Run:");
+  console.error(`      ${invocation}`);
+  console.error(`  See \`${CLI_NAME} --help\` for the full list of openshell-only operations.`);
+}
+
 function findRegisteredSandboxName(tokens: string[]): string | null {
   const registered = new Set(
     registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name),
@@ -204,6 +220,11 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });
     if (!registry.getSandbox(cmd)) {
+      const openshellHint = openshellOnlyCommandHint(argv);
+      if (openshellHint) {
+        printOpenshellOnlyCommandHint(openshellHint);
+        process.exit(1);
+      }
       if (args.length === 0) {
         const suggestion = suggestGlobalCommand(cmd);
         if (suggestion) {
@@ -232,6 +253,11 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   }
 
   if (!registry.getSandbox(cmd)) {
+    const openshellHint = openshellOnlyCommandHint(argv);
+    if (openshellHint) {
+      printOpenshellOnlyCommandHint(openshellHint);
+      process.exit(1);
+    }
     const suggestion = suggestGlobalCommand(cmd);
     if (suggestion) {
       console.error(`  Unknown command: ${cmd}`);
