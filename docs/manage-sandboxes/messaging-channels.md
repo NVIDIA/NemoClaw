@@ -79,7 +79,8 @@ Pair only one sandbox per WhatsApp account at a time.
 When the wizard reaches **Messaging channels**, it lists Telegram, Discord, Slack, and WhatsApp.
 Press a channel number to toggle it on or off, then press **Enter** when done.
 If a token is not already in the environment or credential store, the wizard prompts for it and saves it.
-WhatsApp uses QR pairing instead of a host-side token, so the wizard does not prompt — it prints pairing instructions and you complete the pairing inside the sandbox after rebuild.
+WhatsApp uses QR pairing instead of a host-side token, so the wizard does not prompt.
+It prints pairing instructions and you complete the pairing inside the sandbox after rebuild.
 NemoClaw also selects the matching network policy preset during policy setup so the channel can reach its provider API.
 
 For scripted setup, export the credentials and optional settings for the channels you want to enable before you run onboarding:

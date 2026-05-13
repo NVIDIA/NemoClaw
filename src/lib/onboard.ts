@@ -6110,8 +6110,9 @@ async function createSandbox(
   // the gateway on the next rebuild. `channels start` removes the entry and
   // the bridge comes back.
   const disabledChannels = registry.getDisabledChannels(sandboxName);
+  const disabledChannelNames = new Set(disabledChannels);
   const disabledEnvKeys = new Set(
-    MESSAGING_CHANNELS.filter((c) => disabledChannels.includes(c.name)).flatMap((c) =>
+    MESSAGING_CHANNELS.filter((c) => disabledChannelNames.has(c.name)).flatMap((c) =>
       getChannelTokenKeys(c),
     ),
   );
@@ -6568,6 +6569,7 @@ async function createSandbox(
   );
   const qrSelectedChannels = Array.isArray(enabledChannels)
     ? enabledChannels.filter((name) => {
+        if (disabledChannelNames.has(name)) return false;
         const ch = MESSAGING_CHANNELS.find((c) => c.name === name);
         return !!ch && channelUsesQrPairing(ch);
       })
@@ -9345,11 +9347,12 @@ function getSuggestedPolicyPresets({
   }
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
 
-  const maybeSuggestMessagingPreset = (channel: string, envKey: string): void => {
+  const maybeSuggestMessagingPreset = (channel: string, envKey: string | null): void => {
     if (usesExplicitMessagingSelection) {
       if (enabledChannels.includes(channel)) suggestions.push(channel);
       return;
     }
+    if (envKey === null) return;
     if (getCredential(envKey) || process.env[envKey]) {
       suggestions.push(channel);
       if (process.stdout.isTTY && !isNonInteractive() && process.env.CI !== "true") {
@@ -9361,6 +9364,7 @@ function getSuggestedPolicyPresets({
   maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
   maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
   maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
+  maybeSuggestMessagingPreset("whatsapp", null);
 
   if (webSearchConfig) suggestions.push("brave");
 
