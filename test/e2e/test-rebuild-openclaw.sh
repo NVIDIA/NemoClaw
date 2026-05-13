@@ -34,7 +34,7 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-rebuild-oc}"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 OLD_OPENCLAW_VERSION="2026.3.11"
-MARKER_FILE="/sandbox/.openclaw-data/workspace/rebuild-marker.txt"
+MARKER_FILE="/sandbox/.openclaw/workspace/rebuild-marker.txt"
 MARKER_CONTENT="REBUILD_OC_E2E_$(date +%s)"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
@@ -142,7 +142,7 @@ cat >"${TESTDIR}/Dockerfile" <<DOCKERFILE
 FROM ${OLD_BASE_TAG}
 USER sandbox
 WORKDIR /sandbox
-RUN mkdir -p /sandbox/.openclaw-data/workspace /sandbox/.openclaw && echo '{}' > /sandbox/.openclaw/openclaw.json
+RUN mkdir -p /sandbox/.openclaw/workspace /sandbox/.openclaw && echo '{}' > /sandbox/.openclaw/openclaw.json
 CMD ["/bin/bash"]
 DOCKERFILE
 
@@ -168,7 +168,7 @@ pass "Old sandbox created (OpenClaw ${OLD_OPENCLAW_VERSION})"
 info "Phase 4: Writing markers and registering sandbox..."
 
 openshell sandbox exec --name "${SANDBOX_NAME}" -- \
-  sh -c "mkdir -p /sandbox/.openclaw-data/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
+  sh -c "mkdir -p /sandbox/.openclaw/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
   || fail "Failed to write marker file"
 
 # Verify
@@ -246,14 +246,14 @@ NEMOCLAW_MODULE_DIR="$(node -e "
     if (m) {
       const nodeDir = path.dirname(path.dirname(m[1]));
       const candidate = path.join(nodeDir, 'lib/node_modules/nemoclaw');
-      if (fs.existsSync(path.join(candidate, 'dist/lib/policies.js'))) {
+      if (fs.existsSync(path.join(candidate, 'dist/lib/policy/index.js'))) {
         console.log(candidate);
         process.exit(0);
       }
     }
     // Last resort: relative to the repo root
     const repoCandidate = '${REPO_ROOT}';
-    if (fs.existsSync(path.join(repoCandidate, 'dist/lib/policies.js'))) {
+    if (fs.existsSync(path.join(repoCandidate, 'dist/lib/policy/index.js'))) {
       console.log(repoCandidate);
       process.exit(0);
     }
@@ -266,7 +266,7 @@ diag "NemoClaw module dir: ${NEMOCLAW_MODULE_DIR}"
 for preset in npm pypi; do
   info "  Applying preset: ${preset}"
   node -e "
-    const policies = require('${NEMOCLAW_MODULE_DIR}/dist/lib/policies.js');
+    const policies = require('${NEMOCLAW_MODULE_DIR}/dist/lib/policy/index.js');
     const ok = policies.applyPreset('${SANDBOX_NAME}', '${preset}');
     if (!ok) { console.error('applyPreset returned false for ${preset}'); process.exit(1); }
   " || fail "Failed to apply preset: ${preset}"

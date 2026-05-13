@@ -24,8 +24,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, beforeEach, afterEach } from "vitest";
+import { testTimeout } from "./helpers/timeouts";
 
-const TIMEOUT_MS = Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000);
+const TIMEOUT_MS = testTimeout(20_000);
 const SANDBOX_NAME = "my-assistant";
 
 // Output fixtures that mirror real OpenShell CLI output.

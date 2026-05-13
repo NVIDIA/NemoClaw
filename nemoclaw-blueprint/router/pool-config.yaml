@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Model Router Toolkit pool config for complexity-based routing.
+# Uses the NVIDIA LLM Router v3 (https://github.com/NVIDIA-AI-Blueprints/llm-router)
+# to route requests to the most efficient model that meets an accuracy threshold.
+#
+# The router runs an encoder (Qwen3.5-0.8B) on each query to predict P(correct)
+# per model, then selects the cheapest model above the tolerance threshold.
+#
+# tolerance controls the accuracy-cost tradeoff:
+#   0.0  = always pick the highest-confidence model (most expensive)
+#   0.20 = allow up to 20pp below the best for a cheaper model (default)
+#   1.0  = always pick the cheapest model
+
+routing:
+  method: prefill
+  checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
+  tolerance: 0.20
+  encoder: Qwen/Qwen3.5-0.8B
+  encoder_backend: transformers
+
+models:
+  - name: nemotron-3-nano-reasoning
+    display_name: "Nemotron 3 Nano (Reasoning)"
+    litellm_model: "openai/nvidia/nvidia/Nemotron-3-Nano-30B-A3B"
+    cost_per_m_input_tokens: 0.05
+    cost_per_m_output_tokens: 0.20
+    api_base: "https://inference-api.nvidia.com"
+
+  - name: nemotron-3-super
+    display_name: "Nemotron 3 Super 120B"
+    litellm_model: "openai/nvidia/nvidia/nemotron-3-super-v3"
+    cost_per_m_input_tokens: 0.10
+    cost_per_m_output_tokens: 0.40
+    api_base: "https://inference-api.nvidia.com"

@@ -8,9 +8,13 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
-import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard-contract.js";
-import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context.js";
+import type { AgentDefinition } from "../dist/lib/agent/defs.js";
+import { loadAgent } from "../dist/lib/agent/defs.js";
+import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard/contract.js";
+import { NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
+import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 
 type ShimScalar = string | number | boolean | null | undefined;
 type ShimCallable = (...args: readonly string[]) => ShimValue;
@@ -19,6 +23,10 @@ type ShimFn<TReturn = void> = (...args: ShimValue[]) => TReturn;
 type CommandEntry = {
   command: string;
   env?: Record<string, string | undefined>;
+  policyContent?: string;
+  policyReadError?: string;
+  dockerfileContent?: string;
+  dockerfileReadError?: string;
 };
 type DashboardAccess = { label: string; url: string };
 type ResumeConflict = { field: string; requested: string | null; recorded: string | null };
@@ -39,30 +47,113 @@ type OnboardTestInternals = {
     credentialEnv: string,
     baseUrl: string | null,
   ) => string[];
+  buildCompatibleEndpointSandboxSmokeCommand: (model: string) => string;
+  buildCompatibleEndpointSandboxSmokeScript: (model: string) => string;
   buildSandboxConfigSyncScript: ShimFn<string>;
+  buildSandboxGpuCreateArgs: (config: {
+    sandboxGpuEnabled: boolean;
+    sandboxGpuDevice?: string | null;
+  }) => string[];
+  buildDirectGpuPolicyYaml: (basePolicy: string) => string;
+  buildDirectSandboxGpuProofCommands: (sandboxName: string) => { label: string; args: string[] }[];
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
   compactText: (value?: string) => string;
   computeSetupPresetSuggestions: ShimFn<string[]>;
+  filterSetupPolicyPresets: <T extends { name: string }>(
+    presets: T[],
+    options?: { webSearchSupported?: boolean | null },
+  ) => T[];
   formatEnvAssignment: (name: string, value: string) => string;
   findDashboardForwardOwner: (
     forwardListOutput: string | null | undefined,
     portToStop: string,
   ) => string | null;
   formatOnboardConfigSummary: ShimFn<string>;
+  formatSandboxBuildEstimateNote: (host: {
+    isContainerRuntimeUnderProvisioned: boolean;
+    dockerCpus?: number;
+    dockerMemTotalBytes?: number;
+  }) => string | null;
   getDashboardAccessInfo: ShimFn<DashboardAccess[]>;
   getDashboardForwardStartCommand: ShimFn<string>;
   getNavigationChoice: (value?: string | null) => string | null;
   getGatewayReuseState: ShimFn<string>;
   getPortConflictServiceHints: (platform?: string) => string[];
   getFutureShellPathHint: (binDir: string, pathValue?: string) => string | null;
+  areRequiredDockerDriverBinariesPresent: (
+    platform?: NodeJS.Platform,
+    binaries?: {
+      gatewayBin?: string | null;
+      sandboxBin?: string | null;
+      vmDriverBin?: string | null;
+    },
+    arch?: NodeJS.Architecture,
+  ) => boolean;
   getSandboxInferenceConfig: ShimFn<SandboxInferenceConfig>;
   getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
   getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
   getBlueprintMaxOpenshellVersion: (rootDir?: string) => string | null;
+  getDockerDriverGatewayEnv: (
+    versionOutput?: string | null,
+    platform?: NodeJS.Platform,
+  ) => Record<string, string>;
+  shouldRequireDockerDriverEnv: (platform?: NodeJS.Platform) => boolean;
+  getDockerDriverGatewayRuntimeDriftFromSnapshot: (snapshot: {
+    processEnv: Record<string, string> | null;
+    processExe: string | null;
+    desiredEnv: Record<string, string>;
+    gatewayBin?: string | null;
+  }) => { reason: string } | null;
+  isLinuxDockerDriverGatewayEnabled: (
+    platform?: NodeJS.Platform,
+    arch?: NodeJS.Architecture,
+  ) => boolean;
+  isDockerDriverGatewayPortListener: (
+    portCheck: {
+      ok: boolean;
+      process?: string;
+      pid?: number | null;
+    },
+    opts?: {
+      platform?: NodeJS.Platform;
+      arch?: NodeJS.Architecture;
+      gatewayBin?: string | null;
+      isPidAliveFn?: (pid: number) => boolean;
+      isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
+    },
+  ) => boolean;
+  findReadableNvidiaCdiSpecFiles: (dirs: string[]) => string[];
+  parseDockerCdiSpecDirs: (value?: string | null) => string[];
+  resolveSandboxGpuConfig: (
+    gpu: { type: string } | null,
+    options?: { flag?: "enable" | "disable" | null; device?: string | null; env?: NodeJS.ProcessEnv },
+  ) => {
+    mode: "auto" | "1" | "0";
+    hostGpuDetected: boolean;
+    sandboxGpuEnabled: boolean;
+    sandboxGpuDevice: string | null;
+    errors: string[];
+  };
+  getResumeSandboxGpuOverrides: (
+    entry:
+      | { sandboxGpuMode?: "auto" | "1" | "0" | string | null; sandboxGpuDevice?: string | null }
+      | null
+      | undefined,
+    sessionGpuPassthrough?: boolean,
+  ) => { flag: "enable" | "disable" | null; device: string | null };
+  shouldAllowOpenshellAboveBlueprintMax: (
+    versionOutput?: string | null,
+    platform?: NodeJS.Platform,
+    env?: NodeJS.ProcessEnv,
+  ) => boolean;
   versionGte: (left?: string | null, right?: string | null) => boolean;
   getRequestedModelHint: ShimFn<string | null>;
   getRequestedProviderHint: ShimFn<string | null>;
   getRequestedSandboxNameHint: ShimFn<string | null>;
+  getDefaultSandboxNameForAgent: (agent?: AgentDefinition | null) => string;
+  getSandboxPromptDefault: (agent?: AgentDefinition | null) => string;
+  getRequestedSandboxAgentName: (agent?: AgentDefinition | null) => string;
+  normalizeSandboxAgentName: (agentName?: string | null) => string;
   getResumeConfigConflicts: ShimFn<ResumeConflict[]>;
   getResumeSandboxConflict: ShimFn<{
     requestedSandboxName: string;
@@ -74,20 +165,37 @@ type OnboardTestInternals = {
   isGatewayHealthy: ShimFn<boolean>;
   classifyValidationFailure: ShimFn<ValidationClassification>;
   hasResponsesToolCall: (body?: string | null) => boolean;
+  hasChatCompletionsToolCall: (body?: string | null) => boolean;
+  hasChatCompletionsToolCallLeak: (body?: string | null) => boolean;
+  agentSupportsWebSearch: (
+    agent?: AgentDefinition | null,
+    dockerfilePathOverride?: string | null,
+  ) => boolean;
+  configureWebSearch: (
+    existingConfig?: ShimValue,
+    agent?: AgentDefinition | null,
+    dockerfilePathOverride?: string | null,
+  ) => Promise<ShimValue>;
   isLoopbackHostname: (hostname?: string) => boolean;
   normalizeProviderBaseUrl: (
     value: string | null | undefined,
     flavor: "openai" | "anthropic",
   ) => string;
+  providerNameToOptionKey: (name?: string | null) => string | null;
   parsePolicyPresetEnv: (value: string | null) => string[];
   patchStagedDockerfile: ShimFn<void>;
-  pullAndResolveBaseImageDigest: () => { digest: string; ref: string } | null;
+  pullAndResolveBaseImageDigest: () => { digest: string | null; ref: string } | null;
   SANDBOX_BASE_IMAGE: string;
   printSandboxCreateRecoveryHints: ShimFn<void>;
   resolveDashboardForwardTarget: (chatUiUrl?: string) => string;
   summarizeCurlFailure: ShimFn<string>;
   summarizeProbeFailure: ShimFn<string>;
   shouldIncludeBuildContextPath: ShimFn<boolean>;
+  shouldRunCompatibleEndpointSandboxSmoke: (
+    provider?: string | null,
+    messagingChannels?: string[] | null,
+    agent?: AgentDefinition | null,
+  ) => boolean;
   writeSandboxConfigSyncFile: (script: string) => string;
 };
 
@@ -97,6 +205,9 @@ function parseStdoutJson<T>(stdout: string): T {
   return JSON.parse(line);
 }
 
+const MODEL_ROUTER_FINGERPRINT_FILE = ".nemoclaw-source-fingerprint";
+const MODEL_ROUTER_TEST_SOURCE_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
 type OnboardTestInternalsCandidate = Partial<OnboardTestInternals> | null;
 
 function isOnboardTestInternals(
@@ -105,7 +216,37 @@ function isOnboardTestInternals(
   return (
     value !== null &&
     typeof value.buildProviderArgs === "function" &&
+    typeof value.buildCompatibleEndpointSandboxSmokeCommand === "function" &&
+    typeof value.buildCompatibleEndpointSandboxSmokeScript === "function" &&
+    typeof value.buildSandboxConfigSyncScript === "function" &&
+    typeof value.buildSandboxGpuCreateArgs === "function" &&
+    typeof value.buildDirectGpuPolicyYaml === "function" &&
+    typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
+    typeof value.getDockerDriverGatewayEnv === "function" &&
+    typeof value.shouldRequireDockerDriverEnv === "function" &&
+    typeof value.getDockerDriverGatewayRuntimeDriftFromSnapshot === "function" &&
+    typeof value.isLinuxDockerDriverGatewayEnabled === "function" &&
+    typeof value.areRequiredDockerDriverBinariesPresent === "function" &&
+    typeof value.isDockerDriverGatewayPortListener === "function" &&
+    typeof value.findReadableNvidiaCdiSpecFiles === "function" &&
+    typeof value.parseDockerCdiSpecDirs === "function" &&
+    typeof value.resolveSandboxGpuConfig === "function" &&
+    typeof value.getResumeSandboxGpuOverrides === "function" &&
+    typeof value.shouldAllowOpenshellAboveBlueprintMax === "function" &&
+    typeof value.hasChatCompletionsToolCall === "function" &&
+    typeof value.hasChatCompletionsToolCallLeak === "function" &&
+    typeof value.filterSetupPolicyPresets === "function" &&
+    typeof value.getDefaultSandboxNameForAgent === "function" &&
+    typeof value.getSandboxPromptDefault === "function" &&
+    typeof value.getRequestedSandboxAgentName === "function" &&
+    typeof value.normalizeSandboxAgentName === "function" &&
+    typeof value.agentSupportsWebSearch === "function" &&
+    typeof value.configureWebSearch === "function" &&
+    typeof value.formatSandboxBuildEstimateNote === "function" &&
+    Object.prototype.hasOwnProperty.call(value, "providerNameToOptionKey") &&
+    typeof value.providerNameToOptionKey === "function" &&
+    typeof value.shouldRunCompatibleEndpointSandboxSmoke === "function" &&
     typeof value.writeSandboxConfigSyncFile === "function"
   );
 }
@@ -121,23 +262,44 @@ if (!isOnboardTestInternals(onboardTestInternals)) {
 
 const {
   buildProviderArgs,
+  buildCompatibleEndpointSandboxSmokeCommand,
+  buildCompatibleEndpointSandboxSmokeScript,
   buildSandboxConfigSyncScript,
+  buildSandboxGpuCreateArgs,
+  buildDirectGpuPolicyYaml,
+  buildDirectSandboxGpuProofCommands,
   classifySandboxCreateFailure,
   compactText,
   computeSetupPresetSuggestions,
+  filterSetupPolicyPresets,
   formatEnvAssignment,
   getNavigationChoice,
   getGatewayReuseState,
   getPortConflictServiceHints,
   getFutureShellPathHint,
+  areRequiredDockerDriverBinariesPresent,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
+  getDockerDriverGatewayEnv,
+  shouldRequireDockerDriverEnv,
+  getDockerDriverGatewayRuntimeDriftFromSnapshot,
+  isLinuxDockerDriverGatewayEnabled,
+  isDockerDriverGatewayPortListener,
+  findReadableNvidiaCdiSpecFiles,
+  parseDockerCdiSpecDirs,
+  resolveSandboxGpuConfig,
+  getResumeSandboxGpuOverrides,
+  shouldAllowOpenshellAboveBlueprintMax,
   versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
   getRequestedSandboxNameHint,
+  getDefaultSandboxNameForAgent,
+  getSandboxPromptDefault,
+  getRequestedSandboxAgentName,
+  normalizeSandboxAgentName,
   getResumeConfigConflicts,
   getResumeSandboxConflict,
   getSandboxStateFromOutputs,
@@ -146,8 +308,13 @@ const {
   isGatewayHealthy,
   classifyValidationFailure,
   hasResponsesToolCall,
+  hasChatCompletionsToolCall,
+  hasChatCompletionsToolCallLeak,
+  agentSupportsWebSearch,
+  configureWebSearch,
   isLoopbackHostname,
   normalizeProviderBaseUrl,
+  providerNameToOptionKey,
   parsePolicyPresetEnv,
   patchStagedDockerfile,
   pullAndResolveBaseImageDigest,
@@ -156,12 +323,395 @@ const {
   summarizeCurlFailure,
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
+  shouldRunCompatibleEndpointSandboxSmoke,
   writeSandboxConfigSyncFile,
   findDashboardForwardOwner,
   formatOnboardConfigSummary,
+  formatSandboxBuildEstimateNote,
 } = onboardTestInternals;
 
+const repoRoot = path.join(import.meta.dirname, "..");
+const onboardScriptMocksPath = JSON.stringify(
+  path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+);
+
 describe("onboard helpers", () => {
+  it("resolves sandbox GPU auto/force/disable modes", () => {
+    const gpu = { type: "nvidia" };
+    expect(resolveSandboxGpuConfig(gpu, { env: {} }).sandboxGpuEnabled).toBe(true);
+    expect(
+      resolveSandboxGpuConfig(gpu, {
+        env: { NEMOCLAW_SANDBOX_GPU: "0" },
+      }).sandboxGpuEnabled,
+    ).toBe(false);
+    const forced = resolveSandboxGpuConfig(null, {
+      flag: "enable",
+      env: {},
+    });
+    expect(forced.mode).toBe("1");
+    expect(forced.errors.join("\n")).toContain("no NVIDIA GPU");
+  });
+
+  it("resumes sandbox GPU auto mode without turning CPU fallback into explicit opt-out", () => {
+    const resumedAuto = getResumeSandboxGpuOverrides(
+      { sandboxGpuMode: "auto", sandboxGpuDevice: null },
+      false,
+    );
+    expect(resumedAuto).toEqual({ flag: null, device: null });
+    expect(
+      resolveSandboxGpuConfig({ type: "nvidia" }, { ...resumedAuto, env: {} }).sandboxGpuEnabled,
+    ).toBe(true);
+
+    const resumedDisabled = getResumeSandboxGpuOverrides(
+      { sandboxGpuMode: "0", sandboxGpuDevice: null },
+      false,
+    );
+    expect(
+      resolveSandboxGpuConfig({ type: "nvidia" }, { ...resumedDisabled, env: {} })
+        .sandboxGpuEnabled,
+    ).toBe(false);
+
+    const legacyGpuSession = getResumeSandboxGpuOverrides(null, true);
+    expect(legacyGpuSession.flag).toBe("enable");
+  });
+
+  it("builds OpenShell sandbox GPU create args", () => {
+    expect(buildSandboxGpuCreateArgs({ sandboxGpuEnabled: false })).toEqual([]);
+    expect(buildSandboxGpuCreateArgs({ sandboxGpuEnabled: true })).toEqual(["--gpu"]);
+    expect(
+      buildSandboxGpuCreateArgs({ sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=0" }),
+    ).toEqual(["--gpu", "--gpu-device", "nvidia.com/gpu=0"]);
+  });
+
+  it("keeps /proc read-only and narrows GPU proc writes to comm", () => {
+    const basePolicy = fs.readFileSync(
+      path.join(repoRoot, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+      "utf-8",
+    );
+    const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy);
+    const baseDoc = YAML.parse(basePolicy);
+    const gpuDoc = YAML.parse(gpuPolicy);
+
+    expect(baseDoc.filesystem_policy.read_only).toContain("/proc");
+    expect(gpuDoc.filesystem_policy.read_only).toContain("/proc");
+    expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
+    expect(gpuDoc.filesystem_policy.read_write).toContain("/proc/self/task/*/comm");
+  });
+
+  it("removes stale broad /proc write entries from GPU policy input", () => {
+    const gpuPolicy = buildDirectGpuPolicyYaml(`
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+  read_write:
+    - /tmp
+    - /proc
+network_policies:
+  nvidia:
+    name: nvidia
+    endpoints:
+      - host: integrate.api.nvidia.com
+        port: 443
+`);
+    const gpuDoc = YAML.parse(gpuPolicy);
+
+    expect(gpuDoc.filesystem_policy.read_only).toContain("/proc");
+    expect(gpuDoc.filesystem_policy.read_write).toEqual([
+      "/tmp",
+      "/proc/self/task/*/comm",
+    ]);
+  });
+
+  it("models the OpenShell standalone gateway environment", () => {
+    expect(isLinuxDockerDriverGatewayEnabled("linux")).toBe(true);
+    expect(isLinuxDockerDriverGatewayEnabled("darwin", "arm64")).toBe(true);
+    expect(isLinuxDockerDriverGatewayEnabled("darwin", "x64")).toBe(false);
+    expect(isLinuxDockerDriverGatewayEnabled("win32")).toBe(false);
+    const linuxEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
+    expect(linuxEnv.OPENSHELL_DRIVERS).toBe("docker");
+    expect(linuxEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
+    expect(linuxEnv.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
+    expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
+
+    const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin");
+    expect(darwinEnv.OPENSHELL_DRIVERS).toBe("vm");
+    expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://host.containers.internal:8080");
+    expect(darwinEnv.OPENSHELL_VM_DRIVER_STATE_DIR).toContain("vm-driver");
+    expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBeUndefined();
+  });
+
+  it("requires platform-specific standalone gateway binaries", () => {
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+          vmDriverBin: "/tmp/openshell-driver-vm",
+        },
+        "arm64",
+      ),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/openshell-gateway",
+        sandboxBin: null,
+        vmDriverBin: null,
+      }),
+    ).toBe(false);
+    expect(
+      areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/openshell-gateway",
+        sandboxBin: "/tmp/openshell-sandbox",
+        vmDriverBin: null,
+      }),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+          vmDriverBin: null,
+        },
+        "arm64",
+      ),
+    ).toBe(false);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: null,
+          sandboxBin: "/tmp/openshell-sandbox",
+          vmDriverBin: "/tmp/openshell-driver-vm",
+        },
+        "arm64",
+      ),
+    ).toBe(false);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: null,
+          sandboxBin: null,
+        },
+        "x64",
+      ),
+    ).toBe(true);
+  });
+
+  it("requires Docker-driver process env verification only where /proc is available", () => {
+    expect(shouldRequireDockerDriverEnv("linux")).toBe(true);
+    expect(shouldRequireDockerDriverEnv("darwin")).toBe(false);
+    expect(shouldRequireDockerDriverEnv("win32")).toBe(false);
+  });
+
+  it("detects stale Docker-driver gateway runtime state before reuse", () => {
+    const desiredEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
+    const gatewayBin = process.execPath;
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: desiredEnv,
+        processExe: gatewayBin,
+        desiredEnv,
+        gatewayBin,
+      }),
+    ).toBeNull();
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          ...desiredEnv,
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
+            "ghcr.io/nvidia/openshell/supervisor:0.0.36",
+        },
+        processExe: gatewayBin,
+        desiredEnv,
+        gatewayBin,
+      })?.reason,
+    ).toContain("OPENSHELL_DOCKER_SUPERVISOR_IMAGE=");
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: desiredEnv,
+        processExe: `${gatewayBin} (deleted)`,
+        desiredEnv,
+        gatewayBin,
+      })?.reason,
+    ).toContain("replaced on disk");
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: null,
+        processExe: gatewayBin,
+        desiredEnv,
+        gatewayBin,
+      })?.reason,
+    ).toContain("process environment");
+  });
+
+  it("recognizes an existing Docker-driver gateway listener on Docker-driver platforms", () => {
+    const opts = {
+      platform: "linux" as NodeJS.Platform,
+      isPidAliveFn: (pid: number) => pid === 1234,
+      isDockerDriverGatewayProcessFn: (pid: number, gatewayBin?: string | null) =>
+        pid === 1234 && gatewayBin === "/opt/openshell/openshell-gateway",
+      gatewayBin: "/opt/openshell/openshell-gateway",
+    };
+    expect(
+      isDockerDriverGatewayPortListener({ ok: false, process: "openshell", pid: 1234 }, opts),
+    ).toBe(true);
+    expect(
+      isDockerDriverGatewayPortListener({ ok: false, process: "openshell-", pid: 1234 }, opts),
+    ).toBe(true);
+    expect(
+      isDockerDriverGatewayPortListener({ ok: false, process: "node", pid: 1234 }, opts),
+    ).toBe(false);
+    expect(
+      isDockerDriverGatewayPortListener(
+        { ok: false, process: "openshell", pid: 1234 },
+        { ...opts, platform: "darwin", arch: "arm64" },
+      ),
+    ).toBe(true);
+    expect(
+      isDockerDriverGatewayPortListener(
+        { ok: false, process: "openshell", pid: 1234 },
+        { ...opts, platform: "win32" },
+      ),
+    ).toBe(false);
+    expect(
+      isDockerDriverGatewayPortListener(
+        { ok: false, process: "openshell", pid: 4321 },
+        { ...opts, isPidAliveFn: () => false },
+      ),
+    ).toBe(false);
+  });
+
+  it("recognizes Docker CDI and explicit dev-channel version gates", () => {
+    expect(parseDockerCdiSpecDirs('["/etc/cdi","/var/run/cdi"]')).toEqual([
+      "/etc/cdi",
+      "/var/run/cdi",
+    ]);
+    expect(parseDockerCdiSpecDirs("")).toEqual([]);
+    expect(
+      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40.dev1+gabcdef", "linux", {
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      }),
+    ).toBe(true);
+    expect(
+      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40.dev1+gabcdef", "linux", {
+        NEMOCLAW_OPENSHELL_CHANNEL: "auto",
+      }),
+    ).toBe(false);
+    expect(
+      shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40", "linux", {
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      }),
+    ).toBe(false);
+  });
+
+  it("requires readable NVIDIA CDI spec files, not just CDI directories", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cdi-specs-"));
+    try {
+      const emptyDir = path.join(tmpDir, "empty");
+      const cdiDir = path.join(tmpDir, "cdi");
+      fs.mkdirSync(emptyDir);
+      fs.mkdirSync(cdiDir);
+      fs.writeFileSync(path.join(cdiDir, "unrelated.yaml"), "kind: example.com/device\n");
+      expect(findReadableNvidiaCdiSpecFiles([emptyDir, cdiDir])).toEqual([]);
+
+      const specPath = path.join(cdiDir, "gpu-devices.yaml");
+      fs.writeFileSync(
+        specPath,
+        ["cdiVersion: 0.6.0", "kind: nvidia.com/gpu", "devices:", "  - name: all", ""].join(
+          "\n",
+        ),
+      );
+      expect(findReadableNvidiaCdiSpecFiles([emptyDir, cdiDir])).toEqual([specPath]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("builds direct sandbox GPU proof commands", () => {
+    const commands = buildDirectSandboxGpuProofCommands("alpha");
+    expect(commands.map((entry) => entry.label)).toEqual([
+      "nvidia-smi",
+      "/proc/self/task/<tid>/comm write",
+      "cuInit(0) via libcuda.so.1",
+    ]);
+    expect(commands[0].args).toEqual(["sandbox", "exec", "-n", "alpha", "--", "nvidia-smi"]);
+    expect(commands[1].args.join(" ")).toContain("/proc/self/task/${tid}/comm");
+    expect(commands[2].args.join(" ")).toContain("cuInit(0)");
+  });
+
+  it("uses Hermes-oriented sandbox defaults when NemoHermes selects Hermes", () => {
+    const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
+    try {
+      delete process.env.NEMOCLAW_SANDBOX_NAME;
+      const hermes = loadAgent("hermes");
+      expect(getRequestedSandboxAgentName(null)).toBe("openclaw");
+      expect(normalizeSandboxAgentName(null)).toBe("openclaw");
+      expect(getDefaultSandboxNameForAgent(null)).toBe("my-assistant");
+      expect(getDefaultSandboxNameForAgent(hermes)).toBe("hermes");
+      expect(getSandboxPromptDefault(hermes)).toBe("hermes");
+
+      process.env.NEMOCLAW_SANDBOX_NAME = "custom-hermes";
+      expect(getSandboxPromptDefault(hermes)).toBe("custom-hermes");
+    } finally {
+      if (previousSandboxName === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previousSandboxName;
+      }
+    }
+  });
+
+  it("uses NEMOCLAW_SANDBOX_NAME as the interactive prompt default", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "mythos";
+      expect(getSandboxPromptDefault(null)).toBe("mythos");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
+      }
+    }
+  });
+
+  it("falls back to agent default when NEMOCLAW_SANDBOX_NAME is invalid", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "123-leading-digit-invalid";
+      expect(getSandboxPromptDefault(null)).toBe("my-assistant");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
+      }
+    }
+  });
+
+  it("falls back to agent default when NEMOCLAW_SANDBOX_NAME contains spaces", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "bad name";
+      expect(getSandboxPromptDefault(null)).toBe("my-assistant");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
+      }
+    }
+  });
+
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
     expect(
       classifySandboxCreateFailure("Error: failed to read image export stream\nTimeout error").kind,
@@ -198,7 +748,7 @@ describe("onboard helpers", () => {
     });
   });
 
-  it("builds a sandbox sync script that only writes nemoclaw config", () => {
+  it("builds a sandbox sync script that does not rewrite OpenClaw config content", () => {
     const script = buildSandboxConfigSyncScript({
       endpointType: "custom",
       endpointUrl: "https://inference.local/v1",
@@ -214,7 +764,65 @@ describe("onboard helpers", () => {
     assert.match(script, /"credentialEnv": "OPENAI_API_KEY"/);
     assert.doesNotMatch(script, /cat > ~\/\.openclaw\/openclaw\.json/);
     assert.doesNotMatch(script, /openclaw models set/);
-    assert.match(script, /^exit$/m);
+    assert.match(script, /config_dir=\/sandbox\/\.openclaw/);
+    assert.match(script, /chmod -R g\+rwX,o-rwx "\$config_dir"/);
+    assert.match(script, /find "\$config_dir" -type d -exec chmod g\+s \{\} \+/);
+    assert.match(script, /chmod 2770 "\$config_dir"/);
+    assert.match(script, /chmod 660 "\$config_dir\/openclaw\.json" "\$config_dir\/\.config-hash"/);
+    assert.match(script, /\[ "\$config_dir_owner" != "root" \]/);
+    assert.match(script, /^\s*exit$/m);
+  });
+
+  it("runs the compatible-endpoint sandbox smoke only for OpenClaw messaging sandboxes", () => {
+    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"], null)).toBe(
+      true,
+    );
+    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", [], null)).toBe(false);
+    expect(shouldRunCompatibleEndpointSandboxSmoke("openai-api", ["telegram"], null)).toBe(false);
+    expect(
+      shouldRunCompatibleEndpointSandboxSmoke(
+        "compatible-endpoint",
+        ["telegram"],
+        loadAgent("hermes"),
+      ),
+    ).toBe(false);
+  });
+
+  it("builds a compatible-endpoint smoke script that validates managed inference config", () => {
+    const script = buildCompatibleEndpointSandboxSmokeScript("deepseek-ai/DeepSeek-V4-Flash");
+
+    assert.match(script, /models\.providers\.inference/);
+    assert.match(script, /https:\/\/inference\.local\/v1/);
+    assert.match(script, /apiKey.*unused/);
+    assert.match(script, /agents\.defaults\.model\.primary/);
+    assert.match(script, /curl[\s\S]*\/chat\/completions/);
+    assert.doesNotMatch(script, /COMPATIBLE_API_KEY/);
+    assert.doesNotMatch(script, /api\.deepinfra\.com/);
+  });
+
+  it("wraps compatible-endpoint smoke script without newlines for OpenShell exec", () => {
+    const command = buildCompatibleEndpointSandboxSmokeCommand("deepseek-ai/DeepSeek-V4-Flash");
+
+    assert.doesNotMatch(command, /[\r\n]/);
+    assert.match(command, /base64\.b64decode/);
+    assert.match(command, /sh "\$tmp"/);
+    assert.doesNotMatch(command, /COMPATIBLE_API_KEY/);
+  });
+
+  it("uses active sandbox channels for compatible-endpoint smoke gating", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(
+      source,
+      /const activeMessagingChannels = registry\.getSandbox\(sandboxName\)\?\.messagingChannels;/,
+    );
+    assert.match(
+      source,
+      /messagingChannels: Array\.isArray\(activeMessagingChannels\) \? activeMessagingChannels : \[\]/,
+    );
   });
 
   it("uses explicit messaging selections for policy suggestions when provided", () => {
@@ -289,6 +897,35 @@ describe("onboard helpers", () => {
       expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
     });
 
+    it("filters tier defaults to known presets for agent-specific onboarding", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: known.filter((name) => name !== "brave"),
+      });
+      expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    });
+
+    it("omits Brave when web search is unsupported", () => {
+      const allPresets = known.map((name) => ({ name }));
+      const unsupportedPresets = filterSetupPolicyPresets(allPresets, {
+        webSearchSupported: false,
+      }).map((p) => p.name);
+      const supportedPresets = filterSetupPolicyPresets(allPresets, {
+        webSearchSupported: true,
+      }).map((p) => p.name);
+      expect(unsupportedPresets).not.toContain("brave");
+      expect(supportedPresets).toContain("brave");
+    });
+
+    it("drops Brave tier defaults when web search is unsupported", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: known,
+        webSearchSupported: false,
+      });
+      expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    });
+
     it("forwards enabled messaging channels into the balanced tier suggestions", () => {
       const suggestions = computeSetupPresetSuggestions("balanced", {
         enabledChannels: ["telegram"],
@@ -334,6 +971,15 @@ describe("onboard helpers", () => {
       expect(suggestions).toContain("brave");
     });
 
+    it("does not add Brave from webSearchConfig when web search is unsupported", () => {
+      const suggestions = computeSetupPresetSuggestions("restricted", {
+        webSearchConfig: { provider: "brave" },
+        knownPresetNames: known,
+        webSearchSupported: false,
+      });
+      expect(suggestions).not.toContain("brave");
+    });
+
     it("adds local-inference for local providers", () => {
       const suggestions = computeSetupPresetSuggestions("balanced", {
         provider: "ollama-local",
@@ -366,6 +1012,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
         "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
       ].join("\n"),
     );
 
@@ -383,6 +1030,47 @@ describe("onboard helpers", () => {
       assert.match(patched, /^ARG NEMOCLAW_PRIMARY_MODEL_REF=openai\/gpt-5\.4$/m);
       assert.match(patched, /^ARG CHAT_UI_URL=http:\/\/127\.0\.0\.1:19999$/m);
       assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=build-123$/m);
+      assert.match(patched, /^ARG NEMOCLAW_DARWIN_VM_COMPAT=0$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile for macOS VM rootfs ownership compatibility", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-darwin-vm-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-123",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        null,
+        {},
+        true,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_DARWIN_VM_COMPAT=1$/m);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -499,6 +1187,148 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("#1737: patches the staged Dockerfile with Telegram mention-only config", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-mention-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-tg-mention",
+        "openai-api",
+        null,
+        null,
+        ["telegram"],
+        {},
+        {},
+        null,
+        { requireMention: true },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const line = patched
+        .split("\n")
+        .find((l) => l.startsWith("ARG NEMOCLAW_TELEGRAM_CONFIG_B64="));
+      assert.ok(line, "expected telegram config build arg");
+      const encoded = line.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, { requireMention: true });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#1737: patches the staged Dockerfile with Telegram open-group config when requireMention=false", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-open-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-tg-open",
+        "openai-api",
+        null,
+        null,
+        ["telegram"],
+        {},
+        {},
+        null,
+        { requireMention: false },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const line = patched
+        .split("\n")
+        .find((l) => l.startsWith("ARG NEMOCLAW_TELEGRAM_CONFIG_B64="));
+      assert.ok(line, "expected telegram config build arg");
+      const encoded = line.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, { requireMention: false });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#1737: preserves default Telegram group-open behavior when telegramConfig is empty", () => {
+    // Backward compatibility guard: the ARG default stays at e30= ({} base64)
+    // and patchStagedDockerfile does not rewrite it when no config is passed.
+    // The Dockerfile Python generator reads empty config as requireMention=false
+    // which maps to groupPolicy=open (matches pre-#1737 behavior).
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-empty-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-tg-default",
+        "openai-api",
+        null,
+        null,
+        ["telegram"],
+        {},
+        {},
+        null,
+        {},
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("maps NVIDIA Endpoints to the routed inference provider", () => {
     assert.deepEqual(
       getSandboxInferenceConfig("qwen/qwen3.5-397b-a17b", "nvidia-prod", "openai-completions"),
@@ -508,6 +1338,48 @@ describe("onboard helpers", () => {
         inferenceBaseUrl: "https://inference.local/v1",
         inferenceApi: "openai-completions",
         inferenceCompat: null,
+      },
+    );
+  });
+
+  it("maps Model Router sandboxes through managed inference.local", () => {
+    assert.deepEqual(getSandboxInferenceConfig("nvidia-routed", "nvidia-router"), {
+      providerKey: "inference",
+      primaryModelRef: "inference/nvidia-routed",
+      inferenceBaseUrl: "https://inference.local/v1",
+      inferenceApi: "openai-completions",
+      inferenceCompat: null,
+    });
+  });
+
+  it("maps persisted Model Router provider back to the routed provider option", () => {
+    assert.equal(providerNameToOptionKey("nvidia-router"), "routed");
+  });
+
+  it("leaves Kimi K2.6 compat to the model-specific setup registry", () => {
+    assert.deepEqual(
+      getSandboxInferenceConfig("moonshotai/kimi-k2.6", "nvidia-prod", "openai-completions"),
+      {
+        providerKey: "inference",
+        primaryModelRef: "inference/moonshotai/kimi-k2.6",
+        inferenceBaseUrl: "https://inference.local/v1",
+        inferenceApi: "openai-completions",
+        inferenceCompat: null,
+      },
+    );
+  });
+
+  it("maps OpenAI-compatible endpoints to the managed inference provider", () => {
+    assert.deepEqual(
+      getSandboxInferenceConfig("deepseek-ai/DeepSeek-V4-Flash", "compatible-endpoint"),
+      {
+        providerKey: "inference",
+        primaryModelRef: "inference/deepseek-ai/DeepSeek-V4-Flash",
+        inferenceBaseUrl: "https://inference.local/v1",
+        inferenceApi: "openai-completions",
+        inferenceCompat: {
+          supportsStore: false,
+        },
       },
     );
   });
@@ -525,6 +1397,24 @@ describe("onboard helpers", () => {
         message: "HTTP 405: unsupported model",
       }),
     ).toEqual({ kind: "model", retry: "model" });
+  });
+
+  it("classifies TLS certificate errors as transport", () => {
+    expect(
+      classifyValidationFailure({
+        message: "transport error: invalid peer certificate: UnknownIssuer",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+    expect(
+      classifyValidationFailure({
+        message: "SSL certificate problem: unable to get local issuer certificate",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+    expect(
+      classifyValidationFailure({
+        message: "TLS handshake failure",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
   });
 
   it("detects tool-calling responses payloads conservatively", () => {
@@ -574,6 +1464,207 @@ describe("onboard helpers", () => {
     expect(hasResponsesToolCall("{")).toBe(false);
   });
 
+  it("detects structured chat-completions tool_calls", () => {
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: { name: "sessions_send", arguments: '{"message":"hello"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "OK", tool_calls: [] } }],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: { name: "sessions_send" },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "text",
+                    function: { name: "sessions_send", arguments: '{"message":"hello"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasChatCompletionsToolCall("{")).toBe(false);
+  });
+
+  it("detects leaked stringified tool-call JSON in chat-completions content", () => {
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: '{\n  "arguments":{"message":"hello?"},\n  "name":"sessions_send"\n}',
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "function",
+                  function: {
+                    name: "sessions_send",
+                    arguments: JSON.stringify({ message: "hello?" }),
+                  },
+                }),
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  tool_calls: [
+                    {
+                      type: "function",
+                      function: {
+                        name: "sessions_send",
+                        arguments: JSON.stringify({ message: "hello?" }),
+                      },
+                    },
+                  ],
+                }),
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "text",
+                    text: '{"arguments":{"message":"hello?"},"name":"sessions_send"}',
+                  },
+                ],
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "Regular assistant text response.",
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: '{"type":"function","function":{"name":"sessions_send"}}',
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "Regular assistant text response." }],
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasChatCompletionsToolCallLeak("{")).toBe(false);
+  });
+
   it("normalizes anthropic-compatible base URLs with a trailing /v1", () => {
     expect(normalizeProviderBaseUrl("https://proxy.example.com/v1", "anthropic")).toBe(
       "https://proxy.example.com",
@@ -593,7 +1684,9 @@ describe("onboard helpers", () => {
     // Forward target via buildChain replaces resolveDashboardForwardTarget
     expect(buildChain({ chatUiUrl: "http://127.0.0.1:18789" }).forwardTarget).toBe("18789");
     expect(buildChain({ chatUiUrl: "http://[::1]:18789" }).forwardTarget).toBe("18789");
-    expect(buildChain({ chatUiUrl: "https://chat.example.com:18789" }).forwardTarget).toBe("0.0.0.0:18789");
+    expect(buildChain({ chatUiUrl: "https://chat.example.com:18789" }).forwardTarget).toBe(
+      "0.0.0.0:18789",
+    );
     expect(buildChain({ chatUiUrl: "http://10.0.0.25:18789" }).forwardTarget).toBe("0.0.0.0:18789");
   });
 
@@ -776,6 +1869,106 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("regression #2421: bakes NEMOCLAW_INFERENCE_INPUTS into the staged Dockerfile when env is set", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-inputs-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_INFERENCE_INPUTS=text",
+      ].join("\n"),
+    );
+
+    const prior = process.env.NEMOCLAW_INFERENCE_INPUTS;
+    process.env.NEMOCLAW_INFERENCE_INPUTS = "text,image";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-inputs",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_INFERENCE_INPUTS=text,image$/m);
+    } finally {
+      if (prior === undefined) {
+        delete process.env.NEMOCLAW_INFERENCE_INPUTS;
+      } else {
+        process.env.NEMOCLAW_INFERENCE_INPUTS = prior;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #2421: rejects malformed NEMOCLAW_INFERENCE_INPUTS and keeps default", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-inputs-bad-"),
+    );
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    const baseDockerfile = [
+      "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+      "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+      "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+      "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+      "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+      "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+      "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+      "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+      "ARG NEMOCLAW_BUILD_ID=default",
+      "ARG NEMOCLAW_INFERENCE_INPUTS=text",
+    ].join("\n");
+
+    const prior = process.env.NEMOCLAW_INFERENCE_INPUTS;
+    try {
+      // Cases that must all leave the default untouched.
+      const rejectCases = [
+        undefined,
+        "audio",
+        "text,",
+        "Text,Image",
+        "text, image",
+        'text"\nRUN rm -rf /',
+      ];
+      for (const [index, value] of rejectCases.entries()) {
+        fs.writeFileSync(dockerfilePath, baseDockerfile);
+        if (value === undefined) {
+          delete process.env.NEMOCLAW_INFERENCE_INPUTS;
+        } else {
+          process.env.NEMOCLAW_INFERENCE_INPUTS = value;
+        }
+        patchStagedDockerfile(
+          dockerfilePath,
+          "gpt-5.4",
+          "http://127.0.0.1:18789",
+          `build-inputs-reject-${index}`,
+          "openai-api",
+        );
+        assert.match(
+          fs.readFileSync(dockerfilePath, "utf8"),
+          /^ARG NEMOCLAW_INFERENCE_INPUTS=text$/m,
+          `value="${String(value)}" should not change the ARG default`,
+        );
+      }
+    } finally {
+      if (prior === undefined) {
+        delete process.env.NEMOCLAW_INFERENCE_INPUTS;
+      } else {
+        process.env.NEMOCLAW_INFERENCE_INPUTS = prior;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("regression #1409: rejects malformed NEMOCLAW_PROXY_HOST/PORT and keeps defaults", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-bad-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
@@ -869,6 +2062,75 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("#2880: bakes NEMOCLAW_AGENT_HEARTBEAT_EVERY env into the staged Dockerfile", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-heartbeat-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    const baseDockerfile = [
+      "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+      "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+      "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+      "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+      "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+      "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+      "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+      "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+      "ARG NEMOCLAW_BUILD_ID=default",
+      "ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=",
+    ].join("\n");
+
+    const prior = process.env.NEMOCLAW_AGENT_HEARTBEAT_EVERY;
+    try {
+      // Valid duration values bake in.
+      for (const value of ["0m", "30m", "5m", "1h", "30s"]) {
+        fs.writeFileSync(dockerfilePath, baseDockerfile);
+        process.env.NEMOCLAW_AGENT_HEARTBEAT_EVERY = value;
+        patchStagedDockerfile(
+          dockerfilePath,
+          "gpt-5.4",
+          "http://127.0.0.1:18789",
+          `build-heartbeat-${value}`,
+          "openai-api",
+        );
+        assert.match(
+          fs.readFileSync(dockerfilePath, "utf8"),
+          new RegExp(`^ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=${value}$`, "m"),
+          `value="${value}" should bake into the ARG line`,
+        );
+      }
+
+      // Cases that must all leave the empty default untouched (regex rejects
+      // these so the OpenClaw default cadence is preserved).
+      const rejectCases = [undefined, "", "30 minutes", "5", "5x", "fast"];
+      for (const [index, value] of rejectCases.entries()) {
+        fs.writeFileSync(dockerfilePath, baseDockerfile);
+        if (value === undefined) {
+          delete process.env.NEMOCLAW_AGENT_HEARTBEAT_EVERY;
+        } else {
+          process.env.NEMOCLAW_AGENT_HEARTBEAT_EVERY = value;
+        }
+        patchStagedDockerfile(
+          dockerfilePath,
+          "gpt-5.4",
+          "http://127.0.0.1:18789",
+          `build-heartbeat-reject-${index}`,
+          "openai-api",
+        );
+        assert.match(
+          fs.readFileSync(dockerfilePath, "utf8"),
+          /^ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=$/m,
+          `value="${String(value)}" should not change the empty ARG default`,
+        );
+      }
+    } finally {
+      if (prior === undefined) {
+        delete process.env.NEMOCLAW_AGENT_HEARTBEAT_EVERY;
+      } else {
+        process.env.NEMOCLAW_AGENT_HEARTBEAT_EVERY = prior;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("patches the staged Dockerfile with Brave Search config when enabled", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-web-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
@@ -909,6 +2171,100 @@ describe("onboard helpers", () => {
       } else {
         process.env.BRAVE_API_KEY = priorBraveKey;
       }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#2433: agentSupportsWebSearch detects whether agent Dockerfile declares the web search ARG", () => {
+    // OpenClaw Dockerfile has ARG NEMOCLAW_WEB_SEARCH_ENABLED → supported.
+    // Hermes Dockerfile does not → not supported.
+    // null agent (default) → supported (assumes OpenClaw).
+    expect(agentSupportsWebSearch(null)).toBe(true);
+    expect(agentSupportsWebSearch(loadAgent("openclaw"))).toBe(true);
+    expect(agentSupportsWebSearch(loadAgent("hermes"))).toBe(false);
+  });
+
+  it("#2433: agentSupportsWebSearch honors the effective custom Dockerfile for Brave-capable agents", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-web-search-custom-"));
+    const withoutArg = path.join(tmpDir, "Dockerfile.no-web");
+    const withArg = path.join(tmpDir, "Dockerfile.web");
+    const missing = path.join(tmpDir, "Dockerfile.missing");
+    fs.writeFileSync(withoutArg, "FROM scratch\n");
+    fs.writeFileSync(withArg, "FROM scratch\n  ARG NEMOCLAW_WEB_SEARCH_ENABLED=0\n");
+    try {
+      expect(agentSupportsWebSearch(loadAgent("openclaw"), withoutArg)).toBe(false);
+      expect(agentSupportsWebSearch(loadAgent("hermes"), withArg)).toBe(false);
+      expect(agentSupportsWebSearch(loadAgent("openclaw"), missing)).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#2433: configureWebSearch skips unsupported Hermes instead of prompting for Brave", async () => {
+    const priorBraveKey = process.env.BRAVE_API_KEY;
+    process.env.BRAVE_API_KEY = "brv-test-key";
+    try {
+      await expect(configureWebSearch(null, loadAgent("hermes"))).resolves.toBeNull();
+    } finally {
+      if (priorBraveKey === undefined) {
+        delete process.env.BRAVE_API_KEY;
+      } else {
+        process.env.BRAVE_API_KEY = priorBraveKey;
+      }
+    }
+  });
+
+  it("#2433: configureWebSearch does not call the prompt helper for unsupported Hermes", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-web-search-prompt-"));
+    const scriptPath = path.join(tmpDir, "web-search-prompt-check.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent", "defs.js"));
+
+    const script = `
+let promptCalls = 0;
+const actualCredentials = require(${credentialsPath});
+const mockedCredentials = {
+  ...actualCredentials,
+  prompt: async () => {
+  promptCalls += 1;
+  throw new Error("prompt should not be called");
+  },
+};
+require.cache[require.resolve(${credentialsPath})] = {
+  id: require.resolve(${credentialsPath}),
+  filename: require.resolve(${credentialsPath}),
+  loaded: true,
+  exports: mockedCredentials,
+};
+process.env.BRAVE_API_KEY = "brv-test-key";
+const { configureWebSearch } = require(${onboardPath});
+const { loadAgent } = require(${agentDefsPath});
+
+(async () => {
+  const result = await configureWebSearch(null, loadAgent("hermes"));
+  console.log(JSON.stringify({ result, promptCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+        },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = parseStdoutJson<{ result: null; promptCalls: number }>(result.stdout);
+      assert.equal(payload.result, null);
+      assert.equal(payload.promptCalls, 0);
+    } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
@@ -1157,6 +2513,60 @@ describe("onboard helpers", () => {
     );
   });
 
+  it("fails closed when gateway lifecycle support is not proven", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "gateway-lifecycle.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /normalized\.trim\(\)\.length > 0/);
+    assert.doesNotMatch(source, /!normalized\.trim\(\)\s*\|\|/);
+  });
+
+  it("keeps registry state unless gateway destruction succeeds", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /function destroyGateway\(\): boolean/);
+    assert.match(source, /const gatewayRemoved = dockerDriver/);
+    assert.match(source, /if \(gatewayRemoved\) {\s*registry\.clearAll\(\);\s*}/);
+    assert.match(source, /return gatewayRemoved;/);
+    assert.doesNotMatch(
+      source,
+      /destroyGateway\(\);\s*registry\.clearAll\(\);\s*gatewayReuseState = "missing"/,
+    );
+  });
+
+  it("prints package-managed gateway registration hints with the local HTTPS endpoint", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(
+      source,
+      /"gateway",\s*"add",\s*getGatewayLocalEndpoint\(\),\s*"--local",\s*"--name",\s*GATEWAY_NAME/,
+    );
+    assert.doesNotMatch(source, /openshell gateway add http:\/\/127\.0\.0\.1:\$\{GATEWAY_PORT\}/);
+  });
+
+  it("allows slow sandbox create recovery to wait beyond 60 seconds", () => {
+    const envSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "env.ts"),
+      "utf-8",
+    );
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(envSource, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 180/);
+    assert.match(source, /Math\.ceil\(SANDBOX_READY_TIMEOUT_SECS \/ 2\)/);
+    assert.match(source, /within \$\{SANDBOX_READY_TIMEOUT_SECS\}s/);
+  });
+
   it("classifies gateway reuse states conservatively", () => {
     expect(
       getGatewayReuseState(
@@ -1223,6 +2633,10 @@ if [[ "$*" == *"doctor"*"logs"* ]]; then
   printf "  Gateway auth token: nvapi-fakecredential-9999\\r\\n"
   exit 0
 fi
+if [[ "$*" == "gateway --help" ]]; then
+  printf "Commands: start destroy\\n"
+  exit 0
+fi
 if [[ "$*" == *"gateway"*"start"* ]]; then
   printf "\\033[33mDeploying\\033[0m gateway nemoclaw...\\r\\n"
   printf "\\r\\nWaiting for gateway health...\\r\\n"
@@ -1256,6 +2670,7 @@ mod._load = function(req, parent, isMain) {
   }
   return origLoad.call(this, req, parent, isMain);
 };
+Object.defineProperty(process, "platform", { value: "freebsd" });
 const { startGateway } = require(${onboardPath});
 startGateway(null).catch(() => {});
 `;
@@ -1336,6 +2751,13 @@ startGateway(null).catch(() => {});
         "my-assistant   NotReady   init failed",
       ),
     ).toBe("not_ready");
+    expect(
+      getSandboxStateFromOutputs(
+        "my-assistant",
+        "Error: NotFound: sandbox not found",
+        "other-sandbox   Ready   2m ago",
+      ),
+    ).toBe("missing");
     expect(getSandboxStateFromOutputs("my-assistant", "", "")).toBe("missing");
   });
 
@@ -1380,15 +2802,11 @@ startGateway(null).catch(() => {});
     }
   });
 
-  it("detects resume conflicts when a different sandbox is requested", () => {
+  it("prefers the explicit --name option over NEMOCLAW_SANDBOX_NAME", () => {
     const previous = process.env.NEMOCLAW_SANDBOX_NAME;
-    process.env.NEMOCLAW_SANDBOX_NAME = "other-sandbox";
+    process.env.NEMOCLAW_SANDBOX_NAME = "from-env";
     try {
-      expect(getResumeSandboxConflict({ sandboxName: "my-assistant" })).toEqual({
-        requestedSandboxName: "other-sandbox",
-        recordedSandboxName: "my-assistant",
-      });
-      expect(getResumeSandboxConflict({ sandboxName: "other-sandbox" })).toBe(null);
+      expect(getRequestedSandboxNameHint({ sandboxName: "From-Flag" })).toBe("from-flag");
     } finally {
       if (previous === undefined) {
         delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -1396,6 +2814,80 @@ startGateway(null).catch(() => {});
         process.env.NEMOCLAW_SANDBOX_NAME = previous;
       }
     }
+  });
+
+  it("detects resume conflicts when --name does not match the recorded sandbox", () => {
+    expect(
+      getResumeConfigConflicts(
+        { sandboxName: "my-assistant", steps: { sandbox: { status: "complete" } } },
+        { sandboxName: "second-assistant" },
+      ),
+    ).toEqual([
+      {
+        field: "sandbox",
+        requested: "second-assistant",
+        recorded: "my-assistant",
+      },
+    ]);
+  });
+
+  it("detects resume conflicts when a different sandbox is requested", () => {
+    expect(
+      getResumeSandboxConflict(
+        { sandboxName: "my-assistant", steps: { sandbox: { status: "complete" } } },
+        { sandboxName: "other-sandbox" },
+      ),
+    ).toEqual({
+      requestedSandboxName: "other-sandbox",
+      recordedSandboxName: "my-assistant",
+    });
+    expect(
+      getResumeSandboxConflict(
+        { sandboxName: "other-sandbox", steps: { sandbox: { status: "complete" } } },
+        { sandboxName: "other-sandbox" },
+      ),
+    ).toBe(null);
+  });
+
+  it("does not fire a resume conflict from NEMOCLAW_SANDBOX_NAME alone", () => {
+    // Interactive resume runs never consult the env var (sandbox creation
+    // is already complete in the session, so promptOrDefault is skipped).
+    // Reading it here would surface a spurious conflict whenever a user
+    // happens to export NEMOCLAW_SANDBOX_NAME in their shell rc.
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    process.env.NEMOCLAW_SANDBOX_NAME = "other-sandbox";
+    try {
+      expect(
+        getResumeSandboxConflict({
+          sandboxName: "my-assistant",
+          steps: { sandbox: { status: "complete" } },
+        }),
+      ).toBe(null);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
+      }
+    }
+  });
+
+  it("#2753: ignores an incomplete session sandbox name when checking resume conflicts", () => {
+    // A pre-fix on-disk session may carry sandboxName even though the
+    // sandbox step never completed. Treating that as a conflict source
+    // would block users from running `--resume --name <new>` to recover.
+    expect(
+      getResumeSandboxConflict(
+        { sandboxName: "interrupt-test", steps: { sandbox: { status: "pending" } } },
+        { sandboxName: "fresh-name" },
+      ),
+    ).toBe(null);
+    expect(
+      getResumeConfigConflicts(
+        { sandboxName: "interrupt-test", steps: { sandbox: { status: "pending" } } },
+        { sandboxName: "fresh-name" },
+      ),
+    ).toEqual([]);
   });
 
   it("returns provider and model hints only for non-interactive runs", () => {
@@ -1509,6 +3001,45 @@ startGateway(null).catch(() => {});
         "/home/test/.local/bin:/usr/local/bin:/usr/bin",
       ),
     ).toBe(null);
+  });
+
+  it("requires platform-specific Docker-driver binaries for onboard repair", () => {
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: "/tmp/openshell-gateway",
+          sandboxBin: null,
+          vmDriverBin: "/tmp/openshell-driver-vm",
+        },
+        "arm64",
+      ),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/openshell-gateway",
+        sandboxBin: null,
+        vmDriverBin: "/tmp/openshell-driver-vm",
+      }),
+    ).toBe(false);
+    expect(
+      areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/openshell-gateway",
+        sandboxBin: "/tmp/openshell-sandbox",
+        vmDriverBin: null,
+      }),
+    ).toBe(true);
+    expect(
+      areRequiredDockerDriverBinariesPresent(
+        "darwin",
+        {
+          gatewayBin: null,
+          sandboxBin: null,
+          vmDriverBin: null,
+        },
+        "arm64",
+      ),
+    ).toBe(false);
   });
 
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {
@@ -1695,7 +3226,9 @@ startGateway(null).catch(() => {});
     const scriptPath = path.join(tmpDir, "setup-inference-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const registryPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1733,6 +3266,90 @@ const { setupInference } = require(${onboardPath});
 
 (async () => {
   await setupInference("test-box", "nvidia/nemotron-3-super-120b-a12b", "nvidia-nim");
+  console.log(JSON.stringify({ commands, nvidiaApiKey: process.env.NVIDIA_API_KEY || null }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const payload = parseStdoutJson<{ commands: CommandEntry[]; nvidiaApiKey: string | null }>(
+      result.stdout,
+    );
+    const commands = payload.commands;
+    assert.equal(commands.length, 4);
+    assert.match(commands[0].command, /gateway select nemoclaw/);
+    assert.match(commands[1].command, /provider get/);
+    assert.match(commands[2].command, /--credential NVIDIA_API_KEY/);
+    assert.doesNotMatch(commands[2].command, /nvapi-secret-value/);
+    assert.match(commands[2].command, /provider update/);
+    assert.match(commands[3].command, /inference set/);
+    assert.equal(payload.nvidiaApiKey, "nvapi-secret-value");
+  });
+
+  it("reuses a registered Hermes Provider without re-collecting host credentials", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-reuse-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-hermes-reuse-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get hermes-provider")) {
+    return { status: 0, stdout: "Provider: hermes-provider", stderr: "" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: hermes-provider",
+      "  Model: moonshotai/kimi-k2.6",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.NOUS_API_KEY = "nous-host-secret";
+process.env.OPENAI_API_KEY = "openai-host-secret";
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference("test-box", "moonshotai/kimi-k2.6", "hermes-provider", "https://inference-api.nousresearch.com/v1", "OPENAI_API_KEY", "oauth");
   console.log(JSON.stringify(commands));
 })().catch((error) => {
   console.error(error);
@@ -1753,13 +3370,1013 @@ const { setupInference } = require(${onboardPath});
 
     expect(result.status).toBe(0);
     const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
-    assert.equal(commands.length, 4);
+    assert.equal(commands.length, 3);
     assert.match(commands[0].command, /gateway select nemoclaw/);
-    assert.match(commands[1].command, /provider get/);
-    assert.match(commands[2].command, /--credential NVIDIA_API_KEY/);
-    assert.doesNotMatch(commands[2].command, /nvapi-secret-value/);
-    assert.match(commands[2].command, /provider update/);
-    assert.match(commands[3].command, /inference set/);
+    assert.match(commands[1].command, /provider get hermes-provider/);
+    assert.match(commands[2].command, /inference set --no-verify --provider hermes-provider/);
+    assert.ok(!commands.some((entry) => /provider (create|update)/.test(entry.command)));
+    assert.ok(!commands.some((entry) => entry.env?.NOUS_API_KEY || entry.env?.OPENAI_API_KEY));
+    assert.ok(
+      !commands.some((entry) => /nous-host-secret|openai-host-secret/.test(entry.command)),
+      "host credential values must not appear in argv",
+    );
+  });
+
+  it("reconciles a registered Hermes Provider when a fresh shell Nous key is selected", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-update-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-hermes-update-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get hermes-provider")) {
+    return { status: 0, stdout: "Provider: hermes-provider", stderr: "" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: hermes-provider",
+      "  Model: moonshotai/kimi-k2.6",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.NOUS_API_KEY = "nous-host-secret";
+delete process.env.OPENAI_API_KEY;
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference(
+    "test-box",
+    "moonshotai/kimi-k2.6",
+    "hermes-provider",
+    "https://inference-api.nousresearch.com/v1",
+    "NOUS_API_KEY",
+    "api_key",
+  );
+  console.log(JSON.stringify(commands));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
+    const update = commands.find((entry) => /provider update hermes-provider/.test(entry.command));
+    assert.ok(update);
+    assert.match(update.command, /--credential NOUS_API_KEY/);
+    assert.equal(update.env?.NOUS_API_KEY, "nous-host-secret");
+    assert.ok(
+      !commands.some((entry) => /nous-host-secret/.test(entry.command)),
+      "shell credential value must not appear in argv",
+    );
+    assert.match(
+      commands.at(-1)?.command || "",
+      /inference set --no-verify --provider hermes-provider/,
+    );
+  });
+
+  it("configures Model Router as a host provider while sandboxes keep inference.local", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-inference-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const venvDir = path.join(tmpDir, "model-router-venv");
+    const venvBin = path.join(venvDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-router-check.js");
+    const routerPort = 44000 + (process.pid % 10000);
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(venvBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+    fs.writeFileSync(
+      path.join(venvBin, "model-router"),
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("fs");',
+        'const http = require("http");',
+        'const path = require("path");',
+        "const args = process.argv.slice(2);",
+        'if (args[0] === "proxy-config") {',
+        '  const output = args[args.indexOf("--output") + 1];',
+        "  fs.mkdirSync(path.dirname(output), { recursive: true });",
+        '  fs.writeFileSync(output, "model_list: []\\n");',
+        "  process.exit(0);",
+        "}",
+        'if (args[0] === "proxy") {',
+        '  const port = Number(args[args.indexOf("--port") + 1] || "4000");',
+        "  const server = http.createServer((req, res) => {",
+        '    if (req.url === "/health") { res.statusCode = 200; res.end("ok"); return; }',
+        "    res.statusCode = 404;",
+        "    res.end();",
+        "  });",
+        '  server.listen(port, "127.0.0.1");',
+        "  setTimeout(() => process.exit(0), 10000);",
+        "} else {",
+        "  process.exit(1);",
+        "}",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(venvDir, MODEL_ROUTER_FINGERPRINT_FILE),
+      `git:${MODEL_ROUTER_TEST_SOURCE_SHA}\n`,
+      { mode: 0o600 },
+    );
+
+    const script = String.raw`
+const fs = require("fs");
+const path = require("path");
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const routerPort = ${routerPort};
+const blueprintPath = path.join(${JSON.stringify(repoRoot)}, "nemoclaw-blueprint", "blueprint.yaml");
+const routerPyproject = path.join(${JSON.stringify(repoRoot)}, "nemoclaw-blueprint", "router", "llm-router", "pyproject.toml");
+const originalReadFileSync = fs.readFileSync;
+const originalExistsSync = fs.existsSync;
+fs.existsSync = (filePath) => {
+  if (filePath === routerPyproject || String(filePath) === routerPyproject) return true;
+  return originalExistsSync(filePath);
+};
+fs.readFileSync = (filePath, ...args) => {
+  const raw = originalReadFileSync(filePath, ...args);
+  if (filePath === blueprintPath || String(filePath) === blueprintPath) {
+    return String(raw)
+      .replace('endpoint: "http://localhost:4000/v1"', 'endpoint: "http://localhost:' + routerPort + '/v1"')
+      .replace("port: 4000", "port: " + routerPort);
+  }
+  return raw;
+};
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+    throw new Error("unexpected managed-router reinstall in reuse test: " + cmd);
+  }
+  if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
+    throw new Error("unexpected pip3 invocation in test harness: " + cmd);
+  }
+  if (cmd.includes("git -C") || /^git(?:\s|$)/.test(cmd)) {
+    throw new Error("unexpected git invocation in test harness: " + cmd);
+  }
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  if (
+    cmd.includes("gateway select") ||
+    cmd.includes("provider create") ||
+    cmd.includes("provider update") ||
+    cmd.includes("inference set")
+  ) {
+    return { status: 0, stdout: "", stderr: "" };
+  }
+  throw new Error("unexpected command in managed-router reuse test: " + cmd);
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("git -C") && cmd.includes("rev-parse HEAD")) {
+    return ${JSON.stringify(MODEL_ROUTER_TEST_SOURCE_SHA)};
+  }
+  if (cmd.includes("command -v") && /model-router$/.test(cmd)) {
+    return ${JSON.stringify(path.join(fakeBin, "model-router"))};
+  }
+  if (cmd.includes("inference") && cmd.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: nvidia-router",
+      "  Model: nvidia-routed",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.NVIDIA_API_KEY = "nvapi-router-secret";
+
+const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
+
+(async () => {
+  await setupInference(
+    "router-box",
+    "nvidia-routed",
+    "nvidia-router",
+    "http://host.openshell.internal:" + routerPort + "/v1",
+    "NVIDIA_API_KEY",
+  );
+  console.log(JSON.stringify({
+    commands,
+    sandboxConfig: getSandboxInferenceConfig("nvidia-routed", "nvidia-router", "openai-completions"),
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseStdoutJson<{
+      commands: CommandEntry[];
+      sandboxConfig: SandboxInferenceConfig;
+    }>(result.stdout);
+    const providerCommand = payload.commands.find((entry) =>
+      /provider create/.test(entry.command),
+    );
+    assert.ok(providerCommand, JSON.stringify(payload.commands));
+    assert.match(providerCommand.command, /--name nvidia-router/);
+    assert.match(providerCommand.command, /--credential NVIDIA_API_KEY/);
+    assert.match(
+      providerCommand.command,
+      new RegExp(`OPENAI_BASE_URL=http:\\/\\/host\\.openshell\\.internal:${routerPort}\\/v1`),
+    );
+    assert.doesNotMatch(providerCommand.command, /nvapi-router-secret/);
+    assert.equal(providerCommand.env?.NVIDIA_API_KEY, "nvapi-router-secret");
+
+    const inferenceCommand = payload.commands.find((entry) =>
+      /inference set/.test(entry.command),
+    );
+    assert.ok(inferenceCommand, JSON.stringify(payload.commands));
+    assert.match(inferenceCommand.command, /--provider nvidia-router/);
+    assert.match(inferenceCommand.command, /--model nvidia-routed/);
+
+    assert.deepEqual(payload.sandboxConfig, {
+      providerKey: "inference",
+      primaryModelRef: "inference/nvidia-routed",
+      inferenceBaseUrl: "https://inference.local/v1",
+      inferenceApi: "openai-completions",
+      inferenceCompat: null,
+    });
+  });
+
+  it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-venv-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-router-venv-check.js");
+    const fakeRouterSource = path.join(tmpDir, "model-router-source.js");
+    const setupLog = path.join(tmpDir, "router-setup.log");
+    const venvDir = path.join(tmpDir, "model-router-venv");
+    const routerPort = 45000 + (process.pid % 10000);
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+
+    try {
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(
+        path.join(fakeBin, "model-router"),
+        [
+          "#!/usr/bin/env bash",
+          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          "exit 89",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(fakeBin, "python3"),
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'printf "python3 %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
+          '  venv_dir="$3"',
+          '  mkdir -p "$venv_dir/bin"',
+          '  cat > "$venv_dir/bin/python" <<\'PY\'',
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'printf "venv-python %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
+          '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
+          '  cp "$FAKE_ROUTER_SOURCE" "$venv_bin/model-router"',
+          '  chmod +x "$venv_bin/model-router"',
+          "  exit 0",
+          "fi",
+          "exit 97",
+          "PY",
+          '  chmod +x "$venv_dir/bin/python"',
+          "  exit 0",
+          "fi",
+          "exit 96",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(fakeBin, "pip3"),
+        [
+          "#!/usr/bin/env bash",
+          'printf "pip3 %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          "exit 88",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        fakeRouterSource,
+        [
+          `#!${process.execPath}`,
+          'const fs = require("fs");',
+          'const http = require("http");',
+          'const path = require("path");',
+          "const args = process.argv.slice(2);",
+          'if (args[0] === "proxy-config") {',
+          '  const output = args[args.indexOf("--output") + 1];',
+          "  fs.mkdirSync(path.dirname(output), { recursive: true });",
+          '  fs.writeFileSync(output, "model_list: []\\n");',
+          "  process.exit(0);",
+          "}",
+          'if (args[0] === "proxy") {',
+          '  const port = Number(args[args.indexOf("--port") + 1] || "4000");',
+          "  const server = http.createServer((req, res) => {",
+          '    if (req.url === "/health") { res.statusCode = 200; res.end("ok"); return; }',
+          "    res.statusCode = 404;",
+          "    res.end();",
+          "  });",
+          '  server.listen(port, "127.0.0.1");',
+          "  setTimeout(() => process.exit(0), 10000);",
+          "} else {",
+          "  process.exit(1);",
+          "}",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const script = String.raw`
+const fs = require("fs");
+const path = require("path");
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const routerPort = ${routerPort};
+const repoRoot = ${JSON.stringify(repoRoot)};
+const blueprintPath = path.join(repoRoot, "nemoclaw-blueprint", "blueprint.yaml");
+const routerPyproject = path.join(repoRoot, "nemoclaw-blueprint", "router", "llm-router", "pyproject.toml");
+const originalReadFileSync = fs.readFileSync;
+const originalExistsSync = fs.existsSync;
+const originalRun = runner.run;
+fs.existsSync = (filePath) => {
+  if (filePath === routerPyproject || String(filePath) === routerPyproject) return true;
+  return originalExistsSync(filePath);
+};
+fs.readFileSync = (filePath, ...args) => {
+  const raw = originalReadFileSync(filePath, ...args);
+  if (filePath === blueprintPath || String(filePath) === blueprintPath) {
+    return String(raw)
+      .replace('endpoint: "http://localhost:4000/v1"', 'endpoint: "http://localhost:' + routerPort + '/v1"')
+      .replace("port: 4000", "port: " + routerPort);
+  }
+  return raw;
+};
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+    return originalRun(command, opts);
+  }
+  if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
+    throw new Error("unexpected pip3 invocation in test harness: " + cmd);
+  }
+  if (cmd.includes("git -C") || /^git(?:\s|$)/.test(cmd)) {
+    throw new Error("unexpected git invocation in test harness: " + cmd);
+  }
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("git -C") && cmd.includes("rev-parse HEAD")) {
+    return ${JSON.stringify(MODEL_ROUTER_TEST_SOURCE_SHA)};
+  }
+  if (cmd.includes("command -v") && /model-router$/.test(cmd)) {
+    return ${JSON.stringify(path.join(fakeBin, "model-router"))};
+  }
+  if (cmd.includes("command -v") && /python3$/.test(cmd)) {
+    return ${JSON.stringify(path.join(fakeBin, "python3"))};
+  }
+  if (cmd.includes("inference") && cmd.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: nvidia-router",
+      "  Model: nvidia-routed",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.NVIDIA_API_KEY = "nvapi-router-secret";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference(
+    "router-box",
+    "nvidia-routed",
+    "nvidia-router",
+    "http://host.openshell.internal:" + routerPort + "/v1",
+    "NVIDIA_API_KEY",
+  );
+  console.log(JSON.stringify({ commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          HOME: tmpDir,
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+          FAKE_ROUTER_SOURCE: fakeRouterSource,
+          ROUTER_SETUP_LOG: setupLog,
+          NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const log = fs.readFileSync(setupLog, "utf-8");
+      assert.ok(log.includes(`python3 -m venv ${venvDir}`), log);
+      assert.ok(
+        log.includes(
+          `venv-python -m pip install --quiet --upgrade ${path.join(repoRoot, "nemoclaw-blueprint", "router", "llm-router")}[prefill,proxy]`,
+        ),
+        log,
+      );
+      assert.doesNotMatch(log, /path-router/);
+      assert.doesNotMatch(log, /pip3 /);
+      const payload = parseStdoutJson<{ commands: CommandEntry[] }>(result.stdout);
+      assert.ok(payload.commands.some((entry) => /provider create/.test(entry.command)));
+      assert.ok(payload.commands.some((entry) => /inference set/.test(entry.command)));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers the managed Model Router command over PATH", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-managed-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const venvDir = path.join(tmpDir, "model-router-venv");
+    const venvBin = path.join(venvDir, "bin");
+    const setupLog = path.join(tmpDir, "router-managed.log");
+    const scriptPath = path.join(tmpDir, "setup-router-managed-check.js");
+    const routerPort = 46000 + (process.pid % 10000);
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+
+    try {
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(venvBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(
+        path.join(fakeBin, "model-router"),
+        [
+          "#!/usr/bin/env bash",
+          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          "exit 89",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(venvBin, "model-router"),
+        [
+          `#!${process.execPath}`,
+          'const fs = require("fs");',
+          'const http = require("http");',
+          'const path = require("path");',
+          "const args = process.argv.slice(2);",
+          'if (process.env.ROUTER_SETUP_LOG) fs.appendFileSync(process.env.ROUTER_SETUP_LOG, `managed ${args[0]}\\n`);',
+          'if (args[0] === "proxy-config") {',
+          '  const output = args[args.indexOf("--output") + 1];',
+          "  fs.mkdirSync(path.dirname(output), { recursive: true });",
+          '  fs.writeFileSync(output, "model_list: []\\n");',
+          "  process.exit(0);",
+          "}",
+          'if (args[0] === "proxy") {',
+          '  const port = Number(args[args.indexOf("--port") + 1] || "4000");',
+          "  const server = http.createServer((req, res) => {",
+          '    if (req.url === "/health") { res.statusCode = 200; res.end("ok"); return; }',
+          "    res.statusCode = 404;",
+          "    res.end();",
+          "  });",
+          '  server.listen(port, "127.0.0.1");',
+          "  setTimeout(() => process.exit(0), 10000);",
+          "} else {",
+          "  process.exit(1);",
+          "}",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(venvDir, MODEL_ROUTER_FINGERPRINT_FILE),
+        `git:${MODEL_ROUTER_TEST_SOURCE_SHA}\n`,
+        { mode: 0o600 },
+      );
+
+      const script = String.raw`
+const fs = require("fs");
+const path = require("path");
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const routerPort = ${routerPort};
+const repoRoot = ${JSON.stringify(repoRoot)};
+const blueprintPath = path.join(repoRoot, "nemoclaw-blueprint", "blueprint.yaml");
+const routerPyproject = path.join(repoRoot, "nemoclaw-blueprint", "router", "llm-router", "pyproject.toml");
+const originalReadFileSync = fs.readFileSync;
+const originalExistsSync = fs.existsSync;
+fs.existsSync = (filePath) => {
+  if (filePath === routerPyproject || String(filePath) === routerPyproject) return true;
+  return originalExistsSync(filePath);
+};
+fs.readFileSync = (filePath, ...args) => {
+  const raw = originalReadFileSync(filePath, ...args);
+  if (filePath === blueprintPath || String(filePath) === blueprintPath) {
+    return String(raw)
+      .replace('endpoint: "http://localhost:4000/v1"', 'endpoint: "http://localhost:' + routerPort + '/v1"')
+      .replace("port: 4000", "port: " + routerPort);
+  }
+  return raw;
+};
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+    throw new Error("unexpected managed-router reinstall in reuse test: " + cmd);
+  }
+  if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
+    throw new Error("unexpected pip3 invocation in test harness: " + cmd);
+  }
+  if (cmd.includes("git -C") || /^git(?:\s|$)/.test(cmd)) {
+    throw new Error("unexpected git invocation in test harness: " + cmd);
+  }
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  if (
+    cmd.includes("gateway select") ||
+    cmd.includes("provider create") ||
+    cmd.includes("provider update") ||
+    cmd.includes("inference set")
+  ) {
+    return { status: 0, stdout: "", stderr: "" };
+  }
+  throw new Error("unexpected command in managed-router reuse test: " + cmd);
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("git -C") && cmd.includes("rev-parse HEAD")) {
+    return ${JSON.stringify(MODEL_ROUTER_TEST_SOURCE_SHA)};
+  }
+  if (cmd.includes("command -v") && /model-router$/.test(cmd)) {
+    return ${JSON.stringify(path.join(fakeBin, "model-router"))};
+  }
+  if (cmd.includes("inference") && cmd.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: nvidia-router",
+      "  Model: nvidia-routed",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.NVIDIA_API_KEY = "nvapi-router-secret";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference(
+    "router-box",
+    "nvidia-routed",
+    "nvidia-router",
+    "http://host.openshell.internal:" + routerPort + "/v1",
+    "NVIDIA_API_KEY",
+  );
+  console.log(JSON.stringify({ commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          HOME: tmpDir,
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+          ROUTER_SETUP_LOG: setupLog,
+          NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const log = fs.readFileSync(setupLog, "utf-8");
+      assert.match(log, /managed proxy-config/);
+      assert.doesNotMatch(log, /path-router/);
+      const payload = parseStdoutJson<{ commands: CommandEntry[] }>(result.stdout);
+      assert.ok(payload.commands.some((entry) => /provider create/.test(entry.command)));
+      assert.ok(payload.commands.some((entry) => /inference set/.test(entry.command)));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshes stale managed Model Router command when source fingerprint changes", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-refresh-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const venvDir = path.join(tmpDir, "model-router-venv");
+    const venvBin = path.join(venvDir, "bin");
+    const fakeRouterSource = path.join(tmpDir, "model-router-source.js");
+    const setupLog = path.join(tmpDir, "router-refresh.log");
+    const scriptPath = path.join(tmpDir, "setup-router-refresh-check.js");
+    const routerPort = 47000 + (process.pid % 10000);
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+
+    try {
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(venvBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(
+        path.join(fakeBin, "model-router"),
+        [
+          "#!/usr/bin/env bash",
+          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          "exit 89",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(fakeBin, "python3"),
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'printf "python3 %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
+          '  venv_dir="$3"',
+          '  mkdir -p "$venv_dir/bin"',
+          '  cat > "$venv_dir/bin/python" <<\'PY\'',
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'printf "venv-python %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
+          '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
+          '  cp "$FAKE_ROUTER_SOURCE" "$venv_bin/model-router"',
+          '  chmod +x "$venv_bin/model-router"',
+          "  exit 0",
+          "fi",
+          "exit 97",
+          "PY",
+          '  chmod +x "$venv_dir/bin/python"',
+          "  exit 0",
+          "fi",
+          "exit 96",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(venvBin, "model-router"),
+        [
+          "#!/usr/bin/env bash",
+          'printf "stale-managed %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          "exit 89",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(venvDir, MODEL_ROUTER_FINGERPRINT_FILE), "git:stale\n", {
+        mode: 0o600,
+      });
+      fs.writeFileSync(
+        fakeRouterSource,
+        [
+          `#!${process.execPath}`,
+          'const fs = require("fs");',
+          'const http = require("http");',
+          'const path = require("path");',
+          "const args = process.argv.slice(2);",
+          'if (process.env.ROUTER_SETUP_LOG) fs.appendFileSync(process.env.ROUTER_SETUP_LOG, `fresh ${args[0]}\\n`);',
+          'if (args[0] === "proxy-config") {',
+          '  const output = args[args.indexOf("--output") + 1];',
+          "  fs.mkdirSync(path.dirname(output), { recursive: true });",
+          '  fs.writeFileSync(output, "model_list: []\\n");',
+          "  process.exit(0);",
+          "}",
+          'if (args[0] === "proxy") {',
+          '  const port = Number(args[args.indexOf("--port") + 1] || "4000");',
+          "  const server = http.createServer((req, res) => {",
+          '    if (req.url === "/health") { res.statusCode = 200; res.end("ok"); return; }',
+          "    res.statusCode = 404;",
+          "    res.end();",
+          "  });",
+          '  server.listen(port, "127.0.0.1");',
+          "  setTimeout(() => process.exit(0), 10000);",
+          "} else {",
+          "  process.exit(1);",
+          "}",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const script = String.raw`
+const fs = require("fs");
+const path = require("path");
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const routerPort = ${routerPort};
+const repoRoot = ${JSON.stringify(repoRoot)};
+const blueprintPath = path.join(repoRoot, "nemoclaw-blueprint", "blueprint.yaml");
+const routerPyproject = path.join(repoRoot, "nemoclaw-blueprint", "router", "llm-router", "pyproject.toml");
+const originalReadFileSync = fs.readFileSync;
+const originalRun = runner.run;
+const originalExistsSync = fs.existsSync;
+fs.existsSync = (filePath) => {
+  if (filePath === routerPyproject || String(filePath) === routerPyproject) return true;
+  return originalExistsSync(filePath);
+};
+fs.readFileSync = (filePath, ...args) => {
+  const raw = originalReadFileSync(filePath, ...args);
+  if (filePath === blueprintPath || String(filePath) === blueprintPath) {
+    return String(raw)
+      .replace('endpoint: "http://localhost:4000/v1"', 'endpoint: "http://localhost:' + routerPort + '/v1"')
+      .replace("port: 4000", "port: " + routerPort);
+  }
+  return raw;
+};
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+    return originalRun(command, opts);
+  }
+  if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
+    throw new Error("unexpected pip3 invocation in test harness: " + cmd);
+  }
+  if (cmd.includes("git -C") || /^git(?:\s|$)/.test(cmd)) {
+    throw new Error("unexpected git invocation in test harness: " + cmd);
+  }
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("git -C") && cmd.includes("rev-parse HEAD")) {
+    return ${JSON.stringify(MODEL_ROUTER_TEST_SOURCE_SHA)};
+  }
+  if (cmd.includes("command -v") && /model-router$/.test(cmd)) {
+    return ${JSON.stringify(path.join(fakeBin, "model-router"))};
+  }
+  if (cmd.includes("command -v") && /python3$/.test(cmd)) {
+    return ${JSON.stringify(path.join(fakeBin, "python3"))};
+  }
+  if (cmd.includes("inference") && cmd.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: nvidia-router",
+      "  Model: nvidia-routed",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.NVIDIA_API_KEY = "nvapi-router-secret";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference(
+    "router-box",
+    "nvidia-routed",
+    "nvidia-router",
+    "http://host.openshell.internal:" + routerPort + "/v1",
+    "NVIDIA_API_KEY",
+  );
+  console.log(JSON.stringify({ commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          HOME: tmpDir,
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+          FAKE_ROUTER_SOURCE: fakeRouterSource,
+          ROUTER_SETUP_LOG: setupLog,
+          NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const log = fs.readFileSync(setupLog, "utf-8");
+      assert.ok(log.includes(`python3 -m venv ${venvDir}`), log);
+      assert.ok(
+        log.includes(
+          `venv-python -m pip install --quiet --upgrade ${path.join(repoRoot, "nemoclaw-blueprint", "router", "llm-router")}[prefill,proxy]`,
+        ),
+        log,
+      );
+      assert.match(log, /fresh proxy-config/);
+      assert.doesNotMatch(log, /stale-managed/);
+      assert.doesNotMatch(log, /path-router/);
+      const payload = parseStdoutJson<{ commands: CommandEntry[] }>(result.stdout);
+      assert.ok(payload.commands.some((entry) => /provider create/.test(entry.command)));
+      assert.ok(payload.commands.some((entry) => /inference set/.test(entry.command)));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not delete saved OpenAI credentials when configuring local vLLM", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-local-vllm-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-local-vllm-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const credentials = require(${credentialsPath});
+const localInference = require(${localInferencePath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("inference") && cmd.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: vllm-local",
+      "  Model: meta-llama",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+localInference.validateLocalProvider = () => ({ ok: true });
+localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:8000/v1";
+
+credentials.saveCredential("OPENAI_API_KEY", "sk-existing");
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference("test-box", "meta-llama", "vllm-local");
+  console.log(JSON.stringify({
+    commands,
+    savedOpenAiKey: credentials.getCredential("OPENAI_API_KEY"),
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const payload = parseStdoutJson<{ commands: CommandEntry[]; savedOpenAiKey: string }>(
+      result.stdout,
+    );
+    const providerCommand = payload.commands.find((entry) =>
+      entry.command.includes("provider create"),
+    );
+    assert.ok(providerCommand, "expected local vLLM provider create command");
+    assert.match(providerCommand.command, /--credential NEMOCLAW_VLLM_LOCAL_TOKEN/);
+    assert.doesNotMatch(providerCommand.command, /--credential OPENAI_API_KEY/);
+    assert.equal(providerCommand.env?.NEMOCLAW_VLLM_LOCAL_TOKEN, "dummy");
+    assert.equal(payload.savedOpenAiKey, "sk-existing");
   });
 
   it("detects when the live inference route already matches the requested provider and model", () => {
@@ -1938,7 +4555,7 @@ console.log(JSON.stringify({
     const scriptPath = path.join(tmpDir, "setup-anthropic-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2014,7 +4631,7 @@ const { setupInference } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "setup-openai-update-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2087,8 +4704,8 @@ const { setupInference } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "setup-inference-auth-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2177,8 +4794,8 @@ const { setupInference } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "setup-inference-apply-back-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2246,7 +4863,7 @@ const { setupInference } = require(${onboardPath});
       "utf-8",
     );
     const probeSource = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "http-probe.ts"),
+      path.join(import.meta.dirname, "..", "src", "lib", "adapters", "http", "probe.ts"),
       "utf-8",
     );
     const recoverySource = fs.readFileSync(
@@ -2254,23 +4871,24 @@ const { setupInference } = require(${onboardPath});
       "utf-8",
     );
 
-    assert.match(onboardSource, /http-probe/);
+    assert.match(onboardSource, /adapters\/http\/probe/);
     assert.match(probeSource, /return \["--connect-timeout", "10", "--max-time", "60"\];/);
     assert.match(recoverySource, /failure\.curlStatus === 2/);
     assert.match(recoverySource, /local curl invocation error/);
   });
 
   it("checks provider existence before create/update to avoid AlreadyExists noise (#1155)", () => {
+    // upsertProvider lives in onboard/providers.ts after the refactor.
     const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "providers.ts"),
       "utf-8",
     );
 
     // upsertProvider must check existence first so it never triggers AlreadyExists.
-    assert.match(source, /providerExistsInGateway\(name\)/);
+    assert.match(source, /providerExistsInGateway\(name/);
     assert.match(source, /exists \? "update" : "create"/);
     // Only one openshell call should be made (no create-then-update fallback).
-    assert.match(source, /const result = runOpenshell\(args, runOpts\)/);
+    assert.match(source, /const result = _runOpenshell\(args, runOpts\)/);
   });
 
   it("marks the unused agent_setup/openclaw sibling step as skipped (#1834)", () => {
@@ -2285,6 +4903,81 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /setupOpenclaw[\s\S]*?markStepSkipped\("agent_setup"\)/);
   });
 
+  it("uses named sandbox exec for dashboard and web-search probes", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"curl"/);
+    assert.match(source, /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"hermes"/);
+    assert.match(source, /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"cat"/);
+    assert.doesNotMatch(source, /\["sandbox",\s*"exec",\s*sandboxName,\s*"curl"/);
+    assert.doesNotMatch(source, /\["sandbox",\s*"exec",\s*sandboxName,\s*"hermes"/);
+    assert.doesNotMatch(source, /\["sandbox",\s*"exec",\s*sandboxName,\s*"cat"/);
+  });
+
+  it("re-establishes the agent dashboard forward after agent setup health checks", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const setupPos = source.indexOf("await agentOnboard.handleAgentSetup");
+    const forwardPos = source.indexOf("ensureAgentDashboardForward(sandboxName, agent)", setupPos);
+
+    assert.ok(setupPos !== -1, "agent setup call not found");
+    assert.ok(
+      forwardPos > setupPos,
+      "agent dashboard forward should be re-established after agent health checks",
+    );
+  });
+
+  it("re-establishes the agent dashboard forward after policies are applied", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const policiesPos = source.indexOf("await setupPoliciesWithSelection");
+    const completePoliciesPos = source.indexOf(
+      'onboardSession.markStepComplete(\n        "policies"',
+      policiesPos,
+    );
+    const forwardPos = source.indexOf(
+      "ensureAgentDashboardForward(sandboxName, agent)",
+      completePoliciesPos,
+    );
+    const completeSessionPos = source.indexOf(
+      "onboardSession.completeSession",
+      completePoliciesPos,
+    );
+
+    assert.ok(policiesPos !== -1, "policy setup call not found");
+    assert.ok(completePoliciesPos !== -1, "policy completion call not found");
+    assert.ok(forwardPos > completePoliciesPos, "agent forward should be reset after policy setup");
+    assert.ok(
+      forwardPos < completeSessionPos,
+      "agent forward should be reset before onboarding is marked complete",
+    );
+  });
+
+  it("records gateway completion when a fresh onboard reuses an existing gateway", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const reusePos = source.indexOf('skippedStepMessage("gateway", "running", "reuse")');
+    const nextBranchPos = source.indexOf("} else {", reusePos);
+    const reuseBlock = source.slice(reusePos, nextBranchPos);
+
+    assert.ok(reusePos !== -1, "gateway reuse branch not found");
+    assert.ok(nextBranchPos !== -1, "gateway reuse branch end not found");
+    assert.match(
+      reuseBlock,
+      /onboardSession\.markStepComplete\("gateway"\)/,
+      "reused gateway must be persisted so a later resume can skip it",
+    );
+  });
+
   it("starts the sandbox step before prompting for the sandbox name", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -2293,7 +4986,76 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      // #2753: sandboxName is intentionally absent from the options here so
+      // the session does not record a name before createSandbox completes.
+      /startRecordedStep\("sandbox", \{ provider, model \}\);\s*const recordedMessagingChannels = getRecordedMessagingChannelsForResume\(resume, session\);[\s\S]*?selectedMessagingChannels = recordedMessagingChannels;[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(\);[\s\S]*?const messagingChannelConfig = readMessagingChannelConfigFromEnv\(\);[\s\S]*?onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*current\.messagingChannelConfig = messagingChannelConfig;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*opts\.controlUiPort \|\| null,\s*sandboxGpuConfig,\s*\);/,
+    );
+  });
+
+  it("runs fresh stale-gateway cleanup after the sandbox name is known but before createSandbox", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const promptPos = source.indexOf(
+      "if (!sandboxName) {\n        sandboxName = await promptValidatedSandboxName(agent);",
+    );
+    const cleanupPos = source.indexOf(
+      "stopStaleDashboardListenersForSandbox(registry.listSandboxes().sandboxes, sandboxName);",
+      promptPos,
+    );
+    const createPos = source.indexOf("sandboxName = await createSandbox(", promptPos);
+
+    assert.ok(promptPos !== -1, "sandbox-name resolution block not found");
+    assert.ok(cleanupPos > promptPos, "fresh cleanup should run after sandboxName is known");
+    assert.ok(cleanupPos < createPos, "fresh cleanup should run before createSandbox allocates a port");
+  });
+
+  it("defaults GPU passthrough on for detected NVIDIA GPUs unless opted out", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions\(opts\);/);
+    assert.match(
+      source,
+      /const gpuPassthrough = sandboxGpuConfig\.sandboxGpuEnabled;/,
+    );
+    assert.match(source, /Use --no-gpu to opt out/);
+  });
+
+  it("does not persist sandboxName to onboard-session.json before createSandbox completes (#2753)", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // Steps that run before `openshell sandbox create` succeeds must not
+    // write sandboxName into the session — otherwise a SIGINT in between
+    // leaves a phantom name that `nemoclaw list` resurrects until the user
+    // manually destroys it. sandboxName is only persisted at the sandbox
+    // step's markStepComplete, which runs after createSandbox returns.
+    assert.match(source, /startRecordedStep\("provider_selection"\);/);
+    assert.match(source, /startRecordedStep\("inference", \{ provider, model \}\);/);
+    assert.match(source, /startRecordedStep\("sandbox", \{ provider, model \}\);/);
+    assert.doesNotMatch(
+      source,
+      /startRecordedStep\("(?:provider_selection|inference|sandbox)",\s*\{[^}]*\bsandboxName\b/,
+    );
+    // The first markStepComplete that records sandboxName is the sandbox
+    // step, after createSandbox(). Locked in by checking createSandbox
+    // appears before the first sandboxName-bearing markStepComplete. The
+    // toSessionUpdates({ ... }) options object is matched non-greedily so a
+    // later sandboxName reference from a different call site cannot leak
+    // into the match.
+    const createIdx = source.indexOf("sandboxName = await createSandbox(");
+    const firstSandboxNameMarkComplete = source.search(
+      /onboardSession\.markStepComplete\(\s*"[^"]+",\s*toSessionUpdates\(\{[^}]*\bsandboxName\b/,
+    );
+    assert.ok(
+      createIdx > 0 && firstSandboxNameMarkComplete > createIdx,
+      `createSandbox (${createIdx}) must precede the first sandboxName-bearing markStepComplete (${firstSandboxNameMarkComplete})`,
     );
   });
 
@@ -2309,66 +5071,114 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /skippedStepMessage\("openclaw", sandboxName\)/);
     assert.match(
       source,
-      /skippedStepMessage\("policies", \(recordedPolicyPresets \|\| \[\]\)\.join\(", "\)\)/,
+      /skippedStepMessage\("policies", recordedPolicyPresetsForSupport\.join\(", "\)\)/,
     );
   });
 
-  it("enters permanent shields-down state when dangerouslySkipPermissions is true", () => {
+  it("re-checks RESERVED_SANDBOX_NAMES against a resumed session's sandboxName", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
 
-    // The dangerouslySkipPermissions branch must call shields.shieldsDownPermanent
-    // to activate the permissive policy, unlock the config file with doctor-aligned
-    // permissions, and record permanent shields-down state. This replaced the
-    // previous policies.applyPermissivePolicy call to unify the shields state machine.
     assert.match(
       source,
-      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*if \(!waitForSandboxReady\(sandboxName\)\) \{[\s\S]*?\}\s*shields\.shieldsDownPermanent\(sandboxName\);/,
-    );
-    // Must NOT just print a skip message without activating the policy.
-    assert.doesNotMatch(
-      source,
-      /dangerouslySkipPermissions\)[\s\S]*?Skipped —.*permissive base policy/,
+      // #2753: a stale `session.sandboxName` from an interrupted onboard
+      // must not override a fresh `--name` / NEMOCLAW_SANDBOX_NAME, so the
+      // session value participates only when its sandbox step completed.
+      /const recordedSandboxName =\s*session\?\.steps\?\.sandbox\?\.status === "complete" \? session\?\.sandboxName \|\| null : null;[\s\S]*?let sandboxName = recordedSandboxName \|\| requestedSandboxName \|\| null;\s*if \(sandboxName && RESERVED_SANDBOX_NAMES\.has\(sandboxName\)\) \{[\s\S]*?process\.exit\(1\);\s*\}/,
     );
   });
+  it("reserves update as a sandbox name because it is a global command", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
 
+    assert.match(source, /const RESERVED_SANDBOX_NAMES = new Set\([\s\S]*?"update"[\s\S]*?\]\);/);
+  });
   it("delegates sandbox-create progress streaming to the extracted helper module", () => {
     const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
-    const { streamSandboxCreate } = require("../dist/lib/sandbox-create-stream");
+    const { streamSandboxCreate } = require("../dist/lib/sandbox/create-stream");
 
-    assert.match(onboardSource, /sandbox-create-stream/);
+    assert.match(onboardSource, /sandbox\/create-stream/);
     assert.equal(typeof streamSandboxCreate, "function");
   });
 
-  it("hydrates stored provider credentials when setupInference runs without process env set", () => {
+  it("re-refs stdin before each raw-mode prompt and unrefs in cleanup so sticky unref() does not strand later prompts", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // The shared `prompt()` cleanup unref()s stdin so the wizard exits
+    // naturally after its last readline prompt. unref() is sticky, so the
+    // raw-mode TUI selectors (messaging channels + the three arrow-key
+    // pickers) must explicitly ref() stdin before resume()/setRawMode(true)
+    // or they would otherwise listen on a detached handle.
+    const refMatches = source.match(
+      /process\.stdin\.ref\(\);[\s\S]{0,180}?process\.stdin\.setRawMode\(true\)/g,
+    );
+    assert.ok(
+      refMatches !== null && refMatches.length >= 3,
+      `expected at least 3 ref()-then-setRawMode(true) sites, found ${
+        refMatches ? refMatches.length : 0
+      }`,
+    );
+
+    // The messaging-channels picker uses an `input.ref()` alias on the
+    // captured handle. Same contract, different binding.
+    assert.match(source, /input\.ref\(\)[\s\S]{0,200}?input\.setRawMode\(true\)/);
+
+    // Each raw-mode cleanup must release stdin too, so a wizard that ends
+    // on a TUI selector exits cleanly.
+    const unrefMatches = source.match(
+      /setRawMode\(false\);[\s\S]{0,400}?(?:process\.stdin|input)\.unref\(\)/g,
+    );
+    assert.ok(
+      unrefMatches !== null && unrefMatches.length >= 4,
+      `expected at least 4 setRawMode(false)-then-unref() sites, found ${
+        unrefMatches ? unrefMatches.length : 0
+      }`,
+    );
+  });
+
+  it("migrates a legacy credentials.json into env so setupInference can register the provider", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-resume-credential-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    // Pre-seed a pre-fix plaintext credentials.json. hydrateCredentialEnv
+    // stages it non-destructively into process.env via
+    // stageLegacyCredentialsToEnv(); the secure unlink only runs from the
+    // post-onboard cleanup gate when the staged values are confirmed
+    // migrated, so the legacy file must still exist after this test's
+    // setupInference call (asserted further down).
+    const legacyDir = path.join(tmpDir, ".nemoclaw");
+    fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(legacyDir, "credentials.json"),
+      JSON.stringify({ OPENAI_API_KEY: "sk-stored-secret" }),
+      { mode: 0o600 },
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
       mode: 0o755,
     });
 
+    const legacyFilePath = JSON.stringify(path.join(legacyDir, "credentials.json"));
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
-const credentials = require(${credentialsPath});
-const childProcess = require("node:child_process");
-const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
-const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
@@ -2390,14 +5200,17 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-credentials.saveCredential("OPENAI_API_KEY", "sk-stored-secret");
 delete process.env.OPENAI_API_KEY;
 
 const { setupInference } = require(${onboardPath});
 
 (async () => {
   await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
-  console.log(JSON.stringify({ commands, openai: process.env.OPENAI_API_KEY || null }));
+  console.log(JSON.stringify({
+    commands,
+    openai: process.env.OPENAI_API_KEY || null,
+    legacyFileGone: !fs.existsSync(${legacyFilePath}),
+  }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -2419,8 +5232,18 @@ const { setupInference } = require(${onboardPath});
     const payload = parseStdoutJson<{
       openai: string;
       commands: CommandEntry[];
+      legacyFileGone: boolean;
     }>(result.stdout);
     assert.equal(payload.openai, "sk-stored-secret");
+    // setupInference's hydrateCredentialEnv only stages the legacy file
+    // (non-destructive). The secure unlink runs only after a full successful
+    // onboard, so an interrupted run can be retried without losing the
+    // user's only copy of their credentials.
+    assert.equal(
+      payload.legacyFileGone,
+      false,
+      "legacy credentials.json must survive the staging-only hydrate path",
+    );
     // commands[0]=gateway select, [1]=provider get, [2]=provider update
     const providerUpdate = payload.commands[2];
     assert.ok(providerUpdate, "expected provider update command");
@@ -2434,7 +5257,7 @@ const { setupInference } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "stale-sandbox-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -2480,23 +5303,26 @@ console.log(JSON.stringify({ liveExists, sandbox: registry.getSandbox("my-assist
     assert.equal(payload.sandbox, null);
   });
 
-  it("builds the sandbox without uploading an external OpenClaw config file", async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-sandbox-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "create-sandbox-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+  it(
+    "builds the sandbox without uploading an external OpenClaw config file",
+    { timeout: 90_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-sandbox-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "create-sandbox-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -2506,6 +5332,9 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const registerCalls = [];
+const updateCalls = [];
+const defaultCalls = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -2513,11 +5342,25 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.registerSandbox = () => true;
+registry.registerSandbox = (entry) => {
+  registerCalls.push(entry);
+  return true;
+};
+registry.updateSandbox = (name, updates) => {
+  updateCalls.push({ name, updates });
+  return true;
+};
+registry.setDefault = (name) => {
+  defaultCalls.push(name);
+  return true;
+};
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -2539,54 +5382,72 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(null, "gpt-5.4");
-  console.log(JSON.stringify({ sandboxName, commands }));
+  console.log(JSON.stringify({ sandboxName, commands, registerCalls, updateCalls, defaultCalls }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
-    assert.equal(payload.sandboxName, "my-assistant");
-    const createCommand = payload.commands.find((entry: CommandEntry) =>
-      entry.command.includes("sandbox create"),
-    );
-    assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /nemoclaw-start/);
-    assert.doesNotMatch(createCommand.command, /--upload/);
-    assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
-    assert.doesNotMatch(createCommand.command, /NVIDIA_API_KEY=/);
-    assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
-    assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
-    assert.ok(
-      payload.commands.some(
-        (entry: CommandEntry) =>
-          entry.command.includes("forward start --background 18789 my-assistant") ||
-          entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
-      ),
-      "expected dashboard forward (loopback or WSL 0.0.0.0)",
-    );
-  });
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+      assert.equal(payload.sandboxName, "my-assistant");
+      assert.deepEqual(payload.defaultCalls, ["my-assistant"]);
+      assert.ok(
+        payload.registerCalls.some(
+          (entry: Record<string, unknown>) =>
+            entry.name === "my-assistant" &&
+            entry.model === "gpt-5.4" &&
+            Object.prototype.hasOwnProperty.call(entry, "agentVersion"),
+        ),
+        "expected registry metadata for created sandbox",
+      );
+      assert.ok(
+        payload.updateCalls.every(
+          (call: { name: string; updates: Record<string, unknown> }) =>
+            call.name === "my-assistant" && call.updates,
+        ),
+        "expected any registry metadata updates to target the created sandbox",
+      );
+      const createCommand = payload.commands.find((entry: CommandEntry) =>
+        entry.command.includes("sandbox create"),
+      );
+      assert.ok(createCommand, "expected sandbox create command");
+      assert.match(createCommand.command, /nemoclaw-start/);
+      assert.doesNotMatch(createCommand.command, /--upload/);
+      assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
+      assert.doesNotMatch(createCommand.command, /NVIDIA_API_KEY=/);
+      assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
+      assert.ok(
+        payload.commands.some(
+          (entry: CommandEntry) =>
+            entry.command.includes("forward start --background 18789 my-assistant") ||
+            entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
+        ),
+        "expected dashboard forward (loopback or WSL 0.0.0.0)",
+      );
+    },
+  );
 
   it("binds the dashboard forward to 0.0.0.0 when CHAT_UI_URL points to a remote host", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -2595,9 +5456,9 @@ const { createSandbox } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "create-sandbox-remote-forward.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2621,11 +5482,16 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -2684,9 +5550,9 @@ const { createSandbox } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "dashboard-port-envargs.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2715,11 +5581,16 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:19000/")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 19000 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -2753,7 +5624,6 @@ const { createSandbox } = require(${onboardPath});
     // Without this, a CHAT_UI_URL set in the developer's shell or CI would be
     // inherited, causing chatUiUrl to use the wrong port and making the forward
     // command assertion below fail spuriously.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { CHAT_UI_URL: _stripped, ...inheritedEnv } = process.env;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
@@ -2815,9 +5685,9 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "messaging-provider-check.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2832,6 +5702,7 @@ const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
@@ -2845,10 +5716,17 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("provider get")) return "Provider: discord-bridge";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
-  if (_n(command).includes("sandbox exec") && _n(command).includes("curl")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -2857,7 +5735,17 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  const command = _n(args[1][1]);
+  const entry = { command, env: args[2]?.env || null };
+  const policyMatch = command.match(/--policy ([^ ]+)/);
+  if (policyMatch) {
+    try {
+      entry.policyContent = fs.readFileSync(policyMatch[1], "utf-8");
+    } catch (error) {
+      entry.policyReadError = String(error);
+    }
+  }
+  commands.push(entry);
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2873,6 +5761,8 @@ const { createSandbox } = require(${onboardPath});
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token-value";
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
+  process.env.KUBECONFIG = "/tmp/host-kubeconfig";
+  process.env.SSH_AUTH_SOCK = "/tmp/host-ssh-agent.sock";
   const sandboxName = await createSandbox(null, "gpt-5.4");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -2933,15 +5823,22 @@ const { createSandbox } = require(${onboardPath});
       assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
       assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
       assert.match(createCommand.command, /--provider my-assistant-telegram-bridge/);
+      assert.match(createCommand.command, /--policy [^ ]*nemoclaw-initial-policy[^ ]*\.yaml/);
+      assert.equal(createCommand.policyReadError, undefined);
+      assert.match(createCommand.policyContent || "", /network_policies:/);
+      assert.match(createCommand.policyContent || "", /slack:/);
+      assert.match(createCommand.policyContent || "", /wss-primary\.slack\.com/);
 
-      // Discord and Telegram tokens must NOT appear in the sandbox create command
+      // Messaging tokens must NOT appear in the sandbox create command
       // (they flow exclusively through the openshell provider credential system).
       assert.doesNotMatch(createCommand.command, /test-discord-token-value/);
       assert.doesNotMatch(createCommand.command, /123456:ABC-test-telegram-token/);
-      // Slack tokens ARE injected as --env args so the baked openclaw.json
-      // openshell:resolve:env: placeholders resolve inside the container.
-      assert.match(createCommand.command, /SLACK_BOT_TOKEN=xoxb-test-slack-token-value/);
-      assert.match(createCommand.command, /SLACK_APP_TOKEN=xapp-test-slack-app-token-value/);
+      assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /TELEGRAM_BOT_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /xoxb-test-slack-token-value/);
+      assert.doesNotMatch(createCommand.command, /xapp-test-slack-app-token-value/);
+      assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /SLACK_APP_TOKEN=/);
 
       // Verify blocked credentials are NOT in the sandbox spawn environment
       assert.ok(createCommand.env, "expected env to be captured from spawn call");
@@ -2970,6 +5867,16 @@ const { createSandbox } = require(${onboardPath});
         undefined,
         "NVIDIA_API_KEY must not be in sandbox env",
       );
+      assert.equal(
+        createCommand.env.KUBECONFIG,
+        undefined,
+        "KUBECONFIG must not be in sandbox env",
+      );
+      assert.equal(
+        createCommand.env.SSH_AUTH_SOCK,
+        undefined,
+        "SSH_AUTH_SOCK must not be in sandbox env",
+      );
 
       // Belt-and-suspenders: raw token values must not appear anywhere in env
       const envString = JSON.stringify(createCommand.env);
@@ -2992,6 +5899,367 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
+  it(
+    "preserves Hermes Slack policy when Slack is active at sandbox create time",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-slack-"));
+      try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const customBuildDir = path.join(tmpDir, "custom-build");
+      const customDockerfilePath = path.join(customBuildDir, "Dockerfile");
+      const scriptPath = path.join(tmpDir, "hermes-slack-policy.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent", "defs.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      );
+      const yamlPath = JSON.stringify(path.join(repoRoot, "node_modules", "yaml"));
+      const customDockerfileArg = JSON.stringify(customDockerfilePath);
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(customBuildDir, { recursive: true });
+      fs.writeFileSync(customDockerfilePath, "FROM scratch\n");
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const YAML = require(${yamlPath});
+const { loadAgent } = require(${agentDefsPath});
+
+const nonSlackMessagingEnvKeys = [
+  "DISCORD_BOT_TOKEN",
+  "DISCORD_SERVER_ID",
+  "DISCORD_SERVER_IDS",
+  "DISCORD_ALLOWED_IDS",
+  "DISCORD_USER_ID",
+  "DISCORD_REQUIRE_MENTION",
+  "TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_ALLOWED_IDS",
+  "TELEGRAM_REQUIRE_MENTION",
+];
+
+const commands = [];
+let registeredSandbox = null;
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get")) return { status: 1 };
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  return "";
+};
+registry.registerSandbox = (entry) => {
+  registeredSandbox = entry;
+  return true;
+};
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const command = _n(args[1][1]);
+  const entry = { command, env: args[2]?.env || null };
+  const policyMatch = command.match(/--policy ([^ ]+)/);
+  if (policyMatch) {
+    entry.policyPath = policyMatch[1];
+    try {
+      entry.policyContent = fs.readFileSync(policyMatch[1], "utf-8");
+    } catch (error) {
+      entry.policyReadError = String(error);
+    }
+  }
+  commands.push(entry);
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  for (const key of nonSlackMessagingEnvKeys) delete process.env[key];
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_AGENT = "hermes";
+  process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
+  process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token-value";
+  const sandboxName = await createSandbox(
+    null,
+    "gpt-5.4",
+    "nvidia-prod",
+    null,
+    "my-assistant",
+    null,
+    null,
+    ${customDockerfileArg},
+    loadAgent("hermes"),
+  );
+  const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
+  const parsed = YAML.parse(createCommand?.policyContent || "") || {};
+  const slack = parsed.network_policies?.slack || {};
+  console.log(JSON.stringify({
+    sandboxName,
+    createCommand: {
+      command: createCommand?.command || "",
+      policyPath: createCommand?.policyPath || "",
+      policyReadError: createCommand?.policyReadError || null,
+    },
+    registeredPolicies: registeredSandbox?.policies || [],
+    slackBinaryPaths: (slack.binaries || []).map((entry) => entry.path),
+    slackEndpointHosts: (slack.endpoints || []).map((entry) => entry.host),
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      assert.ok(payload.createCommand.command.includes("sandbox create"));
+      assert.match(payload.createCommand.command, /--provider my-assistant-slack-bridge/);
+      assert.match(payload.createCommand.command, /--provider my-assistant-slack-app/);
+      assert.doesNotMatch(payload.createCommand.policyPath, /nemoclaw-initial-policy/);
+      assert.equal(payload.createCommand.policyReadError, null);
+      assert.deepEqual(payload.registeredPolicies, ["slack"]);
+      assert.deepEqual(payload.slackBinaryPaths, [
+        "/usr/local/bin/hermes",
+        "/usr/bin/python3*",
+        "/opt/hermes/.venv/bin/python",
+      ]);
+      assert.ok(
+        !payload.slackBinaryPaths.includes("/usr/local/bin/node"),
+        "Hermes Slack policy must not be replaced by the generic Node Slack preset",
+      );
+      assert.ok(payload.slackEndpointHosts.includes("wss-primary.slack.com"));
+      assert.ok(payload.slackEndpointHosts.includes("wss-backup.slack.com"));
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    "reuses existing messaging providers during non-interactive recreate when tokens are not in the host env",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-messaging-reuse-provider-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "messaging-reuse-provider.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+
+const commands = [];
+const registerCalls = [];
+registry.registerSandbox({
+  name: "my-assistant",
+  messagingChannels: ["discord", "slack"],
+  providerCredentialHashes: {
+    DISCORD_BOT_TOKEN: "hash-discord",
+    SLACK_BOT_TOKEN: "hash-slack-bot",
+    SLACK_APP_TOKEN: "hash-slack-app",
+    TELEGRAM_BOT_TOKEN: "hash-telegram",
+  },
+});
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get my-assistant-discord-bridge")) return { status: 0 };
+  if (normalized.includes("provider get my-assistant-slack-bridge")) return { status: 0 };
+  if (normalized.includes("provider get my-assistant-slack-app")) return { status: 0 };
+  if (normalized.includes("provider get")) return { status: 1 };
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  return "";
+};
+registry.registerSandbox = (entry) => {
+  registerCalls.push(entry);
+  return true;
+};
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const command = _n(args[1][1]);
+  const entry = { command, env: args[2]?.env || null };
+  const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
+  if (dockerfileMatch) {
+    try {
+      entry.dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
+    } catch (error) {
+      entry.dockerfileReadError = String(error);
+    }
+  }
+  commands.push(entry);
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  delete process.env.DISCORD_BOT_TOKEN;
+  delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_APP_TOKEN;
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["discord", "slack"],
+  );
+  console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          DISCORD_BOT_TOKEN: "",
+          SLACK_BOT_TOKEN: "",
+          SLACK_APP_TOKEN: "",
+          TELEGRAM_BOT_TOKEN: "",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
+        /\bprovider (create|update)\b/.test(entry.command),
+      );
+      assert.equal(
+        providerMutationCommands.length,
+        0,
+        "tokenless rebuild should not mutate providers",
+      );
+
+      const createCommand = payload.commands.find((entry: CommandEntry) =>
+        entry.command.includes("sandbox create"),
+      );
+      assert.ok(createCommand, "expected sandbox create command");
+      assert.equal(createCommand.dockerfileReadError, undefined);
+      assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
+      assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
+      assert.match(createCommand.command, /--provider my-assistant-slack-app/);
+
+      const channelsLine = createCommand.dockerfileContent
+        ?.split("\n")
+        .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
+      assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
+      const channels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
+      assert.deepEqual(channels, ["discord", "slack"]);
+      assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["discord", "slack"]);
+      assert.deepEqual(payload.registerCalls[0]?.providerCredentialHashes, {
+        DISCORD_BOT_TOKEN: "hash-discord",
+        SLACK_BOT_TOKEN: "hash-slack-bot",
+        SLACK_APP_TOKEN: "hash-slack-app",
+      });
+    },
+  );
+
   it("aborts onboard when a messaging provider upsert fails", { timeout: 60_000 }, async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));
@@ -2999,9 +6267,9 @@ const { createSandbox } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "provider-upsert-fail.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3030,6 +6298,8 @@ runner.runCapture = (command) => {
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -3077,7 +6347,7 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "reuse-with-providers.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3182,7 +6452,7 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "noninteractive-notready.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3261,7 +6531,7 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "recreate-flag.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3284,14 +6554,21 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("forward list")) return "";
-  if (_n(command).includes("sandbox exec") && _n(command).includes("curl")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
@@ -3362,9 +6639,9 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "recreate-preserves.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
       const sessionModulePath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "onboard-session.js"),
+        path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
@@ -3389,7 +6666,12 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("forward list")) return "";
-  if (_n(command).includes("sandbox exec") && _n(command).includes("curl")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   return "";
 };
 
@@ -3403,9 +6685,11 @@ registry.getSandbox = () => ({
   policyTier: "balanced",
 });
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
@@ -3474,8 +6758,8 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "interactive-reuse.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3605,8 +6889,8 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "interactive-decline.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3652,14 +6936,21 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("forward list")) return "";
-  if (_n(command).includes("sandbox exec") && _n(command).includes("curl")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 // Mock prompt to return "y" (confirm recreate)
@@ -3745,8 +7036,8 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "interactive-notready.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3775,14 +7066,21 @@ runner.runCapture = (command) => {
     return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
   if (_n(command).includes("forward list")) return "";
-  if (_n(command).includes("sandbox exec") && _n(command).includes("curl")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 // User confirms recreation when prompted
@@ -3806,7 +7104,7 @@ childProcess.spawn = fakeSpawn;
 // childProcess object above does not reach it. Patch the cached module
 // directly so streamSandboxCreate (called by createSandbox) doesn't spawn
 // a real bash process that tries to hit a live gateway.
-const sandboxCreateStreamMod = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "sandbox-create-stream.js"))});
+const sandboxCreateStreamMod = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "sandbox", "create-stream.js"))});
 const _origStreamCreate = sandboxCreateStreamMod.streamSandboxCreate;
 sandboxCreateStreamMod.streamSandboxCreate = (command, env, options = {}) => {
   return _origStreamCreate(command, env, { ...options, spawnImpl: fakeSpawn });
@@ -3865,15 +7163,19 @@ const { createSandbox } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
+    const selectionSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "selection-drift.ts"),
+      "utf-8",
+    );
     assert.match(
       source,
-      /const selectionDrift = getSelectionDrift\(sandboxName, provider, model\);/,
+      /const selectionDrift = getSelectionDrift\(sandboxName, provider, model, \{ runOpenshell \}\);/,
     );
     assert.match(
       source,
       /const confirmedSelectionDrift = selectionDrift\.changed && !selectionDrift\.unknown;/,
     );
-    assert.match(source, /unknown:\s*true/);
+    assert.match(selectionSource, /unknown:\s*true/);
     assert.match(source, /if \(confirmedSelectionDrift\)/);
     assert.match(source, /Recreating sandbox due to provider\/model drift/);
     assert.match(
@@ -4114,7 +7416,7 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("discord-bridge") }
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "hydrate-cred.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -4123,8 +7425,19 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("discord-bridge") }
 
     const script = `
 const credentials = require(${credentialsPath});
-// Mock getCredential to return a stored value
-credentials.getCredential = (name) => name === "TELEGRAM_BOT_TOKEN" ? "stored-telegram-token" : null;
+// Mock getCredential and resolveProviderCredential to return a stored value.
+// hydrateCredentialEnv delegates to resolveProviderCredential which calls
+// getCredential internally.  Since resolveProviderCredential uses the local
+// function reference (not module.exports.getCredential), we must also mock
+// resolveProviderCredential on the module object so the onboard.ts import
+// picks up the mock.  See #2306.
+const mockGetCredential = (name) => name === "TELEGRAM_BOT_TOKEN" ? "stored-telegram-token" : null;
+credentials.getCredential = mockGetCredential;
+credentials.resolveProviderCredential = (envName) => {
+  const value = mockGetCredential(envName);
+  if (value) process.env[envName] = value;
+  return value || null;
+};
 const { hydrateCredentialEnv } = require(${onboardPath});
 
 // Should return null for falsy input
@@ -4208,24 +7521,27 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("nonexistent") }));
     assert.equal(payload.exists, false);
   });
 
-  it("continues once the sandbox is Ready even if the create stream never closes", { timeout: 10000 }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
-    const payloadPath = path.join(tmpDir, "payload.json");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+  it(
+    "continues once the sandbox is Ready even if the create stream never closes",
+    { timeout: 20000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
+      const payloadPath = path.join(tmpDir, "payload.json");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -4248,11 +7564,16 @@ runner.runCapture = (command) => {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -4307,29 +7628,30 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-      timeout: 15000,
-    });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+        timeout: 15000,
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
-    assert.equal(payload.sandboxName, "my-assistant");
-    assert.ok(payload.sandboxListCalls >= 2);
-    assert.deepEqual(payload.killCalls, ["SIGTERM"]);
-    assert.equal(payload.unrefCalls, 1);
-    assert.equal(payload.stdoutDestroyCalls, 1);
-    assert.equal(payload.stderrDestroyCalls, 1);
-  });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+      assert.equal(payload.sandboxName, "my-assistant");
+      assert.ok(payload.sandboxListCalls >= 2);
+      assert.deepEqual(payload.killCalls, ["SIGTERM"]);
+      assert.equal(payload.unrefCalls, 1);
+      assert.equal(payload.stdoutDestroyCalls, 1);
+      assert.equal(payload.stderrDestroyCalls, 1);
+    },
+  );
 
   it("restores the dashboard forward when onboarding reuses an existing ready sandbox", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -4338,7 +7660,7 @@ const { createSandbox } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "reuse-sandbox-forward.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -4464,7 +7786,7 @@ const { createSandbox } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "inference-get-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -4529,6 +7851,17 @@ const { setupInference } = require(${onboardPath});
     assert.equal(commands.length, 4);
   });
 
+  it("prints NemoClaw inference commands in the post-onboard settings summary", () => {
+    const source = fs.readFileSync(path.join(repoRoot, "src", "lib", "onboard.ts"), "utf8");
+    const summaryBlock = source.slice(source.indexOf('console.log("  To change settings later:");'));
+    assert.match(summaryBlock, /Model:\s+\$\{cliName\(\)\} inference get/);
+    assert.match(
+      summaryBlock,
+      /inference set --model <model> --provider <provider> --sandbox \$\{sandboxName\}/,
+    );
+    assert.doesNotMatch(summaryBlock, /openshell inference (get|set)/);
+  });
+
   it("accepts gateway inference output that omits the Route line", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-route-"));
@@ -4536,7 +7869,7 @@ const { setupInference } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "inference-route-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -4612,9 +7945,9 @@ const { setupInference } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "enabled-channels-filter.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -4640,11 +7973,16 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -4744,9 +8082,9 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "enabled-channels-empty.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -4770,11 +8108,16 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -4864,7 +8207,7 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "messaging-noninteractive.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "adapters", "http", "probe.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -5001,9 +8344,7 @@ const { setupMessagingChannels } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "slack-format-reject.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "credentials.js"),
-      );
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -5114,9 +8455,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "slack-app-format-reject.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "credentials.js"),
-      );
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -5176,9 +8515,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
         input: "\n",
       });
       assert.equal(introspect.status, 0, introspect.stderr);
-      const slackIdx = JSON.parse(
-        introspect.stdout.trim().split("\n").pop()!,
-      ).slackIndex1Based;
+      const slackIdx = JSON.parse(introspect.stdout.trim().split("\n").pop()!).slackIndex1Based;
       assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
 
       // Real run: toggle Slack on, exit UI, bot prompt returns valid, app
@@ -5314,9 +8651,9 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "create-sandbox-from.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
     // Create a minimal custom Dockerfile in a temporary directory
     const customBuildDir = path.join(tmpDir, "custom-image");
@@ -5337,6 +8674,22 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       ].join("\n"),
     );
     fs.writeFileSync(path.join(customBuildDir, "extra.txt"), "extra build context file");
+    fs.writeFileSync(path.join(customBuildDir, "large.bin"), "small file with large mocked stat");
+    fs.mkdirSync(path.join(customBuildDir, "node_modules", "pkg"), { recursive: true });
+    fs.writeFileSync(path.join(customBuildDir, "node_modules", "pkg", "ignored.txt"), "skip me");
+    fs.mkdirSync(path.join(customBuildDir, ".ssh"), { recursive: true });
+    fs.writeFileSync(path.join(customBuildDir, ".ssh", "id_ed25519"), "fake test key");
+    fs.mkdirSync(path.join(customBuildDir, ".aws"), { recursive: true });
+    fs.writeFileSync(path.join(customBuildDir, ".aws", "credentials"), "fake test credentials");
+    fs.mkdirSync(path.join(customBuildDir, "secrets"), { recursive: true });
+    fs.writeFileSync(path.join(customBuildDir, "secrets", "token.txt"), "fake test token");
+    fs.writeFileSync(path.join(customBuildDir, ".env.local"), "EXAMPLE=fake");
+    fs.writeFileSync(
+      path.join(customBuildDir, ".npmrc"),
+      "registry=https://registry.example.test\n",
+    );
+    fs.writeFileSync(path.join(customBuildDir, "model.pem"), "fake test certificate");
+    fs.writeFileSync(path.join(customBuildDir, "credentials.json"), "{}");
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -5354,9 +8707,20 @@ const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
+const path = require("node:path");
 
 const commands = [];
 let hasExtraFileAtSpawn = false;
+let stagedIgnoredFilesAtSpawn = null;
+const largeFilePath = ${JSON.stringify(path.join(customBuildDir, "large.bin"))};
+const originalStatSync = fs.statSync;
+fs.statSync = (target, ...rest) => {
+  const stats = originalStatSync(target, ...rest);
+  if (target === largeFilePath) {
+    return { ...stats, size: 101_000_000 };
+  }
+  return stats;
+};
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -5364,11 +8728,16 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -5383,8 +8752,18 @@ childProcess.spawn = (...args) => {
   // flight — onboard deletes it once streamSandboxCreate resolves.
   const fromMatch = cmd.match(/--from\s+(\S+)/);
   if (fromMatch) {
-    const stagedDir = require("node:path").dirname(fromMatch[1]);
-    hasExtraFileAtSpawn = fs.existsSync(require("node:path").join(stagedDir, "extra.txt"));
+    const stagedDir = path.dirname(fromMatch[1]);
+    hasExtraFileAtSpawn = fs.existsSync(path.join(stagedDir, "extra.txt"));
+    stagedIgnoredFilesAtSpawn = {
+      nodeModules: fs.existsSync(path.join(stagedDir, "node_modules")),
+      ssh: fs.existsSync(path.join(stagedDir, ".ssh")),
+      aws: fs.existsSync(path.join(stagedDir, ".aws")),
+      secrets: fs.existsSync(path.join(stagedDir, "secrets")),
+      env: fs.existsSync(path.join(stagedDir, ".env.local")),
+      npmrc: fs.existsSync(path.join(stagedDir, ".npmrc")),
+      pem: fs.existsSync(path.join(stagedDir, "model.pem")),
+      credentialsJson: fs.existsSync(path.join(stagedDir, "credentials.json")),
+    };
   }
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -5398,7 +8777,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
-  console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn }));
+  console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn, stagedIgnoredFiles: stagedIgnoredFilesAtSpawn }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -5427,11 +8806,25 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
     const payload = JSON.parse(payloadLine);
     assert.equal(payload.sandboxName, "my-assistant");
+    assert.match(result.stdout, /Using custom Dockerfile:/);
+    assert.match(result.stdout, /Docker build context:/);
+    assert.match(result.stdout, /Docker build context:.*custom-image/);
+    assert.match(result.stderr, /WARN: build context contains about 101\.0 MB/);
     assert.equal(
       payload.hasExtraFile,
       true,
       "extra.txt from custom build context should be staged",
     );
+    assert.deepEqual(payload.stagedIgnoredFiles, {
+      nodeModules: false,
+      ssh: false,
+      aws: false,
+      secrets: false,
+      env: false,
+      npmrc: false,
+      pem: false,
+      credentialsJson: false,
+    });
   });
 
   it("exits with an error when the --from Dockerfile path does not exist", async () => {
@@ -5441,9 +8834,9 @@ const { createSandbox } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "create-sandbox-missing.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -5462,6 +8855,8 @@ const credentials = require(${credentialsPath});
 runner.run = () => ({ status: 0 });
 runner.runCapture = () => "";
 registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -5493,6 +8888,222 @@ const { createSandbox } = require(${onboardPath});
     assert.match(result.stderr, /Custom Dockerfile not found/);
   });
 
+  it("exits with an error when the --from Dockerfile path is a directory", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-dir-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "create-sandbox-dir.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const directoryPath = JSON.stringify(tmpDir);
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${directoryPath});
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 1, "should exit 1 when fromDockerfile path is a directory");
+    assert.match(result.stderr, /Custom Dockerfile path is not a file/);
+  });
+
+  it("exits clearly when the --from Dockerfile is inside an ignored context path", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-ignored-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "create-sandbox-ignored.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const ignoredDir = path.join(tmpDir, "node_modules", "pkg");
+
+    fs.mkdirSync(ignoredDir, { recursive: true });
+    fs.writeFileSync(path.join(ignoredDir, "Dockerfile"), "FROM ubuntu:22.04\n");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const customDockerfilePath = JSON.stringify(path.join(ignoredDir, "Dockerfile"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 1, "should exit 1 when fromDockerfile is ignored");
+    assert.match(result.stderr, /inside an ignored build-context path/);
+  });
+
+  it("cleans up the custom build context when staging fails", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-cleanup-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "create-sandbox-cleanup.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const customBuildDir = path.join(tmpDir, "custom-image");
+
+    fs.mkdirSync(customBuildDir, { recursive: true });
+    fs.writeFileSync(path.join(customBuildDir, "Dockerfile"), "FROM ubuntu:22.04\n");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const customDockerfilePath = JSON.stringify(path.join(customBuildDir, "Dockerfile"));
+    const customBuildDirLiteral = JSON.stringify(customBuildDir);
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+
+let createdBuildContext = null;
+const originalMkdtempSync = fs.mkdtempSync;
+fs.mkdtempSync = (prefix, ...rest) => {
+  const dir = originalMkdtempSync(prefix, ...rest);
+  if (String(prefix).includes("nemoclaw-build-")) {
+    createdBuildContext = dir;
+  }
+  return dir;
+};
+const originalCpSync = fs.cpSync;
+fs.cpSync = (src, dest, options) => {
+  if (src === ${customBuildDirLiteral}) {
+    fs.writeFileSync(path.join(dest, "partial.txt"), "partial custom context");
+    throw new Error("simulated custom context copy failure");
+  }
+  return originalCpSync(src, dest, options);
+};
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  try {
+    await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
+  } catch (error) {
+    console.log(JSON.stringify({
+      removed: Boolean(createdBuildContext) && !fs.existsSync(createdBuildContext),
+      message: error.message,
+    }));
+    return;
+  }
+  console.error("expected createSandbox to throw");
+  process.exit(1);
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop()!);
+    assert.equal(payload.removed, true, result.stdout);
+    assert.match(payload.message, /simulated custom context copy failure/);
+  });
+
   it("re-prompts on invalid sandbox names instead of exiting in interactive mode", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -5500,7 +9111,7 @@ const { createSandbox } = require(${onboardPath});
     );
     // Extract the promptValidatedSandboxName function body
     const fnMatch = source.match(
-      /async function promptValidatedSandboxName\(\)\s*\{([\s\S]*?)\n\}/,
+      /async function promptValidatedSandboxName\([^)]*\)\s*\{([\s\S]*?)\n\}/,
     );
     assert.ok(fnMatch, "promptValidatedSandboxName function not found");
     const fnBody = fnMatch[1];
@@ -5513,6 +9124,40 @@ const { createSandbox } = require(${onboardPath});
     // Non-interactive still exits within this function
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);
+    assert.match(fnBody, /getNameValidationGuidance\("sandbox name", sandboxName,/);
+  });
+
+  it("shows the full allowed sandbox name format before prompting", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    expect(NAME_ALLOWED_FORMAT).toBe(
+      "lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number",
+    );
+    assert.match(source, /Sandbox name \(\$\{NAME_ALLOWED_FORMAT\}\)/);
+  });
+
+  it("guards against reusing the same sandbox name for a different agent", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    assert.match(source, /getSandboxAgentDrift/);
+    assert.match(
+      source,
+      /Side-by-side agents are supported, but each sandbox name has one agent type/,
+    );
+    assert.match(source, /UNKNOWN_SANDBOX_AGENT_NAME/);
+    assert.match(source, /if \(!existingEntry\) \{[\s\S]*?changed: true/);
+    assert.match(source, /recreateForAgentDrift/);
+    assert.match(source, /getSandboxAgentRegistryFields/);
+    assert.match(source, /getSandboxAgentRegistryFields\(agent, agentVersionKnown\)/);
+    assert.match(
+      source,
+      /const existingEntry = registry\.getSandbox\(sandboxName\)[\s\S]*?existingEntry\?\.agentVersion !== null/,
+    );
+    assert.match(source, /registry\.setDefault\(sandboxName\)/);
   });
 
   it("regression #1881: registry.updateSandbox(model/provider) is called AFTER createSandbox", () => {
@@ -5526,7 +9171,7 @@ const { createSandbox } = require(${onboardPath});
     const createSandboxPos = source.indexOf("sandboxName = await createSandbox(");
     assert.ok(createSandboxPos !== -1, "createSandbox call not found in onboard.ts");
     const updateAfterCreate = source.indexOf(
-      "registry.updateSandbox(sandboxName, { model, provider })",
+      "registry.updateSandbox(sandboxName, {",
       createSandboxPos,
     );
     assert.ok(
@@ -5790,8 +9435,8 @@ const { createSandbox } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
-    const pullPos = source.indexOf("pullAndResolveBaseImageDigest()");
-    assert.ok(pullPos !== -1, "pullAndResolveBaseImageDigest() call not found in onboard.ts");
+    const pullPos = source.search(/const resolved = pullAndResolveBaseImageDigest\s*\(/);
+    assert.ok(pullPos !== -1, "pullAndResolveBaseImageDigest call not found in onboard.ts");
     const patchPos = source.indexOf("patchStagedDockerfile(", pullPos);
     assert.ok(
       patchPos > pullPos,
@@ -5822,6 +9467,25 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(findDashboardForwardOwner(falsePositive, "18789"), null);
   });
 
+  it("ensureDashboardForward clears stale preferred-port forwards before reallocating", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /const preferredEntry = findForwardEntry/);
+    assert.match(source, /function isLiveForwardStatus/);
+    assert.match(source, /!isLiveForwardStatus\(preferredEntry\.status\)/);
+    assert.match(
+      source,
+      /runOpenshell\(\["forward", "stop", String\(preferredPort\)\], \{ ignoreError: true \}\)/,
+    );
+    assert.match(
+      source,
+      /findAvailableDashboardPort\(sandboxName, preferredPort, existingForwards\)/,
+    );
+  });
+
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {
     const summary = formatOnboardConfigSummary({
       provider: "gemini-api",
@@ -5830,21 +9494,21 @@ const { createSandbox } = require(${onboardPath});
       webSearchConfig: { fetchEnabled: true },
       enabledChannels: ["telegram", "slack"],
       sandboxName: "my-assistant",
-      notes: ["Sandbox build takes ~6 minutes on this host."],
+      notes: ["Sandbox build typically takes 5–15 minutes on this host."],
     });
 
     assert.ok(summary.includes("Review configuration"), "summary has review heading");
     assert.ok(summary.includes("gemini-api"), "summary includes provider");
     assert.ok(summary.includes("gemini-2.5-flash"), "summary includes model");
     assert.ok(
-      summary.includes("GEMINI_API_KEY (stored in ~/.nemoclaw/credentials.json)"),
-      "summary shows API key env var + storage location",
+      summary.includes("GEMINI_API_KEY (staged for OpenShell gateway registration)"),
+      "summary shows API key env var + staging state",
     );
     assert.ok(summary.includes("enabled"), "summary includes web-search enabled");
     assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");
     assert.ok(summary.includes("my-assistant"), "summary shows sandbox name");
     assert.ok(
-      summary.includes("Note:          Sandbox build takes ~6 minutes on this host."),
+      summary.includes("Note:          Sandbox build typically takes 5–15 minutes on this host."),
       "summary renders notes under sandbox name",
     );
 
@@ -5887,5 +9551,32 @@ const { createSandbox } = require(${onboardPath});
     });
     assert.ok(!orphanSummary.includes("undefined"), "null fields never render as 'undefined'");
     assert.ok(orphanSummary.includes("(unset)"), "null fields fall back to '(unset)'");
+  });
+
+  it("formatSandboxBuildEstimateNote warns when runtime is under-provisioned (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote({
+      isContainerRuntimeUnderProvisioned: true,
+      dockerCpus: 2,
+      dockerMemTotalBytes: 2 * 1024 ** 3,
+    });
+    assert.ok(note != null && note.length > 0, "returns a note");
+    assert.match(note as string, /under-provisioned/i, "note flags under-provisioned host");
+  });
+
+  it("formatSandboxBuildEstimateNote returns a tighter range on a generous host (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote({
+      isContainerRuntimeUnderProvisioned: false,
+      dockerCpus: 12,
+      dockerMemTotalBytes: 32 * 1024 ** 3,
+    });
+    assert.ok(note != null, "returns a note");
+    assert.match(note ?? "", /\b3[–-]\d+\s+minutes\b/, "tight range starts at 3 minutes");
+  });
+
+  it("formatSandboxBuildEstimateNote returns null when no runtime resource signal is available (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote({
+      isContainerRuntimeUnderProvisioned: false,
+    });
+    assert.strictEqual(note, null);
   });
 });

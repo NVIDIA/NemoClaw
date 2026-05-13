@@ -81,7 +81,7 @@ Examples of questions your assistant can answer with these skills:
 | "Show me the sandbox logs." | `nemoclaw-user-monitor-sandbox` |
 | "How do I deploy NemoClaw to a remote GPU?" | `nemoclaw-user-deploy-remote` |
 | "What security controls can I configure?" | `nemoclaw-user-configure-security` |
-| "Back up my agent workspace files." | `nemoclaw-user-workspace` |
+| "Back up my agent workspace files." | `nemoclaw-user-manage-sandboxes` |
 | "What CLI commands are available?" | `nemoclaw-user-reference` |
 
 You can also reference a skill directly by name if you know which one you need.

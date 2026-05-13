@@ -8,7 +8,7 @@
 #   1. Sandbox is discoverable after restart (not "No sandboxes registered")
 #   2. SSH connectivity resumes (no handshake verification failure)
 #   3. Workspace files in /sandbox/ persist
-#   4. OpenClaw agent data persists (/sandbox/.openclaw-data/)
+#   4. OpenClaw agent data persists (/sandbox/.openclaw/)
 #   5. No re-onboard required (nemoclaw <name> status/connect work)
 #   6. Live inference works end-to-end after restart
 #   7. NemoClaw registry retains sandbox entry
@@ -123,6 +123,78 @@ cleanup_ssh() {
   ssh_config=""
 }
 
+docker_driver_gateway_pid_file() {
+  printf '%s/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.pid\n' "$HOME"
+}
+
+gateway_runtime_id() {
+  local pid_file pid cid
+  pid_file="$(docker_driver_gateway_pid_file)"
+  if [ -f "$pid_file" ]; then
+    pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      printf 'pid:%s\n' "$pid"
+      return 0
+    fi
+  fi
+
+  cid="$(docker ps -qf "name=openshell-cluster-nemoclaw" 2>/dev/null | head -1)"
+  if [ -n "$cid" ]; then
+    printf 'container:%s\n' "$cid"
+    return 0
+  fi
+
+  return 1
+}
+
+stop_gateway_runtime() {
+  local pid_file pid cid
+  openshell forward stop 18789 2>/dev/null || true
+  openshell gateway stop -g nemoclaw 2>/dev/null || true
+
+  pid_file="$(docker_driver_gateway_pid_file)"
+  if [ -f "$pid_file" ]; then
+    pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 10); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+      fi
+    fi
+  fi
+
+  cid="$(docker ps -qf "name=openshell-cluster-nemoclaw" 2>/dev/null | head -1)"
+  if [ -n "$cid" ]; then
+    docker stop "$cid" >/dev/null 2>&1 || true
+  fi
+}
+
+start_gateway_runtime() {
+  local previous_runtime="$1"
+  if [[ "$previous_runtime" == pid:* ]]; then
+    local recovery_log
+    recovery_log="$(mktemp)"
+    if nemoclaw "$SANDBOX_NAME" status >"$recovery_log" 2>&1; then
+      pass "Gateway recovered through NemoClaw status"
+    else
+      info "NemoClaw status recovery returned non-zero; polling gateway health"
+      sed 's/^/    /' "$recovery_log" | tail -40 || true
+    fi
+    rm -f "$recovery_log"
+    return 0
+  fi
+
+  if openshell gateway start --name nemoclaw 2>&1; then
+    pass "Gateway start command succeeded"
+  else
+    info "Gateway start returned non-zero — checking health..."
+  fi
+}
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Prerequisites
 # ══════════════════════════════════════════════════════════════════
@@ -176,6 +248,7 @@ if command -v nemoclaw >/dev/null 2>&1; then
 fi
 if command -v openshell >/dev/null 2>&1; then
   openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
+  stop_gateway_runtime
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
 fi
 rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
@@ -358,44 +431,43 @@ section "Phase 5: Plant state markers in sandbox"
 MARKER_VALUE="nemoclaw-survival-$(date +%s)"
 
 # 5a: Workspace file in writable agent state directory.
-# /sandbox/ is read-only by policy (openclaw-sandbox.yaml); writable state
-# lives under /sandbox/.openclaw-data/. OpenShell ≥0.0.36 correctly enforces
-# this (NVIDIA/OpenShell#910), so markers must target the writable path.
+# /sandbox is writable in the mutable-default policy. Use .openclaw for durable
+# agent state markers so survival checks validate the configured state path.
 # shellcheck disable=SC2029
-if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo ${MARKER_VALUE} > /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null; then
-  pass "Planted workspace marker: /sandbox/.openclaw-data/.survival-marker-workspace"
+if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo ${MARKER_VALUE} > /sandbox/.openclaw/.survival-marker-workspace" 2>/dev/null; then
+  pass "Planted workspace marker: /sandbox/.openclaw/.survival-marker-workspace"
 else
   fail "Could not plant workspace marker"
 fi
 
 # Verify read-back before restart
-readback=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null)
+readback=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw/.survival-marker-workspace" 2>/dev/null)
 if [ "$readback" = "$MARKER_VALUE" ]; then
   pass "Workspace marker verified before restart"
 else
   fail "Workspace marker read-back mismatch: expected '$MARKER_VALUE', got '$readback'"
 fi
 
-# 5b: Agent data directory — plant marker in .openclaw-data if it exists
+# 5b: Agent data directory — plant marker in .openclaw if it exists
 # This tests the complaint from #1086 and @Koneisto: agent state loss
 # shellcheck disable=SC2029
 agent_data_exists=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "[ -d /sandbox/.openclaw-data ] && echo yes || echo no" 2>/dev/null)
+  "[ -d /sandbox/.openclaw ] && echo yes || echo no" 2>/dev/null)
 if [ "$agent_data_exists" = "yes" ]; then
   # shellcheck disable=SC2029
   if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-    "echo ${MARKER_VALUE} > /sandbox/.openclaw-data/.survival-marker" 2>/dev/null; then
-    pass "Planted agent data marker: /sandbox/.openclaw-data/.survival-marker"
+    "echo ${MARKER_VALUE} > /sandbox/.openclaw/.survival-marker" 2>/dev/null; then
+    pass "Planted agent data marker: /sandbox/.openclaw/.survival-marker"
   else
     fail "Could not plant agent data marker"
   fi
 else
-  info "No .openclaw-data directory yet — will check if sandbox itself survives"
+  info "No .openclaw directory yet — will check if sandbox itself survives"
 fi
 
 # 5c: Snapshot which agent identity files exist (to verify they survive)
 agent_files_before=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "ls -la /sandbox/.openclaw-data/ 2>/dev/null | head -20" 2>/dev/null) || true
+  "ls -la /sandbox/.openclaw/ 2>/dev/null | head -20" 2>/dev/null) || true
 if [ -n "$agent_files_before" ]; then
   info "Agent data directory contents before restart:"
   echo "$agent_files_before" | while IFS= read -r line; do
@@ -404,12 +476,12 @@ if [ -n "$agent_files_before" ]; then
 fi
 
 # 5d: Record a deeper workspace file to test nested persistence
-# Uses writable .openclaw-data path — /sandbox/ is read-only by policy.
+# Uses the writable .openclaw path for durable agent state.
 # shellcheck disable=SC2029
 if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "mkdir -p /sandbox/.openclaw-data/test-data && echo ${MARKER_VALUE} > /sandbox/.openclaw-data/test-data/nested-marker.txt" \
+  "mkdir -p /sandbox/.openclaw/test-data && echo ${MARKER_VALUE} > /sandbox/.openclaw/test-data/nested-marker.txt" \
   2>/dev/null; then
-  pass "Planted nested marker: /sandbox/.openclaw-data/test-data/nested-marker.txt"
+  pass "Planted nested marker: /sandbox/.openclaw/test-data/nested-marker.txt"
 else
   fail "Could not plant nested workspace marker"
 fi
@@ -422,38 +494,40 @@ cleanup_ssh
 section "Phase 6: Gateway stop/start cycle (simulates host reboot)"
 
 # Stop any port forwards first
+GATEWAY_RUNTIME_BEFORE="$(gateway_runtime_id || true)"
 openshell forward stop 18789 2>/dev/null || true
 
 info "Stopping gateway (simulates laptop close / VM shutdown)..."
-if openshell gateway stop -g nemoclaw 2>/dev/null; then
-  pass "Gateway stopped"
+stop_gateway_runtime
+if [ -z "$(gateway_runtime_id || true)" ]; then
+  pass "Gateway runtime stopped"
 else
-  fail "Gateway stop failed"
+  fail "Gateway runtime still appears to be running after stop"
   # Non-fatal — continue to see what happens
 fi
 
-# Verify the Docker container is actually stopped
-CONTAINER_NAME="openshell-cluster-nemoclaw"
-container_state=$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || echo "missing")
-if [ "$container_state" = "false" ]; then
-  pass "Docker container confirmed stopped"
-elif [ "$container_state" = "missing" ]; then
-  info "Container not found (may have been removed) — resume should handle this"
-  pass "Docker container not running"
+# Verify the legacy Docker container is stopped when this run uses the
+# legacy k3s gateway; Docker-driver runs use a host openshell-gateway PID.
+if [[ "$GATEWAY_RUNTIME_BEFORE" == container:* ]]; then
+  CONTAINER_NAME="openshell-cluster-nemoclaw"
+  container_state=$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || echo "missing")
+  if [ "$container_state" = "false" ]; then
+    pass "Docker container confirmed stopped"
+  elif [ "$container_state" = "missing" ]; then
+    info "Container not found (may have been removed) — resume should handle this"
+    pass "Docker container not running"
+  else
+    fail "Docker container still running: state=$container_state"
+  fi
 else
-  fail "Docker container still running: state=$container_state"
+  pass "Docker-driver gateway process is not running"
 fi
 
 info "Waiting 5 seconds to simulate delay (laptop lid close / VM hibernate)..."
 sleep 5
 
 info "Starting gateway (simulates laptop open / VM boot)..."
-if openshell gateway start --name nemoclaw 2>&1; then
-  pass "Gateway start command succeeded"
-else
-  # gateway start may exit non-zero but still recover
-  info "Gateway start returned non-zero — checking health..."
-fi
+start_gateway_runtime "$GATEWAY_RUNTIME_BEFORE"
 
 # Wait for gateway to become healthy
 info "Waiting for gateway to become healthy..."
@@ -599,7 +673,7 @@ fi
 section "Phase 9: Verify state persisted across restart"
 
 # 9a: Workspace marker
-post_restart_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/.survival-marker-workspace" 2>/dev/null)
+post_restart_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw/.survival-marker-workspace" 2>/dev/null)
 if [ "$post_restart_marker" = "$MARKER_VALUE" ]; then
   pass "Workspace marker survived restart: $MARKER_VALUE"
 else
@@ -608,7 +682,7 @@ fi
 
 # 9b: Agent data marker
 if [ "$agent_data_exists" = "yes" ]; then
-  agent_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/.survival-marker" 2>/dev/null)
+  agent_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw/.survival-marker" 2>/dev/null)
   if [ "$agent_marker" = "$MARKER_VALUE" ]; then
     pass "Agent data marker survived restart"
   else
@@ -617,7 +691,7 @@ if [ "$agent_data_exists" = "yes" ]; then
 fi
 
 # 9c: Nested workspace file
-nested_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw-data/test-data/nested-marker.txt" 2>/dev/null)
+nested_marker=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat /sandbox/.openclaw/test-data/nested-marker.txt" 2>/dev/null)
 if [ "$nested_marker" = "$MARKER_VALUE" ]; then
   pass "Nested workspace marker survived restart"
 else
@@ -627,7 +701,7 @@ fi
 # 9d: Agent data directory still populated (not wiped to image defaults)
 if [ "$agent_data_exists" = "yes" ]; then
   agent_files_after=$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-    "ls -la /sandbox/.openclaw-data/ 2>/dev/null | head -20" 2>/dev/null) || true
+    "ls -la /sandbox/.openclaw/ 2>/dev/null | head -20" 2>/dev/null) || true
   if [ -n "$agent_files_after" ]; then
     info "Agent data directory contents after restart:"
     echo "$agent_files_after" | while IFS= read -r line; do

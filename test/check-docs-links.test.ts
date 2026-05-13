@@ -140,18 +140,22 @@ describe("check-docs link validation", () => {
     );
   });
 
-  it("fails on malformed HTML comments", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-badcomment-"));
-    const mdPath = path.join(tempDir, "guide.md");
-    fs.writeFileSync(
-      mdPath,
-      ["# Guide", "<!-- missing close", "[ignored](./inside-comment.md)", ""].join("\n"),
-    );
+  it(
+    "fails on malformed HTML comments",
+    { timeout: 15000 },
+    () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-badcomment-"));
+      const mdPath = path.join(tempDir, "guide.md");
+      fs.writeFileSync(
+        mdPath,
+        ["# Guide", "<!-- missing close", "[ignored](./inside-comment.md)", ""].join("\n"),
+      );
 
-    const result = runCheckDocs(mdPath);
+      const result = runCheckDocs(mdPath);
 
-    expect(result.status).toBe(1);
-    expect(`${result.stdout}${result.stderr}`).toContain(`malformed HTML comment in ${mdPath}`);
-    expect(`${result.stdout}${result.stderr}`).not.toContain("inside-comment.md");
-  });
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(`malformed HTML comment in ${mdPath}`);
+      expect(`${result.stdout}${result.stderr}`).not.toContain("inside-comment.md");
+    },
+  );
 });

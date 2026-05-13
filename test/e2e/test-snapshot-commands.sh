@@ -30,9 +30,9 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-snapshot}"
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
-MARKER_FILE="/sandbox/.openclaw-data/workspace/snapshot-marker.txt"
+MARKER_FILE="/sandbox/.openclaw/workspace/snapshot-marker.txt"
 MARKER_CONTENT="SNAPSHOT_E2E_$(date +%s)"
-SECOND_MARKER="/sandbox/.openclaw-data/workspace/snapshot-marker-2.txt"
+SECOND_MARKER="/sandbox/.openclaw/workspace/snapshot-marker-2.txt"
 SECOND_CONTENT="SNAPSHOT_E2E_SECOND_$(date +%s)"
 
 RED='\033[0;31m'
@@ -123,7 +123,7 @@ pass "NemoClaw installed"
 info "Phase 2: Writing marker files into sandbox..."
 
 openshell sandbox exec --name "${SANDBOX_NAME}" -- \
-  sh -c "mkdir -p /sandbox/.openclaw-data/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
+  sh -c "mkdir -p /sandbox/.openclaw/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
   || fail "Failed to write marker file"
 
 VERIFY=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}" 2>/dev/null || true)
@@ -149,7 +149,7 @@ if [ "$_CAPTURE_RC" -ne 0 ]; then
   fail "snapshot create exited with code $_CAPTURE_RC: ${SNAPSHOT_OUTPUT}"
 fi
 
-# The success marker is `✓ Snapshot v<N> created (<count> directories)` — the
+# The success marker is `Snapshot v<N> created (<count> directories)` — the
 # version token between "Snapshot" and "created" broke the old literal grep
 # for "Snapshot created". Use a regex that tolerates the version field.
 if echo "$SNAPSHOT_OUTPUT" | grep -qE "Snapshot v[0-9]+.*created"; then

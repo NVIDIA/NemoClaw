@@ -16,6 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
 const tmpFixtures: string[] = [];
 
@@ -245,14 +246,14 @@ function runCli(tmpDir: string, args: string[]) {
       PATH: "/usr/bin:/bin",
       NEMOCLAW_NO_CONNECT_HINT: "1",
     },
-    timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 15_000),
+    timeout: execTimeout(15_000),
   });
 }
 
 describe("post-reboot SSH identity drift (#2056)", () => {
   it(
     "bare `nemoclaw <name>` (no action) resolves to connect and finds registry entry",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupFixture("reboot-test", "healthy");
       const result = runCli(tmpDir, [sandboxName]);
@@ -262,7 +263,7 @@ describe("post-reboot SSH identity drift (#2056)", () => {
 
   it(
     "explicit `nemoclaw <name> connect` works for healthy sandbox",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupFixture("reboot-explicit", "healthy");
       const result = runCli(tmpDir, [sandboxName, "connect"]);
@@ -272,7 +273,7 @@ describe("post-reboot SSH identity drift (#2056)", () => {
 
   it(
     "identity drift is detected when gateway SSH keys have changed",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupFixture("drift-sandbox", "identity_drift");
       const result = runCli(tmpDir, [sandboxName, "connect"]);
@@ -284,7 +285,7 @@ describe("post-reboot SSH identity drift (#2056)", () => {
 
   it(
     "bare `nemoclaw <name>` also detects identity drift (not silent failure)",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupFixture("drift-bare", "identity_drift");
       const result = runCli(tmpDir, [sandboxName]);
@@ -298,7 +299,7 @@ describe("post-reboot SSH identity drift (#2056)", () => {
 describe("post-reboot registry recovery gate (#2056)", () => {
   it(
     "explicit `nemoclaw <name> connect` recovers registry from live gateway",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupEmptyRegistry("orphan-explicit");
       const result = runCli(tmpDir, [sandboxName, "connect"]);
@@ -308,7 +309,7 @@ describe("post-reboot registry recovery gate (#2056)", () => {
 
   it(
     "bare `nemoclaw <name>` recovers registry from live gateway",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupEmptyRegistry("orphan-bare");
       const result = runCli(tmpDir, [sandboxName]);

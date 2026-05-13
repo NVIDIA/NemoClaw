@@ -128,7 +128,7 @@ cat >"${TESTDIR}/Dockerfile" <<DOCKERFILE
 FROM ${OLD_BASE_TAG}
 USER sandbox
 WORKDIR /sandbox
-RUN mkdir -p /sandbox/.openclaw-data/workspace /sandbox/.openclaw && echo '{}' > /sandbox/.openclaw/openclaw.json
+RUN mkdir -p /sandbox/.openclaw/workspace /sandbox/.openclaw && echo '{}' > /sandbox/.openclaw/openclaw.json
 CMD ["/bin/bash"]
 DOCKERFILE
 

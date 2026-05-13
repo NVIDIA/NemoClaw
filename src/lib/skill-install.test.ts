@@ -194,9 +194,8 @@ describe("resolveSkillPaths", () => {
   it("returns OpenClaw defaults when agent is null", () => {
     const paths = resolveSkillPaths(null, "weather");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/weather");
-    expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/weather");
     expect(paths.sessionFile).toBe(
-      "/sandbox/.openclaw-data/agents/main/sessions/sessions.json",
+      "/sandbox/.openclaw/agents/main/sessions/sessions.json",
     );
     expect(paths.isOpenClaw).toBe(true);
   });
@@ -205,30 +204,26 @@ describe("resolveSkillPaths", () => {
     const agent = {
       name: "openclaw",
       configPaths: {
-        immutableDir: "/sandbox/.openclaw",
-        writableDir: "/sandbox/.openclaw-data",
+        dir: "/sandbox/.openclaw",
       },
     };
     const paths = resolveSkillPaths(agent, "my-skill");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/my-skill");
-    expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/my-skill");
     expect(paths.sessionFile).toBe(
-      "/sandbox/.openclaw-data/agents/main/sessions/sessions.json",
+      "/sandbox/.openclaw/agents/main/sessions/sessions.json",
     );
     expect(paths.isOpenClaw).toBe(true);
   });
 
-  it("returns Hermes paths without mirror or session refresh", () => {
+  it("returns Hermes paths without session refresh", () => {
     const agent = {
       name: "hermes",
       configPaths: {
-        immutableDir: "/sandbox/.hermes",
-        writableDir: "/sandbox/.hermes-data",
+        dir: "/sandbox/.hermes",
       },
     };
     const paths = resolveSkillPaths(agent, "demo-skill");
     expect(paths.uploadDir).toBe("/sandbox/.hermes/skills/demo-skill");
-    expect(paths.mirrorDir).toBeNull();
     expect(paths.sessionFile).toBeNull();
     expect(paths.isOpenClaw).toBe(false);
   });
@@ -237,20 +232,18 @@ describe("resolveSkillPaths", () => {
     const agent = {
       name: "future-agent",
       configPaths: {
-        immutableDir: "/sandbox/.future",
-        writableDir: "/sandbox/.future-data",
+        dir: "/sandbox/.future",
       },
     };
     const paths = resolveSkillPaths(agent, "test-skill");
     expect(paths.uploadDir).toBe("/sandbox/.future/skills/test-skill");
-    expect(paths.mirrorDir).toBeNull();
     expect(paths.sessionFile).toBeNull();
     expect(paths.isOpenClaw).toBe(false);
   });
 });
 
 describe("postInstall", () => {
-  it("refreshes OpenClaw sessions after mirroring an updated skill", () => {
+  it("refreshes OpenClaw sessions after installing an updated skill", () => {
     const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-"));
     const commands: string[] = [];
     try {
@@ -268,11 +261,8 @@ describe("postInstall", () => {
       );
 
       expect(result).toEqual({ success: true, messages: [] });
-      expect(commands.some((command) => command.includes("$HOME/.openclaw/skills/weather"))).toBe(
-        true,
-      );
       expect(commands).toContain(
-        "printf '{}' > '/sandbox/.openclaw-data/agents/main/sessions/sessions.json'",
+        "printf '{}' > '/sandbox/.openclaw/agents/main/sessions/sessions.json'",
       );
     } finally {
       rmSync(skillDir, { recursive: true, force: true });

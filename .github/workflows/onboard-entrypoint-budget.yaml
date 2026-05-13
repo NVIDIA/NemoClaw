@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: onboard-entrypoint-budget
+
+# pull_request_target runs in the base repo context, so this policy cannot be
+# bypassed by editing workflow files or scripts in the PR. Keep this workflow
+# data-only: do not check out or execute PR code. It only reads GitHub's
+# file-level diff metadata.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  onboard-entrypoint-budget:
+    name: onboard-entrypoint-budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require src/lib/onboard.ts to be net-neutral or smaller
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          TARGET_FILE: src/lib/onboard.ts
+          EXTRACTION_DIR: src/lib/onboard/
+        run: |
+          set -euo pipefail
+
+          # Intentionally hard-code TARGET_FILE in the jq expression. gh's jq
+          # filter does not accept shell variables directly, and missing
+          # previous_filename values must not match every file.
+          rows="$(gh api --paginate "/repos/${REPO}/pulls/${PR_NUMBER}/files" \
+            --jq '.[] | select(.filename == "src/lib/onboard.ts" or .previous_filename == "src/lib/onboard.ts") | [.additions, .deletions, .filename] | @tsv')"
+
+          if [ -z "$rows" ]; then
+            echo "${TARGET_FILE} was not changed. New modules under ${EXTRACTION_DIR} are allowed."
+            exit 0
+          fi
+
+          additions=0
+          deletions=0
+          while IFS=$'\t' read -r file_additions file_deletions _file_path; do
+            if [ -z "${file_additions:-}" ]; then
+              continue
+            fi
+            additions=$((additions + file_additions))
+            deletions=$((deletions + file_deletions))
+          done <<< "$rows"
+
+          net=$((additions - deletions))
+          echo "${TARGET_FILE}: +${additions}/-${deletions} (net ${net})"
+          echo "Growth under ${EXTRACTION_DIR} is allowed; this budget applies only to ${TARGET_FILE}."
+
+          if [ "$additions" -le "$deletions" ]; then
+            echo "PASS: ${TARGET_FILE} is net-neutral or smaller."
+            exit 0
+          fi
+
+          cat <<EOF
+          FAIL: ${TARGET_FILE} grew by ${net} line(s).
+
+          ${TARGET_FILE} is already about 12k lines. Please move new logic into
+          focused modules under ${EXTRACTION_DIR}, or reduce ${TARGET_FILE} by at
+          least as many lines as this PR adds there.
+
+          This check allows src/lib/onboard/** to grow. It only blocks net growth
+          in the top-level onboard entrypoint.
+          EOF
+          exit 1

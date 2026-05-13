@@ -3,17 +3,8 @@
 
 import { spawn } from "node:child_process";
 
-// We require runner to access ROOT
-const runner = require("../runner");
-const { ROOT } = runner;
-
-/** Parse a numeric env var, returning `fallback` when unset or non-finite. */
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
-}
+const { envInt }: typeof import("./env") = require("./env");
+const { ROOT } = require("../runner") as typeof import("../runner");
 
 /** Spawn `openshell gateway start` and stream its output with progress heartbeats. */
 export function streamGatewayStart(
@@ -135,17 +126,16 @@ export function streamGatewayStart(
   // never exits (e.g. Docker daemon unresponsive, k3s restart loop). (#1830)
   // On timeout, send SIGTERM and let the `close` event resolve the promise
   // so the child has actually exited before the caller proceeds to retry.
-  const GATEWAY_START_TIMEOUT = envInt("NEMOCLAW_GATEWAY_START_TIMEOUT", 600) * 1000;
+  const gatewayStartTimeout = envInt("NEMOCLAW_GATEWAY_START_TIMEOUT", 600) * 1000;
   let killedByTimeout = false;
   const killTimer = setTimeout(() => {
     killedByTimeout = true;
-    lines.push("[NemoClaw] Gateway start timed out — killing process.");
+    lines.push("[NemoClaw] Gateway start timed out - killing process.");
     child.kill("SIGTERM");
-    // If SIGTERM is ignored, force-kill after 10s.
     setTimeout(() => {
       if (!settled) child.kill("SIGKILL");
     }, 10_000).unref?.();
-  }, GATEWAY_START_TIMEOUT);
+  }, gatewayStartTimeout);
   killTimer.unref?.();
 
   return new Promise<{ status: number; output: string }>((resolve) => {

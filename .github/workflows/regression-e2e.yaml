@@ -1,0 +1,139 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: regression-e2e
+
+# Regression E2E holding pen.
+#
+# Jobs here are intentionally NOT part of scheduled nightly-e2e. They are
+# failing-test-first coverage guards or high-signal regressions that should be
+# easy to dispatch while the owning fix is in flight. Periodically review this
+# workflow and promote stable/high-value jobs into nightly-e2e.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number (optional; creates a check run on that PR)"
+        required: false
+        type: string
+        default: ""
+      jobs:
+        description: >-
+          Comma-separated regression job names to run (empty = all).
+          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e
+        required: false
+        type: string
+        default: ""
+      keep_alive:
+        description: "Keep Brev instance alive after tests (for SSH debugging)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: regression-e2e-${{ github.event_name }}-${{ github.ref }}-${{ inputs.jobs || 'all' }}-${{ inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  select_regression_jobs:
+    runs-on: ubuntu-latest
+    outputs:
+      dashboard: ${{ steps.select.outputs.dashboard }}
+      gateway: ${{ steps.select.outputs.gateway }}
+    steps:
+      - id: select
+        env:
+          JOBS: ${{ inputs.jobs }}
+        run: |
+          set -euo pipefail
+          normalized="$(printf '%s' "$JOBS" | tr -d '[:space:]')"
+
+          includes_job() {
+            case ",${normalized}," in
+              *",$1,"*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          if [ -z "$normalized" ] || includes_job "dashboard-remote-bind-e2e"; then
+            echo "dashboard=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dashboard=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -z "$normalized" ] || includes_job "gateway-health-honest-e2e"; then
+            echo "gateway=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "gateway=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  dashboard-remote-bind-e2e:
+    needs: select_regression_jobs
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      needs.select_regression_jobs.outputs.dashboard == 'true'
+    uses: ./.github/workflows/e2e-branch-validation.yaml
+    with:
+      branch: ${{ github.ref_name }}
+      pr_number: ${{ inputs.pr_number }}
+      test_suite: dashboard-remote-bind
+      use_launchable: true
+      keep_alive: ${{ inputs.keep_alive }}
+    secrets: inherit
+
+  # ── Gateway health-honesty E2E ──────────────────────────────
+  # Coverage guard for #3111. Issue #3111 reported that onboard prints
+  # "✓ Docker-driver gateway is healthy" on Ubuntu 22.04 even though the
+  # shipped openshell-gateway binary (GNU-linked against GLIBC 2.38/2.39)
+  # crashes immediately on a 22.04 host (GLIBC 2.35).
+  #
+  # Root cause is platform-independent: the detached child remains a
+  # zombie so isPidAlive() returns true, registerDockerDriverGatewayEndpoint()
+  # writes metadata without any TCP probe, and isGatewayHealthy() is a
+  # string match on openshell CLI output rather than a real health check.
+  # Any scenario where the gateway binary fails before serving connections
+  # will surface the same false-positive log on ANY Linux host — not just
+  # Ubuntu 22.04.
+  #
+  # This test sabotages the gateway binary with a shim that matches the
+  # #3111 failure mode (immediate exit with GLIBC-style stderr) and asserts
+  # that onboard does NOT log "healthy" and exits non-zero.
+  gateway-health-honest-e2e:
+    needs: select_regression_jobs
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      needs.select_regression_jobs.outputs.gateway == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Run gateway health-honesty E2E test
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-gateway-health-honest.sh
+
+      - name: Upload gateway health-honesty logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-health-honest-logs
+          path: |
+            /tmp/nemoclaw-e2e-gateway-health-honest.log
+            /tmp/nemoclaw-e2e-gateway-health-honest-start.log
+            /tmp/nemoclaw-e2e-gateway-health-honest-process.log
+          if-no-files-found: ignore

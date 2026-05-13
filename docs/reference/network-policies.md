@@ -30,6 +30,10 @@ Any request to an unlisted destination is intercepted by OpenShell, and the oper
 
 The baseline policy is defined in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
 
+:::{note}
+Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-additions.yaml` so Hermes runtime binaries can reach the service endpoints they need while keeping the same deny-by-default model.
+:::
+
 ### Filesystem
 
 | Path | Access |
@@ -53,14 +57,9 @@ The following endpoint groups are allowed by default:
   - Binaries
   - Rules
 
-* - `claude_code`
-  - `api.anthropic.com:443`, `statsig.anthropic.com:443`, `sentry.io:443`
-  - `/usr/local/bin/claude`
-  - POST to inference paths on `api.anthropic.com`, POST on `statsig.anthropic.com`, GET only on `sentry.io`
-
 * - `nvidia`
   - `integrate.api.nvidia.com:443`, `inference-api.nvidia.com:443`
-  - `/usr/local/bin/claude`, `/usr/local/bin/openclaw`
+  - `/usr/local/bin/openclaw`
   - POST to inference and embedding paths, GET to model listings
 
 * - `clawhub`
@@ -91,6 +90,9 @@ All endpoints use TLS termination and are enforced at port 443.
 GitHub access (`github.com`, `api.github.com`) is not included in the baseline policy.
 Apply the `github` preset during onboarding if your agent needs GitHub access.
 See [Customize the Network Policy](../network-policy/customize-network-policy.md).
+
+Messaging endpoints for Telegram, Discord, and Slack are not included in the baseline policy.
+Enable the channel during onboarding or apply the matching messaging preset so the sandbox can reach that platform.
 :::
 
 (policy-tiers)=
@@ -155,6 +157,12 @@ $ nemoclaw onboard
 ### Dynamic Changes
 
 Apply policy updates to a running sandbox without restarting:
+
+```console
+$ openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
+```
+
+To replace the live policy with a complete raw policy file, use `openshell policy set`:
 
 ```console
 $ openshell policy set --policy <policy-file> <sandbox-name>

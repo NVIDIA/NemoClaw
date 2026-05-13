@@ -1,6 +1,6 @@
 # NemoClaw sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:22-slim, apt packages, gosu, user/group setup,
+# Contains: node:22-trixie-slim, apt packages, gosu, user/group setup,
 # .openclaw directory structure, OpenClaw CLI, and PyYAML.
 #
 # Built on main merges and pushed to GHCR. The production Dockerfile
@@ -12,15 +12,15 @@
 # structural (users, directories, symlinks) that doesn't depend on
 # NemoClaw application code. Specifically:
 #
-#   node:22-slim        — pinned by sha256 digest, checked weekly by
+#   node:22-trixie-slim — pinned by sha256 digest, checked weekly by
 #                          docker-pin-check.yaml
-#   apt packages        — pinned to exact Debian bookworm versions
+#   apt packages        — pinned to exact Debian trixie versions
 #   gosu 1.19           — pinned release + per-arch sha256 checksum
 #   gateway/sandbox     — OS users and groups; names and UIDs are a
 #     users               stable contract with OpenShell
-#   .openclaw dirs      — directory structure + symlinks are dictated by
-#     + symlinks          the OpenClaw CLI layout; new dirs are additive
-#                          (add them here and rebuild)
+#   .openclaw dirs      — directory structure is dictated by the OpenClaw
+#                          CLI layout; new dirs are additive (add them
+#                          here and rebuild)
 #   openclaw CLI        — version set by ARG OPENCLAW_VERSION (default below); override with --build-arg
 #   pyyaml              — pinned to exact pip version (6.0.3)
 #
@@ -36,9 +36,9 @@
 #   1. OpenClaw CLI version bump    — update OPENCLAW_VERSION default below, or override via --build-arg / workflow_dispatch
 #   2. New apt package needed       — add it to the apt-get install list
 #   3. gosu upgrade                 — update URL, checksum, and version
-#   4. node:22-slim digest rotated  — update-docker-pin.sh updates both
+#   4. node:22-trixie-slim digest rotated — update-docker-pin.sh updates all
 #                                      Dockerfile and Dockerfile.base
-#   5. New .openclaw subdirectory   — add mkdir + symlink below
+#   5. New .openclaw subdirectory   — add mkdir below
 #   6. PyYAML or other pip dep bump — change the version below
 #
 # For ad-hoc rebuilds (e.g., security patch), use workflow_dispatch on
@@ -48,27 +48,32 @@
 # by OpenClaw CLI version bumps or the weekly docker-pin-check.
 # ────────────────────────────────────────────────────────────────────────
 
-FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
+FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3=3.11.2-1+b1 \
-        python3-pip=23.0.1+dfsg-1 \
-        python3-venv=3.11.2-1+b1 \
-        curl=7.88.1-10+deb12u14 \
-        git=1:2.39.5-0+deb12u3 \
-        gnupg=2.2.40-1.1+deb12u2 \
-        ca-certificates=20230311+deb12u1 \
-        iproute2=6.1.0-3 \
-        iptables=1.8.9-2 \
-        libcap2-bin=1:2.66-4+deb12u2+b2 \
-        procps=2:4.0.2-3 \
+        python3=3.13.5-1 \
+        python3-pip=25.1.1+dfsg-1 \
+        python3-venv=3.13.5-1 \
+        curl=8.14.1-2+deb13u2 \
+        git=1:2.47.3-0+deb13u1 \
+        gnupg=2.4.7-21+deb13u1 \
+        ca-certificates=20250419 \
+        iproute2=6.15.0-1 \
+        iptables=1.8.11-2 \
+        libcap2-bin=1:2.75-10+b8 \
+        procps=2:4.0.4-9 \
+        e2fsprogs=1.47.2-3+b10 \
+        "dos2unix=7.5.2-1*" \
+        jq=1.7.1-6+deb13u1 \
+        vim-tiny=2:9.1.1230-2 \
+        openssh-sftp-server=1:10.0p1-7+deb13u2 \
     && rm -rf /var/lib/apt/lists/*
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of
-# Debian bookworm's ancient 1.14 (2020). Pinned to 1.19 (2025-09).
+# Debian's packaged gosu can lag upstream. Pinned to 1.19 (2025-09).
 # hadolint ignore=DL4006
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
@@ -84,82 +89,102 @@ RUN arch="$(dpkg --print-architecture)" \
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot
 # kill it or restart it with a tampered HOME/config.
+#
+# `gateway` is also a member of the `sandbox` group so both users can write
+# to the mutable-default OpenClaw config tree (chmod g+w + setgid below).
+# This replaces the previous EACCES-swallow approach for control-UI config
+# mutations — see #2681. UIDs stay distinct (security separation preserved);
+# the shared group only governs the mutable-default state directory.
 RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
     && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+    && usermod -aG sandbox gateway \
     && mkdir -p /sandbox/.nemoclaw \
     && chown -R sandbox:sandbox /sandbox
 
-# Split .openclaw into immutable config dir + writable state dir.
-# The policy makes /sandbox/.openclaw read-only via Landlock, so the agent
-# cannot modify openclaw.json, auth tokens, or CORS settings.  Writable
-# state (agents, plugins, etc.) lives in .openclaw-data, reached via symlinks.
+# Create .openclaw with all state subdirs directly (mutable by default).
+# No separate .openclaw-data or symlink bridge — the production Dockerfile
+# layers config on top and sets final permissions.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
-RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
-        /sandbox/.openclaw-data/extensions \
-        /sandbox/.openclaw-data/workspace \
-        /sandbox/.openclaw-data/skills \
-        /sandbox/.openclaw-data/hooks \
-        /sandbox/.openclaw-data/identity \
-        /sandbox/.openclaw-data/devices \
-        /sandbox/.openclaw-data/canvas \
-        /sandbox/.openclaw-data/cron \
-        /sandbox/.openclaw-data/memory \
-        /sandbox/.openclaw-data/logs \
-        /sandbox/.openclaw-data/credentials \
-        /sandbox/.openclaw-data/flows \
-        /sandbox/.openclaw-data/sandbox \
-        /sandbox/.openclaw-data/telegram \
-    && mkdir -p /sandbox/.openclaw \
-    && ln -s /sandbox/.openclaw-data/agents /sandbox/.openclaw/agents \
-    && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
-    && ln -s /sandbox/.openclaw-data/workspace /sandbox/.openclaw/workspace \
-    && ln -s /sandbox/.openclaw-data/skills /sandbox/.openclaw/skills \
-    && ln -s /sandbox/.openclaw-data/hooks /sandbox/.openclaw/hooks \
-    && ln -s /sandbox/.openclaw-data/identity /sandbox/.openclaw/identity \
-    && ln -s /sandbox/.openclaw-data/devices /sandbox/.openclaw/devices \
-    && ln -s /sandbox/.openclaw-data/canvas /sandbox/.openclaw/canvas \
-    && ln -s /sandbox/.openclaw-data/cron /sandbox/.openclaw/cron \
-    && ln -s /sandbox/.openclaw-data/memory /sandbox/.openclaw/memory \
-    && ln -s /sandbox/.openclaw-data/logs /sandbox/.openclaw/logs \
-    && ln -s /sandbox/.openclaw-data/credentials /sandbox/.openclaw/credentials \
-    && ln -s /sandbox/.openclaw-data/sandbox /sandbox/.openclaw/sandbox \
-    && touch /sandbox/.openclaw-data/update-check.json \
-    && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
-    && touch /sandbox/.openclaw-data/exec-approvals.json \
-    && ln -s /sandbox/.openclaw-data/exec-approvals.json /sandbox/.openclaw/exec-approvals.json \
-    && ln -s /sandbox/.openclaw-data/telegram /sandbox/.openclaw/telegram \
-    && ln -s /sandbox/.openclaw-data/flows /sandbox/.openclaw/flows \
-    && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
+RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
+        /sandbox/.openclaw/extensions \
+        /sandbox/.openclaw/workspace \
+        /sandbox/.openclaw/skills \
+        /sandbox/.openclaw/hooks \
+        /sandbox/.openclaw/identity \
+        /sandbox/.openclaw/devices \
+        /sandbox/.openclaw/canvas \
+        /sandbox/.openclaw/cron \
+        /sandbox/.openclaw/memory \
+        /sandbox/.openclaw/logs \
+        /sandbox/.openclaw/credentials \
+        /sandbox/.openclaw/flows \
+        /sandbox/.openclaw/sandbox \
+        /sandbox/.openclaw/telegram \
+        /sandbox/.openclaw/plugin-runtime-deps \
+    && touch /sandbox/.openclaw/update-check.json \
+    && touch /sandbox/.openclaw/exec-approvals.json \
+    && chown -R sandbox:sandbox /sandbox/.openclaw \
+    && chmod -R g+w /sandbox/.openclaw \
+    && find /sandbox/.openclaw -type d -exec chmod g+s {} +
 
 # Pre-create shell init files for the sandbox user.
-# The /sandbox home directory is Landlock read-only at runtime (#804), so these
-# files must exist at build time. Runtime proxy config is written by the
-# entrypoint to /tmp/nemoclaw-proxy-env.sh (root-owned, mode 444,
-# sticky-bit protected) and sourced from here on every interactive session.
+# Runtime proxy config is written by the entrypoint to /tmp/nemoclaw-proxy-env.sh
+# (root-owned, mode 444, sticky-bit protected) and sourced from here on every
+# interactive session.
 # Ref: #2181 — the file must not be writable by the sandbox user.
 # hadolint ignore=SC2028
 RUN printf '%s\n' \
-        '# Source runtime proxy config (Landlock read-only home, #804)' \
+        '# Source runtime proxy config' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
         > /sandbox/.bashrc \
     && printf '%s\n' \
-        '# Source runtime proxy config (Landlock read-only home, #804)' \
+        '# Source runtime proxy config' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
         > /sandbox/.profile \
-    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile
+    && chown root:root /sandbox/.bashrc /sandbox/.profile \
+    && chmod 444 /sandbox/.bashrc /sandbox/.profile
+
+# System-wide proxy hooks. The per-home rc files above only fire for shells
+# that find `~/.bashrc` / `~/.profile` (sandbox user, HOME=/sandbox). SSH
+# sessions and tools that spawn `bash -ic` / `bash -lc` from a different user
+# or HOME silently miss the proxy env. These two hooks make the same
+# /tmp/nemoclaw-proxy-env.sh source for every bash mode regardless of user:
+#
+#   /etc/profile.d/nemoclaw-proxy.sh — sourced by /etc/profile for any login
+#     shell (bash -l, bash -lc).
+#   /etc/bash.bashrc — sourced by every interactive bash (bash -i, bash -ic).
+#     Prepend before the stock `[ -z "$PS1" ] && return` guard so the source
+#     line still runs in non-TTY contexts where PS1 may be unset when the
+#     file is first read.
+#
+# Both files are root-owned and not writable by the sandbox user.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2704
+# hadolint ignore=SC2028
+RUN printf '%s\n' \
+        '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
+        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        > /etc/profile.d/nemoclaw-proxy.sh \
+    && chmod 444 /etc/profile.d/nemoclaw-proxy.sh \
+    && { printf '%s\n' \
+            '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
+            '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+            ''; \
+         cat /etc/bash.bashrc; \
+       } > /etc/bash.bashrc.new \
+    && mv /etc/bash.bashrc.new /etc/bash.bashrc \
+    && chmod 444 /etc/bash.bashrc
 
 # Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests.
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
 # the base image on push to main, or use workflow_dispatch on base-image.yaml
 # with the openclaw_version input for a one-off build without editing this file.
-ARG OPENCLAW_VERSION=2026.4.2
+ARG OPENCLAW_VERSION=2026.4.24
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# OpenClaw rejects symlink writes for exec approvals, but NemoClaw keeps
-# /sandbox/.openclaw immutable and redirects writable state to .openclaw-data.
-# Patch OpenClaw dist defaults so approvals write directly to .openclaw-data.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/1785
+# Install OpenClaw CLI + PyYAML.
+# .openclaw is now writable by default, so exec-approvals writes to
+# ~/.openclaw/exec-approvals.json natively — no sed patch needed.
 RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/blueprint.yaml \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
     || { echo "Error: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)."; exit 1; }; \
@@ -175,27 +200,4 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         echo "Hint: Check available versions with: npm view openclaw versions"; exit 1; \
     fi; \
     npm install -g "openclaw@${OPENCLAW_VERSION}" \
-    && OPENCLAW_DIST_DIR="$(npm root -g)/openclaw/dist" \
-    && if [ ! -d "$OPENCLAW_DIST_DIR" ]; then \
-        echo "Error: OpenClaw dist directory not found: $OPENCLAW_DIST_DIR"; \
-        exit 1; \
-    fi \
-    && LEGACY_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw/exec-approvals.json')" \
-    && DATA_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw-data/exec-approvals.json')" \
-    && files_with_old_path="$(grep -R --include='*.js' -l "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR" || true)" \
-    && if [ -n "$files_with_old_path" ]; then \
-        files_with_old_path_file="$(mktemp)"; \
-        printf '%s\n' "$files_with_old_path" > "$files_with_old_path_file"; \
-        while IFS= read -r file; do \
-            sed -i "s#${LEGACY_EXEC_APPROVALS_PATH}#${DATA_EXEC_APPROVALS_PATH}#g" "$file"; \
-        done < "$files_with_old_path_file"; \
-        rm -f "$files_with_old_path_file"; \
-    elif ! grep -R --include='*.js' -q "$DATA_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
-        echo "Error: Unable to verify OpenClaw exec approvals path in dist"; \
-        exit 1; \
-    fi \
-    && if grep -R --include='*.js' -n "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
-        echo "Error: OpenClaw exec approvals path patch failed"; \
-        exit 1; \
-    fi \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"

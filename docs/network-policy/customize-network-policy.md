@@ -12,6 +12,8 @@ content:
   type: how_to
   difficulty: intermediate
   audience: ["developer", "engineer", "security_engineer"]
+skill:
+  priority: 10
 status: published
 ---
 
@@ -27,6 +29,13 @@ Add, remove, or modify the endpoints that the sandbox is allowed to reach.
 The sandbox policy is defined in a declarative YAML file in the NemoClaw repository and enforced at runtime by [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
 NemoClaw supports both static policy changes that persist across restarts and dynamic updates applied to a running sandbox through the OpenShell CLI.
 
+:::{note}
+If the sandbox needs to reach an HTTP service running on the host, expose the service on a host IP that the OpenShell gateway can reach.
+Apply a custom NemoClaw preset with `nemoclaw <sandbox> policy-add --from-file`.
+Do not rely on `host.docker.internal` as a general host-service path because it bypasses the OpenShell policy path and may not be reachable in every sandbox runtime.
+See [Agent cannot reach a host-side HTTP service](../reference/troubleshooting.md#agent-cannot-reach-a-host-side-http-service).
+:::
+
 ## Prerequisites
 
 - A running NemoClaw sandbox for dynamic changes, or the NemoClaw source repository for static changes.
@@ -34,7 +43,7 @@ NemoClaw supports both static policy changes that persist across restarts and dy
 
 > [!IMPORTANT]
 > Make static policy edits on the host, not inside the sandbox.
-> The sandbox image is intentionally minimal and may not include editors or package-management tools.
+> The sandbox image includes a small set of operational tools such as `vi`, `jq`, and `dos2unix`, but host-side policy files remain the durable source of truth.
 > Changes made only inside the sandbox are also ephemeral and are lost when the sandbox is recreated.
 
 ## Static Changes
@@ -88,6 +97,12 @@ Check that the sandbox is running with the updated policy:
 $ nemoclaw <name> status
 ```
 
+### Add Blueprint Policy Additions
+
+If you maintain a custom blueprint, you can add extra policy entries under `components.policy.additions` in `nemoclaw-blueprint/blueprint.yaml`.
+NemoClaw validates those entries with the same policy schema used by preset files, fetches the live policy during sandbox creation, merges the additions into `network_policies`, and applies the merged policy through OpenShell.
+The applied additions are recorded in the run metadata so you can audit which blueprint-level policy entries were active for that sandbox run.
+
 ## Dynamic Changes
 
 Dynamic changes apply a policy update to a running sandbox without restarting it.
@@ -115,7 +130,6 @@ This is the non-destructive path and the only flow NemoClaw supports out of the 
            port: 8086
            protocol: rest
            enforcement: enforce
-           tls: terminate
            rules:
              - allow: { method: GET, path: "/**" }
              - allow: { method: POST, path: "/api/v2/write" }
@@ -168,6 +182,7 @@ This is useful when you want to test a destination before deciding whether it be
 
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
+For guided post-install examples, see [Common Integration Policy Examples](integration-policy-examples.md).
 
 During onboarding, the [policy tier](../reference/network-policies.md#policy-tiers) you select determines which presets are enabled by default.
 You can add or remove individual presets in the interactive preset screen that follows tier selection.
@@ -178,10 +193,11 @@ Available presets:
 |--------|-----------|
 | `brave` | Brave Search API |
 | `brew` | Homebrew (Linuxbrew) package manager |
-| `discord` | Discord webhook API |
+| `discord` | Discord API, gateway, and CDN access |
 | `github` | GitHub and GitHub REST API |
 | `huggingface` | Hugging Face Hub (download-only) and inference router |
 | `jira` | Atlassian Jira API |
+| `local-inference` | Local Ollama and vLLM through the host gateway |
 | `npm` | npm and Yarn registries |
 | `outlook` | Microsoft 365 and Outlook |
 | `pypi` | Python Package Index |
@@ -195,8 +211,8 @@ $ nemoclaw <name> policy-add
 ```
 
 :::{note}
-Preset selection is interactive.
-Positional preset arguments are ignored.
+Preset selection is interactive when you omit a preset name.
+Pass a preset name with `--yes` for scripted workflows.
 :::
 
 For example, to interactively add PyPI access to a running sandbox:
@@ -218,6 +234,7 @@ The `openshell policy set --policy <file> <sandbox-name>` command operates on ra
 accept the `preset:` metadata block used in preset YAML files. Use `nemoclaw <name> policy-add` for
 presets.
 :::
+
 For scripted workflows, `policy-add` and `policy-remove` accept the preset name as a positional argument:
 
 ```console
@@ -230,9 +247,72 @@ See [Commands](../reference/commands.md#nemoclaw-name-policy-add) for the full f
 
 `nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
 
+## Custom Preset Files
+
+Apply a user-authored preset YAML to a running sandbox without editing the baseline or dropping to `openshell policy set`.
+
+### Authoring
+
+A custom preset follows the same shape as the built-in ones under `nemoclaw-blueprint/policies/presets/`:
+
+```yaml
+preset:
+  name: my-internal-api
+  description: "Internal service"
+network_policies:
+  my-internal-api:
+    name: my-internal-api
+    endpoints:
+      - host: api.example.internal
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+```
+
+The top-level `preset.name` must be a lowercase RFC 1123 label (letters, digits, hyphens) and must not collide with a built-in preset name such as `slack` or `pypi`.
+Rename `preset.name` if NemoClaw refuses to apply the file because of a collision.
+
+### Apply a Single File
+
+```console
+$ nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
+```
+
+Preview the endpoints without applying with `--dry-run`, and skip the confirmation prompt with `--yes` or by exporting `NEMOCLAW_NON_INTERACTIVE=1`.
+
+### Apply Every File in a Directory
+
+```console
+$ nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
+```
+
+Files are processed in lexicographic order.
+Processing stops at the first failure; presets already applied are not rolled back.
+Fix the failing file and re-run the command to continue.
+
+:::{warning}
+Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
+Review every host in a custom preset before applying it, especially when the file originates outside your team.
+:::
+
+### Remove a Custom Preset
+
+Custom presets applied with `--from-file` or `--from-dir` are recorded in the NemoClaw sandbox registry alongside their full YAML content, so they can be removed by name — the original file does not need to be kept on disk:
+
+```console
+$ nemoclaw my-assistant policy-remove my-internal-api --yes
+```
+
+`policy-remove` accepts both built-in and custom preset names. Run `nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
+
 ## Related Topics
 
 - [Approve or Deny Agent Network Requests](approve-network-requests.md) for real-time operator approval.
+- [Common Integration Policy Examples](integration-policy-examples.md) for maintained preset examples such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
 - [Network Policies](../reference/network-policies.md) for the full baseline policy reference.
 - OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
 - OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.
