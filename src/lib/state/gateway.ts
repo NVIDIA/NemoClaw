@@ -78,10 +78,15 @@ export function getReportedGatewayName(output = ""): string | null {
 }
 
 export function isGatewayConnected(statusOutput = ""): boolean {
-  return (
-    typeof statusOutput === "string" &&
-    (statusOutput.includes("Connected") || statusOutput.includes("Server Status"))
-  );
+  if (typeof statusOutput !== "string") return false;
+  const clean = stripAnsi(statusOutput);
+  if (
+    /\b(Error|transport error|client error)\b/i.test(clean) ||
+    /Connection refused|Connection reset|No active gateway/i.test(clean)
+  ) {
+    return false;
+  }
+  return clean.includes("Connected") || clean.includes("Server Status");
 }
 
 export function hasActiveGatewayInfo(activeGatewayInfoOutput = ""): boolean {

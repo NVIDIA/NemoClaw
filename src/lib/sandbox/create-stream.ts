@@ -58,7 +58,7 @@ export const BUILD_PROGRESS_PATTERNS: readonly RegExp[] = [
 const UPLOAD_PROGRESS_PATTERNS: readonly RegExp[] = [
   /^ {2}Pushing image /,
   /^\s*\[progress\]/,
-  /^ {2}Image .*available in the gateway/,
+  /^\s*(?:✓\s*)?Image .*available in the gateway/,
 ];
 
 // Pull-phase indicators. Detect classic Docker pull output (`<tag>: Pulling
@@ -85,6 +85,8 @@ const VISIBLE_PROGRESS_PATTERNS: readonly RegExp[] = [
   ...UPLOAD_PROGRESS_PATTERNS,
   ...PULL_PROGRESS_PATTERNS,
   /^Created sandbox: /,
+  /^Creating sandbox/i,
+  /^Starting sandbox/i,
   /^✓ /,
 ];
 

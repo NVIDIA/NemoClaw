@@ -22,6 +22,7 @@ export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 export const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
+export const QWEN3_6_OLLAMA_MODEL = "qwen3.6:35b";
 export const SMALL_OLLAMA_MODEL = "qwen2.5:7b";
 export const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
 
@@ -248,6 +249,11 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
     case "ollama-local":
       // Check the auth proxy port, not Ollama directly. The proxy listens
       // on 0.0.0.0 and is reachable from containers; Ollama is on 127.0.0.1.
+      // Use -w %{http_code} (instead of -sf) so an authenticated-but-401
+      // response still proves the network path works — the proxy now
+      // requires a Bearer token on every endpoint (#3338) and the ephemeral
+      // probe container doesn't carry one, but the goal here is connectivity
+      // not authorisation.
       return [
         "docker",
         "run",
@@ -259,7 +265,11 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
         "5",
         "--max-time",
         "10",
-        "-sf",
+        "-s",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
         `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
       ];
     default:
@@ -464,6 +474,7 @@ export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
   const options = [SMALL_OLLAMA_MODEL];
   if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
     options.push(DEFAULT_OLLAMA_MODEL);
+    options.push(QWEN3_6_OLLAMA_MODEL);
   }
   return options;
 }
@@ -474,8 +485,10 @@ export function getDefaultOllamaModel(
 ): string {
   const models = getOllamaModelOptions(runCaptureImpl);
   if (models.length === 0) {
-    const bootstrap = getBootstrapOllamaModelOptions(gpu);
-    return bootstrap[0];
+    if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
+      return QWEN3_6_OLLAMA_MODEL;
+    }
+    return SMALL_OLLAMA_MODEL;
   }
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }

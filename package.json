@@ -29,7 +29,7 @@
     "format:ts": "cd nemoclaw && npm run lint:fix && npm run format",
     "check:installer-hash": "bash scripts/check-installer-hash.sh",
     "typecheck": "tsc -p jsconfig.json",
-    "build:cli": "tsc -p tsconfig.src.json && tsc -p nemoclaw-blueprint/tsconfig.json",
+    "build:cli": "tsc -p tsconfig.src.json && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.ts",
     "ts-migration:assist": "tsx scripts/ts-migration-assist.ts",

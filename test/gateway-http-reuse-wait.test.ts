@@ -15,6 +15,7 @@
 // Regression of: https://github.com/NVIDIA/NemoClaw/issues/2020
 
 import http from "node:http";
+import http2 from "node:http2";
 import { createRequire } from "node:module";
 import { type AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const onboardModule = require("../dist/lib/onboard.js") as {
   getGatewayReuseHealthWaitConfig: () => { count: number; interval: number };
+  isDockerDriverGatewayHttpReady: (timeoutMs?: number, url?: string) => Promise<boolean>;
   isGatewayHttpReady: (timeoutMs?: number, url?: string) => Promise<boolean>;
   waitForGatewayHttpReady: (opts?: {
     probe?: () => Promise<boolean>;
@@ -32,6 +34,7 @@ const onboardModule = require("../dist/lib/onboard.js") as {
 };
 const { getGatewayReuseHealthWaitConfig, isGatewayHttpReady, waitForGatewayHttpReady } =
   onboardModule;
+const { isDockerDriverGatewayHttpReady } = onboardModule;
 
 /** Bind an ephemeral localhost port, close it, and return its URL — a port
  * that's guaranteed to refuse connections for the lifetime of the test. */
@@ -175,6 +178,68 @@ describe("isGatewayHttpReady status-code semantics (#3258)", () => {
       }
     } finally {
       await server.close();
+    }
+  });
+});
+
+describe("isDockerDriverGatewayHttpReady (#3111)", () => {
+  it("uses the Docker-driver gRPC health endpoint instead of root /", async () => {
+    let sawHealthPost = false;
+    const server = http2.createServer();
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers) => {
+      if (
+        headers[http2.constants.HTTP2_HEADER_METHOD] === "POST" &&
+        headers[http2.constants.HTTP2_HEADER_PATH] === "/openshell.v1.OpenShell/Health" &&
+        headers[http2.constants.HTTP2_HEADER_CONTENT_TYPE] === "application/grpc"
+      ) {
+        sawHealthPost = true;
+        stream.respond({
+          [http2.constants.HTTP2_HEADER_STATUS]: 200,
+          [http2.constants.HTTP2_HEADER_CONTENT_TYPE]: "application/grpc",
+          "grpc-status": "0",
+        });
+        stream.end(Buffer.alloc(5));
+      } else {
+        stream.respond({ [http2.constants.HTTP2_HEADER_STATUS]: 404 });
+        stream.end();
+      }
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      expect(
+        await isDockerDriverGatewayHttpReady(
+          2000,
+          `http://127.0.0.1:${port}/openshell.v1.OpenShell/Health`,
+        ),
+      ).toBe(true);
+      expect(sawHealthPost).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
+  it("does not treat a raw HTTP/1.1 POST 200 as Docker-driver gRPC health", async () => {
+    const server = http.createServer((req, res) => {
+      res.statusCode =
+        req.method === "POST" && req.url === "/openshell.v1.OpenShell/Health" ? 200 : 404;
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      expect(
+        await isDockerDriverGatewayHttpReady(
+          2000,
+          `http://127.0.0.1:${port}/openshell.v1.OpenShell/Health`,
+        ),
+      ).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
     }
   });
 });

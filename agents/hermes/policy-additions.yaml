@@ -18,7 +18,6 @@ filesystem_policy:
     - /usr
     - /lib
     - /opt/hermes
-    - /opt/nemoclaw-hermes-discord-preload
     - /proc
     - /dev/urandom
     - /app
@@ -224,8 +223,12 @@ network_policies:
           - allow: { method: DELETE, path: "/api/v*/webhooks/*/*/messages/*" }
       - host: gateway.discord.gg
         port: 443
-        access: full
-        tls: skip
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
       - host: cdn.discordapp.com
         port: 443
         protocol: rest
@@ -244,6 +247,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -251,6 +255,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -258,17 +263,26 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
       - host: wss-primary.slack.com
         port: 443
-        tls: skip
-        access: full
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
       - host: wss-backup.slack.com
         port: 443
-        tls: skip
-        access: full
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3* }

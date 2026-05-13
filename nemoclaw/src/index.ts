@@ -12,6 +12,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { renderBox } from "./banner.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import {
   describeOnboardEndpoint,
@@ -426,14 +427,18 @@ export default function register(api: OpenClawPluginApi): void {
     );
   }
 
+  const bannerLines = [
+    "  NemoClaw registered",
+    null,
+    `  Endpoint:  ${bannerEndpoint}`,
+    `  Provider:  ${bannerProvider}`,
+    `  Model:     ${bannerModel}`,
+    "  Slash:     /nemoclaw",
+  ];
+
   api.logger.info("");
-  api.logger.info("  ┌─────────────────────────────────────────────────────┐");
-  api.logger.info("  │  NemoClaw registered                                │");
-  api.logger.info("  │                                                     │");
-  api.logger.info(`  │  Endpoint:  ${bannerEndpoint.padEnd(40)}│`);
-  api.logger.info(`  │  Provider:  ${bannerProvider.padEnd(40)}│`);
-  api.logger.info(`  │  Model:     ${bannerModel.padEnd(40)}│`);
-  api.logger.info("  │  Slash:     /nemoclaw                               │");
-  api.logger.info("  └─────────────────────────────────────────────────────┘");
+  for (const line of renderBox(bannerLines)) {
+    api.logger.info(line);
+  }
   api.logger.info("");
 }

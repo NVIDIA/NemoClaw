@@ -250,21 +250,6 @@ For sensitive workloads, use a reviewed host-side immutability workflow after in
 | Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
 | Recommendation | For always-on assistants handling sensitive workloads, lock config after initial setup. For development workflows, the writable default is appropriate. |
 
-### Locking Config with Shields
-
-NemoClaw exposes the reviewed host-side immutability workflow through shields commands:
-
-| Command | Purpose |
-|---|---|
-| `nemoclaw <name> shields status` | Show whether the sandbox is in default mutable mode, locked mode, or temporarily unlocked mode. |
-| `nemoclaw <name> shields up` | Opt into lockdown for sensitive workloads by locking config and state entry points with root ownership, read-only modes, and the immutable flag where available. |
-| `nemoclaw <name> shields down --timeout 5m --reason "<reason>"` | Temporarily return a previously locked sandbox to the mutable default for maintenance, then auto-restore lockdown. |
-
-Run shields commands from the host.
-They use privileged OpenShell and Kubernetes paths that do not inherit the sandbox process's Landlock context.
-Landlock itself stays fixed at sandbox creation; `shields up` does not rewrite the Landlock policy.
-Instead, it layers DAC permissions and `chattr +i` over paths that the default Landlock policy intentionally leaves writable.
-
 ### Writable Paths
 
 The agent has read-write access to `/sandbox`, `/tmp`, and `/dev/null`.
@@ -422,6 +407,17 @@ Device authentication requires each connecting device to go through a pairing fl
 | What you can change | Set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` as a Docker build argument to disable device authentication. This is a build-time setting baked into `openclaw.json` and verified by hash at startup. |
 | Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
 | Recommendation | Keep device auth enabled (the default). Only disable it for headless or development environments where no untrusted devices can reach the gateway. |
+
+### Gateway Bind Address
+
+NemoClaw binds the OpenShell gateway to loopback by default.
+
+| Aspect | Detail |
+|---|---|
+| Default | `NEMOCLAW_GATEWAY_BIND_ADDRESS=127.0.0.1`. |
+| What you can change | Set `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` before onboarding to listen on all IPv4 interfaces. |
+| Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway. |
+| Recommendation | Keep the loopback default unless the gateway must be reachable from another host. |
 
 ### Insecure Auth Derivation
 

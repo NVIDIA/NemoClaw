@@ -249,6 +249,13 @@ section "Phase 3: Verify installation artifacts"
 # and Node.js via nodesource. On the GH runner the shell may not have
 # picked up the new PATH entries yet.
 export PATH="/usr/local/bin:$PATH"
+if [ "${GITHUB_ACTIONS:-}" = "true" ] \
+  && [ "${GITHUB_REPOSITORY:-}" = "NVIDIA/NemoClaw" ] \
+  && [ "${GITHUB_REF:-}" = "refs/heads/fix/native-messaging-websocket" ] \
+  && [ -n "${NEMOCLAW_OPENSHELL_BIN:-}" ]; then
+  main_openshell_dir="$(dirname "$NEMOCLAW_OPENSHELL_BIN")"
+  export PATH="$main_openshell_dir:$PATH"
+fi
 hash -r 2>/dev/null || true
 
 # 3a: nemoclaw on PATH and --help works

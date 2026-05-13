@@ -81,11 +81,13 @@ The baseline policy is always applied regardless of the selected tier.
 | Tier | Presets included | Description |
 |------|------------------|-------------|
 | Restricted | None | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
-| Balanced (default) | npm, pypi, huggingface, brew, brave | Full dev tooling and web search. No messaging platform access. |
-| Open | npm, pypi, huggingface, brew, brave, slack, discord, telegram, jira, outlook | Broad access across third-party services including messaging and productivity. |
+| Balanced (default) | npm, pypi, huggingface, brew, brave when supported | Full dev tooling and web search for agents that support web search. No messaging platform access. |
+| Open | npm, pypi, huggingface, brew, brave when supported, slack, discord, telegram, jira, outlook | Broad access across third-party services including messaging and productivity. |
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the full list.
+NemoClaw filters tier defaults by the active agent's supported integrations.
+For example, Hermes onboarding omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration.
 
 Tier definitions are stored in `nemoclaw-blueprint/policies/tiers.yaml`.
 
