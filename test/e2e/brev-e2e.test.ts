@@ -399,6 +399,8 @@ function createBrevInstance(elapsed: () => string): void {
         "--startup-script",
         `@${setupScriptPath}`,
         "--detached",
+        "--timeout",
+        "900",
       ];
       if (BREV_GPU_TYPE) {
         createArgs.push("--type", BREV_GPU_TYPE);
@@ -416,7 +418,7 @@ function createBrevInstance(elapsed: () => string): void {
       }
       execFileSync("brev", createArgs, {
         encoding: "utf-8",
-        timeout: 180_000,
+        timeout: 900_000,
         stdio: STREAM_STDIO,
       });
     } else {
