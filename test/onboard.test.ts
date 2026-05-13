@@ -8548,13 +8548,17 @@ const { setupMessagingChannels } = require(${onboardPath});
 
   it("non-interactive onboard reuses stored messaging channels when bridge providers exist", () => {
     const source = fs.readFileSync(path.join(import.meta.dirname, "../src/lib/onboard.ts"), "utf-8");
+    const reuseSource = fs.readFileSync(
+      path.join(import.meta.dirname, "../src/lib/onboard/messaging-reuse.ts"),
+      "utf-8",
+    );
     assert.match(
-      source,
-      /function getReusableStoredMessagingChannelsForNonInteractive\([\s\S]*?registry\.getSandbox\(sandboxName\)[\s\S]*?providerExistsInGateway\(provider\)/,
+      reuseSource,
+      /function getNonInteractiveStoredMessagingChannels\([\s\S]*?getSandbox\(sandboxName\)[\s\S]*?providerExists\(provider\)/,
     );
     assert.match(
       source,
-      /selectedMessagingChannels = await setupMessagingChannels\(\);[\s\S]*?getReusableStoredMessagingChannelsForNonInteractive\(sandboxName\)[\s\S]*?selectedMessagingChannels = reusableStoredMessagingChannels/,
+      /getRecordedMessagingChannelsForResume\(resume, session, sandboxName\)[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(\)/,
     );
   });
 

@@ -2025,36 +2025,11 @@ function getKnownMessagingChannels(channels: string[] | null | undefined): strin
 
 function getRecordedMessagingChannelsForResume(
   resume: boolean,
-  session: Session | null,
+  session: Session | null, sandboxName: string | null,
 ): string[] | null {
-  if (!resume || !isNonInteractive() || !Array.isArray(session?.messagingChannels)) {
-    return null;
-  }
-  return getKnownMessagingChannels(session.messagingChannels);
-}
-
-function getMessagingProviderNamesForChannel(sandboxName: string, channel: string): string[] {
-  if (channel === "discord") return [`${sandboxName}-discord-bridge`];
-  if (channel === "telegram") return [`${sandboxName}-telegram-bridge`];
-  if (channel === "slack") return [`${sandboxName}-slack-bridge`];
-  return [];
-}
-
-function getReusableStoredMessagingChannelsForNonInteractive(
-  sandboxName: string | null,
-): string[] {
-  if (!sandboxName || !isNonInteractive()) return [];
-
-  const entry = registry.getSandbox(sandboxName);
-  const configuredChannels = getKnownMessagingChannels(entry?.messagingChannels);
-  if (configuredChannels.length === 0) return [];
-
-  const disabledChannels = new Set(registry.getDisabledChannels(sandboxName));
-  return configuredChannels.filter((channel) => {
-    if (disabledChannels.has(channel)) return false;
-    const providers = getMessagingProviderNamesForChannel(sandboxName, channel);
-    return providers.length > 0 && providers.every((provider) => providerExistsInGateway(provider));
-  });
+  return require("./onboard/messaging-reuse").getNonInteractiveStoredMessagingChannels(
+    resume, session?.messagingChannels, sandboxName, MESSAGING_CHANNELS, (envKey: string) => Boolean(getCredential(envKey) || normalizeCredentialValue(process.env[envKey])),
+    registry.getSandbox.bind(registry), registry.getDisabledChannels.bind(registry), providerExistsInGateway, isNonInteractive());
 }
 
 /**
@@ -10755,26 +10730,16 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         nextWebSearchConfig = await configureWebSearch(null, agent, webSearchSupportProbePath);
       }
       startRecordedStep("sandbox", { provider, model });
-      const recordedMessagingChannels = getRecordedMessagingChannelsForResume(resume, session);
+      const recordedMessagingChannels = getRecordedMessagingChannelsForResume(resume, session, sandboxName);
       if (recordedMessagingChannels) {
         selectedMessagingChannels = recordedMessagingChannels;
         if (selectedMessagingChannels.length > 0) {
           note(
-            `  [resume] Reusing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`,
+            `  [non-interactive] Reusing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`,
           );
         }
       } else {
         selectedMessagingChannels = await setupMessagingChannels();
-        if (selectedMessagingChannels.length === 0) {
-          const reusableStoredMessagingChannels =
-            getReusableStoredMessagingChannelsForNonInteractive(sandboxName);
-          if (reusableStoredMessagingChannels.length > 0) {
-            selectedMessagingChannels = reusableStoredMessagingChannels;
-            note(
-              `  [non-interactive] Reusing existing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`,
-            );
-          }
-        }
       }
       const messagingChannelConfig = readMessagingChannelConfigFromEnv();
       onboardSession.updateSession((current: Session) => {
