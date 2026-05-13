@@ -61,9 +61,6 @@ const {
 const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
-const {
-  applyOpenShellVmDnsMonkeypatch,
-}: typeof import("./actions/sandbox/vm-dns-monkeypatch") = require("./actions/sandbox/vm-dns-monkeypatch");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -6149,8 +6146,6 @@ async function createSandbox(
     }
   }
 
-  // DNS proxy — run a forwarder in the sandbox pod so the isolated
-  // sandbox namespace can resolve hostnames (fixes #626).
   if (sandboxRuntimeFields.openshellDriver === "kubernetes") {
     console.log("  Setting up sandbox DNS proxy...");
     runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
@@ -6158,16 +6153,7 @@ async function createSandbox(
     });
   }
 
-  const vmDnsPatch = applyOpenShellVmDnsMonkeypatch(sandboxName, {
-    openshellDriver: sandboxRuntimeFields.openshellDriver,
-  });
-  if (vmDnsPatch.ok && vmDnsPatch.changed) {
-    console.log("  ✓ Applied OpenShell VM DNS monkeypatch");
-  } else if (vmDnsPatch.attempted && !vmDnsPatch.ok && vmDnsPatch.reason) {
-    console.error(
-      `  Warning: OpenShell VM DNS monkeypatch did not apply: ${vmDnsPatch.reason}`,
-    );
-  }
+  require("./onboard/vm-dns-monkeypatch").applyOnboardVmDnsMonkeypatch(sandboxName, sandboxRuntimeFields);
 
   // Check that messaging providers exist in the gateway (sandbox attachment
   // cannot be verified via CLI yet — only gateway-level existence is checked).
