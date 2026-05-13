@@ -19,7 +19,8 @@ workflows, scripts, source files, and nearby tests before recommending coverage.
 3. Installs Pi.
 4. Runs `tools/e2e-advisor/pi-analyze.mjs`.
 5. Writes artifacts under `artifacts/e2e-advisor/`.
-6. Posts or updates a sticky PR comment marked by `<!-- nemoclaw-e2e-advisor -->`.
+6. For eligible internal PRs, auto-dispatches the required selective E2E jobs.
+7. Posts or updates a sticky PR comment marked by `<!-- nemoclaw-e2e-advisor -->`.
 
 ## Safety model
 
@@ -28,6 +29,15 @@ workflows, scripts, source files, and nearby tests before recommending coverage.
 - The workflow does not execute PR-provided scripts, tests, or package-manager lifecycle hooks.
 - Generated Pi credential config is written under `/tmp`, not under uploaded artifacts.
 - The job is gated to internal upstream PRs only.
+- Automatic E2E dispatch is further restricted to PR authors with GitHub `OWNER` or `MEMBER`
+  author association.
+- Auto-dispatch runs the trusted `nightly-e2e.yaml` workflow from `main` and passes the PR head SHA
+  as `target_ref`, so the workflow definition itself is not taken from the PR branch.
+- The dispatcher is TypeScript executed by Node with `--experimental-strip-types`, avoiding a
+  package install or build step in the secret-bearing advisor job.
+- The dispatcher does not use a hardcoded job allowlist. It derives dispatchable job names from the
+  target workflow's own `inputs.jobs` selective-dispatch predicates and ignores recommendations that
+  do not match those jobs.
 
 ## Required secret
 
@@ -49,7 +59,8 @@ making deterministic recommendations.
 - `E2E_ADVISOR_GITHUB_TOKEN`
 
 If present, this token is used for sticky PR comments. Otherwise the workflow falls back to
-`github.token`. Commenting is best-effort.
+`github.token`. Commenting is best-effort. Automatic E2E dispatch uses `github.token` with the
+workflow's `actions: write` permission, not this optional comment token.
 
 ## Artifacts
 
@@ -58,6 +69,8 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 - `e2e-advisor-pi-result.json` — parsed Pi response or execution metadata.
 - `e2e-advisor-final-result.json` — normalized result used for comments.
 - `e2e-advisor-pi-summary.md` — markdown summary used in the job summary/comment.
+- `e2e-advisor-dispatch-result.json` — automatic E2E dispatch status.
+- `e2e-advisor-dispatch-summary.md` — markdown dispatch summary.
 
 ## Manual run
 
@@ -73,8 +86,8 @@ Set `PI_E2E_ADVISOR_API_KEY` or a provider-specific key first.
 
 ## Output contract
 
-`tools/e2e-advisor/schema.json` defines the normalized JSON result shape used by the PR comment and
-future enforcement work.
+`tools/e2e-advisor/schema.json` defines the normalized JSON result shape used by the PR comment,
+automatic dispatch, and future enforcement work.
 
 Future enforcement should be implemented as a single dynamic required check that verifies the
 recommended E2E jobs passed for the same PR head SHA.
