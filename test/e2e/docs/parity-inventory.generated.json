@@ -4040,50 +4040,50 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 294,
-          "text": "Sandbox nvidia-smi works",
+          "line": 296,
+          "text": "Onboard GPU proof passed: nvidia-smi when available",
           "polarity": "pass",
-          "normalized_id": "sandbox.nvidia.smi.works",
+          "normalized_id": "onboard.gpu.proof.passed.nvidia.smi.when.available",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 296,
-          "text": "Sandbox nvidia-smi failed",
+          "line": 298,
+          "text": "Onboard GPU proof missing: nvidia-smi when available",
           "polarity": "fail",
-          "normalized_id": "sandbox.nvidia.smi.failed",
+          "normalized_id": "onboard.gpu.proof.missing.nvidia.smi.when.available",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
           "line": 302,
-          "text": "Sandbox /proc/self/task/<tid>/comm write works",
+          "text": "Onboard GPU proof passed: /proc/self/task/<tid>/comm write",
           "polarity": "pass",
-          "normalized_id": "sandbox.proc.self.task.tid.comm.write.works",
+          "normalized_id": "onboard.gpu.proof.passed.proc.self.task.tid.comm.write",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
           "line": 304,
-          "text": "Sandbox /proc comm write failed",
+          "text": "Onboard GPU proof missing: /proc comm write",
           "polarity": "fail",
-          "normalized_id": "sandbox.proc.comm.write.failed",
+          "normalized_id": "onboard.gpu.proof.missing.proc.comm.write",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
           "line": 308,
-          "text": "Sandbox cuInit(0) succeeds",
+          "text": "Onboard GPU proof passed: cuInit(0)",
           "polarity": "pass",
-          "normalized_id": "sandbox.cuinit.0.succeeds",
+          "normalized_id": "onboard.gpu.proof.passed.cuinit.0",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
           "line": 310,
-          "text": "Sandbox cuInit(0) failed",
+          "text": "Onboard GPU proof missing: cuInit(0)",
           "polarity": "fail",
-          "normalized_id": "sandbox.cuinit.0.failed",
+          "normalized_id": "onboard.gpu.proof.missing.cuinit.0",
           "mapping_status": "deferred"
         },
         {
@@ -4208,7 +4208,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 401,
+          "line": 404,
           "text": "Container reachable: host.openshell.internal:${PROXY_PORT} (HTTP $CONTAINER_REACH_STATUS)",
           "polarity": "pass",
           "normalized_id": "container.reachable.host.openshell.internal.proxy.port.http.container.reach.status",
@@ -4216,7 +4216,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 403,
+          "line": 406,
           "text": "Container cannot reach proxy at host.openshell.internal:${PROXY_PORT}",
           "polarity": "fail",
           "normalized_id": "container.cannot.reach.proxy.at.host.openshell.internal.proxy.port",
@@ -4224,7 +4224,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 420,
+          "line": 424,
           "text": "Proxy still alive after kill (HTTP $DEAD_STATUS)",
           "polarity": "fail",
           "normalized_id": "proxy.still.alive.after.kill.http.dead.status",
@@ -4232,7 +4232,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 435,
+          "line": 439,
           "text": "Proxy recovered from persisted token after kill (HTTP $RECOVERED_LIVE_STATUS)",
           "polarity": "pass",
           "normalized_id": "proxy.recovered.from.persisted.token.after.kill.http.recovered.live.status",
@@ -4240,7 +4240,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 437,
+          "line": 441,
           "text": "Proxy did not restart from persisted token",
           "polarity": "fail",
           "normalized_id": "proxy.did.not.restart.from.persisted.token",
@@ -4248,7 +4248,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 446,
+          "line": 450,
           "text": "Recovered proxy accepts persisted token (status: $RECOVER_STATUS)",
           "polarity": "pass",
           "normalized_id": "recovered.proxy.accepts.persisted.token.status.recover.status",
@@ -4256,7 +4256,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 448,
+          "line": 452,
           "text": "Recovered proxy rejected persisted token",
           "polarity": "fail",
           "normalized_id": "recovered.proxy.rejected.persisted.token",
@@ -4264,7 +4264,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 481,
+          "line": 485,
           "text": "No models found in Ollama",
           "polarity": "fail",
           "normalized_id": "no.models.found.in.ollama",
@@ -4272,7 +4272,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 499,
+          "line": 503,
           "text": "[LOCAL] Direct Ollama: model responded with PONG",
           "polarity": "pass",
           "normalized_id": "local.direct.ollama.model.responded.with.pong",
@@ -4280,7 +4280,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 501,
+          "line": 505,
           "text": "[LOCAL] Direct Ollama: expected PONG, got: ${direct_content:0:200}",
           "polarity": "fail",
           "normalized_id": "local.direct.ollama.expected.pong.got.direct.content.0.200",
@@ -4288,7 +4288,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 504,
+          "line": 508,
           "text": "[LOCAL] Direct Ollama: empty response",
           "polarity": "fail",
           "normalized_id": "local.direct.ollama.empty.response",
@@ -4296,15 +4296,15 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 526,
-          "text": "openshell sandbox ssh-config failed",
+          "line": 548,
+          "text": "[LOCAL] Sandbox inference: ${sandbox_probe_failure}",
           "polarity": "fail",
-          "normalized_id": "openshell.sandbox.ssh.config.failed",
+          "normalized_id": "local.sandbox.inference.sandbox.probe.failure",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 533,
+          "line": 552,
           "text": "[LOCAL] Sandbox inference: Ollama responded through sandbox",
           "polarity": "pass",
           "normalized_id": "local.sandbox.inference.ollama.responded.through.sandbox",
@@ -4312,7 +4312,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 536,
+          "line": 555,
           "text": "[LOCAL] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}",
           "polarity": "fail",
           "normalized_id": "local.sandbox.inference.expected.pong.got.sandbox.content.0.200",
@@ -4320,15 +4320,15 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 539,
-          "text": "[LOCAL] Sandbox inference: no response from inference.local inside sandbox",
+          "line": 558,
+          "text": "[LOCAL] Sandbox inference: no response from ${SANDBOX_INFERENCE_URL} inside sandbox",
           "polarity": "fail",
-          "normalized_id": "local.sandbox.inference.no.response.from.inference.local.inside.sandbox",
+          "normalized_id": "local.sandbox.inference.no.response.from.sandbox.inference.url.inside.sandbox",
           "mapping_status": "mapped"
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 556,
+          "line": 575,
           "text": "Sandbox ${SANDBOX_NAME} still in registry after destroy",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.name.still.in.registry.after.destroy",
@@ -4336,7 +4336,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 558,
+          "line": 577,
           "text": "Sandbox ${SANDBOX_NAME} removed from registry",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.name.removed.from.registry",
@@ -4344,7 +4344,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 569,
+          "line": 588,
           "text": "uninstall.sh --delete-models completed",
           "polarity": "pass",
           "normalized_id": "uninstall.sh.delete.models.completed",
@@ -4352,7 +4352,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 571,
+          "line": 590,
           "text": "uninstall.sh failed",
           "polarity": "fail",
           "normalized_id": "uninstall.sh.failed",
@@ -4360,7 +4360,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 575,
+          "line": 594,
           "text": "$HOME/.nemoclaw directory still exists after uninstall",
           "polarity": "fail",
           "normalized_id": "home.nemoclaw.directory.still.exists.after.uninstall",
@@ -4368,7 +4368,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 577,
+          "line": 596,
           "text": "$HOME/.nemoclaw removed",
           "polarity": "pass",
           "normalized_id": "home.nemoclaw.removed",
@@ -4376,7 +4376,7 @@
         },
         {
           "script": "test/e2e/test-gpu-e2e.sh",
-          "line": 584,
+          "line": 603,
           "text": "Cleanup complete",
           "polarity": "pass",
           "normalized_id": "cleanup.complete",
@@ -11097,6 +11097,83 @@
       ]
     },
     {
+      "script": "test/e2e/test-openshell-version-pin.sh",
+      "assertions": [
+        {
+          "script": "test/e2e/test-openshell-version-pin.sh",
+          "line": 215,
+          "text": "Installer hard-failed on sticky OpenShell 0.0.40 instead of reinstalling pinned 0.0.39 (#3474)",
+          "polarity": "fail",
+          "normalized_id": "installer.hard.failed.on.sticky.openshell.0.0.40.instead.of.reinstalling.pinned.0.0.39.3474",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-openshell-version-pin.sh",
+          "line": 217,
+          "text": "install-openshell.sh failed before proving sticky-version recovery (exit ${install_rc})",
+          "polarity": "fail",
+          "normalized_id": "install.openshell.sh.failed.before.proving.sticky.version.recovery.exit.install.rc",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-openshell-version-pin.sh",
+          "line": 219,
+          "text": "install-openshell.sh completed",
+          "polarity": "pass",
+          "normalized_id": "install.openshell.sh.completed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-openshell-version-pin.sh",
+          "line": 222,
+          "text": "Expected installer to download pinned OpenShell v0.0.39",
+          "polarity": "fail",
+          "normalized_id": "expected.installer.to.download.pinned.openshell.v0.0.39",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-openshell-version-pin.sh",
+          "line": 224,
+          "text": "Installer downloaded pinned OpenShell v0.0.39",
+          "polarity": "pass",
+          "normalized_id": "installer.downloaded.pinned.openshell.v0.0.39",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-openshell-version-pin.sh",
+          "line": 227,
+          "text": "Installer downloaded OpenShell v0.0.40 despite NemoClaw max 0.0.39",
+          "polarity": "fail",
+          "normalized_id": "installer.downloaded.openshell.v0.0.40.despite.nemoclaw.max.0.0.39",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-openshell-version-pin.sh",
+          "line": 229,
+          "text": "Installer did not download too-new OpenShell v0.0.40",
+          "polarity": "pass",
+          "normalized_id": "installer.did.not.download.too.new.openshell.v0.0.40",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-openshell-version-pin.sh",
+          "line": 232,
+          "text": "openshell binary was not replaced with pinned 0.0.39",
+          "polarity": "fail",
+          "normalized_id": "openshell.binary.was.not.replaced.with.pinned.0.0.39",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-openshell-version-pin.sh",
+          "line": 234,
+          "text": "Sticky openshell 0.0.40 was replaced with pinned 0.0.39",
+          "polarity": "pass",
+          "normalized_id": "sticky.openshell.0.0.40.was.replaced.with.pinned.0.0.39",
+          "mapping_status": "deferred"
+        }
+      ]
+    },
+    {
       "script": "test/e2e/test-overlayfs-autofix.sh",
       "assertions": [
         {
@@ -15624,8 +15701,8 @@
     }
   ],
   "totals": {
-    "scripts": 47,
-    "assertions": 1923,
+    "scripts": 48,
+    "assertions": 1932,
     "zero_assertion_scripts": 1
   }
 }

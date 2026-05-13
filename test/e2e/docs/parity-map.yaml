@@ -2462,32 +2462,32 @@ scripts:
         reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
         owner: e2e-maintainers
         runner_requirement: self-hosted GPU runner
-      - legacy: Sandbox nvidia-smi works
+      - legacy: "Onboard GPU proof passed: nvidia-smi when available"
         status: deferred
         reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
         owner: e2e-maintainers
         runner_requirement: self-hosted GPU runner
-      - legacy: Sandbox nvidia-smi failed
+      - legacy: "Onboard GPU proof missing: nvidia-smi when available"
         status: deferred
         reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
         owner: e2e-maintainers
         runner_requirement: self-hosted GPU runner
-      - legacy: Sandbox /proc/self/task/<tid>/comm write works
+      - legacy: "Onboard GPU proof passed: /proc/self/task/<tid>/comm write"
         status: deferred
         reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
         owner: e2e-maintainers
         runner_requirement: self-hosted GPU runner
-      - legacy: Sandbox /proc comm write failed
+      - legacy: "Onboard GPU proof missing: /proc comm write"
         status: deferred
         reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
         owner: e2e-maintainers
         runner_requirement: self-hosted GPU runner
-      - legacy: Sandbox cuInit(0) succeeds
+      - legacy: "Onboard GPU proof passed: cuInit(0)"
         status: deferred
         reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
         owner: e2e-maintainers
         runner_requirement: self-hosted GPU runner
-      - legacy: Sandbox cuInit(0) failed
+      - legacy: "Onboard GPU proof missing: cuInit(0)"
         status: deferred
         reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
         owner: e2e-maintainers
@@ -2622,7 +2622,7 @@ scripts:
         reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
         owner: e2e-maintainers
         runner_requirement: self-hosted GPU runner
-      - legacy: openshell sandbox ssh-config failed
+      - legacy: "[LOCAL] Sandbox inference: ${sandbox_probe_failure}"
         status: deferred
         reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
         owner: e2e-maintainers
@@ -2637,7 +2637,7 @@ scripts:
         reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
         owner: e2e-maintainers
         runner_requirement: self-hosted GPU runner
-      - legacy: "[LOCAL] Sandbox inference: no response from inference.local inside sandbox"
+      - legacy: "[LOCAL] Sandbox inference: no response from ${SANDBOX_INFERENCE_URL} inside sandbox"
         status: mapped
         id: legacy.gpu.e2e.local.sandbox.inference.no.response.from.inference.local.inside.sandbox
       - legacy: Sandbox ${SANDBOX_NAME} still in registry after destroy
@@ -6817,6 +6817,56 @@ scripts:
         reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
         reviewer: e2e-maintainers
         approved_at: "2026-05-13"
+  test-openshell-version-pin.sh:
+    scenario: ""
+    status: deferred
+    bucket: rebuild-runtime
+    assertions:
+      - legacy: Installer hard-failed on sticky OpenShell 0.0.40 instead of reinstalling pinned 0.0.39 (#3474)
+        status: deferred
+        reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+        owner: e2e-maintainers
+        runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      - legacy: install-openshell.sh failed before proving sticky-version recovery (exit ${install_rc})
+        status: deferred
+        reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+        owner: e2e-maintainers
+        runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      - legacy: install-openshell.sh completed
+        status: deferred
+        reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+        owner: e2e-maintainers
+        runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      - legacy: Expected installer to download pinned OpenShell v0.0.39
+        status: deferred
+        reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+        owner: e2e-maintainers
+        runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      - legacy: Installer downloaded pinned OpenShell v0.0.39
+        status: deferred
+        reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+        owner: e2e-maintainers
+        runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      - legacy: Installer downloaded OpenShell v0.0.40 despite NemoClaw max 0.0.39
+        status: deferred
+        reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+        owner: e2e-maintainers
+        runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      - legacy: Installer did not download too-new OpenShell v0.0.40
+        status: deferred
+        reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+        owner: e2e-maintainers
+        runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      - legacy: openshell binary was not replaced with pinned 0.0.39
+        status: deferred
+        reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+        owner: e2e-maintainers
+        runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      - legacy: Sticky openshell 0.0.40 was replaced with pinned 0.0.39
+        status: deferred
+        reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+        owner: e2e-maintainers
+        runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
   test-overlayfs-autofix.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
