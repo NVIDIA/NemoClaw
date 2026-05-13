@@ -74,18 +74,38 @@ def main():
           }}
         }}'''
 
-        result = subprocess.run(
-            ['gh', 'api', 'graphql', '-f', f'query={query}'],
-            capture_output=True, text=True,
-            cwd=repo_path
-        )
+        try:
+            result = subprocess.run(
+                ['gh', 'api', 'graphql', '-f', f'query={query}'],
+                capture_output=True,
+                text=True,
+                cwd=repo_path,
+                timeout=60,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"GraphQL request timed out on page {page}", file=sys.stderr)
+            sys.exit(1)
 
         if result.returncode != 0:
             print(f"GraphQL error on page {page}: {result.stderr}", file=sys.stderr)
             sys.exit(1)
 
-        data = json.loads(result.stdout)
-        items_data = data['data']['organization']['projectV2']['items']
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            print(f"Invalid JSON on page {page}: {exc}", file=sys.stderr)
+            print(result.stdout[:1000], file=sys.stderr)
+            sys.exit(1)
+
+        if data.get('errors'):
+            print(f"GraphQL errors on page {page}: {data['errors']}", file=sys.stderr)
+            sys.exit(1)
+
+        items_data = data.get('data', {}).get('organization', {}).get('projectV2', {}).get('items')
+        if not items_data:
+            print(f"Unexpected GraphQL payload shape on page {page}", file=sys.stderr)
+            sys.exit(1)
 
         for item in items_data['nodes']:
             content = item.get('content', {})

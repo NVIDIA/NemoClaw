@@ -172,7 +172,7 @@ gh issue list --repo NVIDIA/NemoClaw --label "refactor" --state open --limit 15
 gh pr list --repo NVIDIA/NemoClaw --label "refactor" --state open --limit 10
 
 # Recent refactor/arch PRs from core contributors
-for author in ${GH_USER} <maintainer> <maintainer> <maintainer>; do
+for author in "${GH_USER}" "maintainer1" "maintainer2" "maintainer3"; do
   gh pr list --repo NVIDIA/NemoClaw --author "$author" --state open --limit 5 \
     --json number,title --jq ".[] | \"#\(.number)\t${author}\t\(.title)\""
 done

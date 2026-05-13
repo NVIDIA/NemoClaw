@@ -205,7 +205,7 @@ query($owner: String!, $repo: String!, $pr: Int!) {
       }
     }
   }
-}' -f owner=NVIDIA -f repo=NemoClaw -f pr="$PR_NUMBER" \
+}' -f owner=NVIDIA -f repo=NemoClaw -F pr="$PR_NUMBER" \
   --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)'
 ```
 
@@ -309,15 +309,15 @@ Look for new comments from the PR author since your last review:
 ```bash
 # Find your most recent review timestamp
 MY_LAST_REVIEW=$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
-  --jq "[.[] | select(.user.login == \"$GH_USER\")] | sort_by(.submittedAt) | last | .submittedAt")
+  --jq "[.[] | select(.user.login == \"$GH_USER\")] | sort_by(.submitted_at) | last | .submitted_at")
 
 # Find comments from the author after your review
 gh api "repos/$REPO/pulls/$PR_NUMBER/comments" --paginate \
-  --jq "[.[] | select(.user.login == \"$AUTHOR\") | select(.createdAt > \"$MY_LAST_REVIEW\")] | length"
+  --jq "[.[] | select(.user.login == \"$AUTHOR\") | select(.created_at > \"$MY_LAST_REVIEW\")] | length"
 
 # Also check issue comments (non-inline)
 gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
-  --jq "[.[] | select(.user.login == \"$AUTHOR\") | select(.createdAt > \"$MY_LAST_REVIEW\")] | length"
+  --jq "[.[] | select(.user.login == \"$AUTHOR\") | select(.created_at > \"$MY_LAST_REVIEW\")] | length"
 ```
 
 Report: "Author has posted N new comments since your last review" with a summary of what they said.

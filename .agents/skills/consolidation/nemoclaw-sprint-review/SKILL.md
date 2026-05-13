@@ -70,7 +70,8 @@ Use the helper script from the repository skill directory:
 ```bash
 SCRIPT=".agents/skills/consolidation/nemoclaw-sprint-review/collect_sprint_items.py"
 test -f "$SCRIPT" || SCRIPT=".agents/skills/nemoclaw-sprint-review/collect_sprint_items.py"
-python3 "$SCRIPT" "Sprint 3" > /tmp/sprint_data.json
+CURRENT_SPRINT="${CURRENT_SPRINT:?Set CURRENT_SPRINT to the sprint selected in Step 1}"
+python3 "$SCRIPT" "$CURRENT_SPRINT" > /tmp/sprint_data.json
 ```
 
 The script outputs a JSON array of items with: number, title, state, status, assignees, labels, type (Issue/PR), author.

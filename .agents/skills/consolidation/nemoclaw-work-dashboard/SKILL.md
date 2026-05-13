@@ -59,8 +59,9 @@ This file is now the lookup set. Any issue number found in this file likely has 
 ## Step 3: Fetch Your Assigned Issues
 
 ```bash
+ISSUES_FILE="${ISSUES_FILE:-$(mktemp -t nemoclaw-issues-XXXXXX.json)}"
 gh issue list --repo "$REPO" --assignee "$GH_USER" --state open \
-  --json number,title,labels,createdAt,url --limit 100
+  --json number,title,labels,createdAt,url --limit 100 > "$ISSUES_FILE"
 ```
 
 ### Filter out issues with associated open PRs
@@ -72,7 +73,7 @@ For each issue, check if its number appears in `/tmp/nemoclaw-issues-with-prs.tx
 
 ```bash
 # Example jq + grep filtering:
-for num in $(cat issues.json | jq -r '.[].number'); do
+for num in $(jq -r '.[].number' "$ISSUES_FILE"); do
   if grep -qw "$num" /tmp/nemoclaw-issues-with-prs.txt; then
     echo "HAS_PR: $num"
   else
@@ -112,8 +113,9 @@ If empty, report "None".
 Fetch all open issues labeled `NV QA` + `bug`:
 
 ```bash
+BUG_FILE="${BUG_FILE:-$(mktemp -t nemoclaw-bugs-XXXXXX.json)}"
 gh issue list --repo "$REPO" --label "NV QA,bug" --state open \
-  --json number,title,labels,createdAt,url,assignees --limit 200
+  --json number,title,labels,createdAt,url,assignees --limit 200 > "$BUG_FILE"
 ```
 
 **Important:** The output may be large (50KB+). If `gh` output is truncated, use the temp file path provided and process with `jq`.
@@ -168,8 +170,9 @@ Also note how many `priority:high` and `security` bugs are already assigned (and
 ## Step 7: Fetch All Open PRs Without Assignees
 
 ```bash
+PR_FILE="${PR_FILE:-$(mktemp -t nemoclaw-prs-XXXXXX.json)}"
 gh pr list --repo "$REPO" --state open \
-  --json number,title,labels,createdAt,url,author,additions,deletions,reviewDecision,reviews,isDraft,assignees,changedFiles,reviewRequests --limit 200
+  --json number,title,labels,createdAt,url,author,additions,deletions,reviewDecision,reviews,isDraft,assignees,changedFiles,reviewRequests --limit 200 > "$PR_FILE"
 ```
 
 **Important:** This output is often very large (1-2MB+). Always process via the temp file with `jq`.
@@ -290,7 +293,7 @@ Generate 5–6 actionable recommendations sorted by impact:
 
 Use markdown with clear section headers, tables, emoji indicators, and callout blocks. The full output should read as a single dashboard document with these sections:
 
-```
+```markdown
 # NemoClaw — Work Review for @<user>
 **Date:** <today> | **Repo:** NVIDIA/NemoClaw
 

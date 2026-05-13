@@ -22,7 +22,7 @@ Scan the NemoClaw-working directory for git worktrees tied to issues or PRs that
 ## Constants
 
 ```
-WORKTREE_BASE="${NEMOCLAW_WORKTREE_BASE}"
+WORKTREE_BASE="${NEMOCLAW_WORKTREE_BASE:?Set NEMOCLAW_WORKTREE_BASE to your NemoClaw worktree directory}"
 REPO="NVIDIA/NemoClaw"
 ```
 
@@ -33,7 +33,8 @@ REPO="NVIDIA/NemoClaw"
 List all directories in `WORKTREE_BASE` that match the patterns `issue-*` or `pr-*`. Extract the type (issue or pr) and number from each directory name.
 
 ```bash
-WORKTREE_BASE="${NEMOCLAW_WORKTREE_BASE}"
+WORKTREE_BASE="${NEMOCLAW_WORKTREE_BASE:?Set NEMOCLAW_WORKTREE_BASE to your NemoClaw worktree directory}"
+test -d "$WORKTREE_BASE" || { echo "Invalid WORKTREE_BASE: $WORKTREE_BASE" >&2; exit 1; }
 ls -d "${WORKTREE_BASE}"/issue-* "${WORKTREE_BASE}"/pr-* 2>/dev/null
 ```
 
@@ -78,7 +79,8 @@ List out specifically which worktrees will be deleted, and ask the user to confi
 On user confirmation, for each stale worktree:
 
 ```bash
-WORKTREE_BASE="${NEMOCLAW_WORKTREE_BASE}"
+WORKTREE_BASE="${NEMOCLAW_WORKTREE_BASE:?Set NEMOCLAW_WORKTREE_BASE to your NemoClaw worktree directory}"
+test -d "$WORKTREE_BASE" || { echo "Invalid WORKTREE_BASE: $WORKTREE_BASE" >&2; exit 1; }
 
 # Remove the git worktree registration first
 cd "${WORKTREE_BASE}/issue-2273"  # any existing worktree to run git from

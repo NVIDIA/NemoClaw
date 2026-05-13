@@ -173,6 +173,7 @@ At the end, this becomes the summary.
 
 ```bash
 # If not given a PR number, infer from current worktree
+WORKTREE_PATH="${WORKTREE_PATH:-$(pwd)}"
 cd "$WORKTREE_PATH"
 BRANCH=$(git branch --show-current)
 PR_NUMBER=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number')

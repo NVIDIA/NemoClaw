@@ -633,7 +633,7 @@ Update the checkpoint:
 
 Halt with a message to the user:
 
-> PR-B #<PR_B> is merged; nightly `<slug>-e2e` is red on main. `/skill:nemoclaw-issue-kickoff <ISSUE>` produced worktree `<path>` on branch `<branch>` with a dev plan. Implement the fix, open it as a PR, then re-invoke `/skill:nemoclaw-pr-e2e-loop <PR_A>` — the loop will resume at Phase 5 and verify the test flips green.
+> PR-B #<PR_B> is merged; regression-e2e `<slug>-e2e` is red on main. `/skill:nemoclaw-issue-kickoff <ISSUE>` produced worktree `<path>` on branch `<branch>` with a dev plan. Implement the fix, open it as a PR, then re-invoke `/skill:nemoclaw-pr-e2e-loop <PR_A>` — the loop will resume at Phase 5 and verify the test flips green.
 
 **On resume with a PR-A number**, startup checkpoint logic must:
 1. Check if the new PR-A's body references `#<ISSUE>` (via `gh pr view <PR_A> --json body,closingIssuesReferences`).
