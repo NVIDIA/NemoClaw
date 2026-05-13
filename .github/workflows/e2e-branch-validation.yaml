@@ -204,6 +204,9 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts
 
+      - name: Build CLI
+        run: npm run build:cli
+
       - name: Run ephemeral Brev E2E
         env:
           BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}

@@ -104,7 +104,10 @@ function brev(...args: string[]): string {
 
 function listBrevInstances(): Array<{ name: string; status?: string }> {
   try {
-    return JSON.parse(brev("ls", "--json"));
+    const parsed = JSON.parse(brev("ls", "--json"));
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed?.workspaces)) return parsed.workspaces;
+    return [];
   } catch {
     return [];
   }
