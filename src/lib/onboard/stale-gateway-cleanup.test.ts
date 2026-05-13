@@ -3,7 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { stopStaleDashboardListeners, type RunResult, type StaleGatewayDeps } from "./stale-gateway-cleanup";
+import {
+  getProtectedDashboardPortsForSandbox,
+  stopStaleDashboardListeners,
+  type RunResult,
+  type StaleGatewayDeps,
+} from "./stale-gateway-cleanup";
 
 interface RunArgs {
   command: string;
@@ -48,6 +53,19 @@ function baseDeps(overrides: Partial<StaleGatewayDeps> = {}): StaleGatewayDeps {
 }
 
 describe("stopStaleDashboardListeners", () => {
+  it("protects registered sandbox dashboard ports except the fresh target", () => {
+    expect(
+      getProtectedDashboardPortsForSandbox(
+        [
+          { name: "my-assistant", dashboardPort: 18789 },
+          { name: "other", dashboardPort: 18790 },
+          { name: "missing" },
+        ],
+        "my-assistant",
+      ),
+    ).toEqual([18790]);
+  });
+
   it("returns without scanning when lsof is missing", () => {
     const run = vi.fn(() => emptyResult());
     const result = stopStaleDashboardListeners({

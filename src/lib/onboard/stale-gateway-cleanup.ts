@@ -53,6 +53,11 @@ export interface CleanupResult {
   skippedProtectedPorts: number[];
 }
 
+export interface SandboxDashboardPortEntry {
+  name: string;
+  dashboardPort?: number | null;
+}
+
 export interface StaleGatewayOptions {
   /**
    * Ports that must not be swept even if a matching gateway-forward process is
@@ -169,6 +174,26 @@ function lsofPidsForPort(port: number, deps: StaleGatewayDeps): number[] {
     return [];
   }
   return parsePidLines(result.stdout);
+}
+
+export function getProtectedDashboardPortsForSandbox(
+  sandboxes: Iterable<SandboxDashboardPortEntry>,
+  sandboxName: string,
+): number[] {
+  return Array.from(sandboxes)
+    .filter((sb) => sb.name !== sandboxName)
+    .map((sb) => sb.dashboardPort)
+    .filter((p): p is number => typeof p === "number" && Number.isFinite(p));
+}
+
+export function stopStaleDashboardListenersForSandbox(
+  sandboxes: Iterable<SandboxDashboardPortEntry>,
+  sandboxName: string,
+  depsOverrides: Partial<StaleGatewayDeps> = {},
+): CleanupResult {
+  return stopStaleDashboardListeners(depsOverrides, {
+    protectedPorts: getProtectedDashboardPortsForSandbox(sandboxes, sandboxName),
+  });
 }
 
 function tryStopPid(pid: number, deps: StaleGatewayDeps): boolean {

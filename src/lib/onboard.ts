@@ -20,6 +20,7 @@ const {
   cleanupTempDir,
   secureTempFile,
 }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
+const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
@@ -5717,24 +5718,6 @@ function getSandboxPromptDefault(agent: AgentDefinition | null | undefined): str
   } catch {
     return agentDefault;
   }
-}
-
-function getProtectedDashboardPortsForFreshCleanup(sandboxName: string): number[] {
-  return registry
-    .listSandboxes()
-    .sandboxes.filter((sb) => sb.name !== sandboxName)
-    .map((sb) => sb.dashboardPort)
-    .filter((p): p is number => typeof p === "number" && Number.isFinite(p));
-}
-
-function stopStaleDashboardListenersForFreshSandbox(sandboxName: string): void {
-  const { stopStaleDashboardListeners } = require("./onboard/stale-gateway-cleanup") as {
-    stopStaleDashboardListeners: typeof import("./onboard/stale-gateway-cleanup").stopStaleDashboardListeners;
-  };
-  stopStaleDashboardListeners(
-    {},
-    { protectedPorts: getProtectedDashboardPortsForFreshCleanup(sandboxName) },
-  );
 }
 
 function getEffectiveSandboxAgent(agent: AgentDefinition | null | undefined): AgentDefinition {
@@ -11555,11 +11538,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         break;
       }
 
-      // Prompt for the sandbox name and show the review gate BEFORE
-      // setupInference runs upsertProvider / `inference set` on the gateway.
-      // On retry (inferenceResult.retry === "selection") the user is re-prompted
-      // for provider/model above and sees this gate again with the new config.
-      // See #2221 (CodeRabbit).
       if (!sandboxName) {
         sandboxName = await promptValidatedSandboxName(agent);
       }
@@ -11751,12 +11729,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         process.exit(1);
       }
       if (fresh) {
-        // A previous failed onboard can leave a stale host-side gateway-forward
-        // process holding the dashboard port. Run the sweep after the sandbox
-        // name is resolved, but before createSandbox() allocates the dashboard
-        // port, so no-name --fresh / Express installs can recover the target
-        // sandbox while still protecting every other registered sandbox.
-        stopStaleDashboardListenersForFreshSandbox(sandboxName);
+        stopStaleDashboardListenersForSandbox(registry.listSandboxes().sandboxes, sandboxName);
       }
       sandboxName = await createSandbox(
         gpu,
@@ -11772,9 +11745,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         sandboxGpuConfig,
       );
       webSearchConfig = nextWebSearchConfig;
-      // Persist model and provider after the sandbox entry exists in the registry.
-      // updateSandbox() silently no-ops when the entry is missing, so this must
-      // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
       registry.updateSandbox(sandboxName, {
         model,
         provider,
