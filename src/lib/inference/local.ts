@@ -22,6 +22,7 @@ export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 export const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
+export const QWEN3_6_OLLAMA_MODEL = "qwen3.6:35b";
 export const SMALL_OLLAMA_MODEL = "qwen2.5:7b";
 export const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
 
@@ -473,6 +474,7 @@ export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
   const options = [SMALL_OLLAMA_MODEL];
   if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
     options.push(DEFAULT_OLLAMA_MODEL);
+    options.push(QWEN3_6_OLLAMA_MODEL);
   }
   return options;
 }
@@ -483,8 +485,10 @@ export function getDefaultOllamaModel(
 ): string {
   const models = getOllamaModelOptions(runCaptureImpl);
   if (models.length === 0) {
-    const bootstrap = getBootstrapOllamaModelOptions(gpu);
-    return bootstrap[0];
+    if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
+      return QWEN3_6_OLLAMA_MODEL;
+    }
+    return SMALL_OLLAMA_MODEL;
   }
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }

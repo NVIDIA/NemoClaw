@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: regression-e2e
+
+# Regression E2E holding pen.
+#
+# Jobs here are intentionally NOT part of scheduled nightly-e2e. They are
+# failing-test-first coverage guards or high-signal regressions that should be
+# easy to dispatch while the owning fix is in flight. Periodically review this
+# workflow and promote stable/high-value jobs into nightly-e2e.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number (optional; creates a check run on that PR)"
+        required: false
+        type: string
+        default: ""
+      jobs:
+        description: >-
+          Comma-separated regression job names to run (empty = all).
+          Valid: dashboard-remote-bind-e2e
+        required: false
+        type: string
+        default: ""
+      keep_alive:
+        description: "Keep Brev instance alive after tests (for SSH debugging)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: regression-e2e-${{ github.event_name }}-${{ github.ref }}-${{ inputs.jobs || 'all' }}-${{ inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  dashboard-remote-bind-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',dashboard-remote-bind-e2e,'))
+    uses: ./.github/workflows/e2e-branch-validation.yaml
+    with:
+      branch: ${{ github.ref_name }}
+      pr_number: ${{ inputs.pr_number }}
+      test_suite: dashboard-remote-bind
+      use_launchable: true
+      keep_alive: ${{ inputs.keep_alive }}
+    secrets: inherit

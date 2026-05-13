@@ -42,6 +42,7 @@ name: e2e-branch-validation
 #                              isolation, openclaw.json config patching, network reachability,
 #                              and L7 proxy token rewriting for Telegram + Discord. Creates
 #                              its own sandbox (e2e-msg-provider). (~15 min)
+#   dashboard-remote-bind    — Verifies opt-in remote dashboard forwards bind 0.0.0.0.
 #   all                      — Runs credential-sanitization + telegram-injection (NOT full,
 #                              which destroys the sandbox the security tests need).
 #
@@ -65,6 +66,7 @@ on:
           - credential-sanitization
           - telegram-injection
           - messaging-providers
+          - dashboard-remote-bind
           - all
       use_launchable:
         description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
