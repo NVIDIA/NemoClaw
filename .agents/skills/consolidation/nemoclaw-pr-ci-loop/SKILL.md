@@ -515,9 +515,9 @@ When ALL of the following are true:
 2. **Never loop faster than the CI can respond.** If checks are pending, report and wait.
 3. **Only one fix per iteration.** Don't stack multiple fixes — push one, let CI validate, then address the next.
 4. **Distinguish product bugs from test bugs.** If an E2E test fails due to a test infrastructure issue (not a product bug), fix the test. If it's a product bug, fix the product code.
-4. **Don't force-push unless absolutely necessary** (repo rules may block it). Prefer fixup commits.
-5. **Track everything.** Every action, every wait, every fix goes in the log.
-6. **Exit conditions:**
+5. **Don't force-push unless absolutely necessary** (repo rules may block it). Prefer fixup commits.
+6. **Track everything.** Every action, every wait, every fix goes in the log.
+7. **Exit conditions:**
    - ✅ All green (success)
    - ❌ Unfixable failure (report and ask user for input)
    - ❌ Max iterations exceeded (default: 20)

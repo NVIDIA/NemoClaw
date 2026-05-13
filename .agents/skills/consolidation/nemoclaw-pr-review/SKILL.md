@@ -340,9 +340,9 @@ Only cite PRs/issues/modules you just verified are still relevant.
 Use constructive suggestions, not demands. Examples:
 
 > 🟡 **Architectural note:** This adds a new function to `<large-file>` (currently `<N>` lines on this branch vs `<M>` on `origin/main`). Consider placing it in a focused module if a suitable current module exists, or extracting a new one. Not a blocker, but it helps the decomposition effort.
-
+>
 > 🟡 **Type safety opportunity:** This file uses `require()` / `module.exports` — if you're already editing it, consider converting to `import`/`export` and removing `@ts-nocheck`. Even converting just the functions you're touching is valuable progress.
-
+>
 > 🔴 **Shell injection regression:** This introduces a new `run("bash -c ...")` call. Use `run(["docker", "rm", name])` argv form instead — see #1889 for context. The polymorphic `run()` in `runner.ts` accepts both, so this is a drop-in change.
 
 ### Step 8: Monolith Growth Guard
