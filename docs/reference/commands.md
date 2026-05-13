@@ -1042,7 +1042,7 @@ For Local Ollama setups, uninstall also stops matching Ollama auth proxy process
 | Flag | Effect |
 |---|---|
 | `--yes` | Skip the confirmation prompt |
-| `--keep-openshell` | Leave the `openshell` binary installed |
+| `--keep-openshell` | Leave OpenShell binaries installed |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models |
 | `--gateway <name>` | Override the gateway name to remove (default: `nemoclaw`) |
 

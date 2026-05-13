@@ -11105,7 +11105,7 @@
           "text": "Installer hard-failed on sticky OpenShell 0.0.40 instead of reinstalling pinned 0.0.39 (#3474)",
           "polarity": "fail",
           "normalized_id": "installer.hard.failed.on.sticky.openshell.0.0.40.instead.of.reinstalling.pinned.0.0.39.3474",
-          "mapping_status": "deferred"
+          "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
@@ -11113,7 +11113,7 @@
           "text": "install-openshell.sh failed before proving sticky-version recovery (exit ${install_rc})",
           "polarity": "fail",
           "normalized_id": "install.openshell.sh.failed.before.proving.sticky.version.recovery.exit.install.rc",
-          "mapping_status": "deferred"
+          "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
@@ -11121,7 +11121,7 @@
           "text": "install-openshell.sh completed",
           "polarity": "pass",
           "normalized_id": "install.openshell.sh.completed",
-          "mapping_status": "deferred"
+          "mapping_status": "mapped"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
@@ -11129,7 +11129,7 @@
           "text": "Expected installer to download pinned OpenShell v0.0.39",
           "polarity": "fail",
           "normalized_id": "expected.installer.to.download.pinned.openshell.v0.0.39",
-          "mapping_status": "deferred"
+          "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
@@ -11137,7 +11137,7 @@
           "text": "Installer downloaded pinned OpenShell v0.0.39",
           "polarity": "pass",
           "normalized_id": "installer.downloaded.pinned.openshell.v0.0.39",
-          "mapping_status": "deferred"
+          "mapping_status": "mapped"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
@@ -11145,7 +11145,7 @@
           "text": "Installer downloaded OpenShell v0.0.40 despite NemoClaw max 0.0.39",
           "polarity": "fail",
           "normalized_id": "installer.downloaded.openshell.v0.0.40.despite.nemoclaw.max.0.0.39",
-          "mapping_status": "deferred"
+          "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
@@ -11153,7 +11153,7 @@
           "text": "Installer did not download too-new OpenShell v0.0.40",
           "polarity": "pass",
           "normalized_id": "installer.did.not.download.too.new.openshell.v0.0.40",
-          "mapping_status": "deferred"
+          "mapping_status": "mapped"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
@@ -11161,7 +11161,7 @@
           "text": "openshell binary was not replaced with pinned 0.0.39",
           "polarity": "fail",
           "normalized_id": "openshell.binary.was.not.replaced.with.pinned.0.0.39",
-          "mapping_status": "deferred"
+          "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
@@ -11169,7 +11169,7 @@
           "text": "Sticky openshell 0.0.40 was replaced with pinned 0.0.39",
           "polarity": "pass",
           "normalized_id": "sticky.openshell.0.0.40.was.replaced.with.pinned.0.0.39",
-          "mapping_status": "deferred"
+          "mapping_status": "mapped"
         }
       ]
     },

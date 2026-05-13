@@ -12,6 +12,12 @@ export const NEMOCLAW_PROVIDERS = [
   "nim-local",
 ] as const;
 export const NEMOCLAW_OLLAMA_MODELS = ["nemotron-3-super:120b", "nemotron-3-nano:30b"] as const;
+export const OPENSHELL_MANAGED_BINARIES = [
+  "openshell",
+  "openshell-gateway",
+  "openshell-sandbox",
+  "openshell-driver-vm",
+] as const;
 
 export interface UninstallPathOptions {
   home: string;
@@ -38,6 +44,10 @@ export function gatewayVolumeCandidates(gatewayName = DEFAULT_GATEWAY_NAME): str
   return [`openshell-cluster-${gatewayName}`];
 }
 
+function openshellInstallPathsForBinDirs(binDirs: string[]): string[] {
+  return binDirs.flatMap((binDir) => OPENSHELL_MANAGED_BINARIES.map((binary) => path.join(binDir, binary)));
+}
+
 export function defaultUninstallPaths(options: UninstallPathOptions): UninstallPaths {
   const xdgBinHome = options.xdgBinHome || path.join(options.home, ".local", "bin");
   const tmpDir = options.tmpDir || "/tmp";
@@ -48,7 +58,7 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
     nemoclawShimPath: path.join(options.home, ".local", "bin", "nemoclaw"),
     nemoclawStateDir: path.join(options.home, ".nemoclaw"),
     openshellConfigDir: path.join(options.home, ".config", "openshell"),
-    openshellInstallPaths: ["/usr/local/bin/openshell", path.join(xdgBinHome, "openshell")],
+    openshellInstallPaths: openshellInstallPathsForBinDirs(["/usr/local/bin", xdgBinHome]),
     repoRoot: options.repoRoot || path.resolve(__dirname, "..", "..", "..", ".."),
     runtimeTempGlobs: [path.join(tmpDir, "nemoclaw-create-*.log"), path.join(tmpDir, "nemoclaw-tg-ssh-*.conf")],
     shellProfilePaths: [
