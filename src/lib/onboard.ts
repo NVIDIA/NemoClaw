@@ -61,6 +61,10 @@ const {
 const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
+const {
+  formatOllamaProxyUnreachableMessage,
+  probeOllamaProxySandboxReachability,
+}: typeof import("./onboard/ollama-proxy-reachability") = require("./onboard/ollama-proxy-reachability");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -7973,6 +7977,18 @@ async function setupInference(
       // Persist token now that ollama-local is confirmed as the provider.
       // Not persisted earlier in case the user backs out to a different provider.
       persistProxyToken(proxyToken);
+      // Probe sandbox → proxy connectivity before committing the inference
+      // route. Running before `inference set` ensures isInferenceRouteReady()
+      // stays false on failure, so a retry (including --resume) re-enters
+      // setupInference and re-runs this check rather than skipping it.
+      const reach = await probeOllamaProxySandboxReachability();
+      if (!reach.ok) {
+        const msg = formatOllamaProxyUnreachableMessage(reach);
+        if (reach.reason === "tcp_failed") {
+          console.error(msg);
+          process.exit(1);
+        }
+      }
     }
     // Use a dedicated internal credential env (NEMOCLAW_OLLAMA_PROXY_TOKEN)
     // so the gateway never reads the user's host OPENAI_API_KEY for local
