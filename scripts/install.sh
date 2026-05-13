@@ -1781,16 +1781,27 @@ repair_installer_nvidia_cdi_spec() {
   info "Generating missing NVIDIA CDI device spec at ${spec_path}."
   if [[ "$(id -u)" -ne 0 ]]; then
     sudo_cmd=(sudo)
-    info "This host is missing NVIDIA CDI device specs. The next step uses sudo to generate them."
+    info "This host is missing NVIDIA CDI device specs. The next steps use sudo to repair them."
     if ! sudo -v; then
       warn "Could not obtain sudo credentials for NVIDIA CDI device spec generation."
       return 0
     fi
   fi
 
+  local cdi_list_output=""
+  if command_exists systemctl; then
+    info "Trying NVIDIA CDI refresh service (auto-generates GPU CDI specs)."
+    if "${sudo_cmd[@]}" systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service >/dev/null 2>&1 \
+      && cdi_list_output="$(nvidia-ctk cdi list 2>/dev/null)" \
+      && grep -q 'nvidia\.com/gpu' <<<"$cdi_list_output"; then
+      ok "Enabled NVIDIA CDI refresh service and generated NVIDIA CDI device spec."
+      return 0
+    fi
+    warn "NVIDIA CDI refresh service did not produce nvidia.com/gpu; falling back to direct generation."
+  fi
+
   local cdi_generate_output=""
   if "${sudo_cmd[@]}" mkdir -p "$spec_dir" && cdi_generate_output="$("${sudo_cmd[@]}" nvidia-ctk cdi generate --output="$spec_path" 2>&1)"; then
-    local cdi_list_output=""
     if cdi_list_output="$(nvidia-ctk cdi list 2>/dev/null)"; then
       if grep -q 'nvidia\.com/gpu' <<<"$cdi_list_output"; then
         ok "Generated NVIDIA CDI device spec."

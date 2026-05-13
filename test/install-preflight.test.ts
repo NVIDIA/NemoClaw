@@ -1050,13 +1050,18 @@ fi`,
     expect(fs.existsSync(onboardLog)).toBe(false);
   });
 
-  it("generates a missing NVIDIA CDI spec before installer host preflight blocks", () => {
+  function runNvidiaCdiInstallerRepairTest({
+    systemctlScript,
+  }: {
+    systemctlScript: string;
+  }) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-cdi-repair-"));
     const fakeBin = path.join(tmp, "bin");
     const sourceRoot = path.join(tmp, "source");
     const cdiDir = path.join(tmp, "cdi");
     const cdiState = path.join(tmp, "cdi-generated");
     const sudoLog = path.join(tmp, "sudo.log");
+    const systemctlLog = path.join(tmp, "systemctl.log");
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(path.join(sourceRoot, "dist", "lib", "onboard"), { recursive: true });
 
@@ -1095,6 +1100,7 @@ fi
 exec "$@"
 `,
     );
+    writeExecutable(path.join(fakeBin, "systemctl"), systemctlScript);
     writeExecutable(
       path.join(fakeBin, "nvidia-ctk"),
       `#!/usr/bin/env bash
@@ -1147,19 +1153,68 @@ run_installer_host_preflight
           CDI_DIR: cdiDir,
           CDI_STATE: cdiState,
           SUDO_LOG: sudoLog,
+          SYSTEMCTL_LOG: systemctlLog,
         },
       },
     );
 
-    const output = `${result.stdout}${result.stderr}`;
+    return {
+      cdiDir,
+      output: `${result.stdout}${result.stderr}`,
+      result,
+      sudoLog: fs.existsSync(sudoLog) ? fs.readFileSync(sudoLog, "utf-8") : "",
+      systemctlLog: fs.existsSync(systemctlLog) ? fs.readFileSync(systemctlLog, "utf-8") : "",
+    };
+  }
+
+  it("enables nvidia-cdi-refresh before installer host preflight blocks", () => {
+    const { output, result, sudoLog, systemctlLog } = runNvidiaCdiInstallerRepairTest({
+      systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+if [ "\${1:-}" = "enable" ]; then
+  touch "$CDI_STATE"
+  exit 0
+fi
+exit 99
+`,
+    });
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
+    expect(output).toMatch(/Enabled NVIDIA CDI refresh service/);
+    expect(output).not.toMatch(/falling back to direct generation/);
+    expect(output).not.toMatch(/Host preflight found issues/);
+    expect(output).not.toMatch(/noisy nvidia-ctk generate/);
+    expect(systemctlLog).toMatch(
+      /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
+    );
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).not.toMatch(/nvidia-ctk cdi generate/);
+  });
+
+  it("falls back to direct NVIDIA CDI generation when refresh service does not repair", () => {
+    const { cdiDir, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+exit 1
+`,
+      });
+
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Generating missing NVIDIA CDI device spec/);
     expect(output).toMatch(/Generated NVIDIA CDI device spec/);
+    expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
+    expect(output).toMatch(/falling back to direct generation/);
     expect(output).not.toMatch(/Host preflight found issues/);
     expect(output).not.toMatch(/noisy nvidia-ctk generate/);
-    const sudoCalls = fs.readFileSync(sudoLog, "utf-8");
-    expect(sudoCalls).toMatch(/^-v$/m);
-    expect(sudoCalls).toContain(`nvidia-ctk cdi generate --output=${cdiDir}/nvidia.yaml`);
+    expect(systemctlLog).toMatch(
+      /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
+    );
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).toContain(`nvidia-ctk cdi generate --output=${cdiDir}/nvidia.yaml`);
   });
 
   it("warns on Podman but still runs onboarding", () => {
