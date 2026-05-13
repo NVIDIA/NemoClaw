@@ -1037,6 +1037,9 @@ const child_process = require("child_process");
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args && args.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   if (cmd === "ps") {
     return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
   }
@@ -1141,6 +1144,9 @@ const child_process = require("child_process");
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args && args.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   if (cmd === "ps") {
     return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
   }
@@ -1250,6 +1256,9 @@ const child_process = require("child_process");
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args && args.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   if (cmd === "ps") {
     return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
   }
@@ -1378,6 +1387,9 @@ const child_process = require("child_process");
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args && args.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   if (cmd === "ps") {
     return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
   }
@@ -4419,6 +4431,9 @@ child_process.spawn = (...args) => {
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
   const cmdStr = [cmd, ...(args || [])].join(" ");
+  if (cmd === "nc" && args && args.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   // ollama pull — pretend it succeeds
   if (cmd === "ollama" && args && args[0] === "pull") {
     return { status: 0, stdout: "", stderr: "", signal: null };
@@ -4708,6 +4723,9 @@ child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
   const command = [cmd, ...(args || [])].join(" ");
+  if (cmd === "nc" && args && args.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   if (command.includes("ollama pull")) {
     return { status: 0, stdout: "", stderr: "", signal: null };
   }
