@@ -213,6 +213,14 @@ describe("docker-gpu-patch", () => {
       ["sandbox", "exec", "-n", "alpha", "--", "true"],
       expect.objectContaining({ ignoreError: true }),
     );
+    const dockerRmCalls = dockerRm.mock.calls as unknown[][];
+    const backupRmCall = dockerRmCalls.findIndex((call) =>
+      String(call[0]).includes("nemoclaw-gpu-backup"),
+    );
+    expect(backupRmCall).toBeGreaterThanOrEqual(0);
+    expect(dockerRm.mock.invocationCallOrder[backupRmCall]).toBeLessThan(
+      runOpenshell.mock.invocationCallOrder[0],
+    );
   });
 
   it("can recreate during sandbox create before supervisor exec is allowed", () => {

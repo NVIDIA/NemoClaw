@@ -337,9 +337,49 @@ function runRemoteTest(scriptPath: string): string {
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
-  sshEnv(cmd, { timeout: GPU_TEST_SUITE ? 1_800_000 : 900_000, stream: true });
+  try {
+    sshEnv(cmd, { timeout: GPU_TEST_SUITE ? 1_800_000 : 900_000, stream: true });
+  } catch (error) {
+    printRemoteFailureDiagnostics();
+    throw error;
+  }
   // Retrieve the captured output for assertion checking
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
+}
+
+function printRemoteFailureDiagnostics(): void {
+  try {
+    const diagnostics = ssh(
+      [
+        `set +e`,
+        `echo "===== remote failure diagnostics ====="`,
+        `echo "--- openshell sandbox list ---"`,
+        `PATH=$HOME/.local/bin:$PATH openshell sandbox list 2>&1 || true`,
+        `echo "--- docker ps ---"`,
+        `docker ps -a --filter label=openshell.ai/managed-by=openshell 2>&1 || true`,
+        `latest="$(find "$HOME/.nemoclaw/onboard-failures" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)"`,
+        `if [ -n "$latest" ]; then`,
+        `  echo "--- latest onboard failure: $latest ---"`,
+        `  for file in summary.txt openshell-sandbox-list.txt openshell-sandbox-get.txt docker-ps.txt; do`,
+        `    if [ -s "$latest/$file" ]; then`,
+        `      echo "--- $file ---"`,
+        `      sed -n '1,160p' "$latest/$file"`,
+        `    fi`,
+        `  done`,
+        `  for file in docker-logs.txt openshell-logs.txt; do`,
+        `    if [ -s "$latest/$file" ]; then`,
+        `      echo "--- tail $file ---"`,
+        `      tail -160 "$latest/$file"`,
+        `    fi`,
+        `  done`,
+        `fi`,
+      ].join("\n"),
+      { timeout: 60_000 },
+    );
+    console.log(diagnostics);
+  } catch (diagnosticsError) {
+    console.log(`Failed to collect remote diagnostics: ${String(diagnosticsError)}`);
+  }
 }
 
 function runLocalDeploy(instanceName: string): void {
