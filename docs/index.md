@@ -306,6 +306,7 @@ Quickstart with Hermes <get-started/quickstart-hermes>
 
 Inference Options <inference/inference-options>
 Use Local Inference <inference/use-local-inference>
+Tool-Calling Reliability <inference/tool-calling-reliability>
 Switch Inference Providers <inference/switch-inference-providers>
 Set Up Task-Specific Sub-Agents <inference/set-up-sub-agent>
 ```
