@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { promises as dnsPromises } from "node:dns";
+import { isIP } from "node:net";
 
 import { isPrivateIp, isPrivateHostname } from "./private-networks.js";
 
@@ -10,6 +11,10 @@ import { isPrivateIp, isPrivateHostname } from "./private-networks.js";
 export { isPrivateIp, isPrivateHostname };
 
 const ALLOWED_SCHEMES = new Set(["https:", "http:"]);
+
+function hostnameForDnsLookup(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+}
 
 /**
  * Result of endpoint URL validation with DNS pinning.
@@ -47,12 +52,26 @@ export async function validateEndpointUrl(url: string): Promise<ValidatedEndpoin
   if (!hostname) {
     throw new Error(`No hostname found in URL: ${url}`);
   }
+  if (isPrivateHostname(hostname)) {
+    throw new Error(
+      `Endpoint URL points to private/internal address ${hostname}. ` +
+        "Connections to internal networks are not allowed.",
+    );
+  }
+
+  const lookupHostname = hostnameForDnsLookup(hostname);
+  if (isIP(lookupHostname)) {
+    return { url, pinnedUrl: url };
+  }
 
   let addresses: Array<{ address: string; family: number }>;
   try {
-    addresses = await dnsPromises.lookup(hostname, { all: true });
+    addresses = await dnsPromises.lookup(lookupHostname, { all: true });
   } catch (err) {
     throw new Error(`Cannot resolve hostname '${hostname}': ${String(err)}`);
+  }
+  if (addresses.length === 0) {
+    throw new Error(`Cannot resolve hostname '${hostname}': no addresses returned.`);
   }
 
   for (const { address } of addresses) {

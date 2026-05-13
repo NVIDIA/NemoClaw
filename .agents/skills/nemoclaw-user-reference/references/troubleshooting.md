@@ -63,6 +63,7 @@ On macOS with Docker Desktop, open the Docker Desktop application and wait for i
 ### Docker permission denied on Linux
 
 On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group.
+The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically.
 Add your user and activate the group in the current shell:
 
 ```console
@@ -71,6 +72,12 @@ $ newgrp docker
 ```
 
 Then retry `nemoclaw onboard`.
+If the installer stopped after printing `newgrp docker`, run that command and then re-run the installer:
+
+```console
+$ newgrp docker
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
 
 ### macOS first-run failures
 
@@ -278,7 +285,7 @@ The `install-openshell.sh` script also enforces this constraint and pins fresh i
 
 ### Invalid sandbox name
 
-Sandbox names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
+Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Uppercase letters are automatically lowercased.
 
 Names that collide with global CLI commands are also rejected.
@@ -304,6 +311,23 @@ If neither is found, verify that Colima is running:
 ```console
 $ colima status
 ```
+
+### Sandbox build is slow or hangs (under-provisioned container runtime)
+
+Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headroom for the BuildKit-driven sandbox image build.
+On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
+
+Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
+On Colima, raise the resources before re-running onboard:
+
+```console
+$ colima stop
+$ colima start --cpu 6 --memory 12 --disk 100
+```
+
+On Docker Desktop, raise CPU and memory limits in *Settings → Resources*, then apply and restart.
+
+To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1` before running `nemoclaw onboard`.
 
 ### Re-onboard fails because port 18789 is held by SSH
 
@@ -448,7 +472,7 @@ Follow these steps to reconnect.
 
 > **If the sandbox does not recover:** If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
 > The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-> Back up your workspace first by following the instructions at Back Up and Restore (use the `nemoclaw-user-workspace` skill).
+> Back up your workspace first by following the instructions at Back Up and Restore (use the `nemoclaw-user-manage-sandboxes` skill).
 
 ### Sandbox is running an outdated agent version
 
@@ -567,6 +591,9 @@ $ nemoclaw onboard
 If you previously set `NEMOCLAW_PREFERRED_API=openai-responses` to force the
 Responses API, unset it before re-running onboard.
 
+When you enable Telegram messaging with an OpenAI-compatible endpoint, onboarding also checks `inference.local` from inside the sandbox.
+If that smoke check fails, fix the compatible-endpoint base URL, credentials, model, or network route before testing the Telegram bot again.
+
 Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone — it patches the config
 at container startup but does not update the Dockerfile ARG baked into the
 image.
@@ -602,10 +629,11 @@ In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the c
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
 This is expected.
-The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time.
+NemoClaw builds the sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) from host-side onboarding, rebuild, inference, policy, and messaging inputs.
+Fresh sandboxes keep that file writable by default so the agent can manage runtime state, but direct in-sandbox edits are not the supported or durable path for NemoClaw-managed settings.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
-To change your configuration, exit the sandbox and rerun onboarding:
+For most configuration changes, exit the sandbox and rerun onboarding:
 
 ```console
 $ nemoclaw onboard
@@ -613,6 +641,14 @@ $ nemoclaw onboard
 
 If NemoClaw reports a resumable failed onboarding session, run `nemoclaw onboard --resume` instead.
 This rebuilds the sandbox with your updated settings.
+
+For advanced live edits, use the host-side config command instead of running `openclaw config set` inside the sandbox:
+
+```console
+$ nemoclaw <sandbox> config set --key <dotpath> --value '<json-or-string>' --restart
+```
+
+Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with the credential-management commands instead.
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 
@@ -663,7 +699,7 @@ Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mod
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
 ```console
-$ openshell term <sandbox-name>
+$ nemoclaw <sandbox-name> connect
 $ tail -f /tmp/gateway.log
 ```
 
@@ -867,6 +903,22 @@ GPU passthrough is not CI-tested on DGX Spark.
 It is expected to work when you pass `--gpu` and the NVIDIA Container Toolkit is configured.
 Verify the toolkit is configured by running `docker run --rm --runtime=nvidia --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi` from the host.
 
+### `unresolvable CDI devices nvidia.com/gpu=all` during gateway start
+
+Recent NVIDIA Container Toolkit installs configure the Docker daemon for Container Device Interface (CDI) device injection, which OpenShell's `gateway start --gpu` then auto-selects.
+If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
+`nemoclaw onboard` now detects this gap during preflight and prints the remediation up front, but the underlying fix is the same on any Docker host whose `docker info` advertises a non-empty `CDISpecDirs`.
+
+Generate the spec, verify it lists `nvidia.com/gpu` entries, then rerun onboarding:
+
+```console
+$ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+$ nvidia-ctk cdi list
+$ nemoclaw onboard
+```
+
+If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
+
 ### `pip install` fails with a system-packages error
 
 Recent Ubuntu releases (including DGX Spark's Ubuntu 24.04) mark the system Python install as externally managed, so `pip install` without a virtual environment fails.
@@ -955,3 +1007,81 @@ For additional troubleshooting, see the Quickstart (use the `nemoclaw-user-get-s
 Podman is not a tested runtime.
 OpenShell officially documents Docker-based runtimes only.
 If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
+
+## Brev
+
+For Brev setup instructions, refer to Brev Web UI (use the `nemoclaw-user-deploy-remote` skill).
+
+### Most OpenClaw skills show as blocked
+
+After deploying NemoClaw on Brev, the Skills page in the OpenClaw gateway dashboard shows most bundled skills with a `blocked` status.
+Only three skills are available by default: `healthcheck`, `skill-creator`, and `weather`.
+
+Skills are blocked for one of three reasons.
+
+- The skill requires a macOS-only binary (`memo`, `remindctl`, `grizzly`, and similar) that is not available on the Linux (GCP) instance Brev provisions.
+- The skill requires a CLI binary that is not pre-installed in the sandbox image, such as `gh` for the GitHub skill.
+- The skill requires API credentials that have not been configured, such as a Notion API key or Discord bot token.
+
+Skills that require macOS-only binaries cannot be enabled on Brev.
+Skills that require additional CLI binaries require a custom sandbox image rebuild.
+
+For credentials, use the supported host-side setup flow. Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack>` for messaging channels.
+To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
+After the rebuild completes, return to the Skills page to confirm the skill status has changed from `blocked` to `ready`.
+
+### `openclaw config set` fails with a permission error on Brev
+
+When the sandbox config has been locked from the host, `openclaw.json` is owned by root and mounted read-only inside the sandbox.
+Running `openclaw config set` inside the sandbox then returns:
+
+```text
+EACCES: permission denied, open '/sandbox/.openclaw/openclaw.json'
+```
+
+In the default sandbox state, `openclaw.json` is writable by the sandbox user.
+If you see this error, use the host-side config command instead:
+
+```console
+$ nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
+```
+
+Refer to Commands (use the `nemoclaw-user-reference` skill) for the full list of supported configuration keys.
+
+### OpenClaw dashboard is unreachable after extended uptime on Brev
+
+After leaving NemoClaw running for an extended period on Brev, the OpenClaw dashboard may return `ERR_CONNECTION_RESET` or fail to load in the browser.
+The agent may still respond on messaging channels such as Telegram or Slack while the dashboard is unreachable.
+
+> **Back up your workspace first:** Take a snapshot before running onboard to protect your workspace files.
+>
+> ```console
+> $ nemoclaw <name> snapshot create
+> ```
+
+Re-run onboarding to restore dashboard connectivity:
+
+```console
+$ nemoclaw onboard
+```
+
+Depending on current sandbox state, onboarding may prompt before recreating resources.
+
+### Skill install buttons do not work on Brev
+
+Clicking **Install** on a skill in the OpenClaw gateway dashboard on Brev shows no response or fails silently.
+
+Skill installation runs against the sandbox environment.
+Installing packages on the Brev host does not make them available inside the sandbox.
+To install a skill dependency, add it to the sandbox image and rebuild:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
+After the rebuild completes, return to the Skills page to confirm the skill is ready.

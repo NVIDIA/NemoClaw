@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 version: "0.1.0"
-min_openshell_version: "0.0.32"
-max_openshell_version: "0.0.36"
+min_openshell_version: "0.0.39"
+max_openshell_version: "0.0.39"
 min_openclaw_version: "2026.4.24"
 # Mirrors the components.sandbox.image manifest digest below. Lets a
 # downstream consumer (or release tooling) verify the blueprint declares
@@ -18,6 +18,7 @@ profiles:
   - ncp
   - nim-local
   - vllm
+  - routed
 
 description: |
   NemoClaw blueprint: orchestrates OpenClaw sandbox creation, migration,
@@ -69,6 +70,19 @@ components:
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
         timeout_secs: 180
+
+      routed:
+        provider_type: "openai"
+        provider_name: "nvidia-router"
+        endpoint: "http://localhost:4000/v1"
+        model: "nvidia-routed"
+        credential_env: "NVIDIA_API_KEY"
+        timeout_secs: 180
+
+  router:
+    enabled: true
+    port: 4000
+    pool_config_path: "router/pool-config.yaml"
 
   policy:
     base: "sandboxes/openclaw/policy.yaml"

@@ -27,7 +27,7 @@ status: published
 Use NemoHermes when you want NemoClaw to create an OpenShell sandbox that runs Hermes instead of the default OpenClaw agent.
 The `nemohermes` command is an alias for `nemoclaw` with the Hermes agent pre-selected.
 
-:::{warning}
+:::{admonition} Experimental Feature
 The Hermes agent option is experimental.
 Interfaces, defaults, and supported features may change without notice, and it is not recommended for production use.
 :::
@@ -56,18 +56,27 @@ $ nemohermes onboard
 The onboard wizard asks for a sandbox name, inference provider, model, credentials, and network policy preset.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 
+The default Hermes sandbox name is `hermes`.
 Use a distinct sandbox name, such as `my-hermes`, so you can run Hermes and OpenClaw sandboxes side by side.
+NemoClaw prevents same-name reuse when an existing sandbox uses a different agent.
 
 ```text
-Sandbox name [my-assistant]: my-hermes
+Sandbox name [hermes]: my-hermes
 ```
 
 Choose the inference provider that matches where you want Hermes model traffic to go.
 The provider options and credential environment variables are the same as the standard NemoClaw quickstart.
 For provider-specific prompts, refer to the [Respond to the Onboard Wizard](quickstart.md#respond-to-the-onboard-wizard) section and the [Inference Options](../inference/inference-options.md) page.
+The Hermes wizard does not ask for Brave Web Search because Hermes does not use NemoClaw's OpenClaw web-search configuration.
 
 After provider and policy selection, review the summary and confirm the build.
 NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
+The Hermes image includes runtime dependencies for the supported NemoClaw messaging integrations, API service, and health endpoint.
+The base image does not include unsupported Hermes integrations.
+
+:::{note}
+Hermes uses an agent-specific baseline policy that allows the Hermes binary and Python runtime to reach the required Nous Research service endpoints, PyPI, NVIDIA inference endpoints, and selected messaging APIs.
+:::
 
 ## Use Non-Interactive Setup
 
@@ -142,6 +151,7 @@ Do not append an OpenClaw `#token=` URL fragment to the Hermes endpoint.
 
 Use the same lifecycle commands as a standard NemoClaw sandbox.
 The `nemohermes` alias keeps help text and recovery messages aligned with Hermes, while targeting the same registered sandbox.
+`nemoclaw list` shows the agent type for each sandbox so you can distinguish Hermes and OpenClaw entries.
 
 ```console
 $ nemohermes my-hermes status
@@ -150,10 +160,11 @@ $ nemohermes my-hermes snapshot create --name before-change
 $ nemohermes my-hermes rebuild
 ```
 
-To change the active model or provider without rebuilding the sandbox, use the OpenShell inference route.
+To change the active model or provider without rebuilding the sandbox, use `nemohermes inference set`.
+It updates the OpenShell inference route and patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
 
 ```console
-$ openshell inference set -g nemoclaw --model <model> --provider <provider>
+$ nemohermes inference set --model <model> --provider <provider>
 ```
 
 To remove the sandbox when you are done, destroy it explicitly.
@@ -166,5 +177,5 @@ $ nemohermes my-hermes destroy
 
 - [Inference Options](../inference/inference-options.md) to choose a provider and model.
 - [Commands](../reference/commands.md) to see the full `nemohermes` alias behavior.
-- [Backup and Restore](../workspace/backup-restore.md) to preserve sandbox state before destructive operations.
+- [Backup and Restore](../manage-sandboxes/backup-restore.md) to preserve sandbox state before destructive operations.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) to inspect OpenShell events and sandbox logs.

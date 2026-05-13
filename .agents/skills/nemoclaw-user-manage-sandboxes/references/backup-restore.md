@@ -1,0 +1,158 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+# Backup and Restore Workspace Files
+
+Workspace files define your agent's personality, memory, and user context.
+They persist across sandbox restarts but are **permanently deleted** when you run `nemoclaw <name> destroy`.
+
+This guide covers snapshot commands, manual backup with CLI commands, and an automated script.
+
+## When to Back Up
+
+- **Before running `nemoclaw <name> destroy`**
+- Before major NemoClaw version upgrades
+- Periodically, if you've invested time customizing your agent
+
+## Snapshot Commands
+
+The fastest way to back up and restore sandbox state is with the built-in snapshot commands.
+Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
+Agent manifests may also declare durable top-level state files. For Hermes,
+snapshots include `SOUL.md` and the SQLite database behind `.hermes/state.db`
+using SQLite's online backup API, then restore that database through SQLite
+instead of copying a live raw database file.
+Treat snapshot directories as private local data: the Hermes database can
+contain session metadata and message history needed for a faithful restore.
+
+```console
+$ nemoclaw my-assistant snapshot create
+$ nemoclaw my-assistant snapshot list
+$ nemoclaw my-assistant snapshot restore
+```
+
+`snapshot list` prints a table of version, name, timestamp, and path. Versions (`v1`, `v2`, ..., `vN`) are computed from the timestamp order, so `vN` is always the newest snapshot.
+
+To tag a snapshot with a human-readable label, pass `--name`:
+
+```console
+$ nemoclaw my-assistant snapshot create --name before-upgrade
+```
+
+To restore a specific snapshot instead of the latest, pass a version, name, or timestamp prefix:
+
+```console
+$ nemoclaw my-assistant snapshot restore v3
+$ nemoclaw my-assistant snapshot restore before-upgrade
+$ nemoclaw my-assistant snapshot restore 2026-04-14T
+```
+
+The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
+Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that were created by older images.
+Unsafe symlinks and hard links inside sandbox state are rejected during backup creation before they can enter a snapshot.
+Credential-bearing Hermes files such as `auth.json` are intentionally excluded
+from snapshots. NemoClaw-regenerated Hermes config files (`config.yaml` and
+`.env`) are also excluded; model/provider and messaging credentials are
+recreated from host-side onboarding and OpenShell provider state during rebuild.
+For full details, see the Commands reference (use the `nemoclaw-user-reference` skill).
+
+## Manual Backup
+
+Use `openshell sandbox download` to copy files from the sandbox to your host.
+
+```console
+$ SANDBOX=my-assistant
+$ BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
+$ mkdir -p "$BACKUP_DIR"
+
+$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/SOUL.md "$BACKUP_DIR/"
+$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/USER.md "$BACKUP_DIR/"
+$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/IDENTITY.md "$BACKUP_DIR/"
+$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/AGENTS.md "$BACKUP_DIR/"
+$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
+$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
+```
+
+## Manual Restore
+
+Use `openshell sandbox upload` to push files back into a sandbox.
+
+```console
+$ SANDBOX=my-assistant
+$ BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
+
+$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/workspace/
+$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
+$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw/workspace/
+$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
+$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
+$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
+```
+
+## Using the Backup Script
+
+The repository includes a convenience script at `scripts/backup-workspace.sh`.
+
+### Backup
+
+```console
+$ ./scripts/backup-workspace.sh backup my-assistant
+Backing up workspace from sandbox 'my-assistant'...
+Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
+```
+
+### Restore
+
+Restore from the most recent backup:
+
+```console
+$ ./scripts/backup-workspace.sh restore my-assistant
+```
+
+Restore from a specific timestamp:
+
+```console
+$ ./scripts/backup-workspace.sh restore my-assistant 20260320-120000
+```
+
+## Verifying a Backup
+
+List backed-up files to confirm completeness:
+
+```console
+$ ls -la ~/.nemoclaw/backups/20260320-120000/
+AGENTS.md
+IDENTITY.md
+MEMORY.md
+SOUL.md
+USER.md
+memory/
+```
+
+## Multi-Agent Deployments
+
+When OpenClaw is configured with multiple named agents, each agent has its own
+workspace directory (`workspace-main/`, `workspace-support/`, `workspace-ops/`,
+and so on — see Multi-Agent Deployments (use the `nemoclaw-user-manage-sandboxes` skill)).
+
+`nemoclaw <name> snapshot create` automatically discovers every `workspace-*/`
+directory under the sandbox state tree and includes it in the snapshot bundle
+alongside the default `workspace/`. `snapshot restore` re-applies the full
+per-agent set. No manual per-workspace backup pattern is needed.
+
+The sandbox entrypoint ensures every per-agent workspace lives directly under
+the persistent `.openclaw/` tree, so state also survives `openshell sandbox restart`.
+
+### Shared files across agents
+
+Files that operators typically want consistent across every per-agent workspace
+(`AGENTS.md`, shared skills, common templates) are **not** synced automatically.
+Each workspace is independent; changes in one don't propagate. Operators that
+need this either copy the shared files explicitly to each workspace after
+editing, or maintain a host-side sync layer. Tracking shared-file tooling
+(shared mount, `workspaces list` command) in
+[#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
+
+## Next Steps
+
+- Workspace Files overview (use the `nemoclaw-user-manage-sandboxes` skill) to learn what each file does
+- Commands reference (use the `nemoclaw-user-reference` skill)

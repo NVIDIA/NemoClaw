@@ -12,18 +12,20 @@ content:
   type: how_to
   difficulty: intermediate
   audience: ["developer", "engineer"]
+skill:
+  priority: 10
 status: published
 ---
 
 <!--
-  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
   SPDX-License-Identifier: Apache-2.0
 -->
 
 # Use a Local Inference Server
 
 NemoClaw can route inference to a model server running on your machine instead of a cloud API.
-This page covers Ollama, compatible-endpoint paths for other servers, and two experimental options for vLLM and NVIDIA NIM.
+This page covers Ollama, compatible-endpoint paths for other servers, and experimental managed options for vLLM and NVIDIA NIM.
 
 All approaches use the same `inference.local` routing model.
 The agent inside the sandbox never connects to your model server directly.
@@ -33,15 +35,16 @@ OpenShell intercepts inference traffic and forwards it to the local endpoint you
 
 - NemoClaw installed.
   Refer to the [Quickstart](../get-started/quickstart.md) if you have not installed yet.
-- A local model server running, or Ollama installed. The NemoClaw onboard wizard can also start Ollama for you.
+- A local model server running, or a supported Ollama, vLLM, or NIM setup that the NemoClaw onboard wizard can use, start, or install.
 
 ## Ollama
 
 Ollama is the default local inference option.
 The onboard wizard detects Ollama automatically when it is installed or running on the host.
 
-If Ollama is not running, NemoClaw starts it for you.
-On macOS, the wizard also offers to install Ollama through Homebrew if it is not present.
+If Ollama is installed but not running, NemoClaw starts it for you.
+On macOS and Linux, the wizard can also offer to install Ollama when it is not present.
+On WSL, the wizard can use, start, restart, or install Ollama on the Windows host through PowerShell interop.
 
 Run the onboard wizard.
 
@@ -51,8 +54,27 @@ $ nemoclaw onboard
 
 Select **Local Ollama** from the provider list.
 NemoClaw lists installed models or offers starter models if none are installed.
+On hosts with at least 32 GiB of detected GPU memory, the starter list includes `qwen3.6:35b` and selects it by default.
 It pulls the selected model, loads it into memory, and validates it before continuing.
-On WSL, if Ollama is running on the Windows host, NemoClaw pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
+If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
+The validation also requires structured chat-completions tool calls.
+If the model leaks tool-call JSON as plain message text, onboarding stops so you can choose a model that returns tool calls in the expected response field.
+On WSL, if you choose the Windows-host Ollama path, NemoClaw uses `host.docker.internal:11434` and pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
+
+### WSL with Windows-Host Ollama
+
+When NemoClaw runs inside WSL, the provider menu can include Windows-host Ollama actions:
+
+- **Use Ollama on Windows host** when the Windows daemon is already reachable.
+- **Restart Ollama on Windows host** when the daemon is installed but only bound to Windows loopback.
+- **Start Ollama on Windows host** when Ollama is installed but not running.
+- **Install Ollama on Windows host** when Windows does not have Ollama installed.
+
+The install and restart paths set `OLLAMA_HOST=0.0.0.0:11434` on the Windows side so Docker and WSL can reach the daemon through `host.docker.internal`.
+After an install or restart action, NemoClaw relaunches Ollama from the detected Windows tray app or verified `ollama.exe` path and waits until `host.docker.internal:11434` responds.
+If the daemon does not become reachable, onboarding prints PowerShell commands you can run to inspect the Windows-side process and port state.
+Use one Ollama instance on port `11434` at a time.
+If both WSL and Windows-host Ollama are running, pick the intended menu entry during onboarding so NemoClaw validates and pulls models against the right daemon.
 
 :::{caution}
 Ollama is convenient for local chat, but some model/template combinations can
@@ -64,19 +86,23 @@ tool, switch to vLLM with `--enable-auto-tool-choice` and the correct
 
 ### Authenticated Reverse Proxy
 
-NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated
-reverse proxy on `0.0.0.0:11435`.
+On non-WSL hosts, NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated reverse proxy on `0.0.0.0:11435`.
+The native install/start paths also reset NemoClaw-managed systemd launches to the loopback binding.
 Containers and other hosts on the local network reach Ollama only through the
 proxy, which validates a Bearer token before forwarding requests.
-Ollama itself is never exposed without authentication.
+On that native path, NemoClaw never exposes Ollama without authentication.
 
-The onboard wizard manages the proxy automatically:
+WSL Ollama paths do not use this proxy.
+Windows-host Ollama uses the Windows daemon through `host.docker.internal`.
+
+For non-WSL Ollama setups, the onboard wizard manages the proxy automatically:
 
 - Generates a random 24-byte token on first run and stores it in
   `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
 - Starts the proxy after Ollama and verifies it before continuing.
 - Cleans up stale proxy processes from previous runs.
 - Retries the sandbox container reachability check and can continue when the host-side proxy is healthy even if the container probe fails.
+- Stops matching proxy processes during uninstall before deleting NemoClaw state.
 - Reuses the persisted token after a host reboot so you do not need to re-run
   onboard.
 
@@ -85,9 +111,10 @@ token as its `OPENAI_API_KEY` credential.
 OpenShell's L7 proxy injects the token at egress, so the agent inside the
 sandbox never sees the token directly.
 
-`GET /api/tags` is exempt from authentication so container health checks
-continue to work.
-All other endpoints (including `POST /api/tags`) require the Bearer token.
+All proxy endpoints require the Bearer token, including `GET /api/tags`.
+Internal health and reachability checks run via the proxy treat any HTTP
+response (including `401`) as proof the proxy is alive — they only fail
+when nothing answers at all.
 
 If Ollama is already running on a non-loopback address when you start onboard,
 the wizard restarts it on `127.0.0.1:11434` so the proxy is the only network
@@ -104,15 +131,20 @@ This does not delete downloaded model files.
 ```console
 $ NEMOCLAW_PROVIDER=ollama \
   NEMOCLAW_MODEL=qwen2.5:14b \
-  nemoclaw onboard --non-interactive
+  nemoclaw onboard --non-interactive --yes
 ```
 
 If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
+
+`--yes` (or `NEMOCLAW_YES=1`) authorises the Ollama model download without an interactive confirmation prompt.
+Under `--non-interactive`, `--yes` (or `NEMOCLAW_YES=1`) is required to authorise the download — onboard exits otherwise, since it cannot prompt.
+Run onboard without `--non-interactive` to get the interactive `[y/N]` prompt that shows the model size before downloading.
 
 | Variable | Purpose |
 |---|---|
 | `NEMOCLAW_PROVIDER` | Set to `ollama`. |
 | `NEMOCLAW_MODEL` | Ollama model tag to use. Optional. |
+| `NEMOCLAW_YES` | Set to `1` to auto-accept the model-download confirmation prompt. Optional. |
 
 ## OpenAI-Compatible Server
 
@@ -208,18 +240,30 @@ $ NEMOCLAW_PROVIDER=anthropicCompatible \
   nemoclaw onboard --non-interactive
 ```
 
-## vLLM Auto-Detection (Experimental)
+## vLLM (Experimental)
 
 When vLLM is already running on `localhost:8000`, NemoClaw can detect it automatically and query the `/v1/models` endpoint to determine the loaded model.
+On supported Linux hosts with NVIDIA GPUs, the onboard wizard can also install or start a managed vLLM container for you.
 
-Set the experimental flag and run onboard.
+For an already-running vLLM server, run `nemoclaw onboard` and select **Local vLLM [experimental]** from the provider list.
 
 ```console
-$ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
+$ nemoclaw onboard
 ```
 
-Select **Local vLLM [experimental]** from the provider list.
-NemoClaw detects the running model and validates the endpoint.
+If vLLM is already running, NemoClaw detects the running model and validates the endpoint.
+If vLLM is not running and your host matches a managed profile, set `NEMOCLAW_EXPERIMENTAL=1`, rerun `nemoclaw onboard`, and select the **Install vLLM** or **Start vLLM** entry.
+NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, and prints progress markers while the model loads.
+The first run can take 10 to 30 minutes.
+Later runs reuse the cached image and model weights.
+
+Managed vLLM uses these profiles:
+
+| Host profile | Default model |
+|---|---|
+| DGX Spark | `Qwen/Qwen3.6-27B-FP8` |
+| DGX Station | `Qwen/Qwen3.6-27B-FP8` |
+| Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 :::{note}
 NemoClaw forces the `chat/completions` API path for vLLM.
@@ -228,14 +272,23 @@ The vLLM `/v1/responses` endpoint does not run the `--tool-call-parser`, so tool
 
 ### Non-Interactive Setup
 
+Use an already-running vLLM server:
+
 ```console
-$ NEMOCLAW_EXPERIMENTAL=1 \
-  NEMOCLAW_PROVIDER=vllm \
+$ NEMOCLAW_PROVIDER=vllm \
   nemoclaw onboard --non-interactive
 ```
 
-NemoClaw auto-detects the model from the running vLLM instance.
-To override the model, set `NEMOCLAW_MODEL`.
+Install or start managed vLLM when a supported profile is detected:
+
+```console
+$ NEMOCLAW_EXPERIMENTAL=1 \
+  NEMOCLAW_PROVIDER=install-vllm \
+  nemoclaw onboard --non-interactive
+```
+
+NemoClaw records the model returned by vLLM's `/v1/models` endpoint.
+Start vLLM with the model you want before onboarding if you manage the server yourself.
 
 ## NVIDIA NIM (Experimental)
 
@@ -249,11 +302,14 @@ $ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
 
 Select **Local NVIDIA NIM [experimental]** from the provider list.
 NemoClaw filters available models by GPU VRAM, pulls the NIM container image, starts it, and waits for it to become healthy before continuing.
+On hosts with mixed NVIDIA GPU models, the preflight summary shows each detected GPU model and the total VRAM so you can confirm which device class the model selection used.
 
 NIM container images are hosted on `nvcr.io` and require NGC registry authentication before `docker pull` succeeds.
 If Docker is not already logged in to `nvcr.io`, onboard prompts for an [NGC API key](https://org.ngc.nvidia.com/setup/api-key) and runs `docker login nvcr.io` over `--password-stdin` so the key is never written to disk or shell history.
 The prompt masks the key during input and retries once on a bad key before failing.
 In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run `docker login nvcr.io` yourself, then re-run `nemoclaw onboard --non-interactive`.
+If `NGC_API_KEY` or `NVIDIA_API_KEY` is already exported, NemoClaw passes it into the managed NIM container through the process environment instead of command-line arguments.
+If the NIM container exits before the health endpoint becomes ready, onboarding stops early and prints the last container log lines.
 
 :::{note}
 NIM uses vLLM internally.
@@ -304,10 +360,10 @@ Refer to [Switch Inference Models](switch-inference-providers.md) for the full p
 For compatible endpoints, the command is:
 
 ```console
-$ openshell inference set --provider compatible-endpoint --model <model-name>
+$ nemoclaw inference set --provider compatible-endpoint --model <model-name>
 ```
 
-If the provider itself needs to change (for example, switching from vLLM to a cloud API), rerun `nemoclaw onboard`.
+If the provider itself needs to change (for example, switching from vLLM to a cloud API), pass the new provider to `nemoclaw inference set`.
 
 ## Next Steps
 

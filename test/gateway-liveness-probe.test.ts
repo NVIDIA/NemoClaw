@@ -29,9 +29,14 @@ describe("gateway liveness probe (#2020)", () => {
 
   it("preflight probes the container when gatewayReuseState is 'healthy'", () => {
     // The preflight section must call the probe before entering the port loop.
-    // Find the first gatewayReuseState assignment and the port loop.
-    const preflightProbe = content.match(
-      /let gatewayReuseState = getGatewayReuseState[\s\S]*?verifyGatewayContainerRunning\(\)[\s\S]*?gatewayReuseState = "missing"/,
+    // Scope to preflight so the regex can't accidentally match the main onboard block.
+    const preflightStart = content.indexOf("async function preflight(");
+    const preflightEnd = content.indexOf("async function startGatewayWithOptions(");
+    expect(preflightStart).toBeGreaterThanOrEqual(0);
+    expect(preflightEnd).toBeGreaterThan(preflightStart);
+    const preflightSection = content.slice(preflightStart, preflightEnd);
+    const preflightProbe = preflightSection.match(
+      /let gatewayReuseState = gatewaySnapshot\.gatewayReuseState[\s\S]*?verifyGatewayContainerRunning\(\)[\s\S]*?destroyGatewayForReuse\(/,
     );
     expect(preflightProbe).toBeTruthy();
   });
@@ -41,7 +46,7 @@ describe("gateway liveness probe (#2020)", () => {
     // Scope to the onboard() function so the regex can't accidentally match the preflight block.
     const onboardSection = content.slice(content.indexOf("async function onboard("));
     const mainFlowProbe = onboardSection.match(
-      /let gatewayReuseState = getGatewayReuseState[\s\S]*?verifyGatewayContainerRunning\(\)[\s\S]*?const canReuseHealthyGateway/,
+      /let gatewayReuseState = gatewaySnapshot\.gatewayReuseState[\s\S]*?verifyGatewayContainerRunning\(\)[\s\S]*?const canReuseHealthyGateway/,
     );
     expect(mainFlowProbe).toBeTruthy();
   });
@@ -72,16 +77,72 @@ describe("gateway liveness probe (#2020)", () => {
     expect(cleanupAfterProbe).toBeTruthy();
   });
 
-  it("does not modify isGatewayHealthy() in gateway-state.ts", () => {
+  it("does not keep stale or drifted gateways reusable when cleanup fails", () => {
+    const cleanupHelper = fs.readFileSync(
+      path.join(ROOT, "src/lib/onboard/gateway-cleanup.ts"),
+      "utf-8",
+    );
+    const failedStaleCleanup = content.match(
+      /destroyGatewayForReuse\(\s*destroyGateway,\s*"  ✓ Stale gateway metadata cleaned up",\s*"  ! Stale gateway metadata cleanup failed; leaving registry state intact\."/g,
+    );
+    const failedDriftCleanup = content.match(
+      /destroyGatewayForReuse\(\s*destroyGateway,\s*"  ✓ Previous gateway cleaned up",\s*"  ! Previous gateway cleanup failed; leaving registry state intact\."/g,
+    );
+
+    expect(cleanupHelper).toMatch(/return "stale"/);
+    expect(failedStaleCleanup?.length).toBeGreaterThanOrEqual(2);
+    expect(failedDriftCleanup?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("main onboard flow aborts (does not downgrade or destroy) when Docker is unknown and HTTP is unready (#3258, #2020)", () => {
+    // Regression guard: when verifyGatewayContainerRunning() returns "unknown"
+    // and the host HTTP probe also fails, we cannot tell whether the existing
+    // gateway is live. Per #2020 the branch must stay non-destructive, and
+    // it must not downgrade gatewayReuseState to "missing" — that would feed
+    // execution into startGatewayWithOptions, whose retry hook destroys the
+    // gateway between failed attempts and would tear down a possibly-live
+    // gateway when Docker is just temporarily unavailable.
+    const onboardSection = content.slice(content.indexOf("async function onboard("));
+    const unknownBranchMatch = onboardSection.match(
+      /containerState === "unknown"[\s\S]*?waitForGatewayHttpReady\(\)[\s\S]*?\} else \{[\s\S]*?\}\s*\}/,
+    );
+    expect(unknownBranchMatch).toBeTruthy();
+    if (!unknownBranchMatch) {
+      throw new Error('Expected containerState === "unknown" branch in main onboard()');
+    }
+    const branchBody = unknownBranchMatch[0];
+    // Must bail out — no fall-through into start-gateway / orphan-cleanup paths.
+    expect(branchBody).toMatch(/process\.exit\(/);
+    // Must not downgrade reuse state (would feed startGatewayWithOptions whose
+    // retry hook calls destroyGateway, tearing down a possibly-live gateway).
+    expect(branchBody).not.toMatch(/gatewayReuseState\s*=\s*"missing"/);
+  });
+
+  it("Docker-driver gateway startup requires a live probe before reporting healthy (#3111)", () => {
+    const dockerStart = content.indexOf("async function startDockerDriverGateway(");
+    const dockerEnd = content.indexOf("\nasync function startGateway(", dockerStart);
+    expect(dockerStart).toBeGreaterThanOrEqual(0);
+    expect(dockerEnd).toBeGreaterThan(dockerStart);
+    const dockerSection = content.slice(dockerStart, dockerEnd);
+
+    expect(dockerSection).toMatch(
+      /isGatewayHealthy\(status, namedInfo, currentInfo\)[\s\S]*?await isGatewayTcpReady\(\)[\s\S]*?Docker-driver gateway is healthy/,
+    );
+    expect(dockerSection).toMatch(
+      /registerDockerDriverGatewayEndpoint\(\)[\s\S]*?await isDockerDriverGatewayHttpReady\(\)[\s\S]*?Reusing existing Docker-driver gateway/,
+    );
+  });
+
+  it("does not modify isGatewayHealthy() in src/lib/state/gateway.ts", () => {
     // isGatewayHealthy() must remain a pure function — no I/O.
     // Scope the check to the function body so unrelated helpers don't cause false failures.
-    const gsContent = fs.readFileSync(path.join(ROOT, "src/lib/gateway-state.ts"), "utf-8");
+    const gsContent = fs.readFileSync(path.join(ROOT, "src/lib/state/gateway.ts"), "utf-8");
     const fnMatch = gsContent.match(
       /(?:function isGatewayHealthy|const isGatewayHealthy\b)[\s\S]*?\n\}/,
     );
     expect(fnMatch).toBeTruthy();
     if (!fnMatch) {
-      throw new Error("Expected isGatewayHealthy() in src/lib/gateway-state.ts");
+      throw new Error("Expected isGatewayHealthy() in src/lib/state/gateway.ts");
     }
     const fnBody = fnMatch[0];
     expect(fnBody).not.toContain("docker");

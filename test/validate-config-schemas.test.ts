@@ -215,6 +215,67 @@ describe("sandbox-policy.schema.json", () => {
     };
     expect(validate(bad)).toBe(false);
   });
+
+  it("accepts sandbox-policy native WebSocket text rules and credential rewrite", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [
+            {
+              host: "gateway.example.com",
+              port: 443,
+              protocol: "websocket",
+              enforcement: "enforce",
+              websocket_credential_rewrite: true,
+              allowed_ips: ["10.0.0.0/8", "172.16.0.0/12"],
+              rules: [
+                { allow: { method: "GET", path: "/**" } },
+                { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "websocket policy");
+  });
+
+  it("accepts sandbox-policy request-body credential rewrite on REST endpoints", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        slack: {
+          name: "Slack",
+          endpoints: [
+            {
+              host: "api.slack.com",
+              port: 443,
+              protocol: "rest",
+              enforcement: "enforce",
+              request_body_credential_rewrite: true,
+              rules: [{ allow: { method: "POST", path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "rest body rewrite policy");
+  });
+
+  it("rejects sandbox-policy endpoint with protocol websocket but no rules or access", () => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
 });
 
 // ── Policy presets ───────────────────────────────────────────────────────────
@@ -265,6 +326,67 @@ describe("policy-preset.schema.json", () => {
     };
     expect(validate(bad)).toBe(false);
   });
+
+  it("accepts preset native WebSocket text rules and credential rewrite", () => {
+    const valid = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [
+            {
+              host: "gateway.example.com",
+              port: 443,
+              protocol: "websocket",
+              enforcement: "enforce",
+              websocket_credential_rewrite: true,
+              allowed_ips: ["10.0.0.0/8", "172.16.0.0/12"],
+              rules: [
+                { allow: { method: "GET", path: "/**" } },
+                { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "websocket preset");
+  });
+
+  it("accepts preset request-body credential rewrite on REST endpoints", () => {
+    const valid = {
+      preset: { name: "slack", description: "Slack" },
+      network_policies: {
+        slack: {
+          name: "Slack",
+          endpoints: [
+            {
+              host: "api.slack.com",
+              port: 443,
+              protocol: "rest",
+              enforcement: "enforce",
+              request_body_credential_rewrite: true,
+              rules: [{ allow: { method: "POST", path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "rest body rewrite preset");
+  });
+
+  it("rejects preset endpoint with protocol websocket but no rules", () => {
+    const bad = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
 });
 
 // ── OpenClaw plugin manifest ─────────────────────────────────────────────────
@@ -285,6 +407,105 @@ describe("openclaw-plugin.schema.json", () => {
 
   it("rejects plugin with invalid version format", () => {
     const bad = { ...cloneObject(data), version: "not-semver" };
+    expect(validate(bad)).toBe(false);
+  });
+});
+
+// ── Model-Specific Setup ────────────────────────────────────────────────────
+
+describe("model-specific-setup/schema.json", () => {
+  const validate = compileSchema("nemoclaw-blueprint/model-specific-setup/schema.json");
+  const data = loadJSON(
+    repoPath("nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json"),
+  );
+
+  it("accepts the OpenClaw Kimi manifest", () => {
+    expectValid(validate, data, "kimi-k2.6-managed-inference.json");
+  });
+
+  it("rejects OpenClaw manifests with Hermes effects", () => {
+    const bad = {
+      ...cloneObject(data),
+      effects: {
+        hermesCompat: {
+          future: true,
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects manifests with empty match objects", () => {
+    const bad = {
+      ...cloneObject(data),
+      match: {},
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects whitespace-only manifest strings", () => {
+    const bad = {
+      ...cloneObject(data),
+      description: "   ",
+      match: {
+        modelIds: ["   "],
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects OpenClaw plugin paths outside the staged plugin trees", () => {
+    for (const [pathValue, loadPathValue] of [
+      ["/etc/passwd", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+      ["../secrets", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+      ["openclaw-plugins/subdir/../escape", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+      ["openclaw-plugins/fixture", "/etc/passwd"],
+      ["openclaw-plugins/fixture", "/usr/local/share/nemoclaw/openclaw-plugins/subdir/../escape"],
+    ]) {
+      const bad = {
+        ...cloneObject(data),
+        effects: {
+          openclawPlugins: [
+            {
+              id: "fixture-plugin",
+              path: pathValue,
+              loadPath: loadPathValue,
+            },
+          ],
+        },
+      };
+      expect(validate(bad)).toBe(false);
+    }
+  });
+
+  it("accepts OpenClaw plugin paths inside the staged plugin trees", () => {
+    const valid = {
+      ...cloneObject(data),
+      effects: {
+        openclawPlugins: [
+          {
+            id: "fixture-plugin",
+            path: "openclaw-plugins/pluginA/main.js",
+            loadPath: "/usr/local/share/nemoclaw/openclaw-plugins/dir/sub_dir/plugin.so",
+          },
+        ],
+      },
+    };
+    expectValid(validate, valid, "fixture plugin paths");
+  });
+
+  it("rejects Hermes manifests with OpenClaw effects", () => {
+    const bad = {
+      id: "fixture-hermes",
+      agent: "hermes",
+      description: "Fixture Hermes setup",
+      match: {
+        modelIds: ["fixture/hermes"],
+      },
+      effects: {
+        openclawCompat: {},
+      },
+    };
     expect(validate(bad)).toBe(false);
   });
 });

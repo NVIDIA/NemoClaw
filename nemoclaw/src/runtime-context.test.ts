@@ -330,11 +330,12 @@ network_policies: {}
 
 describe("registerRuntimeContext", () => {
   describe("hook registration", () => {
-    it("registers a before_agent_start hook", () => {
+    it("registers a before_prompt_build hook", () => {
       const { api } = makeMockApi();
       const onSpy = vi.spyOn(api, "on");
       registerRuntimeContext(api, defaultConfig);
-      expect(onSpy).toHaveBeenCalledWith("before_agent_start", expect.any(Function));
+      expect(onSpy).toHaveBeenCalledWith("before_prompt_build", expect.any(Function));
+      expect(onSpy).not.toHaveBeenCalledWith(`before_${"agent_start"}`, expect.any(Function));
     });
   });
 
@@ -342,7 +343,11 @@ describe("registerRuntimeContext", () => {
     it("returns an object with prependContext", async () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
-      const result = await api._trigger("before_agent_start", {}, { sessionKey: nextSessionKey() });
+      const result = await api._trigger(
+        "before_prompt_build",
+        {},
+        { sessionKey: nextSessionKey() },
+      );
       expect(result).toHaveProperty("prependContext");
     });
 
@@ -350,7 +355,7 @@ describe("registerRuntimeContext", () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
       const result = (await api._trigger(
-        "before_agent_start",
+        "before_prompt_build",
         {},
         { sessionKey: nextSessionKey() },
       )) as {
@@ -364,7 +369,7 @@ describe("registerRuntimeContext", () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
       const result = (await api._trigger(
-        "before_agent_start",
+        "before_prompt_build",
         {},
         { sessionKey: nextSessionKey() },
       )) as {
@@ -377,7 +382,7 @@ describe("registerRuntimeContext", () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
       const result = (await api._trigger(
-        "before_agent_start",
+        "before_prompt_build",
         {},
         { sessionKey: nextSessionKey() },
       )) as {
@@ -390,7 +395,7 @@ describe("registerRuntimeContext", () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
       const result = (await api._trigger(
-        "before_agent_start",
+        "before_prompt_build",
         {},
         { sessionKey: nextSessionKey() },
       )) as {
@@ -403,7 +408,7 @@ describe("registerRuntimeContext", () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
       const result = (await api._trigger(
-        "before_agent_start",
+        "before_prompt_build",
         {},
         { sessionKey: nextSessionKey() },
       )) as {
@@ -416,7 +421,7 @@ describe("registerRuntimeContext", () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
       const result = (await api._trigger(
-        "before_agent_start",
+        "before_prompt_build",
         {},
         { sessionKey: nextSessionKey() },
       )) as {
@@ -431,16 +436,20 @@ describe("registerRuntimeContext", () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
       const key = { sessionKey: nextSessionKey() };
-      await api._trigger("before_agent_start", {}, key);
-      const second = await api._trigger("before_agent_start", {}, key);
+      await api._trigger("before_prompt_build", {}, key);
+      const second = await api._trigger("before_prompt_build", {}, key);
       expect(second).toBeUndefined();
     });
 
     it("re-injects for a different session key", async () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
-      await api._trigger("before_agent_start", {}, { sessionKey: nextSessionKey() });
-      const result = await api._trigger("before_agent_start", {}, { sessionKey: nextSessionKey() });
+      await api._trigger("before_prompt_build", {}, { sessionKey: nextSessionKey() });
+      const result = await api._trigger(
+        "before_prompt_build",
+        {},
+        { sessionKey: nextSessionKey() },
+      );
       expect(result).toHaveProperty("prependContext");
     });
   });
@@ -452,7 +461,7 @@ describe("registerRuntimeContext", () => {
       const key = { sessionKey: nextSessionKey() };
 
       // First call: Running
-      await api._trigger("before_agent_start", {}, key);
+      await api._trigger("before_prompt_build", {}, key);
 
       // Phase changes
       mockExecFile({
@@ -461,7 +470,7 @@ describe("registerRuntimeContext", () => {
         "policy get openclaw": POLICY_SUMMARY,
       });
 
-      const result = (await api._trigger("before_agent_start", {}, key)) as {
+      const result = (await api._trigger("before_prompt_build", {}, key)) as {
         prependContext: string;
       };
       expect(result.prependContext).toContain("<nemoclaw-runtime-update>");
@@ -473,7 +482,7 @@ describe("registerRuntimeContext", () => {
       registerRuntimeContext(api, defaultConfig);
       const key = { sessionKey: nextSessionKey() };
 
-      await api._trigger("before_agent_start", {}, key);
+      await api._trigger("before_prompt_build", {}, key);
 
       mockExecFile({
         "sandbox get openclaw": SANDBOX_RUNNING,
@@ -481,7 +490,7 @@ describe("registerRuntimeContext", () => {
         "policy get openclaw": "Version: 1.1\nHash: newHash999\nStatus: active",
       });
 
-      const result = await api._trigger("before_agent_start", {}, key);
+      const result = await api._trigger("before_prompt_build", {}, key);
       expect(result).toHaveProperty("prependContext");
       expect((result as { prependContext: string }).prependContext).toContain(
         "<nemoclaw-runtime-update>",
@@ -493,7 +502,7 @@ describe("registerRuntimeContext", () => {
       registerRuntimeContext(api, defaultConfig);
       const key = { sessionKey: nextSessionKey() };
 
-      await api._trigger("before_agent_start", {}, key);
+      await api._trigger("before_prompt_build", {}, key);
 
       mockExecFile({
         "sandbox get openclaw": SANDBOX_STOPPED,
@@ -501,7 +510,7 @@ describe("registerRuntimeContext", () => {
         "policy get openclaw": "Version: 2.0\nHash: new123\nStatus: active",
       });
 
-      const result = (await api._trigger("before_agent_start", {}, key)) as {
+      const result = (await api._trigger("before_prompt_build", {}, key)) as {
         prependContext: string;
       };
       expect(result.prependContext).toContain("<nemoclaw-runtime-update>");
@@ -518,7 +527,7 @@ describe("registerRuntimeContext", () => {
       const { api, warnMessages } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
       const result = (await api._trigger(
-        "before_agent_start",
+        "before_prompt_build",
         {},
         { sessionKey: nextSessionKey() },
       )) as {
@@ -540,7 +549,7 @@ describe("registerRuntimeContext", () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
       const result = (await api._trigger(
-        "before_agent_start",
+        "before_prompt_build",
         {},
         { sessionKey: nextSessionKey() },
       )) as {
@@ -558,7 +567,11 @@ describe("registerRuntimeContext", () => {
 
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
-      const result = await api._trigger("before_agent_start", {}, { sessionKey: nextSessionKey() });
+      const result = await api._trigger(
+        "before_prompt_build",
+        {},
+        { sessionKey: nextSessionKey() },
+      );
       // Null fingerprint fields are handled gracefully — context is still injected
       expect(result).toHaveProperty("prependContext");
     });
@@ -571,8 +584,8 @@ describe("registerRuntimeContext", () => {
 
       // Two separate calls with the same session key
       const sessionKey = "isolated-session-key";
-      const first = await api._trigger("before_agent_start", {}, { sessionKey });
-      const second = await api._trigger("before_agent_start", {}, { sessionKey });
+      const first = await api._trigger("before_prompt_build", {}, { sessionKey });
+      const second = await api._trigger("before_prompt_build", {}, { sessionKey });
 
       expect(first).toHaveProperty("prependContext");
       expect(second).toBeUndefined();
@@ -582,8 +595,8 @@ describe("registerRuntimeContext", () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, defaultConfig);
 
-      const first = await api._trigger("before_agent_start", {}, {});
-      const second = await api._trigger("before_agent_start", {}, {});
+      const first = await api._trigger("before_prompt_build", {}, {});
+      const second = await api._trigger("before_prompt_build", {}, {});
 
       // Without a session key caching is disabled — both calls must inject context.
       expect(first).toHaveProperty("prependContext");
@@ -603,7 +616,7 @@ describe("registerRuntimeContext", () => {
       const { api } = makeMockApi();
       registerRuntimeContext(api, cfg);
 
-      const result = await api._trigger("before_agent_start", {}, null);
+      const result = await api._trigger("before_prompt_build", {}, null);
       expect(result).toHaveProperty("prependContext");
     });
   });

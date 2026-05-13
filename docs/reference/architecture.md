@@ -3,7 +3,7 @@ title:
   page: "NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure"
   nav: "Architecture"
 description:
-  main: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
+  main: "Learn how NemoClaw combines a host CLI, sandbox plugin, and versioned blueprint to move OpenClaw into a controlled sandbox."
   agent: "Describes the NemoClaw plugin and blueprint architecture and how they orchestrate the OpenClaw sandbox. Use when looking up architecture, plugin structure, or blueprint design."
 keywords: ["nemoclaw architecture", "nemoclaw plugin blueprint structure"]
 topics: ["generative_ai", "ai_agents"]
@@ -22,7 +22,7 @@ status: published
 
 # Architecture
 
-NemoClaw has two main components: a TypeScript plugin that integrates with the OpenClaw CLI, and a Python blueprint that orchestrates OpenShell resources.
+NemoClaw combines a host CLI, a TypeScript plugin that runs with OpenClaw inside the sandbox, and a versioned YAML blueprint that defines the sandbox image, policies, and inference profiles applied through OpenShell.
 
 ## System Overview
 
@@ -40,7 +40,7 @@ graph LR
     USER(["👤 User"]):::user
 
     subgraph EXTERNAL["External Services"]
-        INFERENCE["Inference Provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM</small>"]:::external
+        INFERENCE["Inference Provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM · Model Router</small>"]:::external
         MSGAPI["Messaging Platforms<br/><small>Telegram · Discord · Slack</small>"]:::external
         INTERNET["Internet<br/><small>PyPI · npm · GitHub · APIs</small>"]:::external
     end
@@ -103,7 +103,7 @@ graph TB
     classDef pod fill:#444,stroke:#76b900,color:#fff,stroke-width:2px
     classDef external fill:#f5f5f5,stroke:#e0e0e0,color:#1a1a1a,stroke-width:1px
 
-    subgraph HOST["Host machine · Linux / macOS / WSL2 / DGX Spark"]
+    subgraph HOST["Host machine · Linux / macOS / WSL2 / DGX Spark / DGX Station"]
         direction TB
         CLI["nemoclaw CLI<br/><small>bin/nemoclaw.js → dist/<br/>onboard · connect · status · logs</small>"]:::cli
 
@@ -126,7 +126,7 @@ graph TB
         end
     end
 
-    INFER["Inference provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM</small>"]:::external
+    INFER["Inference provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM · Model Router</small>"]:::external
 
     CLI -->|"openshell CLI<br/>(orchestrates)"| GWCON
     AGENT -->|"inference requests<br/><small>placeholder credentials</small>"| PROXY
@@ -188,13 +188,15 @@ nemoclaw/
 
 ## NemoClaw Blueprint
 
-The blueprint is a versioned Python artifact with its own release stream.
-The plugin resolves, verifies, and executes the blueprint as a subprocess.
-The blueprint drives all interactions with the OpenShell CLI.
+The blueprint is a versioned YAML package with its own release stream.
+The runner resolves, verifies, and applies the blueprint through the OpenShell CLI.
+The blueprint defines the sandbox shape, default policies, and inference profiles; the runner performs the OpenShell operations.
 
 ```text
 nemoclaw-blueprint/
 ├── blueprint.yaml                  Manifest: version, profiles, compatibility
+├── model-specific-setup/           Agent-scoped model/provider compatibility manifests
+├── router/                         Model Router config and routing engine
 ├── policies/
 │   └── openclaw-sandbox.yaml       Default network + filesystem policy
 ```
@@ -245,6 +247,12 @@ OpenShell intercepts them and routes to the configured provider:
 ```text
 Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build.nvidia.com)
 ```
+
+When you select the Model Router provider, the OpenShell gateway routes to a host-side router process instead of a single upstream model.
+The router selects from the configured pool, then calls the upstream NVIDIA endpoint with the credential held outside the sandbox.
+
+Some model and provider combinations need agent-specific compatibility setup.
+NemoClaw keeps those declarations under `nemoclaw-blueprint/model-specific-setup/<agent>/` so OpenClaw and Hermes fixes can be tested and reviewed independently.
 
 Refer to [Inference Options](../inference/inference-options.md) for provider configuration details.
 

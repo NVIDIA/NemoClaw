@@ -32,6 +32,8 @@
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash test/e2e/test-gpu-e2e.sh
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 PASS=0
@@ -187,7 +189,7 @@ else
 fi
 
 # If the Ollama installer started a system service, stop it so onboard
-# can start Ollama with OLLAMA_HOST=0.0.0.0:11434 (required for containers).
+# can restart Ollama on loopback and expose only the authenticated proxy to containers.
 # This needs the ollama process to be owned by our user, or systemctl access.
 if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   info "Ollama service is running — attempting to stop for clean onboard..."
@@ -276,7 +278,39 @@ else
   fail "nemoclaw ${SANDBOX_NAME} status failed"
 fi
 
-# 4c: Inference provider is ollama-local
+# 4c: Direct sandbox GPU is enabled by default on NVIDIA hosts
+if status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1); then
+  if echo "$status_output" | grep -Fq "Sandbox GPU: enabled"; then
+    pass "Sandbox GPU is enabled by default"
+  else
+    fail "Sandbox GPU is not enabled in status output"
+  fi
+else
+  fail "Could not read sandbox GPU status"
+fi
+
+# 4d: Direct sandbox GPU proofs
+if openshell sandbox exec -n "$SANDBOX_NAME" -- nvidia-smi >/dev/null 2>&1; then
+  pass "Sandbox nvidia-smi works"
+else
+  fail "Sandbox nvidia-smi failed"
+fi
+
+# shellcheck disable=SC2016  # expanded inside the sandbox by sh -lc
+if openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc \
+  'tid="$(ls /proc/self/task | head -n 1)"; old="$(cat "/proc/self/task/${tid}/comm" 2>/dev/null || true)"; printf nemoclaw-gpu >"/proc/self/task/${tid}/comm"; [ -z "$old" ] || printf "%s" "$old" >"/proc/self/task/${tid}/comm" || true' >/dev/null 2>&1; then
+  pass "Sandbox /proc/self/task/<tid>/comm write works"
+else
+  fail "Sandbox /proc comm write failed"
+fi
+
+if openshell sandbox exec -n "$SANDBOX_NAME" -- python3 -c 'import ctypes; lib=ctypes.CDLL("libcuda.so.1"); rc=lib.cuInit(0); print(f"cuInit(0)={rc}"); raise SystemExit(0 if rc == 0 else 1)' >/dev/null 2>&1; then
+  pass "Sandbox cuInit(0) succeeds"
+else
+  fail "Sandbox cuInit(0) failed"
+fi
+
+# 4e: Inference provider is ollama-local
 if inf_check=$(openshell inference get 2>&1); then
   if echo "$inf_check" | grep -qi "ollama"; then
     pass "Inference provider is Ollama-based"
@@ -287,7 +321,7 @@ else
   fail "openshell inference get failed: ${inf_check:0:200}"
 fi
 
-# 4d: Ollama is running and reachable
+# 4f: Ollama is running and reachable
 if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   pass "Ollama running on 127.0.0.1:11434 (started by onboard)"
 else
@@ -319,9 +353,13 @@ if [ -f "$TOKEN_FILE" ]; then
   fi
 fi
 
-# 4.5c: Auth proxy is running on proxy port
-if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-  pass "Auth proxy running on :${PROXY_PORT}"
+# 4.5c: Auth proxy is running on proxy port. Since #3338 made /api/tags require
+# a Bearer token, treat any HTTP response (including 401) as proof of life —
+# we only fail when nothing answers at all.
+PROXY_LIVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+  "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || PROXY_LIVE_STATUS="000"
+if [[ "$PROXY_LIVE_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Auth proxy running on :${PROXY_PORT} (HTTP $PROXY_LIVE_STATUS)"
 else
   fail "Auth proxy not running on :${PROXY_PORT} — onboard should have started it"
 fi
@@ -337,7 +375,7 @@ fi
 
 # 4.5e: Proxy accepts correct token
 if [ -f "$TOKEN_FILE" ]; then
-  PROXY_TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+  PROXY_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
   PROXY_AUTH="Bearer $PROXY_TOKEN"
   PROXY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
     -H "Authorization: $PROXY_AUTH" \
@@ -350,12 +388,17 @@ if [ -f "$TOKEN_FILE" ]; then
   fi
 fi
 
-# 4.5f: Container can reach proxy through host.openshell.internal
-if docker run --rm \
+# 4.5f: Container can reach proxy through host.openshell.internal. We only
+# care that the network path works — an authenticated-but-401 response is
+# still proof of reachability (#3338 requires auth on /api/tags).
+CONTAINER_REACH_STATUS=$(docker run --rm \
   --add-host "host.openshell.internal:host-gateway" \
   curlimages/curl:8.10.1 \
-  -sf "http://host.openshell.internal:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-  pass "Container reachable: host.openshell.internal:${PROXY_PORT}"
+  -s -o /dev/null -w "%{http_code}" \
+  --connect-timeout 5 --max-time 10 \
+  "http://host.openshell.internal:${PROXY_PORT}/api/tags" 2>/dev/null) || CONTAINER_REACH_STATUS="000"
+if [[ "$CONTAINER_REACH_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Container reachable: host.openshell.internal:${PROXY_PORT} (HTTP $CONTAINER_REACH_STATUS)"
 else
   fail "Container cannot reach proxy at host.openshell.internal:${PROXY_PORT}"
 fi
@@ -368,22 +411,28 @@ if [ -n "$PROXY_PID_BEFORE" ] && [ -f "$TOKEN_FILE" ]; then
   if echo "$PROXY_CMD" | grep -q "ollama-auth-proxy"; then
     kill "$PROXY_PID_BEFORE" 2>/dev/null || true
     sleep 2
-    # Verify proxy is dead
-    if curl -sf --connect-timeout 2 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-      fail "Proxy still alive after kill"
+    # Verify proxy is dead. After #3338 an alive proxy returns 401 on
+    # /api/tags without auth, so curl -sf would fail either way; we need
+    # the http_code itself: only 000 (no answer at all) means dead.
+    DEAD_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 \
+      "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || DEAD_STATUS="000"
+    if [[ "$DEAD_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+      fail "Proxy still alive after kill (HTTP $DEAD_STATUS)"
     else
       info "Proxy confirmed dead — restarting from persisted token..."
     fi
     # Restart from persisted token (simulates what ensureOllamaAuthProxy does
     # on sandbox connect after a host reboot)
-    RECOVERED_TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+    RECOVERED_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
     OLLAMA_PROXY_TOKEN="$RECOVERED_TOKEN" \
       OLLAMA_PROXY_PORT="$PROXY_PORT" \
       OLLAMA_BACKEND_PORT=11434 \
       node "$(dirname "$0")/../../scripts/ollama-auth-proxy.js" >/dev/null 2>&1 &
     sleep 2
-    if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-      pass "Proxy recovered from persisted token after kill"
+    RECOVERED_LIVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+      "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || RECOVERED_LIVE_STATUS="000"
+    if [[ "$RECOVERED_LIVE_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+      pass "Proxy recovered from persisted token after kill (HTTP $RECOVERED_LIVE_STATUS)"
     else
       fail "Proxy did not restart from persisted token"
     fi

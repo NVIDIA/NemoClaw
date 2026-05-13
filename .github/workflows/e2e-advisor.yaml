@@ -1,0 +1,203 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: e2e-advisor
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Base ref to diff against
+        required: false
+        default: origin/main
+      head_ref:
+        description: Head ref to diff
+        required: false
+        default: HEAD
+      target_repo:
+        description: Optional repo to analyze, e.g. NVIDIA/NemoClaw
+        required: false
+        type: string
+        default: ""
+      target_pr:
+        description: Optional pull request number in target_repo to analyze
+        required: false
+        type: string
+        default: ""
+      target_base:
+        description: Base branch to use with target_repo/target_pr manual analysis
+        required: false
+        type: string
+        default: main
+      run_pi:
+        description: Run Pi semantic analysis
+        required: false
+        type: boolean
+        default: true
+      pi_provider:
+        description: Pi provider name for PI_E2E_ADVISOR_API_KEY
+        required: false
+        type: string
+        default: anthropic
+      pi_model:
+        description: Optional Pi model pattern, for example aws/anthropic/bedrock-claude-opus-4-7 or openai/openai/gpt-5.5
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  # `pull-requests: write` is required for the advisor to post (or update) a
+  # comment on a PR via POST /repos/:o/:r/issues/:n/comments. Even though the
+  # endpoint lives under `/issues/`, for GITHUB_TOKEN the permission that
+  # actually gates PR comments is `pull-requests`, not `issues`. With only
+  # `pull-requests: read`, the endpoint returns 403 "Resource not accessible
+  # by integration" despite `issues: write`. See the comment step below and
+  # https://github.com/orgs/community/discussions/56632.
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: e2e-advisor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  advise:
+    name: Pi semantic E2E recommendation
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Pin the Pi coding agent to a known-good version. Updates should go through
+      # the normal dependency-review path (e.g. Dependabot) so a compromised
+      # upstream release cannot execute automatically in this secret-bearing job.
+      PI_AGENT_VERSION: "0.73.1"
+      # The trusted checkout always lives at this path and is the only source
+      # of code executed in this job. The PR content, if any, is mounted as
+      # read-only analysis data under PR_WORKDIR.
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+    steps:
+      # Trusted-code boundary: the advisor implementation (pi-analyze.mjs,
+      # comment.mjs, schema.json, pi-models.template.json) is always fetched
+      # from the main branch of this repo, regardless of what the PR changed.
+      # This prevents a future PR from modifying advisor code and executing
+      # arbitrary Node in a job that holds API keys and a write-scoped token.
+      - name: Checkout trusted advisor code (main)
+        uses: actions/checkout@v6
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: main
+          path: advisor
+          persist-credentials: false
+
+      # PR content is checked out as inert analysis data only. Nothing from
+      # this directory is invoked as code by the advisor scripts; it is read
+      # via `git diff` / `fs.readFileSync` from inside the trusted scripts.
+      - name: Checkout PR workspace (read-only data)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-workdir
+          fetch-depth: 0
+          persist-credentials: false
+
+      # For manual workflow_dispatch against this repo (no target_repo given),
+      # check out the ref the maintainer dispatched against as the workdir.
+      # workflow_dispatch requires write access, so this ref is trusted for
+      # the purposes of analysis-data access, though we still never execute
+      # it as code.
+      - name: Checkout dispatch workspace (read-only data)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' }}
+        uses: actions/checkout@v6
+        with:
+          path: pr-workdir
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Set default advisor workdir
+        run: echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"
+
+      - name: Prepare target PR checkout
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' }}
+        env:
+          TARGET_REPO: ${{ inputs.target_repo }}
+          TARGET_PR: ${{ inputs.target_pr }}
+          TARGET_BASE: ${{ inputs.target_base }}
+        run: |
+          TARGET_DIR=/tmp/e2e-advisor-target
+          rm -rf "$TARGET_DIR"
+          mkdir -p "$TARGET_DIR"
+          git -C "$TARGET_DIR" init
+          git -C "$TARGET_DIR" remote add target "https://github.com/${TARGET_REPO}.git"
+          git -C "$TARGET_DIR" fetch --no-tags target "$TARGET_BASE"
+          git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head:refs/remotes/target/pr-${TARGET_PR}"
+          git -C "$TARGET_DIR" checkout --detach "refs/remotes/target/pr-${TARGET_PR}"
+          echo "ADVISOR_WORKDIR=$TARGET_DIR" >> "$GITHUB_ENV"
+
+      # Pinned install. The version is held in PI_AGENT_VERSION above so
+      # the pin is reviewed as a code change, not silently inherited from
+      # whatever @latest points to at runtime.
+      - name: Install Pi
+        run: npm install -g "@mariozechner/pi-coding-agent@${PI_AGENT_VERSION}"
+
+      - name: Run Pi semantic E2E advisor
+        id: pi-analysis
+        continue-on-error: true
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
+          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+          PI_E2E_ADVISOR_RUN_PI: ${{ github.event_name == 'workflow_dispatch' && inputs.run_pi == false && '0' || '1' }}
+          PI_E2E_ADVISOR_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_provider || 'anthropic' }}
+          PI_E2E_ADVISOR_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.pi_model || '' }}
+          # Preferred E2E advisor secret. The script maps this generic key to the selected provider's
+          # expected env var before invoking pi, matching how local pi can be run with --api-key.
+          PI_E2E_ADVISOR_API_KEY: ${{ secrets.PI_E2E_ADVISOR_API_KEY }}
+          # Also support standard Pi provider env vars for future upstream/external-advisor use.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          cd "$ADVISOR_WORKDIR"
+          node "$ADVISOR_DIR/tools/e2e-advisor/pi-analyze.mjs" \
+            --base "$BASE_REF" \
+            --head "$HEAD_REF" \
+            --schema "$ADVISOR_DIR/tools/e2e-advisor/schema.json" \
+            --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
+
+      - name: Publish job summary
+        if: always()
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-pi-summary.md" ]; then
+            cat "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-pi-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '# Pi Semantic E2E Advisor\n\nPi analysis did not produce a summary. See raw artifacts/logs.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Post E2E advisor PR comment
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.E2E_ADVISOR_GITHUB_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          node "$ADVISOR_DIR/tools/e2e-advisor/comment.mjs" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" \
+            --summary "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-pi-summary.md" \
+            --result "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-final-result.json"
+
+      - name: Upload advisor artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-advisor
+          path: artifacts/e2e-advisor/
+          if-no-files-found: warn

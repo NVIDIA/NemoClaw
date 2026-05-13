@@ -65,10 +65,12 @@ jobs:
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=,format=short
 
       - name: Validate OpenClaw version input
@@ -113,10 +115,12 @@ jobs:
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
         with:
           images: ${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=,format=short
 
       - name: Build and push

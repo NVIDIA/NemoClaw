@@ -65,7 +65,7 @@ describe("plugin registration", () => {
   it("continues registration when the runtime context hook is unsupported", () => {
     const api = createMockApi();
     vi.mocked(api.on).mockImplementation((hookName: string) => {
-      if (hookName === "before_agent_start") {
+      if (hookName === "before_prompt_build") {
         throw new Error("unsupported hook");
       }
     });
@@ -190,7 +190,6 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     const onCalls = vi.mocked(api.on).mock.calls;
     const hookCall = onCalls.find(([name]) => name === "before_tool_call");
     expect(hookCall).toBeDefined();
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by expect above
     return hookCall![1];
   }
 
