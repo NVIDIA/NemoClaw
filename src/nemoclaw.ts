@@ -162,6 +162,53 @@ function printConnectOrderHint(candidate: string | null): void {
   }
 }
 
+type OpenShellCommandHint = {
+  entered: string;
+  command: string;
+  note?: string;
+};
+
+function getOpenShellCommandHint(argv: readonly string[]): OpenShellCommandHint | null {
+  const [cmd, subcommand] = argv;
+  if (cmd === "term") {
+    return {
+      entered: argv.join(" "),
+      command: "openshell term",
+      note: "Use this to monitor gateway logs and policy approval prompts.",
+    };
+  }
+
+  if (cmd === "policy" && subcommand === "set") {
+    return {
+      entered: argv.join(" "),
+      command: "openshell policy set --policy <policy-file> <sandbox-name>",
+      note: `For NemoClaw presets, use: ${CLI_NAME} <sandbox-name> policy-add <preset>`,
+    };
+  }
+
+  if (cmd === "gateway" && subcommand === "stop") {
+    return {
+      entered: argv.join(" "),
+      command: "openshell gateway stop -g nemoclaw",
+    };
+  }
+
+  return null;
+}
+
+function printOpenShellCommandHint(hint: OpenShellCommandHint): never {
+  console.error(`  Unknown ${CLI_NAME} command: ${hint.entered}`);
+  console.error("");
+  console.error("  This operation belongs to OpenShell.");
+  console.error(`  Run: ${hint.command}`);
+  if (hint.note) {
+    console.error(`  ${hint.note}`);
+  }
+  console.error("");
+  console.error(`  Run '${CLI_NAME} help' for NemoClaw commands.`);
+  process.exit(1);
+}
+
 const VALID_SANDBOX_ACTIONS =
   "connect, status, doctor, logs, policy-add, policy-remove, policy-list, hosts-add, hosts-list, hosts-remove, skill, snapshot, share, rebuild, recover, shields, config, channels, gateway-token, destroy";
 
@@ -255,6 +302,11 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const args = argv.slice(1);
   const requestedSandboxAction = normalized.action;
   const requestedSandboxActionArgs = normalized.actionArgs;
+  const openshellHint = getOpenShellCommandHint(argv);
+  if (openshellHint && !registry.getSandbox(cmd)) {
+    printOpenShellCommandHint(openshellHint);
+  }
+
   if (normalized.connectHelpRequested) {
     validateName(cmd, "sandbox name");
     printSandboxConnectHelp(cmd);

@@ -25,7 +25,12 @@ function isOclifParseError(error: unknown): boolean {
     error && typeof error === "object"
       ? (error as { constructor?: { name?: string } }).constructor?.name
       : "";
-  return name === "NonExistentFlagsError" || name === "UnexpectedArgsError" || name === "CLIError";
+  return (
+    name === "NonExistentFlagsError" ||
+    name === "UnexpectedArgsError" ||
+    name === "FailedFlagValidationError" ||
+    name === "CLIError"
+  );
 }
 
 function isOclifExitError(error: unknown): boolean {
