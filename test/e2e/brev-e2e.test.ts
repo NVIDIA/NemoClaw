@@ -35,8 +35,8 @@
  *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp)
  *   BREV_MIN_DISK          — Minimum disk size in GB (default: 50)
  *   BREV_GPU_TYPE          — Optional GPU instance type for TEST_SUITE=gpu
- *   BREV_GPU_NAME          — GPU name filter when BREV_GPU_TYPE is unset (default: T4)
- *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 16)
+ *   BREV_GPU_NAME          — GPU name filter when BREV_GPU_TYPE is unset (default: L4)
+ *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 20)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
  *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
  *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
@@ -58,8 +58,8 @@ const BREV_MIN_RAM = parseInt(process.env.BREV_MIN_RAM || "16", 10);
 const BREV_PROVIDER = process.env.BREV_PROVIDER || "gcp";
 const BREV_MIN_DISK = parseInt(process.env.BREV_MIN_DISK || "50", 10);
 const BREV_GPU_TYPE = process.env.BREV_GPU_TYPE || "";
-const BREV_GPU_NAME = process.env.BREV_GPU_NAME || "T4";
-const BREV_GPU_MIN_VRAM = process.env.BREV_GPU_MIN_VRAM || "16";
+const BREV_GPU_NAME = process.env.BREV_GPU_NAME || "L4";
+const BREV_GPU_MIN_VRAM = process.env.BREV_GPU_MIN_VRAM || "20";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
@@ -347,6 +347,14 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
   console.log(`[${elapsed()}] SSH is up`);
 }
 
+function commandErrorOutput(error: unknown): string {
+  const err = error as { message?: string; stdout?: Buffer | string; stderr?: Buffer | string };
+  return [err.message, err.stdout?.toString(), err.stderr?.toString()]
+    .filter((part): part is string => Boolean(part?.trim()))
+    .join("\n")
+    .trim();
+}
+
 /**
  * Create a Brev launchable instance with a startup script.
  *
@@ -393,6 +401,36 @@ function createBrevInstance(elapsed: () => string): void {
 
   try {
     if (GPU_TEST_SUITE) {
+      const gpuSelectorArgs = BREV_GPU_TYPE
+        ? ["--type", BREV_GPU_TYPE]
+        : [
+            "--gpu-name",
+            BREV_GPU_NAME,
+            "--min-total-vram",
+            BREV_GPU_MIN_VRAM,
+            "--min-disk",
+            String(Math.max(BREV_MIN_DISK, 100)),
+            "--provider",
+            BREV_PROVIDER,
+          ];
+      try {
+        const dryRunOutput = execFileSync(
+          "brev",
+          ["create", `${requireInstanceName()}-probe`, "--dry-run", ...gpuSelectorArgs],
+          {
+            encoding: "utf-8",
+            timeout: 120_000,
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        ).trim();
+        console.log(`[${elapsed()}] Brev GPU candidates: ${dryRunOutput || "(none)"}`);
+      } catch (dryRunErr) {
+        throw new Error(
+          `brev GPU dry-run failed before provisioning. ${commandErrorOutput(dryRunErr)}`,
+          { cause: dryRunErr },
+        );
+      }
+
       const createArgs = [
         "create",
         requireInstanceName(),
@@ -402,20 +440,7 @@ function createBrevInstance(elapsed: () => string): void {
         "--timeout",
         "900",
       ];
-      if (BREV_GPU_TYPE) {
-        createArgs.push("--type", BREV_GPU_TYPE);
-      } else {
-        createArgs.push(
-          "--gpu-name",
-          BREV_GPU_NAME,
-          "--min-total-vram",
-          BREV_GPU_MIN_VRAM,
-          "--min-disk",
-          String(Math.max(BREV_MIN_DISK, 100)),
-          "--provider",
-          BREV_PROVIDER,
-        );
-      }
+      createArgs.push(...gpuSelectorArgs);
       execFileSync("brev", createArgs, {
         encoding: "utf-8",
         timeout: 900_000,
