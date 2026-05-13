@@ -62,16 +62,6 @@ section() {
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
-run_sandbox_exec() {
-  local limit="$1"
-  shift
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$limit" openshell sandbox exec -n "$SANDBOX_NAME" -- "$@"
-  else
-    openshell sandbox exec -n "$SANDBOX_NAME" -- "$@"
-  fi
-}
-
 # Parse chat completion response — handles both content and reasoning_content
 parse_chat_content() {
   python3 -c "
@@ -299,27 +289,25 @@ else
   fail "Could not read sandbox GPU status"
 fi
 
-# 4d: Direct sandbox GPU proofs. Keep these bounded; onboarding already
-# performs the same checks, and a stuck OpenShell exec must not consume the
-# whole remote E2E timeout.
-if run_sandbox_exec 45s sh -lc 'if command -v nvidia-smi >/dev/null 2>&1; then exec nvidia-smi; fi; echo "nvidia-smi not installed; skipping optional visibility check"' >/dev/null 2>&1; then
-  pass "Sandbox nvidia-smi works when available"
+# 4d: Direct sandbox GPU proofs. Onboard performs these immediately after the
+# Docker GPU patch and before continuing; assert that proof instead of
+# re-running OpenShell exec after the full OpenClaw setup.
+if grep -Fq "GPU proof passed: nvidia-smi when available" "$INSTALL_LOG"; then
+  pass "Onboard GPU proof passed: nvidia-smi when available"
 else
-  fail "Sandbox nvidia-smi optional probe failed or timed out"
+  fail "Onboard GPU proof missing: nvidia-smi when available"
 fi
 
-# shellcheck disable=SC2016  # expanded inside the sandbox by sh -lc
-if run_sandbox_exec 45s sh -lc \
-  'tid="$(ls /proc/self/task | head -n 1)"; comm="/proc/self/task/${tid}/comm"; old="$(cat "$comm" 2>/dev/null || true)"; printf nemoclaw-gpu >"$comm"; [ -z "$old" ] || printf "%s" "$old" >"$comm" || true' >/dev/null 2>&1; then
-  pass "Sandbox /proc/self/task/<tid>/comm write works"
+if grep -Fq "GPU proof passed: /proc/<pid>/task/<tid>/comm write" "$INSTALL_LOG"; then
+  pass "Onboard GPU proof passed: /proc/self/task/<tid>/comm write"
 else
-  fail "Sandbox /proc comm write failed"
+  fail "Onboard GPU proof missing: /proc comm write"
 fi
 
-if run_sandbox_exec 45s sh -lc 'python3 -c '\''import ctypes; lib=ctypes.CDLL("libcuda.so.1"); rc=lib.cuInit(0); print(f"cuInit(0)={rc}"); raise SystemExit(0 if rc == 0 else 1)'\''' >/dev/null 2>&1; then
-  pass "Sandbox cuInit(0) succeeds"
+if grep -Fq "GPU proof passed: cuInit(0) via libcuda.so.1" "$INSTALL_LOG"; then
+  pass "Onboard GPU proof passed: cuInit(0)"
 else
-  fail "Sandbox cuInit(0) failed"
+  fail "Onboard GPU proof missing: cuInit(0)"
 fi
 
 # 4e: Inference provider is ollama-local
@@ -403,16 +391,20 @@ fi
 # 4.5f: Container can reach proxy through host.openshell.internal. We only
 # care that the network path works — an authenticated-but-401 response is
 # still proof of reachability (#3338 requires auth on /api/tags).
-CONTAINER_REACH_STATUS=$(docker run --rm \
-  --add-host "host.openshell.internal:host-gateway" \
-  curlimages/curl:8.10.1 \
-  -s -o /dev/null -w "%{http_code}" \
-  --connect-timeout 5 --max-time 10 \
-  "http://host.openshell.internal:${PROXY_PORT}/api/tags" 2>/dev/null) || CONTAINER_REACH_STATUS="000"
-if [[ "$CONTAINER_REACH_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
-  pass "Container reachable: host.openshell.internal:${PROXY_PORT} (HTTP $CONTAINER_REACH_STATUS)"
+if grep -Fq "local inference providers will use sandbox loopback" "$INSTALL_LOG"; then
+  skip "Generic Docker bridge proxy reachability skipped; GPU sandbox uses host networking"
 else
-  fail "Container cannot reach proxy at host.openshell.internal:${PROXY_PORT}"
+  CONTAINER_REACH_STATUS=$(docker run --rm \
+    --add-host "host.openshell.internal:host-gateway" \
+    curlimages/curl:8.10.1 \
+    -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout 5 --max-time 10 \
+    "http://host.openshell.internal:${PROXY_PORT}/api/tags" 2>/dev/null) || CONTAINER_REACH_STATUS="000"
+  if [[ "$CONTAINER_REACH_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+    pass "Container reachable: host.openshell.internal:${PROXY_PORT} (HTTP $CONTAINER_REACH_STATUS)"
+  else
+    fail "Container cannot reach proxy at host.openshell.internal:${PROXY_PORT}"
+  fi
 fi
 
 # 4.5g: Proxy recovery — kill and restart from persisted token

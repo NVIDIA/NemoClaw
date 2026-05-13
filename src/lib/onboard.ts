@@ -145,6 +145,7 @@ const {
   getOllamaModelOptions,
   getOllamaWarmupCommand,
   getResolvedOllamaHost,
+  LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   OLLAMA_HOST_DOCKER_INTERNAL,
   validateOllamaPortConfiguration,
   validateOllamaModel,
@@ -1355,6 +1356,28 @@ function validateSandboxGpuPreflight(config: SandboxGpuConfig): void {
     process.exit(1);
   }
   console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);
+}
+
+function shouldUseDockerGpuPatchHostNetwork(config: SandboxGpuConfig): boolean {
+  return (
+    dockerGpuPatch.shouldApplyDockerGpuPatch(config, {
+      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+    }) && dockerGpuPatch.getDockerGpuPatchNetworkMode(process.env) === "host"
+  );
+}
+
+function configureLocalInferenceForDockerGpuHostNetwork(config: SandboxGpuConfig): void {
+  if (!shouldUseDockerGpuPatchHostNetwork(config)) return;
+  if (!process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV]) {
+    process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV] = "http://127.0.0.1";
+    note(
+      "  Docker-driver GPU patch will use host networking; local inference providers will use sandbox loopback.",
+    );
+    return;
+  }
+  note(
+    `  Docker-driver GPU patch will use host networking; local inference providers will use ${LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV}.`,
+  );
 }
 
 // ── Base image resolution ───────────────────────────────────────
@@ -10648,6 +10671,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         return current;
       });
     }
+    configureLocalInferenceForDockerGpuHostNetwork(sandboxGpuConfig);
 
     const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
     let gatewayReuseState = gatewaySnapshot.gatewayReuseState;

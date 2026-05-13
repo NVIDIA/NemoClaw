@@ -15,6 +15,7 @@ import {
   collectDockerGpuPatchDiagnostics,
   dockerReportsNvidiaCdiDevices,
   formatDockerInspectNetworkSummary,
+  getDockerGpuPatchNetworkMode,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   recreateOpenShellDockerSandboxWithGpu,
   selectDockerGpuPatchMode,
@@ -172,6 +173,22 @@ describe("docker-gpu-patch", () => {
     );
     expect(buildDockerGpuCloneRunOptions(inspect, { NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "preserve" })).toEqual(
       {},
+    );
+  });
+
+  it("reports the Docker GPU patch network mode", () => {
+    expect(getDockerGpuPatchNetworkMode({})).toBe("host");
+    expect(getDockerGpuPatchNetworkMode({ NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host" })).toBe(
+      "host",
+    );
+    expect(getDockerGpuPatchNetworkMode({ NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "preserve" })).toBe(
+      "preserve",
+    );
+    expect(getDockerGpuPatchNetworkMode({ NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "bridge" })).toBe(
+      "preserve",
+    );
+    expect(getDockerGpuPatchNetworkMode({ NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "bogus" })).toBe(
+      "preserve",
     );
   });
 

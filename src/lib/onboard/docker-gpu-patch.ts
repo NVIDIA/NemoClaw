@@ -344,14 +344,21 @@ export function buildDockerGpuCloneRunOptions(
   inspect: DockerContainerInspect,
   env: Record<string, string | undefined> = process.env,
 ): DockerGpuCloneRunOptions {
-  const networkOverride = String(env[DOCKER_GPU_PATCH_NETWORK_ENV] || "").trim().toLowerCase();
-  if (networkOverride === "preserve" || networkOverride === "bridge") return {};
-  if (networkOverride && networkOverride !== "host") return {};
+  if (getDockerGpuPatchNetworkMode(env) !== "host") return {};
 
   const endpoint = envValue(inspect.Config?.Env, "OPENSHELL_ENDPOINT");
   const hostEndpoint = endpoint ? dockerGpuHostEndpointFromOpenShellEndpoint(endpoint) : null;
   if (!hostEndpoint) return {};
   return { networkMode: "host", openshellEndpoint: hostEndpoint };
+}
+
+export function getDockerGpuPatchNetworkMode(
+  env: Record<string, string | undefined> = process.env,
+): "host" | "preserve" {
+  const networkOverride = String(env[DOCKER_GPU_PATCH_NETWORK_ENV] || "").trim().toLowerCase();
+  if (networkOverride === "preserve" || networkOverride === "bridge") return "preserve";
+  if (networkOverride && networkOverride !== "host") return "preserve";
+  return "host";
 }
 
 export function buildDockerGpuCloneRunArgs(
