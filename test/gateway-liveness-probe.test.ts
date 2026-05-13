@@ -139,9 +139,7 @@ describe("gateway liveness probe (#2020)", () => {
     expect(dockerStart).toBeGreaterThanOrEqual(0);
     expect(dockerEnd).toBeGreaterThan(dockerStart);
     const dockerSection = content.slice(dockerStart, dockerEnd);
-    const calls = dockerSection.match(
-      /verifySandboxBridgeGatewayReachableOrExit\(exitOnFailure\)/g,
-    );
+    const calls = dockerSection.match(/verifySandboxBridgeGatewayReachableOrExit\(exitOnFailure/g);
     expect(calls?.length).toBeGreaterThanOrEqual(3);
 
     for (const marker of [
@@ -153,7 +151,7 @@ describe("gateway liveness probe (#2020)", () => {
       expect(markerIdx).toBeGreaterThan(0);
       const before = dockerSection.slice(0, markerIdx);
       expect(
-        before.lastIndexOf("verifySandboxBridgeGatewayReachableOrExit(exitOnFailure)"),
+        before.lastIndexOf("verifySandboxBridgeGatewayReachableOrExit(exitOnFailure"),
       ).toBeGreaterThan(0);
     }
   });

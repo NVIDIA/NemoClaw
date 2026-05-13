@@ -2033,6 +2033,30 @@ function getRecordedMessagingChannelsForResume(
   return getKnownMessagingChannels(session.messagingChannels);
 }
 
+function getMessagingProviderNamesForChannel(sandboxName: string, channel: string): string[] {
+  if (channel === "discord") return [`${sandboxName}-discord-bridge`];
+  if (channel === "telegram") return [`${sandboxName}-telegram-bridge`];
+  if (channel === "slack") return [`${sandboxName}-slack-bridge`];
+  return [];
+}
+
+function getReusableStoredMessagingChannelsForNonInteractive(
+  sandboxName: string | null,
+): string[] {
+  if (!sandboxName || !isNonInteractive()) return [];
+
+  const entry = registry.getSandbox(sandboxName);
+  const configuredChannels = getKnownMessagingChannels(entry?.messagingChannels);
+  if (configuredChannels.length === 0) return [];
+
+  const disabledChannels = new Set(registry.getDisabledChannels(sandboxName));
+  return configuredChannels.filter((channel) => {
+    if (disabledChannels.has(channel)) return false;
+    const providers = getMessagingProviderNamesForChannel(sandboxName, channel);
+    return providers.length > 0 && providers.every((provider) => providerExistsInGateway(provider));
+  });
+}
+
 /**
  * Detect whether any messaging provider credential has been rotated since
  * the sandbox was created, by comparing SHA-256 hashes of the current
@@ -10741,6 +10765,16 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
       } else {
         selectedMessagingChannels = await setupMessagingChannels();
+        if (selectedMessagingChannels.length === 0) {
+          const reusableStoredMessagingChannels =
+            getReusableStoredMessagingChannelsForNonInteractive(sandboxName);
+          if (reusableStoredMessagingChannels.length > 0) {
+            selectedMessagingChannels = reusableStoredMessagingChannels;
+            note(
+              `  [non-interactive] Reusing existing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`,
+            );
+          }
+        }
       }
       const messagingChannelConfig = readMessagingChannelConfigFromEnv();
       onboardSession.updateSession((current: Session) => {

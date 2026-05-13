@@ -7851,6 +7851,7 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          OPENSHELL_DRIVERS: "docker",
         },
         timeout: 15000,
       });
@@ -8544,6 +8545,18 @@ const { setupMessagingChannels } = require(${onboardPath});
       assert.equal(channels.length, 0, "expected empty array when no tokens are set");
     },
   );
+
+  it("non-interactive onboard reuses stored messaging channels when bridge providers exist", () => {
+    const source = fs.readFileSync(path.join(import.meta.dirname, "../src/lib/onboard.ts"), "utf-8");
+    assert.match(
+      source,
+      /function getReusableStoredMessagingChannelsForNonInteractive\([\s\S]*?registry\.getSandbox\(sandboxName\)[\s\S]*?providerExistsInGateway\(provider\)/,
+    );
+    assert.match(
+      source,
+      /selectedMessagingChannels = await setupMessagingChannels\(\);[\s\S]*?getReusableStoredMessagingChannelsForNonInteractive\(sandboxName\)[\s\S]*?selectedMessagingChannels = reusableStoredMessagingChannels/,
+    );
+  });
 
   it(
     "interactive setupMessagingChannels drops slack when prompted token fails tokenFormat check (#1912)",
