@@ -51,4 +51,20 @@ describe("onboard messaging reuse", () => {
 
     expect(reusedChannels).toEqual(["slack"]);
   });
+
+  it("normalizes empty resume messaging channels to null", () => {
+    const reusedChannels = getNonInteractiveStoredMessagingChannels(
+      true,
+      ["unknown"],
+      "assistant",
+      messagingChannels,
+      () => false,
+      () => ({ messagingChannels: ["discord"] }),
+      () => [],
+      () => true,
+      true,
+    );
+
+    expect(reusedChannels).toBeNull();
+  });
 });

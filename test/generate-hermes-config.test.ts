@@ -176,6 +176,20 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("DISCORD_ALLOWED_USERS=");
   });
 
+  it("does not allow all Discord users for empty guild config keys", () => {
+    const { envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["discord"]),
+      NEMOCLAW_DISCORD_GUILDS_B64: encodeJson({
+        " ": {
+          requireMention: false,
+        },
+      }),
+    });
+
+    expect(envFile).not.toContain("DISCORD_ALLOW_ALL_USERS=true\n");
+    expect(envFile).not.toContain("DISCORD_ALLOWED_USERS=");
+  });
+
   it("does not emit generic platforms blocks for Telegram or Slack messaging tokens", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram", "slack"]),

@@ -33,7 +33,8 @@ export function getNonInteractiveStoredMessagingChannels(
 ): string[] | null {
   if (!nonInteractive) return null;
   if (resume && Array.isArray(sessionChannels)) {
-    return getKnownMessagingChannels(sessionChannels, messagingChannels);
+    const knownSessionChannels = getKnownMessagingChannels(sessionChannels, messagingChannels);
+    return knownSessionChannels.length > 0 ? knownSessionChannels : null;
   }
   if (resume || !sandboxName || messagingChannels.some((channel) => hasMessagingToken(channel.envKey))) {
     return null;
