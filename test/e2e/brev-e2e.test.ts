@@ -32,10 +32,10 @@
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
- *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp)
+ *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp for CPU, any for GPU)
  *   BREV_MIN_DISK          — Minimum disk size in GB (default: 50)
  *   BREV_GPU_TYPE          — Optional GPU instance type for TEST_SUITE=gpu
- *   BREV_GPU_NAME          — GPU name filter when BREV_GPU_TYPE is unset (default: L4)
+ *   BREV_GPU_NAME          — GPU name filter when BREV_GPU_TYPE is unset (default: any GPU)
  *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 20)
  *   BREV_CREATE_TIMEOUT_SECONDS — Brev create timeout, seconds (default: 1200 for GPU)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
@@ -56,16 +56,16 @@ import path from "node:path";
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
 const BREV_MIN_RAM = parseInt(process.env.BREV_MIN_RAM || "16", 10);
-const BREV_PROVIDER = process.env.BREV_PROVIDER || "gcp";
 const BREV_MIN_DISK = parseInt(process.env.BREV_MIN_DISK || "50", 10);
 const BREV_GPU_TYPE = process.env.BREV_GPU_TYPE || "";
-const BREV_GPU_NAME = process.env.BREV_GPU_NAME || "L4";
+const BREV_GPU_NAME = process.env.BREV_GPU_NAME || "";
 const BREV_GPU_MIN_VRAM = process.env.BREV_GPU_MIN_VRAM || "20";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 const CLI_PATH = path.join(REPO_DIR, "bin", "nemoclaw.js");
 const GPU_TEST_SUITE = TEST_SUITE === "gpu";
+const BREV_PROVIDER = process.env.BREV_PROVIDER ?? (GPU_TEST_SUITE ? "" : "gcp");
 const BREV_CREATE_TIMEOUT_SECONDS = parseInt(
   process.env.BREV_CREATE_TIMEOUT_SECONDS || (GPU_TEST_SUITE ? "1200" : "180"),
   10,
@@ -388,7 +388,7 @@ function createBrevInstance(elapsed: () => string): void {
       console.log(`[${elapsed()}]   gpu type: ${BREV_GPU_TYPE}`);
     } else {
       console.log(
-        `[${elapsed()}]   gpu: name ${BREV_GPU_NAME}, min ${BREV_GPU_MIN_VRAM} GB VRAM, provider: ${BREV_PROVIDER}`,
+        `[${elapsed()}]   gpu: ${BREV_GPU_NAME ? `name ${BREV_GPU_NAME}, ` : ""}min ${BREV_GPU_MIN_VRAM} GB VRAM${BREV_PROVIDER ? `, provider: ${BREV_PROVIDER}` : ""}`,
       );
     }
   } else {
@@ -418,14 +418,12 @@ function createBrevInstance(elapsed: () => string): void {
       const gpuSelectorArgs = BREV_GPU_TYPE
         ? ["--type", BREV_GPU_TYPE]
         : [
-            "--gpu-name",
-            BREV_GPU_NAME,
+            ...(BREV_GPU_NAME ? ["--gpu-name", BREV_GPU_NAME] : []),
             "--min-total-vram",
             BREV_GPU_MIN_VRAM,
             "--min-disk",
             String(Math.max(BREV_MIN_DISK, 100)),
-            "--provider",
-            BREV_PROVIDER,
+            ...(BREV_PROVIDER ? ["--provider", BREV_PROVIDER] : []),
           ];
       try {
         const dryRunOutput = execFileSync(

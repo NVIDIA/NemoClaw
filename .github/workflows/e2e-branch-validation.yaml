@@ -85,6 +85,26 @@ on:
         description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
         required: false
         default: ""
+      brev_provider:
+        description: "Brev provider filter for provisioning (blank = Brev default/any)"
+        required: false
+        default: ""
+      brev_gpu_type:
+        description: "Exact Brev GPU instance type for test_suite=gpu (overrides GPU filters)"
+        required: false
+        default: ""
+      brev_gpu_name:
+        description: "GPU name filter for test_suite=gpu (blank = any GPU)"
+        required: false
+        default: ""
+      brev_gpu_min_vram:
+        description: "Minimum total GPU VRAM in GB for test_suite=gpu"
+        required: false
+        default: "20"
+      brev_create_timeout_seconds:
+        description: "Brev create timeout in seconds"
+        required: false
+        default: ""
   workflow_call:
     inputs:
       branch:
@@ -110,6 +130,26 @@ on:
         required: false
         type: boolean
         default: true
+      brev_provider:
+        required: false
+        type: string
+        default: ""
+      brev_gpu_type:
+        required: false
+        type: string
+        default: ""
+      brev_gpu_name:
+        required: false
+        type: string
+        default: ""
+      brev_gpu_min_vram:
+        required: false
+        type: string
+        default: "20"
+      brev_create_timeout_seconds:
+        required: false
+        type: string
+        default: ""
     secrets:
       BREV_API_TOKEN:
         required: false
@@ -216,8 +256,11 @@ jobs:
           TEST_SUITE: ${{ inputs.test_suite }}
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
           LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
-          BREV_PROVIDER: gcp
-          BREV_GPU_TYPE: ${{ vars.BREV_GPU_TYPE || '' }}
+          BREV_PROVIDER: ${{ inputs.brev_provider || vars.BREV_PROVIDER || '' }}
+          BREV_GPU_TYPE: ${{ inputs.brev_gpu_type || vars.BREV_GPU_TYPE || '' }}
+          BREV_GPU_NAME: ${{ inputs.brev_gpu_name || vars.BREV_GPU_NAME || '' }}
+          BREV_GPU_MIN_VRAM: ${{ inputs.brev_gpu_min_vram || vars.BREV_GPU_MIN_VRAM || '20' }}
+          BREV_CREATE_TIMEOUT_SECONDS: ${{ inputs.brev_create_timeout_seconds || vars.BREV_CREATE_TIMEOUT_SECONDS || '' }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-branch-validation
 
