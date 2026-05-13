@@ -585,4 +585,98 @@ describe("inventory commands", () => {
     expect(lines).toContain("    alpha * (minimaxai/minimax-m2.7)");
     expect(lines).toContain("      (onboarded: unknown)");
   });
+
+  it("emits a gateway-down diagnostic and sets process.exitCode when the gateway is unhealthy (#3386)", () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    const lines: string[] = [];
+    try {
+      showStatusCommand({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", model: "m" }],
+          defaultSandbox: "alpha",
+        }),
+        getLiveInference: () => null,
+        showServiceStatus: vi.fn(),
+        getGatewayHealth: () => ({
+          healthy: false,
+          state: "named_unreachable",
+          reason: "host port held or container not running",
+        }),
+        log: (message = "") => lines.push(message),
+      });
+
+      expect(
+        lines.some((l) =>
+          l.includes("gateway: down [named_unreachable] (host port held or container not running)"),
+        ),
+      ).toBe(true);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("keeps process.exitCode at 0 when getGatewayHealth reports healthy", () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    const lines: string[] = [];
+    try {
+      showStatusCommand({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", model: "m" }],
+          defaultSandbox: "alpha",
+        }),
+        getLiveInference: () => null,
+        showServiceStatus: vi.fn(),
+        getGatewayHealth: () => ({ healthy: true, state: "healthy_named" }),
+        log: (message = "") => lines.push(message),
+      });
+
+      expect(lines.some((l) => l.includes("gateway: down"))).toBe(false);
+      expect(process.exitCode).toBe(0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("preserves legacy 0-exit behaviour when getGatewayHealth dep is omitted", () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    try {
+      showStatusCommand({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", model: "m" }],
+          defaultSandbox: "alpha",
+        }),
+        getLiveInference: () => null,
+        showServiceStatus: vi.fn(),
+      });
+      expect(process.exitCode).toBe(0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("skips the gateway health check when no sandboxes are registered", () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    const lines: string[] = [];
+    const getGatewayHealth = vi.fn();
+    try {
+      showStatusCommand({
+        listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+        getLiveInference: () => null,
+        showServiceStatus: vi.fn(),
+        getGatewayHealth,
+        log: (message = "") => lines.push(message),
+      });
+
+      expect(getGatewayHealth).not.toHaveBeenCalled();
+      expect(lines.some((l) => l.includes("gateway: down"))).toBe(false);
+      expect(process.exitCode).toBe(0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
 });

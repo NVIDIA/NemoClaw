@@ -11,6 +11,7 @@
  */
 
 import http from "node:http";
+import http2 from "node:http2";
 
 import { GATEWAY_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
@@ -70,6 +71,7 @@ export function getGatewayReuseHealthWaitConfig(): { count: number; interval: nu
 export function isGatewayHttpReady(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `http://127.0.0.1:${GATEWAY_PORT}/`,
+  method: "GET" | "POST" = "GET",
 ): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -83,7 +85,7 @@ export function isGatewayHttpReady(
       resolve(ready);
     };
     const request = http
-      .get(url, (res) => {
+      .request(url, { method }, (res) => {
         res.resume();
         const code = res.statusCode || 0;
         settle(GATEWAY_HTTP_ALIVE_CODES.has(code));
@@ -93,6 +95,95 @@ export function isGatewayHttpReady(
       request.destroy();
       settle(false);
     });
+    request.end();
+  });
+}
+
+export function isDockerDriverGatewayHttpReady(
+  timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
+  url = `http://127.0.0.1:${GATEWAY_PORT}/openshell.v1.OpenShell/Health`,
+): Promise<boolean> {
+  const effectiveTimeout =
+    Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? Math.round(timeoutMs)
+      : ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return Promise.resolve(false);
+  }
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    let statusCode = 0;
+    let contentType = "";
+    let grpcStatus: string | undefined;
+    let client: http2.ClientHttp2Session | null = null;
+    let stream: http2.ClientHttp2Stream | null = null;
+
+    const headerValue = (value: string | string[] | number | undefined): string => {
+      if (Array.isArray(value)) return value[0] ?? "";
+      if (value == null) return "";
+      return String(value);
+    };
+
+    const isHealthyResponse = () =>
+      statusCode === 200 &&
+      /^application\/grpc\b/i.test(contentType) &&
+      (grpcStatus === undefined || grpcStatus === "0");
+
+    const settle = (ready: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        stream?.close();
+      } catch {
+        // best-effort cleanup
+      }
+      try {
+        client?.close();
+      } catch {
+        // best-effort cleanup
+      }
+      resolve(ready);
+    };
+
+    const timer = setTimeout(() => settle(false), effectiveTimeout);
+
+    try {
+      const origin = `${parsed.protocol}//${parsed.host}`;
+      client = http2.connect(origin);
+      client.on("error", () => settle(false));
+      stream = client.request({
+        [http2.constants.HTTP2_HEADER_METHOD]: http2.constants.HTTP2_METHOD_POST,
+        [http2.constants.HTTP2_HEADER_PATH]: `${parsed.pathname}${parsed.search}`,
+        [http2.constants.HTTP2_HEADER_SCHEME]: parsed.protocol.replace(":", ""),
+        [http2.constants.HTTP2_HEADER_AUTHORITY]: parsed.host,
+        [http2.constants.HTTP2_HEADER_CONTENT_TYPE]: "application/grpc",
+        [http2.constants.HTTP2_HEADER_TE]: "trailers",
+      });
+      stream.on("response", (headers) => {
+        statusCode = Number(headers[http2.constants.HTTP2_HEADER_STATUS] || 0);
+        contentType = headerValue(headers[http2.constants.HTTP2_HEADER_CONTENT_TYPE]);
+        const status = headerValue(headers["grpc-status"]);
+        if (status) grpcStatus = status;
+      });
+      stream.on("trailers", (headers) => {
+        const status = headerValue(headers["grpc-status"]);
+        if (status) grpcStatus = status;
+      });
+      stream.on("data", () => {
+        // Drain the gRPC response body; the readiness signal is in headers/trailers.
+      });
+      stream.on("error", () => settle(false));
+      stream.on("end", () => settle(isHealthyResponse()));
+      // Empty protobuf message: one uncompressed gRPC frame with zero payload bytes.
+      stream.end(Buffer.alloc(5));
+    } catch {
+      settle(false);
+    }
   });
 }
 

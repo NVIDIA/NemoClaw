@@ -80,7 +80,7 @@ jobs:
           docker run --rm --user sandbox nemoclaw-hermes-production \
             test -r /opt/nemoclaw-blueprint/blueprint.yaml
           docker run --rm --user sandbox nemoclaw-hermes-production \
-            test -x /usr/local/bin/nemoclaw-decode-proxy
+            test ! -e /usr/local/bin/nemoclaw-decode-proxy
           docker run --rm --user sandbox nemoclaw-hermes-production \
             test -x /usr/local/bin/nemoclaw-start
 

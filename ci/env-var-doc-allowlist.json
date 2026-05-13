@@ -4,8 +4,16 @@
     "reason": "Test harness sentinel set to '1' so test files can import src/nemoclaw.ts without triggering main(). Never user-set in production."
   },
   {
+    "name": "NEMOCLAW_INVOKED_AS",
+    "reason": "Internal launcher marker set by bin/nemohermes.js so the runtime knows which binary the user invoked. Never user-set; the value is constrained to a known-name allowlist in src/lib/cli/branding.ts."
+  },
+  {
     "name": "NEMOCLAW_MODEL_ROUTER_VENV",
     "reason": "Internal developer/test override for the managed Model Router virtualenv path. Production users should use the default ~/.nemoclaw/model-router-venv."
+  },
+  {
+    "name": "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
+    "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },
   {
     "name": "NEMOCLAW_TEST_NO_SLEEP",

@@ -27,6 +27,11 @@ describe("resolveGlobalOclifDispatch", () => {
       commandId: "inference:set",
       args: ["--provider", "nvidia-prod"],
     });
+    expect(resolveGlobalOclifDispatch("inference", ["get", "--json"])).toEqual({
+      kind: "oclif",
+      commandId: "inference:get",
+      args: ["--json"],
+    });
     expect(resolveGlobalOclifDispatch("--version", [])).toEqual({
       kind: "oclif",
       commandId: "root:version",
@@ -44,9 +49,10 @@ describe("resolveGlobalOclifDispatch", () => {
       kind: "usageError",
       lines: ["tunnel <start|stop>"],
     });
-    expect(resolveGlobalOclifDispatch("inference", ["get"])).toEqual({
+    expect(resolveGlobalOclifDispatch("inference", ["bogus"])).toEqual({
       kind: "usageError",
       lines: [
+        "inference get [--json]",
         "inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify]",
       ],
     });

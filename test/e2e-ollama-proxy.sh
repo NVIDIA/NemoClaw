@@ -68,24 +68,30 @@ else
   fail "Mock should be responding on localhost:$MOCK_PORT"
 fi
 
-# Test 2: Proxy is listening
-if curl -sf --connect-timeout 2 "http://127.0.0.1:$PROXY_PORT/api/tags" >/dev/null 2>&1; then
-  pass "Proxy responding on port $PROXY_PORT"
+# All STATUS=$(curl ... -w "%{http_code}") calls below trail `|| STATUS="000"`
+# so a curl failure (e.g. proxy not listening) under `set -e` does not abort
+# the script before fail/summary lines run. Mirrors the GPU e2e pattern.
+
+# Test 2: Proxy is listening (any HTTP response counts as alive — auth
+# enforcement on /api/tags is exercised in Test 6 below)
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:$PROXY_PORT/api/tags") || STATUS="000"
+if [[ "$STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Proxy responding on port $PROXY_PORT (HTTP $STATUS)"
 else
   fail "Proxy not responding on port $PROXY_PORT"
 fi
 
 # Test 3: Unauthenticated POST rejected
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PROXY_PORT/api/generate" -d '{}')
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PROXY_PORT/api/generate" -d '{}') || STATUS="000"
 if [ "$STATUS" = "401" ]; then
   pass "Unauthenticated POST rejected (401)"
 else
   fail "Unauthenticated POST should be 401, got $STATUS"
 fi
 
-# Test 4: Wrong token rejected (use /api/generate, not /api/tags which is exempt)
+# Test 4: Wrong token rejected
 WRONG_AUTH="Bearer wrong-token"
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: $WRONG_AUTH" -X POST "http://127.0.0.1:$PROXY_PORT/api/generate" -d '{}')
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: $WRONG_AUTH" -X POST "http://127.0.0.1:$PROXY_PORT/api/generate" -d '{}') || STATUS="000"
 if [ "$STATUS" = "401" ]; then
   pass "Wrong token rejected (401)"
 else
@@ -94,27 +100,27 @@ fi
 
 # Test 5: Correct token proxied to backend on a protected endpoint
 CORRECT_AUTH="Bearer $TOKEN"
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: $CORRECT_AUTH" -X POST "http://127.0.0.1:$PROXY_PORT/api/generate" -d '{}')
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: $CORRECT_AUTH" -X POST "http://127.0.0.1:$PROXY_PORT/api/generate" -d '{}') || STATUS="000"
 if [ "$STATUS" = "200" ]; then
   pass "Correct token proxied to backend (protected endpoint)"
 else
   fail "Correct token should proxy to backend, got $STATUS"
 fi
 
-# Test 6: GET /api/tags allowed without auth (health check)
-BODY=$(curl -sf "http://127.0.0.1:$PROXY_PORT/api/tags")
-if echo "$BODY" | grep -q "mock:latest"; then
-  pass "GET /api/tags allowed without auth (health check)"
+# Test 6: GET /api/tags without auth → 401 (no health-check bypass — #3338)
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PROXY_PORT/api/tags") || STATUS="000"
+if [ "$STATUS" = "401" ]; then
+  pass "Unauthenticated GET /api/tags → 401"
 else
-  fail "GET /api/tags should be allowed without auth"
+  fail "Unauthenticated GET /api/tags should be 401, got $STATUS"
 fi
 
-# Test 7: POST /api/tags requires auth (only GET exempt)
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PROXY_PORT/api/tags" -d '{}')
+# Test 7: POST /api/tags without auth → 401
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PROXY_PORT/api/tags" -d '{}') || STATUS="000"
 if [ "$STATUS" = "401" ]; then
-  pass "POST /api/tags requires auth (only GET exempt)"
+  pass "Unauthenticated POST /api/tags → 401"
 else
-  fail "POST /api/tags should be 401, got $STATUS"
+  fail "Unauthenticated POST /api/tags should be 401, got $STATUS"
 fi
 
 echo ""

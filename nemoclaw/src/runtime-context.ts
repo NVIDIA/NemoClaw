@@ -464,14 +464,14 @@ export async function getRuntimeSummary(pluginConfig: NemoClawConfig): Promise<R
 }
 
 /**
- * Registers a `before_agent_start` hook that prepends a `<nemoclaw-runtime>`
+ * Registers a `before_prompt_build` hook that prepends a `<nemoclaw-runtime>`
  * context block (or a `<nemoclaw-runtime-update>` delta) to each agent turn.
  *
  * Falls back to a minimal static context block if openshell is unavailable or
  * any internal error occurs, and logs a warning via `api.logger`.
  */
 export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: NemoClawConfig): void {
-  api.on("before_agent_start", async (_event: unknown, hookContext: unknown) => {
+  api.on("before_prompt_build", async (_event: unknown, hookContext: unknown) => {
     // Initialise to the configured default; overwritten below with the live
     // state value so the fallback block reflects the active sandbox name even
     // when the sandbox was changed after the plugin was initialised.

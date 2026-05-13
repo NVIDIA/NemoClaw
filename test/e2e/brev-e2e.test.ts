@@ -28,7 +28,7 @@
  * Optional env vars:
  *   TEST_SUITE             — which test to run: full (default), deploy-cli, credential-sanitization,
  *                             telegram-injection, messaging-providers,
- *                             messaging-compatible-endpoint, all
+ *                             messaging-compatible-endpoint, dashboard-remote-bind, all
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
@@ -839,5 +839,15 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       expect(output).not.toMatch(/FAIL:/);
     },
     900_000, // 15 min — creates a new sandbox with Telegram + compatible endpoint
+  );
+
+  it.runIf(TEST_SUITE === "dashboard-remote-bind")(
+    "dashboard forward binds to all interfaces for remote browser origins",
+    () => {
+      const output = runRemoteTest("test/e2e/test-dashboard-remote-bind.sh");
+      expect(output).toContain("PASS");
+      expect(output).not.toMatch(/FAIL:/);
+    },
+    300_000,
   );
 });

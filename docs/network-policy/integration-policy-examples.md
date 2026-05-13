@@ -165,7 +165,7 @@ $ nemoclaw my-assistant policy-add discord --yes
 
 ## GitHub and Jira
 
-Use `github` when the agent needs GitHub API, Git, or `gh` access.
+Use `github` when the agent needs GitHub API or Git access.
 Use `jira` when the agent needs Atlassian Jira access.
 
 Preview first:
