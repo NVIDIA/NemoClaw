@@ -53,9 +53,18 @@ export function parseSandboxIdFromGetOutput(output: string): string | null {
   return match?.[1] ?? null;
 }
 
+function readTextFileIfPresent(filePath: string): string | null {
+  try {
+    return fs.readFileSync(filePath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 function patchGuestInit(initPath: string): boolean {
-  if (!fs.existsSync(initPath)) return false;
-  const original = fs.readFileSync(initPath, "utf-8");
+  const original = readTextFileIfPresent(initPath);
+  if (original === null) return false;
   if (original.includes('nameserver ${GVPROXY_GATEWAY_IP}')) return false;
   const patched = original.replace(LEGACY_PUBLIC_DNS_BLOCK, GVPROXY_DNS_BLOCK);
   if (patched === original) return false;
@@ -114,7 +123,7 @@ export function applyOpenShellVmDnsMonkeypatch(
 
   fs.mkdirSync(path.dirname(resolvConf), { recursive: true });
   const desired = `nameserver ${GVPROXY_DNS}\n`;
-  const current = fs.existsSync(resolvConf) ? fs.readFileSync(resolvConf, "utf-8") : "";
+  const current = readTextFileIfPresent(resolvConf) ?? "";
   let changed = current !== desired;
   if (changed) {
     fs.writeFileSync(resolvConf, desired);
