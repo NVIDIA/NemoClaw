@@ -317,6 +317,7 @@ import {
 import type { ContainerRuntime } from "./platform";
 import type { Session, SessionUpdates } from "./state/onboard-session";
 import {
+  filterEnabledChannelsByAgent,
   getAvailableMessagingChannelsForAgent,
   resolveQrSelectedChannels,
 } from "./onboard/messaging-state";
@@ -5267,6 +5268,7 @@ async function createSandbox(
     sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
     "sandbox name",
   );
+  enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
 

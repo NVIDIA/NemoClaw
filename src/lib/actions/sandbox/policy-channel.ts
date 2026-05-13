@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { loadAgent, type AgentDefinition } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { hashCredential } from "../../security/credential-hash";
 import { getCredential, prompt as askPrompt } from "../../credentials/store";
@@ -244,10 +245,23 @@ export function listSandboxPolicies(sandboxName: string) {
 
 // ── Messaging channels ───────────────────────────────────────────
 
+function resolveAgentForSandbox(sandboxName: string): AgentDefinition {
+  const entry = registry.getSandbox(sandboxName);
+  const agentName = entry?.agent || "openclaw";
+  return loadAgent(agentName);
+}
+
+function channelSupportedByAgent(channelName: string, agent: AgentDefinition): boolean {
+  const supported = agent.messagingPlatforms;
+  return !Array.isArray(supported) || supported.length === 0 || supported.includes(channelName);
+}
+
 export function listSandboxChannels(sandboxName: string) {
+  const agent = resolveAgentForSandbox(sandboxName);
   console.log("");
   console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
   for (const [name, channel] of Object.entries(KNOWN_CHANNELS)) {
+    if (!channelSupportedByAgent(name, agent)) continue;
     console.log(`    ${name} — ${channel.description}`);
   }
   console.log("");
@@ -416,6 +430,15 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
     process.exit(1);
   }
   const canonical = channelArg.trim().toLowerCase();
+
+  const agent = resolveAgentForSandbox(sandboxName);
+  if (!channelSupportedByAgent(canonical, agent)) {
+    console.error(
+      `  Channel '${canonical}' is not supported by agent '${agent.name}' for sandbox '${sandboxName}'.`,
+    );
+    console.error(`  Supported channels: ${agent.messagingPlatforms.join(", ") || "(none)"}`);
+    process.exit(1);
+  }
 
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);

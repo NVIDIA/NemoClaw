@@ -29,3 +29,13 @@ export function resolveQrSelectedChannels(
     return !!ch && channelUsesQrPairing(ch);
   });
 }
+
+export function filterEnabledChannelsByAgent<T extends string[] | null | undefined>(
+  enabledChannels: T,
+  agent: AgentDefinition | null,
+): T {
+  if (!Array.isArray(enabledChannels)) return enabledChannels;
+  const supported = agent?.messagingPlatforms ?? [];
+  if (supported.length === 0) return enabledChannels;
+  return enabledChannels.filter((n) => supported.includes(n)) as T;
+}
