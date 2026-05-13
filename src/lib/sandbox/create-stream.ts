@@ -21,8 +21,8 @@ export interface StreamSandboxCreateOptions {
   // Initial progress phase:
   //   build  — docker-building the sandbox image
   //   upload — pushing the built image into the gateway registry
-  //   create — k3s provisioning the pod from the image
-  //   ready  — waiting for the pod to reach Ready state
+  //   create — gateway provisioning the sandbox from the image
+  //   ready  — waiting for the sandbox to reach Ready state
   // Defaults to "build".
   initialPhase?: "build" | "upload" | "create" | "ready";
   spawnImpl?: (
@@ -172,7 +172,9 @@ export function streamSandboxCreate(
     if (!line) return;
     lines.push(line);
     lastOutputAt = Date.now();
-    if (matchesAny(line, BUILD_PROGRESS_PATTERNS)) {
+    if (/^ {2}Built image /.test(line)) {
+      setPhase("create");
+    } else if (matchesAny(line, BUILD_PROGRESS_PATTERNS)) {
       setPhase("build");
     } else if (matchesAny(line, PULL_PROGRESS_PATTERNS)) {
       setPhase("pull");

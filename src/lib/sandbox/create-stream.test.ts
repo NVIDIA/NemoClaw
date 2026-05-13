@@ -296,6 +296,28 @@ describe("sandbox-create-stream", () => {
     expect(calls.some((l) => /Still building sandbox image\.\.\./.test(l))).toBe(false);
   });
 
+  it("moves to the create phase after the sandbox image is built", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      logLine,
+      spawnImpl: () => child as never,
+      heartbeatIntervalMs: 100,
+      silentPhaseMs: 50,
+    });
+
+    child.stdout.emit("data", Buffer.from("  Built image openshell/sandbox-from:123\n"));
+    await vi.advanceTimersByTimeAsync(200);
+    child.emit("close", 0);
+    await promise;
+
+    const calls = logLine.mock.calls.map((c) => c[0] as string);
+    expect(calls).toContain("  Creating sandbox in gateway...");
+    expect(calls.some((l) => /Still creating sandbox in gateway\.\.\./.test(l))).toBe(true);
+    expect(calls.some((l) => /Still building sandbox image\.\.\./.test(l))).toBe(false);
+  });
+
   it("reports spawn errors cleanly", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", process.env, {

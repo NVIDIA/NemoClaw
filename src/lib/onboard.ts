@@ -36,6 +36,8 @@ const {
   buildSandboxConfigSyncScript,
   writeSandboxConfigSyncFile,
 }: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
+const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") =
+  require("./onboard/docker-gpu-patch");
 const {
   isValidProxyHost,
   isValidProxyPort,
@@ -1459,13 +1461,29 @@ function getResumeSandboxGpuOverrides(
   return { flag: null, device: null };
 }
 
-function buildSandboxGpuCreateArgs(config: SandboxGpuConfig): string[] {
+function buildSandboxGpuCreateArgs(
+  config: SandboxGpuConfig,
+  options: { suppressGpuFlag?: boolean } = {},
+): string[] {
+  if (options.suppressGpuFlag) return [];
   if (!config.sandboxGpuEnabled) return [];
   const args = ["--gpu"];
   if (config.sandboxGpuDevice) {
     args.push("--gpu-device", config.sandboxGpuDevice);
   }
   return args;
+}
+
+function getSandboxReadyTimeoutSecs(
+  _config: Pick<SandboxGpuConfig, "sandboxGpuEnabled">,
+  env: NodeJS.ProcessEnv = process.env,
+  _platform: NodeJS.Platform = process.platform,
+  _arch: NodeJS.Architecture = process.arch,
+): number {
+  if (String(env.NEMOCLAW_SANDBOX_READY_TIMEOUT || "").trim()) {
+    return envInt("NEMOCLAW_SANDBOX_READY_TIMEOUT", SANDBOX_READY_TIMEOUT_SECS, env);
+  }
+  return SANDBOX_READY_TIMEOUT_SECS;
 }
 
 function parseDockerCdiSpecDirs(value: string | null | undefined): string[] {
@@ -6084,6 +6102,14 @@ async function createSandbox(
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
     console.log("  Direct sandbox GPU enabled; allowing only /proc task comm writes.");
   }
+  const useDockerGpuPatch = dockerGpuPatch.shouldApplyDockerGpuPatch(effectiveSandboxGpuConfig, {
+    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+  });
+  if (useDockerGpuPatch) {
+    console.log(
+      "  Docker-driver GPU patch active; creating sandbox first, then recreating the Docker container with GPU access.",
+    );
+  }
   const createArgs = [
     "--from",
     `${buildCtx}/Dockerfile`,
@@ -6091,7 +6117,9 @@ async function createSandbox(
     sandboxName,
     "--policy",
     initialSandboxPolicy.policyPath,
-    ...buildSandboxGpuCreateArgs(effectiveSandboxGpuConfig),
+    ...buildSandboxGpuCreateArgs(effectiveSandboxGpuConfig, {
+      suppressGpuFlag: useDockerGpuPatch,
+    }),
   ];
 
   // Create OpenShell providers for messaging credentials so they flow through
@@ -6271,6 +6299,7 @@ async function createSandbox(
       envArgs.push(formatEnvAssignment(webSearch.BRAVE_API_KEY_ENV, braveKey));
     }
   }
+  const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const sandboxEnv = buildSubprocessEnv();
   // Remove host-infrastructure credentials that the generic allowlist
   // permits for host-side processes but that must not enter the sandbox.
@@ -6333,13 +6362,57 @@ async function createSandbox(
     }
   }
 
-  // Wait for sandbox to reach Ready state in k3s before registering.
-  // On WSL2 + Docker Desktop the pod can take longer to initialize;
+  let dockerGpuPatchResult: import("./onboard/docker-gpu-patch").DockerGpuPatchResult | null =
+    null;
+  if (useDockerGpuPatch) {
+    console.log("  Recreating OpenShell Docker sandbox container with NVIDIA GPU access...");
+    try {
+      dockerGpuPatchResult = dockerGpuPatch.recreateOpenShellDockerSandboxWithGpu(
+        {
+          sandboxName,
+          gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
+          timeoutSecs: sandboxReadyTimeoutSecs,
+        },
+        {
+          runOpenshell,
+          runCaptureOpenshell,
+          sleep,
+        },
+      );
+      console.log(`  ✓ Docker GPU mode selected: ${dockerGpuPatchResult.mode.label}`);
+    } catch (error) {
+      const diagnostics = dockerGpuPatch.collectDockerGpuPatchDiagnostics(
+        sandboxName,
+        { error },
+        {
+          runCaptureOpenshell,
+        },
+      );
+      console.error("");
+      console.error("  Docker GPU patch failed.");
+      if (error instanceof Error && error.message) {
+        console.error(`  ${error.message}`);
+      }
+      if (diagnostics) {
+        console.error(`  Diagnostics saved: ${diagnostics.dir}`);
+      }
+      console.error("  Escape hatch: set NEMOCLAW_DOCKER_GPU_PATCH=0 to skip this patch.");
+      console.error("  The failed sandbox/container has been left in place for inspection.");
+      console.error("  Manual cleanup:");
+      for (const command of dockerGpuPatch.dockerGpuPatchCleanupCommands(sandboxName)) {
+        console.error(`    ${command}`);
+      }
+      process.exit(1);
+    }
+  }
+
+  // Wait for OpenShell to report the sandbox Ready before registering.
+  // On first run the sandbox can take longer to initialize;
   // without this gate, NemoClaw registers a phantom sandbox that
   // causes "sandbox not found" on every subsequent connect/status call.
   console.log("  Waiting for sandbox to become ready...");
   let ready = false;
-  const readyAttempts = Math.max(1, Math.ceil(SANDBOX_READY_TIMEOUT_SECS / 2));
+  const readyAttempts = Math.max(1, Math.ceil(sandboxReadyTimeoutSecs / 2));
   for (let i = 0; i < readyAttempts; i++) {
     const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
     if (isSandboxReady(list, sandboxName)) {
@@ -6357,12 +6430,9 @@ async function createSandbox(
       sandboxName,
       { backupPath: restoreBackupPath },
     );
-    // Clean up the failed sandbox after preserving local diagnostics so the
-    // next onboard retry with the same name does not fail on "sandbox already exists".
-    const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     console.error("");
     console.error(
-      `  Sandbox '${sandboxName}' was created but did not become ready within ${SANDBOX_READY_TIMEOUT_SECS}s.`,
+      `  Sandbox '${sandboxName}' was created but did not become ready within ${sandboxReadyTimeoutSecs}s.`,
     );
     if (diagnostics) {
       console.error(`  Diagnostics saved: ${diagnostics.dir}`);
@@ -6376,11 +6446,32 @@ async function createSandbox(
         console.error(`  State backup retained: ${diagnostics.backupPath}`);
       }
     }
-    if (delResult.status === 0) {
-      console.error("  The failed sandbox has been removed; retry will recreate it.");
+    if (useDockerGpuPatch) {
+      const gpuDiagnostics = dockerGpuPatch.collectDockerGpuPatchDiagnostics(
+        sandboxName,
+        { selectedMode: dockerGpuPatchResult?.mode ?? null },
+        {
+          runCaptureOpenshell,
+        },
+      );
+      if (gpuDiagnostics) {
+        console.error(`  Docker GPU diagnostics saved: ${gpuDiagnostics.dir}`);
+      }
+      console.error("  The failed sandbox/container has been left in place for inspection.");
+      console.error("  Manual cleanup:");
+      for (const command of dockerGpuPatch.dockerGpuPatchCleanupCommands(sandboxName)) {
+        console.error(`    ${command}`);
+      }
     } else {
-      console.error("  Could not remove the failed sandbox. Manual cleanup:");
-      console.error(`    openshell sandbox delete "${sandboxName}"`);
+      // Clean up non-GPU failures after preserving local diagnostics so the
+      // next onboard retry with the same name does not fail on "sandbox already exists".
+      const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+      if (delResult.status === 0) {
+        console.error("  The failed sandbox has been removed; retry will recreate it.");
+      } else {
+        console.error("  Could not remove the failed sandbox. Manual cleanup:");
+        console.error(`    openshell sandbox delete "${sandboxName}"`);
+      }
     }
     console.error(`  Retry: ${cliName()} onboard`);
     process.exit(1);
@@ -6415,12 +6506,20 @@ async function createSandbox(
     try {
       verifyDirectSandboxGpu(sandboxName);
     } catch (error) {
-      const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
-      if (delResult.status === 0) {
-        console.error("  The sandbox with failed GPU access has been removed — you can retry safely.");
-      } else {
-        console.error("  Could not remove the sandbox with failed GPU access. Manual cleanup:");
-        console.error(`    openshell sandbox delete "${sandboxName}"`);
+      const diagnostics = dockerGpuPatch.collectDockerGpuPatchDiagnostics(
+        sandboxName,
+        { error, selectedMode: dockerGpuPatchResult?.mode ?? null },
+        {
+          runCaptureOpenshell,
+        },
+      );
+      if (diagnostics) {
+        console.error(`  Diagnostics saved: ${diagnostics.dir}`);
+      }
+      console.error("  The sandbox with failed GPU access has been left in place for inspection.");
+      console.error("  Manual cleanup:");
+      for (const command of dockerGpuPatch.dockerGpuPatchCleanupCommands(sandboxName)) {
+        console.error(`    ${command}`);
       }
       throw error;
     }
@@ -11518,6 +11617,7 @@ module.exports = {
   findReadableNvidiaCdiSpecFiles,
   parseDockerCdiSpecDirs,
   getResumeSandboxGpuOverrides,
+  getSandboxReadyTimeoutSecs,
   resolveSandboxGpuConfig,
   shouldAllowOpenshellAboveBlueprintMax,
   pullAndResolveBaseImageDigest,
