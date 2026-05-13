@@ -149,6 +149,7 @@ if [ "${1:-}" = "--version" ]; then
   exit 0
 fi
 exit 99
+# request-body-credential-rewrite websocket-credential-rewrite
 EOF
 
   cat >"$fake_bin/gh" <<'EOF'
@@ -238,6 +239,7 @@ if [ "${1:-}" = "--version" ]; then
   exit 0
 fi
 exit 99
+# request-body-credential-rewrite websocket-credential-rewrite
 EOF
 
   cat >"$fake_bin/openshell-gateway" <<'EOF'
