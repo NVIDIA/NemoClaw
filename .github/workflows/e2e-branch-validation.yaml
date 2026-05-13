@@ -261,6 +261,7 @@ jobs:
           BREV_GPU_NAME: ${{ inputs.brev_gpu_name || vars.BREV_GPU_NAME || '' }}
           BREV_GPU_MIN_VRAM: ${{ inputs.brev_gpu_min_vram || vars.BREV_GPU_MIN_VRAM || '20' }}
           BREV_CREATE_TIMEOUT_SECONDS: ${{ inputs.brev_create_timeout_seconds || vars.BREV_CREATE_TIMEOUT_SECONDS || '' }}
+          NEMOCLAW_GPU_E2E_MODEL: ${{ vars.NEMOCLAW_GPU_E2E_MODEL || 'qwen2.5:7b' }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-branch-validation --silent=false --reporter=default
 

@@ -201,6 +201,7 @@ function sshEnv(
   cmd: string,
   { timeout = 600_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
+  const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen2.5:7b";
   const envParts = [
     `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
@@ -208,6 +209,12 @@ function sshEnv(
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
   ];
+  if (GPU_TEST_SUITE) {
+    // This suite validates Docker GPU passthrough and sandbox inference wiring.
+    // Pin a small model so Brev's cheaper GPU shapes do not fail before
+    // sandbox creation while auto-loading a very large default Ollama model.
+    envParts.push(`export NEMOCLAW_MODEL='${shellEscape(gpuE2eModel)}'`);
+  }
   // Forward optional messaging tokens for the messaging-providers test
   for (const key of [
     "TELEGRAM_BOT_TOKEN",
