@@ -344,6 +344,7 @@ describe("base sandbox policy", () => {
       (h) =>
         h === "discord.com" ||
         h === "gateway.discord.gg" ||
+        h === "*.discord.gg" ||
         h === "cdn.discordapp.com" ||
         h === "media.discordapp.net",
     );
@@ -519,6 +520,13 @@ describe("messaging WebSocket presets", () => {
       name: "discord",
       policyKey: "discord",
       host: "gateway.discord.gg",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(DISCORD_PRESET_PATH),
+    },
+    {
+      name: "discord",
+      policyKey: "discord",
+      host: "*.discord.gg",
       credentialRewrite: true,
       data: loadYaml<PolicyPreset>(DISCORD_PRESET_PATH),
     },
