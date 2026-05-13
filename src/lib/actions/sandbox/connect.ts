@@ -196,10 +196,16 @@ function repairSandboxInferenceRouteIfNeeded(
         }
         return true;
       }
-      if (!quiet && !patch.ok && patch.reason) {
-        console.error(
-          `  Warning: OpenShell VM DNS monkeypatch did not apply: ${patch.reason}`,
-        );
+      if (!quiet) {
+        if (!patch.ok && patch.reason) {
+          console.error(
+            `  Warning: OpenShell VM DNS monkeypatch did not apply: ${patch.reason}`,
+          );
+        } else if (patch.ok) {
+          console.error(
+            "  Warning: OpenShell VM DNS monkeypatch completed but inference.local is still unavailable.",
+          );
+        }
       }
     }
 
