@@ -62,6 +62,16 @@ section() {
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
+run_sandbox_exec() {
+  local limit="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$limit" openshell sandbox exec -n "$SANDBOX_NAME" -- "$@"
+  else
+    openshell sandbox exec -n "$SANDBOX_NAME" -- "$@"
+  fi
+}
+
 # Parse chat completion response — handles both content and reasoning_content
 parse_chat_content() {
   python3 -c "
@@ -289,22 +299,24 @@ else
   fail "Could not read sandbox GPU status"
 fi
 
-# 4d: Direct sandbox GPU proofs
-if openshell sandbox exec -n "$SANDBOX_NAME" -- nvidia-smi >/dev/null 2>&1; then
-  pass "Sandbox nvidia-smi works"
+# 4d: Direct sandbox GPU proofs. Keep these bounded; onboarding already
+# performs the same checks, and a stuck OpenShell exec must not consume the
+# whole remote E2E timeout.
+if run_sandbox_exec 45s sh -lc 'if command -v nvidia-smi >/dev/null 2>&1; then exec nvidia-smi; fi; echo "nvidia-smi not installed; skipping optional visibility check"' >/dev/null 2>&1; then
+  pass "Sandbox nvidia-smi works when available"
 else
-  fail "Sandbox nvidia-smi failed"
+  fail "Sandbox nvidia-smi optional probe failed or timed out"
 fi
 
 # shellcheck disable=SC2016  # expanded inside the sandbox by sh -lc
-if openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc \
-  'tid="$(ls /proc/self/task | head -n 1)"; old="$(cat "/proc/self/task/${tid}/comm" 2>/dev/null || true)"; printf nemoclaw-gpu >"/proc/self/task/${tid}/comm"; [ -z "$old" ] || printf "%s" "$old" >"/proc/self/task/${tid}/comm" || true' >/dev/null 2>&1; then
+if run_sandbox_exec 45s sh -lc \
+  'tid="$(ls /proc/self/task | head -n 1)"; comm="/proc/self/task/${tid}/comm"; old="$(cat "$comm" 2>/dev/null || true)"; printf nemoclaw-gpu >"$comm"; [ -z "$old" ] || printf "%s" "$old" >"$comm" || true' >/dev/null 2>&1; then
   pass "Sandbox /proc/self/task/<tid>/comm write works"
 else
   fail "Sandbox /proc comm write failed"
 fi
 
-if openshell sandbox exec -n "$SANDBOX_NAME" -- python3 -c 'import ctypes; lib=ctypes.CDLL("libcuda.so.1"); rc=lib.cuInit(0); print(f"cuInit(0)={rc}"); raise SystemExit(0 if rc == 0 else 1)' >/dev/null 2>&1; then
+if run_sandbox_exec 45s sh -lc 'python3 -c '\''import ctypes; lib=ctypes.CDLL("libcuda.so.1"); rc=lib.cuInit(0); print(f"cuInit(0)={rc}"); raise SystemExit(0 if rc == 0 else 1)'\''' >/dev/null 2>&1; then
   pass "Sandbox cuInit(0) succeeds"
 else
   fail "Sandbox cuInit(0) failed"
