@@ -22,7 +22,7 @@ export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
-const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 420;
+const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
 export const DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV =
   "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT";
 const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
@@ -961,28 +961,35 @@ export function collectDockerGpuPatchDiagnostics(
     ...discoveredContainerIds,
   ]);
   if (containerTargets.length > 0) {
-    try {
-      const inspect = d.dockerCapture(["inspect", ...containerTargets], {
-        ignoreError: true,
-        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-      });
-      if (inspect.trim()) {
-        writeTextFile(dir, "docker-inspect.json", inspect);
-        try {
-          const parsed = JSON.parse(inspect);
-          const entries = Array.isArray(parsed) ? parsed : [parsed];
-          const summaries = entries
-            .map((entry, index) =>
-              formatDockerInspectNetworkSummary(containerTargets[index] || `container-${index}`, entry),
-            )
-            .join("\n\n");
-          if (summaries.trim()) writeTextFile(dir, "docker-network-summary.txt", summaries);
-        } catch {
-          /* best effort */
+    const inspectEntries: unknown[] = [];
+    const networkSummaries: string[] = [];
+    for (const target of containerTargets) {
+      try {
+        const inspect = d.dockerCapture(["inspect", target], {
+          ignoreError: true,
+          timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+        });
+        if (!inspect.trim()) continue;
+        const parsed = JSON.parse(inspect);
+        const entries = Array.isArray(parsed) ? parsed : [parsed];
+        inspectEntries.push(...entries);
+        for (const [index, entry] of entries.entries()) {
+          networkSummaries.push(
+            formatDockerInspectNetworkSummary(
+              entries.length === 1 ? target : `${target}[${index}]`,
+              entry,
+            ),
+          );
         }
+      } catch {
+        /* best effort */
       }
-    } catch {
-      /* best effort */
+    }
+    if (inspectEntries.length > 0) {
+      writeTextFile(dir, "docker-inspect.json", JSON.stringify(inspectEntries, null, 2));
+    }
+    if (networkSummaries.length > 0) {
+      writeTextFile(dir, "docker-network-summary.txt", networkSummaries.join("\n\n"));
     }
     const logs = containerTargets
       .map((target) => {

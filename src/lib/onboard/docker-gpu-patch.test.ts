@@ -11,6 +11,7 @@ import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuMode,
   buildDockerGpuModeCandidates,
+  collectDockerGpuPatchDiagnostics,
   dockerReportsNvidiaCdiDevices,
   formatDockerInspectNetworkSummary,
   getDockerGpuSupervisorReconnectTimeoutSecs,
@@ -155,13 +156,57 @@ describe("docker-gpu-patch", () => {
   });
 
   it("uses a Docker-GPU-specific supervisor reconnect wait with an override", () => {
-    expect(getDockerGpuSupervisorReconnectTimeoutSecs(180, {})).toBe(420);
-    expect(getDockerGpuSupervisorReconnectTimeoutSecs(600, {})).toBe(600);
+    expect(getDockerGpuSupervisorReconnectTimeoutSecs(180, {})).toBe(900);
+    expect(getDockerGpuSupervisorReconnectTimeoutSecs(600, {})).toBe(900);
+    expect(getDockerGpuSupervisorReconnectTimeoutSecs(1200, {})).toBe(1200);
     expect(
       getDockerGpuSupervisorReconnectTimeoutSecs(180, {
         NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT: "30",
       }),
     ).toBe(30);
+  });
+
+  it("keeps Docker network diagnostics when old patch containers are gone", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-diag-"));
+    try {
+      const liveInspect = inspectFixture();
+      liveInspect.Id = "new-container-id";
+      const dockerCapture = vi.fn((args: readonly string[]) => {
+        if (args[0] === "ps") return "new-container-id\n";
+        if (args[0] === "inspect" && args[1] === "new-container-id") {
+          return JSON.stringify([liveInspect]);
+        }
+        throw new Error(`missing target ${String(args[1])}`);
+      });
+
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            oldContainerId: "old-container-id",
+            newContainerId: "new-container-id",
+            backupContainerName: "backup-container",
+          },
+        },
+        {
+          dockerCapture,
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:00Z"),
+        },
+      );
+
+      expect(diagnostics?.dir).toBeTruthy();
+      const summary = fs.readFileSync(
+        path.join(diagnostics?.dir || "", "docker-network-summary.txt"),
+        "utf-8",
+      );
+      expect(summary).toContain("target=new-container-id");
+      expect(summary).toContain("network_mode=openshell-docker");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("falls back to NVIDIA runtime when Docker rejects --gpus", () => {
