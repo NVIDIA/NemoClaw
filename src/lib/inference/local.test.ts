@@ -405,6 +405,9 @@ describe("local inference helpers", () => {
       ["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL],
     );
     expect(getDefaultOllamaModel({ totalMemoryMB: 16384 }, () => "")).toBe("qwen2.5:7b");
+    expect(
+      getDefaultOllamaModel({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB }, () => ""),
+    ).toBe(QWEN3_6_OLLAMA_MODEL);
   });
 
   it("builds a background warmup command for ollama models", () => {

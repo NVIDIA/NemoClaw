@@ -476,8 +476,10 @@ export function getDefaultOllamaModel(
 ): string {
   const models = getOllamaModelOptions(runCaptureImpl);
   if (models.length === 0) {
-    const bootstrap = getBootstrapOllamaModelOptions(gpu);
-    return bootstrap[0];
+    if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
+      return QWEN3_6_OLLAMA_MODEL;
+    }
+    return SMALL_OLLAMA_MODEL;
   }
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }
