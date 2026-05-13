@@ -120,6 +120,8 @@ describe("docker-gpu-patch", () => {
         "/host:/container:rw",
         "--network",
         "openshell-docker",
+        "--network-alias",
+        "openshell-alpha",
         "--restart",
         "unless-stopped",
         "--cap-add",
@@ -157,7 +159,9 @@ describe("docker-gpu-patch", () => {
 
   it("can switch the recreated sandbox to host networking for OpenShell callbacks", () => {
     const inspect = inspectFixture();
-    const options = buildDockerGpuCloneRunOptions(inspect, {});
+    const options = buildDockerGpuCloneRunOptions(inspect, {
+      NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
+    });
     const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"), options);
 
     expect(options).toEqual({
@@ -171,13 +175,16 @@ describe("docker-gpu-patch", () => {
     expect(args).not.toEqual(
       expect.arrayContaining(["--add-host", "host.openshell.internal:172.17.0.1"]),
     );
-    expect(buildDockerGpuCloneRunOptions(inspect, { NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "preserve" })).toEqual(
-      {},
-    );
+    expect(args).not.toEqual(expect.arrayContaining(["--network-alias", "openshell-alpha"]));
+    expect(
+      buildDockerGpuCloneRunOptions(inspect, {
+        NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "preserve",
+      }),
+    ).toEqual({});
   });
 
   it("reports the Docker GPU patch network mode", () => {
-    expect(getDockerGpuPatchNetworkMode({})).toBe("host");
+    expect(getDockerGpuPatchNetworkMode({})).toBe("preserve");
     expect(getDockerGpuPatchNetworkMode({ NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host" })).toBe(
       "host",
     );
@@ -339,9 +346,11 @@ describe("docker-gpu-patch", () => {
         "--gpus",
         "all",
         "--network",
-        "host",
+        "openshell-docker",
+        "--network-alias",
+        "openshell-alpha",
         "--env",
-        "OPENSHELL_ENDPOINT=http://127.0.0.1:8080/",
+        "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/",
       ]),
       expect.objectContaining({ ignoreError: true }),
     );

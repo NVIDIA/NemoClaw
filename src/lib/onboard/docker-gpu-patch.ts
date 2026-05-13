@@ -356,9 +356,29 @@ export function getDockerGpuPatchNetworkMode(
   env: Record<string, string | undefined> = process.env,
 ): "host" | "preserve" {
   const networkOverride = String(env[DOCKER_GPU_PATCH_NETWORK_ENV] || "").trim().toLowerCase();
-  if (networkOverride === "preserve" || networkOverride === "bridge") return "preserve";
-  if (networkOverride && networkOverride !== "host") return "preserve";
-  return "host";
+  if (networkOverride === "host") return "host";
+  return "preserve";
+}
+
+function dockerNetworkAliases(
+  inspect: DockerContainerInspect,
+  networkMode: string | null | undefined,
+): string[] {
+  const network = String(networkMode || "").trim();
+  if (
+    !network ||
+    ["bridge", "default", "host", "none"].includes(network) ||
+    network.includes(":")
+  ) {
+    return [];
+  }
+
+  const networkInfo = inspect.NetworkSettings?.Networks?.[network];
+  const containerId = String(inspect.Id || "").trim();
+  return Array.from(new Set(stringArray(networkInfo?.Aliases)))
+    .map((alias) => alias.trim())
+    .filter(Boolean)
+    .filter((alias) => !sameContainerId(alias, containerId));
 }
 
 export function buildDockerGpuCloneRunArgs(
@@ -392,6 +412,9 @@ export function buildDockerGpuCloneRunArgs(
   for (const bind of stringArray(host.Binds)) args.push("--volume", bind);
   const networkMode = options.networkMode ?? host.NetworkMode;
   pushStringFlag(args, "--network", networkMode);
+  for (const alias of dockerNetworkAliases(inspect, networkMode)) {
+    args.push("--network-alias", alias);
+  }
 
   const restart = host.RestartPolicy;
   if (restart?.Name && restart.Name !== "no") {

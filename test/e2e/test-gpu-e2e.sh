@@ -391,8 +391,8 @@ fi
 # 4.5f: Container can reach proxy through host.openshell.internal. We only
 # care that the network path works — an authenticated-but-401 response is
 # still proof of reachability (#3338 requires auth on /api/tags).
-if grep -Fq "local inference providers will use sandbox loopback" "$INSTALL_LOG"; then
-  skip "Generic Docker bridge proxy reachability skipped; GPU sandbox uses host networking"
+if grep -Fq "Docker-driver GPU patch active" "$INSTALL_LOG"; then
+  skip "Generic Docker bridge proxy reachability skipped; Docker GPU patch uses OpenShell-managed network path"
 else
   CONTAINER_REACH_STATUS=$(docker run --rm \
     --add-host "host.openshell.internal:host-gateway" \
