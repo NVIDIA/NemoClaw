@@ -12,6 +12,7 @@ Usage:
 
 Environment variables:
     CHAT_UI_URL                         Dashboard URL (default: http://127.0.0.1:18789)
+    NEMOCLAW_DASHBOARD_PORT            Dashboard/gateway port (default: 18789)
     NEMOCLAW_MODEL                      Model identifier
     NEMOCLAW_PROVIDER_KEY               Provider key for model config
     NEMOCLAW_PRIMARY_MODEL_REF          Primary model reference
@@ -50,6 +51,9 @@ MODEL_SETUP_EFFECT_KEYS = {
     "openclaw": {"openclawCompat", "openclawPlugins"},
     "hermes": {"hermesCompat"},
 }
+DEFAULT_DASHBOARD_PORT = 18789
+MIN_DASHBOARD_PORT = 1024
+MAX_DASHBOARD_PORT = 65535
 
 
 def _coerce_positive_int(env: dict, name: str, default: int) -> int:
@@ -78,6 +82,41 @@ def is_loopback(hostname: str) -> bool:
     if normalized == "localhost" or normalized == "::1":
         return True
     return bool(re.match(r"^127(?:\.\d{1,3}){3}$", normalized))
+
+
+def _normalize_url_for_parse(raw_url: str) -> str:
+    if raw_url and not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE):
+        return f"http://{raw_url}"
+    return raw_url
+
+
+def _validate_dashboard_port(raw: str, env_name: str) -> int:
+    stripped = raw.strip()
+    if not re.match(r"^\d+$", stripped):
+        raise ValueError(f"{env_name} must be an integer between 1024 and 65535")
+    value = int(stripped)
+    if value < MIN_DASHBOARD_PORT or value > MAX_DASHBOARD_PORT:
+        raise ValueError(f"{env_name} must be an integer between 1024 and 65535")
+    return value
+
+
+def _chat_ui_url_port(chat_ui_url: str) -> int | None:
+    try:
+        port = urlparse(_normalize_url_for_parse(chat_ui_url)).port
+    except ValueError:
+        return None
+    if port is None:
+        return None
+    if port < MIN_DASHBOARD_PORT or port > MAX_DASHBOARD_PORT:
+        return None
+    return port
+
+
+def _resolve_gateway_port(env: dict, chat_ui_url: str) -> int:
+    raw_dashboard_port = env.get("NEMOCLAW_DASHBOARD_PORT") or ""
+    if raw_dashboard_port.strip():
+        return _validate_dashboard_port(raw_dashboard_port, "NEMOCLAW_DASHBOARD_PORT")
+    return _chat_ui_url_port(chat_ui_url) or DEFAULT_DASHBOARD_PORT
 
 
 def _registry_roots(env: dict) -> list[Path]:
@@ -318,7 +357,14 @@ def build_config(env: dict | None = None) -> dict:
     proxy_port = env.get("NEMOCLAW_PROXY_PORT") or "3128"
     proxy_url = f"http://{proxy_host}:{proxy_port}"
     model = env["NEMOCLAW_MODEL"]
-    chat_ui_url = env.get("CHAT_UI_URL") or "http://127.0.0.1:18789"
+    raw_chat_ui_url = env.get("CHAT_UI_URL") or ""
+    chat_ui_url = raw_chat_ui_url or f"http://127.0.0.1:{DEFAULT_DASHBOARD_PORT}"
+    gateway_port = _resolve_gateway_port(env, chat_ui_url)
+    if (env.get("NEMOCLAW_DASHBOARD_PORT") or "").strip() and (
+        not raw_chat_ui_url
+        or raw_chat_ui_url == f"http://127.0.0.1:{DEFAULT_DASHBOARD_PORT}"
+    ):
+        chat_ui_url = f"http://127.0.0.1:{gateway_port}"
     provider_key = env["NEMOCLAW_PROVIDER_KEY"]
     primary_model_ref = env["NEMOCLAW_PRIMARY_MODEL_REF"]
     inference_base_url = env["NEMOCLAW_INFERENCE_BASE_URL"]
@@ -446,15 +492,14 @@ def build_config(env: dict | None = None) -> dict:
 
     # Normalize schemeless URLs before parsing — urlparse("remote-host:18789")
     # misclassifies hostname as scheme. Mirrors ensureScheme() in dashboard-contract.ts.
-    _normalized_url = chat_ui_url
-    if chat_ui_url and not re.match(r"^[a-z][a-z0-9+.-]*://", chat_ui_url, re.IGNORECASE):
-        _normalized_url = f"http://{chat_ui_url}"
+    _normalized_url = _normalize_url_for_parse(chat_ui_url)
 
     parsed = urlparse(_normalized_url)
+    loopback_origin = f"http://127.0.0.1:{gateway_port}"
     chat_origin = (
         f"{parsed.scheme}://{parsed.netloc}"
         if parsed.scheme and parsed.netloc
-        else "http://127.0.0.1:18789"
+        else loopback_origin
     )
     # When onboard injects an internal port (e.g. :18789) into a URL that the
     # user provided without an explicit port, the browser origin from a reverse
@@ -470,9 +515,7 @@ def build_config(env: dict | None = None) -> dict:
         portless_origin = f"{parsed.scheme}://{host_part}"
     else:
         portless_origin = None
-    origins = list(dict.fromkeys(
-        filter(None, ["http://127.0.0.1:18789", chat_origin, portless_origin])
-    ))
+    origins = list(dict.fromkeys(filter(None, [loopback_origin, chat_origin, portless_origin])))
 
     # Auto-disable device auth when CHAT_UI_URL is non-loopback — terminal-based
     # pairing is impossible when the user only has web access (Brev Launchable,
@@ -596,6 +639,7 @@ def build_config(env: dict | None = None) -> dict:
         "plugins": plugins,
         "gateway": {
             "mode": "local",
+            "port": gateway_port,
             "controlUi": {
                 "allowInsecureAuth": allow_insecure,
                 "dangerouslyDisableDeviceAuth": disable_device_auth,

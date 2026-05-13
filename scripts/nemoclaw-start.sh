@@ -168,10 +168,35 @@ case "${1:-}" in
   nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
+
+_chat_ui_url_port() {
+  [ -n "${CHAT_UI_URL:-}" ] || return 1
+  python3 - "$CHAT_UI_URL" <<'PYPORT'
+import re
+import sys
+from urllib.parse import urlparse
+
+raw_url = sys.argv[1]
+if raw_url and not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE):
+    raw_url = f"http://{raw_url}"
+try:
+    port = urlparse(raw_url).port
+except ValueError:
+    sys.exit(1)
+if port is None or port < 1024 or port > 65535:
+    sys.exit(1)
+print(port)
+PYPORT
+}
+
 # Validate NEMOCLAW_DASHBOARD_PORT if set (same behavior as ports.js: fail fast).
 _DASHBOARD_PORT_RAW="${NEMOCLAW_DASHBOARD_PORT:-}"
 if [ -z "$_DASHBOARD_PORT_RAW" ]; then
-  _DASHBOARD_PORT=18789
+  if _CHAT_UI_PORT="$(_chat_ui_url_port)"; then
+    _DASHBOARD_PORT="$_CHAT_UI_PORT"
+  else
+    _DASHBOARD_PORT=18789
+  fi
 else
   _DASHBOARD_PORT="$(printf '%s' "$_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   case "$_DASHBOARD_PORT" in
@@ -196,6 +221,8 @@ else
   CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"
 fi
 PUBLIC_PORT="$_DASHBOARD_PORT"
+export OPENCLAW_GATEWAY_PORT="$_DASHBOARD_PORT"
+export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:${_DASHBOARD_PORT}"
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 
@@ -992,6 +1019,85 @@ except Exception:
 PYTOKEN
 }
 
+ensure_gateway_token() {
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+  local config_dir
+  config_dir="$(dirname "$config_file")"
+
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing gateway token generation — config or hash path is a symlink\n' >&2
+    return 1
+  fi
+
+  if [ -n "$(_read_gateway_token)" ]; then
+    return 0
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    prepare_openclaw_config_for_write "$config_file" "$hash_file"
+  fi
+
+  local _write_rc=0
+  python3 - "$config_file" <<'PYTOKEN' || _write_rc=$?
+import json
+import os
+import secrets
+import sys
+import tempfile
+
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+    auth = cfg.setdefault('gateway', {}).setdefault('auth', {})
+    if not auth.get('token'):
+        auth['token'] = secrets.token_urlsafe(32)
+        dir_path = os.path.dirname(path)
+        fd, tmp_path = tempfile.mkstemp(prefix='.openclaw.', suffix='.tmp', dir=dir_path, text=True)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                fd = None
+                json.dump(cfg, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+            dir_flags = os.O_RDONLY
+            if hasattr(os, 'O_DIRECTORY'):
+                dir_flags |= os.O_DIRECTORY
+            dir_fd = os.open(dir_path, dir_flags)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except Exception:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+except Exception as exc:
+    print(f'[SECURITY] Failed to ensure OpenClaw gateway token: {exc}', file=sys.stderr)
+    sys.exit(1)
+PYTOKEN
+
+  if [ "$_write_rc" -eq 0 ] && [ -f "$hash_file" ]; then
+    (cd "$(dirname "$config_file")" && sha256sum "$(basename "$config_file")" >"$hash_file") || _write_rc=$?
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    restore_openclaw_config_after_write "$config_file" "$hash_file" || _write_rc=$?
+  fi
+
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
 export_gateway_token() {
   local token
   token="$(_read_gateway_token)"
@@ -1001,6 +1107,20 @@ export_gateway_token() {
     return
   fi
   export OPENCLAW_GATEWAY_TOKEN="$token"
+}
+
+needs_gateway_token_for_current_command() {
+  # Startup and direct OpenClaw CLI commands need the token before auto-pair or
+  # agent subprocesses run. Arbitrary explicit commands do not, and non-root
+  # smoke paths may not be able to mutate the baked OpenClaw config.
+  if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+    return 0
+  fi
+
+  case "${NEMOCLAW_CMD[0]##*/}" in
+    openclaw) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
@@ -1395,6 +1515,14 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
+    if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
+      _escaped_gateway_port="$(printf '%s' "$OPENCLAW_GATEWAY_PORT" | sed "s/'/'\\\\''/g")"
+      printf "export OPENCLAW_GATEWAY_PORT='%s'\n" "$_escaped_gateway_port"
+    fi
+    if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
+      _escaped_gateway_url="$(printf '%s' "$OPENCLAW_GATEWAY_URL" | sed "s/'/'\\\\''/g")"
+      printf "export OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+    fi
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
@@ -1900,6 +2028,9 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_cors_override
   refresh_openclaw_provider_placeholders
   ensure_mutable_openclaw_config_hash
+  if needs_gateway_token_for_current_command; then
+    ensure_gateway_token
+  fi
   # Capture baseline for next start's recovery — only after overrides and
   # placeholder refresh have produced the post-startup config the user
   # actually runs with.
@@ -2002,6 +2133,9 @@ reconcile_agent_model_with_provider
 apply_cors_override
 refresh_openclaw_provider_placeholders
 ensure_mutable_openclaw_config_hash
+if needs_gateway_token_for_current_command; then
+  ensure_gateway_token
+fi
 # Capture baseline for next start's recovery — only after overrides and
 # placeholder refresh have produced the post-startup config the user
 # actually runs with.

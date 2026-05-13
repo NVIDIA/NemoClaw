@@ -136,4 +136,5 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 ## Next Steps
 
 - [Use a Local Inference Server](use-local-inference.md) for Ollama, vLLM, NIM, and compatible-endpoint setup details.
+- [Tool-Calling Reliability](tool-calling-reliability.md) for deciding when Ollama is enough and when vLLM with a parser is safer.
 - [Switch Inference Models](switch-inference-providers.md) for changing the model at runtime without re-onboarding.

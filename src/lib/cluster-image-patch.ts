@@ -42,6 +42,13 @@ export interface RunOpts {
   ignoreError?: boolean;
   /** Hard wall-clock timeout (ms). Child is killed on expiry. */
   timeoutMs?: number;
+  /**
+   * Drop captured stdout/stderr instead of forwarding them to the user's
+   * terminal. Used for noisy commands (`docker manifest inspect`,
+   * `docker build`) whose raw output is internal-only — the caller logs
+   * its own progress lines.
+   */
+  suppressOutput?: boolean;
 }
 
 export interface EnsurePatchedClusterImageOpts {
@@ -260,6 +267,7 @@ export function ensurePatchedClusterImage(opts: EnsurePatchedClusterImageOpts): 
     // and restricted-network hosts fail in seconds instead of minutes.
     const probeResult = runImpl(["docker", "manifest", "inspect", opts.upstreamImage], {
       ignoreError: true,
+      suppressOutput: true,
       timeoutMs: inspectTimeoutMs,
     });
     if (probeResult.status !== 0) {
@@ -321,13 +329,14 @@ export function ensurePatchedClusterImage(opts: EnsurePatchedClusterImageOpts): 
       [
         "docker",
         "build",
+        "--quiet",
         "--build-arg",
         `UPSTREAM=${opts.upstreamImage}`,
         "-t",
         tag,
         tmpDir,
       ],
-      { ignoreError: true, timeoutMs: buildTimeoutMs },
+      { ignoreError: true, suppressOutput: true, timeoutMs: buildTimeoutMs },
     );
 
     if (buildResult.status !== 0) {
@@ -397,6 +406,7 @@ function defaultRunCapture(cmd: readonly string[], opts: RunOpts = {}): string {
 function defaultRun(cmd: readonly string[], opts: RunOpts = {}): { status: number | null } {
   const result = runner.run(cmd, {
     ignoreError: opts.ignoreError,
+    suppressOutput: opts.suppressOutput,
     ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
   });
   return { status: result.status ?? null };
