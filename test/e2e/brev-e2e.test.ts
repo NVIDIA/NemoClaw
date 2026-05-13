@@ -210,7 +210,7 @@ function sshEnv(
   return ssh(`${envPrefix} && ${cmd}`, { timeout, stream });
 }
 
-function waitForSsh(maxAttempts = 40, intervalMs = 5_000): void {
+function waitForSsh(maxAttempts = GPU_TEST_SUITE ? 180 : 40, intervalMs = 5_000): void {
   for (let i = 1; i <= maxAttempts; i++) {
     try {
       ssh("echo ok", { timeout: 10_000 });
