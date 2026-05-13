@@ -184,7 +184,7 @@ describe("docker-gpu-patch", () => {
   });
 
   it("reports the Docker GPU patch network mode", () => {
-    expect(getDockerGpuPatchNetworkMode({})).toBe("preserve");
+    expect(getDockerGpuPatchNetworkMode({})).toBe("host");
     expect(getDockerGpuPatchNetworkMode({ NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host" })).toBe(
       "host",
     );
@@ -346,11 +346,9 @@ describe("docker-gpu-patch", () => {
         "--gpus",
         "all",
         "--network",
-        "openshell-docker",
-        "--network-alias",
-        "openshell-alpha",
+        "host",
         "--env",
-        "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/",
+        "OPENSHELL_ENDPOINT=http://127.0.0.1:8080/",
       ]),
       expect.objectContaining({ ignoreError: true }),
     );

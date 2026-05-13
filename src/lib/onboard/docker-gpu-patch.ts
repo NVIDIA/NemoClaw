@@ -356,8 +356,9 @@ export function getDockerGpuPatchNetworkMode(
   env: Record<string, string | undefined> = process.env,
 ): "host" | "preserve" {
   const networkOverride = String(env[DOCKER_GPU_PATCH_NETWORK_ENV] || "").trim().toLowerCase();
-  if (networkOverride === "host") return "host";
-  return "preserve";
+  if (networkOverride === "preserve" || networkOverride === "bridge") return "preserve";
+  if (networkOverride && networkOverride !== "host") return "preserve";
+  return "host";
 }
 
 function dockerNetworkAliases(

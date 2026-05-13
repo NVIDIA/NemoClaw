@@ -508,8 +508,16 @@ else
   fail "[LOCAL] Direct Ollama: empty response"
 fi
 
-# 5b: Inference through sandbox → openshell gateway → host.openshell.internal:11435 (proxy) → Ollama
-info "[LOCAL] Sandbox inference test → sandbox → gateway → auth proxy → Ollama on GPU..."
+# 5b: Inference through sandbox → provider route → Ollama. The Docker GPU
+# patch uses host networking so the sandbox can reconnect to OpenShell after
+# recreation; in that mode NemoClaw bakes a direct loopback Ollama URL into
+# OpenClaw to avoid OpenShell's inference.local TCP relay path.
+SANDBOX_INFERENCE_URL="https://inference.local/v1/chat/completions"
+if grep -Fq "OpenClaw local inference will use direct sandbox URL" "$INSTALL_LOG"; then
+  OLLAMA_HOST_PORT="${NEMOCLAW_OLLAMA_PORT:-11434}"
+  SANDBOX_INFERENCE_URL="http://127.0.0.1:${OLLAMA_HOST_PORT}/v1/chat/completions"
+fi
+info "[LOCAL] Sandbox inference test → ${SANDBOX_INFERENCE_URL} → Ollama on GPU..."
 ssh_config="$(mktemp)"
 sandbox_response=""
 
@@ -522,7 +530,7 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" \
-    "curl -s --max-time 90 https://inference.local/v1/chat/completions \
+    "curl -s --max-time 90 ${SANDBOX_INFERENCE_URL} \
       -H 'Content-Type: application/json' \
       -d '{\"model\":\"$CONFIGURED_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":200}'" \
     2>&1) || true
@@ -535,7 +543,7 @@ if [ -n "$sandbox_response" ]; then
   sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
   if echo "$sandbox_content" | grep -qi "PONG"; then
     pass "[LOCAL] Sandbox inference: Ollama responded through sandbox"
-    info "Full path proven: sandbox → openshell gateway → auth proxy (:11435) → Ollama GPU (:11434)"
+    info "Full path proven: sandbox → ${SANDBOX_INFERENCE_URL} → Ollama GPU (:11434)"
   else
     fail "[LOCAL] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}"
   fi

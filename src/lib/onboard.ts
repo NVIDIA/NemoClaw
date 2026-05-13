@@ -1380,6 +1380,15 @@ function configureLocalInferenceForDockerGpuHostNetwork(config: SandboxGpuConfig
   );
 }
 
+function dockerGpuPatchHostNetworkInferenceBaseUrl(
+  config: SandboxGpuConfig,
+  provider: string | null | undefined,
+): string | null {
+  if (!shouldUseDockerGpuPatchHostNetwork(config)) return null;
+  if (!provider || !LOCAL_INFERENCE_PROVIDERS.includes(provider)) return null;
+  return getLocalProviderValidationBaseUrl(provider);
+}
+
 // ── Base image resolution ───────────────────────────────────────
 // Pulls candidate sandbox-base images from GHCR and inspects them to get the
 // actual repo digest when available. This avoids the registry mismatch that
@@ -5998,6 +6007,15 @@ async function createSandbox(
     }
   }
   const buildId = String(Date.now());
+  const sandboxInferenceBaseUrlOverride = dockerGpuPatchHostNetworkInferenceBaseUrl(
+    effectiveSandboxGpuConfig,
+    provider,
+  );
+  if (sandboxInferenceBaseUrlOverride) {
+    console.log(
+      `  Docker-driver GPU host networking: OpenClaw local inference will use direct sandbox URL ${sandboxInferenceBaseUrlOverride}.`,
+    );
+  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -6012,6 +6030,7 @@ async function createSandbox(
     resolved ? resolved.ref : null,
     telegramConfig,
     process.platform === "darwin",
+    sandboxInferenceBaseUrlOverride,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
