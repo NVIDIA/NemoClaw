@@ -70,8 +70,13 @@ const {
   syncPresetSelection,
 }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
 const {
-  HOST_QR_LOGIN_HANDLERS,
-} = require("./host-qr-handlers") as typeof import("./host-qr-handlers");
+  gatherWechatConfig,
+  hasWechatConfigDrift,
+  toSessionWechatConfig,
+} = require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
+const {
+  setupSelectedMessagingChannels,
+} = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -5743,33 +5748,7 @@ async function createSandbox(
       telegramConfig.requireMention = telegramRequireMention;
     }
   }
-  // WeChat per-account metadata captured by the host-side QR login. The
-  // values themselves are non-secret (account id, base URL, user id) — the
-  // bot token is held separately in the OpenShell provider. We pass them
-  // through to the sandbox so the in-sandbox wrapper plugin can pre-seed
-  // the upstream @tencent-weixin/openclaw-weixin credentials file without
-  // re-running the QR handshake.
-  // Populated from process.env (just captured by the host-qr handler this
-  // run, or from `rebuildSandbox`'s env-stash) with a session fallback for
-  // the resume case where setupMessagingChannels short-circuits the
-  // host-qr handler because the bot token is already cached. Not gated on
-  // `enabledTokenEnvKeys` — the metadata flows into the image whenever it
-  // is known, so seed-wechat-accounts.py can do its job.
-  const wechatConfig: { accountId?: string; baseUrl?: string; userId?: string } = {};
-  {
-    const accountId = normalizeCredentialValue(process.env.WECHAT_ACCOUNT_ID || "");
-    const baseUrl = normalizeCredentialValue(process.env.WECHAT_BASE_URL || "");
-    const userId = normalizeCredentialValue(process.env.WECHAT_USER_ID || "");
-    if (accountId) wechatConfig.accountId = accountId;
-    if (baseUrl) wechatConfig.baseUrl = baseUrl;
-    if (userId) wechatConfig.userId = userId;
-    if (Object.keys(wechatConfig).length === 0) {
-      const recorded = onboardSession.loadSession()?.wechatConfig;
-      if (recorded?.accountId) wechatConfig.accountId = recorded.accountId;
-      if (recorded?.baseUrl) wechatConfig.baseUrl = recorded.baseUrl;
-      if (recorded?.userId) wechatConfig.userId = recorded.userId;
-    }
-  }
+  const wechatConfig = gatherWechatConfig(onboardSession.loadSession());
   // Persist the effective Telegram config into the session so a later resume
   // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and
   // force a sandbox recreate — otherwise the old groupPolicy would stay baked
@@ -5779,14 +5758,7 @@ async function createSandbox(
       typeof telegramConfig.requireMention === "boolean"
         ? { requireMention: telegramConfig.requireMention as boolean }
         : null;
-    current.wechatConfig =
-      Object.keys(wechatConfig).length > 0
-        ? {
-            accountId: wechatConfig.accountId,
-            baseUrl: wechatConfig.baseUrl,
-            userId: wechatConfig.userId,
-          }
-        : null;
+    current.wechatConfig = toSessionWechatConfig(wechatConfig);
     current.messagingChannelConfig = messagingChannelConfig;
     return current;
   });
@@ -5839,7 +5811,7 @@ async function createSandbox(
     discordGuilds,
     resolved ? resolved.ref : null,
     telegramConfig,
-    wechatConfig,
+    wechatConfig as Record<string, unknown>,
     process.platform === "darwin",
     sandboxInferenceBaseUrlOverride,
   );
@@ -8301,187 +8273,7 @@ async function setupMessagingChannels(): Promise<string[]> {
     return [];
   }
 
-  // For each selected channel, prompt for token if not already set
-  for (const name of selected) {
-    const ch = MESSAGING_CHANNELS.find((c) => c.name === name);
-    if (!ch) {
-      console.log(`  Unknown channel: ${name}`);
-      continue;
-    }
-    if (getMessagingToken(ch.envKey)) {
-      console.log(`  ✓ ${ch.name} — already configured`);
-    } else if (ch.loginMethod === "host-qr") {
-      // Dispatch to the per-channel host-side QR handler (see
-      // src/lib/host-qr-handlers.ts). Handlers capture both the bot token
-      // and any non-secret per-account metadata the in-sandbox wrapper
-      // plugin needs to skip a second QR scan; the result shape is
-      // uniform so the apply path here stays channel-agnostic.
-      console.log("");
-      console.log(`  ${ch.help}`);
-      const handler = HOST_QR_LOGIN_HANDLERS[ch.name];
-      if (!handler) {
-        console.log(`  Skipped ${ch.name} (no host-qr handler registered)`);
-        enabled.delete(ch.name);
-        continue;
-      }
-      // Belt-and-suspenders: the WeChat handler wraps its own body in
-      // try/catch, but a future handler might not. Use a real try/catch
-      // around `await handler()` rather than `.catch()` so any throw that
-      // escapes before the handler returns its Promise (e.g. a non-async
-      // handler that throws during a setup expression) still gets
-      // normalized to a structured "error" result and the channel is
-      // skipped instead of crashing onboarding.
-      let result: Awaited<ReturnType<typeof handler>>;
-      try {
-        result = await handler();
-      } catch (err: unknown) {
-        result = {
-          kind: "error",
-          message: err instanceof Error ? err.message : String(err),
-        };
-      }
-      if (result.kind !== "ok") {
-        const reason =
-          result.kind === "timeout"
-            ? "QR login timed out"
-            : result.kind === "expired"
-              ? "QR expired too many times"
-              : result.kind === "aborted"
-                ? "login aborted"
-                : `login failed: ${result.message ?? "unknown error"}`;
-        console.log(`  Skipped ${ch.name} (${reason})`);
-        enabled.delete(ch.name);
-        continue;
-      }
-      if (result.token) {
-        saveCredential(ch.envKey, result.token);
-        process.env[ch.envKey] = result.token;
-      }
-      // Stash non-secret metadata on env so the Dockerfile-patch path
-      // (createSandbox → patchStagedDockerfile) can serialize it into the
-      // channel's build args without a second round-trip to the handler.
-      if (result.extraEnv) {
-        for (const [key, value] of Object.entries(result.extraEnv)) {
-          process.env[key] = value;
-        }
-      }
-      // Seed the DM allowlist with the operator captured during the QR
-      // handshake, unless the user already supplied their own list.
-      if (ch.userIdEnvKey && result.defaultUserId && !process.env[ch.userIdEnvKey]) {
-        process.env[ch.userIdEnvKey] = result.defaultUserId;
-      }
-      const suffix = result.summary ? ` (${result.summary})` : "";
-      console.log(`  ✓ ${ch.name} token saved${suffix}`);
-    } else {
-      console.log("");
-      console.log(`  ${ch.help}`);
-      const token = normalizeCredentialValue(await prompt(`  ${ch.label}: `, { secret: true }));
-      if (token && ch.tokenFormat && !ch.tokenFormat.test(token)) {
-        console.log(
-          `  ✗ Invalid format. ${ch.tokenFormatHint || "Check the token and try again."}`,
-        );
-        console.log(`  Skipped ${ch.name} (invalid token format)`);
-        enabled.delete(ch.name);
-        continue;
-      }
-      if (token) {
-        saveCredential(ch.envKey, token);
-        process.env[ch.envKey] = token;
-        console.log(`  ✓ ${ch.name} token saved`);
-      } else {
-        console.log(`  Skipped ${ch.name} (no token entered)`);
-        enabled.delete(ch.name);
-        continue;
-      }
-    }
-    if (ch.appTokenEnvKey) {
-      const existingAppToken = getMessagingToken(ch.appTokenEnvKey);
-      if (existingAppToken) {
-        console.log(`  ✓ ${ch.name} app token — already configured`);
-      } else {
-        console.log("");
-        console.log(`  ${ch.appTokenHelp}`);
-        const appToken = normalizeCredentialValue(
-          await prompt(`  ${ch.appTokenLabel}: `, { secret: true }),
-        );
-        if (appToken && ch.appTokenFormat && !ch.appTokenFormat.test(appToken)) {
-          console.log(
-            `  ✗ Invalid format. ${ch.appTokenFormatHint || "Check the token and try again."}`,
-          );
-          console.log(`  Skipped ${ch.name} app token (invalid token format)`);
-          enabled.delete(ch.name);
-          continue;
-        }
-        if (appToken) {
-          saveCredential(ch.appTokenEnvKey, appToken);
-          process.env[ch.appTokenEnvKey] = appToken;
-          console.log(`  ✓ ${ch.name} app token saved`);
-        } else {
-          console.log(`  Skipped ${ch.name} app token (Socket Mode requires both tokens)`);
-          enabled.delete(ch.name);
-          continue;
-        }
-      }
-    }
-    if (ch.serverIdEnvKey) {
-      const existingServerIds = getMessagingConfigValue(ch.serverIdEnvKey) || "";
-      if (existingServerIds) {
-        process.env[ch.serverIdEnvKey] = existingServerIds;
-        console.log(`  ✓ ${ch.name} — server ID already set: ${existingServerIds}`);
-      } else {
-        console.log(`  ${ch.serverIdHelp}`);
-        const serverId = (await prompt(`  ${ch.serverIdLabel}: `)).trim();
-        if (serverId) {
-          process.env[ch.serverIdEnvKey] = serverId;
-          console.log(`  ✓ ${ch.name} server ID saved`);
-        } else {
-          console.log(`  Skipped ${ch.name} server ID (guild channels stay disabled)`);
-        }
-      }
-    }
-    // Mention-control prompt: fires for any channel that exposes a
-    // requireMention env key. Discord gates the prompt behind a configured
-    // server ID (mention control only makes sense in a guild). Telegram
-    // has no serverIdEnvKey because mention control applies to every group
-    // the bot is added to, so the prompt always fires there. See #1737.
-    const requireMentionKey = ch.requireMentionEnvKey;
-    if (requireMentionKey && (!ch.serverIdEnvKey || Boolean(process.env[ch.serverIdEnvKey]))) {
-      const existingRequireMention = getMessagingConfigValue(requireMentionKey);
-      if (existingRequireMention === "0" || existingRequireMention === "1") {
-        process.env[requireMentionKey] = existingRequireMention;
-        const mode = existingRequireMention === "0" ? "all messages" : "@mentions only";
-        console.log(`  ✓ ${ch.name} — reply mode already set: ${mode}`);
-      } else {
-        console.log(`  ${ch.requireMentionHelp}`);
-        const answer = (await prompt("  Reply only when @mentioned? [Y/n]: ")).trim().toLowerCase();
-        const value = answer === "n" || answer === "no" ? "0" : "1";
-        process.env[requireMentionKey] = value;
-        const mode = value === "0" ? "all messages" : "@mentions only";
-        console.log(`  ✓ ${ch.name} reply mode saved: ${mode}`);
-      }
-    }
-    // Prompt for user/sender ID when the channel supports allowlisting
-    if (ch.userIdEnvKey && (!ch.serverIdEnvKey || process.env[ch.serverIdEnvKey])) {
-      const existingIds = getMessagingConfigValue(ch.userIdEnvKey) || "";
-      if (existingIds) {
-        process.env[ch.userIdEnvKey] = existingIds;
-        console.log(`  ✓ ${ch.name} — allowed IDs already set: ${existingIds}`);
-      } else {
-        console.log(`  ${ch.userIdHelp}`);
-        const userId = (await prompt(`  ${ch.userIdLabel}: `)).trim();
-        if (userId) {
-          process.env[ch.userIdEnvKey] = userId;
-          console.log(`  ✓ ${ch.name} allowed IDs saved`);
-        } else {
-          const skippedReason =
-            ch.allowIdsMode === "guild"
-              ? "any member in the configured server can message the bot"
-              : "bot will require manual pairing";
-          console.log(`  Skipped ${ch.name} user ID (${skippedReason})`);
-        }
-      }
-    }
-  }
+  await setupSelectedMessagingChannels(selected, enabled, MESSAGING_CHANNELS);
   console.log("");
 
   // Channels where the user declined to enter a token were dropped from
@@ -10710,21 +10502,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const sandboxGpuConfigChanged = sandboxName
       ? hasSandboxGpuDrift(sandboxName, sandboxGpuConfig)
       : false;
-    // WeChat per-account metadata is baked into openclaw.json at build time
-    // via the wrapper plugin. If the host re-ran the QR login and got a new
-    // accountId/baseUrl/userId, treat it as drift and force a recreate so
-    // the sandbox doesn't keep talking to the previous IDC base URL. We
-    // compare the recorded session metadata against whatever is currently
-    // staged on env (set by setupMessagingChannels for a fresh login).
-    const recordedWechat = session?.wechatConfig ?? null;
-    const currentWechatAccountId = normalizeCredentialValue(process.env.WECHAT_ACCOUNT_ID || "");
-    const currentWechatBaseUrl = normalizeCredentialValue(process.env.WECHAT_BASE_URL || "");
-    const currentWechatUserId = normalizeCredentialValue(process.env.WECHAT_USER_ID || "");
-    const wechatConfigChanged =
-      Boolean(currentWechatAccountId) &&
-      ((recordedWechat?.accountId ?? "") !== currentWechatAccountId ||
-        (recordedWechat?.baseUrl ?? "") !== currentWechatBaseUrl ||
-        (recordedWechat?.userId ?? "") !== currentWechatUserId);
+    const wechatConfigChanged = hasWechatConfigDrift(session);
     const resumeSandbox =
       resume &&
       !webSearchConfigChanged &&
