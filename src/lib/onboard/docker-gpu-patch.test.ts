@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildDockerGpuCloneRunArgs,
+  buildDockerGpuCloneRunOptions,
   buildDockerGpuMode,
   buildDockerGpuModeCandidates,
   collectDockerGpuPatchDiagnostics,
@@ -27,7 +28,12 @@ function inspectFixture(): DockerContainerInspect {
     Name: "/openshell-alpha",
     Config: {
       Image: "openshell/sandbox:abc",
-      Env: ["A=1", "OPENSHELL_TEST=1", "NVIDIA_VISIBLE_DEVICES=void"],
+      Env: [
+        "A=1",
+        "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/",
+        "OPENSHELL_TEST=1",
+        "NVIDIA_VISIBLE_DEVICES=void",
+      ],
       Labels: {
         "openshell.ai/managed-by": "openshell",
         "openshell.ai/sandbox-name": "alpha",
@@ -102,6 +108,8 @@ describe("docker-gpu-patch", () => {
         "--env",
         "A=1",
         "--env",
+        "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/",
+        "--env",
         "OPENSHELL_TEST=1",
         "--label",
         "openshell.ai/managed-by=openshell",
@@ -133,17 +141,38 @@ describe("docker-gpu-patch", () => {
 
   it("formats sanitized network diagnostics without dumping provider secrets", () => {
     const inspect = inspectFixture();
-    inspect.Config?.Env?.push("NVIDIA_API_KEY=secret", "OPENSHELL_ENDPOINT=http://host:8080");
+    inspect.Config?.Env?.push("NVIDIA_API_KEY=secret");
 
     const summary = formatDockerInspectNetworkSummary("old-container-id", inspect);
 
     expect(summary).toContain("target=old-container-id");
     expect(summary).toContain("network_mode=openshell-docker");
     expect(summary).toContain("host.openshell.internal:172.17.0.1");
-    expect(summary).toContain("env.OPENSHELL_ENDPOINT=http://host:8080");
+    expect(summary).toContain("env.OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/");
     expect(summary).toContain("openshell-docker: ip=172.18.0.2 gateway=172.18.0.1");
     expect(summary).not.toContain("NVIDIA_API_KEY");
     expect(summary).not.toContain("secret");
+  });
+
+  it("can switch the recreated sandbox to host networking for OpenShell callbacks", () => {
+    const inspect = inspectFixture();
+    const options = buildDockerGpuCloneRunOptions(inspect, {});
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"), options);
+
+    expect(options).toEqual({
+      networkMode: "host",
+      openshellEndpoint: "http://127.0.0.1:8080/",
+    });
+    expect(args).toEqual(expect.arrayContaining(["--network", "host"]));
+    expect(args).toEqual(
+      expect.arrayContaining(["--env", "OPENSHELL_ENDPOINT=http://127.0.0.1:8080/"]),
+    );
+    expect(args).not.toEqual(
+      expect.arrayContaining(["--add-host", "host.openshell.internal:172.17.0.1"]),
+    );
+    expect(buildDockerGpuCloneRunOptions(inspect, { NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "preserve" })).toEqual(
+      {},
+    );
   });
 
   it("maps default and explicit GPU devices to Docker --gpus values", () => {
@@ -287,7 +316,16 @@ describe("docker-gpu-patch", () => {
     expect(result.newContainerId).toBe("new-container-id");
     expect(result.mode.kind).toBe("gpus");
     expect(dockerRunDetached).toHaveBeenCalledWith(
-      expect.arrayContaining(["--name", "openshell-alpha", "--gpus", "all"]),
+      expect.arrayContaining([
+        "--name",
+        "openshell-alpha",
+        "--gpus",
+        "all",
+        "--network",
+        "host",
+        "--env",
+        "OPENSHELL_ENDPOINT=http://127.0.0.1:8080/",
+      ]),
       expect.objectContaining({ ignoreError: true }),
     );
     expect(runOpenshell).toHaveBeenCalledWith(

@@ -25,6 +25,7 @@ const DOCKER_GPU_PATCH_WAIT_SECS = 180;
 const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
 export const DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV =
   "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT";
+export const DOCKER_GPU_PATCH_NETWORK_ENV = "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK";
 const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
 const GPU_ENV_KEYS = new Set([
   "NVIDIA_VISIBLE_DEVICES",
@@ -95,6 +96,11 @@ export type DockerGpuPatchResult = {
   newContainerId: string;
   backupContainerName: string;
   mode: DockerGpuPatchMode;
+};
+
+export type DockerGpuCloneRunOptions = {
+  networkMode?: string | null;
+  openshellEndpoint?: string | null;
 };
 
 export type DockerGpuPatchDiagnostics = {
@@ -223,6 +229,28 @@ function envKey(env: string): string {
   return idx === -1 ? env : env.slice(0, idx);
 }
 
+function envValue(env: string[] | null | undefined, key: string): string | null {
+  const prefix = `${key}=`;
+  const entry = stringArray(env).find((value) => value.startsWith(prefix));
+  return entry ? entry.slice(prefix.length) : null;
+}
+
+function replaceEnvValue(entry: string, key: string, value: string | null | undefined): string {
+  if (!value || envKey(entry) !== key) return entry;
+  return `${key}=${value}`;
+}
+
+function dockerGpuHostEndpointFromOpenShellEndpoint(endpoint: string): string | null {
+  try {
+    const url = new URL(endpoint);
+    if (url.hostname !== "host.openshell.internal") return null;
+    url.hostname = "127.0.0.1";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function pushStringFlag(args: string[], flag: string, value: unknown): void {
   const normalized = String(value ?? "").trim();
   if (normalized) args.push(flag, normalized);
@@ -312,9 +340,24 @@ export function shouldApplyDockerGpuPatch(
   );
 }
 
+export function buildDockerGpuCloneRunOptions(
+  inspect: DockerContainerInspect,
+  env: Record<string, string | undefined> = process.env,
+): DockerGpuCloneRunOptions {
+  const networkOverride = String(env[DOCKER_GPU_PATCH_NETWORK_ENV] || "").trim().toLowerCase();
+  if (networkOverride === "preserve" || networkOverride === "bridge") return {};
+  if (networkOverride && networkOverride !== "host") return {};
+
+  const endpoint = envValue(inspect.Config?.Env, "OPENSHELL_ENDPOINT");
+  const hostEndpoint = endpoint ? dockerGpuHostEndpointFromOpenShellEndpoint(endpoint) : null;
+  if (!hostEndpoint) return {};
+  return { networkMode: "host", openshellEndpoint: hostEndpoint };
+}
+
 export function buildDockerGpuCloneRunArgs(
   inspect: DockerContainerInspect,
   mode: DockerGpuPatchMode,
+  options: DockerGpuCloneRunOptions = {},
 ): string[] {
   const config = inspect.Config || {};
   const host = inspect.HostConfig || {};
@@ -330,7 +373,7 @@ export function buildDockerGpuCloneRunArgs(
   if (config.OpenStdin) args.push("--interactive");
 
   for (const env of stringArray(config.Env).filter((entry) => !GPU_ENV_KEYS.has(envKey(entry)))) {
-    args.push("--env", env);
+    args.push("--env", replaceEnvValue(env, "OPENSHELL_ENDPOINT", options.openshellEndpoint));
   }
 
   const labels = config.Labels || {};
@@ -340,7 +383,8 @@ export function buildDockerGpuCloneRunArgs(
   }
 
   for (const bind of stringArray(host.Binds)) args.push("--volume", bind);
-  pushStringFlag(args, "--network", host.NetworkMode);
+  const networkMode = options.networkMode ?? host.NetworkMode;
+  pushStringFlag(args, "--network", networkMode);
 
   const restart = host.RestartPolicy;
   if (restart?.Name && restart.Name !== "no") {
@@ -354,10 +398,14 @@ export function buildDockerGpuCloneRunArgs(
   for (const cap of stringArray(host.CapAdd)) args.push("--cap-add", cap);
   for (const cap of stringArray(host.CapDrop)) args.push("--cap-drop", cap);
   for (const opt of stringArray(host.SecurityOpt)) args.push("--security-opt", opt);
-  for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
+  if (networkMode !== "host") {
+    for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
+  }
   for (const group of stringArray(host.GroupAdd)) args.push("--group-add", group);
-  for (const dns of stringArray(host.Dns)) args.push("--dns", dns);
-  for (const dnsSearch of stringArray(host.DnsSearch)) args.push("--dns-search", dnsSearch);
+  if (networkMode !== "host") {
+    for (const dns of stringArray(host.Dns)) args.push("--dns", dns);
+    for (const dnsSearch of stringArray(host.DnsSearch)) args.push("--dns-search", dnsSearch);
+  }
 
   pushNumberFlag(args, "--memory", host.Memory);
   pushNumberFlag(args, "--memory-reservation", host.MemoryReservation);
@@ -661,7 +709,8 @@ export function recreateOpenShellDockerSandboxWithGpu(
       throw new Error(`Could not move original sandbox container aside: ${resultText(renameResult)}`);
     }
 
-    const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode);
+    const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
+    const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);
     const runResult = d.dockerRunDetached(cloneArgs, {
       ignoreError: true,
       suppressOutput: true,
