@@ -2,18 +2,23 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Release Notes
 
-NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use the following GitHub resources to track changes.
+NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
-| Resource | Description |
-|---|---|
-| [Releases](https://github.com/NVIDIA/NemoClaw/releases) | Versioned release notes and downloadable assets. |
-| [Release comparison](https://github.com/NVIDIA/NemoClaw/compare) | Diff between any two tags or branches. |
-| [Merged pull requests](https://github.com/NVIDIA/NemoClaw/pulls?q=is%3Apr+is%3Amerged) | Individual changes with review discussion. |
-| [Commit history](https://github.com/NVIDIA/NemoClaw/commits/main) | Full commit log on `main`. |
+## v0.0.40
 
-## Behavior Changes
+NemoClaw v0.0.40 improves onboarding reliability, local inference setup, and sandbox recovery:
 
-### v0.0.39 Release Prep Updates
+- `nemoclaw onboard` uses the Docker-driver OpenShell gateway path on macOS with OpenShell 0.0.37, repairs incomplete Docker-driver installs before startup, and installs the platform-specific gateway asset it needs.
+- The Docker-driver gateway startup check waits for the gateway port to accept TCP connections before it reports the gateway as healthy, and startup failures now include child process exit details.
+- Local Ollama setup requires the authenticated reverse proxy token on every native Ollama API route, including `GET /api/tags`.
+- The Linux Ollama install path preflights `zstd` before running the official installer and explains why each sudo-backed setup step needs elevated privileges.
+- The onboarding provider menu offers an already-running local vLLM server directly when `localhost:8000` responds, while managed vLLM install and start options remain behind the experimental opt-in.
+- Policy tier defaults are filtered by active agent support, so presets such as Brave Search are not reapplied to agents that do not support that integration.
+- `nemoclaw <name> connect` checks dashboard forward reachability with a TCP probe before it reports a forward as stale.
+- Sandbox startup captures a known-good OpenClaw config baseline and restores it on restart if `/sandbox/.openclaw/openclaw.json` becomes empty.
+- The NemoClaw OpenClaw plugin package declares compatibility metadata for OpenClaw package tooling.
+
+## v0.0.39
 
 NemoClaw v0.0.39 improves several day-two workflows:
 
@@ -31,7 +36,7 @@ NemoClaw v0.0.39 improves several day-two workflows:
 - OpenClaw workspace template files are seeded when bootstrap is skipped and the workspace is still empty.
 - Kimi K2.6 and related NVIDIA-hosted chat-completions paths include model-specific compatibility handling for reasoning output.
 
-### v0.0.38 Reliability Updates
+## v0.0.38
 
 NemoClaw v0.0.38 improves several day-two workflows:
 
@@ -42,7 +47,7 @@ NemoClaw v0.0.38 improves several day-two workflows:
 - Rebuild backups tolerate partial archive output when usable data was produced, then report only the manifest-defined paths that could not be archived.
 - NemoHermes uninstall output uses NemoHermes-specific help, progress, and completion text.
 
-### v0.0.34 Installer Requires Explicit Acceptance in Non-TTY Environments
+## v0.0.34
 
 Starting with NemoClaw v0.0.34, the `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash` installer pipeline no longer auto-accepts the third-party software notice when stdin is piped and `/dev/tty` is unavailable (for example, deeply detached SSH sessions or some container shells).
 In environments without a TTY, accept upfront in the pipe:

@@ -24,6 +24,20 @@ status: published
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.40
+
+NemoClaw v0.0.40 improves onboarding reliability, local inference setup, and sandbox recovery:
+
+- `nemoclaw onboard` uses the Docker-driver OpenShell gateway path on macOS with OpenShell 0.0.37, repairs incomplete Docker-driver installs before startup, and installs the platform-specific gateway asset it needs.
+- The Docker-driver gateway startup check waits for the gateway port to accept TCP connections before it reports the gateway as healthy, and startup failures now include child process exit details.
+- Local Ollama setup requires the authenticated reverse proxy token on every native Ollama API route, including `GET /api/tags`.
+- The Linux Ollama install path preflights `zstd` before running the official installer and explains why each sudo-backed setup step needs elevated privileges.
+- The onboarding provider menu offers an already-running local vLLM server directly when `localhost:8000` responds, while managed vLLM install and start options remain behind the experimental opt-in.
+- Policy tier defaults are filtered by active agent support, so presets such as Brave Search are not reapplied to agents that do not support that integration.
+- `nemoclaw <name> connect` checks dashboard forward reachability with a TCP probe before it reports a forward as stale.
+- Sandbox startup captures a known-good OpenClaw config baseline and restores it on restart if `/sandbox/.openclaw/openclaw.json` becomes empty.
+- The NemoClaw OpenClaw plugin package declares compatibility metadata for OpenClaw package tooling.
+
 ## v0.0.39
 
 NemoClaw v0.0.39 improves several day-two workflows:

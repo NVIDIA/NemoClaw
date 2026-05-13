@@ -37,6 +37,7 @@ vi.mock("../policy", () => ({
   ]),
   parseCurrentPolicy: vi.fn((raw) => raw || ""),
   PERMISSIVE_POLICY_PATH: "/mock/permissive.yaml",
+  resolvePermissivePolicyPath: vi.fn(() => "/mock/permissive.yaml"),
 }));
 
 vi.mock("../sandbox/config", () => ({

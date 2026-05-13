@@ -272,7 +272,7 @@ For example, Slack bot tokens must start with `xoxb-`.
 ### Choose Network Policy Presets
 
 After the sandbox image builds and OpenClaw starts inside the sandbox, NemoClaw asks which network policy tier to apply.
-The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search.
+The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search when the selected agent supports web search.
 Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
 
 The preset selector lets you include more destinations, such as GitHub, Jira, Slack, Telegram, or local inference.
@@ -346,9 +346,4 @@ openclaw agent --agent main --local -m "hello" --session-id test
 
 ## Related Skills
 
-- `nemoclaw-user-manage-sandboxes` — Manage NemoClaw sandboxes (use the `nemoclaw-user-manage-sandboxes` skill) for port forwards, rebuilds, upgrades, and uninstall
-- `nemoclaw-user-configure-inference` — Switch inference providers (use the `nemoclaw-user-configure-inference` skill) to use a different model or endpoint
-- `nemoclaw-user-manage-policy` — Approve or deny network requests (use the `nemoclaw-user-manage-policy` skill) when the agent tries to reach external hosts
-- `nemoclaw-user-deploy-remote` — Deploy to a remote GPU instance (use the `nemoclaw-user-deploy-remote` skill) for always-on operation
-- `nemoclaw-user-monitor-sandbox` — Monitor sandbox activity (use the `nemoclaw-user-monitor-sandbox` skill) through the OpenShell TUI
-- `nemoclaw-user-reference` — Consult the troubleshooting guide (use the `nemoclaw-user-reference` skill) for common error messages and resolution steps
+- `nemoclaw-user-overview` — NemoClaw Overview (use the `nemoclaw-user-overview` skill) to learn what NemoClaw is and its capabilities

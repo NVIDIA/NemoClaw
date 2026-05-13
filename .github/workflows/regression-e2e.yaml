@@ -21,7 +21,7 @@ on:
       jobs:
         description: >-
           Comma-separated regression job names to run (empty = all).
-          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e
+          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e
         required: false
         type: string
         default: ""
@@ -46,6 +46,7 @@ jobs:
     outputs:
       dashboard: ${{ steps.select.outputs.dashboard }}
       gateway: ${{ steps.select.outputs.gateway }}
+      gateway_drift_preflight: ${{ steps.select.outputs.gateway_drift_preflight }}
     steps:
       - id: select
         env:
@@ -71,6 +72,12 @@ jobs:
             echo "gateway=true" >> "$GITHUB_OUTPUT"
           else
             echo "gateway=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -z "$normalized" ] || includes_job "gateway-drift-preflight-e2e"; then
+            echo "gateway_drift_preflight=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "gateway_drift_preflight=false" >> "$GITHUB_OUTPUT"
           fi
 
   dashboard-remote-bind-e2e:
@@ -137,3 +144,30 @@ jobs:
             /tmp/nemoclaw-e2e-gateway-health-honest-start.log
             /tmp/nemoclaw-e2e-gateway-health-honest-process.log
           if-no-files-found: ignore
+
+
+  # ── Gateway drift preflight E2E ─────────────────────────────
+  # Coverage guard for #3399 / #3423. A stale OpenShell gateway image can
+  # make sandbox-state RPCs fail with protobuf invalid-wire decode errors.
+  # NemoClaw must fail closed instead of trusting or misclassifying that state.
+  gateway-drift-preflight-e2e:
+    needs: select_regression_jobs
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      needs.select_regression_jobs.outputs.gateway_drift_preflight == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Run gateway drift preflight E2E test
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-gateway-drift-preflight.sh
