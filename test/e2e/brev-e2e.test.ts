@@ -26,14 +26,16 @@
  *   The local `brev` CLI must already be authenticated before this suite runs.
  *
  * Optional env vars:
- *   TEST_SUITE             — which test to run: full (default), deploy-cli, credential-sanitization,
- *                             telegram-injection, messaging-providers,
+ *   TEST_SUITE             — which test to run: full (default), deploy-cli, gpu,
+ *                             credential-sanitization, telegram-injection, messaging-providers,
  *                             messaging-compatible-endpoint, dashboard-remote-bind, all
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
  *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp)
  *   BREV_MIN_DISK          — Minimum disk size in GB (default: 50)
+ *   BREV_GPU_TYPE          — GPU instance type for TEST_SUITE=gpu
+ *                             (default: a2-highgpu-1g:nvidia-tesla-a100:1)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
  *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
  *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
@@ -54,10 +56,12 @@ const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
 const BREV_MIN_RAM = parseInt(process.env.BREV_MIN_RAM || "16", 10);
 const BREV_PROVIDER = process.env.BREV_PROVIDER || "gcp";
 const BREV_MIN_DISK = parseInt(process.env.BREV_MIN_DISK || "50", 10);
+const BREV_GPU_TYPE = process.env.BREV_GPU_TYPE || "a2-highgpu-1g:nvidia-tesla-a100:1";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 const CLI_PATH = path.join(REPO_DIR, "bin", "nemoclaw.js");
+const GPU_TEST_SUITE = TEST_SUITE === "gpu";
 
 function requireInstanceName(): string {
   if (!INSTANCE_NAME) {
@@ -338,7 +342,7 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
 }
 
 /**
- * Create a Brev instance via `brev search cpu | brev create` with a startup script.
+ * Create a Brev launchable instance with a startup script.
  *
  * The Brev API sometimes returns "unexpected EOF" after the instance is actually
  * created server-side. The CLI then falls back to the next instance type, which
@@ -346,13 +350,18 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
  * check if the instance exists anyway.
  */
 function createBrevInstance(elapsed: () => string): void {
+  const instanceKind = GPU_TEST_SUITE ? "gpu" : "cpu";
   console.log(
-    `[${elapsed()}] Creating instance via launchable (brev search cpu | brev create + startup-script)...`,
+    `[${elapsed()}] Creating ${instanceKind} instance via launchable...`,
   );
   console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
-  console.log(
-    `[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM, ${BREV_MIN_DISK} GB disk, provider: ${BREV_PROVIDER}`,
-  );
+  if (GPU_TEST_SUITE) {
+    console.log(`[${elapsed()}]   gpu: ${BREV_GPU_TYPE}`);
+  } else {
+    console.log(
+      `[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM, ${BREV_MIN_DISK} GB disk, provider: ${BREV_PROVIDER}`,
+    );
+  }
 
   // Resolve the setup script to a local file path.
   // Default: repo-local scripts/brev-launchable-ci-cpu.sh (hermetic).
@@ -371,11 +380,27 @@ function createBrevInstance(elapsed: () => string): void {
   }
 
   try {
-    execSync(
-      `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
-        `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
-      { encoding: "utf-8", timeout: 180_000, stdio: PIPE_INPUT_STDIO },
-    );
+    if (GPU_TEST_SUITE) {
+      execFileSync(
+        "brev",
+        [
+          "create",
+          requireInstanceName(),
+          "--gpu",
+          BREV_GPU_TYPE,
+          "--startup-script",
+          `@${setupScriptPath}`,
+          "--detached",
+        ],
+        { encoding: "utf-8", timeout: 180_000, stdio: STREAM_STDIO },
+      );
+    } else {
+      execSync(
+        `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
+          `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
+        { encoding: "utf-8", timeout: 180_000, stdio: PIPE_INPUT_STDIO },
+      );
+    }
   } catch (createErr) {
     console.log(
       `[${elapsed()}] brev create exited with error — checking if instance was created anyway...`,
@@ -400,6 +425,32 @@ function createBrevInstance(elapsed: () => string): void {
     );
   }
   console.log(`[${elapsed()}] brev create returned (instance provisioning in background)`);
+}
+
+/**
+ * GPU Brev instances provide the host driver, but Docker may still need the
+ * NVIDIA container runtime configured before sandbox containers can use GPUs.
+ */
+function prepareGpuDockerRuntime(elapsed: () => string): void {
+  console.log(`[${elapsed()}] Preparing NVIDIA Docker runtime on Brev GPU instance...`);
+  ssh(
+    [
+      `set -euo pipefail`,
+      `nvidia-smi`,
+      `sudo apt-get update -qq`,
+      `sudo apt-get install -y -qq ca-certificates curl gnupg >/dev/null`,
+      `curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`,
+      `curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null`,
+      `sudo apt-get update -qq`,
+      `sudo apt-get install -y -qq nvidia-container-toolkit >/dev/null`,
+      `sudo nvidia-ctk runtime configure --runtime=docker`,
+      `sudo systemctl restart docker`,
+      `sudo chmod 666 /var/run/docker.sock`,
+      `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`,
+    ].join(" && "),
+    { timeout: 900_000, stream: true },
+  );
+  console.log(`[${elapsed()}] NVIDIA Docker runtime ready`);
 }
 
 /**
@@ -441,12 +492,12 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   );
   console.log(`[${elapsed()}] Dependencies synced`);
 
-  // When TEST_SUITE=full, test-full-e2e.sh runs install.sh which handles
+  // When TEST_SUITE=full or gpu, the shell test runs install.sh which handles
   // plugin build, npm link, and onboard from scratch. Skip those steps
   // to avoid ~8 min of redundant work.
-  if (TEST_SUITE === "full") {
+  if (TEST_SUITE === "full" || GPU_TEST_SUITE) {
     console.log(
-      `[${elapsed()}] Skipping plugin build, npm link, and onboard (TEST_SUITE=full — install.sh handles it)`,
+      `[${elapsed()}] Skipping plugin build, npm link, and onboard (TEST_SUITE=${TEST_SUITE} — install.sh handles it)`,
     );
     return { remoteDir: resolvedRemoteDir, needsOnboard: false };
   }
@@ -714,7 +765,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       remoteDir = `${remoteHome}/nemoclaw`;
     } else {
       // ── Launchable path: pre-baked CI environment ──────────────────
-      // Uses brev search cpu | brev create with --startup-script.
+      // Uses brev create with --startup-script.
       // The script pre-installs Docker, Node.js, OpenShell CLI, npm deps,
       // and pre-pulls Docker images. We just need to rsync branch code and
       // run onboard.
@@ -726,6 +777,10 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       console.log(`[${elapsed()}] Waiting for launchable setup to complete...`);
       waitForLaunchableReady();
 
+      if (GPU_TEST_SUITE) {
+        prepareGpuDockerRuntime(elapsed);
+      }
+
       const result = bootstrapLaunchable(elapsed);
       remoteDir = result.remoteDir;
 
@@ -736,7 +791,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     }
 
     // Verify sandbox registry (only when beforeAll created a sandbox)
-    if (TEST_SUITE !== "full") {
+    if (TEST_SUITE !== "full" && !GPU_TEST_SUITE) {
       console.log(`[${elapsed()}] Verifying sandbox registry...`);
       const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
       expect(registry.defaultSandbox).toBe("e2e-test");
@@ -776,6 +831,16 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       expect(output).not.toMatch(/FAIL:/);
     },
     900_000,
+  );
+
+  it.runIf(GPU_TEST_SUITE)(
+    "GPU E2E suite passes on Brev GPU VM",
+    () => {
+      const output = runRemoteTest("test/e2e/test-gpu-e2e.sh");
+      expect(output).toContain("GPU E2E PASSED");
+      expect(output).not.toMatch(/FAIL:/);
+    },
+    1_800_000,
   );
 
   it.runIf(TEST_SUITE === "credential-sanitization" || TEST_SUITE === "all")(

@@ -43,6 +43,8 @@ name: e2e-branch-validation
 #                              and L7 proxy token rewriting for Telegram + Discord. Creates
 #                              its own sandbox (e2e-msg-provider). (~15 min)
 #   dashboard-remote-bind    — Verifies opt-in remote dashboard forwards bind 0.0.0.0.
+#   gpu                      — Provisions a Brev GPU VM and runs the Ollama GPU E2E
+#                              sandbox proof suite from source. (~45 min)
 #   all                      — Runs credential-sanitization + telegram-injection (NOT full,
 #                              which destroys the sandbox the security tests need).
 #
@@ -67,6 +69,7 @@ on:
           - telegram-injection
           - messaging-providers
           - dashboard-remote-bind
+          - gpu
           - all
       use_launchable:
         description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
@@ -202,6 +205,7 @@ jobs:
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
           LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
           BREV_PROVIDER: gcp
+          BREV_GPU_TYPE: ${{ vars.BREV_GPU_TYPE || 'a2-highgpu-1g:nvidia-tesla-a100:1' }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-branch-validation
 
