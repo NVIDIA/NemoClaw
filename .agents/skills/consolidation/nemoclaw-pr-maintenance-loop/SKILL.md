@@ -30,13 +30,13 @@ Use this when the user wants to keep all personal NemoClaw PRs healthy: reviewer
 : "${NEMOCLAW_REPO:?NEMOCLAW_REPO must be set}"
 WORKTREE_BASE="${NEMOCLAW_WORKTREE_BASE}"
 MAIN_REPO="${NEMOCLAW_REPO}"
-REPO="NVIDIA/NemoClaw"
-STATE_DIR="$HOME/.nemoclaw/pr-maintenance-loop"
-STATE_FILE="$STATE_DIR/state.json"
-LOCKFILE="$STATE_DIR/loop.lock"
-PIDFILE="$STATE_DIR/watcher.pid"
-LOGFILE="$STATE_DIR/watcher.log"
-INTERVAL=600  # 10 minutes
+REPO="${NEMOCLAW_GITHUB_REPO:-NVIDIA/NemoClaw}"
+STATE_DIR="${NEMOCLAW_PR_MAINTENANCE_STATE_DIR:-$HOME/.nemoclaw/pr-maintenance-loop}"
+STATE_FILE="${NEMOCLAW_PR_MAINTENANCE_STATE_FILE:-$STATE_DIR/state.json}"
+LOCKFILE="${NEMOCLAW_PR_MAINTENANCE_LOCKFILE:-$STATE_DIR/loop.lock}"
+PIDFILE="${NEMOCLAW_PR_MAINTENANCE_PIDFILE:-$STATE_DIR/watcher.pid}"
+LOGFILE="${NEMOCLAW_PR_MAINTENANCE_LOGFILE:-$STATE_DIR/watcher.log}"
+INTERVAL="${NEMOCLAW_PR_MAINTENANCE_INTERVAL:-600}"  # 10 minutes by default
 ```
 
 ## Invocation Patterns

@@ -228,7 +228,11 @@ function classify(s: Omit<PrSummary, "bucket" | "nextAction">): {
 
 function daysSince(iso: string): number {
   const ms = Date.now() - new Date(iso).getTime();
-  return Math.max(0, Math.round(ms / 86_400_000));
+  return Math.max(0, Math.floor(ms / 86_400_000));
+}
+
+function escapeTableCell(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
 function summarize(pr: RawPr): PrSummary {
@@ -281,12 +285,15 @@ function renderTable(version: string, rows: PrSummary[]): string {
   };
 
   for (const r of rows) {
-    const title = r.title.length > 60 ? r.title.slice(0, 57) + "…" : r.title;
+    const rawTitle = r.title.length > 60 ? r.title.slice(0, 57) + "…" : r.title;
+    const title = escapeTableCell(rawTitle);
+    const author = escapeTableCell(r.author);
+    const nextAction = escapeTableCell(r.nextAction);
     const ci = ciIcon[r.ciState];
     const cr = r.coderabbitMajor === 0 ? "✅" : `⚠ ${r.coderabbitMajor}`;
     const conflicts = r.mergeStateStatus === "DIRTY" ? "DIRTY" : "clean";
     lines.push(
-      `| ${r.bucket} | [#${r.number}](${r.url}) | ${title} | @${r.author} | ${ci} | ${cr} | ${conflicts} | ${r.ageDays}d | ${r.nextAction} |`,
+      `| ${r.bucket} | [#${r.number}](${r.url}) | ${title} | @${author} | ${ci} | ${cr} | ${conflicts} | ${r.ageDays}d | ${nextAction} |`,
     );
   }
 
