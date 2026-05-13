@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 import {
   isSandboxBridgeGatewayReachable,
   formatSandboxBridgeUnreachableMessage,
+  shouldVerifySandboxBridgeGatewayReachability,
+  verifySandboxBridgeGatewayReachableOrExit,
 } from "../../../dist/lib/onboard/gateway-sandbox-reachability";
 
 describe("isSandboxBridgeGatewayReachable", () => {
@@ -64,6 +66,29 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(seen.args).toContain("custom-net");
     expect(seen.args).toContain("--pull=missing");
     expect(seen.args.join(" ")).toContain("nc -zw7 host.openshell.internal 9090");
+  });
+});
+
+describe("verifySandboxBridgeGatewayReachableOrExit", () => {
+  it("skips the Docker bridge probe when OpenShell is using the macOS VM driver", async () => {
+    let inspectCalls = 0;
+    await verifySandboxBridgeGatewayReachableOrExit(false, {
+      drivers: "vm",
+      inspectSubnetImpl: () => {
+        inspectCalls += 1;
+        return undefined;
+      },
+      runImpl: () => {
+        throw new Error("probe should not run");
+      },
+    });
+    expect(inspectCalls).toBe(0);
+  });
+
+  it("keeps the bridge probe enabled for Docker-driver gateways", () => {
+    expect(shouldVerifySandboxBridgeGatewayReachability({ drivers: "docker" })).toBe(true);
+    expect(shouldVerifySandboxBridgeGatewayReachability({ drivers: "vm,docker" })).toBe(true);
+    expect(shouldVerifySandboxBridgeGatewayReachability({ drivers: "vm" })).toBe(false);
   });
 });
 

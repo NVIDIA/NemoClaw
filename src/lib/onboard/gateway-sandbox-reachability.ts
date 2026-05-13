@@ -57,6 +57,21 @@ export interface SandboxBridgeReachabilityOptions {
   inspectSubnetImpl?: (networkName: string) => string | undefined;
 }
 
+export interface SandboxBridgeReachabilityVerifyOptions
+  extends SandboxBridgeReachabilityOptions {
+  drivers?: string;
+}
+
+export function shouldVerifySandboxBridgeGatewayReachability(
+  opts: { drivers?: string } = {},
+): boolean {
+  const drivers = (opts.drivers ?? process.env.OPENSHELL_DRIVERS ?? "docker")
+    .split(/[,\s]+/)
+    .map((driver) => driver.trim().toLowerCase())
+    .filter(Boolean);
+  return drivers.includes("docker");
+}
+
 function defaultInspectSubnet(networkName: string): string | undefined {
   try {
     const out = dockerInspectFormat(
@@ -186,8 +201,11 @@ export function formatSandboxBridgeUnreachableMessage(
 
 export async function verifySandboxBridgeGatewayReachableOrExit(
   exitOnFailure: boolean,
+  opts: SandboxBridgeReachabilityVerifyOptions = {},
 ): Promise<void> {
-  const reach = await isSandboxBridgeGatewayReachable();
+  if (!shouldVerifySandboxBridgeGatewayReachability({ drivers: opts.drivers })) return;
+
+  const reach = await isSandboxBridgeGatewayReachable(opts);
   if (reach.ok) return;
 
   const message = formatSandboxBridgeUnreachableMessage(reach);
