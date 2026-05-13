@@ -212,7 +212,7 @@ info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
 info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
 info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
 info "Slack app token: configured (${#SLACK_APP} chars)"
-info "WeChat token: ${WECHAT_TOKEN:0:10}... (${#WECHAT_TOKEN} chars), account=${WECHAT_ACCOUNT}"
+info "WeChat token: configured (${#WECHAT_TOKEN} chars), account=${WECHAT_ACCOUNT}"
 info "Sandbox name: $SANDBOX_NAME"
 
 # ══════════════════════════════════════════════════════════════════

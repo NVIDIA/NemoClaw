@@ -58,8 +58,22 @@ export async function dispatchHostQrLogin(
       process.env[key] = value;
     }
   }
-  if (ch.userIdEnvKey && result.defaultUserId && !process.env[ch.userIdEnvKey]) {
-    process.env[ch.userIdEnvKey] = result.defaultUserId;
+  // Merge the scanned operator's id into the DM allowlist. The channel's
+  // userIdHelp documents this as "added automatically; supply additional
+  // ids as a comma-separated list", so an operator-supplied list must not
+  // displace the scanner — otherwise the person who paired the bot can
+  // lock themselves out of DM access. Dedupe via Set; preserve the
+  // existing comma format (no space) the rest of the stack writes.
+  if (ch.userIdEnvKey && result.defaultUserId) {
+    const existing = process.env[ch.userIdEnvKey] ?? "";
+    const merged = new Set(
+      existing
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean),
+    );
+    merged.add(result.defaultUserId);
+    process.env[ch.userIdEnvKey] = Array.from(merged).join(",");
   }
   return { ok: true, summary: result.summary };
 }
