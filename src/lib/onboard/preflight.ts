@@ -41,8 +41,10 @@ export interface CheckPortOpts {
   lsofOutput?: string;
   /** Force the net-probe fallback path. */
   skipLsof?: boolean;
+  /** Host address to use for the fallback net probe. */
+  host?: string;
   /** Async probe implementation for testing. */
-  probeImpl?: (port: number) => Promise<PortProbeResult>;
+  probeImpl?: (port: number, host: string) => Promise<PortProbeResult>;
 }
 
 export interface MemoryInfo {
@@ -717,10 +719,11 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
 
 export async function probePortAvailability(
   port: number,
-  opts: Pick<CheckPortOpts, "probeImpl"> = {},
+  opts: Pick<CheckPortOpts, "host" | "probeImpl"> = {},
 ): Promise<PortProbeResult> {
+  const host = opts.host || "127.0.0.1";
   if (typeof opts.probeImpl === "function") {
-    return opts.probeImpl(port);
+    return opts.probeImpl(port, host);
   }
 
   return new Promise((resolve) => {
@@ -750,7 +753,7 @@ export async function probePortAvailability(
         warning: `port probe inconclusive: ${err.message}`,
       });
     });
-    srv.listen(port, "127.0.0.1", () => {
+    srv.listen(port, host, () => {
       srv.close(() => resolve({ ok: true }));
     });
   });

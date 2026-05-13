@@ -501,13 +501,14 @@ reviews:
         false-positive (detached-zombie isPidAlive + metadata-only
         isGatewayHealthy) regardless of OpenShell packaging choices.
 
-        **E2E test recommendation:**
-        - `gateway-health-honest-e2e` — false-positive health check when
-          the gateway binary crashes on startup (#3111)
+        **Regression E2E test recommendation:**
+        - Run `regression-e2e.yaml` with the jobs input set to
+          gateway-health-honest-e2e to validate false-positive health
+          checks when the gateway binary crashes on startup (#3111).
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=gateway-health-honest-e2e
+        gh workflow run regression-e2e.yaml --ref <branch> -f 'jobs=gateway-health-honest-e2e'
         ```
 
     - path: ".github/workflows/nightly-e2e.yaml"

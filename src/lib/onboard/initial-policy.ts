@@ -17,7 +17,12 @@ const CREATE_TIME_POLICY_PRESETS_BY_CHANNEL: Record<string, string[]> = {
   slack: ["slack"],
 };
 
-const PROC_COMM_READ_WRITE_PATH = "/proc/self/task/*/comm";
+const PROC_PATH = "/proc";
+const STALE_PROC_COMM_READ_WRITE_PATH = "/proc/self/task/*/comm";
+
+function isProcEntryOwnedByOpenShell(entry: string): boolean {
+  return entry === PROC_PATH || entry === STALE_PROC_COMM_READ_WRITE_PATH;
+}
 
 export function buildDirectGpuPolicyYaml(basePolicy: string): string {
   const parsed = YAML.parse(basePolicy);
@@ -26,39 +31,40 @@ export function buildDirectGpuPolicyYaml(basePolicy: string): string {
   }
   parsed.filesystem_policy = parsed.filesystem_policy || {};
   const fsPolicy = parsed.filesystem_policy;
-  fsPolicy.read_only = Array.isArray(fsPolicy.read_only)
+  // OpenShell adds /proc as read-write only after GPU devices are present.
+  // Remove entries that would block that enrichment or be treated as literal paths.
+  const readOnly = Array.isArray(fsPolicy.read_only)
     ? fsPolicy.read_only.map((entry: unknown) => String(entry))
     : [];
-  if (!fsPolicy.read_only.includes("/proc")) {
-    fsPolicy.read_only.push("/proc");
-  }
+  fsPolicy.read_only = readOnly.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
   const readWrite = Array.isArray(fsPolicy.read_write)
     ? fsPolicy.read_write.map((entry: unknown) => String(entry))
     : [];
-  fsPolicy.read_write = readWrite.filter((entry: string) => entry !== "/proc");
-  if (!fsPolicy.read_write.includes(PROC_COMM_READ_WRITE_PATH)) {
-    fsPolicy.read_write.push(PROC_COMM_READ_WRITE_PATH);
-  }
+  fsPolicy.read_write = readWrite.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
   return YAML.stringify(parsed);
 }
 
-const PROC_COMM_WRITE_PROBE = `
-set -eu
-tid="$(ls /proc/self/task | head -n 1)"
-old="$(cat "/proc/self/task/\${tid}/comm" 2>/dev/null || true)"
-printf nemoclaw-gpu >"/proc/self/task/\${tid}/comm"
-if [ -n "$old" ]; then printf "%s" "$old" >"/proc/self/task/\${tid}/comm" || true; fi
-`;
+const PROC_COMM_WRITE_PROBE = [
+  "set -eu;",
+  'comm="/proc/$$/task/$$/comm";',
+  'old="$(cat "$comm" 2>/dev/null || true)";',
+  'printf nemoclaw-gpu >"$comm";',
+  'if [ -n "$old" ]; then',
+  'printf "%s" "$old" >"$comm" || true;',
+  "fi",
+].join(" ");
 
-const CUDA_INIT_PROBE = `
-python3 - <<'PY'
-import ctypes
-lib = ctypes.CDLL("libcuda.so.1")
-rc = lib.cuInit(0)
-print(f"cuInit(0)={rc}")
-raise SystemExit(0 if rc == 0 else 1)
-PY
-`;
+const CUDA_INIT_PROBE = [
+  "python3",
+  "-c",
+  [
+    "'import ctypes;",
+    'lib = ctypes.CDLL("libcuda.so.1");',
+    "rc = lib.cuInit(0);",
+    'print(f"cuInit(0)={rc}");',
+    "raise SystemExit(0 if rc == 0 else 1)'",
+  ].join(" "),
+].join(" ");
 
 export function buildDirectSandboxGpuProofCommands(
   sandboxName: string,
@@ -69,7 +75,7 @@ export function buildDirectSandboxGpuProofCommands(
       args: ["sandbox", "exec", "-n", sandboxName, "--", "nvidia-smi"],
     },
     {
-      label: "/proc/self/task/<tid>/comm write",
+      label: "/proc/<pid>/task/<tid>/comm write",
       args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", PROC_COMM_WRITE_PROBE],
     },
     {

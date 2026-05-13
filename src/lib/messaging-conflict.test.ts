@@ -93,6 +93,24 @@ describe("findChannelConflicts", () => {
     const registry = makeRegistry([{ name: "alice", messagingChannels: ["telegram"] }]);
     expect(findChannelConflicts("bob", [], registry)).toEqual([]);
   });
+
+  it("ignores a stopped (disabled) channel — its credential is not in use (#3381)", () => {
+    const registry = makeRegistry([
+      {
+        name: "alice",
+        messagingChannels: ["telegram"],
+        disabledChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
+    ]);
+    expect(
+      findChannelConflicts(
+        "bob",
+        [{ channel: "telegram", credentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" } }],
+        registry,
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("findAllOverlaps", () => {
@@ -158,6 +176,23 @@ describe("findAllOverlaps", () => {
     const registry = makeRegistry([
       { name: "alice", messagingChannels: ["telegram"] },
       { name: "bob", messagingChannels: ["discord"] },
+    ]);
+    expect(findAllOverlaps(registry)).toEqual([]);
+  });
+
+  it("ignores stopped (disabled) channels so nemoclaw status does not report phantom overlaps (#3381)", () => {
+    const registry = makeRegistry([
+      {
+        name: "alice",
+        messagingChannels: ["telegram"],
+        disabledChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
+      {
+        name: "bob",
+        messagingChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
     ]);
     expect(findAllOverlaps(registry)).toEqual([]);
   });

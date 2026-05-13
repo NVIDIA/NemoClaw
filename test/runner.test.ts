@@ -667,12 +667,14 @@ describe("regression guards", () => {
                 'ignored  openshell-x86_64-unknown-linux-musl.tar.gz' \
                 'ignored  openshell-aarch64-unknown-linux-musl.tar.gz' \
                 'ignored  openshell-x86_64-apple-darwin.tar.gz' \
-                'ignored  openshell-aarch64-apple-darwin.tar.gz' > "$out"
+                'ignored  openshell-aarch64-apple-darwin.tar.gz' \
+                'ignored  openshell-driver-vm-aarch64-apple-darwin.tar.gz' > "$out"
               ;;
             openshell-gateway-checksums-sha256.txt)
               printf '%s\n' \
                 'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
-                'ignored  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+                'ignored  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
+                'ignored  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
               ;;
             openshell-sandbox-checksums-sha256.txt)
               printf '%s\n' \
@@ -689,6 +691,8 @@ describe("regression guards", () => {
         export -f curl
         shasum() { cat >/dev/null; echo "checksum OK"; return 0; }
         export -f shasum
+        strings() { echo "request-body-credential-rewrite websocket-credential-rewrite"; }
+        export -f strings
         tar() { return 0; }; export -f tar
         install() { return 0; }; export -f install
         source "${scriptPath}"
@@ -724,6 +728,8 @@ describe("regression guards", () => {
         export -f curl
         shasum() { echo "SHASUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
         export -f shasum
+        strings() { echo "request-body-credential-rewrite websocket-credential-rewrite"; }
+        export -f strings
         tar() { return 0; }; export -f tar
         install() { return 0; }; export -f install
         source "${scriptPath}"

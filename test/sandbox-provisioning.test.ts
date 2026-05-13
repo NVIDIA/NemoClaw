@@ -267,7 +267,6 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localBin, "nemoclaw-codex-acp"),
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "generate-openclaw-config.py"),
-      path.join(localLib, "ws-proxy-fix.js"),
       pluginFile,
       nestedPluginFile,
     ];
@@ -295,15 +294,11 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const generatorMode = (
         fs.statSync(path.join(localLib, "generate-openclaw-config.py")).mode & 0o777
       ).toString(8);
-      const wsProxyMode = (fs.statSync(path.join(localLib, "ws-proxy-fix.js")).mode & 0o777).toString(
-        8,
-      );
       const pluginDirMode = (fs.statSync(pluginDir).mode & 0o777).toString(8);
       const pluginMode = (fs.statSync(pluginFile).mode & 0o777).toString(8);
       const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
       const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
       expect(generatorMode).toBe("755");
-      expect(wsProxyMode).toBe("644");
       expect(pluginDirMode).toBe("755");
       expect(pluginMode).toBe("644");
       expect(nestedPluginDirMode).toBe("755");
@@ -488,12 +483,12 @@ describe("Hermes sandbox provisioning", () => {
     expect(permissivePolicySrc).toContain("- /opt/hermes");
   });
 
-  it("allowlists the Discord sitecustomize preload dir so Python can load the facade shim", () => {
+  it("does not allowlist removed Hermes placeholder-normalization preload dirs", () => {
     const policySrc = fs.readFileSync(HERMES_POLICY, "utf-8");
     const permissivePolicySrc = fs.readFileSync(HERMES_POLICY_PERMISSIVE, "utf-8");
 
-    expect(policySrc).toContain("- /opt/nemoclaw-hermes-discord-preload");
-    expect(permissivePolicySrc).toContain("- /opt/nemoclaw-hermes-discord-preload");
+    expect(policySrc).not.toContain("- /opt/nemoclaw-hermes-discord-preload");
+    expect(permissivePolicySrc).not.toContain("- /opt/nemoclaw-hermes-discord-preload");
   });
 });
 
@@ -587,6 +582,7 @@ describe("sandbox test image fixtures", () => {
   it("clears production config recovery artifacts after writing the legacy fixture", () => {
     expect(src).toContain("/sandbox/.openclaw/openclaw.json.bak*");
     expect(src).toContain("/sandbox/.openclaw/openclaw.json.last-good");
+    expect(src).toContain("/sandbox/.openclaw/openclaw.json.nemoclaw-baseline");
     expect(src).toContain("/sandbox/.openclaw-data/logs/config-health.json");
   });
 });

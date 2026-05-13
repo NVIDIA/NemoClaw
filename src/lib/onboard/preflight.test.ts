@@ -46,6 +46,21 @@ describe("checkPortAvailable", () => {
     expect(result).toEqual({ ok: true });
   });
 
+  it("passes the requested host to the fallback probe", async () => {
+    let probedHost: string | null = null;
+    const result = await checkPortAvailable(8990, {
+      lsofOutput: "",
+      host: "0.0.0.0",
+      probeImpl: async (_port, host) => {
+        probedHost = host;
+        return { ok: true };
+      },
+    });
+
+    expect(probedHost).toBe("0.0.0.0");
+    expect(result).toEqual({ ok: true });
+  });
+
   it("probe catches occupied port even when lsof returns empty", async () => {
     const result = await checkPortAvailable(18789, {
       lsofOutput: "",
@@ -160,6 +175,20 @@ describe("probePortAvailability", () => {
     const port = srv.address().port;
     try {
       const result = await probePortAvailability(port, {});
+      expect(result.ok).toBe(false);
+      expect(result.reason).toContain("EADDRINUSE");
+    } finally {
+      await new Promise<void>((resolve) => srv.close(resolve));
+    }
+  });
+
+  it("uses the requested host for real net probes", async () => {
+    const net = require("node:net");
+    const srv = net.createServer();
+    await new Promise<void>((resolve) => srv.listen(0, "0.0.0.0", resolve));
+    const port = srv.address().port;
+    try {
+      const result = await probePortAvailability(port, { host: "0.0.0.0" });
       expect(result.ok).toBe(false);
       expect(result.reason).toContain("EADDRINUSE");
     } finally {

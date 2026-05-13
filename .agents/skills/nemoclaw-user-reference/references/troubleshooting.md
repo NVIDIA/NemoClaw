@@ -608,6 +608,19 @@ Changing or exporting it later does not rewrite the baked `openclaw.json` inside
 If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
 For the security trade-offs, refer to Security Best Practices (use the `nemoclaw-user-configure-security` skill).
 
+### `openclaw.json` is empty after changing inference
+
+Some runtime inference changes can leave `/sandbox/.openclaw/openclaw.json` empty if the write fails partway through.
+When that happens, OpenClaw commands may report that the config is empty instead of showing a raw JSON parse error.
+
+Current NemoClaw sandboxes capture a known-good config baseline after a successful startup.
+On the next sandbox startup, NemoClaw restores `openclaw.json` from OpenClaw's last-good copy when available, or from the NemoClaw baseline.
+If the sandbox still cannot start or reports that no baseline is available, rebuild it from the host:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
 ### `openclaw channels add` or `remove` is blocked inside the sandbox
 
 This is expected.
@@ -629,7 +642,8 @@ In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the c
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
 This is expected.
-The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time.
+NemoClaw builds the sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) from host-side onboarding, rebuild, inference, policy, and messaging inputs.
+Fresh sandboxes keep that file writable by default so the agent can manage runtime state, but direct in-sandbox edits are not the supported or durable path for NemoClaw-managed settings.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
 For most configuration changes, exit the sandbox and rerun onboarding:

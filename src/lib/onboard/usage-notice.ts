@@ -63,7 +63,7 @@ function parseJson<T>(text: string): T {
 // Reflect.get is used throughout the codebase as a type-safe alternative to
 // direct property access on loosely-typed objects.  Unlike an `as Record<…>`
 // cast it never widens the target type and keeps loosely-typed member access
-// explicit. See also: deploy.ts, onboard.ts, ws-proxy-fix.ts.
+// explicit. See also: deploy.ts and onboard.ts.
 function readStringProperty(value: object | null, key: string): string | undefined {
   if (!value) {
     return undefined;

@@ -29,28 +29,20 @@ RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
     && rm -rf /var/lib/apt/lists/*
 
 # Hermes v2026.4.13+ auto-detects HTTPS_PROXY and skips fallback-IP
-# transport when a proxy is present. The sandbox proxy chain
-# (decode-proxy -> OpenShell L7 proxy) handles REST credential placeholder
-# rewriting and hostname-based policy enforcement. A Hermes-only local Discord
-# facade handles discord.py's Gateway session inside the sandbox and forwards
-# REST through the same placeholder-substitution path.
+# transport when a proxy is present. OpenShell handles REST credential
+# placeholder rewriting, hostname-based policy enforcement, and native
+# WebSocket credential rewrite at the egress boundary.
 ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 
 # Copy NemoClaw plugin for Hermes (Python-based)
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 
-# Copy config generator, Discord facade, and URL-decode proxy
+# Copy config generator
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} +
-COPY agents/hermes/decode-proxy.py /usr/local/bin/nemoclaw-decode-proxy
-COPY agents/hermes/discord-facade.py /usr/local/bin/nemoclaw-discord-facade
-COPY agents/hermes/discord-preload/ /opt/nemoclaw-hermes-discord-preload/
-RUN chmod 755 /usr/local/bin/nemoclaw-decode-proxy /usr/local/bin/nemoclaw-discord-facade \
-    && find /opt/nemoclaw-hermes-discord-preload -type d -exec chmod 755 {} + \
-    && find /opt/nemoclaw-hermes-discord-preload -type f -exec chmod 444 {} +
 
 # Copy blueprint (shared infrastructure)
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
@@ -77,6 +69,7 @@ ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 ARG NEMOCLAW_BUILD_ID=default
+ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 
 # Promote build-args to env vars for the config generation script.
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
@@ -260,6 +253,16 @@ RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /sandbox/.hermes/.config-hash \
     && chmod 600 /sandbox/.hermes/.config-hash \
     && chown sandbox:sandbox /sandbox/.hermes/.config-hash
+
+# OpenShell's macOS VM backend currently remaps extracted rootfs ownership to
+# the host uid/gid before startup. Hermes uses /sandbox as a read_write path, so
+# that repair walks the trusted rc files too; keep this Darwin-only so Linux
+# Docker-driver sandboxes retain the tighter default permissions.
+RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
+        chmod -R a+rwX /sandbox/.hermes; \
+        find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
+        chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
+    fi
 
 # start.sh handles privilege separation: runs as root initially, then drops
 # to 'gateway' user via gosu for the agent process. See start.sh.

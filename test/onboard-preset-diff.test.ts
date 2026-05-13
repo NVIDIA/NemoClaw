@@ -66,8 +66,11 @@ resolver.resolveOpenshell = () => "/fake/openshell";
 
 const runner = require(${runnerPath});
 runner.run = () => {};
-// Return "Running" so waitForSandboxReady passes immediately.
-runner.runCapture = () => "Running";
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : String(command);
+  if (text.includes("sandbox list")) return "test-sb Ready";
+  return "Running";
+};
 
 const credentials = require(${credPath});
 credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + msg); };
@@ -234,6 +237,81 @@ console.log = () => {};
       [],
       `expected no removals, got ${JSON.stringify(payload.removedCalls)}`,
     );
+  });
+
+  it("non-interactive suggested re-onboard removes unsupported Brave preset", () => {
+    const script =
+      buildPreamble({
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      provider: "openai",
+      webSearchSupported: false,
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.ok(
+      !payload.chosen.includes("brave"),
+      `expected chosen to drop brave, got ${JSON.stringify(payload.chosen)}`,
+    );
+    assert.ok(
+      payload.chosen.includes("my-internal-api"),
+      `expected chosen to preserve my-internal-api, got ${JSON.stringify(payload.chosen)}`,
+    );
+    assert.deepEqual(payload.removedCalls, ["brave"]);
+    assert.deepEqual(payload.finalApplied.slice().sort(), [
+      "brew",
+      "huggingface",
+      "my-internal-api",
+      "npm",
+      "pypi",
+    ]);
+  });
+
+  it("resume selection removes unsupported Brave preset", () => {
+    const script =
+      buildPreamble({
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: ["npm", "brave"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      selectedPresets: ["npm", "brave"],
+      webSearchSupported: false,
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen, ["npm"]);
+    assert.deepEqual(payload.removedCalls, ["brave"]);
+    assert.deepEqual(payload.finalApplied, ["npm"]);
   });
 
   // Widening the selection (user re-enables a preset they'd previously dropped)

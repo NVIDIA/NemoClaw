@@ -22,6 +22,9 @@ function runHermes(
       env: {
         ...process.env,
         HOME: "/tmp/nemohermes-test-" + Date.now(),
+        // Clear inherited markers so the launcher under test sets them itself.
+        NEMOCLAW_AGENT: undefined,
+        NEMOCLAW_INVOKED_AS: undefined,
         NEMOCLAW_HEALTH_POLL_COUNT: "1",
         NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
         ...env,
@@ -47,7 +50,11 @@ function runNemoClaw(
       env: {
         ...process.env,
         HOME: "/tmp/nemohermes-test-" + Date.now(),
+        // Clear inherited markers so the base nemoclaw bin has a clean slate.
+        // The base launcher does not set NEMOCLAW_INVOKED_AS, so leaving an
+        // inherited value would silently re-brand the CLI as the alias.
         NEMOCLAW_AGENT: undefined,
+        NEMOCLAW_INVOKED_AS: undefined,
         NEMOCLAW_HEALTH_POLL_COUNT: "1",
         NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
         ...env,
@@ -97,20 +104,35 @@ describe("nemohermes alias", () => {
     expect(out).not.toContain("uninstall connect");
   });
 
-  it("NEMOCLAW_AGENT is set to hermes via the launcher", () => {
-    // The launcher sets the env var before requiring dist/nemoclaw.
-    // We verify indirectly: --version shows nemohermes branding which
-    // requires both NEMOCLAW_AGENT=hermes AND argv containing nemohermes.
+  it("NEMOCLAW_AGENT and NEMOCLAW_INVOKED_AS are set by the launcher", () => {
+    // The launcher sets both env vars before requiring dist/nemoclaw.
+    // --version shows nemohermes branding only when both are set.
     const { code, out } = runHermes("--version");
     expect(code).toBe(0);
     expect(out).toContain("nemohermes");
   });
 
-  it("nemoclaw onboard --agent hermes uses Hermes branding after agent resolution", () => {
+  it("nemoclaw onboard --agent hermes keeps the nemoclaw CLI name in suggestions (#3358)", () => {
+    // Regression for NVB#6165494 / issue #3358: a user who launches via
+    // `nemoclaw` (with --agent hermes or NEMOCLAW_AGENT=hermes) should never
+    // see `nemohermes` suggested back as the command to run, because they may
+    // not have the alias installed on PATH.
     const { code, out } = runNemoClaw(
       "onboard --agent hermes --resume --non-interactive --yes-i-accept-third-party-software",
     );
     expect(code).toBe(1);
-    expect(out).toContain("nemohermes onboard");
+    expect(out).toContain("nemoclaw onboard");
+    expect(out).not.toMatch(/\bnemohermes\b/);
+  });
+
+  it("NEMOCLAW_AGENT=hermes nemoclaw also keeps the nemoclaw CLI name (#3358)", () => {
+    // The exact repro path reported by NV QA on Brev v0.0.38.
+    const { code, out } = runNemoClaw(
+      "onboard --resume --non-interactive --yes-i-accept-third-party-software",
+      { NEMOCLAW_AGENT: "hermes" },
+    );
+    expect(code).toBe(1);
+    expect(out).toContain("nemoclaw onboard");
+    expect(out).not.toMatch(/\bnemohermes\b/);
   });
 });

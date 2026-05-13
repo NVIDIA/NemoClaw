@@ -174,6 +174,9 @@ The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8
 If another sandbox already owns the dashboard port, onboarding scans ports `18789` through `18799` and uses the next free port.
 If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
 
+When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `nemoclaw onboard --fresh`, `nemoclaw <name> destroy` (when destroying the last sandbox), and `nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover.
+The sweep only targets processes owned by the current user whose command line matches `openclaw-gateway` or `openshell forward` markers, and skips dashboard ports owned by other live sandboxes.
+
 If a non-NemoClaw process is already bound to the dashboard port or the gateway port, identify the conflicting process, verify it is safe to stop, and terminate it:
 
 ```console
@@ -202,6 +205,23 @@ Or set the port directly:
 ```console
 $ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 ```
+
+For an OpenShell gateway port conflict, set `NEMOCLAW_GATEWAY_PORT` to a free
+non-privileged port that does not overlap NemoClaw's dashboard, vLLM, Ollama,
+or Ollama proxy ports:
+
+```console
+$ NEMOCLAW_GATEWAY_PORT=8990 nemoclaw onboard
+```
+
+Remote/headless hosts can bind the OpenShell gateway to all IPv4 interfaces:
+
+```console
+$ NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 nemoclaw onboard
+```
+
+Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the
+network should be able to reach the gateway.
 
 See [Environment Variables](commands.md#environment-variables) for the full list of port overrides.
 
@@ -638,6 +658,19 @@ Changing or exporting it later does not rewrite the baked `openclaw.json` inside
 If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
 For the security trade-offs, refer to [Security Best Practices](../security/best-practices.md).
 
+### `openclaw.json` is empty after changing inference
+
+Some runtime inference changes can leave `/sandbox/.openclaw/openclaw.json` empty if the write fails partway through.
+When that happens, OpenClaw commands may report that the config is empty instead of showing a raw JSON parse error.
+
+Current NemoClaw sandboxes capture a known-good config baseline after a successful startup.
+On the next sandbox startup, NemoClaw restores `openclaw.json` from OpenClaw's last-good copy when available, or from the NemoClaw baseline.
+If the sandbox still cannot start or reports that no baseline is available, rebuild it from the host:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
 ### `openclaw channels add` or `remove` is blocked inside the sandbox
 
 This is expected.
@@ -659,7 +692,8 @@ In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the c
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
 This is expected.
-The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time.
+NemoClaw builds the sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) from host-side onboarding, rebuild, inference, policy, and messaging inputs.
+Fresh sandboxes keep that file writable by default so the agent can manage runtime state, but direct in-sandbox edits are not the supported or durable path for NemoClaw-managed settings.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
 For most configuration changes, exit the sandbox and rerun onboarding:

@@ -76,7 +76,11 @@ credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + ms
 credentials.ensureApiKey = async () => {};
 credentials.getCredential = () => null;
 runner.run = () => {};
-runner.runCapture = () => ${JSON.stringify(runCaptureReturn)};
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : String(command);
+  if (text.includes("sandbox list")) return "test-sb Ready";
+  return ${JSON.stringify(runCaptureReturn)};
+};
 ${openshellStub}
 
 const updates = [];

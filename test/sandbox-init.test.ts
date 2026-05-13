@@ -637,61 +637,24 @@ EOF
       expect(src).not.toContain("_PROXY_MARKER_BEGIN");
     });
 
-    it("hermes start.sh persists OpenShell proxy CA env for connect sessions", () => {
+    it("hermes start.sh routes messaging directly through OpenShell without local bridges", () => {
       const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain("SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO");
-      expect(src).toContain("export REQUESTS_CA_BUNDLE=");
-      expect(src).toContain("export GIT_SSL_CAINFO=");
+      expect(src).toContain("OpenShell owns credential alias/body/WebSocket rewrite");
+      expect(src).not.toContain("DISCORD_PROXY=");
+      expect(src).not.toContain("DECODE_PROXY_PORT");
+      expect(src).not.toContain("start_discord_facade");
+      expect(src).not.toContain("NEMOCLAW_DISCORD_FACADE_URL");
+      expect(src).not.toContain("nemoclaw-discord-facade");
+      expect(src).not.toContain("nemoclaw-decode-proxy");
     });
 
-    it("hermes start.sh routes Discord through the local decode proxy", () => {
+    it("hermes start.sh does not install Python placeholder-normalization preloads", () => {
       const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain('export DISCORD_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"');
-      expect(src).toContain('DISCORD_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"');
-      expect(src).toContain("start_discord_facade");
-      expect(src).toContain('NEMOCLAW_DISCORD_FACADE_URL="http://127.0.0.1:${DISCORD_FACADE_PORT}"');
-      expect(src).toContain("nemoclaw-discord-facade");
-    });
-
-    it("hermes start.sh prepares the Discord facade log before child redirection", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      const startFn = src.match(/start_discord_facade\(\) \{([\s\S]*?)^}/m);
-      expect(startFn).toBeTruthy();
-      const body = startFn![1];
-      expect(body).toContain('local log_path="/tmp/discord-facade.log"');
-      expect(body).toContain('prepare_restricted_log "$log_path" gateway:gateway 600');
-      expect(body).toContain('prepare_restricted_log "$log_path" "" 600');
-      // Privilege step-down now uses STEP_DOWN_PREFIX_GATEWAY (setpriv-
-      // based, see sandbox-init.sh init_step_down_prefixes), not gosu
-      // directly — this drops cap_setuid/setgid/fowner/chown/kill from
-      // the bounding set atomically with reuid. Issue #3280 follow-up.
-      expect(body).toContain('"${STEP_DOWN_PREFIX_GATEWAY[@]}" sh -c');
-      expect(body).not.toContain("gosu gateway sh -c");
-      expect(body).toContain('exec "$@" >/tmp/discord-facade.log 2>&1');
-      expect(body).not.toContain(
-        "gosu gateway python3 /usr/local/bin/nemoclaw-discord-facade >/tmp/discord-facade.log",
-      );
-      expect(body).not.toContain(
-        "python3 /usr/local/bin/nemoclaw-discord-facade >/tmp/discord-facade.log",
-      );
-    });
-
-    it("hermes start.sh launches the Discord facade and decode proxy under the Hermes venv interpreter", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain('HERMES_VENV_PYTHON="/opt/hermes/.venv/bin/python"');
-
-      const facadeFn = src.match(/start_discord_facade\(\) \{([\s\S]*?)^}/m);
-      expect(facadeFn).toBeTruthy();
-      const facadeBody = facadeFn![1];
-      expect(facadeBody).toContain('"$HERMES_VENV_PYTHON" /usr/local/bin/nemoclaw-discord-facade');
-      // Must not launch via bare python3 — that's the system interpreter.
-      expect(facadeBody).not.toMatch(/(?<![\w/"])python3 \/usr\/local\/bin\/nemoclaw-discord-facade/);
-
-      const decodeFn = src.match(/start_decode_proxy\(\) \{([\s\S]*?)^}/m);
-      expect(decodeFn).toBeTruthy();
-      const decodeBody = decodeFn![1];
-      expect(decodeBody).toContain('"$HERMES_VENV_PYTHON" /usr/local/bin/nemoclaw-decode-proxy');
-      expect(decodeBody).not.toMatch(/(?<![\w/"])python3 \/usr\/local\/bin\/nemoclaw-decode-proxy/);
+      expect(src).not.toContain("HERMES_VENV_PYTHON");
+      expect(src).not.toContain("start_decode_proxy");
+      expect(src).not.toContain("/opt/nemoclaw-hermes-discord-preload");
+      expect(src).not.toMatch(/(?<![\w/"])python3 \/usr\/local\/bin\/nemoclaw-decode-proxy/);
+      expect(src).not.toMatch(/(?<![\w/"])python3 \/usr\/local\/bin\/nemoclaw-discord-facade/);
     });
 
     it("hermes start.sh calls validate_tmp_permissions", () => {
@@ -699,14 +662,16 @@ EOF
       expect(src).toContain("validate_tmp_permissions");
     });
 
-    it("hermes start.sh routes gateway traffic through the decode proxy", () => {
+    it("hermes start.sh launches the gateway without a NemoClaw-owned decode proxy", () => {
       const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain("DECODE_PROXY_PORT=3129");
-      expect(src).toContain('"$HERMES_VENV_PYTHON" /usr/local/bin/nemoclaw-decode-proxy');
-      expect(src).toContain('HTTPS_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"');
-      expect(src).toContain('HTTP_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"');
-      expect(src).toContain('PYTHONPATH="/opt/nemoclaw-hermes-discord-preload${PYTHONPATH:+:${PYTHONPATH}}"');
-      expect(src).toContain("start_decode_proxy");
+      expect(src).toContain('HERMES_HOME="${HERMES_DIR}"');
+      expect(src).toContain("Messaging egress goes directly through OpenShell");
+      expect(src).toContain('"${STEP_DOWN_PREFIX_GATEWAY[@]}" sh -c');
+      expect(src).not.toContain("gosu gateway sh -c");
+      expect(src).not.toContain("DECODE_PROXY_PORT=3129");
+      expect(src).not.toContain("/usr/local/bin/nemoclaw-decode-proxy");
+      expect(src).not.toContain('HTTPS_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"');
+      expect(src).not.toContain('HTTP_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}"');
     });
 
     it("hermes start.sh checks immutable bits before legacy migration mutates files", () => {

@@ -11,6 +11,7 @@ import { NAME_ALLOWED_FORMAT } from "./name-validation";
 const { spawnSync } = require("child_process");
 const path = require("path");
 const { detectDockerHost } = require("./platform");
+const { buildSubprocessEnv } = require("./subprocess-env") as typeof import("./subprocess-env");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
@@ -31,6 +32,16 @@ type SpawnResult = SpawnSyncReturns<string | Buffer>;
 const dockerHost = detectDockerHost();
 if (dockerHost) {
   process.env.DOCKER_HOST = dockerHost.dockerHost;
+}
+
+function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv): Record<string, string> {
+  const normalizedExtra: Record<string, string> = {};
+  if (extraEnv) {
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (value !== undefined) normalizedExtra[key] = value;
+    }
+  }
+  return buildSubprocessEnv(normalizedExtra);
 }
 
 function logOpenshellRuntimeHint(file: string, renderedCommand = ""): void {
@@ -59,7 +70,7 @@ function spawnAndHandle(
     ...opts,
     stdio,
     cwd: ROOT,
-    env: { ...process.env, ...opts.env },
+    env: buildRunnerEnv(opts.env),
   });
   if (!opts.suppressOutput) {
     writeRedactedResult(result, stdio);
@@ -133,7 +144,7 @@ function runArrayCmd(
     ...spawnOpts,
     stdio,
     cwd: ROOT,
-    env: { ...process.env, ...extraEnv },
+    env: buildRunnerEnv(extraEnv),
   });
   if (!suppressOutput) {
     writeRedactedResult(result, stdio);
@@ -221,7 +232,7 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       cwd: ROOT,
-      env: { ...process.env, ...extraEnv },
+      env: buildRunnerEnv(extraEnv),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });
