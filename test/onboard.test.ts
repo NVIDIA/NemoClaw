@@ -383,31 +383,39 @@ describe("onboard helpers", () => {
     ).toEqual(["--gpu", "--gpu-device", "nvidia.com/gpu=0"]);
   });
 
-  it("keeps /proc read-only and narrows GPU proc writes to comm", () => {
-    const basePolicy = fs.readFileSync(
-      path.join(repoRoot, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-      "utf-8",
-    );
-    const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy);
-    const baseDoc = YAML.parse(basePolicy);
-    const gpuDoc = YAML.parse(gpuPolicy);
+  it(
+    "removes /proc from direct GPU create policy so OpenShell can own GPU enrichment",
+    () => {
+      const basePolicy = fs.readFileSync(
+        path.join(repoRoot, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        "utf-8",
+      );
+      const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy);
+      const baseDoc = YAML.parse(basePolicy);
+      const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(baseDoc.filesystem_policy.read_only).toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_only).toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_write).toContain("/proc/self/task/*/comm");
-  });
+      // /proc is added at runtime by OpenShell's GPU enrichment;
+      // create-time must not pre-declare it.
+      expect(baseDoc.filesystem_policy.read_only).toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
+    },
+  );
 
-  it("removes stale broad /proc write entries from GPU policy input", () => {
+  it("removes stale proc entries from GPU policy input", () => {
     const gpuPolicy = buildDirectGpuPolicyYaml(`
 version: 1
 filesystem_policy:
   include_workdir: true
   read_only:
     - /usr
+    - /proc
+    - /proc/self/task/*/comm
   read_write:
     - /tmp
     - /proc
+    - /proc/self/task/*/comm
 network_policies:
   nvidia:
     name: nvidia
@@ -417,11 +425,8 @@ network_policies:
 `);
     const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(gpuDoc.filesystem_policy.read_only).toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_write).toEqual([
-      "/tmp",
-      "/proc/self/task/*/comm",
-    ]);
+    expect(gpuDoc.filesystem_policy.read_only).toEqual(["/usr"]);
+    expect(gpuDoc.filesystem_policy.read_write).toEqual(["/tmp"]);
   });
 
   it("models the OpenShell standalone gateway environment", () => {
@@ -640,12 +645,18 @@ network_policies:
     const commands = buildDirectSandboxGpuProofCommands("alpha");
     expect(commands.map((entry) => entry.label)).toEqual([
       "nvidia-smi",
-      "/proc/self/task/<tid>/comm write",
+      "/proc/<pid>/task/<tid>/comm write",
       "cuInit(0) via libcuda.so.1",
     ]);
     expect(commands[0].args).toEqual(["sandbox", "exec", "-n", "alpha", "--", "nvidia-smi"]);
-    expect(commands[1].args.join(" ")).toContain("/proc/self/task/${tid}/comm");
+    expect(commands[1].args.join(" ")).toContain("/proc/$$/task/$$/comm");
+    expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
     expect(commands[2].args.join(" ")).toContain("cuInit(0)");
+    for (const command of commands) {
+      for (const arg of command.args) {
+        assert.doesNotMatch(arg, /[\r\n]/);
+      }
+    }
   });
 
   it("uses Hermes-oriented sandbox defaults when NemoHermes selects Hermes", () => {
