@@ -14,17 +14,22 @@
  * Diagnostic-only: never mutates iptables/ufw.
  */
 
-import { dockerRun } from "../adapters/docker/run";
 import { dockerInspectFormat } from "../adapters/docker/inspect";
+import { dockerRun } from "../adapters/docker/run";
 import { GATEWAY_PORT } from "../core/ports";
 
-const DEFAULT_PROBE_IMAGE = "busybox:latest";
+const DEFAULT_PROBE_IMAGE =
+  "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
 const DEFAULT_NETWORK_NAME = "openshell-docker";
 const HOST_INTERNAL_NAME = "host.openshell.internal";
 const DEFAULT_PROBE_TIMEOUT_SEC = 5;
 const PROBE_RUN_OVERHEAD_MS = 10_000;
 
-export type SandboxBridgeReachabilityReason = "ok" | "tcp_failed" | "network_not_found";
+export type SandboxBridgeReachabilityReason =
+  | "ok"
+  | "tcp_failed"
+  | "network_not_found"
+  | "probe_unavailable";
 
 export interface SandboxBridgeReachabilityResult {
   ok: boolean;
@@ -33,13 +38,21 @@ export interface SandboxBridgeReachabilityResult {
   detail?: string;
 }
 
+interface SandboxBridgeProbeRunResult {
+  status: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: string;
+  stderr?: string | Buffer | null;
+  stdout?: string | Buffer | null;
+}
+
 export interface SandboxBridgeReachabilityOptions {
   networkName?: string;
   port?: number;
   timeoutSec?: number;
   probeImage?: string;
   /** Test seam — override docker run. */
-  runImpl?: (args: readonly string[], timeoutMs: number) => { status: number | null };
+  runImpl?: (args: readonly string[], timeoutMs: number) => SandboxBridgeProbeRunResult;
   /** Test seam — override the network-subnet inspect. */
   inspectSubnetImpl?: (networkName: string) => string | undefined;
 }
@@ -57,13 +70,37 @@ function defaultInspectSubnet(networkName: string): string | undefined {
   }
 }
 
-function defaultRunImpl(args: readonly string[], timeoutMs: number): { status: number | null } {
+function defaultRunImpl(args: readonly string[], timeoutMs: number): SandboxBridgeProbeRunResult {
   const result = dockerRun(args, {
     timeout: timeoutMs,
     ignoreError: true,
     suppressOutput: true,
   });
-  return { status: result.status ?? null };
+  return {
+    status: result.status ?? null,
+    signal: result.signal,
+    error: result.error?.message,
+    stderr: result.stderr,
+    stdout: result.stdout,
+  };
+}
+
+function outputTail(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const raw = Buffer.isBuffer(value) ? value.toString("utf8") : String(value);
+  const text = raw.trim();
+  return text ? text.slice(-400) : undefined;
+}
+
+function summarizeProbeUnavailable(result: SandboxBridgeProbeRunResult): string {
+  const details = [
+    result.error,
+    outputTail(result.stderr),
+    outputTail(result.stdout),
+    result.signal ? `signal ${result.signal}` : undefined,
+    result.status !== null ? `exit ${result.status}` : undefined,
+  ].filter((item): item is string => Boolean(item));
+  return details[0] ?? "docker run did not complete the probe";
 }
 
 export async function isSandboxBridgeGatewayReachable(
@@ -88,13 +125,21 @@ export async function isSandboxBridgeGatewayReachable(
 
   const result = runImpl(
     [
-      "run", "--rm", "--network", networkName, probeImage,
+      "run", "--rm", "--pull=missing", "--network", networkName, probeImage,
       "sh", "-c", `nc -zw${timeoutSec} ${HOST_INTERNAL_NAME} ${port}`,
     ],
     timeoutSec * 1000 + PROBE_RUN_OVERHEAD_MS,
   );
   if (result.status === 0) {
     return { ok: true, reason: "ok", subnet };
+  }
+  if (result.status !== 1) {
+    return {
+      ok: false,
+      reason: "probe_unavailable",
+      subnet,
+      detail: summarizeProbeUnavailable(result),
+    };
   }
   return {
     ok: false,
@@ -117,6 +162,13 @@ export function formatSandboxBridgeUnreachableMessage(
       "    Check the gateway log for startup errors before retrying.",
     ].join("\n");
   }
+  if (result.reason === "probe_unavailable") {
+    return [
+      "  ⚠ Could not run the sandbox bridge reachability probe.",
+      "    This does not prove the gateway is unreachable; continuing.",
+      result.detail ? `    ${result.detail}` : undefined,
+    ].filter((line): line is string => Boolean(line)).join("\n");
+  }
   const allowCmd = result.subnet
     ? `      sudo ufw allow from ${result.subnet} to any port ${port} proto tcp`
     : [
@@ -130,4 +182,23 @@ export function formatSandboxBridgeUnreachableMessage(
     allowCmd,
     "    Then re-run `nemoclaw onboard`.",
   ].join("\n");
+}
+
+export async function verifySandboxBridgeGatewayReachableOrExit(
+  exitOnFailure: boolean,
+): Promise<void> {
+  const reach = await isSandboxBridgeGatewayReachable();
+  if (reach.ok) return;
+
+  const message = formatSandboxBridgeUnreachableMessage(reach);
+  if (reach.reason === "probe_unavailable") {
+    console.warn(message);
+    return;
+  }
+
+  console.error(message);
+  if (exitOnFailure) {
+    process.exit(1);
+  }
+  throw new Error(`Docker-driver sandbox-bridge unreachable (${reach.reason})`);
 }

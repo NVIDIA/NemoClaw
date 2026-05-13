@@ -39,6 +39,16 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(result.subnet).toBe("172.19.0.0/16");
   });
 
+  it("flags probe_unavailable when docker cannot run the helper container", async () => {
+    const result = await isSandboxBridgeGatewayReachable({
+      inspectSubnetImpl: () => "172.19.0.0/16",
+      runImpl: () => ({ status: 125, stderr: "docker: failed to pull image" }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("probe_unavailable");
+    expect(result.detail).toContain("failed to pull image");
+  });
+
   it("threads through configured network name + port to the probe argv", async () => {
     const seen: { args: readonly string[] } = { args: [] };
     await isSandboxBridgeGatewayReachable({
@@ -52,6 +62,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
       },
     });
     expect(seen.args).toContain("custom-net");
+    expect(seen.args).toContain("--pull=missing");
     expect(seen.args.join(" ")).toContain("nc -zw7 host.openshell.internal 9090");
   });
 });
@@ -89,6 +100,17 @@ describe("formatSandboxBridgeUnreachableMessage", () => {
       detail: 'Docker network "openshell-docker" not found',
     });
     expect(msg).toContain("bridge network is missing");
+    expect(msg).not.toContain("ufw allow");
+  });
+
+  it("uses a non-firewall message when the probe itself cannot run", () => {
+    const msg = formatSandboxBridgeUnreachableMessage({
+      ok: false,
+      reason: "probe_unavailable",
+      detail: "docker: failed to pull image",
+    });
+    expect(msg).toContain("Could not run the sandbox bridge reachability probe");
+    expect(msg).toContain("continuing");
     expect(msg).not.toContain("ufw allow");
   });
 });
