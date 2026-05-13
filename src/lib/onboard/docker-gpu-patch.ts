@@ -709,25 +709,35 @@ export function applyDockerGpuPatchOrExit(
     console.log(`  ✓ Docker GPU mode selected: ${result.mode.label}`);
     return result;
   } catch (error) {
-    const diagnostics = collectDockerGpuPatchDiagnostics(
-      options.sandboxName,
-      { error },
-      {
-        runCaptureOpenshell: deps.runCaptureOpenshell,
-      },
-    );
-    console.error("");
-    console.error("  Docker GPU patch failed.");
-    if (error instanceof Error && error.message) {
-      console.error(`  ${error.message}`);
-    }
-    if (diagnostics) {
-      console.error(`  Diagnostics saved: ${diagnostics.dir}`);
-    }
-    console.error("  Escape hatch: set NEMOCLAW_DOCKER_GPU_PATCH=0 to skip this patch.");
-    printDockerGpuPatchCleanup(options.sandboxName);
-    process.exit(1);
+    printDockerGpuPatchFailureAndExit(options.sandboxName, error, {
+      runCaptureOpenshell: deps.runCaptureOpenshell,
+    });
   }
+}
+
+export function printDockerGpuPatchFailureAndExit(
+  sandboxName: string,
+  error: unknown,
+  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell">,
+): never {
+  const diagnostics = collectDockerGpuPatchDiagnostics(
+    sandboxName,
+    { error },
+    {
+      runCaptureOpenshell: deps.runCaptureOpenshell,
+    },
+  );
+  console.error("");
+  console.error("  Docker GPU patch failed.");
+  if (error instanceof Error && error.message) {
+    console.error(`  ${error.message}`);
+  }
+  if (diagnostics) {
+    console.error(`  Diagnostics saved: ${diagnostics.dir}`);
+  }
+  console.error("  Escape hatch: set NEMOCLAW_DOCKER_GPU_PATCH=0 to skip this patch.");
+  printDockerGpuPatchCleanup(sandboxName);
+  process.exit(1);
 }
 
 export function printDockerGpuReadinessFailure(

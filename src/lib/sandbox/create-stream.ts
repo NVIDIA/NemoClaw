@@ -14,6 +14,7 @@ export interface StreamSandboxCreateResult {
 
 export interface StreamSandboxCreateOptions {
   readyCheck?: (() => boolean) | null;
+  failureCheck?: (() => string | null | undefined) | null;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
   silentPhaseMs?: number;
@@ -238,9 +239,25 @@ export function streamSandboxCreate(
           } catch {
             return;
           }
-          if (!ready) return;
-          setPhase("ready");
-          const detail = "Sandbox reported Ready before create stream exited; continuing.";
+          if (ready) {
+            setPhase("ready");
+            const detail = "Sandbox reported Ready before create stream exited; continuing.";
+            lines.push(detail);
+            printProgressLine(`  ${detail}`);
+            try {
+              child.kill?.("SIGTERM");
+            } catch {
+              // Best effort only — the child may have already exited.
+            }
+            detachChild();
+            sawProgress = true;
+            finish(0, { forcedReady: true });
+            return;
+          }
+
+          const failure = options.failureCheck?.();
+          if (!failure) return;
+          const detail = String(failure);
           lines.push(detail);
           printProgressLine(`  ${detail}`);
           try {
@@ -250,7 +267,7 @@ export function streamSandboxCreate(
           }
           detachChild();
           sawProgress = true;
-          finish(0, { forcedReady: true });
+          finish(1);
         } finally {
           polling = false;
         }

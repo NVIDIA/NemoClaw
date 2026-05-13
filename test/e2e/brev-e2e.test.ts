@@ -303,7 +303,7 @@ function runRemoteTest(scriptPath: string): string {
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
-  sshEnv(cmd, { timeout: 900_000, stream: true });
+  sshEnv(cmd, { timeout: GPU_TEST_SUITE ? 1_800_000 : 900_000, stream: true });
   // Retrieve the captured output for assertion checking
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }

@@ -6055,10 +6055,40 @@ async function createSandbox(
     ...envArgs,
     "nemoclaw-start",
   ])} 2>&1`;
+  let dockerGpuPatchResult: import("./onboard/docker-gpu-patch").DockerGpuPatchResult | null =
+    null;
+  let dockerGpuPatchError: unknown = null;
+  const maybeApplyDockerGpuPatchDuringCreate = () => {
+    if (!useDockerGpuPatch || dockerGpuPatchResult || dockerGpuPatchError) return;
+    const containerIds = dockerGpuPatch.findOpenShellDockerSandboxContainerIds(sandboxName);
+    if (containerIds.length === 0) return;
+    console.log(
+      "  OpenShell Docker container detected; recreating it with NVIDIA GPU access before readiness wait...",
+    );
+    try {
+      dockerGpuPatchResult = dockerGpuPatch.recreateOpenShellDockerSandboxWithGpu(
+        {
+          sandboxName,
+          gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
+          timeoutSecs: sandboxReadyTimeoutSecs,
+        },
+        { runOpenshell, runCaptureOpenshell, sleep },
+      );
+      console.log(`  ✓ Docker GPU mode selected: ${dockerGpuPatchResult.mode.label}`);
+    } catch (error) {
+      dockerGpuPatchError = error;
+    }
+  };
   const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
     readyCheck: () => {
       const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-      return isSandboxReady(list, sandboxName);
+      if (isSandboxReady(list, sandboxName)) return true;
+      maybeApplyDockerGpuPatchDuringCreate();
+      return Boolean(dockerGpuPatchResult);
+    },
+    failureCheck: () => {
+      if (!dockerGpuPatchError) return null;
+      return "Docker GPU patch failed while OpenShell sandbox create was still waiting.";
     },
   });
 
@@ -6073,6 +6103,12 @@ async function createSandbox(
   // temp dir (which may hold source and env-arg API keys).
   if (cleanupBuildCtx()) {
     process.removeListener("exit", cleanupBuildCtx);
+  }
+
+  if (dockerGpuPatchError) {
+    dockerGpuPatch.printDockerGpuPatchFailureAndExit(sandboxName, dockerGpuPatchError, {
+      runCaptureOpenshell,
+    });
   }
 
   if (createResult.status !== 0) {
@@ -6099,9 +6135,7 @@ async function createSandbox(
     }
   }
 
-  let dockerGpuPatchResult: import("./onboard/docker-gpu-patch").DockerGpuPatchResult | null =
-    null;
-  if (useDockerGpuPatch) {
+  if (useDockerGpuPatch && !dockerGpuPatchResult) {
     dockerGpuPatchResult = dockerGpuPatch.applyDockerGpuPatchOrExit(
       {
         sandboxName,

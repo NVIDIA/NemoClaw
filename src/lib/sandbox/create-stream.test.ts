@@ -124,6 +124,32 @@ describe("sandbox-create-stream", () => {
     expect(child.unref).toHaveBeenCalled();
   });
 
+  it("can abort a stuck create stream from a failure check", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      spawnImpl: () => child,
+      readyCheck: () => false,
+      failureCheck: () => "Docker GPU patch failed while OpenShell sandbox create was still waiting.",
+      pollIntervalMs: 5,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine,
+    });
+
+    await vi.advanceTimersByTimeAsync(6);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 1,
+      sawProgress: true,
+      output: expect.stringContaining("Docker GPU patch failed while OpenShell sandbox create"),
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(child.unref).toHaveBeenCalled();
+  });
+
   it("flushes the final partial line before resolving", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", process.env, {
