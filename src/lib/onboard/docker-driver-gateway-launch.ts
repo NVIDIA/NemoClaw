@@ -23,6 +23,13 @@ export type DockerDriverGatewayLaunch = {
   containerName?: string;
 };
 
+export type DockerDriverGatewayRuntimeIdentity = {
+  launch: DockerDriverGatewayLaunch | null;
+  desiredEnv: Record<string, string>;
+  driftGatewayBin: string | null;
+  identityGatewayBin: string | null;
+};
+
 type BuildGatewayLaunchOptions = {
   gatewayBin: string;
   gatewayEnv: Record<string, string>;
@@ -242,4 +249,40 @@ export function prepareDockerDriverGatewayLaunch(launch: DockerDriverGatewayLaun
     suppressOutput: true,
     timeout: 30_000,
   });
+}
+
+export function buildDockerDriverGatewayRuntimeIdentity(
+  options: BuildGatewayLaunchOptions,
+): DockerDriverGatewayRuntimeIdentity {
+  const launch = buildDockerDriverGatewayLaunch(options);
+  const desiredEnv =
+    launch.mode === "container"
+      ? {
+          ...options.gatewayEnv,
+          ...Object.fromEntries(
+            Object.entries(launch.env).filter(
+              ([key, val]) => key in options.gatewayEnv && typeof val === "string",
+            ) as [string, string][],
+          ),
+        }
+      : options.gatewayEnv;
+  return {
+    launch,
+    desiredEnv,
+    driftGatewayBin: launch.processGatewayBin,
+    identityGatewayBin: launch.processGatewayBin || options.gatewayBin,
+  };
+}
+
+export function prepareAndLogDockerDriverGatewayLaunch(
+  launch: DockerDriverGatewayLaunch,
+  log: (message: string) => void = console.log,
+): void {
+  if (launch.mode !== "container") return;
+  log(`  OpenShell gateway compatibility patch active (${launch.reason}).`);
+  log("  Running openshell-gateway inside a Docker compatibility container.");
+  if (launch.env.OPENSHELL_BIND_ADDRESS === "0.0.0.0") {
+    log("  Compatibility gateway bind: 0.0.0.0 (required for Docker sandbox callbacks).");
+  }
+  prepareDockerDriverGatewayLaunch(launch);
 }

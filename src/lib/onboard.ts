@@ -35,16 +35,12 @@ const {
   buildSandboxConfigSyncScript,
   writeSandboxConfigSyncFile,
 }: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
-const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") =
-  require("./onboard/docker-gpu-patch");
-const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") =
-  require("./onboard/docker-driver-gateway-launch");
-const dockerCdi: typeof import("./onboard/docker-cdi") = require("./onboard/docker-cdi");
-const sandboxGpuCreate: typeof import("./onboard/sandbox-gpu-create") =
-  require("./onboard/sandbox-gpu-create");
-const { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs, parseDockerCdiSpecDirs } =
-  dockerCdi;
-const { buildSandboxGpuCreateArgs, getSandboxReadyTimeoutSecs } = sandboxGpuCreate;
+const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") = require("./onboard/docker-gpu-patch");
+const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
+const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
+const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
+const { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs, parseDockerCdiSpecDirs }: typeof import("./onboard/docker-cdi") = require("./onboard/docker-cdi");
+const { buildSandboxGpuCreateArgs, getSandboxReadyTimeoutSecs }: typeof import("./onboard/sandbox-gpu-create") = require("./onboard/sandbox-gpu-create");
 const {
   isValidProxyHost,
   isValidProxyPort,
@@ -154,7 +150,6 @@ const {
   getOllamaModelOptions,
   getOllamaWarmupCommand,
   getResolvedOllamaHost,
-  LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   OLLAMA_HOST_DOCKER_INTERNAL,
   validateOllamaPortConfiguration,
   validateOllamaModel,
@@ -1359,37 +1354,6 @@ function validateSandboxGpuPreflight(config: SandboxGpuConfig): void {
     process.exit(1);
   }
   console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);
-}
-
-function shouldUseDockerGpuPatchHostNetwork(config: SandboxGpuConfig): boolean {
-  return (
-    dockerGpuPatch.shouldApplyDockerGpuPatch(config, {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-    }) && dockerGpuPatch.getDockerGpuPatchNetworkMode(process.env) === "host"
-  );
-}
-
-function configureLocalInferenceForDockerGpuHostNetwork(config: SandboxGpuConfig): void {
-  if (!shouldUseDockerGpuPatchHostNetwork(config)) return;
-  if (!process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV]) {
-    process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV] = "http://127.0.0.1";
-    note(
-      "  Docker-driver GPU patch will use host networking; local inference providers will use sandbox loopback.",
-    );
-    return;
-  }
-  note(
-    `  Docker-driver GPU patch will use host networking; local inference providers will use ${LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV}.`,
-  );
-}
-
-function dockerGpuPatchHostNetworkInferenceBaseUrl(
-  config: SandboxGpuConfig,
-  provider: string | null | undefined,
-): string | null {
-  if (!shouldUseDockerGpuPatchHostNetwork(config)) return null;
-  if (!provider || !LOCAL_INFERENCE_PROVIDERS.includes(provider)) return null;
-  return getLocalProviderValidationBaseUrl(provider);
 }
 
 // ── Base image resolution ───────────────────────────────────────
@@ -2928,23 +2892,10 @@ async function refreshDockerDriverGatewayReuseState(
   const baseDesiredEnv = getDockerDriverGatewayEnv(
     runCaptureOpenshell(["--version"], { ignoreError: true }),
   );
-  // When the compat-container gateway is active, the running process has
-  // overridden env values (e.g. OPENSHELL_BIND_ADDRESS=0.0.0.0). Build the
-  // drift-check env from the launch config so we compare like-for-like and
-  // avoid flagging a healthy containerized gateway as stale.
-  const launchForDrift = gatewayBin
-    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayLaunch({
-        gatewayBin,
-        gatewayEnv: baseDesiredEnv,
-        stateDir: getDockerDriverGatewayStateDir(),
-        sandboxBin: resolveOpenShellSandboxBinary(),
-      })
-    : null;
-  const desiredEnv = launchForDrift ? { ...baseDesiredEnv, ...Object.fromEntries(
-    Object.entries(launchForDrift.env).filter(([key, val]) => key in baseDesiredEnv && typeof val === "string") as [string, string][],
-  ) } : baseDesiredEnv;
-  const driftBin = launchForDrift ? launchForDrift.processGatewayBin : gatewayBin;
-  const identityBin = launchForDrift?.processGatewayBin || gatewayBin;
+  const runtimeIdentity = gatewayBin ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({ gatewayBin, gatewayEnv: baseDesiredEnv, stateDir: getDockerDriverGatewayStateDir(), sandboxBin: resolveOpenShellSandboxBinary() }) : null;
+  const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
+  const driftBin = runtimeIdentity?.driftGatewayBin ?? gatewayBin;
+  const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const pid = getDockerDriverGatewayPid();
   if (pid !== null && isDockerDriverGatewayProcessAlive()) {
     const drift = getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, driftBin);
@@ -4436,19 +4387,11 @@ async function startDockerDriverGateway({
   });
   const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
   const stateDir = getDockerDriverGatewayStateDir();
-  const gatewayLaunch = gatewayBin
-    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayLaunch({
-        gatewayBin,
-        gatewayEnv,
-        stateDir,
-        sandboxBin: resolveOpenShellSandboxBinary(),
-      })
-    : null;
-  const driftGatewayBin = gatewayLaunch ? gatewayLaunch.processGatewayBin : gatewayBin;
-  const driftGatewayEnv = gatewayLaunch ? { ...gatewayEnv, ...Object.fromEntries(
-    Object.entries(gatewayLaunch.env).filter(([key, val]) => key in gatewayEnv && typeof val === "string") as [string, string][],
-  ) } : gatewayEnv;
-  const identityGatewayBin = gatewayLaunch?.processGatewayBin || gatewayBin;
+  const runtimeIdentity = gatewayBin ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({ gatewayBin, gatewayEnv, stateDir, sandboxBin: resolveOpenShellSandboxBinary() }) : null;
+  const gatewayLaunch = runtimeIdentity?.launch ?? null;
+  const driftGatewayBin = runtimeIdentity?.driftGatewayBin ?? gatewayBin;
+  const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
+  const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
 
@@ -4538,17 +4481,9 @@ async function startDockerDriverGateway({
     args: [],
     env: { ...process.env, ...gatewayEnv },
     mode: "host" as const,
+    processGatewayBin: gatewayBin,
   };
-  if (launch.mode === "container") {
-    console.log(`  OpenShell gateway compatibility patch active (${launch.reason}).`);
-    console.log("  Running openshell-gateway inside a Docker compatibility container.");
-    if (launch.env.OPENSHELL_BIND_ADDRESS === "0.0.0.0") {
-      console.log(
-        "  Compatibility gateway bind: 0.0.0.0 (required for Docker sandbox callbacks).",
-      );
-    }
-    dockerDriverGatewayLaunch.prepareDockerDriverGatewayLaunch(launch);
-  }
+  dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
   const child = spawn(launch.command, launch.args, {
     detached: true,
     stdio: ["ignore", outFd, errFd],
@@ -5732,14 +5667,10 @@ async function createSandbox(
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
     console.log("  Direct sandbox GPU enabled; allowing only /proc task comm writes.");
   }
-  const useDockerGpuPatch = dockerGpuPatch.shouldApplyDockerGpuPatch(effectiveSandboxGpuConfig, {
-    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-  });
-  if (useDockerGpuPatch) {
-    console.log(
-      "  Docker-driver GPU patch active; creating sandbox first, then recreating the Docker container with GPU access.",
-    );
-  }
+  const useDockerGpuPatch = dockerGpuSandboxCreate.shouldUseDockerGpuPatchForCreate(
+    effectiveSandboxGpuConfig,
+    { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(), log: console.log },
+  );
   const createArgs = [
     "--from",
     `${buildCtx}/Dockerfile`,
@@ -5863,15 +5794,12 @@ async function createSandbox(
     }
   }
   const buildId = String(Date.now());
-  const sandboxInferenceBaseUrlOverride = dockerGpuPatchHostNetworkInferenceBaseUrl(
-    effectiveSandboxGpuConfig,
-    provider,
+  const sandboxInferenceBaseUrlOverride =
+    dockerGpuLocalInference.dockerGpuPatchHostNetworkInferenceBaseUrl(
+      effectiveSandboxGpuConfig,
+      provider,
+      { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(), log: console.log },
   );
-  if (sandboxInferenceBaseUrlOverride) {
-    console.log(
-      `  Docker-driver GPU host networking: OpenClaw local inference will use direct sandbox URL ${sandboxInferenceBaseUrlOverride}.`,
-    );
-  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -5958,44 +5886,21 @@ async function createSandbox(
     ...envArgs,
     "nemoclaw-start",
   ])} 2>&1`;
-  let dockerGpuPatchResult: import("./onboard/docker-gpu-patch").DockerGpuPatchResult | null =
-    null;
-  let dockerGpuPatchError: unknown = null;
-  let dockerGpuPatchNeedsSupervisorWait = false;
-  const maybeApplyDockerGpuPatchDuringCreate = () => {
-    if (!useDockerGpuPatch || dockerGpuPatchResult || dockerGpuPatchError) return;
-    const containerIds = dockerGpuPatch.findOpenShellDockerSandboxContainerIds(sandboxName);
-    if (containerIds.length === 0) return;
-    console.log(
-      "  OpenShell Docker container detected; recreating it with NVIDIA GPU access before readiness wait...",
-    );
-    try {
-      dockerGpuPatchResult = dockerGpuPatch.recreateOpenShellDockerSandboxWithGpu(
-        {
-          sandboxName,
-          gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
-          timeoutSecs: sandboxReadyTimeoutSecs,
-          waitForSupervisor: false,
-        },
-        { runCaptureOpenshell, sleep },
-      );
-      dockerGpuPatchNeedsSupervisorWait = true;
-      console.log(`  ✓ Docker GPU mode selected: ${dockerGpuPatchResult.mode.label}`);
-    } catch (error) {
-      dockerGpuPatchError = error;
-    }
-  };
+  const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
+    enabled: useDockerGpuPatch,
+    sandboxName,
+    gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
+    timeoutSecs: sandboxReadyTimeoutSecs,
+    deps: { runOpenshell, runCaptureOpenshell, sleep },
+  });
   const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
     readyCheck: () => {
       const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
       if (isSandboxReady(list, sandboxName)) return true;
-      maybeApplyDockerGpuPatchDuringCreate();
+      dockerGpuCreatePatch.maybeApplyDuringCreate();
       return false;
     },
-    failureCheck: () => {
-      if (!dockerGpuPatchError) return null;
-      return "Docker GPU patch failed while OpenShell sandbox create was still waiting.";
-    },
+    failureCheck: dockerGpuCreatePatch.createFailureMessage,
   });
 
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
@@ -6011,11 +5916,7 @@ async function createSandbox(
     process.removeListener("exit", cleanupBuildCtx);
   }
 
-  if (dockerGpuPatchError) {
-    dockerGpuPatch.printDockerGpuPatchFailureAndExit(sandboxName, dockerGpuPatchError, {
-      runCaptureOpenshell,
-    });
-  }
+  dockerGpuCreatePatch.exitOnPatchError();
 
   if (createResult.status !== 0) {
     const failure = classifySandboxCreateFailure(createResult.output);
@@ -6041,44 +5942,8 @@ async function createSandbox(
     }
   }
 
-  if (useDockerGpuPatch && !dockerGpuPatchResult) {
-    dockerGpuPatchResult = dockerGpuPatch.applyDockerGpuPatchOrExit(
-      {
-        sandboxName,
-        gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
-        timeoutSecs: sandboxReadyTimeoutSecs,
-      },
-      { runOpenshell, runCaptureOpenshell, sleep },
-    );
-  }
-  if (dockerGpuPatchNeedsSupervisorWait) {
-    const supervisorReconnectTimeoutSecs =
-      dockerGpuPatch.getDockerGpuSupervisorReconnectTimeoutSecs(sandboxReadyTimeoutSecs);
-    console.log(
-      `  Waiting for OpenShell supervisor to reconnect to the GPU-enabled container (up to ${supervisorReconnectTimeoutSecs}s)...`,
-    );
-    const supervisorReady = dockerGpuPatch.waitForOpenShellSupervisorReconnect(
-      sandboxName,
-      supervisorReconnectTimeoutSecs,
-      { runOpenshell, sleep },
-    );
-    if (!supervisorReady) {
-      dockerGpuPatch.printDockerGpuPatchFailureAndExit(
-        sandboxName,
-        new Error("OpenShell supervisor did not reconnect to the GPU-enabled container."),
-        {
-          runCaptureOpenshell,
-          context: {
-            sandboxName,
-            oldContainerId: dockerGpuPatchResult?.oldContainerId,
-            newContainerId: dockerGpuPatchResult?.newContainerId,
-            backupContainerName: dockerGpuPatchResult?.backupContainerName,
-            selectedMode: dockerGpuPatchResult?.mode ?? null,
-          },
-        },
-      );
-    }
-  }
+  dockerGpuCreatePatch.ensureApplied();
+  dockerGpuCreatePatch.waitForSupervisorReconnectIfNeeded();
 
   // Wait for OpenShell to report the sandbox Ready before registering.
   // On first run the sandbox can take longer to initialize;
@@ -6123,7 +5988,7 @@ async function createSandbox(
     if (useDockerGpuPatch) {
       dockerGpuPatch.printDockerGpuReadinessFailure(
         sandboxName,
-        dockerGpuPatchResult?.mode ?? null,
+        dockerGpuCreatePatch.selectedMode(),
         { runCaptureOpenshell },
       );
     } else {
@@ -6173,7 +6038,7 @@ async function createSandbox(
       dockerGpuPatch.printDockerGpuProofFailure(
         sandboxName,
         error,
-        dockerGpuPatchResult?.mode ?? null,
+        dockerGpuCreatePatch.selectedMode(),
         { runCaptureOpenshell },
       );
       throw error;
@@ -10449,7 +10314,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         return current;
       });
     }
-    configureLocalInferenceForDockerGpuHostNetwork(sandboxGpuConfig);
+    dockerGpuLocalInference.configureLocalInferenceForDockerGpuHostNetwork(sandboxGpuConfig, {
+      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      note,
+    });
 
     const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
     let gatewayReuseState = gatewaySnapshot.gatewayReuseState;
