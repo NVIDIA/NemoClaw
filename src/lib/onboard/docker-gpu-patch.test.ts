@@ -13,6 +13,7 @@ import {
   buildDockerGpuModeCandidates,
   dockerReportsNvidiaCdiDevices,
   formatDockerInspectNetworkSummary,
+  getDockerGpuSupervisorReconnectTimeoutSecs,
   recreateOpenShellDockerSandboxWithGpu,
   selectDockerGpuPatchMode,
   shouldApplyDockerGpuPatch,
@@ -151,6 +152,16 @@ describe("docker-gpu-patch", () => {
       "device=0",
     ]);
     expect(buildDockerGpuMode("gpus", "1,2").args).toEqual(["--gpus", "device=1,2"]);
+  });
+
+  it("uses a Docker-GPU-specific supervisor reconnect wait with an override", () => {
+    expect(getDockerGpuSupervisorReconnectTimeoutSecs(180, {})).toBe(420);
+    expect(getDockerGpuSupervisorReconnectTimeoutSecs(600, {})).toBe(600);
+    expect(
+      getDockerGpuSupervisorReconnectTimeoutSecs(180, {
+        NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT: "30",
+      }),
+    ).toBe(30);
   });
 
   it("falls back to NVIDIA runtime when Docker rejects --gpus", () => {

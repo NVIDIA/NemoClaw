@@ -6154,10 +6154,14 @@ async function createSandbox(
     );
   }
   if (dockerGpuPatchNeedsSupervisorWait) {
-    console.log("  Waiting for OpenShell supervisor to reconnect to the GPU-enabled container...");
+    const supervisorReconnectTimeoutSecs =
+      dockerGpuPatch.getDockerGpuSupervisorReconnectTimeoutSecs(sandboxReadyTimeoutSecs);
+    console.log(
+      `  Waiting for OpenShell supervisor to reconnect to the GPU-enabled container (up to ${supervisorReconnectTimeoutSecs}s)...`,
+    );
     const supervisorReady = dockerGpuPatch.waitForOpenShellSupervisorReconnect(
       sandboxName,
-      sandboxReadyTimeoutSecs,
+      supervisorReconnectTimeoutSecs,
       { runOpenshell, sleep },
     );
     if (!supervisorReady) {

@@ -14,6 +14,7 @@ import {
   dockerRunDetached,
   dockerStop,
 } from "../adapters/docker";
+import { envInt } from "./env";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
@@ -21,6 +22,9 @@ export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
+const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 420;
+export const DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV =
+  "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT";
 const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
 const GPU_ENV_KEYS = new Set([
   "NVIDIA_VISIBLE_DEVICES",
@@ -566,6 +570,23 @@ function waitForOpenShellSandboxExec(
 }
 
 export const waitForOpenShellSupervisorReconnect = waitForOpenShellSandboxExec;
+
+export function getDockerGpuSupervisorReconnectTimeoutSecs(
+  sandboxReadyTimeoutSecs: number,
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const readyTimeoutSecs = Number.isFinite(sandboxReadyTimeoutSecs)
+    ? Math.max(1, Math.round(sandboxReadyTimeoutSecs))
+    : 1;
+  const fallback = Math.max(
+    readyTimeoutSecs,
+    DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS,
+  );
+  return Math.max(
+    1,
+    envInt(DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV, fallback, env),
+  );
+}
 
 function decoratePatchError<T extends Error>(
   error: T,

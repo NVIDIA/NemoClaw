@@ -369,7 +369,7 @@ function printRemoteFailureDiagnostics(): void {
         `latest="$(find "$HOME/.nemoclaw/onboard-failures" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)"`,
         `if [ -n "$latest" ]; then`,
         `  echo "--- latest onboard failure: $latest ---"`,
-        `  for file in summary.txt openshell-sandbox-list.txt openshell-sandbox-get.txt docker-ps.txt docker-network-summary.txt; do`,
+        `  for file in summary.txt docker-network-summary.txt docker-ps.txt openshell-sandbox-list.txt openshell-sandbox-get.txt; do`,
         `    if [ -s "$latest/$file" ]; then`,
         `      echo "--- $file ---"`,
         `      sed -n '1,160p' "$latest/$file"`,

@@ -5133,6 +5133,8 @@ const { setupInference } = require(${onboardPath});
       /buildSandboxGpuCreateArgs\(\s*effectiveSandboxGpuConfig,\s*\{\s*suppressGpuFlag: useDockerGpuPatch,\s*\}/,
     );
     assert.match(source, /applyDockerGpuPatchOrExit/);
+    assert.match(source, /getDockerGpuSupervisorReconnectTimeoutSecs\(sandboxReadyTimeoutSecs\)/);
+    assert.match(source, /waitForOpenShellSupervisorReconnect\(\s*sandboxName,\s*supervisorReconnectTimeoutSecs/);
     assert.match(source, /printDockerGpuReadinessFailure/);
     assert.match(source, /printDockerGpuProofFailure/);
     assert.match(
