@@ -688,6 +688,86 @@ export function dockerGpuPatchCleanupCommands(sandboxName: string): string[] {
   return [`openshell sandbox delete ${JSON.stringify(sandboxName)}`];
 }
 
+function printDockerGpuPatchCleanup(sandboxName: string): void {
+  console.error("  The failed sandbox/container has been left in place for inspection.");
+  console.error("  Manual cleanup:");
+  for (const command of dockerGpuPatchCleanupCommands(sandboxName)) {
+    console.error(`    ${command}`);
+  }
+}
+
+export function applyDockerGpuPatchOrExit(
+  options: {
+    sandboxName: string;
+    gpuDevice?: string | null;
+    timeoutSecs: number;
+  },
+  deps: Pick<DockerGpuPatchDeps, "runOpenshell" | "runCaptureOpenshell" | "sleep">,
+): DockerGpuPatchResult {
+  console.log("  Recreating OpenShell Docker sandbox container with NVIDIA GPU access...");
+  try {
+    const result = recreateOpenShellDockerSandboxWithGpu(options, deps);
+    console.log(`  ✓ Docker GPU mode selected: ${result.mode.label}`);
+    return result;
+  } catch (error) {
+    const diagnostics = collectDockerGpuPatchDiagnostics(
+      options.sandboxName,
+      { error },
+      {
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+      },
+    );
+    console.error("");
+    console.error("  Docker GPU patch failed.");
+    if (error instanceof Error && error.message) {
+      console.error(`  ${error.message}`);
+    }
+    if (diagnostics) {
+      console.error(`  Diagnostics saved: ${diagnostics.dir}`);
+    }
+    console.error("  Escape hatch: set NEMOCLAW_DOCKER_GPU_PATCH=0 to skip this patch.");
+    printDockerGpuPatchCleanup(options.sandboxName);
+    process.exit(1);
+  }
+}
+
+export function printDockerGpuReadinessFailure(
+  sandboxName: string,
+  selectedMode: DockerGpuPatchMode | null,
+  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell">,
+): void {
+  const diagnostics = collectDockerGpuPatchDiagnostics(
+    sandboxName,
+    { selectedMode },
+    {
+      runCaptureOpenshell: deps.runCaptureOpenshell,
+    },
+  );
+  if (diagnostics) {
+    console.error(`  Docker GPU diagnostics saved: ${diagnostics.dir}`);
+  }
+  printDockerGpuPatchCleanup(sandboxName);
+}
+
+export function printDockerGpuProofFailure(
+  sandboxName: string,
+  error: unknown,
+  selectedMode: DockerGpuPatchMode | null,
+  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell">,
+): void {
+  const diagnostics = collectDockerGpuPatchDiagnostics(
+    sandboxName,
+    { error, selectedMode },
+    {
+      runCaptureOpenshell: deps.runCaptureOpenshell,
+    },
+  );
+  if (diagnostics) {
+    console.error(`  Diagnostics saved: ${diagnostics.dir}`);
+  }
+  printDockerGpuPatchCleanup(sandboxName);
+}
+
 function writeTextFile(dir: string, name: string, content: string): void {
   fs.writeFileSync(path.join(dir, name), content.endsWith("\n") ? content : `${content}\n`, {
     mode: 0o600,

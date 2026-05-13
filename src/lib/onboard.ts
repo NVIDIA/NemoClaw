@@ -8,7 +8,6 @@
 const {
   envInt,
   LOCAL_INFERENCE_TIMEOUT_SECS,
-  SANDBOX_READY_TIMEOUT_SECS,
 }: typeof import("./onboard/env") = require("./onboard/env");
 const {
   agentProductName,
@@ -38,6 +37,14 @@ const {
 }: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
 const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") =
   require("./onboard/docker-gpu-patch");
+const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") =
+  require("./onboard/docker-driver-gateway-launch");
+const dockerCdi: typeof import("./onboard/docker-cdi") = require("./onboard/docker-cdi");
+const sandboxGpuCreate: typeof import("./onboard/sandbox-gpu-create") =
+  require("./onboard/sandbox-gpu-create");
+const { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs, parseDockerCdiSpecDirs } =
+  dockerCdi;
+const { buildSandboxGpuCreateArgs, getSandboxReadyTimeoutSecs } = sandboxGpuCreate;
 const {
   isValidProxyHost,
   isValidProxyPort,
@@ -1459,89 +1466,6 @@ function getResumeSandboxGpuOverrides(
     return { flag: "enable", device: entry?.sandboxGpuDevice || null };
   }
   return { flag: null, device: null };
-}
-
-function buildSandboxGpuCreateArgs(
-  config: SandboxGpuConfig,
-  options: { suppressGpuFlag?: boolean } = {},
-): string[] {
-  if (options.suppressGpuFlag) return [];
-  if (!config.sandboxGpuEnabled) return [];
-  const args = ["--gpu"];
-  if (config.sandboxGpuDevice) {
-    args.push("--gpu-device", config.sandboxGpuDevice);
-  }
-  return args;
-}
-
-function getSandboxReadyTimeoutSecs(
-  _config: Pick<SandboxGpuConfig, "sandboxGpuEnabled">,
-  env: NodeJS.ProcessEnv = process.env,
-  _platform: NodeJS.Platform = process.platform,
-  _arch: NodeJS.Architecture = process.arch,
-): number {
-  if (String(env.NEMOCLAW_SANDBOX_READY_TIMEOUT || "").trim()) {
-    return envInt("NEMOCLAW_SANDBOX_READY_TIMEOUT", SANDBOX_READY_TIMEOUT_SECS, env);
-  }
-  return SANDBOX_READY_TIMEOUT_SECS;
-}
-
-function parseDockerCdiSpecDirs(value: string | null | undefined): string[] {
-  const raw = String(value || "").trim();
-  if (!raw || raw === "<no value>") return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? parsed.map((entry) => String(entry || "").trim()).filter(Boolean)
-      : [];
-  } catch {
-    return raw
-      .split(/[\s,]+/)
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-  }
-}
-
-function getDockerCdiSpecDirs(): string[] {
-  return parseDockerCdiSpecDirs(
-    dockerInfoFormat("{{json .CDISpecDirs}}", { ignoreError: true }),
-  );
-}
-
-function isLikelyNvidiaCdiSpecFile(filePath: string): boolean {
-  if (!/\.(json|ya?ml)$/i.test(filePath)) return false;
-  let stat: import("fs").Stats;
-  try {
-    stat = fs.statSync(filePath);
-  } catch {
-    return false;
-  }
-  if (!stat.isFile()) return false;
-
-  let content = "";
-  try {
-    content = fs.readFileSync(filePath, "utf-8");
-  } catch {
-    return false;
-  }
-  return /nvidia\.com\/gpu|nvidia-container|libcuda|cuda/i.test(content);
-}
-
-function findReadableNvidiaCdiSpecFiles(dirs: string[]): string[] {
-  const specs: string[] = [];
-  for (const dir of dirs) {
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const candidate = path.join(dir, entry);
-      if (isLikelyNvidiaCdiSpecFile(candidate)) specs.push(candidate);
-    }
-  }
-  return specs.sort();
 }
 
 function sandboxGpuRemediationLines(): string[] {
@@ -4833,6 +4757,17 @@ async function startDockerDriverGateway({
     ignoreError: true,
   });
   const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
+  const stateDir = getDockerDriverGatewayStateDir();
+  const gatewayLaunch = gatewayBin
+    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayLaunch({
+        gatewayBin,
+        gatewayEnv,
+        stateDir,
+        sandboxBin: resolveOpenShellSandboxBinary(),
+      })
+    : null;
+  const driftGatewayBin = gatewayLaunch ? gatewayLaunch.processGatewayBin : gatewayBin;
+  const identityGatewayBin = gatewayLaunch?.processGatewayBin || gatewayBin;
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
@@ -4845,7 +4780,7 @@ async function startDockerDriverGateway({
     isDockerDriverGatewayProcessAlive() &&
     isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)
   ) {
-    const drift = getDockerDriverGatewayRuntimeDrift(pidFileGatewayPid, gatewayEnv, gatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(pidFileGatewayPid, gatewayEnv, driftGatewayBin);
     if (drift) {
       restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
     } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
@@ -4859,9 +4794,11 @@ async function startDockerDriverGateway({
   }
 
   const portCheck = await checkPortAvailable(GATEWAY_PORT);
-  const portListenerPid = getDockerDriverGatewayPortListenerPid(portCheck, { gatewayBin });
+  const portListenerPid = getDockerDriverGatewayPortListenerPid(portCheck, {
+    gatewayBin: identityGatewayBin,
+  });
   if (portListenerPid !== null) {
-    const drift = getDockerDriverGatewayRuntimeDrift(portListenerPid, gatewayEnv, gatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(portListenerPid, gatewayEnv, driftGatewayBin);
     if (drift) {
       rememberDockerDriverGatewayPid(portListenerPid);
       restartDockerDriverGatewayProcessForDrift(portListenerPid, drift.reason);
@@ -4894,7 +4831,7 @@ async function startDockerDriverGateway({
 
   const existingPid = getDockerDriverGatewayPid() ?? portListenerPid;
   if (existingPid !== null && isPidAlive(existingPid)) {
-    if (!isDockerDriverGatewayProcess(existingPid, gatewayBin)) {
+    if (!isDockerDriverGatewayProcess(existingPid, identityGatewayBin)) {
       fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
     } else {
       console.log(`  Restarting unhealthy Docker-driver gateway process (PID ${existingPid})...`);
@@ -4907,20 +4844,29 @@ async function startDockerDriverGateway({
     }
   }
 
-  const stateDir = getDockerDriverGatewayStateDir();
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
   const outFd = fs.openSync(logPath, "a", 0o600);
   const errFd = fs.openSync(logPath, "a", 0o600);
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
-  const child = spawn(gatewayBin, [], {
+  const launch = gatewayLaunch ?? {
+    command: gatewayBin,
+    args: [],
+    env: { ...process.env, ...gatewayEnv },
+    mode: "host" as const,
+  };
+  if (launch.mode === "container") {
+    console.log(`  OpenShell gateway compatibility patch active (${launch.reason}).`);
+    console.log(
+      `  Running openshell-gateway in ${launch.env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_IMAGE || "ubuntu:24.04"}.`,
+    );
+    dockerDriverGatewayLaunch.prepareDockerDriverGatewayLaunch(launch);
+  }
+  const child = spawn(launch.command, launch.args, {
     detached: true,
     stdio: ["ignore", outFd, errFd],
-    env: {
-      ...process.env,
-      ...gatewayEnv,
-    },
+    env: launch.env,
   });
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness
   child.unref();
@@ -6365,45 +6311,14 @@ async function createSandbox(
   let dockerGpuPatchResult: import("./onboard/docker-gpu-patch").DockerGpuPatchResult | null =
     null;
   if (useDockerGpuPatch) {
-    console.log("  Recreating OpenShell Docker sandbox container with NVIDIA GPU access...");
-    try {
-      dockerGpuPatchResult = dockerGpuPatch.recreateOpenShellDockerSandboxWithGpu(
-        {
-          sandboxName,
-          gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
-          timeoutSecs: sandboxReadyTimeoutSecs,
-        },
-        {
-          runOpenshell,
-          runCaptureOpenshell,
-          sleep,
-        },
-      );
-      console.log(`  ✓ Docker GPU mode selected: ${dockerGpuPatchResult.mode.label}`);
-    } catch (error) {
-      const diagnostics = dockerGpuPatch.collectDockerGpuPatchDiagnostics(
+    dockerGpuPatchResult = dockerGpuPatch.applyDockerGpuPatchOrExit(
+      {
         sandboxName,
-        { error },
-        {
-          runCaptureOpenshell,
-        },
-      );
-      console.error("");
-      console.error("  Docker GPU patch failed.");
-      if (error instanceof Error && error.message) {
-        console.error(`  ${error.message}`);
-      }
-      if (diagnostics) {
-        console.error(`  Diagnostics saved: ${diagnostics.dir}`);
-      }
-      console.error("  Escape hatch: set NEMOCLAW_DOCKER_GPU_PATCH=0 to skip this patch.");
-      console.error("  The failed sandbox/container has been left in place for inspection.");
-      console.error("  Manual cleanup:");
-      for (const command of dockerGpuPatch.dockerGpuPatchCleanupCommands(sandboxName)) {
-        console.error(`    ${command}`);
-      }
-      process.exit(1);
-    }
+        gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
+        timeoutSecs: sandboxReadyTimeoutSecs,
+      },
+      { runOpenshell, runCaptureOpenshell, sleep },
+    );
   }
 
   // Wait for OpenShell to report the sandbox Ready before registering.
@@ -6447,21 +6362,11 @@ async function createSandbox(
       }
     }
     if (useDockerGpuPatch) {
-      const gpuDiagnostics = dockerGpuPatch.collectDockerGpuPatchDiagnostics(
+      dockerGpuPatch.printDockerGpuReadinessFailure(
         sandboxName,
-        { selectedMode: dockerGpuPatchResult?.mode ?? null },
-        {
-          runCaptureOpenshell,
-        },
+        dockerGpuPatchResult?.mode ?? null,
+        { runCaptureOpenshell },
       );
-      if (gpuDiagnostics) {
-        console.error(`  Docker GPU diagnostics saved: ${gpuDiagnostics.dir}`);
-      }
-      console.error("  The failed sandbox/container has been left in place for inspection.");
-      console.error("  Manual cleanup:");
-      for (const command of dockerGpuPatch.dockerGpuPatchCleanupCommands(sandboxName)) {
-        console.error(`    ${command}`);
-      }
     } else {
       // Clean up non-GPU failures after preserving local diagnostics so the
       // next onboard retry with the same name does not fail on "sandbox already exists".
@@ -6506,21 +6411,12 @@ async function createSandbox(
     try {
       verifyDirectSandboxGpu(sandboxName);
     } catch (error) {
-      const diagnostics = dockerGpuPatch.collectDockerGpuPatchDiagnostics(
+      dockerGpuPatch.printDockerGpuProofFailure(
         sandboxName,
-        { error, selectedMode: dockerGpuPatchResult?.mode ?? null },
-        {
-          runCaptureOpenshell,
-        },
+        error,
+        dockerGpuPatchResult?.mode ?? null,
+        { runCaptureOpenshell },
       );
-      if (diagnostics) {
-        console.error(`  Diagnostics saved: ${diagnostics.dir}`);
-      }
-      console.error("  The sandbox with failed GPU access has been left in place for inspection.");
-      console.error("  Manual cleanup:");
-      for (const command of dockerGpuPatch.dockerGpuPatchCleanupCommands(sandboxName)) {
-        console.error(`    ${command}`);
-      }
       throw error;
     }
   }

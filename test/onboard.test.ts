@@ -5074,15 +5074,22 @@ const { setupInference } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
+    const patchSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "docker-gpu-patch.ts"),
+      "utf-8",
+    );
 
     assert.match(source, /const useDockerGpuPatch = dockerGpuPatch\.shouldApplyDockerGpuPatch/);
     assert.match(
       source,
       /buildSandboxGpuCreateArgs\(\s*effectiveSandboxGpuConfig,\s*\{\s*suppressGpuFlag: useDockerGpuPatch,\s*\}/,
     );
-    assert.match(source, /recreateOpenShellDockerSandboxWithGpu/);
-    assert.match(source, /collectDockerGpuPatchDiagnostics/);
-    assert.match(source, /has been left in place for inspection/);
+    assert.match(source, /applyDockerGpuPatchOrExit/);
+    assert.match(source, /printDockerGpuReadinessFailure/);
+    assert.match(source, /printDockerGpuProofFailure/);
+    assert.match(patchSource, /recreateOpenShellDockerSandboxWithGpu/);
+    assert.match(patchSource, /collectDockerGpuPatchDiagnostics/);
+    assert.match(patchSource, /has been left in place for inspection/);
   });
 
   it("does not persist sandboxName to onboard-session.json before createSandbox completes (#2753)", () => {
