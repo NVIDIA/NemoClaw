@@ -38,7 +38,6 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
-const LEGACY_CLUSTER_DRIVERS = new Set([null, undefined, "", "docker", "kubernetes"]);
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -161,7 +160,7 @@ function isSandboxInferenceRouteHealthy(sandboxName: string): boolean {
 }
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
-  return LEGACY_CLUSTER_DRIVERS.has(sb?.openshellDriver);
+  return sb?.openshellDriver !== "vm";
 }
 
 function reapplyVmInferenceRoute(sandboxName: string, sb: SandboxEntry | null): boolean {
