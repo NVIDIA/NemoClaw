@@ -27,7 +27,7 @@ describe("sandbox build context staging", () => {
         ),
       ).toBe(true);
       expect(
-        fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "scripts", "ws-proxy-fix.js")),
+        fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "scripts", "http-proxy-fix.js")),
       ).toBe(true);
       expect(
         fs.existsSync(

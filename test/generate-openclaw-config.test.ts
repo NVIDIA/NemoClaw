@@ -213,6 +213,8 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.discord.accounts.default.token).toBe(
       "openshell:resolve:env:DISCORD_BOT_TOKEN",
     );
+    expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
+    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
   });
 
   it("emits Bolt-shape placeholders for Slack so the SDK's prefix regex passes", () => {
@@ -220,8 +222,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     const slack = config.channels.slack.accounts.default;
     // Bolt validates ^xoxb-[A-Za-z0-9_-]+$ / ^xapp-…$ at App construction.
-    // The slack-token-rewriter preload translates these to canonical form
-    // before egress, where OpenShell's L7 proxy substitutes the real token.
+    // OpenShell resolves these provider-shaped aliases at the egress boundary.
     expect(slack.botToken).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
     expect(slack.appToken).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
     expect(slack.botToken).toMatch(/^xoxb-[A-Za-z0-9_-]+$/);

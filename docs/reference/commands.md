@@ -80,6 +80,11 @@ To make the installer abort instead of continuing, set `NEMOCLAW_SINGLE_SESSION=
 $ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+When existing sandboxes were created with OpenShell earlier than `0.0.37`, the installer prompts before running the new automatic gateway upgrade path.
+For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the installer to back up registered sandbox state, retire the old gateway, install the current supported OpenShell release, and restore state during onboarding.
+The automatic path is disabled if the existing `nemoclaw` CLI does not advertise `backup-all`; preserve sandbox state manually before retiring the old gateway in that case.
+To perform those steps manually, run `nemoclaw backup-all`, retire the old gateway with `openshell gateway destroy -g nemoclaw || openshell gateway destroy`, then rerun the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
+
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are registered with the OpenShell gateway and never persisted to host disk. See [Credential Storage](../security/credential-storage.md) for details on inspection, rotation, and migration from earlier releases.
@@ -904,6 +909,22 @@ Pass `--json` for machine-readable output with registered sandboxes, service sta
 ```console
 $ nemoclaw status
 $ nemoclaw status --json
+```
+
+When at least one sandbox is registered and the named NemoClaw gateway is unreachable, unhealthy, or attached to a different sandbox, the command prints a `gateway: down [state] (reason)` line between the sandbox list and the host-service list.
+The command suggests `openshell gateway start --name nemoclaw` or `nemoclaw onboard --resume` to recover.
+It exits with code `1` so shell scripts and CI can detect the degraded state from `$?`.
+For `--json`, the structured output includes `gatewayHealth`, and the exit code is set after the report is generated.
+A clean machine with no registered sandboxes keeps the legacy `0` exit because no gateway is expected to be configured yet.
+
+### `nemoclaw inference get`
+
+Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway.
+Use this command when you want the direct runtime route without the rest of the sandbox status output.
+
+```console
+$ nemoclaw inference get
+$ nemoclaw inference get --json
 ```
 
 ### `nemoclaw inference set`

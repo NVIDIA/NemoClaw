@@ -89,7 +89,7 @@ flowchart TB
 * - Filesystem
   - System binary tampering, credential theft, config manipulation.
   - Landlock LSM + container mounts
-  - No. Requires sandbox re-creation.
+  - Landlock layout: no. Requires sandbox re-creation. Config lockdown posture: yes, with host-side shields commands.
 
 * - Process
   - Privilege escalation, fork bombs, syscall abuse.
@@ -130,7 +130,7 @@ If someone replaces a binary while the sandbox runs, the hash mismatch triggers 
 
 | Aspect | Detail |
 |---|---|
-| Default | Each endpoint restricts access to specific binaries. For example, the `github` preset restricts access so only `/usr/bin/gh` and `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
+| Default | Each endpoint restricts access to specific binaries. For example, the `github` preset restricts access so only `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
 | What you can change | Add binaries to an endpoint entry, or omit the `binaries` field to allow any executable. |
 | Risk if relaxed | Removing binary restrictions lets any process in the sandbox reach the endpoint. An agent could use `curl`, `wget`, or a Python script to exfiltrate data to an allowed host, bypassing the intended usage pattern. |
 | Recommendation | Always scope endpoints to the binaries that need them. If the agent needs a host from a new binary, add that binary explicitly rather than removing the restriction. |
@@ -178,7 +178,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 | `brave` | Brave Search API. | Agent can issue search queries. |
 | `brew` | Homebrew (Linuxbrew) package manager. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
 | `discord` | Discord REST API, WebSocket gateway, CDN. | CDN endpoint (`cdn.discordapp.com`) allows GET to any path. WebSocket uses `access: full` (no inspection). |
-| `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `gh` and `git`. |
+| `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `git`. |
 | `huggingface` | Hugging Face Hub (download-only) and inference router. | Allows downloading arbitrary models and datasets. POST is restricted to the inference router only. |
 | `jira` | Atlassian Jira API. | Gives agent read/write access to project issues and comments. |
 | `local-inference` | Local Ollama and vLLM through the host gateway. | Allows sandbox access to host-side local inference ports covered by the preset. |
@@ -229,6 +229,21 @@ For sensitive workloads, use a reviewed host-side immutability workflow after in
 | What you can change | Apply a reviewed host-side immutability workflow to lock config and state directories with DAC permissions and the immutable flag where available. |
 | Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
 | Recommendation | For always-on assistants handling sensitive workloads, lock config after initial setup. For development workflows, the writable default is appropriate. |
+
+### Locking Config with Shields
+
+NemoClaw exposes the reviewed host-side immutability workflow through shields commands:
+
+| Command | Purpose |
+|---|---|
+| `nemoclaw <name> shields status` | Show whether the sandbox is in default mutable mode, locked mode, or temporarily unlocked mode. |
+| `nemoclaw <name> shields up` | Opt into lockdown for sensitive workloads by locking config and state entry points with root ownership, read-only modes, and the immutable flag where available. |
+| `nemoclaw <name> shields down --timeout 5m --reason "<reason>"` | Temporarily return a previously locked sandbox to the mutable default for maintenance, then auto-restore lockdown. |
+
+Run shields commands from the host.
+They use privileged OpenShell and Kubernetes paths that do not inherit the sandbox process's Landlock context.
+Landlock itself stays fixed at sandbox creation; `shields up` does not rewrite the Landlock policy.
+Instead, it layers DAC permissions and `chattr +i` over paths that the default Landlock policy intentionally leaves writable.
 
 ### Writable Paths
 
