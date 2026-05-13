@@ -5,6 +5,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { dockerForceRm } from "../adapters/docker";
+
 const DEFAULT_COMPAT_IMAGE = "ubuntu:24.04";
 const DEFAULT_COMPAT_CONTAINER_NAME = "nemoclaw-openshell-gateway";
 const GATEWAY_MOUNT_PATH = "/opt/nemoclaw/openshell-gateway";
@@ -188,12 +190,9 @@ export function buildDockerDriverGatewayLaunch(
 
 export function prepareDockerDriverGatewayLaunch(launch: DockerDriverGatewayLaunch): void {
   if (launch.mode !== "container" || !launch.containerName) return;
-  try {
-    execFileSync("docker", ["rm", "-f", launch.containerName], {
-      stdio: "ignore",
-      timeout: 30_000,
-    });
-  } catch {
-    /* best effort: the container may not exist */
-  }
+  dockerForceRm(launch.containerName, {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: 30_000,
+  });
 }
