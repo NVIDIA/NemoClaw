@@ -89,6 +89,7 @@ On macOS with Docker Desktop, open the Docker Desktop application and wait for i
 ### Docker permission denied on Linux
 
 On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group.
+The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically.
 Add your user and activate the group in the current shell:
 
 ```console
@@ -97,6 +98,12 @@ $ newgrp docker
 ```
 
 Then retry `nemoclaw onboard`.
+If the installer stopped after printing `newgrp docker`, run that command and then re-run the installer:
+
+```console
+$ newgrp docker
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
 
 ### macOS first-run failures
 
@@ -652,7 +659,8 @@ In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the c
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
 This is expected.
-The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time.
+NemoClaw builds the sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) from host-side onboarding, rebuild, inference, policy, and messaging inputs.
+Fresh sandboxes keep that file writable by default so the agent can manage runtime state, but direct in-sandbox edits are not the supported or durable path for NemoClaw-managed settings.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
 For most configuration changes, exit the sandbox and rerun onboarding:
@@ -1057,16 +1065,16 @@ $ nemoclaw <name> rebuild
 
 After the rebuild completes, return to the Skills page to confirm the skill status has changed from `blocked` to `ready`.
 
-### `openclaw config set` fails with a permission error on Brev (Shields Up)
+### `openclaw config set` fails with a permission error on Brev
 
-When `nemoclaw <name> shields up` has been run, `openclaw.json` is owned by root and mounted read-only inside the sandbox.
+When the sandbox config has been locked from the host, `openclaw.json` is owned by root and mounted read-only inside the sandbox.
 Running `openclaw config set` inside the sandbox then returns:
 
 ```text
 EACCES: permission denied, open '/sandbox/.openclaw/openclaw.json'
 ```
 
-In the default sandbox state (before `shields up`), `openclaw.json` is writable by the sandbox user.
+In the default sandbox state, `openclaw.json` is writable by the sandbox user.
 If you see this error, use the host-side config command instead:
 
 ```console

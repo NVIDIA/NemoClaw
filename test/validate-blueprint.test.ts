@@ -433,6 +433,18 @@ describe("github preset", () => {
     const np = parsed.network_policies;
     expect(np && "github" in np).toBe(true);
   });
+
+  it("regression #2179: github preset only advertises the installed git binary", () => {
+    const parsed = loadYaml<PolicyPreset>(PRESET_PATH);
+    const meta = parsed.preset;
+    expect(meta?.description).toBe("GitHub.com and GitHub API access (git)");
+    expect(meta?.description ?? "").not.toMatch(/\bgh\b/);
+
+    const binaries = (parsed.network_policies?.github?.binaries ?? [])
+      .map((binary) => binary.path)
+      .sort();
+    expect(binaries).toEqual(["/usr/bin/git"]);
+  });
 });
 
 describe("huggingface preset", () => {

@@ -53,6 +53,19 @@ $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEM
 If you use nvm or fnm to manage Node.js, the installer might not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 
+On Linux, the installer checks Docker before it installs NemoClaw.
+If Docker is missing, the installer downloads the official Docker convenience script, asks for `sudo`, installs Docker, and starts the Docker service when systemd is available.
+If Docker is installed but your current shell cannot use the Docker socket yet, the installer adds your user to the `docker` group when needed and exits with a recovery command.
+
+```console
+$ newgrp docker
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+On DGX Spark and DGX Station, an interactive installer can offer express install after you accept the third-party software notice.
+Express install switches onboarding to non-interactive mode, applies the suggested security policy, and selects the managed local inference path for that platform.
+Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer when you want to choose a provider yourself.
+
 The installer auto-launches `nemoclaw onboard` when it can locate the freshly-installed binary.
 If it cannot locate the binary, or if blocking host preflight checks fail, it does not launch the wizard automatically.
 In that case, the installer prints the relevant diagnostics and a `To finish setup, run:` block with the explicit `nemoclaw onboard` command.
@@ -355,12 +368,15 @@ openclaw agent --agent main --local -m "hello" --session-id test
 
 ## Next Steps
 
-- [NemoHermes Quickstart](quickstart-hermes.md) to launch Hermes instead of the default OpenClaw agent.
+Navigate to the following topics to learn more about NemoClaw.
+
+- [NemoClaw Overview](../about/overview.md) to learn what NemoClaw is and its capabilities.
+- [Architecture Overview](../about/how-it-works.md) to understand how NemoClaw works.
+- [Ecosystem](../about/ecosystem.md) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+
+Use the following topics to learn how to use NemoClaw.
+
 - [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle.md) for port forwards, rebuilds, upgrades, and uninstall.
-- [Switch inference providers](../inference/switch-inference-providers.md) to use a different model or endpoint.
-- [Approve or deny network requests](../network-policy/approve-network-requests.md) when the agent tries to reach external hosts.
-- [Customize the network policy](../network-policy/customize-network-policy.md) to pre-approve trusted domains.
-- [Common integration policy examples](../network-policy/integration-policy-examples.md) for maintained policy presets such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
-- [Deploy to a remote GPU instance](../deployment/deploy-to-remote-gpu.md) for always-on operation.
-- [Monitor sandbox activity](../monitoring/monitor-sandbox-activity.md) through the OpenShell TUI.
-- [Consult the troubleshooting guide](../reference/troubleshooting.md) for common error messages and resolution steps.
+- [Inference Options](../inference/inference-options.md) to use a different model or endpoint.
+- [Network Policies](../network-policy/approve-network-requests.md) to manage egress approvals.
+- [Troubleshooting](../reference/troubleshooting.md) for common error messages and resolution steps.

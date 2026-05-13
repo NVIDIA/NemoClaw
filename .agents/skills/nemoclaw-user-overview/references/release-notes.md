@@ -13,7 +13,25 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use the f
 
 ## Behavior Changes
 
-### v0.0.38 Reliability updates
+### v0.0.39 Release Prep Updates
+
+NemoClaw v0.0.39 improves several day-two workflows:
+
+- The installer checks Docker earlier on Linux, can install and start Docker when needed, and stops with `newgrp docker` guidance when the current shell has not picked up the `docker` group yet.
+- DGX Spark and DGX Station users can accept an express install prompt that preselects the local inference path and suggested policy defaults.
+- NemoClaw now creates GPU-capable OpenShell Docker sandboxes by default when an NVIDIA GPU is available, with explicit `--sandbox-gpu`, `--no-sandbox-gpu`, and `--sandbox-gpu-device` controls.
+- `nemohermes` supports Hermes Provider onboarding and runtime model switches through `nemohermes inference set`.
+- `nemoclaw <name> hosts-add`, `hosts-list`, and `hosts-remove` manage sandbox host aliases for LAN-only services.
+- `nemoclaw update` checks and runs the maintained installer flow, while `nemoclaw upgrade-sandboxes` remains responsible for rebuilding existing sandboxes.
+- `nemoclaw <name> destroy` preserves the shared gateway by default unless `--cleanup-gateway` is selected.
+- `nemoclaw <name> connect` repairs stale `inference.local` DNS proxy routes before opening the session.
+- Windows-host Ollama onboarding relaunches the daemon with the reachable binding after install or restart.
+- Local NVIDIA NIM onboarding passes `NGC_API_KEY` or `NVIDIA_API_KEY` into the managed container without putting the secret in process arguments, detects early container exits during health checks, and prints a per-GPU preflight breakdown on mixed-model hosts.
+- The sandbox startup path strips additional Linux capabilities before and during privilege step-down.
+- OpenClaw workspace template files are seeded when bootstrap is skipped and the workspace is still empty.
+- Kimi K2.6 and related NVIDIA-hosted chat-completions paths include model-specific compatibility handling for reasoning output.
+
+### v0.0.38 Reliability Updates
 
 NemoClaw v0.0.38 improves several day-two workflows:
 
@@ -24,7 +42,7 @@ NemoClaw v0.0.38 improves several day-two workflows:
 - Rebuild backups tolerate partial archive output when usable data was produced, then report only the manifest-defined paths that could not be archived.
 - NemoHermes uninstall output uses NemoHermes-specific help, progress, and completion text.
 
-### v0.0.34 — Installer requires explicit acceptance in non-TTY environments
+### v0.0.34 Installer Requires Explicit Acceptance in Non-TTY Environments
 
 Starting with NemoClaw v0.0.34, the `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash` installer pipeline no longer auto-accepts the third-party software notice when stdin is piped and `/dev/tty` is unavailable (for example, deeply detached SSH sessions or some container shells).
 In environments without a TTY, accept upfront in the pipe:

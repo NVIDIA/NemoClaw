@@ -100,7 +100,11 @@ describe("local inference helpers", () => {
       "5",
       "--max-time",
       "10",
-      "-sf",
+      "-s",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
       `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
     ]);
   });

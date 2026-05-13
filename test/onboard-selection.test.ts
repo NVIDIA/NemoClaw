@@ -202,6 +202,179 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
+  it("offers detected running vLLM without requiring a rerun", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-running-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "vllm-running-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"ok"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const messages = [];
+const lines = [];
+const originalLog = console.log;
+
+function findRunningVllmChoice() {
+  const option = lines.find((line) =>
+    /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(line)
+  );
+  const match = option && option.match(/^\s*(\d+)\)/);
+  if (!match) {
+    throw new Error("Could not find running vLLM option in menu:\\n" + lines.join("\\n"));
+  }
+  return match[1];
+}
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  if (/Choose \[/.test(message)) return findRunningVllmChoice();
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim({ type: "nvidia" }, null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_EXPERIMENTAL: "",
+        NEMOCLAW_PROVIDER: "",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).not.toBe("");
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "vllm-local");
+    assert.equal(payload.result.model, "meta-llama/Llama-3.3-70B-Instruct");
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Detected local inference option: vLLM"),
+      ),
+    );
+    assert.ok(
+      payload.lines.some((line: string) =>
+        /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(
+          line,
+        ),
+      ),
+    );
+    assert.ok(!payload.lines.some((line: string) => line.includes("rerun the same command")));
+  });
+
+  it("does not turn non-interactive NEMOCLAW_PROVIDER=vllm into managed install-vllm", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-no-install-"));
+    const scriptPath = path.join(tmpDir, "vllm-no-install-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const vllm = require(${vllmPath});
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive test");
+};
+vllm.installVllm = async () => {
+  console.error("INSTALL_VLLM_CALLED");
+  return { ok: false };
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim({ type: "nvidia" }, null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "vllm",
+        NEMOCLAW_EXPERIMENTAL: "",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Requested provider 'vllm' is not available/);
+    assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
+  });
+
   it("does not label NVIDIA Endpoints as recommended in the provider list", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-recommended-label-"));
@@ -798,7 +971,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("starts managed Ollama on loopback before exposing the auth proxy", () => {
+  it("starts managed Ollama on loopback before exposing the auth proxy", { timeout: 10_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-loopback-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3691,7 +3864,7 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line: string) => line.includes("tool-call-parser requires")));
   });
 
-  it("offers install-ollama option on Linux when Ollama is not installed", () => {
+  it("offers install-ollama option on Linux when Ollama is not installed", { timeout: 10_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-ollama-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3765,6 +3938,7 @@ let promptCalls = 0;
 const messages = [];
 const updates = [];
 const runCommands = [];
+const events = [];
 
 credentials.prompt = async (message) => {
   promptCalls += 1;
@@ -3792,10 +3966,13 @@ runner.runCapture = (command) => {
   return "";
 };
 runner.run = (command, opts) => {
-  runCommands.push(typeof command === "string" ? command : command.join(" "));
+  const rendered = typeof command === "string" ? command : command.join(" ");
+  runCommands.push(rendered);
+  events.push({ type: "command", value: rendered });
 };
 runner.runShell = (command, opts) => {
   runCommands.push(command);
+  events.push({ type: "command", value: command });
 };
 registry.updateSandbox = (_name, update) => updates.push(update);
 
@@ -3808,10 +3985,14 @@ const { setupNim } = require(${onboardPath});
 (async () => {
   const originalLog = console.log;
   const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
+  console.log = (...args) => {
+    const line = args.join(" ");
+    lines.push(line);
+    events.push({ type: "log", value: line });
+  };
   try {
     const result = await setupNim("install-test", null);
-    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines, runCommands }));
+    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines, runCommands, events }));
   } finally {
     console.log = originalLog;
   }
@@ -3846,6 +4027,43 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "ollama-local");
 
     // Should have run the curl installer (not brew)
+    const zstdPreflightIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("apt-get install -y -qq --no-install-recommends zstd"),
+    );
+    const ollamaInstallerIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("ollama.com/install.sh"),
+    );
+    assert.ok(zstdPreflightIndex >= 0, "Should preflight zstd before the Ollama installer");
+    assert.ok(
+      ollamaInstallerIndex > zstdPreflightIndex,
+      "Should install zstd before running the Ollama installer",
+    );
+    const zstdWarningEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "log" && event.value.includes("requires zstd for archive extraction"),
+    );
+    const zstdCommandEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "command" &&
+        event.value.includes("apt-get install -y -qq --no-install-recommends zstd"),
+    );
+    const installerWarningEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "log" &&
+        event.value.includes("creates a system user, a systemd service, and writes to /usr/local"),
+    );
+    const installerCommandEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "command" && event.value.includes("ollama.com/install.sh"),
+    );
+    assert.ok(
+      zstdWarningEventIndex >= 0 && zstdWarningEventIndex < zstdCommandEventIndex,
+      "Should explain the zstd sudo install before running apt-get",
+    );
+    assert.ok(
+      installerWarningEventIndex >= 0 && installerWarningEventIndex < installerCommandEventIndex,
+      "Should explain the Ollama installer sudo usage before running it",
+    );
     assert.ok(
       payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
       "Should use curl installer on Linux",
@@ -3937,11 +4155,13 @@ const { setupNim } = require(${onboardPath});
     });
 
     assert.equal(result.status, 1);
+    assert.match(result.stdout, /Applying an Ollama systemd override/);
+    assert.match(result.stdout, /use sudo to write the drop-in, reload systemd, and restart the service/);
     assert.match(result.stderr, /Failed to apply Ollama systemd loopback override/);
     assert.match(result.stderr, /Refusing to continue/);
   });
 
-  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", () => {
+  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", { timeout: 10_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-noninteractive-install-ollama-"),
@@ -4066,6 +4286,20 @@ const { setupNim } = require(${onboardPath});
 
     assert.equal(payload.promptCalls, 0);
     assert.equal(payload.result.provider, "ollama-local");
+    const zstdPreflightIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("apt-get install -y -qq --no-install-recommends zstd"),
+    );
+    const ollamaInstallerIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("ollama.com/install.sh"),
+    );
+    assert.ok(
+      zstdPreflightIndex >= 0,
+      "Should preflight zstd before the non-interactive Ollama installer",
+    );
+    assert.ok(
+      ollamaInstallerIndex > zstdPreflightIndex,
+      "Should install zstd before running the non-interactive Ollama installer",
+    );
     assert.ok(
       payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
       "Should use the Ollama installer when requested non-interactively on a fresh host",

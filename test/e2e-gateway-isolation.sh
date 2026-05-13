@@ -275,8 +275,8 @@ else
 fi
 
 # ── Test 13b: Sandbox user cannot write to .nemoclaw parent ───────
-# Note: /sandbox itself is sandbox-owned (DAC allows writes). Landlock makes it
-# read-only in production — tested in checks/04-landlock-readonly.sh instead.
+# Note: /sandbox itself is sandbox-owned and writable in the mutable-default
+# policy. This check only covers the root-owned .nemoclaw parent.
 
 info "13b. Sandbox user cannot create files in /sandbox/.nemoclaw"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/testfile 2>&1 || echo BLOCKED")

@@ -63,6 +63,7 @@ On macOS with Docker Desktop, open the Docker Desktop application and wait for i
 ### Docker permission denied on Linux
 
 On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group.
+The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically.
 Add your user and activate the group in the current shell:
 
 ```console
@@ -71,6 +72,12 @@ $ newgrp docker
 ```
 
 Then retry `nemoclaw onboard`.
+If the installer stopped after printing `newgrp docker`, run that command and then re-run the installer:
+
+```console
+$ newgrp docker
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
 
 ### macOS first-run failures
 
@@ -622,7 +629,8 @@ In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the c
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
 This is expected.
-The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time.
+NemoClaw builds the sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) from host-side onboarding, rebuild, inference, policy, and messaging inputs.
+Fresh sandboxes keep that file writable by default so the agent can manage runtime state, but direct in-sandbox edits are not the supported or durable path for NemoClaw-managed settings.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
 For most configuration changes, exit the sandbox and rerun onboarding:
@@ -999,3 +1007,81 @@ For additional troubleshooting, see the Quickstart (use the `nemoclaw-user-get-s
 Podman is not a tested runtime.
 OpenShell officially documents Docker-based runtimes only.
 If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
+
+## Brev
+
+For Brev setup instructions, refer to Brev Web UI (use the `nemoclaw-user-deploy-remote` skill).
+
+### Most OpenClaw skills show as blocked
+
+After deploying NemoClaw on Brev, the Skills page in the OpenClaw gateway dashboard shows most bundled skills with a `blocked` status.
+Only three skills are available by default: `healthcheck`, `skill-creator`, and `weather`.
+
+Skills are blocked for one of three reasons.
+
+- The skill requires a macOS-only binary (`memo`, `remindctl`, `grizzly`, and similar) that is not available on the Linux (GCP) instance Brev provisions.
+- The skill requires a CLI binary that is not pre-installed in the sandbox image, such as `gh` for the GitHub skill.
+- The skill requires API credentials that have not been configured, such as a Notion API key or Discord bot token.
+
+Skills that require macOS-only binaries cannot be enabled on Brev.
+Skills that require additional CLI binaries require a custom sandbox image rebuild.
+
+For credentials, use the supported host-side setup flow. Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack>` for messaging channels.
+To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
+After the rebuild completes, return to the Skills page to confirm the skill status has changed from `blocked` to `ready`.
+
+### `openclaw config set` fails with a permission error on Brev
+
+When the sandbox config has been locked from the host, `openclaw.json` is owned by root and mounted read-only inside the sandbox.
+Running `openclaw config set` inside the sandbox then returns:
+
+```text
+EACCES: permission denied, open '/sandbox/.openclaw/openclaw.json'
+```
+
+In the default sandbox state, `openclaw.json` is writable by the sandbox user.
+If you see this error, use the host-side config command instead:
+
+```console
+$ nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
+```
+
+Refer to Commands (use the `nemoclaw-user-reference` skill) for the full list of supported configuration keys.
+
+### OpenClaw dashboard is unreachable after extended uptime on Brev
+
+After leaving NemoClaw running for an extended period on Brev, the OpenClaw dashboard may return `ERR_CONNECTION_RESET` or fail to load in the browser.
+The agent may still respond on messaging channels such as Telegram or Slack while the dashboard is unreachable.
+
+> **Back up your workspace first:** Take a snapshot before running onboard to protect your workspace files.
+>
+> ```console
+> $ nemoclaw <name> snapshot create
+> ```
+
+Re-run onboarding to restore dashboard connectivity:
+
+```console
+$ nemoclaw onboard
+```
+
+Depending on current sandbox state, onboarding may prompt before recreating resources.
+
+### Skill install buttons do not work on Brev
+
+Clicking **Install** on a skill in the OpenClaw gateway dashboard on Brev shows no response or fails silently.
+
+Skill installation runs against the sandbox environment.
+Installing packages on the Brev host does not make them available inside the sandbox.
+To install a skill dependency, add it to the sandbox image and rebuild:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
+After the rebuild completes, return to the Skills page to confirm the skill is ready.

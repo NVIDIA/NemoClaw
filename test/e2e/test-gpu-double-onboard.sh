@@ -295,9 +295,12 @@ else
   fail "Ollama not running — onboard should have started it"
 fi
 
-# 4d: Auth proxy is running
-if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-  pass "Auth proxy running on :${PROXY_PORT}"
+# 4d: Auth proxy is running. After #3338 an alive proxy answers 401 on /api/tags
+# without a Bearer token, so we accept any HTTP response as proof of life.
+PROXY_LIVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+  "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || PROXY_LIVE_STATUS="000"
+if [[ "$PROXY_LIVE_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Auth proxy running on :${PROXY_PORT} (HTTP $PROXY_LIVE_STATUS)"
 else
   fail "Auth proxy not running on :${PROXY_PORT}"
 fi
@@ -434,9 +437,12 @@ else
   fail "Token file permissions: expected 600, got $PERMS"
 fi
 
-# 6d: Auth proxy is running after re-onboard
-if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-  pass "Auth proxy running on :${PROXY_PORT} after re-onboard"
+# 6d: Auth proxy is running after re-onboard. Same "any HTTP response = alive"
+# pattern as 4d — /api/tags now requires auth per #3338.
+PROXY_LIVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+  "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || PROXY_LIVE_STATUS="000"
+if [[ "$PROXY_LIVE_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Auth proxy running on :${PROXY_PORT} after re-onboard (HTTP $PROXY_LIVE_STATUS)"
 else
   fail "Auth proxy not running after re-onboard"
 fi
