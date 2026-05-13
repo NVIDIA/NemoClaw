@@ -2925,12 +2925,29 @@ async function refreshDockerDriverGatewayReuseState(
     return gatewayReuseState;
   }
   const gatewayBin = resolveOpenShellGatewayBinary();
-  const desiredEnv = getDockerDriverGatewayEnv(
+  const baseDesiredEnv = getDockerDriverGatewayEnv(
     runCaptureOpenshell(["--version"], { ignoreError: true }),
   );
+  // When the compat-container gateway is active, the running process has
+  // overridden env values (e.g. OPENSHELL_BIND_ADDRESS=0.0.0.0). Build the
+  // drift-check env from the launch config so we compare like-for-like and
+  // avoid flagging a healthy containerized gateway as stale.
+  const launchForDrift = gatewayBin
+    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayLaunch({
+        gatewayBin,
+        gatewayEnv: baseDesiredEnv,
+        stateDir: getDockerDriverGatewayStateDir(),
+        sandboxBin: resolveOpenShellSandboxBinary(),
+      })
+    : null;
+  const desiredEnv = launchForDrift ? { ...baseDesiredEnv, ...Object.fromEntries(
+    Object.entries(launchForDrift.env).filter(([key, val]) => key in baseDesiredEnv && typeof val === "string") as [string, string][],
+  ) } : baseDesiredEnv;
+  const driftBin = launchForDrift ? launchForDrift.processGatewayBin : gatewayBin;
+  const identityBin = launchForDrift?.processGatewayBin || gatewayBin;
   const pid = getDockerDriverGatewayPid();
   if (pid !== null && isDockerDriverGatewayProcessAlive()) {
-    const drift = getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, driftBin);
     if (drift) {
       console.log(
         `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
@@ -2942,10 +2959,10 @@ async function refreshDockerDriverGatewayReuseState(
 
   const portCheck = await checkGatewayPortAvailable();
   const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck, {
-    gatewayBin,
+    gatewayBin: identityBin,
   });
   if (dockerGatewayPid !== null) {
-    const drift = getDockerDriverGatewayRuntimeDrift(dockerGatewayPid, desiredEnv, gatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(dockerGatewayPid, desiredEnv, driftBin);
     rememberDockerDriverGatewayPid(dockerGatewayPid);
     if (drift) {
       console.log(
@@ -4428,6 +4445,9 @@ async function startDockerDriverGateway({
       })
     : null;
   const driftGatewayBin = gatewayLaunch ? gatewayLaunch.processGatewayBin : gatewayBin;
+  const driftGatewayEnv = gatewayLaunch ? { ...gatewayEnv, ...Object.fromEntries(
+    Object.entries(gatewayLaunch.env).filter(([key, val]) => key in gatewayEnv && typeof val === "string") as [string, string][],
+  ) } : gatewayEnv;
   const identityGatewayBin = gatewayLaunch?.processGatewayBin || gatewayBin;
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
@@ -4441,7 +4461,7 @@ async function startDockerDriverGateway({
     isDockerDriverGatewayProcessAlive() &&
     isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)
   ) {
-    const drift = getDockerDriverGatewayRuntimeDrift(pidFileGatewayPid, gatewayEnv, driftGatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(pidFileGatewayPid, driftGatewayEnv, driftGatewayBin);
     if (drift) {
       restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
     } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
@@ -4459,7 +4479,7 @@ async function startDockerDriverGateway({
     gatewayBin: identityGatewayBin,
   });
   if (portListenerPid !== null) {
-    const drift = getDockerDriverGatewayRuntimeDrift(portListenerPid, gatewayEnv, driftGatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(portListenerPid, driftGatewayEnv, driftGatewayBin);
     if (drift) {
       rememberDockerDriverGatewayPid(portListenerPid);
       restartDockerDriverGatewayProcessForDrift(portListenerPid, drift.reason);
