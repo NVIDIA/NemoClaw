@@ -15,6 +15,7 @@ import { loadAgent } from "../dist/lib/agent/defs.js";
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard/contract.js";
 import { NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 type ShimScalar = string | number | boolean | null | undefined;
 type ShimCallable = (...args: readonly string[]) => ShimValue;
@@ -97,6 +98,7 @@ type OnboardTestInternals = {
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
   ) => Record<string, string>;
+  getGatewayStartEnv: () => Record<string, string>;
   shouldRequireDockerDriverEnv: (platform?: NodeJS.Platform) => boolean;
   getDockerDriverGatewayRuntimeDriftFromSnapshot: (snapshot: {
     processEnv: Record<string, string> | null;
@@ -224,6 +226,7 @@ function isOnboardTestInternals(
     typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
     typeof value.getDockerDriverGatewayEnv === "function" &&
+    typeof value.getGatewayStartEnv === "function" &&
     typeof value.shouldRequireDockerDriverEnv === "function" &&
     typeof value.getDockerDriverGatewayRuntimeDriftFromSnapshot === "function" &&
     typeof value.isLinuxDockerDriverGatewayEnabled === "function" &&
@@ -283,6 +286,7 @@ const {
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   getDockerDriverGatewayEnv,
+  getGatewayStartEnv,
   shouldRequireDockerDriverEnv,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
   isLinuxDockerDriverGatewayEnabled,
@@ -436,15 +440,36 @@ network_policies:
     expect(isLinuxDockerDriverGatewayEnabled("win32")).toBe(false);
     const linuxEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
     expect(linuxEnv.OPENSHELL_DRIVERS).toBe("docker");
+    expect(linuxEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
     expect(linuxEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
+    expect(linuxEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
     expect(linuxEnv.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
     expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
 
     const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin");
     expect(darwinEnv.OPENSHELL_DRIVERS).toBe("vm");
+    expect(darwinEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
     expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://host.containers.internal:8080");
+    expect(darwinEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
     expect(darwinEnv.OPENSHELL_VM_DRIVER_STATE_DIR).toContain("vm-driver");
     expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBeUndefined();
+
+    const originalOverlayFix = process.env.NEMOCLAW_DISABLE_OVERLAY_FIX;
+    process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = "1";
+    try {
+      expect(getGatewayStartEnv()).toMatchObject({
+        OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+        OPENSHELL_SERVER_PORT: "8080",
+        OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+        OPENSHELL_SSH_GATEWAY_PORT: "8080",
+      });
+    } finally {
+      if (originalOverlayFix === undefined) {
+        delete process.env.NEMOCLAW_DISABLE_OVERLAY_FIX;
+      } else {
+        process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = originalOverlayFix;
+      }
+    }
   });
 
   it("requires platform-specific standalone gateway binaries", () => {
@@ -538,6 +563,18 @@ network_policies:
         gatewayBin,
       })?.reason,
     ).toContain("OPENSHELL_DOCKER_SUPERVISOR_IMAGE=");
+
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          ...desiredEnv,
+          OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+        },
+        processExe: gatewayBin,
+        desiredEnv,
+        gatewayBin,
+      })?.reason,
+    ).toContain("OPENSHELL_BIND_ADDRESS=");
 
     expect(
       getDockerDriverGatewayRuntimeDriftFromSnapshot({
@@ -2514,13 +2551,13 @@ const { loadAgent } = require(${agentDefsPath});
     // Primary start path (startGatewayWithOptions) builds gwArgs with --port.
     assert.match(
       source,
-      /const gwArgs = \["--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+      /const gwArgs = \["--name", GATEWAY_NAME, "--port", getGatewayPortArg\(\)\]/,
     );
 
     // Recovery start path (recoverGatewayRuntime) also passes --port.
     assert.match(
       source,
-      /runOpenshell\(\s*\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+      /runOpenshell\(\s*\["gateway", "start", "--name", GATEWAY_NAME, "--port", getGatewayPortArg\(\)\]/,
     );
   });
 
@@ -3677,7 +3714,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
     });
   });
 
-  it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", () => {
+  it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-venv-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3699,7 +3736,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
         path.join(fakeBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "path-router %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -3710,17 +3747,17 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
         [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "python3 %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
           '  venv_dir="$3"',
           '  mkdir -p "$venv_dir/bin"',
           '  cat > "$venv_dir/bin/python" <<\'PY\'',
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "venv-python %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "venv-python %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
           '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
-          '  cp "$FAKE_ROUTER_SOURCE" "$venv_bin/model-router"',
+          `  cp ${JSON.stringify(fakeRouterSource)} "$venv_bin/model-router"`,
           '  chmod +x "$venv_bin/model-router"',
           "  exit 0",
           "fi",
@@ -3917,7 +3954,7 @@ const { setupInference } = require(${onboardPath});
         path.join(fakeBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "path-router %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -3931,7 +3968,7 @@ const { setupInference } = require(${onboardPath});
           'const http = require("http");',
           'const path = require("path");',
           "const args = process.argv.slice(2);",
-          'if (process.env.ROUTER_SETUP_LOG) fs.appendFileSync(process.env.ROUTER_SETUP_LOG, `managed ${args[0]}\\n`);',
+          `fs.appendFileSync(${JSON.stringify(setupLog)}, \`managed \${args[0]}\\n\`);`,
           'if (args[0] === "proxy-config") {',
           '  const output = args[args.indexOf("--output") + 1];',
           "  fs.mkdirSync(path.dirname(output), { recursive: true });",
@@ -4099,7 +4136,7 @@ const { setupInference } = require(${onboardPath});
         path.join(fakeBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "path-router %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -4110,17 +4147,17 @@ const { setupInference } = require(${onboardPath});
         [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "python3 %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
           '  venv_dir="$3"',
           '  mkdir -p "$venv_dir/bin"',
           '  cat > "$venv_dir/bin/python" <<\'PY\'',
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "venv-python %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "venv-python %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
           '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
-          '  cp "$FAKE_ROUTER_SOURCE" "$venv_bin/model-router"',
+          `  cp ${JSON.stringify(fakeRouterSource)} "$venv_bin/model-router"`,
           '  chmod +x "$venv_bin/model-router"',
           "  exit 0",
           "fi",
@@ -4138,7 +4175,7 @@ const { setupInference } = require(${onboardPath});
         path.join(venvBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "stale-managed %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "stale-managed %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -4155,7 +4192,7 @@ const { setupInference } = require(${onboardPath});
           'const http = require("http");',
           'const path = require("path");',
           "const args = process.argv.slice(2);",
-          'if (process.env.ROUTER_SETUP_LOG) fs.appendFileSync(process.env.ROUTER_SETUP_LOG, `fresh ${args[0]}\\n`);',
+          `fs.appendFileSync(${JSON.stringify(setupLog)}, \`fresh \${args[0]}\\n\`);`,
           'if (args[0] === "proxy-config") {',
           '  const output = args[args.indexOf("--output") + 1];',
           "  fs.mkdirSync(path.dirname(output), { recursive: true });",

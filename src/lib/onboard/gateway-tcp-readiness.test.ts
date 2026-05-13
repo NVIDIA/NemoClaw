@@ -9,7 +9,7 @@
 // See: https://github.com/NVIDIA/NemoClaw/issues/3111
 
 import net from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GATEWAY_PORT } from "../core/ports";
 import { isGatewayTcpReady } from "./gateway-tcp-readiness";
@@ -53,6 +53,7 @@ describe("isGatewayTcpReady (#3111)", () => {
       await teardown();
       teardown = null;
     }
+    vi.restoreAllMocks();
   });
 
   it("resolves true when something is accepting connections", async () => {
@@ -95,9 +96,12 @@ describe("isGatewayTcpReady (#3111)", () => {
   });
 
   it("defaults to GATEWAY_PORT when no port is supplied", async () => {
-    // The development host may already have a gateway on GATEWAY_PORT. Compare
-    // the implicit and explicit calls instead of assuming the port is closed.
-    const implicit = await isGatewayTcpReady(undefined, 200);
-    await expect(isGatewayTcpReady(GATEWAY_PORT, 200)).resolves.toBe(implicit);
+    // The host running this test may already have something listening on the
+    // default gateway port, so assert the probed argument instead of the result.
+    const createConnection = vi.spyOn(net, "createConnection");
+    await expect(isGatewayTcpReady(undefined, 200)).resolves.toBeTypeOf("boolean");
+    expect(createConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ port: GATEWAY_PORT }),
+    );
   });
 });
