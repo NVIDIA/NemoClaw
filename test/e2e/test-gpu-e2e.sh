@@ -513,11 +513,14 @@ fi
 # recreation; in that mode NemoClaw bakes a direct loopback Ollama URL into
 # OpenClaw to avoid OpenShell's inference.local TCP relay path.
 SANDBOX_INFERENCE_URL="https://inference.local/v1/chat/completions"
+SANDBOX_INFERENCE_EXEC="openshell"
 if grep -Fq "OpenClaw local inference will use direct sandbox URL" "$INSTALL_LOG"; then
   OLLAMA_HOST_PORT="${NEMOCLAW_OLLAMA_PORT:-11434}"
   SANDBOX_INFERENCE_URL="http://127.0.0.1:${OLLAMA_HOST_PORT}/v1/chat/completions"
+  SANDBOX_INFERENCE_EXEC="docker"
 fi
 info "[LOCAL] Sandbox inference test → ${SANDBOX_INFERENCE_URL} → Ollama on GPU..."
+sandbox_probe_failure=""
 sandbox_response=""
 TIMEOUT_CMD=""
 command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 120"
@@ -526,9 +529,24 @@ sandbox_curl_cmd=$(printf "curl -s --max-time 90 %q -H %q -d %q" \
   "$SANDBOX_INFERENCE_URL" \
   "Content-Type: application/json" \
   "$sandbox_payload")
-sandbox_response=$($TIMEOUT_CMD openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$sandbox_curl_cmd" 2>&1) || true
+if [ "$SANDBOX_INFERENCE_EXEC" = "docker" ]; then
+  sandbox_container_id=$(docker ps --quiet \
+    --filter "label=openshell.ai/managed-by=openshell" \
+    --filter "label=openshell.ai/sandbox-name=${SANDBOX_NAME}" \
+    | head -n 1)
+  if [ -n "$sandbox_container_id" ]; then
+    info "[LOCAL] Using docker exec for Docker GPU sandbox inference proof (${sandbox_container_id:0:12})..."
+    sandbox_response=$($TIMEOUT_CMD docker exec "$sandbox_container_id" sh -lc "$sandbox_curl_cmd" 2>&1) || true
+  else
+    sandbox_probe_failure="OpenShell-managed Docker container not found for ${SANDBOX_NAME}"
+  fi
+else
+  sandbox_response=$($TIMEOUT_CMD openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$sandbox_curl_cmd" 2>&1) || true
+fi
 
-if [ -n "$sandbox_response" ]; then
+if [ -n "$sandbox_probe_failure" ]; then
+  fail "[LOCAL] Sandbox inference: ${sandbox_probe_failure}"
+elif [ -n "$sandbox_response" ]; then
   sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
   if echo "$sandbox_content" | grep -qi "PONG"; then
     pass "[LOCAL] Sandbox inference: Ollama responded through sandbox"
