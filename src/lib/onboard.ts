@@ -4696,9 +4696,7 @@ async function startDockerDriverGateway({
   };
   if (launch.mode === "container") {
     console.log(`  OpenShell gateway compatibility patch active (${launch.reason}).`);
-    console.log(
-      `  Running openshell-gateway in ${launch.env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_IMAGE || "ubuntu:24.04"}.`,
-    );
+    console.log("  Running openshell-gateway inside a Docker compatibility container.");
     dockerDriverGatewayLaunch.prepareDockerDriverGatewayLaunch(launch);
   }
   const child = spawn(launch.command, launch.args, {

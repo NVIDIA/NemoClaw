@@ -435,7 +435,6 @@ function parseDockerCdiSpecDirs(value: string | null | undefined): string[] {
 function isLikelyNvidiaCdiSpecFile(filePath: string): boolean {
   if (!/\.(json|ya?ml)$/i.test(filePath)) return false;
   try {
-    if (!fs.statSync(filePath).isFile()) return false;
     return /nvidia\.com\/gpu|nvidia-container|libcuda|cuda/i.test(
       fs.readFileSync(filePath, "utf-8"),
     );

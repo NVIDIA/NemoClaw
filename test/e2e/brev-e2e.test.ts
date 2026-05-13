@@ -447,10 +447,39 @@ function createBrevInstance(elapsed: () => string): void {
         stdio: STREAM_STDIO,
       });
     } else {
-      execSync(
-        `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
-          `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
-        { encoding: "utf-8", timeout: 180_000, stdio: PIPE_INPUT_STDIO },
+      const cpuCandidates = execFileSync(
+        "brev",
+        [
+          "search",
+          "cpu",
+          "--min-vcpu",
+          BREV_MIN_VCPU,
+          "--min-ram",
+          BREV_MIN_RAM,
+          "--min-disk",
+          BREV_MIN_DISK,
+          "--provider",
+          BREV_PROVIDER,
+          "--sort",
+          "price",
+        ],
+        { encoding: "utf-8", timeout: 120_000, stdio: PIPE_INPUT_STDIO },
+      );
+      execFileSync(
+        "brev",
+        [
+          "create",
+          requireInstanceName(),
+          "--startup-script",
+          `@${setupScriptPath}`,
+          "--detached",
+        ],
+        {
+          encoding: "utf-8",
+          input: cpuCandidates,
+          timeout: 180_000,
+          stdio: PIPE_INPUT_STDIO,
+        },
       );
     }
   } catch (createErr) {

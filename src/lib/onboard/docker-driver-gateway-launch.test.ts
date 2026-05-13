@@ -107,13 +107,14 @@ describe("docker-driver-gateway-launch", () => {
           "--volume",
           `${dir}:${dir}:ro`,
           "--env",
-          "OPENSHELL_DRIVERS=docker",
+          "OPENSHELL_DRIVERS",
           "--env",
-          `OPENSHELL_DOCKER_SUPERVISOR_BIN=${sandboxBin}`,
+          "OPENSHELL_DOCKER_SUPERVISOR_BIN",
           "ubuntu:24.04",
           "/opt/nemoclaw/openshell-gateway",
         ]),
       );
+      expect(launch.env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBe(sandboxBin);
     });
   });
 

@@ -124,7 +124,32 @@ function addVolume(args: string[], hostPath: string, containerPath = hostPath, m
 }
 
 function addEnv(args: string[], key: string, value: string | undefined): void {
-  if (typeof value === "string") args.push("--env", `${key}=${value}`);
+  if (typeof value === "string") args.push("--env", key);
+}
+
+function safeDockerName(value: string | undefined, fallback: string): string {
+  const candidate = String(value || "").trim();
+  if (!candidate) return fallback;
+  if (/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(candidate)) return candidate;
+  throw new Error("Invalid Docker container name override.");
+}
+
+function safeDockerImage(value: string | undefined, fallback: string): string {
+  const candidate = String(value || "").trim();
+  if (!candidate) return fallback;
+  if (/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/.test(candidate)) return candidate;
+  throw new Error("Invalid Docker image override.");
+}
+
+function safeDockerHost(value: string | undefined): string | undefined {
+  const candidate = String(value || "").trim();
+  if (!candidate) return undefined;
+  if (candidate.startsWith("unix://")) {
+    const socketPath = candidate.slice("unix://".length);
+    if (path.isAbsolute(socketPath) && !socketPath.includes("\0")) return candidate;
+  }
+  if (/^tcp:\/\/[A-Za-z0-9_.-]+:[0-9]{1,5}$/.test(candidate)) return candidate;
+  return undefined;
 }
 
 export function buildDockerDriverGatewayLaunch(
@@ -154,9 +179,17 @@ export function buildDockerDriverGatewayLaunch(
     );
   }
 
-  const image = env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_IMAGE || DEFAULT_COMPAT_IMAGE;
-  const containerName =
-    env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_CONTAINER_NAME || DEFAULT_COMPAT_CONTAINER_NAME;
+  const image = safeDockerImage(env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_IMAGE, DEFAULT_COMPAT_IMAGE);
+  const containerName = safeDockerName(
+    env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_CONTAINER_NAME,
+    DEFAULT_COMPAT_CONTAINER_NAME,
+  );
+  const dockerHost = safeDockerHost(env.DOCKER_HOST);
+  if (dockerHost) {
+    env.DOCKER_HOST = dockerHost;
+  } else {
+    delete env.DOCKER_HOST;
+  }
   const dockerSocket = getDockerSocketPath(env);
   const args = [
     "run",
@@ -173,7 +206,7 @@ export function buildDockerDriverGatewayLaunch(
   for (const key of Object.keys(gatewayEnv).sort()) {
     addEnv(args, key, gatewayEnv[key]);
   }
-  addEnv(args, "DOCKER_HOST", env.DOCKER_HOST);
+  addEnv(args, "DOCKER_HOST", dockerHost);
   addEnv(args, "RUST_LOG", env.RUST_LOG);
   args.push(image, GATEWAY_MOUNT_PATH);
 

@@ -30,14 +30,6 @@ export function getDockerCdiSpecDirs(): string[] {
 
 function isLikelyNvidiaCdiSpecFile(filePath: string): boolean {
   if (!/\.(json|ya?ml)$/i.test(filePath)) return false;
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(filePath);
-  } catch {
-    return false;
-  }
-  if (!stat.isFile()) return false;
-
   let content = "";
   try {
     content = fs.readFileSync(filePath, "utf-8");
