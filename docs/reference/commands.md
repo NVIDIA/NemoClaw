@@ -1155,13 +1155,16 @@ Set them before running `nemoclaw onboard` if a slow connection or large model p
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
+| `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for the post-create readiness wait, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the deadline expires onboarding deletes the orphaned sandbox and prints the retry hint. |
 
 ```console
 $ export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600
+$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $ nemoclaw onboard
 ```
 
-If the pull exceeds the limit, onboarding emits the timeout in minutes plus a hint to raise this variable, and the partial download is preserved for the next attempt.
+If a timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable. The Ollama pull preserves its partial download for the next attempt; the readiness wait deletes the orphaned sandbox first so the next `nemoclaw onboard` starts clean.
 
 ### Lifecycle Behavior Flags
 
