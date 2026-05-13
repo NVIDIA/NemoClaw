@@ -54,9 +54,6 @@ const {
   verifyWebSearchInsideSandbox: verifyWebSearchInsideSandboxWithDeps,
 }: typeof import("./onboard/web-search-verify") = require("./onboard/web-search-verify");
 const {
-  verifyWebSearchInsideSandbox: verifyWebSearchInsideSandboxWithDeps,
-}: typeof import("./onboard/web-search-verify") = require("./onboard/web-search-verify");
-const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
   prepareInitialSandboxCreatePolicy,
