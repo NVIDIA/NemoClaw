@@ -608,6 +608,19 @@ Changing or exporting it later does not rewrite the baked `openclaw.json` inside
 If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
 For the security trade-offs, refer to Security Best Practices (use the `nemoclaw-user-configure-security` skill).
 
+### `openclaw.json` is empty after changing inference
+
+Some runtime inference changes can leave `/sandbox/.openclaw/openclaw.json` empty if the write fails partway through.
+When that happens, OpenClaw commands may report that the config is empty instead of showing a raw JSON parse error.
+
+Current NemoClaw sandboxes capture a known-good config baseline after a successful startup.
+On the next sandbox startup, NemoClaw restores `openclaw.json` from OpenClaw's last-good copy when available, or from the NemoClaw baseline.
+If the sandbox still cannot start or reports that no baseline is available, rebuild it from the host:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
 ### `openclaw channels add` or `remove` is blocked inside the sandbox
 
 This is expected.

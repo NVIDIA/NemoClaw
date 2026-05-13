@@ -28,6 +28,9 @@ The onboard wizard detects Ollama automatically when it is installed or running 
 If Ollama is installed but not running, NemoClaw starts it for you.
 On macOS and Linux, the wizard can also offer to install Ollama when it is not present.
 On WSL, the wizard can use, start, restart, or install Ollama on the Windows host through PowerShell interop.
+On Debian and Ubuntu, the native Linux install path checks for `zstd` before it runs the Ollama installer.
+If `zstd` is missing, NemoClaw installs it with `apt-get` and explains the sudo prompt before continuing.
+On non-apt Linux distributions, install `zstd` first, then rerun onboarding.
 
 Run the onboard wizard.
 
