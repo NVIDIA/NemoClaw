@@ -94,8 +94,29 @@ const VISIBLE_PROGRESS_PATTERNS: readonly RegExp[] = [
   /^✓ /,
 ];
 
+const VM_READY_DETACH_OUTPUT_PATTERNS: readonly RegExp[] = [/Setting up NemoClaw/];
+
 function matchesAny(line: string, patterns: readonly RegExp[]) {
   return patterns.some((pattern) => pattern.test(line));
+}
+
+function selectedDrivers(env: NodeJS.ProcessEnv): string[] {
+  const raw =
+    env.OPENSHELL_DRIVERS ??
+    process.env.OPENSHELL_DRIVERS ??
+    (process.platform === "darwin" ? "vm" : "docker");
+  return raw
+    .split(",")
+    .map((driver) => driver.trim())
+    .filter(Boolean);
+}
+
+function getReadyCheckOutputPatterns(
+  env: NodeJS.ProcessEnv,
+  patterns: readonly RegExp[] | undefined,
+): readonly RegExp[] {
+  if (patterns) return patterns;
+  return selectedDrivers(env).includes("vm") ? VM_READY_DETACH_OUTPUT_PATTERNS : [];
 }
 
 export function streamSandboxCreate(
@@ -114,8 +135,11 @@ export function streamSandboxCreate(
   let pending = "";
   let lastPrintedLine = "";
   let sawProgress = false;
-  let readyCheckOutputMatched =
-    !options.readyCheckOutputPatterns || options.readyCheckOutputPatterns.length === 0;
+  const readyCheckOutputPatterns = getReadyCheckOutputPatterns(
+    env,
+    options.readyCheckOutputPatterns,
+  );
+  let readyCheckOutputMatched = readyCheckOutputPatterns.length === 0;
   let printedReadyCheckOutputWait = false;
   let settled = false;
   let polling = false;
@@ -179,7 +203,7 @@ export function streamSandboxCreate(
     if (!line) return;
     lines.push(line);
     lastOutputAt = Date.now();
-    if (!readyCheckOutputMatched && matchesAny(line, options.readyCheckOutputPatterns ?? [])) {
+    if (!readyCheckOutputMatched && matchesAny(line, readyCheckOutputPatterns)) {
       readyCheckOutputMatched = true;
     }
     if (matchesAny(line, BUILD_PROGRESS_PATTERNS)) {

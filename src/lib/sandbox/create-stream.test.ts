@@ -22,6 +22,9 @@ class FakeChild extends EventEmitter implements StreamableChildProcess {
   unref = vi.fn();
 }
 
+const dockerEnv = { ...process.env, OPENSHELL_DRIVERS: "docker" };
+const vmEnv = { ...process.env, OPENSHELL_DRIVERS: "vm" };
+
 describe("sandbox-create-stream", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -30,7 +33,7 @@ describe("sandbox-create-stream", () => {
   it("prints the initial build banner immediately", async () => {
     const child = new FakeChild();
     const logLine = vi.fn();
-    const promise = streamSandboxCreate("echo create", process.env, {
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
       logLine,
       spawnImpl: () => child,
     });
@@ -43,7 +46,7 @@ describe("sandbox-create-stream", () => {
   it("streams visible progress lines and returns the collected output", async () => {
     const child = new FakeChild();
     const logLine = vi.fn();
-    const promise = streamSandboxCreate("echo create", process.env, {
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
       logLine,
       spawnImpl: () => child,
       heartbeatIntervalMs: 1_000,
@@ -99,7 +102,7 @@ describe("sandbox-create-stream", () => {
 
     const child = new FakeChild();
     let checks = 0;
-    const promise = streamSandboxCreate("echo create", process.env, {
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
       spawnImpl: () => child,
       readyCheck: () => {
         checks += 1;
@@ -130,10 +133,9 @@ describe("sandbox-create-stream", () => {
     const child = new FakeChild();
     const logLine = vi.fn();
     let resolved = false;
-    const promise = streamSandboxCreate("echo create", process.env, {
+    const promise = streamSandboxCreate("echo create", vmEnv, {
       spawnImpl: () => child,
       readyCheck: () => true,
-      readyCheckOutputPatterns: [/Setting up NemoClaw/],
       pollIntervalMs: 5,
       heartbeatIntervalMs: 1_000,
       silentPhaseMs: 10_000,
@@ -165,10 +167,9 @@ describe("sandbox-create-stream", () => {
 
   it("does not recover a non-zero close before required startup output appears", async () => {
     const child = new FakeChild();
-    const promise = streamSandboxCreate("echo create", process.env, {
+    const promise = streamSandboxCreate("echo create", vmEnv, {
       spawnImpl: () => child,
       readyCheck: () => true,
-      readyCheckOutputPatterns: [/Setting up NemoClaw/],
       pollIntervalMs: 60_000,
       heartbeatIntervalMs: 1_000,
       silentPhaseMs: 10_000,
@@ -205,7 +206,7 @@ describe("sandbox-create-stream", () => {
   it("recovers when sandbox is ready at the moment the stream exits non-zero", async () => {
     const child = new FakeChild();
     const logLine = vi.fn();
-    const promise = streamSandboxCreate("echo create", process.env, {
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
       spawnImpl: () => child,
       readyCheck: () => true, // sandbox is already Ready
       pollIntervalMs: 60_000, // large interval so the poll doesn't fire first
