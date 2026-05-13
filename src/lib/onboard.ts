@@ -44,6 +44,18 @@ const {
 const {
   agentSupportsWebSearch,
 }: typeof import("./onboard/web-search-support") = require("./onboard/web-search-support");
+const dashboardAccess: typeof import("./onboard/dashboard-access") = require("./onboard/dashboard-access");
+const {
+  buildGatewayBootstrapSecretsScript,
+  createGatewayBootstrapRepairHelpers,
+  getGatewayBootstrapRepairPlan,
+}: typeof import("./onboard/gateway-bootstrap") = require("./onboard/gateway-bootstrap");
+const {
+  verifyWebSearchInsideSandbox: verifyWebSearchInsideSandboxWithDeps,
+}: typeof import("./onboard/web-search-verify") = require("./onboard/web-search-verify");
+const {
+  verifyWebSearchInsideSandbox: verifyWebSearchInsideSandboxWithDeps,
+}: typeof import("./onboard/web-search-verify") = require("./onboard/web-search-verify");
 const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
@@ -343,12 +355,6 @@ const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 const GATEWAY_NAME = "nemoclaw";
-const GATEWAY_BOOTSTRAP_SECRET_NAMES = [
-  "openshell-server-tls",
-  "openshell-server-client-ca",
-  "openshell-client-tls",
-  "openshell-ssh-handshake",
-];
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
 type HermesAuthMethod = "oauth" | "api_key";
 const HERMES_AUTH_METHOD_OAUTH: HermesAuthMethod = "oauth";
@@ -2406,80 +2412,14 @@ async function configureWebSearch(
   return { fetchEnabled: true };
 }
 
-/**
- * Post-creation probe: verify web search is actually functional inside the
- * sandbox. Hermes silently ignores unknown web.backend values, so checking
- * the config file alone is insufficient — we need to ask the runtime.
- *
- * For Hermes: runs `hermes dump` and checks for an active web backend.
- * For OpenClaw: checks that the tools.web.search block is present in the config.
- *
- * This is a best-effort warning — it does not abort onboarding.
- */
 function verifyWebSearchInsideSandbox(
   sandboxName: string,
   agent: AgentDefinition | null | undefined,
 ): void {
-  const agentName = agent?.name || "openclaw";
-  try {
-    if (agentName === "hermes") {
-      // `hermes dump` outputs config_overrides and active toolsets.
-      // Look for the web backend in its output.
-      const dump = runCaptureOpenshell(
-        ["sandbox", "exec", "-n", sandboxName, "--", "hermes", "dump"],
-        {
-          ignoreError: true,
-          timeout: 10_000,
-        },
-      );
-      if (!dump) {
-        console.warn("  ⚠ Could not verify web search config inside sandbox (hermes dump failed).");
-        return;
-      }
-      // A working web backend shows as an explicit config override or active-toolset entry.
-      // Avoid broad /web.*search/ matching so warning text never looks like success.
-      const hasWebBackend =
-        /^\s*web\.backend:\s*\S+/m.test(dump) ||
-        /^\s*active toolsets:\s*.*\bweb\b/im.test(dump) ||
-        /^\s*toolsets:\s*.*\bweb\b/im.test(dump);
-      if (!hasWebBackend) {
-        console.warn(
-          "  ⚠ Web search was configured but Hermes does not report an active web backend.",
-        );
-        console.warn("    The agent may not have accepted the web search configuration.");
-        console.warn(`    Check: ${cliName()} ${sandboxName} exec hermes dump`);
-      } else {
-        console.log("  ✓ Web search is active inside sandbox");
-      }
-    } else if (agentName === "openclaw") {
-      // OpenClaw: verify tools.web.search block exists in the baked config.
-      const configCheck = runCaptureOpenshell(
-        ["sandbox", "exec", "-n", sandboxName, "--", "cat", "/sandbox/.openclaw/openclaw.json"],
-        { ignoreError: true, timeout: 10_000 },
-      );
-      if (!configCheck) {
-        console.warn("  ⚠ Could not verify web search config inside sandbox.");
-        return;
-      }
-      try {
-        const parsed = JSON.parse(configCheck);
-        if (parsed?.tools?.web?.search?.enabled) {
-          console.log("  ✓ Web search is active inside sandbox");
-        } else {
-          console.warn(
-            "  ⚠ Web search was configured but tools.web.search is not enabled in openclaw.json.",
-          );
-        }
-      } catch {
-        console.warn("  ⚠ Could not parse openclaw.json to verify web search config.");
-      }
-    } else {
-      console.warn(`  ⚠ Web search verification is not implemented for agent '${agentName}'.`);
-    }
-  } catch {
-    // Best-effort — don't let probe failures derail onboarding.
-    console.warn("  ⚠ Web search verification probe failed (non-fatal).");
-  }
+  verifyWebSearchInsideSandboxWithDeps(sandboxName, agent, {
+    runCaptureOpenshell,
+    cliName,
+  });
 }
 
 // getSandboxInferenceConfig — moved to onboard-providers.ts
@@ -3246,6 +3186,15 @@ function getGatewayLocalEndpoint(): string {
   return dockerDriverGatewayEnv.getGatewayHttpsEndpoint();
 }
 
+const {
+  gatewayClusterHealthcheckPassed,
+  repairGatewayBootstrapSecrets,
+} = createGatewayBootstrapRepairHelpers({
+  buildGatewayClusterExecArgv,
+  run,
+  runCapture,
+});
+
 function isLinuxDockerDriverGatewayEnabled(
   platform: NodeJS.Platform = process.platform,
   arch: NodeJS.Architecture = process.arch,
@@ -3613,117 +3562,7 @@ function registerDockerDriverGatewayEndpoint(): boolean {
   return ok;
 }
 
-function getGatewayBootstrapRepairPlan(missingSecrets: string[] = []) {
-  const allowed = new Set(GATEWAY_BOOTSTRAP_SECRET_NAMES);
-  const normalized = [
-    ...new Set((missingSecrets || []).map((name) => String(name).trim()).filter(Boolean)),
-  ].filter((name) => allowed.has(name));
-  const missing = new Set(normalized);
-  const needsClientBundle =
-    missing.has("openshell-server-client-ca") || missing.has("openshell-client-tls");
 
-  return {
-    missingSecrets: normalized,
-    needsRepair: normalized.length > 0,
-    needsServerTls: missing.has("openshell-server-tls"),
-    needsClientBundle,
-    needsHandshake: missing.has("openshell-ssh-handshake"),
-  };
-}
-
-function buildGatewayBootstrapSecretsScript(missingSecrets: string[] = []): string {
-  const plan = getGatewayBootstrapRepairPlan(missingSecrets);
-  if (!plan.needsRepair) return "exit 0";
-
-  return `
-set -eu
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-kubectl get namespace openshell >/dev/null 2>&1
-kubectl -n openshell get statefulset/openshell >/dev/null 2>&1
-TMPDIR="$(mktemp -d)"
-cleanup() {
-  rm -rf "$TMPDIR"
-}
-trap cleanup EXIT
-if ${plan.needsServerTls ? "true" : "false"}; then
-  cat >"$TMPDIR/server-ext.cnf" <<'EOF'
-subjectAltName=DNS:openshell,DNS:openshell.openshell,DNS:openshell.openshell.svc,DNS:openshell.openshell.svc.cluster.local,DNS:localhost,IP:127.0.0.1
-extendedKeyUsage=serverAuth
-EOF
-  openssl req -nodes -newkey rsa:2048 -keyout "$TMPDIR/server.key" -out "$TMPDIR/server.csr" -subj "/CN=openshell.openshell.svc.cluster.local" >/dev/null 2>&1
-  openssl x509 -req -in "$TMPDIR/server.csr" -signkey "$TMPDIR/server.key" -out "$TMPDIR/server.crt" -days 3650 -sha256 -extfile "$TMPDIR/server-ext.cnf" >/dev/null 2>&1
-  kubectl create secret tls -n openshell openshell-server-tls --cert="$TMPDIR/server.crt" --key="$TMPDIR/server.key" --dry-run=client -o yaml | kubectl apply -f -
-fi
-if ${plan.needsClientBundle ? "true" : "false"}; then
-  cat >"$TMPDIR/client-ext.cnf" <<'EOF'
-extendedKeyUsage=clientAuth
-EOF
-  openssl req -x509 -nodes -newkey rsa:2048 -keyout "$TMPDIR/client-ca.key" -out "$TMPDIR/client-ca.crt" -subj "/CN=openshell-client-ca" -days 3650 >/dev/null 2>&1
-  openssl req -nodes -newkey rsa:2048 -keyout "$TMPDIR/client.key" -out "$TMPDIR/client.csr" -subj "/CN=openshell-client" >/dev/null 2>&1
-  openssl x509 -req -in "$TMPDIR/client.csr" -CA "$TMPDIR/client-ca.crt" -CAkey "$TMPDIR/client-ca.key" -CAcreateserial -out "$TMPDIR/client.crt" -days 3650 -sha256 -extfile "$TMPDIR/client-ext.cnf" >/dev/null 2>&1
-  kubectl create secret generic -n openshell openshell-server-client-ca --from-file=ca.crt="$TMPDIR/client-ca.crt" --dry-run=client -o yaml | kubectl apply -f -
-  kubectl create secret generic -n openshell openshell-client-tls --from-file=tls.crt="$TMPDIR/client.crt" --from-file=tls.key="$TMPDIR/client.key" --from-file=ca.crt="$TMPDIR/client-ca.crt" --dry-run=client -o yaml | kubectl apply -f -
-fi
-if ${plan.needsHandshake ? "true" : "false"}; then
-  kubectl create secret generic -n openshell openshell-ssh-handshake --from-literal=secret="$(openssl rand -hex 32)" --dry-run=client -o yaml | kubectl apply -f -
-fi
-`;
-}
-
-function runGatewayClusterCapture(script: string, opts: RunnerOptions = {}) {
-  return runCapture(buildGatewayClusterExecArgv(script), opts);
-}
-
-function runGatewayCluster(script: string, opts: RunnerOptions = {}) {
-  return run(buildGatewayClusterExecArgv(script), opts);
-}
-
-function listMissingGatewayBootstrapSecrets() {
-  const output = runGatewayClusterCapture(
-    `
-set -eu
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-kubectl get namespace openshell >/dev/null 2>&1 || exit 0
-kubectl -n openshell get statefulset/openshell >/dev/null 2>&1 || exit 0
-for name in ${GATEWAY_BOOTSTRAP_SECRET_NAMES.map((name) => shellQuote(name)).join(" ")}; do
-  kubectl -n openshell get secret "$name" >/dev/null 2>&1 || printf '%s\\n' "$name"
-done
-`,
-    { ignoreError: true },
-  );
-  return output
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function gatewayClusterHealthcheckPassed(): boolean {
-  const result = runGatewayCluster("/usr/local/bin/cluster-healthcheck.sh", {
-    ignoreError: true,
-    suppressOutput: true,
-  });
-  return result.status === 0;
-}
-
-function repairGatewayBootstrapSecrets(): { repaired: boolean; missingSecrets: string[] } {
-  const missingSecrets = listMissingGatewayBootstrapSecrets();
-  const plan = getGatewayBootstrapRepairPlan(missingSecrets);
-  if (!plan.needsRepair) return { repaired: false, missingSecrets };
-
-  console.log(
-    `  OpenShell bootstrap secrets missing: ${plan.missingSecrets.join(", ")}. Repairing...`,
-  );
-  const repairResult = runGatewayCluster(buildGatewayBootstrapSecretsScript(plan.missingSecrets), {
-    ignoreError: true,
-    suppressOutput: true,
-  });
-  const remainingSecrets = listMissingGatewayBootstrapSecrets();
-  if (repairResult.status === 0 && remainingSecrets.length === 0) {
-    console.log("  ✓ OpenShell bootstrap secrets created");
-    return { repaired: true, missingSecrets: remainingSecrets };
-  }
-  return { repaired: false, missingSecrets: remainingSecrets };
-}
 
 function attachGatewayMetadataIfNeeded({
   forceRefresh = false,
@@ -9833,172 +9672,75 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
 
 function buildDashboardChain(
   chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-  options: {
-    wslHostAddress?: string | null;
-    runCapture?: typeof runCapture;
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    release?: string;
-    isWsl?: boolean;
-  } = {},
+  options: Parameters<typeof dashboardAccess.buildDashboardChain>[1] = {},
 ) {
-  return buildChain({
-    chatUiUrl,
-    isWsl: isWsl(options),
-    wslHostAddress: getWslHostAddress(options),
-  });
+  return dashboardAccess.buildDashboardChain(chatUiUrl, { ...options, runCapture: options.runCapture || runCapture });
 }
 
 function getDashboardForwardPort(
   chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-  options: {
-    wslHostAddress?: string | null;
-    runCapture?: typeof runCapture;
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    release?: string;
-    isWsl?: boolean;
-  } = {},
+  options: Parameters<typeof dashboardAccess.getDashboardForwardPort>[1] = {},
 ): string {
-  return String(buildDashboardChain(chatUiUrl, options).port);
+  return dashboardAccess.getDashboardForwardPort(chatUiUrl, {
+    ...options,
+    runCapture: options.runCapture || runCapture,
+  });
 }
 
 function getDashboardForwardTarget(
   chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-  options: {
-    wslHostAddress?: string | null;
-    runCapture?: typeof runCapture;
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    release?: string;
-    isWsl?: boolean;
-    chatUiUrl?: string;
-    token?: string | null;
-  } = {},
+  options: Parameters<typeof dashboardAccess.getDashboardForwardTarget>[1] = {},
 ): string {
-  return buildDashboardChain(chatUiUrl, options).forwardTarget;
+  return dashboardAccess.getDashboardForwardTarget(chatUiUrl, {
+    ...options,
+    runCapture: options.runCapture || runCapture,
+  });
 }
 
 function getDashboardForwardStartCommand(
   sandboxName: string,
-  options: {
-    chatUiUrl?: string;
-    openshellBinary?: string;
-    wslHostAddress?: string | null;
-    runCapture?: typeof runCapture;
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    release?: string;
-    isWsl?: boolean;
-    token?: string | null;
-  } = {},
+  options: Parameters<typeof dashboardAccess.getDashboardForwardStartCommand>[1] = {},
 ): string {
-  const chatUiUrl =
-    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const forwardTarget = getDashboardForwardTarget(chatUiUrl, options);
-  return `${openshellShellCommand(
-    ["forward", "start", "--background", forwardTarget, sandboxName],
-    options,
-  )}`;
+  return dashboardAccess.getDashboardForwardStartCommand(sandboxName, {
+    ...options,
+    runCapture: options.runCapture || runCapture,
+    openshellShellCommand,
+  });
 }
 
 function buildAuthenticatedDashboardUrl(baseUrl: string, token: string | null = null): string {
-  if (!token) return baseUrl;
-  return `${baseUrl}#token=${encodeURIComponent(token)}`;
+  return dashboardAccess.buildAuthenticatedDashboardUrl(baseUrl, token);
 }
 
 function dashboardUrlForDisplay(url: string): string {
-  return redact(url.replace(/#token=[^\s'"]*$/i, ""));
+  return dashboardAccess.dashboardUrlForDisplay(url, redact);
 }
 
 function getWslHostAddress(
-  options: {
-    wslHostAddress?: string | null;
-    runCapture?: typeof runCapture;
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    release?: string;
-    isWsl?: boolean;
-  } = {},
+  options: Parameters<typeof dashboardAccess.getWslHostAddress>[0] = {},
 ): string | null {
-  if (options.wslHostAddress) {
-    return options.wslHostAddress;
-  }
-  if (!isWsl(options)) {
-    return null;
-  }
-  const runCaptureFn = options.runCapture || runCapture;
-  const output = runCaptureFn(["hostname", "-I"], { ignoreError: true });
-  return (
-    String(output || "")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)[0] || null
-  );
+  return dashboardAccess.getWslHostAddress({ ...options, runCapture: options.runCapture || runCapture });
 }
 
 function getDashboardAccessInfo(
   sandboxName: string,
-  options: {
-    token?: string | null;
-    chatUiUrl?: string;
-    wslHostAddress?: string | null;
-    runCapture?: typeof runCapture;
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    release?: string;
-    isWsl?: boolean;
-  } = {},
+  options: Parameters<typeof dashboardAccess.getDashboardAccessInfo>[1] = {},
 ) {
-  const token = Object.prototype.hasOwnProperty.call(options, "token")
-    ? options.token
-    : fetchGatewayAuthTokenFromSandbox(sandboxName);
-  const chatUiUrl =
-    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const chain = buildDashboardChain(chatUiUrl, options);
-  const dashboardAccess = buildControlUiUrls(token, chain.port, chain.accessUrl).map(
-    (url, index) => ({
-      label: index === 0 ? "Dashboard" : `Alt ${index}`,
-      url: buildAuthenticatedDashboardUrl(url, null),
-    }),
-  );
-
-  const wslHostAddress = getWslHostAddress(options);
-  if (wslHostAddress) {
-    const wslUrl = buildAuthenticatedDashboardUrl(`http://${wslHostAddress}:${chain.port}/`, token);
-    if (!dashboardAccess.some((access) => access.url === wslUrl)) {
-      dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
-    }
-  }
-
-  return dashboardAccess;
+  return dashboardAccess.getDashboardAccessInfo(sandboxName, {
+    ...options,
+    runCapture: options.runCapture || runCapture,
+    fetchGatewayAuthToken: fetchGatewayAuthTokenFromSandbox,
+  });
 }
 
 function getDashboardGuidanceLines(
-  dashboardAccess: Array<{ label: string; url: string }> = [],
-  options: {
-    chatUiUrl?: string;
-    wslHostAddress?: string | null;
-    runCapture?: typeof runCapture;
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    release?: string;
-    isWsl?: boolean;
-  } = {},
+  access: Parameters<typeof dashboardAccess.getDashboardGuidanceLines>[0] = [],
+  options: Parameters<typeof dashboardAccess.getDashboardGuidanceLines>[1] = {},
 ): string[] {
-  const chatUiUrl =
-    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const chain = buildDashboardChain(chatUiUrl, options);
-  const guidance = [`Port ${String(chain.port)} must be forwarded before opening these URLs.`];
-  if (isWsl(options)) {
-    guidance.push(
-      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
-    );
-  }
-  if (dashboardAccess.length === 0) {
-    guidance.push("No dashboard URLs were generated.");
-  }
-  return guidance;
+  return dashboardAccess.getDashboardGuidanceLines(access, {
+    ...options,
+    runCapture: options.runCapture || runCapture,
+  });
 }
 /** Print the post-onboard dashboard with sandbox status and reconfiguration hints. */
 function printDashboard(
