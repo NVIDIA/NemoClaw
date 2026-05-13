@@ -582,7 +582,7 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
     } else if (step.name === "State and binaries") {
       removeManagedSwap(paths, runtime);
       for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
-      if (options.keepOpenShell) runtime.log("Keeping openshell binary as requested.");
+      if (options.keepOpenShell) runtime.log("Keeping OpenShell binaries as requested.");
       else for (const target of paths.openshellInstallPaths) removeFileWithOptionalSudo(target, runtime);
       removePath(paths.nemoclawStateDir, runtime);
       removePath(paths.openshellConfigDir, runtime);

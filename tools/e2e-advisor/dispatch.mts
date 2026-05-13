@@ -15,6 +15,7 @@ type PullRequestPayload = {
   number?: number;
   author_association?: string;
   draft?: boolean;
+  user?: { login?: string };
   head?: {
     ref?: string;
     sha?: string;
@@ -59,7 +60,9 @@ type DispatchPlan = {
   prNumber?: number;
   targetRef?: string;
   authorAssociation?: string;
+  authorLogin?: string;
   allowedAuthorAssociations?: string[];
+  allowedByAuthorAllowlist?: boolean;
 };
 
 type ParsedArgs = {
@@ -219,13 +222,18 @@ export function planAutoDispatch({
   }
 
   const authorAssociation = pr.author_association || "";
+  const authorLogin = pr.user?.login || "";
   const allowedAssociations = parseCsv(env.E2E_ADVISOR_AUTO_DISPATCH_AUTHOR_ASSOCIATIONS || DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS);
-  if (!allowedAssociations.includes(authorAssociation)) {
+  const allowedAuthorLogins = parseCsv(env.E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS).map(normalizeLogin);
+  const allowedByAssociation = allowedAssociations.includes(authorAssociation);
+  const allowedByAuthorAllowlist = Boolean(authorLogin && allowedAuthorLogins.includes(normalizeLogin(authorLogin)));
+  if (!allowedByAssociation && !allowedByAuthorAllowlist) {
     return {
       ...base,
-      reason: `PR author association ${authorAssociation || "<unknown>"} is not allowed`,
+      reason: `PR author association ${authorAssociation || "<unknown>"} is not allowed and PR author ${authorLogin || "<unknown>"} is not allowlisted`,
       prNumber: pr.number,
       authorAssociation,
+      authorLogin,
       allowedAuthorAssociations: allowedAssociations,
     };
   }
@@ -236,6 +244,8 @@ export function planAutoDispatch({
       reason: "advisor confidence was low",
       prNumber: pr.number,
       authorAssociation,
+      authorLogin,
+      allowedByAuthorAllowlist,
     };
   }
 
@@ -246,6 +256,8 @@ export function planAutoDispatch({
       reason: "advisor did not require any E2E jobs",
       prNumber: pr.number,
       authorAssociation,
+      authorLogin,
+      allowedByAuthorAllowlist,
     };
   }
 
@@ -260,6 +272,8 @@ export function planAutoDispatch({
       reason: "no required advisor recommendations matched dispatchable jobs in the target workflow",
       prNumber: pr.number,
       authorAssociation,
+      authorLogin,
+      allowedByAuthorAllowlist,
       dispatchableJobCount: dispatchableJobs.length,
       recommendedJobs,
       ignoredJobs,
@@ -273,6 +287,8 @@ export function planAutoDispatch({
       reason: `advisor recommended ${jobs.length} dispatchable jobs, above E2E_ADVISOR_AUTO_DISPATCH_MAX_JOBS=${maxJobs}`,
       prNumber: pr.number,
       authorAssociation,
+      authorLogin,
+      allowedByAuthorAllowlist,
       jobs,
       ignoredJobs,
     };
@@ -299,7 +315,9 @@ export function planAutoDispatch({
     prNumber: pr.number,
     targetRef,
     authorAssociation,
+    authorLogin,
     allowedAuthorAssociations: allowedAssociations,
+    allowedByAuthorAllowlist,
   };
 }
 
@@ -349,6 +367,10 @@ function parseCsv(value: string | undefined): string[] {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function normalizeLogin(login: string): string {
+  return login.trim().toLowerCase();
 }
 
 async function dispatchWorkflow({

@@ -197,6 +197,9 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          # Optional comma-separated GitHub login allowlist for trusted authors whose
+          # private org membership appears as CONTRIBUTOR in pull_request payloads.
+          E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS: ${{ secrets.E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS }}
         run: |
           DISPATCH_RESULT="$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-dispatch-result.json"
           DISPATCH_SUMMARY="$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-dispatch-summary.md"

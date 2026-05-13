@@ -8,7 +8,6 @@
 const {
   envInt,
   LOCAL_INFERENCE_TIMEOUT_SECS,
-  SANDBOX_READY_TIMEOUT_SECS,
 }: typeof import("./onboard/env") = require("./onboard/env");
 const {
   agentProductName,
@@ -36,6 +35,12 @@ const {
   buildSandboxConfigSyncScript,
   writeSandboxConfigSyncFile,
 }: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
+const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") = require("./onboard/docker-gpu-patch");
+const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
+const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
+const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
+const { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs, parseDockerCdiSpecDirs }: typeof import("./onboard/docker-cdi") = require("./onboard/docker-cdi");
+const { buildSandboxGpuCreateArgs, getSandboxReadyTimeoutSecs }: typeof import("./onboard/sandbox-gpu-create") = require("./onboard/sandbox-gpu-create");
 const {
   isValidProxyHost,
   isValidProxyPort,
@@ -1321,73 +1326,6 @@ function getResumeSandboxGpuOverrides(
     return { flag: "enable", device: entry?.sandboxGpuDevice || null };
   }
   return { flag: null, device: null };
-}
-
-function buildSandboxGpuCreateArgs(config: SandboxGpuConfig): string[] {
-  if (!config.sandboxGpuEnabled) return [];
-  const args = ["--gpu"];
-  if (config.sandboxGpuDevice) {
-    args.push("--gpu-device", config.sandboxGpuDevice);
-  }
-  return args;
-}
-
-function parseDockerCdiSpecDirs(value: string | null | undefined): string[] {
-  const raw = String(value || "").trim();
-  if (!raw || raw === "<no value>") return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? parsed.map((entry) => String(entry || "").trim()).filter(Boolean)
-      : [];
-  } catch {
-    return raw
-      .split(/[\s,]+/)
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-  }
-}
-
-function getDockerCdiSpecDirs(): string[] {
-  return parseDockerCdiSpecDirs(
-    dockerInfoFormat("{{json .CDISpecDirs}}", { ignoreError: true }),
-  );
-}
-
-function isLikelyNvidiaCdiSpecFile(filePath: string): boolean {
-  if (!/\.(json|ya?ml)$/i.test(filePath)) return false;
-  let stat: import("fs").Stats;
-  try {
-    stat = fs.statSync(filePath);
-  } catch {
-    return false;
-  }
-  if (!stat.isFile()) return false;
-
-  let content = "";
-  try {
-    content = fs.readFileSync(filePath, "utf-8");
-  } catch {
-    return false;
-  }
-  return /nvidia\.com\/gpu|nvidia-container|libcuda|cuda/i.test(content);
-}
-
-function findReadableNvidiaCdiSpecFiles(dirs: string[]): string[] {
-  const specs: string[] = [];
-  for (const dir of dirs) {
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const candidate = path.join(dir, entry);
-      if (isLikelyNvidiaCdiSpecFile(candidate)) specs.push(candidate);
-    }
-  }
-  return specs.sort();
 }
 
 function sandboxGpuRemediationLines(): string[] {
@@ -2931,12 +2869,16 @@ async function refreshDockerDriverGatewayReuseState(
     return gatewayReuseState;
   }
   const gatewayBin = resolveOpenShellGatewayBinary();
-  const desiredEnv = getDockerDriverGatewayEnv(
+  const baseDesiredEnv = getDockerDriverGatewayEnv(
     runCaptureOpenshell(["--version"], { ignoreError: true }),
   );
+  const runtimeIdentity = gatewayBin ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({ gatewayBin, gatewayEnv: baseDesiredEnv, stateDir: getDockerDriverGatewayStateDir(), sandboxBin: resolveOpenShellSandboxBinary() }) : null;
+  const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
+  const driftBin = runtimeIdentity?.driftGatewayBin ?? gatewayBin;
+  const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const pid = getDockerDriverGatewayPid();
   if (pid !== null && isDockerDriverGatewayProcessAlive()) {
-    const drift = getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, driftBin);
     if (drift) {
       console.log(
         `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
@@ -2948,10 +2890,10 @@ async function refreshDockerDriverGatewayReuseState(
 
   const portCheck = await checkGatewayPortAvailable();
   const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck, {
-    gatewayBin,
+    gatewayBin: identityBin,
   });
   if (dockerGatewayPid !== null) {
-    const drift = getDockerDriverGatewayRuntimeDrift(dockerGatewayPid, desiredEnv, gatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(dockerGatewayPid, desiredEnv, driftBin);
     rememberDockerDriverGatewayPid(dockerGatewayPid);
     if (drift) {
       console.log(
@@ -4223,7 +4165,7 @@ async function startGatewayWithOptions(
   step(2, 8, "Starting OpenShell gateway");
 
   if (isLinuxDockerDriverGatewayEnabled()) {
-    return startDockerDriverGateway({ exitOnFailure });
+    return startDockerDriverGateway({ exitOnFailure, skipSandboxBridgeReachability: gpuPassthrough && process.env.NEMOCLAW_DOCKER_GPU_PATCH !== "0" && dockerGpuPatch.getDockerGpuPatchNetworkMode(process.env) === "host" });
   }
 
   const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
@@ -4415,15 +4357,19 @@ async function startGatewayWithOptions(
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
-async function startDockerDriverGateway({
-  exitOnFailure = true,
-}: { exitOnFailure?: boolean } = {}): Promise<void> {
+async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridgeReachability = false }: { exitOnFailure?: boolean; skipSandboxBridgeReachability?: boolean } = {}): Promise<void> {
   dockerDriverGatewayEnv.writeDockerGatewayDebEnvOverride(() => getDockerDriverGatewayEnv());
   const gatewayBin = resolveOpenShellGatewayBinary();
   const openshellVersionOutput = runCaptureOpenshell(["--version"], {
     ignoreError: true,
   });
   const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
+  const stateDir = getDockerDriverGatewayStateDir();
+  const runtimeIdentity = gatewayBin ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({ gatewayBin, gatewayEnv, stateDir, sandboxBin: resolveOpenShellSandboxBinary() }) : null;
+  const gatewayLaunch = runtimeIdentity?.launch ?? null;
+  const driftGatewayBin = runtimeIdentity?.driftGatewayBin ?? gatewayBin;
+  const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
+  const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
 
@@ -4438,11 +4384,11 @@ async function startDockerDriverGateway({
     isDockerDriverGatewayProcessAlive() &&
     isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)
   ) {
-    const drift = getDockerDriverGatewayRuntimeDrift(pidFileGatewayPid, gatewayEnv, gatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(pidFileGatewayPid, driftGatewayEnv, driftGatewayBin);
     if (drift) {
       restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
     } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure); console.log("  ✓ Reusing existing Docker-driver gateway");
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, { skip: skipSandboxBridgeReachability }); console.log("  ✓ Reusing existing Docker-driver gateway");
       return;
     } else {
       console.log(
@@ -4452,9 +4398,11 @@ async function startDockerDriverGateway({
   }
 
   const portCheck = await checkGatewayPortAvailable();
-  const portListenerPid = getDockerDriverGatewayPortListenerPid(portCheck, { gatewayBin });
+  const portListenerPid = getDockerDriverGatewayPortListenerPid(portCheck, {
+    gatewayBin: identityGatewayBin,
+  });
   if (portListenerPid !== null) {
-    const drift = getDockerDriverGatewayRuntimeDrift(portListenerPid, gatewayEnv, gatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(portListenerPid, driftGatewayEnv, driftGatewayBin);
     if (drift) {
       rememberDockerDriverGatewayPid(portListenerPid);
       restartDockerDriverGatewayProcessForDrift(portListenerPid, drift.reason);
@@ -4473,7 +4421,7 @@ async function startDockerDriverGateway({
         isGatewayHealthy(adoptedStatus, adoptedGwInfo, adoptedActiveGatewayInfo) &&
         (await isDockerDriverGatewayHttpReady())
       ) {
-        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure); console.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
+        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, { skip: skipSandboxBridgeReachability }); console.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
         return;
       }
     }
@@ -4487,7 +4435,7 @@ async function startDockerDriverGateway({
 
   const existingPid = getDockerDriverGatewayPid() ?? portListenerPid;
   if (existingPid !== null && isPidAlive(existingPid)) {
-    if (!isDockerDriverGatewayProcess(existingPid, gatewayBin)) {
+    if (!isDockerDriverGatewayProcess(existingPid, identityGatewayBin)) {
       fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
     } else {
       console.log(`  Restarting unhealthy Docker-driver gateway process (PID ${existingPid})...`);
@@ -4500,20 +4448,24 @@ async function startDockerDriverGateway({
     }
   }
 
-  const stateDir = getDockerDriverGatewayStateDir();
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
   const outFd = fs.openSync(logPath, "a", 0o600);
   const errFd = fs.openSync(logPath, "a", 0o600);
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
-  const child = spawn(gatewayBin, [], {
+  const launch = gatewayLaunch ?? {
+    command: gatewayBin,
+    args: [],
+    env: { ...process.env, ...gatewayEnv },
+    mode: "host" as const,
+    processGatewayBin: gatewayBin,
+  };
+  dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
+  const child = spawn(launch.command, launch.args, {
     detached: true,
     stdio: ["ignore", outFd, errFd],
-    env: {
-      ...process.env,
-      ...gatewayEnv,
-    },
+    env: launch.env,
   });
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness
   child.unref();
@@ -4542,7 +4494,7 @@ async function startDockerDriverGateway({
       isGatewayHealthy(status, namedInfo, currentInfo) &&
       (await isGatewayTcpReady())
     ) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure); console.log("  ✓ Docker-driver gateway is healthy");
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, { skip: skipSandboxBridgeReachability }); console.log("  ✓ Docker-driver gateway is healthy");
       return;
     }
     if (i < pollCount - 1) sleep(pollInterval);
@@ -5693,6 +5645,10 @@ async function createSandbox(
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
     console.log("  Direct sandbox GPU enabled; allowing only /proc task comm writes.");
   }
+  const useDockerGpuPatch = dockerGpuSandboxCreate.shouldUseDockerGpuPatchForCreate(
+    effectiveSandboxGpuConfig,
+    { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(), log: console.log },
+  );
   const createArgs = [
     "--from",
     `${buildCtx}/Dockerfile`,
@@ -5700,7 +5656,9 @@ async function createSandbox(
     sandboxName,
     "--policy",
     initialSandboxPolicy.policyPath,
-    ...buildSandboxGpuCreateArgs(effectiveSandboxGpuConfig),
+    ...buildSandboxGpuCreateArgs(effectiveSandboxGpuConfig, {
+      suppressGpuFlag: useDockerGpuPatch,
+    }),
   ];
 
   // Create OpenShell providers for messaging credentials so they flow through
@@ -5814,6 +5772,12 @@ async function createSandbox(
     }
   }
   const buildId = String(Date.now());
+  const sandboxInferenceBaseUrlOverride =
+    dockerGpuLocalInference.dockerGpuPatchHostNetworkInferenceBaseUrl(
+      effectiveSandboxGpuConfig,
+      provider,
+      { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(), log: console.log },
+  );
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -5828,6 +5792,7 @@ async function createSandbox(
     resolved ? resolved.ref : null,
     telegramConfig,
     process.platform === "darwin",
+    sandboxInferenceBaseUrlOverride,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -5880,6 +5845,7 @@ async function createSandbox(
       envArgs.push(formatEnvAssignment(webSearch.BRAVE_API_KEY_ENV, braveKey));
     }
   }
+  const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const sandboxEnv = buildSubprocessEnv();
   // Remove host-infrastructure credentials that the generic allowlist
   // permits for host-side processes but that must not enter the sandbox.
@@ -5898,11 +5864,21 @@ async function createSandbox(
     ...envArgs,
     "nemoclaw-start",
   ])} 2>&1`;
+  const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
+    enabled: useDockerGpuPatch,
+    sandboxName,
+    gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
+    timeoutSecs: sandboxReadyTimeoutSecs,
+    deps: { runOpenshell, runCaptureOpenshell, sleep },
+  });
   const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
     readyCheck: () => {
       const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-      return isSandboxReady(list, sandboxName);
+      if (isSandboxReady(list, sandboxName)) return true;
+      dockerGpuCreatePatch.maybeApplyDuringCreate();
+      return false;
     },
+    failureCheck: dockerGpuCreatePatch.createFailureMessage,
   });
 
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
@@ -5917,6 +5893,8 @@ async function createSandbox(
   if (cleanupBuildCtx()) {
     process.removeListener("exit", cleanupBuildCtx);
   }
+
+  dockerGpuCreatePatch.exitOnPatchError();
 
   if (createResult.status !== 0) {
     const failure = classifySandboxCreateFailure(createResult.output);
@@ -5942,13 +5920,16 @@ async function createSandbox(
     }
   }
 
-  // Wait for sandbox to reach Ready state in k3s before registering.
-  // On WSL2 + Docker Desktop the pod can take longer to initialize;
+  dockerGpuCreatePatch.ensureApplied();
+  dockerGpuCreatePatch.waitForSupervisorReconnectIfNeeded();
+
+  // Wait for OpenShell to report the sandbox Ready before registering.
+  // On first run the sandbox can take longer to initialize;
   // without this gate, NemoClaw registers a phantom sandbox that
   // causes "sandbox not found" on every subsequent connect/status call.
   console.log("  Waiting for sandbox to become ready...");
   let ready = false;
-  const readyAttempts = Math.max(1, Math.ceil(SANDBOX_READY_TIMEOUT_SECS / 2));
+  const readyAttempts = Math.max(1, Math.ceil(sandboxReadyTimeoutSecs / 2));
   for (let i = 0; i < readyAttempts; i++) {
     const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
     if (isSandboxReady(list, sandboxName)) {
@@ -5966,12 +5947,9 @@ async function createSandbox(
       sandboxName,
       { backupPath: restoreBackupPath },
     );
-    // Clean up the failed sandbox after preserving local diagnostics so the
-    // next onboard retry with the same name does not fail on "sandbox already exists".
-    const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     console.error("");
     console.error(
-      `  Sandbox '${sandboxName}' was created but did not become ready within ${SANDBOX_READY_TIMEOUT_SECS}s.`,
+      `  Sandbox '${sandboxName}' was created but did not become ready within ${sandboxReadyTimeoutSecs}s.`,
     );
     if (diagnostics) {
       console.error(`  Diagnostics saved: ${diagnostics.dir}`);
@@ -5985,11 +5963,22 @@ async function createSandbox(
         console.error(`  State backup retained: ${diagnostics.backupPath}`);
       }
     }
-    if (delResult.status === 0) {
-      console.error("  The failed sandbox has been removed; retry will recreate it.");
+    if (useDockerGpuPatch) {
+      dockerGpuPatch.printDockerGpuReadinessFailure(
+        sandboxName,
+        dockerGpuCreatePatch.selectedMode(),
+        { runCaptureOpenshell },
+      );
     } else {
-      console.error("  Could not remove the failed sandbox. Manual cleanup:");
-      console.error(`    openshell sandbox delete "${sandboxName}"`);
+      // Clean up non-GPU failures after preserving local diagnostics so the
+      // next onboard retry with the same name does not fail on "sandbox already exists".
+      const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+      if (delResult.status === 0) {
+        console.error("  The failed sandbox has been removed; retry will recreate it.");
+      } else {
+        console.error("  Could not remove the failed sandbox. Manual cleanup:");
+        console.error(`    openshell sandbox delete "${sandboxName}"`);
+      }
     }
     console.error(`  Retry: ${cliName()} onboard`);
     process.exit(1);
@@ -6024,13 +6013,12 @@ async function createSandbox(
     try {
       verifyDirectSandboxGpu(sandboxName);
     } catch (error) {
-      const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
-      if (delResult.status === 0) {
-        console.error("  The sandbox with failed GPU access has been removed — you can retry safely.");
-      } else {
-        console.error("  Could not remove the sandbox with failed GPU access. Manual cleanup:");
-        console.error(`    openshell sandbox delete "${sandboxName}"`);
-      }
+      dockerGpuPatch.printDockerGpuProofFailure(
+        sandboxName,
+        error,
+        dockerGpuCreatePatch.selectedMode(),
+        { runCaptureOpenshell },
+      );
       throw error;
     }
   }
@@ -10305,6 +10293,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         return current;
       });
     }
+    dockerGpuLocalInference.configureLocalInferenceForDockerGpuHostNetwork(sandboxGpuConfig, {
+      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      note,
+    });
 
     const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
     let gatewayReuseState = gatewaySnapshot.gatewayReuseState;
@@ -11015,6 +11007,7 @@ module.exports = {
   findReadableNvidiaCdiSpecFiles,
   parseDockerCdiSpecDirs,
   getResumeSandboxGpuOverrides,
+  getSandboxReadyTimeoutSecs,
   resolveSandboxGpuConfig,
   shouldAllowOpenshellAboveBlueprintMax,
   pullAndResolveBaseImageDigest,

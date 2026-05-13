@@ -4,7 +4,12 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { defaultUninstallPaths, gatewayVolumeCandidates, uninstallStatePaths } from "./paths";
+import {
+  defaultUninstallPaths,
+  gatewayVolumeCandidates,
+  OPENSHELL_MANAGED_BINARIES,
+  uninstallStatePaths,
+} from "./paths";
 
 describe("uninstall paths", () => {
   it("returns the gateway volume candidate used by uninstall.sh", () => {
@@ -18,7 +23,10 @@ describe("uninstall paths", () => {
     expect(paths.openshellConfigDir).toBe(path.join("/home/test", ".config", "openshell"));
     expect(paths.nemoclawConfigDir).toBe(path.join("/home/test", ".config", "nemoclaw"));
     expect(paths.nemoclawShimPath).toBe(path.join("/home/test", ".local", "bin", "nemoclaw"));
-    expect(paths.openshellInstallPaths).toEqual(["/usr/local/bin/openshell", path.join("/xdg/bin", "openshell")]);
+    expect(paths.openshellInstallPaths).toEqual([
+      ...OPENSHELL_MANAGED_BINARIES.map((binary) => path.join("/usr/local/bin", binary)),
+      ...OPENSHELL_MANAGED_BINARIES.map((binary) => path.join("/xdg/bin", binary)),
+    ]);
     expect(paths.helperServiceGlob).toBe(path.join("/tmp/nemo", "nemoclaw-services-*"));
     expect(paths.runtimeTempGlobs).toEqual([
       path.join("/tmp/nemo", "nemoclaw-create-*.log"),

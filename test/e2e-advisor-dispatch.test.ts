@@ -20,6 +20,7 @@ function pullRequest(authorAssociation = "MEMBER", overrides = {}) {
     pull_request: {
       number: 123,
       author_association: authorAssociation,
+      user: { login: "ericksoa" },
       ...overrides,
       head: {
         ref: "feature/e2e-advisor",
@@ -88,7 +89,7 @@ describe("E2E advisor auto-dispatch planning", () => {
     });
   });
 
-  it("skips PRs that are not authored by org members or owners", () => {
+  it("plans dispatch for allowlisted authors whose private org membership appears as contributor", () => {
     const workflowText = fs.readFileSync(
       path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
       "utf8",
@@ -96,15 +97,38 @@ describe("E2E advisor auto-dispatch planning", () => {
     const plan = planAutoDispatch({
       result: advisorResult(),
       workflowText,
-      event: pullRequest("COLLABORATOR"),
+      event: pullRequest("CONTRIBUTOR", { user: { login: "ericksoa" } }),
       env: {
         GITHUB_EVENT_NAME: "pull_request",
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS: "octocat,ErickSOA",
+      },
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.authorLogin).toBe("ericksoa");
+    expect(plan.allowedByAuthorAllowlist).toBe(true);
+  });
+
+  it("skips PRs that are not authored by org members, owners, or allowlisted authors", () => {
+    const workflowText = fs.readFileSync(
+      path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
+      "utf8",
+    );
+    const plan = planAutoDispatch({
+      result: advisorResult(),
+      workflowText,
+      event: pullRequest("COLLABORATOR", { user: { login: "outside-contributor" } }),
+      env: {
+        GITHUB_EVENT_NAME: "pull_request",
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS: "ericksoa",
       },
     });
 
     expect(plan.status).toBe("skipped");
     expect(plan.reason).toMatch(/not allowed/);
+    expect(plan.reason).toMatch(/not allowlisted/);
   });
 
   it("skips draft PRs", () => {

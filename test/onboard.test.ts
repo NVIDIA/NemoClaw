@@ -52,10 +52,13 @@ type OnboardTestInternals = {
   buildCompatibleEndpointSandboxSmokeCommand: (model: string) => string;
   buildCompatibleEndpointSandboxSmokeScript: (model: string) => string;
   buildSandboxConfigSyncScript: ShimFn<string>;
-  buildSandboxGpuCreateArgs: (config: {
-    sandboxGpuEnabled: boolean;
-    sandboxGpuDevice?: string | null;
-  }) => string[];
+  buildSandboxGpuCreateArgs: (
+    config: {
+      sandboxGpuEnabled: boolean;
+      sandboxGpuDevice?: string | null;
+    },
+    options?: { suppressGpuFlag?: boolean },
+  ) => string[];
   buildDirectGpuPolicyYaml: (basePolicy: string) => string;
   buildDirectSandboxGpuProofCommands: (sandboxName: string) => { label: string; args: string[] }[];
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
@@ -144,6 +147,12 @@ type OnboardTestInternals = {
       | undefined,
     sessionGpuPassthrough?: boolean,
   ) => { flag: "enable" | "disable" | null; device: string | null };
+  getSandboxReadyTimeoutSecs: (
+    config: { sandboxGpuEnabled: boolean },
+    env?: NodeJS.ProcessEnv,
+    platform?: NodeJS.Platform,
+    arch?: NodeJS.Architecture,
+  ) => number;
   shouldAllowOpenshellAboveBlueprintMax: (
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
@@ -237,6 +246,7 @@ function isOnboardTestInternals(
     typeof value.parseDockerCdiSpecDirs === "function" &&
     typeof value.resolveSandboxGpuConfig === "function" &&
     typeof value.getResumeSandboxGpuOverrides === "function" &&
+    typeof value.getSandboxReadyTimeoutSecs === "function" &&
     typeof value.shouldAllowOpenshellAboveBlueprintMax === "function" &&
     typeof value.hasChatCompletionsToolCall === "function" &&
     typeof value.hasChatCompletionsToolCallLeak === "function" &&
@@ -296,6 +306,7 @@ const {
   parseDockerCdiSpecDirs,
   resolveSandboxGpuConfig,
   getResumeSandboxGpuOverrides,
+  getSandboxReadyTimeoutSecs,
   shouldAllowOpenshellAboveBlueprintMax,
   versionGte,
   getRequestedModelHint,
@@ -386,6 +397,28 @@ describe("onboard helpers", () => {
     expect(
       buildSandboxGpuCreateArgs({ sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=0" }),
     ).toEqual(["--gpu", "--gpu-device", "nvidia.com/gpu=0"]);
+    expect(
+      buildSandboxGpuCreateArgs(
+        { sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=0" },
+        { suppressGpuFlag: true },
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps the default sandbox readiness timeout unless explicitly overridden", () => {
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: false }, {}, "linux")).toBe(180);
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "linux")).toBe(180);
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "win32")).toBe(180);
+  });
+
+  it("honors explicit sandbox readiness timeout overrides", () => {
+    expect(
+      getSandboxReadyTimeoutSecs(
+        { sandboxGpuEnabled: true },
+        { NEMOCLAW_SANDBOX_READY_TIMEOUT: "75" },
+        "linux",
+      ),
+    ).toBe(75);
   });
 
   it(
@@ -682,11 +715,20 @@ network_policies:
   it("builds direct sandbox GPU proof commands", () => {
     const commands = buildDirectSandboxGpuProofCommands("alpha");
     expect(commands.map((entry) => entry.label)).toEqual([
-      "nvidia-smi",
+      "nvidia-smi when available",
       "/proc/<pid>/task/<tid>/comm write",
       "cuInit(0) via libcuda.so.1",
     ]);
-    expect(commands[0].args).toEqual(["sandbox", "exec", "-n", "alpha", "--", "nvidia-smi"]);
+    expect(commands[0].args).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "sh",
+      "-lc",
+      expect.stringContaining("command -v nvidia-smi"),
+    ]);
     expect(commands[1].args.join(" ")).toContain("/proc/$$/task/$$/comm");
     expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
     expect(commands[2].args.join(" ")).toContain("cuInit(0)");
@@ -2855,8 +2897,10 @@ const { loadAgent } = require(${agentDefsPath});
     );
 
     assert.match(envSource, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 180/);
-    assert.match(source, /Math\.ceil\(SANDBOX_READY_TIMEOUT_SECS \/ 2\)/);
-    assert.match(source, /within \$\{SANDBOX_READY_TIMEOUT_SECS\}s/);
+    assert.match(source, /Math\.ceil\(sandboxReadyTimeoutSecs \/ 2\)/);
+    assert.match(source, /within \$\{sandboxReadyTimeoutSecs\}s/);
+    assert.doesNotMatch(source, /DOCKER_DRIVER_GPU_SANDBOX_READY_TIMEOUT_SECS = 600/);
+    assert.doesNotMatch(source, /OPENSHELL_PROVISION_TIMEOUT = String\(sandboxReadyTimeoutSecs\)/);
   });
 
   it("classifies gateway reuse states conservatively", () => {
@@ -5421,6 +5465,35 @@ ${webSearchVerifySource}`;
       /const gpuPassthrough = sandboxGpuConfig\.sandboxGpuEnabled;/,
     );
     assert.match(source, /Use --no-gpu to opt out/);
+  });
+
+  it("uses the NemoClaw Docker GPU patch without passing --gpu to sandbox create", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const patchSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "docker-gpu-patch.ts"),
+      "utf-8",
+    );
+
+    const createSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /useDockerGpuPatch = dockerGpuSandboxCreate\.shouldUseDockerGpuPatchForCreate/);
+    assert.match(source, /suppressGpuFlag: useDockerGpuPatch/);
+    assert.match(source, /maybeApplyDuringCreate/);
+    assert.match(source, /printDockerGpuReadinessFailure/);
+    assert.match(source, /printDockerGpuProofFailure/);
+    assert.match(createSource, /applyDockerGpuPatchOrExit/);
+    assert.match(createSource, /getDockerGpuSupervisorReconnectTimeoutSecs/);
+    assert.match(createSource, /waitForOpenShellSupervisorReconnect/);
+    assert.match(createSource, /recreateOpenShellDockerSandboxWithGpu/);
+    assert.match(patchSource, /recreateOpenShellDockerSandboxWithGpu/);
+    assert.match(patchSource, /collectDockerGpuPatchDiagnostics/);
+    assert.match(patchSource, /has been left in place for inspection/);
   });
 
   it("does not persist sandboxName to onboard-session.json before createSandbox completes (#2753)", () => {
