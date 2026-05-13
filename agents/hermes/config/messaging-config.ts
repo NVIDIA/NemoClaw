@@ -32,6 +32,8 @@ export function buildMessagingEnvLines(
   const discordAllowedUsers = collectDiscordAllowedUsers(allowedIds, discordGuilds);
   if (discordAllowedUsers.length > 0) {
     envLines.push(`DISCORD_ALLOWED_USERS=${discordAllowedUsers.join(",")}`);
+  } else if (enabledChannels.has("discord") && Object.keys(discordGuilds).length > 0) {
+    envLines.push("DISCORD_ALLOW_ALL_USERS=true");
   }
   if (allowedIds.telegram?.length) {
     envLines.push(`TELEGRAM_ALLOWED_USERS=${allowedIds.telegram.map(String).join(",")}`);
