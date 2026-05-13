@@ -322,6 +322,11 @@ import {
 } from "./messaging-channel-config";
 import type { ContainerRuntime } from "./platform";
 import type { Session, SessionUpdates } from "./state/onboard-session";
+import {
+  getAvailableMessagingChannelsForAgent,
+  resolveQrSelectedChannels,
+} from "./onboard/messaging-state";
+import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
 import type {
   ModelCatalogFetchResult,
   ModelValidationResult,
@@ -330,7 +335,6 @@ import type {
 } from "./onboard/types";
 import {
   channelHasStaticToken,
-  channelUsesQrPairing,
   getChannelTokenKeys,
   listChannels,
 } from "./sandbox/channels";
@@ -6567,13 +6571,11 @@ async function createSandbox(
   const tokensByEnvKey = Object.fromEntries(
     messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
   );
-  const qrSelectedChannels = Array.isArray(enabledChannels)
-    ? enabledChannels.filter((name) => {
-        if (disabledChannelNames.has(name)) return false;
-        const ch = MESSAGING_CHANNELS.find((c) => c.name === name);
-        return !!ch && channelUsesQrPairing(ch);
-      })
-    : [];
+  const qrSelectedChannels = resolveQrSelectedChannels(
+    MESSAGING_CHANNELS,
+    enabledChannels,
+    disabledChannelNames,
+  );
   const activeMessagingChannels = [
     ...new Set([
       ...messagingTokenDefs
@@ -6635,13 +6637,9 @@ async function createSandbox(
   // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
   const messagingAllowedIds: Record<string, string[]> = {};
   const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
+  const activeChannelNames = new Set(activeMessagingChannels);
   for (const ch of MESSAGING_CHANNELS) {
-    if (
-      ch.envKey &&
-      enabledTokenEnvKeys.has(ch.envKey) &&
-      ch.userIdEnvKey &&
-      process.env[ch.userIdEnvKey]
-    ) {
+    if (activeChannelNames.has(ch.name) && ch.userIdEnvKey && process.env[ch.userIdEnvKey]) {
       const ids = String(process.env[ch.userIdEnvKey])
         .split(",")
         .map((s) => s.trim())
@@ -9043,27 +9041,23 @@ async function checkTelegramReachability(token: string) {
 
 async function setupMessagingChannels(
   agent: AgentDefinition | null = null,
+  existingChannels: string[] | null = null,
 ): Promise<string[]> {
   step(5, 8, "Messaging channels");
 
-  const supportedPlatforms = agent?.messagingPlatforms;
-  // When the agent declares a supported messaging-platform list, hide every
-  // other channel from the picker. Agents that omit the field (or expose an
-  // empty list) keep the historical behaviour of showing all known channels.
-  const availableChannels =
-    supportedPlatforms && supportedPlatforms.length > 0
-      ? MESSAGING_CHANNELS.filter((c) => supportedPlatforms.includes(c.name))
-      : MESSAGING_CHANNELS;
-
+  const availableChannels = getAvailableMessagingChannelsForAgent(MESSAGING_CHANNELS, agent);
   const getMessagingToken = (envKey: string | undefined): string | null =>
     envKey ? getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null : null;
-
   const getMessagingConfigValue = (envKey: string): string | null =>
     normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);
+  const seedFromState = (): string[] => [
+    ...availableChannels.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name),
+    ...(existingChannels ?? []).filter((n) => availableChannels.some((c) => c.name === n)),
+  ];
 
   // Non-interactive: skip prompt, tokens come from env/credentials
   if (isNonInteractive() || process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
-    const found = availableChannels.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name);
+    const found = Array.from(new Set(seedFromState()));
     if (found.length > 0) {
       note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
       if (found.includes("telegram")) {
@@ -9078,11 +9072,10 @@ async function setupMessagingChannels(
     return found;
   }
 
-  // Single-keypress toggle selector — pre-select channels that already have tokens.
-  // Press a channel number to toggle; press Enter to continue.
-  const enabled = new Set(
-    availableChannels.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name),
-  );
+  // Single-keypress toggle selector — pre-select channels that already have tokens
+  // or were recorded for this sandbox (so a rebuild does not silently drop QR-only
+  // channels that have no host token).
+  const enabled = new Set(seedFromState());
 
   const output = process.stderr;
   // Lines above the prompt: 1 blank + 1 header + N channels + 1 blank = N + 3
@@ -9330,46 +9323,6 @@ async function setupMessagingChannels(
   return Array.from(enabled);
 }
 
-function getSuggestedPolicyPresets({
-  enabledChannels = null,
-  webSearchConfig = null,
-  provider = null,
-}: {
-  enabledChannels?: string[] | null;
-  webSearchConfig?: WebSearchConfig | null;
-  provider?: string | null;
-} = {}): string[] {
-  const suggestions = ["pypi", "npm"];
-
-  // Auto-suggest local-inference preset when a local provider is selected
-  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
-    suggestions.push("local-inference");
-  }
-  const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
-
-  const maybeSuggestMessagingPreset = (channel: string, envKey: string | null): void => {
-    if (usesExplicitMessagingSelection) {
-      if (enabledChannels.includes(channel)) suggestions.push(channel);
-      return;
-    }
-    if (envKey === null) return;
-    if (getCredential(envKey) || process.env[envKey]) {
-      suggestions.push(channel);
-      if (process.stdout.isTTY && !isNonInteractive() && process.env.CI !== "true") {
-        console.log(`  Auto-detected: ${envKey} -> suggesting ${channel} preset`);
-      }
-    }
-  };
-
-  maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
-  maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
-  maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
-  maybeSuggestMessagingPreset("whatsapp", null);
-
-  if (webSearchConfig) suggestions.push("brave");
-
-  return suggestions;
-}
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
 
@@ -11751,7 +11704,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           );
         }
       } else {
-        selectedMessagingChannels = await setupMessagingChannels(agent);
+        const existing = sandboxName
+          ? registry.getSandbox(sandboxName)?.messagingChannels ?? null
+          : null;
+        selectedMessagingChannels = await setupMessagingChannels(agent, existing);
       }
       const messagingChannelConfig = readMessagingChannelConfigFromEnv();
       onboardSession.updateSession((current: Session) => {

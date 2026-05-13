@@ -4889,7 +4889,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /if \(recordedMessagingChannels\) \{[\s\S]*?selectedMessagingChannels = recordedMessagingChannels;[\s\S]*?\} else \{\s*selectedMessagingChannels = await setupMessagingChannels\(agent\);\s*\}/,
+      /if \(recordedMessagingChannels\) \{[\s\S]*?selectedMessagingChannels = recordedMessagingChannels;[\s\S]*?\} else \{[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(agent, /,
     );
   });
 
