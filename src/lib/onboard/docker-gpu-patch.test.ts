@@ -12,6 +12,7 @@ import {
   buildDockerGpuMode,
   buildDockerGpuModeCandidates,
   dockerReportsNvidiaCdiDevices,
+  formatDockerInspectNetworkSummary,
   recreateOpenShellDockerSandboxWithGpu,
   selectDockerGpuPatchMode,
   shouldApplyDockerGpuPatch,
@@ -46,6 +47,15 @@ function inspectFixture(): DockerContainerInspect {
       ExtraHosts: ["host.openshell.internal:172.17.0.1"],
       Memory: 8 * 1024 * 1024 * 1024,
       NanoCpus: 2_500_000_000,
+    },
+    NetworkSettings: {
+      Networks: {
+        "openshell-docker": {
+          IPAddress: "172.18.0.2",
+          Gateway: "172.18.0.1",
+          Aliases: ["openshell-alpha"],
+        },
+      },
     },
   };
 }
@@ -117,6 +127,21 @@ describe("docker-gpu-patch", () => {
       ]),
     );
     expect(args).not.toEqual(expect.arrayContaining(["--env", "NVIDIA_VISIBLE_DEVICES=void"]));
+  });
+
+  it("formats sanitized network diagnostics without dumping provider secrets", () => {
+    const inspect = inspectFixture();
+    inspect.Config?.Env?.push("NVIDIA_API_KEY=secret", "OPENSHELL_ENDPOINT=http://host:8080");
+
+    const summary = formatDockerInspectNetworkSummary("old-container-id", inspect);
+
+    expect(summary).toContain("target=old-container-id");
+    expect(summary).toContain("network_mode=openshell-docker");
+    expect(summary).toContain("host.openshell.internal:172.17.0.1");
+    expect(summary).toContain("env.OPENSHELL_ENDPOINT=http://host:8080");
+    expect(summary).toContain("openshell-docker: ip=172.18.0.2 gateway=172.18.0.1");
+    expect(summary).not.toContain("NVIDIA_API_KEY");
+    expect(summary).not.toContain("secret");
   });
 
   it("maps default and explicit GPU devices to Docker --gpus values", () => {

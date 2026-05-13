@@ -115,6 +115,31 @@ describe("docker-driver-gateway-launch", () => {
         ]),
       );
       expect(launch.env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBe(sandboxBin);
+      expect(launch.env.OPENSHELL_BIND_ADDRESS).toBe("0.0.0.0");
+    });
+  });
+
+  it("allows the compatibility gateway bind address to be forced back to loopback", () => {
+    withTempBinaries(({ dir, gatewayBin, sandboxBin }) => {
+      const stateDir = path.join(dir, "state");
+      fs.mkdirSync(stateDir);
+      const launch = buildDockerDriverGatewayLaunch({
+        gatewayBin,
+        sandboxBin,
+        stateDir,
+        platform: "linux",
+        env: {
+          NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH: "1",
+          NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_BIND_ADDRESS: "127.0.0.1",
+        },
+        gatewayEnv: {
+          OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+          OPENSHELL_DRIVERS: "docker",
+        },
+      });
+
+      expect(launch.mode).toBe("container");
+      expect(launch.env.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
     });
   });
 

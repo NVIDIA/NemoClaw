@@ -4652,6 +4652,11 @@ async function startDockerDriverGateway({
   if (launch.mode === "container") {
     console.log(`  OpenShell gateway compatibility patch active (${launch.reason}).`);
     console.log("  Running openshell-gateway inside a Docker compatibility container.");
+    if (launch.env.OPENSHELL_BIND_ADDRESS === "0.0.0.0") {
+      console.log(
+        "  Compatibility gateway bind: 0.0.0.0 (required for Docker sandbox callbacks).",
+      );
+    }
     dockerDriverGatewayLaunch.prepareDockerDriverGatewayLaunch(launch);
   }
   const child = spawn(launch.command, launch.args, {
@@ -6159,7 +6164,16 @@ async function createSandbox(
       dockerGpuPatch.printDockerGpuPatchFailureAndExit(
         sandboxName,
         new Error("OpenShell supervisor did not reconnect to the GPU-enabled container."),
-        { runCaptureOpenshell },
+        {
+          runCaptureOpenshell,
+          context: {
+            sandboxName,
+            oldContainerId: dockerGpuPatchResult?.oldContainerId,
+            newContainerId: dockerGpuPatchResult?.newContainerId,
+            backupContainerName: dockerGpuPatchResult?.backupContainerName,
+            selectedMode: dockerGpuPatchResult?.mode ?? null,
+          },
+        },
       );
     }
   }

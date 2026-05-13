@@ -10,6 +10,8 @@ import { dockerForceRm } from "../adapters/docker";
 const DEFAULT_COMPAT_IMAGE = "ubuntu:24.04";
 const DEFAULT_COMPAT_CONTAINER_NAME = "nemoclaw-openshell-gateway";
 const GATEWAY_MOUNT_PATH = "/opt/nemoclaw/openshell-gateway";
+const DEFAULT_COMPAT_BIND_ADDRESS = "0.0.0.0";
+const LOOPBACK_BIND_ADDRESS = "127.0.0.1";
 
 export type DockerDriverGatewayLaunch = {
   command: string;
@@ -152,6 +154,15 @@ function safeDockerHost(value: string | undefined): string | undefined {
   return undefined;
 }
 
+function compatGatewayBindAddress(env: NodeJS.ProcessEnv): string {
+  const raw = String(env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_BIND_ADDRESS || "").trim();
+  if (!raw) return DEFAULT_COMPAT_BIND_ADDRESS;
+  if (raw === DEFAULT_COMPAT_BIND_ADDRESS || raw === LOOPBACK_BIND_ADDRESS) return raw;
+  throw new Error(
+    "Invalid NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_BIND_ADDRESS; expected 0.0.0.0 or 127.0.0.1.",
+  );
+}
+
 export function buildDockerDriverGatewayLaunch(
   options: BuildGatewayLaunchOptions,
 ): DockerDriverGatewayLaunch {
@@ -159,9 +170,10 @@ export function buildDockerDriverGatewayLaunch(
   if (options.sandboxBin && !gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN) {
     gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN = options.sandboxBin;
   }
-  const env = { ...(options.env ?? process.env), ...gatewayEnv };
+  const baseEnv = options.env ?? process.env;
   const compat = shouldUseContainerizedGateway(options);
   if (!compat.useContainer) {
+    const env = { ...baseEnv, ...gatewayEnv };
     return {
       command: options.gatewayBin,
       args: [],
@@ -171,6 +183,8 @@ export function buildDockerDriverGatewayLaunch(
     };
   }
 
+  gatewayEnv.OPENSHELL_BIND_ADDRESS = compatGatewayBindAddress(baseEnv);
+  const env = { ...baseEnv, ...gatewayEnv };
   const sandboxBin = options.sandboxBin || gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN;
   if (!sandboxBin) {
     throw new Error(

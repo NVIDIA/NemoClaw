@@ -140,6 +140,16 @@ export type DockerContainerInspect = {
     DnsSearch?: string[] | null;
     ShmSize?: number;
   } | null;
+  NetworkSettings?: {
+    Networks?: Record<
+      string,
+      {
+        IPAddress?: string;
+        Gateway?: string;
+        Aliases?: string[] | null;
+      }
+    > | null;
+  } | null;
 };
 
 function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
@@ -723,11 +733,14 @@ export function applyDockerGpuPatchOrExit(
 export function printDockerGpuPatchFailureAndExit(
   sandboxName: string,
   error: unknown,
-  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell">,
+  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell"> & {
+    context?: DockerGpuPatchFailureContext | null;
+    selectedMode?: DockerGpuPatchMode | null;
+  },
 ): never {
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
-    { error },
+    { error, context: deps.context, selectedMode: deps.selectedMode },
     {
       runCaptureOpenshell: deps.runCaptureOpenshell,
     },
@@ -790,6 +803,60 @@ function writeTextFile(dir: string, name: string, content: string): void {
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+const DIAGNOSTIC_ENV_KEYS = new Set([
+  "OPENSHELL_ENDPOINT",
+  "OPENSHELL_SANDBOX_ID",
+  "OPENSHELL_SANDBOX",
+  "OPENSHELL_LOG_LEVEL",
+  "OPENSHELL_TLS_CA",
+  "OPENSHELL_TLS_CERT",
+  "OPENSHELL_TLS_KEY",
+]);
+
+function diagnosticEnvLines(env: string[] | null | undefined): string[] {
+  return stringArray(env)
+    .filter((entry) => DIAGNOSTIC_ENV_KEYS.has(envKey(entry)))
+    .sort()
+    .map((entry) => `  env.${envKey(entry)}=${entry.slice(envKey(entry).length + 1)}`);
+}
+
+export function formatDockerInspectNetworkSummary(
+  target: string,
+  inspect: DockerContainerInspect,
+): string {
+  const lines = [
+    `target=${target}`,
+    `id=${inspect.Id ?? "unknown"}`,
+    `name=${String(inspect.Name || "").replace(/^\/+/, "") || "unknown"}`,
+    `image=${inspect.Config?.Image ?? "unknown"}`,
+    `network_mode=${inspect.HostConfig?.NetworkMode ?? "unknown"}`,
+  ];
+  const extraHosts = stringArray(inspect.HostConfig?.ExtraHosts);
+  if (extraHosts.length > 0) {
+    lines.push("extra_hosts:");
+    for (const entry of extraHosts) lines.push(`  ${entry}`);
+  }
+  const envLines = diagnosticEnvLines(inspect.Config?.Env);
+  if (envLines.length > 0) {
+    lines.push("openshell_env:");
+    lines.push(...envLines);
+  }
+  const networks = inspect.NetworkSettings?.Networks || {};
+  const names = Object.keys(networks).sort();
+  if (names.length > 0) {
+    lines.push("networks:");
+    for (const name of names) {
+      const network = networks[name] || {};
+      lines.push(
+        `  ${name}: ip=${network.IPAddress || "unknown"} gateway=${network.Gateway || "unknown"}`,
+      );
+      const aliases = stringArray(network.Aliases);
+      if (aliases.length > 0) lines.push(`    aliases=${aliases.join(",")}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 export function collectDockerGpuPatchDiagnostics(
@@ -878,7 +945,21 @@ export function collectDockerGpuPatchDiagnostics(
         ignoreError: true,
         timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
       });
-      if (inspect.trim()) writeTextFile(dir, "docker-inspect.json", inspect);
+      if (inspect.trim()) {
+        writeTextFile(dir, "docker-inspect.json", inspect);
+        try {
+          const parsed = JSON.parse(inspect);
+          const entries = Array.isArray(parsed) ? parsed : [parsed];
+          const summaries = entries
+            .map((entry, index) =>
+              formatDockerInspectNetworkSummary(containerTargets[index] || `container-${index}`, entry),
+            )
+            .join("\n\n");
+          if (summaries.trim()) writeTextFile(dir, "docker-network-summary.txt", summaries);
+        } catch {
+          /* best effort */
+        }
+      }
     } catch {
       /* best effort */
     }
