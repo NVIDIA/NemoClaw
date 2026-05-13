@@ -84,12 +84,6 @@ export interface Session {
   webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
-  // Disabled channels carried across a destructive rebuild. registry-based
-  // `getDisabledChannels` is wiped by onboard's drift-recreate paths
-  // (onboard.ts:10640+), so the session is the only durable carrier.
-  // Read by createSandbox at build time; cleared after the new registry
-  // entry is written so future onboards do not inherit stale state.
-  disabledChannels: string[] | null;
   messagingChannelConfig: MessagingChannelConfig | null;
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
@@ -158,7 +152,6 @@ export interface SessionUpdates {
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
   messagingChannels?: string[];
-  disabledChannels?: string[] | null;
   messagingChannelConfig?: MessagingChannelConfig | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
@@ -361,7 +354,6 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
-    disabledChannels: readStringArray(overrides.disabledChannels),
     messagingChannelConfig: sanitizeMessagingChannelConfig(overrides.messagingChannelConfig),
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
@@ -402,7 +394,6 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
-    disabledChannels: readStringArray(data.disabledChannels),
     messagingChannelConfig: sanitizeMessagingChannelConfig(data.messagingChannelConfig),
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
@@ -818,11 +809,6 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   }
   if (Array.isArray(updates.messagingChannels)) {
     safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
-  }
-  if (updates.disabledChannels === null) {
-    safe.disabledChannels = null;
-  } else if (Array.isArray(updates.disabledChannels)) {
-    safe.disabledChannels = updates.disabledChannels.filter((value) => typeof value === "string");
   }
   if (updates.messagingChannelConfig === null) {
     safe.messagingChannelConfig = null;

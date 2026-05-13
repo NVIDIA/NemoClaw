@@ -594,32 +594,6 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
   // the rebuild used to drop the queued token.
   await applyChannelAddToGatewayAndRegistry(sandboxName, channelArg, acquired);
   console.log(`  ${G}✓${R} Registered ${channelArg} bridge with the OpenShell gateway.`);
-  // Auto-apply the channel's egress policy preset (e.g. `wechat` opens
-  // *.wechat.com / *.weixin.qq.com) so the bridge can reach its upstream
-  // after the rebuild. `nemoclaw onboard` does this implicitly via
-  // getSuggestedPolicyPresets; channels-add has to do it itself or the
-  // rebuild reuses the prior session.policyPresets (which didn't include
-  // this channel) and the bridge boots with no egress for its API hosts.
-  // The rebuild captures applied presets in the backup manifest and
-  // restores them after recreate, so applying here flows through.
-  // Idempotent: skipped when the preset is already applied or absent.
-  const channelPreset = policies
-    .listPresets()
-    .find((p: { name: string }) => p.name === channelArg);
-  if (channelPreset && !policies.getAppliedPresets(sandboxName).includes(channelArg)) {
-    if (policies.applyPreset(sandboxName, channelArg)) {
-      console.log(
-        `  ${G}✓${R} Applied '${channelArg}' policy preset (egress for ${channelArg} hosts).`,
-      );
-    } else {
-      console.error(
-        `  ⚠ Failed to apply '${channelArg}' policy preset. The bridge may not reach its upstream.`,
-      );
-      console.error(
-        `  Run '${CLI_NAME} ${sandboxName} policy-add ${channelArg}' manually after the rebuild.`,
-      );
-    }
-  }
   await promptAndRebuild(sandboxName, `add '${channelArg}'`);
 }
 
@@ -656,19 +630,6 @@ export async function removeSandboxChannel(sandboxName: string, args: string[] =
     getChannelTokenKeys(channel),
   );
   console.log(`  ${G}✓${R} Removed ${channelArg} bridge from the OpenShell gateway.`);
-  // channels-add auto-applies the channel's policy preset for egress; on
-  // removal we leave the preset in place — operators may want to keep
-  // *.wechat.com (or equivalent) open for other reasons — and just hint
-  // at the manual `policy-remove` so it's discoverable.
-  const channelPreset = policies
-    .listPresets()
-    .find((p: { name: string }) => p.name === channelArg);
-  if (channelPreset && policies.getAppliedPresets(sandboxName).includes(channelArg)) {
-    console.log(
-      `  Hint: '${channelArg}' policy preset is still applied. Run ` +
-        `'${CLI_NAME} ${sandboxName} policy-remove ${channelArg}' to also close egress.`,
-    );
-  }
   await promptAndRebuild(sandboxName, `remove '${channelArg}'`);
 }
 

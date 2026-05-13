@@ -1157,6 +1157,7 @@ network_policies:
         {},
         null,
         {},
+        {},
         true,
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");

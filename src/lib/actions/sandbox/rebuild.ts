@@ -483,18 +483,6 @@ export async function rebuildSandbox(
     bail("Failed to delete sandbox.", deleteResult.status || 1);
     return;
   }
-  // Snapshot disabledChannels off the registry entry before we delete it so
-  // we can carry it across the rebuild via the session. Routing through
-  // the session (not the registry) survives onboard.ts:10640+'s
-  // drift-recreate calls to registry.removeSandbox(), which fire between
-  // our delete here and createSandbox's read at onboard.ts:5082 \u2014 a
-  // registry stub written here would be wiped before createSandbox runs.
-  // Without this carry, `channels stop <ch>` followed by rebuild silently
-  // re-enables <ch> in the new image: the disable filter at 5082 finds
-  // an empty list and the bridge gets baked back in.
-  const preservedDisabledChannels = Array.isArray(sb.disabledChannels)
-    ? sb.disabledChannels.filter((value: unknown): value is string => typeof value === "string")
-    : [];
   removeSandboxRegistryEntry(sandboxName);
   log(
     `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
@@ -539,10 +527,6 @@ export async function rebuildSandbox(
     s.status = "in_progress";
     s.agent = rebuildAgent;
     s.messagingChannels = rebuildMessagingChannels;
-    // Carry disabledChannels through the rebuild via the session — see the
-    // preservedDisabledChannels snapshot above for why the registry alone
-    // is not durable across onboard's drift-recreate path.
-    s.disabledChannels = preservedDisabledChannels;
     s.messagingChannelConfig = rebuildMessagingChannelConfig;
     // Persist inference selection from the about-to-be-removed registry entry
     // so onboard --resume can recreate with the same provider/model in

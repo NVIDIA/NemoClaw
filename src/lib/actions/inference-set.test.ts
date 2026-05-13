@@ -78,7 +78,6 @@ function baseSession(overrides: Partial<Session> = {}): Session {
     webSearchConfig: null,
     policyPresets: null,
     messagingChannels: null,
-    disabledChannels: null,
     messagingChannelConfig: null,
     migratedLegacyValueHashes: null,
     gpuPassthrough: false,
