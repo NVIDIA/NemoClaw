@@ -35,8 +35,8 @@
  *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp)
  *   BREV_MIN_DISK          — Minimum disk size in GB (default: 50)
  *   BREV_GPU_TYPE          — Optional GPU instance type for TEST_SUITE=gpu
- *   BREV_GPU_NAME          — GPU name filter when BREV_GPU_TYPE is unset (default: A100)
- *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 40)
+ *   BREV_GPU_NAME          — GPU name filter when BREV_GPU_TYPE is unset (default: T4)
+ *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 16)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
  *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
  *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
@@ -58,8 +58,8 @@ const BREV_MIN_RAM = parseInt(process.env.BREV_MIN_RAM || "16", 10);
 const BREV_PROVIDER = process.env.BREV_PROVIDER || "gcp";
 const BREV_MIN_DISK = parseInt(process.env.BREV_MIN_DISK || "50", 10);
 const BREV_GPU_TYPE = process.env.BREV_GPU_TYPE || "";
-const BREV_GPU_NAME = process.env.BREV_GPU_NAME || "A100";
-const BREV_GPU_MIN_VRAM = process.env.BREV_GPU_MIN_VRAM || "40";
+const BREV_GPU_NAME = process.env.BREV_GPU_NAME || "T4";
+const BREV_GPU_MIN_VRAM = process.env.BREV_GPU_MIN_VRAM || "16";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
