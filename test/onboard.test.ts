@@ -856,15 +856,10 @@ network_policies:
         "slack",
         "discord",
       ]);
-      expect(
-        getSuggestedPolicyPresets({
-          enabledChannels: ["whatsapp"],
-          experimentalEnabled: true,
-        }),
-      ).toEqual(["pypi", "npm", "whatsapp"]);
       expect(getSuggestedPolicyPresets({ enabledChannels: ["whatsapp"] })).toEqual([
         "pypi",
         "npm",
+        "whatsapp",
       ]);
     } finally {
       if (originalTelegramBotToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;

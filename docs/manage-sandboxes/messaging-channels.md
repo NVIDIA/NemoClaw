@@ -26,7 +26,6 @@ status: published
 
 Telegram, Discord, Slack, and WhatsApp reach your agent through OpenShell-managed processes and gateway constructs.
 For token-based channels, NemoClaw registers credentials with OpenShell providers; WhatsApp pairs inside the sandbox via QR scan and stores session state there.
-WhatsApp is experimental and is only surfaced to the onboard wizard and `channels add` when `NEMOCLAW_EXPERIMENTAL=1` is set; without the flag the picker and `channels list` hide it.
 NemoClaw bakes the selected channel configuration into the sandbox image and keeps runtime delivery under OpenShell control.
 
 You can enable channels during `nemoclaw onboard` or add them later with host-side `nemoclaw <sandbox> channels` commands.

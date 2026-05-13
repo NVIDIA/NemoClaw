@@ -22,11 +22,9 @@ import {
   clearChannelTokens,
   getChannelDef,
   getChannelTokenKeys,
-  isChannelExperimental,
   knownChannelNames,
   persistChannelTokens,
 } from "../../sandbox/channels";
-import { isExperimentalChannelGateEnabled } from "../../onboard/messaging-state";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -247,11 +245,9 @@ export function listSandboxPolicies(sandboxName: string) {
 // ── Messaging channels ───────────────────────────────────────────
 
 export function listSandboxChannels(sandboxName: string) {
-  const experimental = isExperimentalChannelGateEnabled();
   console.log("");
   console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
   for (const [name, channel] of Object.entries(KNOWN_CHANNELS)) {
-    if (isChannelExperimental(channel) && !experimental) continue;
     console.log(`    ${name} — ${channel.description}`);
   }
   console.log("");
@@ -420,13 +416,6 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
     process.exit(1);
   }
   const canonical = channelArg.trim().toLowerCase();
-
-  if (isChannelExperimental(channel) && !isExperimentalChannelGateEnabled()) {
-    console.error(
-      `  Channel '${canonical}' is experimental. Set NEMOCLAW_EXPERIMENTAL=1 to enable it.`,
-    );
-    process.exit(1);
-  }
 
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);

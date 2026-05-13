@@ -2,26 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
-import { channelUsesQrPairing, isChannelExperimental, type ChannelDef } from "../sandbox/channels";
+import { channelUsesQrPairing, type ChannelDef } from "../sandbox/channels";
 
 export type MessagingChannel = { name: string } & ChannelDef;
 
-export function isExperimentalChannelGateEnabled(): boolean {
-  return process.env.NEMOCLAW_EXPERIMENTAL === "1";
-}
-
-export function getAvailableMessagingChannelsForAgent<T extends { name: string } & ChannelDef>(
+export function getAvailableMessagingChannelsForAgent<T extends { name: string }>(
   channels: T[],
   agent: AgentDefinition | null = null,
-  experimentalEnabled: boolean = isExperimentalChannelGateEnabled(),
 ): T[] {
   const supportedPlatforms = agent?.messagingPlatforms;
-  const platformFiltered =
-    supportedPlatforms && supportedPlatforms.length > 0
-      ? channels.filter((c) => supportedPlatforms.includes(c.name))
-      : channels;
-  if (experimentalEnabled) return platformFiltered;
-  return platformFiltered.filter((c) => !isChannelExperimental(c));
+  if (supportedPlatforms && supportedPlatforms.length > 0) {
+    return channels.filter((c) => supportedPlatforms.includes(c.name));
+  }
+  return channels;
 }
 
 export function resolveQrSelectedChannels(
