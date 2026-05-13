@@ -34,6 +34,7 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
+const LEGACY_CLUSTER_DRIVERS = new Set([null, undefined, "", "kubernetes"]);
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -155,12 +156,44 @@ function isSandboxInferenceRouteHealthy(sandboxName: string): boolean {
   return probe.status === 0 && /^OK\s+[0-9]{3}\b/.test(probe.output.trim());
 }
 
+function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
+  return LEGACY_CLUSTER_DRIVERS.has(sb?.openshellDriver);
+}
+
+function reapplyVmInferenceRoute(sandboxName: string, sb: SandboxEntry | null): boolean {
+  if (!sb?.provider || !sb.model) return false;
+  const result = runOpenshell(
+    ["inference", "set", "--provider", sb.provider, "--model", sb.model],
+    { ignoreError: true },
+  );
+  return result.status === 0 && isSandboxInferenceRouteHealthy(sandboxName);
+}
+
 function repairSandboxInferenceRouteIfNeeded(
   sandboxName: string,
+  sb: SandboxEntry | null,
   { quiet = false }: { quiet?: boolean } = {},
 ): boolean {
   if (process.env.NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR === "1") return false;
   if (isSandboxInferenceRouteHealthy(sandboxName)) return false;
+
+  if (!shouldUseLegacyDnsProxyRepair(sb)) {
+    if (!quiet) {
+      console.log("");
+      console.log(`  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`);
+    }
+    const healthy = reapplyVmInferenceRoute(sandboxName, sb);
+    if (!quiet) {
+      if (healthy) {
+        console.log("  inference.local route repaired.");
+      } else {
+        console.error(
+          `  Warning: inference.local is still unavailable through the OpenShell ${sb?.openshellDriver || "non-legacy"} gateway path.`,
+        );
+      }
+    }
+    return healthy;
+  }
 
   if (!quiet) {
     console.log("");
@@ -219,7 +252,7 @@ function ensureSandboxInferenceRoute(
           );
         }
       }
-      repairSandboxInferenceRouteIfNeeded(sandboxName, { quiet });
+      repairSandboxInferenceRouteIfNeeded(sandboxName, sb, { quiet });
     }
   } catch {
     /* non-fatal — don't block connect on inference route repair */

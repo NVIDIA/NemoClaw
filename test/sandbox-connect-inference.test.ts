@@ -21,6 +21,7 @@ type SandboxEntryFixture = {
   provider?: string | null;
   nimContainer?: string | null;
   gpuEnabled?: boolean;
+  openshellDriver?: string | null;
   policies?: string[];
 };
 
@@ -355,6 +356,42 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("inference.local is unavailable inside 'stale-dns-sandbox'");
       expect(combined).toContain("inference.local route repaired");
+    },
+  );
+
+  it(
+    "does not run legacy DNS proxy repair for VM sandboxes",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "vm-sandbox",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          openshellDriver: "vm",
+          policies: [],
+        },
+        "nvidia-prod",
+        "nvidia/nemotron-3-super-120b-a12b",
+        {
+          inferenceProbeResponses: [
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            'BROKEN 503 {"error":"inference service unavailable"}',
+          ],
+        },
+      );
+
+      const result = runConnect(tmpDir, sandboxName);
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      expect(state.inferenceSetCalls.length).toBe(1);
+      expect(state.dockerCalls.length).toBe(0);
+
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("Reapplying OpenShell inference route");
+      expect(combined).toContain("OpenShell vm gateway path");
     },
   );
 });
