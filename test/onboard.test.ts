@@ -5135,6 +5135,10 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /applyDockerGpuPatchOrExit/);
     assert.match(source, /printDockerGpuReadinessFailure/);
     assert.match(source, /printDockerGpuProofFailure/);
+    assert.match(
+      source,
+      /readyCheck:\s*\(\)\s*=>\s*\{[\s\S]*?if \(isSandboxReady\(list, sandboxName\)\) return true;\s*maybeApplyDockerGpuPatchDuringCreate\(\);\s*return false;\s*\}/,
+    );
     assert.match(patchSource, /recreateOpenShellDockerSandboxWithGpu/);
     assert.match(patchSource, /collectDockerGpuPatchDiagnostics/);
     assert.match(patchSource, /has been left in place for inspection/);

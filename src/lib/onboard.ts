@@ -6087,7 +6087,7 @@ async function createSandbox(
       const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
       if (isSandboxReady(list, sandboxName)) return true;
       maybeApplyDockerGpuPatchDuringCreate();
-      return Boolean(dockerGpuPatchResult);
+      return false;
     },
     failureCheck: () => {
       if (!dockerGpuPatchError) return null;
