@@ -21,7 +21,7 @@ on:
       jobs:
         description: >-
           Comma-separated regression job names to run (empty = all).
-          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e
+          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e
         required: false
         type: string
         default: ""
@@ -47,6 +47,7 @@ jobs:
       dashboard: ${{ steps.select.outputs.dashboard }}
       gateway: ${{ steps.select.outputs.gateway }}
       gateway_drift_preflight: ${{ steps.select.outputs.gateway_drift_preflight }}
+      openshell_version_pin: ${{ steps.select.outputs.openshell_version_pin }}
     steps:
       - id: select
         env:
@@ -78,6 +79,12 @@ jobs:
             echo "gateway_drift_preflight=true" >> "$GITHUB_OUTPUT"
           else
             echo "gateway_drift_preflight=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -z "$normalized" ] || includes_job "openshell-version-pin-e2e"; then
+            echo "openshell_version_pin=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "openshell_version_pin=false" >> "$GITHUB_OUTPUT"
           fi
 
   dashboard-remote-bind-e2e:
@@ -145,6 +152,35 @@ jobs:
             /tmp/nemoclaw-e2e-gateway-health-honest-process.log
           if-no-files-found: ignore
 
+
+  # ── OpenShell version-pin E2E ──────────────────────────────
+  # Coverage guard for #3474. If a host has sticky OpenShell 0.0.40 on PATH
+  # but this NemoClaw release supports only <=0.0.39, install-openshell.sh
+  # must replace it with the pinned compatible release instead of hard-failing.
+  openshell-version-pin-e2e:
+    needs: select_regression_jobs
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      needs.select_regression_jobs.outputs.openshell_version_pin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run OpenShell version-pin E2E test
+        run: bash test/e2e/test-openshell-version-pin.sh
+
+      - name: Upload OpenShell version-pin logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openshell-version-pin-logs
+          path: |
+            /tmp/nemoclaw-e2e-openshell-version-pin.log
+            /tmp/nemoclaw-e2e-openshell-version-pin-install.log
+            /tmp/nemoclaw-e2e-openshell-version-pin-downloads.log
+          if-no-files-found: ignore
 
   # ── Gateway drift preflight E2E ─────────────────────────────
   # Coverage guard for #3399 / #3423. A stale OpenShell gateway image can

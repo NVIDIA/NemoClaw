@@ -160,7 +160,7 @@ const {
   getOllamaProxyToken,
   isProxyHealthy,
   killStaleProxy,
-  persistProxyToken,
+  persistAndProbeOllamaProxy,
   startOllamaAuthProxy,
 } = require("./inference/ollama/proxy");
 const {
@@ -7960,7 +7960,7 @@ async function setupInference(
       ollamaCredential = proxyToken;
       // Persist token now that ollama-local is confirmed as the provider.
       // Not persisted earlier in case the user backs out to a different provider.
-      persistProxyToken(proxyToken);
+      await persistAndProbeOllamaProxy(proxyToken);
     }
     // Use a dedicated internal credential env (NEMOCLAW_OLLAMA_PROXY_TOKEN)
     // so the gateway never reads the user's host OPENAI_API_KEY for local

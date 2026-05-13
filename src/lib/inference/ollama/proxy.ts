@@ -26,6 +26,10 @@ const {
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
 const { promptManualModelId } = require("../model-prompts");
+const {
+  formatOllamaProxyUnreachableMessage,
+  probeOllamaProxySandboxReachability,
+} = require("../../onboard/ollama-proxy-reachability");
 
 // ── State ────────────────────────────────────────────────────────
 
@@ -54,6 +58,20 @@ function persistProxyToken(token: string): void {
   fs.writeFileSync(PROXY_TOKEN_PATH, token, { mode: 0o600 });
   // mode only applies on creation; ensure permissions on existing files too
   fs.chmodSync(PROXY_TOKEN_PATH, 0o600);
+}
+
+// Persist the proxy token then probe sandbox → proxy reachability. Runs
+// before `inference set` so isInferenceRouteReady() stays false on failure
+// and a retry (including --resume) re-enters setupInference and re-probes.
+// A tcp_failed result prints the UFW remediation and exits 1; probe_unavailable
+// (Docker Desktop, DNS, missing network) is non-fatal.
+async function persistAndProbeOllamaProxy(token: string): Promise<void> {
+  persistProxyToken(token);
+  const reach = await probeOllamaProxySandboxReachability();
+  if (!reach.ok && reach.reason === "tcp_failed") {
+    console.error(formatOllamaProxyUnreachableMessage(reach));
+    process.exit(1);
+  }
 }
 
 function loadPersistedProxyToken(): string | null {
@@ -697,6 +715,7 @@ export {
   getOllamaPullTimeoutMs,
   isProxyHealthy,
   killStaleProxy,
+  persistAndProbeOllamaProxy,
   persistProxyToken,
   startOllamaAuthProxy,
   promptOllamaModel,
