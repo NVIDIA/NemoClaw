@@ -206,6 +206,23 @@ Or set the port directly:
 $ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 ```
 
+For an OpenShell gateway port conflict, set `NEMOCLAW_GATEWAY_PORT` to a free
+non-privileged port that does not overlap NemoClaw's dashboard, vLLM, Ollama,
+or Ollama proxy ports:
+
+```console
+$ NEMOCLAW_GATEWAY_PORT=8990 nemoclaw onboard
+```
+
+Remote/headless hosts can bind the OpenShell gateway to all IPv4 interfaces:
+
+```console
+$ NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 nemoclaw onboard
+```
+
+Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the
+network should be able to reach the gateway.
+
 See [Environment Variables](commands.md#environment-variables) for the full list of port overrides.
 
 ### Running multiple sandboxes simultaneously
