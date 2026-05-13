@@ -18,6 +18,10 @@ export interface StreamSandboxCreateOptions {
   heartbeatIntervalMs?: number;
   silentPhaseMs?: number;
   logLine?: (line: string) => void;
+  // Optional guard for the early-ready escape hatch. When set, readyCheck()
+  // alone cannot detach the create stream until at least one streamed output
+  // line matches a configured pattern.
+  readyCheckOutputPatterns?: readonly RegExp[];
   // Initial progress phase:
   //   build  — docker-building the sandbox image
   //   upload — pushing the built image into the gateway registry
@@ -110,6 +114,9 @@ export function streamSandboxCreate(
   let pending = "";
   let lastPrintedLine = "";
   let sawProgress = false;
+  let readyCheckOutputMatched =
+    !options.readyCheckOutputPatterns || options.readyCheckOutputPatterns.length === 0;
+  let printedReadyCheckOutputWait = false;
   let settled = false;
   let polling = false;
   const pollIntervalMs = options.pollIntervalMs || 2000;
@@ -172,6 +179,9 @@ export function streamSandboxCreate(
     if (!line) return;
     lines.push(line);
     lastOutputAt = Date.now();
+    if (!readyCheckOutputMatched && matchesAny(line, options.readyCheckOutputPatterns ?? [])) {
+      readyCheckOutputMatched = true;
+    }
     if (matchesAny(line, BUILD_PROGRESS_PATTERNS)) {
       setPhase("build");
     } else if (matchesAny(line, PULL_PROGRESS_PATTERNS)) {
@@ -238,6 +248,16 @@ export function streamSandboxCreate(
           }
           if (!ready) return;
           setPhase("ready");
+          if (!readyCheckOutputMatched) {
+            if (!printedReadyCheckOutputWait) {
+              const detail =
+                "Sandbox reported Ready; waiting for startup command output before detaching.";
+              lines.push(detail);
+              printProgressLine(`  ${detail}`);
+              printedReadyCheckOutputWait = true;
+            }
+            return;
+          }
           const detail = "Sandbox reported Ready before create stream exited; continuing.";
           lines.push(detail);
           printProgressLine(`  ${detail}`);
@@ -300,7 +320,7 @@ export function streamSandboxCreate(
       // last poll tick and the stream exit (e.g. SSH 255 after "Created sandbox:").
       if (code && code !== 0 && options.readyCheck) {
         try {
-          if (options.readyCheck()) {
+          if (options.readyCheck() && readyCheckOutputMatched) {
             finish(0, { forcedReady: true });
             return;
           }

@@ -5918,11 +5918,20 @@ async function createSandbox(
     ...envArgs,
     "nemoclaw-start",
   ])} 2>&1`;
+  const selectedOpenShellDrivers = (process.env.OPENSHELL_DRIVERS ??
+    (process.platform === "darwin" ? "vm" : "docker"))
+    .split(",")
+    .map((driver) => driver.trim())
+    .filter(Boolean);
+  const waitForStartupOutputBeforeReadyDetach = selectedOpenShellDrivers.includes("vm");
   const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
     readyCheck: () => {
       const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
       return isSandboxReady(list, sandboxName);
     },
+    readyCheckOutputPatterns: waitForStartupOutputBeforeReadyDetach
+      ? [/Setting up NemoClaw/]
+      : undefined,
   });
 
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
