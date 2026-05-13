@@ -62,6 +62,10 @@ function readTextFileIfPresent(filePath: string): string | null {
   }
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function patchGuestInit(initPath: string): boolean {
   const original = readTextFileIfPresent(initPath);
   if (original === null) return false;
@@ -121,15 +125,26 @@ export function applyOpenShellVmDnsMonkeypatch(
     };
   }
 
-  fs.mkdirSync(path.dirname(resolvConf), { recursive: true });
-  const desired = `nameserver ${GVPROXY_DNS}\n`;
-  const current = readTextFileIfPresent(resolvConf) ?? "";
-  let changed = current !== desired;
-  if (changed) {
-    fs.writeFileSync(resolvConf, desired);
-  }
-  changed =
-    patchGuestInit(path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh")) || changed;
+  let changed = false;
+  try {
+    fs.mkdirSync(path.dirname(resolvConf), { recursive: true });
+    const desired = `nameserver ${GVPROXY_DNS}\n`;
+    const current = readTextFileIfPresent(resolvConf) ?? "";
+    changed = current !== desired;
+    if (changed) {
+      fs.writeFileSync(resolvConf, desired);
+    }
+    changed =
+      patchGuestInit(path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh")) || changed;
 
-  return { attempted: true, changed, ok: true, rootfs };
+    return { attempted: true, changed, ok: true, rootfs };
+  } catch (error) {
+    return {
+      attempted: true,
+      changed,
+      ok: false,
+      reason: `failed to patch VM DNS files: ${errorMessage(error)}`,
+      rootfs,
+    };
+  }
 }
