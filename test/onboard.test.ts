@@ -1353,6 +1353,18 @@ const { setupInference } = require(${onboardPath});
     assert.ok(cleanupPos < createPos, "fresh cleanup should run before createSandbox allocates a port");
   });
 
+  it("tells users that selecting no messaging channels skips the step", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(
+      source,
+      /Press 1-\$\{MESSAGING_CHANNELS\.length\} to toggle, Enter when done \(none selected skips\):/,
+    );
+  });
+
   it("migrates a legacy credentials.json into env so setupInference can register the provider", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
