@@ -226,6 +226,27 @@ describe("sandbox-create-stream", () => {
     });
   });
 
+  it("recovers when required startup output is the final partial line", async () => {
+    const child = new FakeChild();
+    const promise = streamSandboxCreate("echo create", vmEnv, {
+      spawnImpl: () => child,
+      readyCheck: () => true,
+      pollIntervalMs: 60_000,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine: vi.fn(),
+    });
+
+    child.stderr.emit("data", Buffer.from("Created sandbox: demo\nSetting up NemoClaw"));
+    child.emit("close", 255);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      forcedReady: true,
+      output: expect.stringContaining("Setting up NemoClaw"),
+    });
+  });
+
   it("returns non-zero when readyCheck is false at close time", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", process.env, {

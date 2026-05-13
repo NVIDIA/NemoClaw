@@ -232,10 +232,17 @@ export function streamSandboxCreate(
     parts.forEach(flushLine);
   }
 
+  function flushPendingLine() {
+    if (!pending) return;
+    const trailing = pending;
+    pending = "";
+    flushLine(trailing);
+  }
+
   function finish(status: number, overrides: Partial<StreamSandboxCreateResult> = {}) {
     if (settled) return;
     settled = true;
-    if (pending) flushLine(pending);
+    flushPendingLine();
     if (readyTimer) clearInterval(readyTimer);
     clearInterval(heartbeatTimer);
     resolvePromise({
@@ -342,6 +349,7 @@ export function streamSandboxCreate(
     child.on("close", (code) => {
       // One last ready-check: the sandbox may have become Ready between the
       // last poll tick and the stream exit (e.g. SSH 255 after "Created sandbox:").
+      flushPendingLine();
       if (code && code !== 0 && options.readyCheck) {
         try {
           if (options.readyCheck() && readyCheckOutputMatched) {
