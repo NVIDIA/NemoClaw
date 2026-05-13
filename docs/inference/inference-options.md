@@ -59,7 +59,8 @@ NemoClaw uses provider-specific local tokens for those routes, and rebuilds of l
 The onboard wizard presents the following provider options by default.
 The first six are always available.
 Ollama appears when it is installed or running on the host.
-Experimental local vLLM appears when you opt in and NemoClaw detects either a running vLLM server or a supported NVIDIA GPU host profile.
+Experimental local vLLM appears when NemoClaw detects a running vLLM server.
+The managed install/start vLLM entry appears when you opt in and NemoClaw detects a supported NVIDIA GPU host profile.
 
 | Option | Description | Curated models |
 |--------|-------------|----------------|
@@ -103,12 +104,13 @@ $ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-inte
 
 ## Experimental Options
 
-The following local inference options require `NEMOCLAW_EXPERIMENTAL=1` and, when prerequisites are met, appear in the onboarding selection list.
+The following local inference options are experimental.
+Local NIM and managed vLLM install/start require `NEMOCLAW_EXPERIMENTAL=1`; an already-running vLLM server appears directly in the onboarding selection list.
 
 | Option | Condition | Notes |
 |--------|-----------|-------|
 | Local NVIDIA NIM | NIM-capable GPU detected | Pulls and manages a NIM container. |
-| Local vLLM | vLLM running on `localhost:8000`, or a supported DGX Spark, DGX Station, or Linux NVIDIA GPU profile | Auto-detects the loaded model. Can install or start a managed vLLM container for supported profiles. |
+| Local vLLM | vLLM running on `localhost:8000`, or a supported DGX Spark, DGX Station, or Linux NVIDIA GPU profile | Auto-detects the loaded model when vLLM is already running. Can install or start a managed vLLM container for supported profiles after experimental opt-in. |
 
 For setup instructions, refer to [Use a Local Inference Server](use-local-inference.md).
 
@@ -134,4 +136,5 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 ## Next Steps
 
 - [Use a Local Inference Server](use-local-inference.md) for Ollama, vLLM, NIM, and compatible-endpoint setup details.
+- [Tool-Calling Reliability](tool-calling-reliability.md) for deciding when Ollama is enough and when vLLM with a parser is safer.
 - [Switch Inference Models](switch-inference-providers.md) for changing the model at runtime without re-onboarding.

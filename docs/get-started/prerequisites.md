@@ -77,5 +77,5 @@ The table is generated from [`ci/platform-matrix.json`](https://github.com/NVIDI
 :maxdepth: 1
 :hidden:
 
-windows-preparation
+(Windows Only) Windows Prerequisites <windows-preparation.md>
 ```

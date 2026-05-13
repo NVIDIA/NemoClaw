@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   renderSandboxInventoryText: vi.fn(),
   runBackupAllAction: vi.fn(),
   runGarbageCollectImagesAction: vi.fn(),
+  runInferenceGet: vi.fn(),
   runInferenceSet: vi.fn(),
   runOnboardAction: vi.fn(),
   runSetupAction: vi.fn(),
@@ -50,6 +51,14 @@ vi.mock("../actions/inference-set", () => ({
   runInferenceSet: mocks.runInferenceSet,
 }));
 
+vi.mock("../actions/inference-get", () => ({
+  InferenceGetError: class InferenceGetError extends Error {
+    exitCode = 1;
+  },
+  runInferenceGet: mocks.runInferenceGet,
+}));
+
+import InferenceGetCommand from "./inference/get";
 import InferenceSetCommand from "./inference/set";
 import ListCommand from "./list";
 import BackupAllCommand from "./maintenance/backup-all";
@@ -151,5 +160,11 @@ describe("global oclif command adapters", () => {
       sandboxName: "alpha",
       noVerify: true,
     });
+  });
+
+  it("maps inference get flags into the inference action", async () => {
+    await InferenceGetCommand.run(["--json"], rootDir);
+
+    expect(mocks.runInferenceGet).toHaveBeenCalledWith({ json: true });
   });
 });

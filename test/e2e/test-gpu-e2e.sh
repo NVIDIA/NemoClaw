@@ -353,9 +353,13 @@ if [ -f "$TOKEN_FILE" ]; then
   fi
 fi
 
-# 4.5c: Auth proxy is running on proxy port
-if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-  pass "Auth proxy running on :${PROXY_PORT}"
+# 4.5c: Auth proxy is running on proxy port. Since #3338 made /api/tags require
+# a Bearer token, treat any HTTP response (including 401) as proof of life —
+# we only fail when nothing answers at all.
+PROXY_LIVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+  "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || PROXY_LIVE_STATUS="000"
+if [[ "$PROXY_LIVE_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Auth proxy running on :${PROXY_PORT} (HTTP $PROXY_LIVE_STATUS)"
 else
   fail "Auth proxy not running on :${PROXY_PORT} — onboard should have started it"
 fi
@@ -384,12 +388,17 @@ if [ -f "$TOKEN_FILE" ]; then
   fi
 fi
 
-# 4.5f: Container can reach proxy through host.openshell.internal
-if docker run --rm \
+# 4.5f: Container can reach proxy through host.openshell.internal. We only
+# care that the network path works — an authenticated-but-401 response is
+# still proof of reachability (#3338 requires auth on /api/tags).
+CONTAINER_REACH_STATUS=$(docker run --rm \
   --add-host "host.openshell.internal:host-gateway" \
   curlimages/curl:8.10.1 \
-  -sf "http://host.openshell.internal:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-  pass "Container reachable: host.openshell.internal:${PROXY_PORT}"
+  -s -o /dev/null -w "%{http_code}" \
+  --connect-timeout 5 --max-time 10 \
+  "http://host.openshell.internal:${PROXY_PORT}/api/tags" 2>/dev/null) || CONTAINER_REACH_STATUS="000"
+if [[ "$CONTAINER_REACH_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Container reachable: host.openshell.internal:${PROXY_PORT} (HTTP $CONTAINER_REACH_STATUS)"
 else
   fail "Container cannot reach proxy at host.openshell.internal:${PROXY_PORT}"
 fi
@@ -402,9 +411,13 @@ if [ -n "$PROXY_PID_BEFORE" ] && [ -f "$TOKEN_FILE" ]; then
   if echo "$PROXY_CMD" | grep -q "ollama-auth-proxy"; then
     kill "$PROXY_PID_BEFORE" 2>/dev/null || true
     sleep 2
-    # Verify proxy is dead
-    if curl -sf --connect-timeout 2 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-      fail "Proxy still alive after kill"
+    # Verify proxy is dead. After #3338 an alive proxy returns 401 on
+    # /api/tags without auth, so curl -sf would fail either way; we need
+    # the http_code itself: only 000 (no answer at all) means dead.
+    DEAD_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 \
+      "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || DEAD_STATUS="000"
+    if [[ "$DEAD_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+      fail "Proxy still alive after kill (HTTP $DEAD_STATUS)"
     else
       info "Proxy confirmed dead — restarting from persisted token..."
     fi
@@ -416,8 +429,10 @@ if [ -n "$PROXY_PID_BEFORE" ] && [ -f "$TOKEN_FILE" ]; then
       OLLAMA_BACKEND_PORT=11434 \
       node "$(dirname "$0")/../../scripts/ollama-auth-proxy.js" >/dev/null 2>&1 &
     sleep 2
-    if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-      pass "Proxy recovered from persisted token after kill"
+    RECOVERED_LIVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+      "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || RECOVERED_LIVE_STATUS="000"
+    if [[ "$RECOVERED_LIVE_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+      pass "Proxy recovered from persisted token after kill (HTTP $RECOVERED_LIVE_STATUS)"
     else
       fail "Proxy did not restart from persisted token"
     fi

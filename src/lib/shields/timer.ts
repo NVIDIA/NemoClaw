@@ -6,7 +6,7 @@
 // restores the captured policy snapshot.
 //
 // Usage (internal — called by shields.ts via fork()):
-//   node shields-timer.js <sandbox-name> <snapshot-path> <restore-at-iso> <config-path> <config-dir>
+//   node shields-timer.js <sandbox-name> <snapshot-path> <restore-at-iso> <config-path> <config-dir> <process-token>
 
 import fs from "node:fs";
 import path from "node:path";
@@ -14,6 +14,8 @@ import path from "node:path";
 import { buildPolicySetCommand } from "../policy";
 import { run } from "../runner";
 import { DEFAULT_AGENT_CONFIG, resolveAgentConfig } from "../sandbox/config";
+import { resolveNemoclawStateDir } from "../state/paths";
+import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import { lockAgentConfig } from "./index";
 
 type UnknownRecord = { [key: string]: unknown };
@@ -36,17 +38,17 @@ interface TimerArgs {
   markerPath: string;
   configPath?: string;
   configDir?: string;
+  processToken?: string;
 }
 
-const STATE_DIR = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state");
-const AUDIT_FILE = path.join(STATE_DIR, "shields-audit.jsonl");
+const STATE_DIR = resolveNemoclawStateDir();
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseTimerArgs(argv: string[]): TimerArgs | null {
-  const [sandboxName, snapshotPath, restoreAtIso, configPath, configDir] = argv;
+  const [sandboxName, snapshotPath, restoreAtIso, configPath, configDir, processToken] = argv;
   const restoreAtMs = restoreAtIso ? new Date(restoreAtIso).getTime() : Number.NaN;
 
   if (!sandboxName || !snapshotPath || !restoreAtIso || Number.isNaN(restoreAtMs)) {
@@ -63,12 +65,13 @@ function parseTimerArgs(argv: string[]): TimerArgs | null {
     markerPath: path.join(STATE_DIR, `shields-timer-${sandboxName}.json`),
     configPath,
     configDir,
+    processToken,
   };
 }
 
-function appendAudit(entry: UnknownRecord): void {
+function appendAudit(entry: ShieldsAuditEntry): void {
   try {
-    fs.appendFileSync(AUDIT_FILE, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+    appendAuditEntry(entry);
   } catch {
     // Best effort — don't crash the timer
   }
@@ -106,11 +109,51 @@ function cleanupMarker(markerPath: string): void {
   }
 }
 
+function readTimerMarker(markerPath: string): UnknownRecord | null {
+  try {
+    if (!fs.existsSync(markerPath)) {
+      return null;
+    }
+    const parsed = JSON.parse(fs.readFileSync(markerPath, "utf-8"));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function markerMatchesCurrentTimer(args: TimerArgs): boolean {
+  const marker = readTimerMarker(args.markerPath);
+  if (!marker) return false;
+
+  const markerPid = marker.pid;
+  const markerSandboxName = marker.sandboxName;
+  const markerSnapshotPath = marker.snapshotPath;
+  const markerRestoreAt = marker.restoreAt;
+  const markerProcessToken = marker.processToken;
+
+  return (
+    markerPid === process.pid &&
+    markerSandboxName === args.sandboxName &&
+    markerSnapshotPath === args.snapshotPath &&
+    markerRestoreAt === args.restoreAtIso &&
+    markerProcessToken === args.processToken
+  );
+}
+
 function runRestoreTimer(args: TimerArgs): void {
   const now = new Date().toISOString();
   let exitCode = 0;
+  let ownedMarker = false;
 
   try {
+    // Timer markers are the source of authority. If the marker was removed or
+    // replaced (e.g., destroy-time neutralization), this process must not
+    // restore policy or rewrite shields state.
+    if (!markerMatchesCurrentTimer(args)) {
+      return;
+    }
+    ownedMarker = true;
+
     if (!fs.existsSync(args.snapshotPath)) {
       appendAudit({
         action: "shields_up_failed",
@@ -214,7 +257,7 @@ function runRestoreTimer(args: TimerArgs): void {
         timestamp: now,
         restored_by: "auto_timer",
         policy_snapshot: args.snapshotPath,
-        restore_at: args.restoreAtIso,
+        scheduled_restore_at: args.restoreAtIso,
       });
       return;
     }
@@ -241,7 +284,9 @@ function runRestoreTimer(args: TimerArgs): void {
     });
     exitCode = 1;
   } finally {
-    cleanupMarker(args.markerPath);
+    if (ownedMarker && markerMatchesCurrentTimer(args)) {
+      cleanupMarker(args.markerPath);
+    }
     process.exit(exitCode);
   }
 }
@@ -260,3 +305,10 @@ function main(): void {
 if (require.main === module) {
   main();
 }
+
+export {
+  markerMatchesCurrentTimer,
+  parseTimerArgs,
+  readTimerMarker,
+  runRestoreTimer,
+};

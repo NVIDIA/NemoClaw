@@ -200,6 +200,9 @@ When a new NemoClaw release becomes available, update the `nemoclaw` CLI on your
 
 Re-run the installer.
 Before it onboards anything, the installer calls [`nemoclaw backup-all`](../reference/commands.md#nemoclaw-backup-all) automatically, storing a snapshot of each running sandbox in `~/.nemoclaw/rebuild-backups/` as a safety net.
+If your existing gateway is from OpenShell earlier than `0.0.37`, the installer prompts before it runs the new automatic gateway upgrade path.
+The automatic path is offered only when the existing `nemoclaw` CLI supports `backup-all`; older installs must preserve sandbox state manually before retiring the gateway.
+For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemoclaw backup-all` and `openshell gateway destroy -g nemoclaw || openshell gateway destroy` before rerunning the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
 
 ```console
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash

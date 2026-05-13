@@ -65,7 +65,7 @@ describe("plugin registration", () => {
   it("continues registration when the runtime context hook is unsupported", () => {
     const api = createMockApi();
     vi.mocked(api.on).mockImplementation((hookName: string) => {
-      if (hookName === "before_agent_start") {
+      if (hookName === "before_prompt_build") {
         throw new Error("unsupported hook");
       }
     });

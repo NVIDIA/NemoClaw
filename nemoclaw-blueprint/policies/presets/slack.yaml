@@ -13,6 +13,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -20,6 +21,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -27,21 +29,29 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-      # Socket Mode WebSocket — pure L4 CONNECT tunnel. OpenShell v0.0.15+
-      # auto-terminates TLS unconditionally (NVIDIA/OpenShell#544), which
-      # also applies to WSS. tls: skip restores the pre-v0.0.15 pass-
-      # through behaviour needed here.
+      # Socket Mode WebSocket. The xapp token is authorized on the HTTPS
+      # apps.connections.open leg; the upgraded Socket Mode stream still gets
+      # explicit WebSocket upgrade/text-frame policy.
       - host: wss-primary.slack.com
         port: 443
-        access: full
-        tls: skip
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
       - host: wss-backup.slack.com
         port: 443
-        access: full
-        tls: skip
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }

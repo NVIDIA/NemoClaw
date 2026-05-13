@@ -16,32 +16,38 @@ function writeExecutable(target: string, contents: string) {
 /**
  * Run install-openshell.sh with a fake `openshell` binary that reports the
  * given version. The download/install code path is never reached because we
- * either exit early (version ok / too high) or hit the upgrade warn and then
- * the script tries to download — so we stub curl and gh to fail fast.
+ * either exit early (version + capability ok / too high / missing capability)
+ * or hit the upgrade warn and then the script tries to download — so we stub
+ * curl and gh to fail fast.
  */
 function runWithInstalledVersion(
   version: string,
   extraEnv: NodeJS.ProcessEnv = {},
-  options: { driverBins?: boolean; os?: string; arch?: string } = {},
+  options: {
+    capability?: boolean;
+    driverBins?: boolean | "gateway" | "gateway-vm";
+    os?: string;
+    arch?: string;
+  } = {},
 ) {
+  const capability = options.capability ?? true;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-ver-"));
   try {
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
 
-    if (options.os || options.arch) {
-      writeExecutable(
-        path.join(fakeBin, "uname"),
-        `#!/usr/bin/env bash
+    writeExecutable(
+      path.join(fakeBin, "uname"),
+      `#!/usr/bin/env bash
 if [ "\${1:-}" = "-m" ]; then echo "${options.arch ?? "x86_64"}"; else echo "${options.os ?? "Linux"}"; fi`,
-      );
-    }
+    );
 
     // Fake openshell that reports the given version
     writeExecutable(
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell ${version}"; exit 0; fi
+${capability ? "# request-body-credential-rewrite websocket-credential-rewrite" : ""}
 exit 99`,
     );
 
@@ -51,8 +57,17 @@ exit 99`,
         `#!/usr/bin/env bash
 exit 0`,
       );
+    }
+    if (options.driverBins !== false && options.driverBins !== "gateway") {
       writeExecutable(
         path.join(fakeBin, "openshell-sandbox"),
+        `#!/usr/bin/env bash
+exit 0`,
+      );
+    }
+    if (options.driverBins === "gateway-vm") {
+      writeExecutable(
+        path.join(fakeBin, "openshell-driver-vm"),
         `#!/usr/bin/env bash
 exit 0`,
       );
@@ -62,7 +77,7 @@ exit 0`,
     writeExecutable(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-echo "curl stub: not available in test" >&2
+echo "curl stub: $*" >&2
 exit 1`,
     );
 
@@ -72,6 +87,27 @@ exit 1`,
       `#!/usr/bin/env bash
 exit 1`,
     );
+
+    if ((options.os ?? "Linux") === "Darwin") {
+      writeExecutable(
+        path.join(fakeBin, "codesign"),
+        `#!/usr/bin/env bash
+state="\${NEMOCLAW_FAKE_CODESIGN_STATE:-}"
+if [ "\${1:-}" = "-d" ]; then
+  if [ "\${NEMOCLAW_FAKE_CODESIGN_HAS_ENTITLEMENT:-1}" = "1" ] || { [ -n "$state" ] && [ -f "$state" ]; }; then
+    printf '%s\\n' '<plist version="1.0"><dict><key>com.apple.security.hypervisor</key><true/></dict></plist>'
+  fi
+  exit 0
+fi
+if [ -n "\${NEMOCLAW_FAKE_CODESIGN_LOG:-}" ]; then
+  printf '%s\\n' "$*" >> "$NEMOCLAW_FAKE_CODESIGN_LOG"
+fi
+if [ -n "$state" ]; then
+  : > "$state"
+fi
+exit 0`,
+      );
+    }
 
     return spawnSync("bash", [SCRIPT], {
       env: {
@@ -88,21 +124,303 @@ exit 1`,
 }
 
 describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
-  it("exits cleanly when openshell 0.0.37 and driver binaries are already installed", () => {
-    const result = runWithInstalledVersion("0.0.37");
+  it("exits cleanly when openshell 0.0.39 and driver binaries are already installed", () => {
+    const result = runWithInstalledVersion("0.0.39");
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/already installed.*0\.0\.37/);
+    expect(result.stdout).toMatch(/already installed.*0\.0\.39/);
   });
 
-  it("triggers reinstall when openshell 0.0.37 is missing Docker-driver binaries", () => {
-    const result = runWithInstalledVersion("0.0.37", {}, { driverBins: false, os: "Linux" });
+  it("triggers reinstall when openshell 0.0.39 is missing Docker-driver binaries", () => {
+    const result = runWithInstalledVersion("0.0.39", {}, { driverBins: false, os: "Linux" });
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/missing Docker-driver binaries/);
-    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.37'/);
+    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.39'/);
   });
 
-  it("triggers upgrade when openshell 0.0.36 is installed (below current floor)", () => {
-    const result = runWithInstalledVersion("0.0.36");
+  it("fails closed when openshell 0.0.39 lacks required messaging rewrite support", () => {
+    const result = runWithInstalledVersion("0.0.39", {}, { capability: false });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toMatch(/missing request-body-credential-rewrite support/);
+  });
+
+  it("accepts macOS openshell 0.0.39 when the gateway and VM driver binaries are installed", () => {
+    const result = runWithInstalledVersion("0.0.39", {}, {
+      driverBins: "gateway-vm",
+      os: "Darwin",
+      arch: "arm64",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/already installed.*0\.0\.39/);
+  });
+
+  it("repairs macOS openshell-driver-vm when the Hypervisor entitlement is missing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-codesign-"));
+    try {
+      const state = path.join(tmp, "codesign-state");
+      const log = path.join(tmp, "codesign.log");
+      const result = runWithInstalledVersion(
+        "0.0.39",
+        {
+          NEMOCLAW_FAKE_CODESIGN_HAS_ENTITLEMENT: "0",
+          NEMOCLAW_FAKE_CODESIGN_STATE: state,
+          NEMOCLAW_FAKE_CODESIGN_LOG: log,
+        },
+        {
+          driverBins: "gateway-vm",
+          os: "Darwin",
+          arch: "arm64",
+        },
+      );
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toMatch(/missing the macOS Hypervisor entitlement/);
+      expect(result.stdout).toMatch(/Signing openshell-driver-vm/);
+      expect(result.stdout).toMatch(/already installed.*0\.0\.39/);
+      expect(result.stdout).not.toMatch(/Installing OpenShell from release/);
+      expect(fs.readFileSync(log, "utf-8")).toContain("--force --sign - --entitlements");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("triggers reinstall on macOS when openshell 0.0.39 is missing required gateway binaries", () => {
+    const result = runWithInstalledVersion("0.0.39", {}, {
+      driverBins: false,
+      os: "Darwin",
+      arch: "arm64",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/missing Docker-driver binaries/);
+    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.39'/);
+  });
+
+  it("downloads the macOS arm64 gateway and VM helper assets during reinstall", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-macos-assets-"));
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      const downloadLog = path.join(tmp, "downloads.log");
+      fs.mkdirSync(fakeBin);
+
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "arm64"; else echo "Darwin"; fi`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi
+exit 99`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "gh"),
+        `#!/usr/bin/env bash
+exit 1`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+echo "$@" >> ${JSON.stringify(downloadLog)}
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+if [ -n "$out" ]; then
+  case "$(basename "$out")" in
+  openshell-checksums-sha256.txt)
+    printf '%s\n' \
+      'ignored  openshell-aarch64-apple-darwin.tar.gz' \
+      'ignored  openshell-driver-vm-aarch64-apple-darwin.tar.gz' > "$out"
+    ;;
+  openshell-gateway-checksums-sha256.txt)
+    printf '%s\n' \
+      'ignored  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
+    ;;
+  *)
+    : > "$out"
+    ;;
+  esac
+fi
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "shasum"),
+        `#!/usr/bin/env bash
+cat >/dev/null
+echo "checksum OK"
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "tar"),
+        `#!/usr/bin/env bash
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "install"),
+        `#!/usr/bin/env bash
+dest="\${@: -1}"
+mkdir -p "$(dirname "$dest")"
+cat > "$dest" <<'EOF'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.39"; exit 0; fi
+# request-body-credential-rewrite websocket-credential-rewrite
+exit 0
+EOF
+chmod +x "$dest"
+exit 0`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          XDG_BIN_HOME: path.join(tmp, "local-bin"),
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const downloads = fs.readFileSync(downloadLog, "utf-8");
+      expect(downloads).toContain("openshell-aarch64-apple-darwin.tar.gz");
+      expect(downloads).toContain("openshell-gateway-aarch64-apple-darwin.tar.gz");
+      expect(downloads).toContain("openshell-driver-vm-aarch64-apple-darwin.tar.gz");
+      expect(downloads).toContain("openshell-gateway-checksums-sha256.txt");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades into the active writable openshell directory to avoid PATH shadowing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-active-dir-"));
+    try {
+      const activeBin = path.join(tmp, "active-bin");
+      const fakeBin = path.join(tmp, "fake-bin");
+      const installLog = path.join(tmp, "install.log");
+      fs.mkdirSync(activeBin);
+      fs.mkdirSync(fakeBin);
+
+      writeExecutable(
+        path.join(activeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi
+exit 99`,
+      );
+
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "x86_64"; else echo "Linux"; fi`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "gh"),
+        `#!/usr/bin/env bash
+exit 1`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+if [ -n "$out" ]; then
+  case "$(basename "$out")" in
+  openshell-checksums-sha256.txt)
+    printf '%s\n' 'ignored  openshell-x86_64-unknown-linux-musl.tar.gz' > "$out"
+    ;;
+  openshell-gateway-checksums-sha256.txt)
+    printf '%s\n' 'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' > "$out"
+    ;;
+  openshell-sandbox-checksums-sha256.txt)
+    printf '%s\n' 'ignored  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' > "$out"
+    ;;
+  *)
+    : > "$out"
+    ;;
+  esac
+fi
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "shasum"),
+        `#!/usr/bin/env bash
+cat >/dev/null
+echo "checksum OK"
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "tar"),
+        `#!/usr/bin/env bash
+outdir=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-C" ]; then
+    outdir="$arg"
+    break
+  fi
+  prev="$arg"
+done
+[ -n "$outdir" ] || exit 1
+case "$*" in
+*openshell-gateway*) name="openshell-gateway" ;;
+*openshell-sandbox*) name="openshell-sandbox" ;;
+*) name="openshell" ;;
+esac
+printf '#!/usr/bin/env bash\\nexit 0\\n' > "$outdir/$name"
+chmod 755 "$outdir/$name"
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "install"),
+        `#!/usr/bin/env bash
+dest="\${@: -1}"
+printf '%s\\n' "$dest" >> ${JSON.stringify(installLog)}
+mkdir -p "$(dirname "$dest")"
+case "$(basename "$dest")" in
+openshell)
+  printf '#!/usr/bin/env bash\\nif [ "$1" = "--version" ]; then echo "openshell 0.0.39"; else exit 0; fi\\n# request-body-credential-rewrite websocket-credential-rewrite\\n' > "$dest"
+  ;;
+*)
+  printf '#!/usr/bin/env bash\\nexit 0\\n' > "$dest"
+  ;;
+esac
+chmod 755 "$dest"
+exit 0`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:${activeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const installedTargets = fs.readFileSync(installLog, "utf-8");
+      expect(installedTargets).toContain(path.join(activeBin, "openshell"));
+      expect(installedTargets).toContain(path.join(activeBin, "openshell-gateway"));
+      expect(installedTargets).toContain(path.join(activeBin, "openshell-sandbox"));
+      expect(installedTargets).not.toContain("/usr/local/bin/openshell");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("triggers upgrade when openshell 0.0.38 is installed (below current floor)", () => {
+    const result = runWithInstalledVersion("0.0.38");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
@@ -127,7 +445,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("fails with a clear error when openshell is above MAX_VERSION", () => {
-    const result = runWithInstalledVersion("0.0.38");
+    const result = runWithInstalledVersion("0.0.40");
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/above the maximum/);
   });
@@ -139,7 +457,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("accepts an installed OpenShell dev-channel Docker-driver build", () => {
-    const result = runWithInstalledVersion("0.0.37.dev84+g6b2180425", {
+    const result = runWithInstalledVersion("0.0.39.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
     });
     expect(result.status).toBe(0);
@@ -151,7 +469,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
     });
     expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/required dev-channel Docker-driver build/);
+    expect(result.stdout).toMatch(/required dev-channel messaging-rewrite build/);
   });
 
   it("proceeds to install when openshell is not present", () => {
@@ -164,7 +482,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       writeExecutable(
         path.join(fakeBin, "curl"),
         `#!/usr/bin/env bash
-echo "curl stub: not available in test" >&2
+echo "curl stub: $*" >&2
 exit 1`,
       );
       writeExecutable(

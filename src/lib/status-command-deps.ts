@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { spawnSync } from "node:child_process";
 
-import { parseGatewayInference } from "./inference/config";
-import type { MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory";
+import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
+import { getLiveGatewayInference } from "./inference/live";
+import type { GatewayHealth, MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory";
 import { backfillMessagingChannels, findAllOverlaps } from "./messaging-conflict";
 import type { CaptureOpenshellResult } from "./adapters/openshell/client";
 import { captureOpenshellCommand, stripAnsi } from "./adapters/openshell/client";
@@ -132,19 +132,45 @@ function readGatewayLog(rootDir: string, sandboxName: string): string | null {
   }
 }
 
+function probeGatewayHealth(): GatewayHealth {
+  try {
+    const lifecycle = getNamedGatewayLifecycleState();
+    if (lifecycle.state === "healthy_named") {
+      return { healthy: true, state: lifecycle.state };
+    }
+    const reasonByState: Record<string, string> = {
+      named_unreachable: "host port held or container not running",
+      named_unhealthy: "named gateway present but not Connected",
+      connected_other: `connected to '${lifecycle.activeGateway ?? "unknown"}', not 'nemoclaw'`,
+      missing_named: "named gateway not configured",
+    };
+    return {
+      healthy: false,
+      state: lifecycle.state,
+      reason: reasonByState[lifecycle.state],
+    };
+  } catch {
+    // A transient probe failure must not mask a real gateway problem, but
+    // we also can't claim it's unhealthy when we genuinely couldn't tell.
+    // Report it as a soft degraded state so the user still sees a hint.
+    return { healthy: false, state: "probe_error", reason: "could not reach OpenShell CLI" };
+  }
+}
+
 export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
   return {
     listSandboxes: () => registry.listSandboxes(),
     getLiveInference: () =>
-      parseGatewayInference(
-        stripAnsi(
-          captureOpenshell(rootDir, ["inference", "get"], {
-            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-          }).output,
-        ),
-      ),
+      getLiveGatewayInference(
+        (args, opts) =>
+          captureOpenshell(rootDir, args, {
+            timeout: opts?.timeout,
+          }),
+        { timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+      ).inference,
     showServiceStatus,
     getServiceStatuses,
+    getGatewayHealth: probeGatewayHealth,
     checkMessagingBridgeHealth: (sandboxName, channels) =>
       checkMessagingBridgeHealth(rootDir, sandboxName, channels),
     backfillAndFindOverlaps: () => backfillAndFindOverlaps(rootDir),

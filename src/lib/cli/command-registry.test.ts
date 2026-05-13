@@ -17,10 +17,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 57 commands", () => {
-      // 25 global (20 visible + 5 hidden help/version aliases)
+    it("should contain exactly 58 commands", () => {
+      // 26 global (21 visible + 5 hidden help/version aliases)
       // 32 sandbox (26 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(57);
+      expect(COMMANDS).toHaveLength(58);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -39,9 +39,9 @@ describe("command-registry", () => {
   });
 
   describe("globalCommands()", () => {
-    it("should return exactly 25 entries", () => {
-      // 20 visible + 5 hidden (help, --help, -h, --version, -v)
-      expect(globalCommands()).toHaveLength(25);
+    it("should return exactly 26 entries", () => {
+      // 21 visible + 5 hidden (help, --help, -h, --version, -v)
+      expect(globalCommands()).toHaveLength(26);
     });
 
     it("every entry has scope global", () => {
@@ -65,10 +65,10 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 11 hidden commands (46 visible)", () => {
+    it("should exclude 11 hidden commands (47 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
       // 6 hidden sandbox (shields×3, config get/set/rotate-token)
-      expect(visibleCommands()).toHaveLength(46);
+      expect(visibleCommands()).toHaveLength(47);
     });
 
     it("no visible command has hidden=true", () => {
