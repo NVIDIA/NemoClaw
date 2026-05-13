@@ -362,6 +362,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
           model: "nvidia/nemotron-3-super-120b-a12b",
           provider: "nvidia-prod",
           gpuEnabled: false,
+          openshellDriver: "docker",
           policies: [],
         },
         "nvidia-prod",

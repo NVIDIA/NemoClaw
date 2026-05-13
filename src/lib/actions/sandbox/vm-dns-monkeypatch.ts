@@ -86,6 +86,15 @@ function realpathIfPresent(filePath: string): string | null {
   }
 }
 
+function lstatIfPresent(filePath: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 function fail(reason: string, rootfs?: string, changed = false): VmDnsMonkeypatchResult {
   return {
     attempted: true,
@@ -148,6 +157,13 @@ function resolveTargetInsideRootfs(
       };
     }
     return { ok: true, path: targetReal };
+  }
+
+  if (lstatIfPresent(target)?.isSymbolicLink()) {
+    return {
+      ok: false,
+      reason: `refusing to patch ${path.join(...relativePath)} because it is a dangling symlink: ${target}`,
+    };
   }
 
   if (opts.mustExist) {

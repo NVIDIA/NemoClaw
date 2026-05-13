@@ -326,6 +326,34 @@ describe("OpenShell VM DNS monkeypatch", () => {
     expect(fs.readFileSync(outside, "utf-8")).toBe("nameserver 8.8.8.8\n");
   });
 
+  it("refuses dangling resolver symlinks before writing", () => {
+    const stateDir = makeTempDir();
+    const rootfs = sandboxRootfs(stateDir);
+    const outside = path.join(stateDir, "missing-resolv.conf");
+    fs.mkdirSync(path.join(rootfs, "etc"), { recursive: true });
+    fs.symlinkSync(outside, path.join(rootfs, "etc", "resolv.conf"));
+    writeRecognizedInit(rootfs);
+
+    const result = applyOpenShellVmDnsMonkeypatch(
+      "demo",
+      { openshellDriver: "vm" },
+      {
+        capture: () => ({ status: 0, output: "Id: abc\n" }),
+        platform: "darwin",
+        stateDir,
+      },
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      changed: false,
+      ok: false,
+      status: "failed",
+    });
+    expect(result.reason).toContain("dangling symlink");
+    expect(fs.existsSync(outside)).toBe(false);
+  });
+
   it("returns a warning result instead of throwing when rootfs files cannot be patched", () => {
     const stateDir = makeTempDir();
     const rootfs = sandboxRootfs(stateDir);

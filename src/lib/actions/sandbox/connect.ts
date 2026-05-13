@@ -38,7 +38,7 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
-const LEGACY_CLUSTER_DRIVERS = new Set([null, undefined, "", "kubernetes"]);
+const LEGACY_CLUSTER_DRIVERS = new Set([null, undefined, "", "docker", "kubernetes"]);
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
