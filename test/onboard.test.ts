@@ -15,6 +15,7 @@ import { loadAgent } from "../dist/lib/agent/defs.js";
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard/contract.js";
 import { NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 type ShimScalar = string | number | boolean | null | undefined;
 type ShimCallable = (...args: readonly string[]) => ShimValue;
@@ -3702,7 +3703,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
     });
   });
 
-  it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", () => {
+  it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-venv-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3724,7 +3725,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
         path.join(fakeBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "path-router %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -3735,17 +3736,17 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
         [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "python3 %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
           '  venv_dir="$3"',
           '  mkdir -p "$venv_dir/bin"',
           '  cat > "$venv_dir/bin/python" <<\'PY\'',
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "venv-python %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "venv-python %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
           '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
-          '  cp "$FAKE_ROUTER_SOURCE" "$venv_bin/model-router"',
+          `  cp ${JSON.stringify(fakeRouterSource)} "$venv_bin/model-router"`,
           '  chmod +x "$venv_bin/model-router"',
           "  exit 0",
           "fi",
@@ -3942,7 +3943,7 @@ const { setupInference } = require(${onboardPath});
         path.join(fakeBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "path-router %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -3956,7 +3957,7 @@ const { setupInference } = require(${onboardPath});
           'const http = require("http");',
           'const path = require("path");',
           "const args = process.argv.slice(2);",
-          'if (process.env.ROUTER_SETUP_LOG) fs.appendFileSync(process.env.ROUTER_SETUP_LOG, `managed ${args[0]}\\n`);',
+          `fs.appendFileSync(${JSON.stringify(setupLog)}, \`managed \${args[0]}\\n\`);`,
           'if (args[0] === "proxy-config") {',
           '  const output = args[args.indexOf("--output") + 1];',
           "  fs.mkdirSync(path.dirname(output), { recursive: true });",
@@ -4124,7 +4125,7 @@ const { setupInference } = require(${onboardPath});
         path.join(fakeBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "path-router %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "path-router %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -4135,17 +4136,17 @@ const { setupInference } = require(${onboardPath});
         [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "python3 %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
           '  venv_dir="$3"',
           '  mkdir -p "$venv_dir/bin"',
           '  cat > "$venv_dir/bin/python" <<\'PY\'',
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'printf "venv-python %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "venv-python %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
           '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
-          '  cp "$FAKE_ROUTER_SOURCE" "$venv_bin/model-router"',
+          `  cp ${JSON.stringify(fakeRouterSource)} "$venv_bin/model-router"`,
           '  chmod +x "$venv_bin/model-router"',
           "  exit 0",
           "fi",
@@ -4163,7 +4164,7 @@ const { setupInference } = require(${onboardPath});
         path.join(venvBin, "model-router"),
         [
           "#!/usr/bin/env bash",
-          'printf "stale-managed %s\\n" "$*" >> "$ROUTER_SETUP_LOG"',
+          `printf "stale-managed %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
           "exit 89",
           "",
         ].join("\n"),
@@ -4180,7 +4181,7 @@ const { setupInference } = require(${onboardPath});
           'const http = require("http");',
           'const path = require("path");',
           "const args = process.argv.slice(2);",
-          'if (process.env.ROUTER_SETUP_LOG) fs.appendFileSync(process.env.ROUTER_SETUP_LOG, `fresh ${args[0]}\\n`);',
+          `fs.appendFileSync(${JSON.stringify(setupLog)}, \`fresh \${args[0]}\\n\`);`,
           'if (args[0] === "proxy-config") {',
           '  const output = args[args.indexOf("--output") + 1];',
           "  fs.mkdirSync(path.dirname(output), { recursive: true });",

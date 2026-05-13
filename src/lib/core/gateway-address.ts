@@ -17,12 +17,8 @@ export function parseGatewayBindAddress(
   const raw = process.env[envVar];
   if (raw === undefined || raw === "") return fallback;
   const trimmed = String(raw).trim();
-  if (
-    trimmed === DEFAULT_GATEWAY_BIND_ADDRESS ||
-    trimmed === WILDCARD_GATEWAY_BIND_ADDRESS
-  ) {
-    return trimmed;
-  }
+  if (trimmed === DEFAULT_GATEWAY_BIND_ADDRESS) return DEFAULT_GATEWAY_BIND_ADDRESS;
+  if (trimmed === WILDCARD_GATEWAY_BIND_ADDRESS) return WILDCARD_GATEWAY_BIND_ADDRESS;
   throw new Error(
     `Invalid gateway bind address: ${envVar}="${raw}" — must be either ${DEFAULT_GATEWAY_BIND_ADDRESS} or ${WILDCARD_GATEWAY_BIND_ADDRESS}`,
   );

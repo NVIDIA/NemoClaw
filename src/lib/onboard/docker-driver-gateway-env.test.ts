@@ -94,12 +94,11 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         OPENSHELL_BIND_ADDRESS: "127.0.0.1",
       }));
 
+      const envFileContent = fs.readFileSync(envFile, "utf-8");
       expect(fs.statSync(envDir).mode & 0o777).toBe(0o700);
       expect(fs.statSync(envFile).mode & 0o777).toBe(0o600);
-      expect(fs.readFileSync(envFile, "utf-8")).toContain("KEEP_ME=1\n");
-      expect(fs.readFileSync(envFile, "utf-8")).toContain(
-        "OPENSHELL_BIND_ADDRESS=127.0.0.1\n",
-      );
+      expect(envFileContent).toContain("KEEP_ME=1\n");
+      expect(envFileContent).toContain("OPENSHELL_BIND_ADDRESS=127.0.0.1\n");
     } finally {
       existsSpy.mockRestore();
       homedirSpy.mockRestore();
