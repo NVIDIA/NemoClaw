@@ -93,7 +93,7 @@ if (args[0] === "gateway" && args[1] === "info") {
 }
 
 if (args[0] === "sandbox" && args[1] === "get" && args[2] === ${JSON.stringify(sandboxName)}) {
-  process.stdout.write("Sandbox:\\n\\n  Id: abc\\n  Name: ${sandboxName}\\n  Phase: Ready\\n");
+  process.stdout.write("Sandbox:\\n\\n  \\x1b[2mId:\\x1b[0m abc\\n  Name: ${sandboxName}\\n  Phase: Ready\\n");
   process.exit(0);
 }
 
@@ -214,7 +214,40 @@ process.exit(0);
   return { tmpDir, stateFile, sandboxName };
 }
 
-function runConnect(tmpDir: string, sandboxName: string) {
+function createVmRootfs(tmpDir: string, sandboxId = "abc") {
+  const rootfs = path.join(
+    tmpDir,
+    ".local",
+    "state",
+    "nemoclaw",
+    "openshell-docker-gateway",
+    "vm-driver",
+    "sandboxes",
+    sandboxId,
+    "rootfs",
+  );
+  fs.mkdirSync(path.join(rootfs, "etc"), { recursive: true });
+  fs.mkdirSync(path.join(rootfs, "srv"), { recursive: true });
+  fs.writeFileSync(
+    path.join(rootfs, "etc", "resolv.conf"),
+    "nameserver 8.8.8.8\nnameserver 8.8.4.4\n",
+  );
+  fs.writeFileSync(
+    path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh"),
+    [
+      "elif ip link show eth0 >/dev/null 2>&1; then",
+      "    if [ ! -s /etc/resolv.conf ]; then",
+      '        echo "nameserver 8.8.8.8" > /etc/resolv.conf',
+      '        echo "nameserver 8.8.4.4" >> /etc/resolv.conf',
+      "    fi",
+      "fi",
+      "",
+    ].join("\n"),
+  );
+  return rootfs;
+}
+
+function runConnect(tmpDir: string, sandboxName: string, extraEnv: NodeJS.ProcessEnv = {}) {
   const repoRoot = path.join(import.meta.dirname, "..");
   return spawnSync(
     process.execPath,
@@ -227,6 +260,7 @@ function runConnect(tmpDir: string, sandboxName: string) {
         HOME: tmpDir,
         PATH: `${path.join(tmpDir, ".local", "bin")}:/usr/bin:/bin`,
         NEMOCLAW_NO_CONNECT_HINT: "1",
+        ...extraEnv,
       },
       timeout: execTimeout(15_000),
     },
@@ -392,6 +426,51 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("Reapplying OpenShell inference route");
       expect(combined).toContain("OpenShell vm gateway path");
+    },
+  );
+
+  it(
+    "applies the macOS VM DNS monkeypatch before falling back to route reapply",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "vm-dns-sandbox",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          openshellDriver: "vm",
+          policies: [],
+        },
+        "nvidia-prod",
+        "nvidia/nemotron-3-super-120b-a12b",
+        {
+          inferenceProbeResponses: [
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            "OK 200",
+          ],
+        },
+      );
+      const rootfs = createVmRootfs(tmpDir);
+
+      const result = runConnect(tmpDir, sandboxName, {
+        NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH: "1",
+      });
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      expect(state.inferenceSetCalls.length).toBe(0);
+      expect(state.dockerCalls.length).toBe(0);
+      expect(fs.readFileSync(path.join(rootfs, "etc", "resolv.conf"), "utf-8")).toBe(
+        "nameserver 192.168.127.1\n",
+      );
+      expect(
+        fs.readFileSync(path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh"), "utf-8"),
+      ).toContain('nameserver ${GVPROXY_GATEWAY_IP}');
+
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("Applying OpenShell VM DNS monkeypatch");
+      expect(combined).toContain("inference.local route repaired");
     },
   );
 });

@@ -23,6 +23,10 @@ import { ROOT } from "../../runner";
 import { runSetupDnsProxy } from "../dns";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import {
+  applyOpenShellVmDnsMonkeypatch,
+  shouldApplyVmDnsMonkeypatch,
+} from "./vm-dns-monkeypatch";
+import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
@@ -178,6 +182,27 @@ function repairSandboxInferenceRouteIfNeeded(
   if (isSandboxInferenceRouteHealthy(sandboxName)) return false;
 
   if (!shouldUseLegacyDnsProxyRepair(sb)) {
+    if (shouldApplyVmDnsMonkeypatch(sb)) {
+      if (!quiet) {
+        console.log("");
+        console.log(
+          `  inference.local is unavailable inside '${sandboxName}'. Applying OpenShell VM DNS monkeypatch...`,
+        );
+      }
+      const patch = applyOpenShellVmDnsMonkeypatch(sandboxName, sb);
+      if (patch.ok && isSandboxInferenceRouteHealthy(sandboxName)) {
+        if (!quiet) {
+          console.log("  inference.local route repaired.");
+        }
+        return true;
+      }
+      if (!quiet && !patch.ok && patch.reason) {
+        console.error(
+          `  Warning: OpenShell VM DNS monkeypatch did not apply: ${patch.reason}`,
+        );
+      }
+    }
+
     if (!quiet) {
       console.log("");
       console.log(`  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`);
