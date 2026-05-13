@@ -307,7 +307,13 @@ exercise_macos_vm_rootfs_permission_regression() {
     || fail "onboard does not enable macOS VM rootfs compatibility for Darwin sandbox builds"
   grep -q "chmod -R a+rwX /sandbox/.openclaw" Dockerfile \
     || fail "Dockerfile does not relax OpenClaw state permissions for macOS VM rootfs remapping"
-  pass "macOS VM sandbox builds enable rootfs ownership compatibility"
+  grep -q "ARG NEMOCLAW_DARWIN_VM_COMPAT=0" agents/hermes/Dockerfile \
+    || fail "Hermes Dockerfile is missing the macOS VM rootfs compatibility ARG"
+  grep -q "chmod -R a+rwX /sandbox/.hermes" agents/hermes/Dockerfile \
+    || fail "Hermes Dockerfile does not relax Hermes state permissions for macOS VM rootfs remapping"
+  grep -q "chmod a+rw /sandbox/.bashrc /sandbox/.profile" agents/hermes/Dockerfile \
+    || fail "Hermes Dockerfile does not relax trusted rc files for macOS VM ownership repair"
+  pass "macOS VM sandbox builds enable OpenClaw and Hermes rootfs ownership compatibility"
 }
 
 wait_for_survivor_ready() {

@@ -69,6 +69,7 @@ ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 ARG NEMOCLAW_BUILD_ID=default
+ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 
 # Promote build-args to env vars for the config generation script.
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
@@ -252,6 +253,16 @@ RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /sandbox/.hermes/.config-hash \
     && chmod 600 /sandbox/.hermes/.config-hash \
     && chown sandbox:sandbox /sandbox/.hermes/.config-hash
+
+# OpenShell's macOS VM backend currently remaps extracted rootfs ownership to
+# the host uid/gid before startup. Hermes uses /sandbox as a read_write path, so
+# that repair walks the trusted rc files too; keep this Darwin-only so Linux
+# Docker-driver sandboxes retain the tighter default permissions.
+RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
+        chmod -R a+rwX /sandbox/.hermes; \
+        find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
+        chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
+    fi
 
 # start.sh handles privilege separation: runs as root initially, then drops
 # to 'gateway' user via gosu for the agent process. See start.sh.
