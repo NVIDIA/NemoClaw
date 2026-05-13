@@ -7,6 +7,9 @@ author_email: jyaunches@nvidia.com
 
 ---
 
+
+<!-- markdownlint-disable MD022 MD026 MD031 MD032 MD036 MD040 MD058 -->
+
 # NemoClaw Maintainer: Review the Day's Tag
 
 Sweep every open PR that carries today's version-target label (e.g. `v0.0.8`) and produce one consolidated review queue. Unlike `nemoclaw-maintainer-day` (which picks one item and acts) or `nemoclaw-pr-sweep` (which works over local worktrees), this skill produces a **read-only review pass** across the entire day's target.
@@ -90,13 +93,13 @@ node --experimental-strip-types --no-warnings \
   .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>
 ```
 
-For anything that fails, route per [MERGE-GATE.md](../nemoclaw-maintainer-day/MERGE-GATE.md) and [SALVAGE-PR.md](../nemoclaw-maintainer-day/SALVAGE-PR.md).
+For anything that fails, route per `MERGE-GATE.md` from `nemoclaw-maintainer-day` and `SALVAGE-PR.md` from `nemoclaw-maintainer-day`.
 
 ## Stop and Ask When
 
 - The day's tag has zero PRs (suggest `/nemoclaw-maintainer-morning` or confirm the target version)
 - More than one PR targets the same issue — surface as a duplicate group (see `find-review-pr`) before recommending approvals
-- A PR touches risky areas without tests — route to [TEST-GAPS.md](../nemoclaw-maintainer-day/TEST-GAPS.md) before approval
+- A PR touches risky areas without tests — route to `TEST-GAPS.md` from `nemoclaw-maintainer-day` before approval
 
 ## Commit Hygiene
 

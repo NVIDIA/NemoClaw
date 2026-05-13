@@ -6,6 +6,9 @@ author_email: jyaunches@nvidia.com
 
 ---
 
+
+<!-- markdownlint-disable MD022 MD026 MD031 MD032 MD036 MD040 MD058 -->
+
 # NemoClaw Worktree Cleanup
 
 Scan the NemoClaw-working directory for git worktrees tied to issues or PRs that have been closed/merged on GitHub, then recommend and (on confirmation) delete them.

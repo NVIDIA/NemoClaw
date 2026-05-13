@@ -6,6 +6,9 @@ author_email: jyaunches@nvidia.com
 
 ---
 
+
+<!-- markdownlint-disable MD022 MD026 MD031 MD032 MD036 MD040 MD058 -->
+
 # NemoClaw Daily Release Review
 
 Produce a **daily/current-release readiness report** for NemoClaw.
@@ -331,7 +334,7 @@ Already merged since `vX.Y.Z` and expected in the next tag:
 
 ## Current Sprint Progress
 
-**Sprint:** Sprint N (YYYY-MM-DD – YYYY-MM-DD)  
+**Sprint:** Sprint N (YYYY-MM-DD – YYYY-MM-DD)
 **Day:** X of Y (Z% elapsed)
 
 | Status | Count |

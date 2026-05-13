@@ -6,6 +6,9 @@ author_email: jyaunches@nvidia.com
 
 ---
 
+
+<!-- markdownlint-disable MD022 MD026 MD031 MD032 MD036 MD040 MD058 -->
+
 # NemoClaw Architecture Report
 
 Analyze the architectural evolution of the NemoClaw codebase — what's been refactored, what direction the team is heading, and what remains. Produces a timestamped report artifact stored locally.

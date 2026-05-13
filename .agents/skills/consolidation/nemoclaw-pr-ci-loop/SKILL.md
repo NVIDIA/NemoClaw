@@ -6,6 +6,9 @@ author_email: jyaunches@nvidia.com
 
 ---
 
+
+<!-- markdownlint-disable MD022 MD026 MD031 MD032 MD036 MD040 MD058 -->
+
 # NemoClaw PR CI Enforcement Loop
 
 A persistent loop that shepherds a single PR to fully-green CI. Monitors checks, triggers E2E tests, diagnoses failures, applies fixes, and repeats until done.
@@ -177,9 +180,17 @@ if [ -f "$CHECKPOINT" ]; then
   # Jump to the appropriate phase based on status
 fi
 
-# Gather full PR state
+# Gather full PR state. Always do this before inspecting CodeRabbit or E2E.
 PR_DATA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json \
   number,title,headRefName,statusCheckRollup,comments,reviews,files)
+
+# Summarize current checks from statusCheckRollup so failures are visible even
+# when the user originally asked about review feedback.
+echo "$PR_DATA" | jq -r '
+  .statusCheckRollup[]?
+  | select(.name != null)
+  | [.name, (.status // ""), (.conclusion // ""), (.detailsUrl // "")]
+  | @tsv'
 ```
 
 **Resume routing based on checkpoint status:**
@@ -194,8 +205,15 @@ PR_DATA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json \
 ### Phase 1: Check PR CI Status
 
 ```bash
-# Get all check statuses
-gh pr checks "$PR_NUMBER" --repo "$REPO"
+# Get all check statuses. Run this on every invocation before CodeRabbit/E2E work.
+gh pr checks "$PR_NUMBER" --repo "$REPO" --watch=false || true
+
+# Machine-readable failure/pending split.
+gh pr view "$PR_NUMBER" --repo "$REPO" --json statusCheckRollup --jq '
+  .statusCheckRollup[]?
+  | select(.name != null)
+  | select(.status != "COMPLETED" or (.conclusion != "SUCCESS" and .conclusion != "SKIPPED" and .conclusion != null))
+  | {name, status, conclusion, detailsUrl}'
 ```
 
 Classify each check:
@@ -206,9 +224,11 @@ Classify each check:
 
 **If any checks are PENDING/IN_PROGRESS → report status and WAIT for next loop iteration.**
 
-**If all checks are PASS → proceed to Phase 2.**
+**If any checks FAIL → proceed to Phase 3 (Fix CI). Do not inspect only CodeRabbit feedback while checks are red.**
 
-**If any checks FAIL → proceed to Phase 3 (Fix CI).**
+**Only if all non-skipped checks PASS → proceed to Phase 2.**
+
+This ordering is mandatory: PR check failures (`checks`, `markdown-links`, `commit-lint`, etc.) take priority over CodeRabbit comments and E2E recommendations.
 
 ### Phase 2: CodeRabbit E2E Recommendations
 
@@ -250,13 +270,24 @@ For each failing check:
 
 #### 3a: Get failure logs
 
-```bash
-# For GitHub Actions checks
-RUN_ID=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json \
-  name,state,link --jq '.[] | select(.state == "FAILURE") | .link' \
-  | grep -oP 'runs/\K[0-9]+' | head -1)
+List every failing check first; do not stop after the first failure unless applying a one-fix-per-iteration change.
 
-gh run view "$RUN_ID" --repo "$REPO" --log-failed 2>&1 | tail -100
+```bash
+FAILED_CHECKS=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json statusCheckRollup --jq '
+  [.statusCheckRollup[]?
+   | select(.name != null)
+   | select(.status == "COMPLETED" and (.conclusion != "SUCCESS" and .conclusion != "SKIPPED" and .conclusion != null))
+   | {name, conclusion, detailsUrl}]')
+echo "$FAILED_CHECKS" | jq -r '.[] | [.name, .conclusion, .detailsUrl] | @tsv'
+
+# For GitHub Actions checks, inspect each failing run/job URL.
+echo "$FAILED_CHECKS" | jq -r '.[].detailsUrl // empty' | while read -r URL; do
+  RUN_ID=$(echo "$URL" | grep -oE 'runs/[0-9]+' | head -1 | cut -d/ -f2)
+  if [ -n "$RUN_ID" ]; then
+    echo "===== run $RUN_ID ====="
+    gh run view "$RUN_ID" --repo "$REPO" --log-failed 2>&1 | tail -120
+  fi
+done
 ```
 
 #### 3b: Diagnose the failure
@@ -270,6 +301,8 @@ Common failure categories and actions:
 | `biome check` / lint errors | Formatting or lint violation | Run `npx biome check --write` |
 | `vitest` / unit test failure | Test assertion broken | Read test, understand failure, fix code or test |
 | `shellcheck` | Shell script lint | Fix the shellcheck warning |
+| `markdown-links` | Broken Markdown link / anchor / file reference | Fix or remove the broken link/reference |
+| `checks` | Aggregate repo checks; inspect failed sub-step in run logs | Fix underlying lint/test/build failure |
 | `build-sandbox-images` | Docker build error | Fix Dockerfile or build deps |
 | `dco-check` | Missing sign-off | `git commit --amend -s` |
 | E2E timeout | Test took too long | Increase timeout or optimize |
@@ -297,7 +330,7 @@ ACTION: Fixed biome lint error in src/lib/verify-deployment.ts (trailing comma)
 RESULT: Pushed commit abc1234, waiting for CI re-run
 ```
 
-**After pushing → WAIT for next loop iteration** (CI will re-trigger).
+**After pushing → immediately re-run Phase 1 once to report the new check state, then WAIT for next loop iteration** (CI will re-trigger and may be pending).
 
 ### Phase 4: Trigger E2E Tests
 
@@ -390,8 +423,9 @@ When ALL of the following are true:
 
 ## Loop Behavior Rules
 
-1. **Never loop faster than the CI can respond.** If checks are pending, report and wait.
-2. **Only one fix per iteration.** Don't stack multiple fixes — push one, let CI validate, then address the next.
+1. **Always inspect PR checks first.** Even if the user asks about CodeRabbit, start by listing failing/pending workflows.
+2. **Never loop faster than the CI can respond.** If checks are pending, report and wait.
+3. **Only one fix per iteration.** Don't stack multiple fixes — push one, let CI validate, then address the next.
 3. **Distinguish product bugs from test bugs.** If an E2E test fails due to a test infrastructure issue (not a product bug), fix the test. If it's a product bug, fix the product code.
 4. **Don't force-push unless absolutely necessary** (repo rules may block it). Prefer fixup commits.
 5. **Track everything.** Every action, every wait, every fix goes in the log.

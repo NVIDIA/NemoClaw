@@ -6,6 +6,9 @@ author_email: jyaunches@nvidia.com
 
 ---
 
+
+<!-- markdownlint-disable MD022 MD026 MD031 MD032 MD036 MD040 MD058 -->
+
 # NemoClaw PR Sweep
 
 Iterate over all active PR worktrees in NemoClaw-working, perform routine maintenance actions, and report status. Handles both PRs you own (authored) and PRs you're reviewing (someone else authored) with different permission levels.

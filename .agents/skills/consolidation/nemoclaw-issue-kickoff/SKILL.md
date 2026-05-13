@@ -6,6 +6,9 @@ author_email: jyaunches@nvidia.com
 
 ---
 
+
+<!-- markdownlint-disable MD022 MD026 MD031 MD032 MD036 MD040 MD058 -->
+
 # NemoClaw Issue Kickoff
 
 Pick up a NemoClaw GitHub issue, create a fresh git worktree, research the codebase in depth, and produce a phased development plan with test-depth classification for each phase.
