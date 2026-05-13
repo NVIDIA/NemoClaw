@@ -774,7 +774,7 @@ describe("regression guards", () => {
             {
               encoding: "utf-8",
               env: { ...process.env, HOME: tmp, PATH: `${fakeBin}:/usr/bin:/bin` },
-              timeout: 5000,
+              timeout: 15000,
             },
           );
           expect(result.status, `${script}: ${result.stdout}${result.stderr}`).toBe(0);

@@ -15,11 +15,7 @@ AI-assisted label suggestion for issues and PRs. Reads live triage instructions,
 
 ## Step 1: Read Triage Instructions
 
-Before suggesting any labels, read the live instructions:
-
-```bash
-cat docs/triage-instructions.md
-```
+Before suggesting any labels, read the live instructions from [references/triage-instructions.md](references/triage-instructions.md).
 
 Do not triage from memory. The instructions contain the label guide, tone rules, skip list, and output format. They may have been updated since your last session.
 
