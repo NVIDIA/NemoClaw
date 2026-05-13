@@ -34,8 +34,9 @@
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
  *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp)
  *   BREV_MIN_DISK          — Minimum disk size in GB (default: 50)
- *   BREV_GPU_TYPE          — GPU instance type for TEST_SUITE=gpu
- *                             (default: a2-highgpu-1g:nvidia-tesla-a100:1)
+ *   BREV_GPU_TYPE          — Optional GPU instance type for TEST_SUITE=gpu
+ *   BREV_GPU_NAME          — GPU name filter when BREV_GPU_TYPE is unset (default: A100)
+ *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 40)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
  *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
  *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
@@ -56,7 +57,9 @@ const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
 const BREV_MIN_RAM = parseInt(process.env.BREV_MIN_RAM || "16", 10);
 const BREV_PROVIDER = process.env.BREV_PROVIDER || "gcp";
 const BREV_MIN_DISK = parseInt(process.env.BREV_MIN_DISK || "50", 10);
-const BREV_GPU_TYPE = process.env.BREV_GPU_TYPE || "a2-highgpu-1g:nvidia-tesla-a100:1";
+const BREV_GPU_TYPE = process.env.BREV_GPU_TYPE || "";
+const BREV_GPU_NAME = process.env.BREV_GPU_NAME || "A100";
+const BREV_GPU_MIN_VRAM = process.env.BREV_GPU_MIN_VRAM || "40";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
@@ -356,7 +359,13 @@ function createBrevInstance(elapsed: () => string): void {
   );
   console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
   if (GPU_TEST_SUITE) {
-    console.log(`[${elapsed()}]   gpu: ${BREV_GPU_TYPE}`);
+    if (BREV_GPU_TYPE) {
+      console.log(`[${elapsed()}]   gpu type: ${BREV_GPU_TYPE}`);
+    } else {
+      console.log(
+        `[${elapsed()}]   gpu: name ${BREV_GPU_NAME}, min ${BREV_GPU_MIN_VRAM} GB VRAM, provider: ${BREV_PROVIDER}`,
+      );
+    }
   } else {
     console.log(
       `[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM, ${BREV_MIN_DISK} GB disk, provider: ${BREV_PROVIDER}`,
@@ -381,19 +390,32 @@ function createBrevInstance(elapsed: () => string): void {
 
   try {
     if (GPU_TEST_SUITE) {
-      execFileSync(
-        "brev",
-        [
-          "create",
-          requireInstanceName(),
-          "--gpu",
-          BREV_GPU_TYPE,
-          "--startup-script",
-          `@${setupScriptPath}`,
-          "--detached",
-        ],
-        { encoding: "utf-8", timeout: 180_000, stdio: STREAM_STDIO },
-      );
+      const createArgs = [
+        "create",
+        requireInstanceName(),
+        "--startup-script",
+        `@${setupScriptPath}`,
+        "--detached",
+      ];
+      if (BREV_GPU_TYPE) {
+        createArgs.push("--type", BREV_GPU_TYPE);
+      } else {
+        createArgs.push(
+          "--gpu-name",
+          BREV_GPU_NAME,
+          "--min-total-vram",
+          BREV_GPU_MIN_VRAM,
+          "--min-disk",
+          String(Math.max(BREV_MIN_DISK, 100)),
+          "--provider",
+          BREV_PROVIDER,
+        );
+      }
+      execFileSync("brev", createArgs, {
+        encoding: "utf-8",
+        timeout: 180_000,
+        stdio: STREAM_STDIO,
+      });
     } else {
       execSync(
         `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
