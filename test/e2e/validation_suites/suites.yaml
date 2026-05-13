@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Functional suite definitions.
+#
+# A suite is an ordered list of shell scripts that run after setup and
+# expected state validation complete. Suites consume `.e2e/context.env`
+# and MUST NOT perform install or onboarding themselves.
+#
+# `requires_state` declares the expected-state keys (dotted paths) that
+# must be present with a matching value for a suite to run against a
+# given scenario. The resolver validates these references at plan
+# resolution time (Phase 2) and the runner validates actual probe
+# results at runtime (Phase 8).
+#
+# Script paths are relative to this file's directory. Scripts are added
+# incrementally; Phase 5 lands the first `smoke` and `inference` steps.
+
+suites:
+  smoke:
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+    steps:
+      - id: cli-available
+        script: smoke/00-cli-available.sh
+      - id: gateway-health
+        script: smoke/01-gateway-health.sh
+      - id: sandbox-listed
+        script: smoke/02-sandbox-listed.sh
+      - id: sandbox-shell
+        script: smoke/03-sandbox-shell.sh
+
+  inference:
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+      inference.expected: available
+    steps:
+      - id: models-health
+        script: inference/cloud/00-models-health.sh
+      - id: chat-completion
+        script: inference/cloud/01-chat-completion.sh
+      - id: sandbox-inference-local
+        script: inference/cloud/02-inference-local-from-sandbox.sh
+
+  credentials:
+    requires_state:
+      credentials.expected: present
+    steps:
+      - id: credentials-present
+        script: security/credentials/00-credentials-present.sh
+
+  local-ollama-inference:
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+      inference.expected: available
+    steps:
+      - id: ollama-models-health
+        script: inference/ollama-gpu/00-ollama-models-health.sh
+      - id: ollama-chat-completion
+        script: inference/ollama-gpu/01-ollama-chat-completion.sh
+
+  ollama-proxy:
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+    steps:
+      - id: proxy-reachable
+        script: inference/ollama-auth-proxy/00-proxy-reachable.sh
+
+  platform-macos:
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+    steps:
+      - id: macos-smoke
+        script: platform/macos/00-macos-smoke.sh
+
+  platform-wsl:
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+    steps:
+      - id: wsl-smoke
+        script: platform/wsl/00-wsl-smoke.sh
+
+  hermes-specific:
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+      sandbox.agent: hermes
+    steps:
+      - id: hermes-health
+        script: hermes/00-hermes-health.sh

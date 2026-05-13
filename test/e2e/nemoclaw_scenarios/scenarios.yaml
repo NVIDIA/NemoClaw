@@ -1,0 +1,196 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# E2E setup scenario catalog.
+#
+# Reading order:
+#   1. `platforms`, `installs`, `runtimes`, and `onboarding` define reusable
+#      profiles ("dimensions") that describe how a user reaches a completed
+#      NemoClaw environment.
+#   2. `setup_scenarios` names concrete combinations by ID. Each scenario
+#      references profiles by key and pins exactly one `expected_state`
+#      from `expected-states.yaml`, along with an ordered list of `suites`
+#      from `suites.yaml`.
+#
+# Adding a new scenario:
+#   - Reuse existing profiles where possible. Add a new profile only when a
+#     dimension is genuinely new (e.g. a new platform runner).
+#   - Pick the expected_state that describes the completed environment.
+#   - List the suites to run against it, in the order they should execute.
+#   - Run `bash test/e2e/runtime/run-scenario.sh <id> --plan-only` once the
+#     resolver lands to validate references.
+#
+# See `test/e2e/docs/README.md` for the full reading guide and the sparse matrix
+# design that drives the initial three scenarios.
+
+platforms:
+  ubuntu-local:
+    os: ubuntu
+    execution_target: local
+  macos-local:
+    os: macos
+    execution_target: local
+  wsl-local:
+    os: wsl
+    execution_target: local
+  gpu-runner:
+    os: ubuntu
+    execution_target: local
+    gpu: nvidia
+  brev-launchable:
+    os: ubuntu
+    execution_target: remote
+    provider: brev
+  dgx-spark:
+    os: ubuntu
+    execution_target: local
+    hardware: dgx-spark
+
+installs:
+  repo-current:
+    method: repo-checkout
+    source: current-branch
+  public-curl:
+    method: curl-install-script
+    source: public-installer
+  launchable:
+    method: brev-launchable
+    source: launchable-image
+  release:
+    method: release-tarball
+    source: github-release
+  upgrade-from-version:
+    method: upgrade-in-place
+    source: prior-release
+
+runtimes:
+  docker-running:
+    container_engine: docker
+    container_daemon: running
+  gpu-docker-cdi:
+    container_engine: docker
+    container_daemon: running
+    gpu_runtime: cdi
+  docker-missing:
+    container_engine: docker
+    container_daemon: missing
+
+onboarding:
+  cloud-openclaw:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+  cloud-hermes:
+    path: cloud
+    agent: hermes
+    provider: nvidia
+    inference_route: inference-local
+  local-ollama-openclaw:
+    path: local
+    agent: openclaw
+    provider: ollama
+    inference_route: inference-local
+  openai-compatible-openclaw:
+    path: cloud
+    agent: openclaw
+    provider: openai-compatible
+    inference_route: inference-local
+
+setup_scenarios:
+  ubuntu-repo-cloud-openclaw:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw
+    expected_state: cloud-openclaw-ready
+    suites:
+      - smoke
+      - inference
+      - credentials
+
+  ubuntu-repo-cloud-hermes:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-hermes
+    expected_state: cloud-hermes-ready
+    suites:
+      - smoke
+      - inference
+      - hermes-specific
+
+  gpu-repo-local-ollama-openclaw:
+    dimensions:
+      platform: gpu-runner
+      install: repo-current
+      runtime: gpu-docker-cdi
+      onboarding: local-ollama-openclaw
+    runner_requirements:
+      - self-hosted-gpu
+      - docker-cdi
+    expected_state: local-ollama-openclaw-ready
+    suites:
+      - smoke
+      - local-ollama-inference
+      - ollama-proxy
+
+  macos-repo-cloud-openclaw:
+    dimensions:
+      platform: macos-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw
+    runner_requirements:
+      - macos-latest
+    expected_state: cloud-openclaw-ready
+    suites:
+      - smoke
+      - platform-macos
+
+  wsl-repo-cloud-openclaw:
+    dimensions:
+      platform: wsl-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw
+    runner_requirements:
+      - windows-latest
+      - wsl2
+    expected_state: cloud-openclaw-ready
+    suites:
+      - smoke
+      - platform-wsl
+
+  brev-launchable-cloud-openclaw:
+    dimensions:
+      platform: brev-launchable
+      install: launchable
+      runtime: docker-running
+      onboarding: cloud-openclaw
+    runner_requirements:
+      - ubuntu-latest
+      - brev-api-token
+      - launchable-image
+    expected_state: cloud-openclaw-ready
+    # Remote gateway must bind to 0.0.0.0 so the GitHub runner can reach it
+    # after ssh port-forward. Scenario-level overrides land alongside their
+    # first real consumer (deferred from Phase 1).
+    overrides:
+      onboarding:
+        gateway:
+          bind_address: 0.0.0.0
+    suites:
+      - smoke
+      - inference
+
+  ubuntu-no-docker-preflight-negative:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-missing
+      onboarding: cloud-openclaw
+    expected_state: preflight-failure-no-sandbox
+    suites: []

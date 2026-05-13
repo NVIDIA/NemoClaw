@@ -1,0 +1,98 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Expected state configs.
+#
+# Each entry describes the observable contract that must be true after
+# setup/install/onboarding completes for a given scenario. Expected states
+# are reusable: multiple setup scenarios can resolve to the same expected
+# state when they produce the same completed environment.
+#
+# Schema keys are intentionally small and structural. Deeper behavior lives
+# in suites; expected states answer "is the environment in the shape we
+# expect?" not "does every feature still work?".
+#
+# Negative/preflight expected states (e.g. `preflight-failure-no-sandbox`)
+# are introduced in Phase 9 alongside their first consuming scenario.
+
+expected_states:
+  cloud-openclaw-ready:
+    cli:
+      installed: true
+    gateway:
+      expected: present
+      health: healthy
+    sandbox:
+      expected: present
+      status: running
+      agent: openclaw
+    inference:
+      expected: available
+      provider: nvidia
+      route: inference-local
+      mode: gateway-routed
+    credentials:
+      expected: present
+      storage: gateway-managed
+    security:
+      policy_engine: supported
+      shields: supported
+
+  cloud-hermes-ready:
+    cli:
+      installed: true
+    gateway:
+      expected: present
+      health: healthy
+    sandbox:
+      expected: present
+      status: running
+      agent: hermes
+    inference:
+      expected: available
+      provider: nvidia
+      route: inference-local
+      mode: gateway-routed
+    credentials:
+      expected: present
+      storage: gateway-managed
+    security:
+      policy_engine: supported
+      shields: supported
+
+  local-ollama-openclaw-ready:
+    cli:
+      installed: true
+    gateway:
+      expected: present
+      health: healthy
+    sandbox:
+      expected: present
+      status: running
+      agent: openclaw
+    inference:
+      expected: available
+      provider: ollama
+      route: inference-local
+      mode: gateway-routed
+    credentials:
+      expected: present
+      storage: gateway-managed
+    security:
+      policy_engine: supported
+      shields: supported
+
+  # Negative preflight state. Introduced alongside its first consumer,
+  # `ubuntu-no-docker-preflight-negative` (deferred from Phase 1).
+  # Setup is expected to fail, and the runner must confirm that no
+  # gateway or sandbox ghost state was left behind.
+  preflight-failure-no-sandbox:
+    cli:
+      installed: true
+    gateway:
+      expected: absent
+    sandbox:
+      expected: absent
+    failure:
+      expected: true
+      stage: preflight

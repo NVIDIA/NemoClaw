@@ -312,6 +312,8 @@ const validationRecovery: typeof import("./validation-recovery") = require("./va
 const webSearch: typeof import("./inference/web-search") = require("./inference/web-search");
 const openshellInstallFlow: typeof import("./onboard/openshell-install") =
   require("./onboard/openshell-install");
+const openshellPinFlow: typeof import("./onboard/openshell-pin") =
+  require("./onboard/openshell-pin");
 const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-failure") =
   require("./onboard/sandbox-create-failure");
 
@@ -348,6 +350,7 @@ import type { WebSearchConfig } from "./inference/web-search";
 import type {
   DockerDriverBinaryOverrides,
   OpenShellInstallDeps,
+  OpenShellInstallResult,
 } from "./onboard/openshell-install";
 import type { SelectionDrift } from "./onboard/selection-drift";
 
@@ -2703,42 +2706,20 @@ function getPortConflictServiceHints(platform = process.platform): string[] {
   ];
 }
 
-function installOpenshell(): {
-  installed: boolean;
-  localBin: string | null;
-  futureShellPathHint: string | null;
-} {
-  const result = spawnSync("bash", [path.join(SCRIPTS, "install-openshell.sh")], {
+function installOpenshell(): OpenShellInstallResult {
+  return openshellPinFlow.runOpenshellInstall({
+    scriptsDir: SCRIPTS,
     cwd: ROOT,
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf-8",
-    timeout: 300_000,
+    resolveOpenshell,
+    getFutureShellPathHint,
+    setOpenshellBin: (bin) => {
+      OPENSHELL_BIN = bin;
+    },
+    getBlueprintMinOpenshellVersion,
+    getBlueprintMaxOpenshellVersion,
+    versionGte,
+    log: console.log,
   });
-  if (result.status !== 0) {
-    const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
-    if (output) {
-      console.error(output);
-    }
-    return { installed: false, localBin: null, futureShellPathHint: null };
-  }
-  const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");
-  const openshellPath = path.join(localBin, "openshell");
-  const futureShellPathHint = fs.existsSync(openshellPath)
-    ? getFutureShellPathHint(localBin, process.env.PATH)
-    : null;
-  if (fs.existsSync(openshellPath) && futureShellPathHint) {
-    process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH}`;
-  }
-  OPENSHELL_BIN = resolveOpenshell();
-  if (OPENSHELL_BIN) {
-    process.env.NEMOCLAW_OPENSHELL_BIN = OPENSHELL_BIN;
-  }
-  return {
-    installed: OPENSHELL_BIN !== null,
-    localBin,
-    futureShellPathHint,
-  };
 }
 
 function areRequiredDockerDriverBinariesPresent(
