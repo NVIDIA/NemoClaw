@@ -37,6 +37,7 @@
  *   BREV_GPU_TYPE          — Optional GPU instance type for TEST_SUITE=gpu
  *   BREV_GPU_NAME          — GPU name filter when BREV_GPU_TYPE is unset (default: L4)
  *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 20)
+ *   BREV_CREATE_TIMEOUT_SECONDS — Brev create timeout, seconds (default: 1200 for GPU)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
  *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
  *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
@@ -65,6 +66,16 @@ const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 const CLI_PATH = path.join(REPO_DIR, "bin", "nemoclaw.js");
 const GPU_TEST_SUITE = TEST_SUITE === "gpu";
+const BREV_CREATE_TIMEOUT_SECONDS = parseInt(
+  process.env.BREV_CREATE_TIMEOUT_SECONDS || (GPU_TEST_SUITE ? "1200" : "180"),
+  10,
+);
+const BREV_CREATE_TIMEOUT_MS =
+  (Number.isFinite(BREV_CREATE_TIMEOUT_SECONDS) && BREV_CREATE_TIMEOUT_SECONDS > 0
+    ? BREV_CREATE_TIMEOUT_SECONDS
+    : GPU_TEST_SUITE
+      ? 1200
+      : 180) * 1000;
 
 function requireInstanceName(): string {
   if (!INSTANCE_NAME) {
@@ -369,6 +380,9 @@ function createBrevInstance(elapsed: () => string): void {
     `[${elapsed()}] Creating ${instanceKind} instance via launchable...`,
   );
   console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
+  console.log(
+    `[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`,
+  );
   if (GPU_TEST_SUITE) {
     if (BREV_GPU_TYPE) {
       console.log(`[${elapsed()}]   gpu type: ${BREV_GPU_TYPE}`);
@@ -438,12 +452,12 @@ function createBrevInstance(elapsed: () => string): void {
         `@${setupScriptPath}`,
         "--detached",
         "--timeout",
-        "900",
+        String(Math.round(BREV_CREATE_TIMEOUT_MS / 1000)),
       ];
       createArgs.push(...gpuSelectorArgs);
       execFileSync("brev", createArgs, {
         encoding: "utf-8",
-        timeout: 900_000,
+        timeout: BREV_CREATE_TIMEOUT_MS + 180_000,
         stdio: STREAM_STDIO,
       });
     } else {
