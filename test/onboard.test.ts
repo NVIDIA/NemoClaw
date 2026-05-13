@@ -5133,20 +5133,20 @@ ${webSearchVerifySource}`;
       "utf-8",
     );
 
-    assert.match(source, /const useDockerGpuPatch = dockerGpuPatch\.shouldApplyDockerGpuPatch/);
-    assert.match(
-      source,
-      /buildSandboxGpuCreateArgs\(\s*effectiveSandboxGpuConfig,\s*\{\s*suppressGpuFlag: useDockerGpuPatch,\s*\}/,
+    const createSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
+      "utf-8",
     );
-    assert.match(source, /applyDockerGpuPatchOrExit/);
-    assert.match(source, /getDockerGpuSupervisorReconnectTimeoutSecs\(sandboxReadyTimeoutSecs\)/);
-    assert.match(source, /waitForOpenShellSupervisorReconnect\(\s*sandboxName,\s*supervisorReconnectTimeoutSecs/);
+
+    assert.match(source, /useDockerGpuPatch = dockerGpuSandboxCreate\.shouldUseDockerGpuPatchForCreate/);
+    assert.match(source, /suppressGpuFlag: useDockerGpuPatch/);
+    assert.match(source, /maybeApplyDuringCreate/);
     assert.match(source, /printDockerGpuReadinessFailure/);
     assert.match(source, /printDockerGpuProofFailure/);
-    assert.match(
-      source,
-      /readyCheck:\s*\(\)\s*=>\s*\{[\s\S]*?if \(isSandboxReady\(list, sandboxName\)\) return true;\s*maybeApplyDockerGpuPatchDuringCreate\(\);\s*return false;\s*\}/,
-    );
+    assert.match(createSource, /applyDockerGpuPatchOrExit/);
+    assert.match(createSource, /getDockerGpuSupervisorReconnectTimeoutSecs/);
+    assert.match(createSource, /waitForOpenShellSupervisorReconnect/);
+    assert.match(createSource, /recreateOpenShellDockerSandboxWithGpu/);
     assert.match(patchSource, /recreateOpenShellDockerSandboxWithGpu/);
     assert.match(patchSource, /collectDockerGpuPatchDiagnostics/);
     assert.match(patchSource, /has been left in place for inspection/);
