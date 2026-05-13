@@ -6308,6 +6308,165 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
+  it(
+    "preserves disabled channels in the registry after a recreate so `channels start` can re-enable them (#3381)",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-disabled-channels-preserve-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "disabled-channels-preserve.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+
+const commands = [];
+const registerCalls = [];
+registry.registerSandbox({
+  name: "my-assistant",
+  messagingChannels: ["telegram"],
+  disabledChannels: ["telegram"],
+  providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-telegram" },
+});
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get my-assistant-telegram-bridge")) return { status: 0 };
+  if (normalized.includes("provider get")) return { status: 1 };
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  return "";
+};
+registry.registerSandbox = (entry) => {
+  registerCalls.push(entry);
+  return true;
+};
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const command = _n(args[1][1]);
+  const entry = { command, env: args[2]?.env || null };
+  const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
+  if (dockerfileMatch) {
+    try {
+      entry.dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
+    } catch (error) {
+      entry.dockerfileReadError = String(error);
+    }
+  }
+  commands.push(entry);
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"],
+  );
+  console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          TELEGRAM_BOT_TOKEN: "",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      const createCommand = payload.commands.find((entry: CommandEntry) =>
+        entry.command.includes("sandbox create"),
+      );
+      assert.ok(createCommand, "expected sandbox create command");
+      assert.equal(createCommand.dockerfileReadError, undefined);
+
+      const channelsLine = createCommand.dockerfileContent
+        ?.split("\n")
+        .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
+      assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
+      const bakedChannels = JSON.parse(
+        Buffer.from(channelsLine.split("=")[1], "base64").toString(),
+      );
+      assert.deepEqual(bakedChannels, [], "disabled channel must not be baked into the image");
+      assert.doesNotMatch(
+        createCommand.command,
+        /--provider my-assistant-telegram-bridge/,
+        "disabled channel's bridge must not be attached to the new sandbox",
+      );
+
+      assert.deepEqual(
+        payload.registerCalls[0]?.messagingChannels,
+        ["telegram"],
+        "registry.messagingChannels must keep the disabled-but-configured channel so `channels start` can recover it",
+      );
+      assert.deepEqual(
+        payload.registerCalls[0]?.disabledChannels,
+        ["telegram"],
+        "registry.disabledChannels must round-trip through the rebuild",
+      );
+    },
+  );
+
   it("aborts onboard when a messaging provider upsert fails", { timeout: 60_000 }, async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));

@@ -6279,7 +6279,13 @@ async function createSandbox(
     providerCredentialHashes:
       Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
     policies: initialSandboxPolicy.appliedPresets,
-    messagingChannels: activeMessagingChannels,
+    // Persist the operator's configured channel set, not the post-disabled-filter
+    // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
+    // X, but X is still configured — losing it here means a later `channels start
+    // X` has nothing to re-enable (the next rebuild sees an empty channel set and
+    // never reattaches the gateway bridge). See #3381.
+    messagingChannels:
+      enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels,
     messagingChannelConfig: messagingChannelConfig || undefined,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
     dashboardPort: actualDashboardPort,
