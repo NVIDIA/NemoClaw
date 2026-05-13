@@ -28,7 +28,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
 #
 # Environment overrides:
-#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.37)
+#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.39)
 #   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
 #   SKIP_DOCKER_PULL      — Set to 1 to skip Docker image pre-pulls
@@ -40,7 +40,7 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.37}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.39}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
@@ -250,7 +250,7 @@ DOCKER_PULL_PID=""
 if [[ "${SKIP_DOCKER_PULL:-0}" != "1" ]]; then
   info "Pre-pulling Docker images in background..."
   (
-    SUPERVISOR_TAG="${OPENSHELL_VERSION#v}" # v0.0.37 → 0.0.37
+    SUPERVISOR_TAG="${OPENSHELL_VERSION#v}" # v0.0.39 -> 0.0.39
     SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor:${SUPERVISOR_TAG}"
 
     # Pull all images in parallel

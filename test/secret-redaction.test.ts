@@ -115,7 +115,7 @@ describe("secret redaction consistency (#1736)", () => {
         "uptime",
       ]) {
         try {
-          const target = spawnSync("bash", ["-lc", `command -v ${name}`], {
+          const target = spawnSync("bash", ["--noprofile", "--norc", "-c", `command -v ${name}`], {
             encoding: "utf-8",
           }).stdout.trim();
           if (target) symlinkSync(target, join(fakeBin, name));

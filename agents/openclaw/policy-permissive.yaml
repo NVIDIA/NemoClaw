@@ -183,27 +183,36 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         access: full
       - host: api.slack.com
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         access: full
       - host: hooks.slack.com
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         access: full
       - host: wss-primary.slack.com
         port: 443
-        protocol: rest
+        protocol: websocket
         enforcement: enforce
-        access: full
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
       - host: wss-backup.slack.com
         port: 443
-        protocol: rest
+        protocol: websocket
         enforcement: enforce
-        access: full
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
     binaries:
       - { path: "/**" }
 

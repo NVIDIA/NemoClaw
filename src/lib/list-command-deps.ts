@@ -3,7 +3,7 @@
 
 import * as onboardSession from "./state/onboard-session";
 import type { ListSandboxesCommandDeps, SandboxEntry } from "./inventory";
-import { parseGatewayInference } from "./inference/config";
+import { getLiveGatewayInference } from "./inference/live";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { parseSshProcesses, createSystemDeps } from "./state/sandbox-session";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
@@ -73,12 +73,9 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
       ),
     getLiveInference: () => {
       try {
-        return parseGatewayInference(
-          captureOpenshell(["inference", "get"], {
-            ignoreError: true,
-            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-          }).output,
-        );
+        return getLiveGatewayInference(captureOpenshell, {
+          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        }).inference;
       } catch {
         return null;
       }

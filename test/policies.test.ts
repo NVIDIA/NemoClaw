@@ -749,34 +749,151 @@ describe("policies", () => {
       expect(graphSection).toContain("method: PATCH");
     });
 
-    it("messaging WebSocket presets keep tls: skip on gateway endpoints", () => {
+    it("messaging WebSocket presets use native inspected WebSocket policy", () => {
       const cases = [
-        { preset: "discord", pattern: /host:\s*gateway\.discord\.gg[\s\S]*?tls:\s*skip/ },
-        { preset: "slack", pattern: /host:\s*wss-primary\.slack\.com[\s\S]*?tls:\s*skip/ },
-        { preset: "slack", pattern: /host:\s*wss-backup\.slack\.com[\s\S]*?tls:\s*skip/ },
+        {
+          preset: "discord",
+          host: "gateway.discord.gg",
+          credentialRewrite: true,
+        },
+        {
+          preset: "slack",
+          host: "wss-primary.slack.com",
+          credentialRewrite: true,
+        },
+        {
+          preset: "slack",
+          host: "wss-backup.slack.com",
+          credentialRewrite: true,
+        },
       ];
 
-      for (const { preset, pattern } of cases) {
+      for (const { preset, host, credentialRewrite } of cases) {
         const content = requirePresetContent(policies.loadPreset(preset));
-        expect(content).toBeTruthy();
-        expect(content).toMatch(pattern);
+        const parsed = YAML.parse(content) as {
+          network_policies?: Record<
+            string,
+            {
+              endpoints?: Array<{
+                host?: string;
+                protocol?: string;
+                access?: string;
+                tls?: string;
+                websocket_credential_rewrite?: boolean;
+                request_body_credential_rewrite?: boolean;
+                rules?: Array<{ allow?: { method?: string; path?: string } }>;
+              }>;
+            }
+          >;
+        };
+        const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
+          (policy) => policy.endpoints ?? [],
+        );
+        const endpoint = endpoints.find((candidate) => candidate.host === host);
+        expect(endpoint).toBeTruthy();
+        expect(endpoint).toMatchObject({ protocol: "websocket", enforcement: "enforce" });
+        expect(endpoint).not.toHaveProperty("access");
+        expect(endpoint).not.toHaveProperty("tls");
+        expect(endpoint?.websocket_credential_rewrite === true).toBe(credentialRewrite);
+        expect(endpoint?.rules).toEqual(
+          expect.arrayContaining([
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+          ]),
+        );
       }
     });
 
-    it("Hermes Discord gateway policy uses the OpenClaw L4 WebSocket tunnel shape", () => {
+    it("Slack REST endpoints opt into OpenShell request-body credential rewrite", () => {
+      const policySources = [
+        fs.readFileSync(
+          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets/slack.yaml"),
+          "utf8",
+        ),
+        fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"), "utf8"),
+        fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"), "utf8"),
+        fs.readFileSync(
+          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml"),
+          "utf8",
+        ),
+      ];
+      const slackRestHosts = new Set(["slack.com", "api.slack.com", "hooks.slack.com"]);
+
+      for (const content of policySources) {
+        const parsed = YAML.parse(content) as {
+          network_policies?: Record<
+            string,
+            {
+              endpoints?: Array<{
+                host?: string;
+                protocol?: string;
+                request_body_credential_rewrite?: boolean;
+              }>;
+            }
+          >;
+        };
+        const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
+          (policy) => policy.endpoints ?? [],
+        );
+        for (const endpoint of endpoints.filter((candidate) =>
+          slackRestHosts.has(candidate.host ?? ""),
+        )) {
+          expect(endpoint).toMatchObject({
+            protocol: "rest",
+            request_body_credential_rewrite: true,
+          });
+        }
+      }
+    });
+
+    it("Hermes messaging gateway policies use native inspected WebSocket policy", () => {
       const policyFiles = [
         path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
         path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"),
       ];
+      const cases = [
+        "gateway.discord.gg",
+        "wss-primary.slack.com",
+        "wss-backup.slack.com",
+      ];
 
       for (const file of policyFiles) {
         const content = fs.readFileSync(file, "utf8");
-        const gatewaySection =
-          content.split("host: gateway.discord.gg")[1]?.split("- host:")[0] ?? "";
-        expect(gatewaySection).toContain("access: full");
-        expect(gatewaySection).toContain("tls: skip");
-        expect(gatewaySection).not.toContain("protocol: rest");
-        expect(gatewaySection).not.toContain("rules:");
+        const parsed = YAML.parse(content) as {
+          network_policies?: Record<
+            string,
+            {
+              endpoints?: Array<{
+                host?: string;
+                protocol?: string;
+                access?: string;
+                tls?: string;
+                websocket_credential_rewrite?: boolean;
+                rules?: Array<{ allow?: { method?: string; path?: string } }>;
+              }>;
+            }
+          >;
+        };
+        const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
+          (policy) => policy.endpoints ?? [],
+        );
+        for (const host of cases) {
+          const endpoint = endpoints.find((candidate) => candidate.host === host);
+          expect(endpoint).toBeTruthy();
+          expect(endpoint).toMatchObject({
+            protocol: "websocket",
+            enforcement: "enforce",
+            websocket_credential_rewrite: true,
+          });
+          expect(endpoint).not.toHaveProperty("access");
+          expect(endpoint).not.toHaveProperty("tls");
+          expect(endpoint?.rules).toEqual(
+            expect.arrayContaining([
+              { allow: { method: "GET", path: "/**" } },
+              { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+            ]),
+          );
+        }
       }
     });
 
@@ -835,6 +952,20 @@ describe("policies", () => {
         ]),
       );
       expect(discordMutationRules.some((rule) => rule.path === "/**")).toBe(false);
+    });
+
+    it("Hermes GitHub policy does not whitelist the absent gh CLI (#2179)", () => {
+      const content = fs.readFileSync(
+        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
+        "utf8",
+      );
+      const parsed = YAML.parse(content);
+      const githubPolicy = parsed.network_policies?.github as
+        | { binaries?: Array<{ path?: string }> }
+        | undefined;
+      const binaries = (githubPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(["/opt/hermes/.venv/bin/python", "/usr/bin/git"]);
+      expect(binaries).not.toContain("/usr/bin/gh");
     });
 
     it("REST policy YAML avoids deprecated tls: terminate", () => {

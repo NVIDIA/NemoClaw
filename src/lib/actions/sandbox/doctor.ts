@@ -620,12 +620,13 @@ export async function runSandboxDoctor(sandboxName: string, args: string[] = [])
       });
     }
 
+    const shieldsDown = shields.isShieldsDown(sandboxName, true);
     checks.push({
       group: "Sandbox",
       label: "Shields",
-      status: shields.isShieldsDown(sandboxName) ? "warn" : "ok",
-      detail: shields.isShieldsDown(sandboxName) ? "down" : "up",
-      hint: shields.isShieldsDown(sandboxName)
+      status: shieldsDown ? "warn" : "ok",
+      detail: shieldsDown ? "down" : "up",
+      hint: shieldsDown
         ? `run \`${CLI_NAME} ${sandboxName} shields status\` for details`
         : undefined,
     });

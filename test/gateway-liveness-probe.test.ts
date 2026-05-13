@@ -36,7 +36,7 @@ describe("gateway liveness probe (#2020)", () => {
     expect(preflightEnd).toBeGreaterThan(preflightStart);
     const preflightSection = content.slice(preflightStart, preflightEnd);
     const preflightProbe = preflightSection.match(
-      /let gatewayReuseState = gatewaySnapshot\.gatewayReuseState[\s\S]*?verifyGatewayContainerRunning\(\)[\s\S]*?gatewayReuseState = "missing"/,
+      /let gatewayReuseState = gatewaySnapshot\.gatewayReuseState[\s\S]*?verifyGatewayContainerRunning\(\)[\s\S]*?destroyGatewayForReuse\(/,
     );
     expect(preflightProbe).toBeTruthy();
   });
@@ -77,6 +77,23 @@ describe("gateway liveness probe (#2020)", () => {
     expect(cleanupAfterProbe).toBeTruthy();
   });
 
+  it("does not keep stale or drifted gateways reusable when cleanup fails", () => {
+    const cleanupHelper = fs.readFileSync(
+      path.join(ROOT, "src/lib/onboard/gateway-cleanup.ts"),
+      "utf-8",
+    );
+    const failedStaleCleanup = content.match(
+      /destroyGatewayForReuse\(\s*destroyGateway,\s*"  ✓ Stale gateway metadata cleaned up",\s*"  ! Stale gateway metadata cleanup failed; leaving registry state intact\."/g,
+    );
+    const failedDriftCleanup = content.match(
+      /destroyGatewayForReuse\(\s*destroyGateway,\s*"  ✓ Previous gateway cleaned up",\s*"  ! Previous gateway cleanup failed; leaving registry state intact\."/g,
+    );
+
+    expect(cleanupHelper).toMatch(/return "stale"/);
+    expect(failedStaleCleanup?.length).toBeGreaterThanOrEqual(2);
+    expect(failedDriftCleanup?.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("main onboard flow aborts (does not downgrade or destroy) when Docker is unknown and HTTP is unready (#3258, #2020)", () => {
     // Regression guard: when verifyGatewayContainerRunning() returns "unknown"
     // and the host HTTP probe also fails, we cannot tell whether the existing
@@ -99,6 +116,21 @@ describe("gateway liveness probe (#2020)", () => {
     // Must not downgrade reuse state (would feed startGatewayWithOptions whose
     // retry hook calls destroyGateway, tearing down a possibly-live gateway).
     expect(branchBody).not.toMatch(/gatewayReuseState\s*=\s*"missing"/);
+  });
+
+  it("Docker-driver gateway startup requires a live probe before reporting healthy (#3111)", () => {
+    const dockerStart = content.indexOf("async function startDockerDriverGateway(");
+    const dockerEnd = content.indexOf("\nasync function startGateway(", dockerStart);
+    expect(dockerStart).toBeGreaterThanOrEqual(0);
+    expect(dockerEnd).toBeGreaterThan(dockerStart);
+    const dockerSection = content.slice(dockerStart, dockerEnd);
+
+    expect(dockerSection).toMatch(
+      /isGatewayHealthy\(status, namedInfo, currentInfo\)[\s\S]*?await isGatewayTcpReady\(\)[\s\S]*?Docker-driver gateway is healthy/,
+    );
+    expect(dockerSection).toMatch(
+      /registerDockerDriverGatewayEndpoint\(\)[\s\S]*?await isDockerDriverGatewayHttpReady\(\)[\s\S]*?Reusing existing Docker-driver gateway/,
+    );
   });
 
   it("does not modify isGatewayHealthy() in src/lib/state/gateway.ts", () => {

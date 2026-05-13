@@ -1,9 +1,9 @@
 ---
 title:
-  page: "How NemoClaw Works: Plugin, Blueprint, and Sandbox Lifecycle"
+  page: "NemoClaw Architecture Overview: Plugin, Blueprint, and Sandbox Lifecycle"
   nav: "How It Works"
 description:
-  main: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
+  main: "Learn how NemoClaw combines a host CLI, sandbox plugin, and versioned blueprint to move OpenClaw into a controlled sandbox."
   agent: "Describes how NemoClaw works internally: CLI, plugin, blueprint runner, OpenShell orchestration, inference routing, and protection layers. Use for sandbox lifecycle and architecture mechanics; not for product definition (Overview) or multi-project placement (Ecosystem)."
 keywords: ["how nemoclaw works", "nemoclaw sandbox lifecycle blueprint"]
 topics: ["generative_ai", "ai_agents"]
@@ -20,71 +20,48 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# How NemoClaw Works
+# NemoClaw Architecture Overview
 
-This page explains how NemoClaw operates, which parts run where, how the blueprint drives OpenShell, and how inference and policy attach to the sandbox.
+This page explains how NemoClaw runs OpenClaw inside an OpenShell sandbox and how the gateway connects the agent to inference, integrations, and policy.
 
-## How the Pieces Connect
+NemoClaw does not replace OpenClaw or OpenShell.
+It packages them into a repeatable setup with a host CLI, a versioned blueprint, default policies, inference setup, plugin configuration, and state helpers.
+You can use that setup directly or adapt it for your own OpenShell integration.
 
-The `nemoclaw` CLI is the primary entrypoint for setting up and managing sandboxed OpenClaw agents.
-It delegates heavy lifting to a versioned blueprint, a Python artifact that orchestrates sandbox creation, policy application, and inference provider setup through the OpenShell CLI.
+## High-Level Flow
 
-Between your shell and the running sandbox, NemoClaw contributes these integration layers:
+NemoClaw keeps the user workflow on the host while OpenShell enforces the sandbox boundary.
+The gateway sits between NemoClaw control, the sandbox, inference providers, and external integrations.
+That placement lets NemoClaw configure the environment without giving the agent direct access to host credentials or uncontrolled network egress.
 
-| Layer | Role in the flow |
+```{figure} images/nemoclaw-highlevel-component-diagram.png
+:alt: NemoClaw High-Level Component Diagram
+:width: 100%
+:align: center
+
+NemoClaw High-Level Component Diagram
+```
+
+The diagram has the following components:
+
+| Component | Role in the flow |
 |-------|------------------|
-| Onboarding | `nemoclaw onboard` validates credentials, selects providers, and drives blueprint execution until the sandbox is ready. |
-| Blueprint | Supplies the hardened image definition, default policies, capability posture, and orchestration steps the runner applies through OpenShell. |
-| State management | Migrates agent state across machines with credential stripping and integrity checks. |
-| Channel messaging | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the agent. NemoClaw enables this through onboarding and blueprint wiring; delivery is not a separate NemoClaw host daemon. |
+| Users and operators | Start from the CLI, installer, dashboard, or an end-user channel. |
+| NemoClaw control | Collects configuration, runs onboarding, prepares the blueprint, and asks OpenShell to create or update resources. |
+| OpenShell gateway | Owns sandbox lifecycle, networking, policy enforcement, inference routing, and integration egress. |
+| NemoClaw sandbox | Runs OpenClaw with the NemoClaw plugin, the selected blueprint contents, and supporting tools. |
+| Inference | Receives model requests through the gateway, using NVIDIA endpoints, NIM, or compatible APIs. |
+| Integrations | Reach messaging services, MCP servers, GitHub, package indexes, or model hubs through gateway-managed egress. |
+| State and artifacts | Store configuration, credentials, logs, workspace files, policies, and transcripts outside the running agent process. |
 
 For repository layout, file paths, and deeper diagrams, see [Architecture](../reference/architecture.md).
-
-```{mermaid}
-flowchart TB
-    subgraph Host
-        CMD["nemoclaw onboard"]
-        PLUGIN[nemoclaw plugin]
-        BLUEPRINT[blueprint runner]
-        CLI["openshell CLI sandbox · gateway · inference · policy"]
-
-        CMD --> PLUGIN
-        PLUGIN --> BLUEPRINT
-        BLUEPRINT --> CLI
-    end
-
-    subgraph Sandbox["OpenShell Sandbox"]
-        AGENT[OpenClaw agent]
-        INF[NVIDIA inference, routed]
-        NET[default network policy]
-        FS[filesystem isolation]
-
-        AGENT --- INF
-        AGENT --- NET
-        AGENT --- FS
-    end
-
-    PLUGIN --> AGENT
-
-    classDef nv fill:#76b900,stroke:#333,color:#fff
-    classDef nvLight fill:#e6f2cc,stroke:#76b900,color:#1a1a1a
-    classDef nvDark fill:#333,stroke:#76b900,color:#fff
-
-    class CMD,PLUGIN,BLUEPRINT nvDark
-    class CLI nv
-    class AGENT nv
-    class INF,NET,FS nvLight
-
-    style Host fill:none,stroke:#76b900,stroke-width:2px,color:#1a1a1a
-    style Sandbox fill:#f5faed,stroke:#76b900,stroke-width:2px,color:#1a1a1a
-```
 
 ## Design Principles
 
 NemoClaw architecture follows the following principles.
 
 Thin plugin, versioned blueprint
-: The plugin stays small and stable. Orchestration logic lives in the blueprint and evolves on its own release cadence.
+: The sandbox plugin stays small and stable. Host-side orchestration uses a versioned blueprint and runner that can evolve on its own release cadence.
 
 Respect CLI boundaries
 : The `nemoclaw` CLI is the primary interface for sandbox management.
@@ -99,25 +76,26 @@ OpenShell-backed lifecycle
 Reproducible setup
 : Running setup again recreates the sandbox from the same blueprint and policy definitions.
 
-## Plugin and Blueprint
+## CLI, Plugin, and Blueprint
 
-NemoClaw is split into two parts:
+NemoClaw is split into three integration pieces:
 
-- The *plugin* is a TypeScript package that registers an inference provider and the `/nemoclaw` slash command inside the sandbox.
-  It handles user interaction and delegates orchestration work to the blueprint.
-- The *blueprint* is a versioned Python artifact that contains all the logic for creating sandboxes, applying policies, and configuring inference.
-  The plugin resolves, verifies, and executes the blueprint as a subprocess.
+- The *host CLI* runs onboarding, validates provider choices, stores configuration, and calls OpenShell commands for gateway, provider, sandbox, and policy operations.
+- The *plugin* is a TypeScript package that runs with OpenClaw inside the sandbox.
+  It registers the managed inference provider metadata, the `/nemoclaw` slash command, and runtime context hooks.
+- The *blueprint* is a versioned YAML package with the sandbox image, policy, inference profile, and supporting assets.
+  The runner resolves and verifies the blueprint before applying it through OpenShell.
 
-This separation keeps the plugin small and stable while allowing the blueprint to evolve on its own release cadence.
+This separation keeps the sandbox plugin small while allowing host orchestration and blueprint contents to evolve on their own release cadence.
 
 ## Sandbox Creation
 
 When you run `nemoclaw onboard`, NemoClaw creates an OpenShell sandbox that runs OpenClaw in an isolated container.
-The blueprint orchestrates this process through the OpenShell CLI:
+The host CLI and blueprint runner orchestrate this process through the OpenShell CLI:
 
-1. The plugin downloads the blueprint artifact, checks version compatibility, and verifies the digest.
-2. The blueprint determines which OpenShell resources to create or update, such as the gateway, inference providers, sandbox, and network policy.
-3. The blueprint calls OpenShell CLI commands to create the sandbox and configure each resource.
+1. NemoClaw resolves the blueprint, checks version compatibility, and verifies the digest.
+2. The onboarding flow determines which OpenShell resources to create or update, such as the gateway, inference providers, sandbox, and network policy.
+3. The runner calls OpenShell CLI commands to create the sandbox and configure each resource.
 
 After the sandbox starts, the agent runs inside it with all network, filesystem, and inference controls in place.
 
