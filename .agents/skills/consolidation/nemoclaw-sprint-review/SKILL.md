@@ -62,10 +62,12 @@ The sprint field is an **Iteration** field named "Sprint". Pick the iteration wh
 
 The project has 1400+ items. Sprint items are spread across all pages, so you **must paginate through all items**.
 
-Use the helper script at `${AGENT_SKILLS_DIR}/nemoclaw-sprint-review/collect_sprint_items.py`:
+Use the helper script from the repository skill directory:
 
 ```bash
-python3 ${AGENT_SKILLS_DIR}/nemoclaw-sprint-review/collect_sprint_items.py "Sprint 3" > /tmp/sprint_data.json
+SCRIPT=".agents/skills/consolidation/nemoclaw-sprint-review/collect_sprint_items.py"
+test -f "$SCRIPT" || SCRIPT=".agents/skills/nemoclaw-sprint-review/collect_sprint_items.py"
+python3 "$SCRIPT" "Sprint 3" > /tmp/sprint_data.json
 ```
 
 The script outputs a JSON array of items with: number, title, state, status, assignees, labels, type (Issue/PR), author.

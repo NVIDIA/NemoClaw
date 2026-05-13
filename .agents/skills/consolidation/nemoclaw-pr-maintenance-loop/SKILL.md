@@ -48,32 +48,7 @@ One-shot pass:
 /skill:nemoclaw-pr-maintenance-loop
 ```
 
-Optional background watcher, only if user asks for an always-running process outside `/loop`:
-
-```bash
-mkdir -p "$STATE_DIR"
-if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-  echo "Watcher already running: $(cat "$PIDFILE")"
-else
-  nohup bash -c '
-    echo $$ > "'$PIDFILE'"
-    while true; do
-      echo "[$(date -Iseconds)] invoking the agent" >> "'$LOGFILE'"
-      <agent-cli> -p "Run /skill:nemoclaw-pr-maintenance-loop one pass" >> "'$LOGFILE'" 2>&1
-      echo "[$(date -Iseconds)] pass finished; sleeping until next interval" >> "'$LOGFILE'"
-      sleep '$INTERVAL'
-    done
-  ' &>/dev/null &
-fi
-```
-
-Stop background watcher:
-
-```bash
-kill "$(cat "$PIDFILE")" && rm -f "$PIDFILE"
-```
-
-Prefer `/loop` over the background watcher because it is visible, interruptible, and simpler.
+Do not spawn a background watcher from the skill. Agent CLI names and flags are user-environment-specific and go stale; use the harness `/loop` mechanism for persistence.
 
 ## State and Idempotency
 

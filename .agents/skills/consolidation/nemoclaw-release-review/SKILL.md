@@ -124,10 +124,12 @@ cd ${NEMOCLAW_REPO} && gh api graphql -f query='
 
 The sprint field is an **Iteration** field named `Sprint`. Pick the iteration whose date range includes today.
 
-Then collect all sprint items. Prefer the existing helper from the sprint-review skill:
+Then collect all sprint items. Prefer the existing helper from the sprint-review skill, resolving it from the repository instead of a user-specific skills directory:
 
 ```bash
-python3 ${AGENT_SKILLS_DIR}/nemoclaw-sprint-review/collect_sprint_items.py "Sprint N" > /tmp/nemoclaw_current_sprint.json
+SCRIPT=".agents/skills/consolidation/nemoclaw-sprint-review/collect_sprint_items.py"
+test -f "$SCRIPT" || SCRIPT=".agents/skills/nemoclaw-sprint-review/collect_sprint_items.py"
+python3 "$SCRIPT" "Sprint N" > /tmp/nemoclaw_current_sprint.json
 ```
 
 The script returns items with number, title, state, status, assignees, labels, type, and author.

@@ -37,11 +37,12 @@ Take the `targetVersion` field from the JSON output.
 
 ## Step 2: Build the Review Queue
 
-Run the review-sweep script:
+Run the review-sweep script from the skill directory, not from a user-specific path:
 
 ```bash
-node --experimental-strip-types --no-warnings \
-  ~/.agent-local/agent/skills/nemoclaw-maintainer-review-days-tag/scripts/review-days-tag.ts <version>
+SCRIPT=".agents/skills/consolidation/nemoclaw-maintainer-review-days-tag/scripts/review-days-tag.ts"
+test -f "$SCRIPT" || SCRIPT=".agents/skills/nemoclaw-maintainer-review-days-tag/scripts/review-days-tag.ts"
+node --experimental-strip-types --no-warnings "$SCRIPT" <version>
 ```
 
 (Optional flags: `--repo OWNER/REPO`, `--json` for raw output.)

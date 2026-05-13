@@ -112,85 +112,27 @@ Write the checkpoint after EVERY state transition:
 
 ---
 
-## Kickstart Mechanism: Self-Spawning Background Watcher
+## Looping Model
 
-When waiting for long-running CI or E2E (10-30 minutes), the session may die.
-The skill solves this by spawning a **background watcher process** on its first
-run that periodically re-invokes the agent until the loop completes.
+This skill is designed for the coding-agent harness to re-invoke it with `/loop` or by normal user request. Do not spawn a background process that tries to call an agent CLI; the correct CLI and invocation mechanism are harness-specific and can go stale.
 
-### How It Works
+Persist checkpoint state to disk, then exit whenever CI/E2E is still pending. On the next invocation, read the checkpoint and continue from the last observed state.
 
-On the FIRST invocation (fresh start), after creating the checkpoint, the skill
-spawns a background watcher:
+Suggested use:
 
-```bash
-# Spawn background watcher (runs until checkpoint is removed)
-CI_LOOP_DIR="$HOME/.nemoclaw/ci-loop"
-PIDFILE="${CI_LOOP_DIR}/${PR_NUMBER}.pid"
-LOGFILE="${CI_LOOP_DIR}/${PR_NUMBER}.log"
-CHECKPOINT="${CI_LOOP_DIR}/${PR_NUMBER}.json"
-INTERVAL=300  # 5 minutes
-
-# Only spawn if not already running
-if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-  echo "Watcher already running (PID $(cat $PIDFILE))"
-else
-  nohup bash -c '
-    echo $$ > '"$PIDFILE"'
-    while [ -f '"$CHECKPOINT"' ]; do
-      sleep '"$INTERVAL"'
-      # Re-check: checkpoint might have been removed while sleeping
-      [ -f '"$CHECKPOINT"' ] || break
-      echo "[$(date -Iseconds)] Watcher invoking the agent..." >> '"$LOGFILE"'
-      <agent-cli> -p "Resume CI loop for PR '"$PR_NUMBER"'" >> '"$LOGFILE"' 2>&1
-      echo "[$(date -Iseconds)] agent exited with code $?" >> '"$LOGFILE"'
-    done
-    rm -f '"$PIDFILE"'
-    echo "[$(date -Iseconds)] Watcher exiting — checkpoint removed (loop complete)" >> '"$LOGFILE"'
-  ' &>/dev/null &
-  echo "Background watcher started (PID $!) — will re-check every ${INTERVAL}s"
-  echo "  Log: $LOGFILE"
-  echo "  Stop: kill $(cat $PIDFILE) or remove $CHECKPOINT"
-fi
+```text
+/loop 5m /skill:nemoclaw-pr-ci-loop <PR_NUMBER>
 ```
 
-### Watcher Lifecycle
+Manual re-invocation works the same way: "resume CI loop for PR <N>".
 
-| Event | What Happens |
-|-------|-------------|
-| Skill first invoked | Checkpoint created, watcher spawned |
-| Watcher fires (every 5m) | Runs `<agent-cli> -p "Resume CI loop for PR <N>"` |
-| agent invocation finds work | Does the work, updates checkpoint |
-| agent invocation finds "still waiting" | Reports status, exits quickly |
-| Loop completes (all green) | Checkpoint archived/removed → watcher exits on next check |
-| User kills watcher | `kill $(cat ~/.nemoclaw/ci-loop/<PR>.pid)` |
-| User abandons loop | `rm ~/.nemoclaw/ci-loop/<PR>.json` → watcher self-terminates |
-| Machine reboots | Watcher dies, user re-invokes skill → resumes from checkpoint, re-spawns watcher |
+### Idempotency Rules
 
-### Watcher Guard Rails
-
-1. **PID file prevents duplicates** — won't spawn a second watcher if one is running
-2. **Checkpoint-gated** — watcher exits when checkpoint disappears (success or abandon)
-3. **Log file for observability** — every invocation logged with timestamp
-4. **No orphan risk** — the `while [ -f checkpoint ]` loop guarantees termination
-5. **User can always kill it** — PID file makes it easy to stop
-
-### Manual Override: Re-invoke Without Watcher
-
-The skill works fine without the watcher — user can always just open a session
-and say "check on CI" or "ci loop". The checkpoint resume logic is the same
-regardless of whether it was invoked by the watcher or the user.
-
-### Adjusting the Interval
-
-The 5-minute default is tuned for NemoClaw CI:
-- PR checks take 2-3 minutes
-- E2E jobs take 10-25 minutes
-- 5-minute polling avoids wasted invocations while still being responsive
-
-For faster feedback during active development, the skill can be invoked
-manually at any time (it's idempotent). The watcher is the safety net,
-not the primary interface.
+The skill MUST be safe to invoke multiple times while waiting:
+- If `status == waiting_for_e2e` and the run is still in progress → just report status, don't re-trigger
+- If `status == checking_pr_ci` and checks are still pending → just report, don't re-push
+- Never trigger the same E2E run twice
+- Never apply the same fix twice (check if HEAD already contains the fix)
 
 ### Idempotency Guarantee
 
@@ -283,24 +225,24 @@ gh pr view "$PR_NUMBER" --repo "$REPO" --json comments \
 - Report "Waiting for CodeRabbit review with E2E recommendations"
 - **WAIT for next loop iteration**
 
-#### If CodeRabbit has commented with E2E recommendations:
-Extract the recommended job names. Common patterns in CodeRabbit comments:
-- "Consider running `sandbox-operations-e2e`"
-- "Recommended E2E: cloud-e2e, sandbox-survival-e2e"
-- Job names matching the nightly-e2e.yaml job list
+#### If CodeRabbit/E2E Advisor has commented with E2E recommendations:
+Extract recommended workflow and job names from the current comments. Validate each name against current workflow files before dispatching.
 
-Also apply the **path-to-job mapping** as a fallback/supplement:
+If recommendations are missing or ambiguous, derive a fallback from current repo state instead of a hardcoded path-to-job table:
 
-| Changed path | Recommended jobs |
-|-------------|-----------------|
-| `scripts/nemoclaw-start.sh`, `scripts/lib/sandbox-init.sh` | sandbox-survival-e2e, sandbox-operations-e2e, cloud-e2e |
-| `Dockerfile`, `Dockerfile.base` | cloud-e2e, sandbox-survival-e2e, hermes-e2e, rebuild-openclaw-e2e |
-| `src/lib/onboard.ts` | cloud-e2e, sandbox-operations-e2e, rebuild-openclaw-e2e |
-| `src/nemoclaw.ts` | sandbox-survival-e2e, sandbox-operations-e2e |
-| `nemoclaw-blueprint/policies/**` | network-policy-e2e |
-| `src/lib/sandbox-process-recovery-action.ts` | sandbox-survival-e2e, sandbox-operations-e2e |
-| `agents/hermes/**` | hermes-e2e, rebuild-hermes-e2e |
-| `test/e2e/test-*.sh` | The corresponding job name |
+```bash
+# Changed files
+FILES=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json files --jq '.files[].path')
+
+# Current workflow jobs and dispatch inputs
+rg -n "^[[:space:]]+[A-Za-z0-9_-]+:" .github/workflows/*e2e*.yaml
+rg -n "workflow_dispatch|inputs:|jobs:" .github/workflows/*e2e*.yaml
+
+# Current advisor config, if present
+test -f .coderabbit.yaml && rg -n "e2e|nightly|workflow|path" .coderabbit.yaml
+```
+
+Map changed paths to jobs only after reading the current workflows/advisor config.
 
 ### Phase 3: Fix Failing CI
 

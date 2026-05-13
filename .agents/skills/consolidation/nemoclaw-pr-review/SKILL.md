@@ -44,11 +44,7 @@ git log --oneline origin/main -20 -- <changed-file>
 # Look for moves between: Dockerfile ↔ nemoclaw-start.sh ↔ bin/lib/onboard.js ↔ nemoclaw/src/
 ```
 
-Key drift patterns in NemoClaw:
-- **Config generation** moved from `nemoclaw-start.sh` (runtime) to `Dockerfile` (build-time) in commit `0f8eedd`
-- **Gateway isolation** restructured the entire entrypoint in PR #721
-- **Auto-pair logic** has competing implementations across PRs #690, #721, #123
-- **Security hardening** is layered across Dockerfile (DAC), Landlock (policy), and entrypoint (runtime checks)
+Derive drift patterns from recent history and current open PRs rather than old PR numbers. Check whether the touched code moved, was split, or has competing changes in another open PR.
 
 Flag as 🔴 BLOCKER if the PR patches dead or moved code.
 
@@ -278,15 +274,23 @@ If E2E Advisor recommendations require dispatching or deeper validation, defer e
 
 ### Step 7: Architectural Alignment Check
 
-The NemoClaw CLI is undergoing an active decomposition effort. The codebase has a dual-quality problem: the plugin (`nemoclaw/src/`) is clean typed TypeScript, while the CLI host code has ~10,400 lines of `@ts-nocheck` CJS-in-disguise spread across 8 files — with `src/lib/onboard.ts` at 6,404 lines being the primary target. PRs should move *toward* the target architecture, not away from it.
+The NemoClaw CLI has had ongoing decomposition and type-safety work. Do **not** rely on frozen line counts, issue numbers, or module lists embedded in this skill. Recompute the current architectural baseline from the repo before reviewing:
 
-#### Current State (reference for reviewers — updated 2026-04-25)
+```bash
+# Current hotspots by size / exports / @ts-nocheck
+find src nemoclaw/src -name '*.ts' -maxdepth 4 -print0 2>/dev/null | \
+  xargs -0 wc -l | sort -nr | head -20
+rg -n "@ts-nocheck|module\.exports|require\(" src nemoclaw/src 2>/dev/null
+rg -n "run\(\s*['\"]|bash -c|shell:\s*true" src scripts nemoclaw/src 2>/dev/null
 
-- **`src/lib/onboard.ts`** — 7,870 lines, 160 functions, 88 exports. This is the God Object being decomposed. All `@ts-nocheck` annotations have been removed from `src/` files, but onboard.ts remains CJS-style (`module.exports`, `require()`).
-- **`src/nemoclaw.ts`** — 3,929 lines, CLI router with command registry extracted to `command-registry.ts`.
-- **`src/lib/runner.ts`** — 295 lines, supports both safe `run([argv])` and unsafe `run("bash -c string")` patterns.
-- **Recently extracted modules** — `dashboard-contract.ts` (98 lines), `dashboard-health.ts` (71 lines), `dashboard-recover.ts` (47 lines), `command-registry.ts` (483 lines), `credential-filter.ts` (153 lines), `errno.ts` (44 lines), `json-types.ts` (27 lines). These are the model for future extractions.
-- **Typed modules** — `credentials.ts`, `registry.ts`, `onboard-session.ts`, `http-probe.ts`, `sandbox-session-state.ts`, etc. New code should follow these patterns.
+# Current decomposition/refactor context
+gh issue list --repo NVIDIA/NemoClaw --state open --limit 100 \
+  --search 'label:arch-improve OR label:refactor'
+gh pr list --repo NVIDIA/NemoClaw --state open --limit 100 \
+  --search 'label:refactor OR architecture OR extract OR type'
+```
+
+Treat large files, `@ts-nocheck`, CommonJS-style TypeScript, shell-string execution, duplicated helpers, and module-scoped mutable state as review signals only after verifying they still exist in the current tree.
 
 #### Check each PR for these patterns
 
@@ -302,8 +306,8 @@ The NemoClaw CLI is undergoing an active decomposition effort. The codebase has 
 **🟡 Flag (missed opportunity or neutral):**
 - Adding new functions to `onboard.ts` instead of a focused module — suggest where it could live instead
 - Adding new `require()` calls in files that could use `import` — note the inconsistency
-- Using the local `runOpenshell()` wrapper in `onboard.ts` instead of the typed `runOpenshellCommand()` from `src/lib/openshell.ts` — there are two implementations and we want to converge on the typed one
-- Keeping `sleep()` wrappers instead of importing `sleepSeconds` from `src/lib/wait.ts` directly (PR #2027)
+- Adding another local wrapper where a current shared utility already exists — search before flagging and cite the actual utility
+- Keeping ad-hoc sleeps/timeouts where a current readiness/wait helper exists — search before flagging and cite the actual helper
 - New `@ts-nocheck` files — these should only be created by mechanical migration, never for new code
 
 **🔴 Push back (moves away from target architecture):**
@@ -313,29 +317,26 @@ The NemoClaw CLI is undergoing an active decomposition effort. The codebase has 
 - Growing `onboard.ts` exports — if a new function is only used by one external caller, it should live in a focused module, not be added to the 82-export God Object
 - Duplicating functionality that already exists in a typed module (e.g., reimplementing openshell execution instead of using `src/lib/openshell.ts`)
 
-#### In-flight refactoring PRs and issues to be aware of
+#### In-flight refactoring PRs and issues
 
-When reviewing, check for conflicts or alignment with these active efforts:
-- **PR #2465** — `refactor(cli): centralize subprocess execution and make shell use explicit` — @<maintainer>, 59 files. Extracts `process-primitives.ts`, `shell-quote.ts`, `remote-script.ts`, `find-executable.ts`. ⚠️ Watch for net growth of `onboard.ts`.
-- **PR #2442** — `refactor(cli): replace race-condition sleeps with readiness probes` — @ksapru
-- **PR #2087** — `refactor(onboard): extract modules from onboard.ts` (WIP/Draft) — extracting providers, Ollama proxy, inference probes, dashboard
-- **Issue #2306** — Extract rebuild/recreate path from onboard monolith + canonical credential resolution. **Highest priority architectural issue.**
-- **Issue #2387** — Unify schema + semantic validation into extensible pipeline.
-- **Issue #1889** — tracking migration of all remaining shell-string callsites to argv arrays
+When reviewing, discover current active efforts at runtime. Check whether the PR overlaps, contradicts, or can reuse them:
 
-**Recently merged refactoring PRs** (for context on what's already been done):
-- **PR #2398** — extracted dashboard delivery chain → `dashboard-contract.ts`, `dashboard-health.ts`, `dashboard-recover.ts`
-- **PR #2407** — unified secret redaction → `credential-filter.ts`
-- **PR #2446** — typed command registry → `command-registry.ts`
-- **PR #2447** — consolidated errno + JSON type helpers
-- **PR #2422** — tighten repo-wide type boundaries (⚠️ added 635 lines to onboard.ts via type annotations)
-- **PR #2027** — replaced spawnSync("sleep") with native wait utility (merged)
+```bash
+gh pr list --repo NVIDIA/NemoClaw --state open --limit 100 \
+  --json number,title,author,labels,files \
+  --search 'refactor OR architecture OR extract OR type OR shell OR onboard'
+gh issue list --repo NVIDIA/NemoClaw --state open --limit 100 \
+  --json number,title,labels,updatedAt \
+  --search 'label:arch-improve OR label:refactor OR onboard OR shell OR type'
+```
+
+Only cite PRs/issues/modules you just verified are still relevant.
 
 #### How to phrase architectural feedback
 
 Use constructive suggestions, not demands. Examples:
 
-> 🟡 **Architectural note:** This adds a new function to `onboard.ts` (now 6,404+ lines). Consider placing it in `src/lib/onboard-dashboard.ts` or a focused module — PR #2087 is extracting similar dashboard logic. Not a blocker, but it helps the decomposition effort.
+> 🟡 **Architectural note:** This adds a new function to `<large-file>` (currently `<N>` lines on this branch vs `<M>` on `origin/main`). Consider placing it in a focused module if a suitable current module exists, or extracting a new one. Not a blocker, but it helps the decomposition effort.
 
 > 🟡 **Type safety opportunity:** This file uses `require()` / `module.exports` — if you're already editing it, consider converting to `import`/`export` and removing `@ts-nocheck`. Even converting just the functions you're touching is valuable progress.
 
@@ -347,21 +348,18 @@ Use constructive suggestions, not demands. Examples:
 
 #### Monolith files and current baselines
 
-| File | Baseline (lines) | Functions | Exports | Status |
-|------|-------------------|-----------|---------|--------|
-| `src/lib/onboard.ts` | 7,870 | 160 | 88 | 🔴 Primary decomposition target |
-| `src/nemoclaw.ts` | 3,929 | — | — | 🟡 CLI router, secondary target |
-
-Update these baselines when extraction PRs land.
-
-#### How to check
+Compute baselines dynamically from files touched by the PR and the largest current files in `src/` / `nemoclaw/src/`. Do not maintain hardcoded line counts here.
 
 ```bash
-# Compare the PR's version against main
-git show origin/main:src/lib/onboard.ts | wc -l   # baseline
-wc -l src/lib/onboard.ts                            # PR version
-git show origin/main:src/nemoclaw.ts | wc -l
-wc -l src/nemoclaw.ts
+# Compare touched large files against main
+for f in $(git diff --name-only origin/main...HEAD | grep -E '^(src|nemoclaw/src)/.*\.ts$'); do
+  base=$(git show "origin/main:$f" 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+  head=$(wc -l < "$f" | tr -d ' ')
+  printf '%s %s -> %s (%+d)\n' "$f" "$base" "$head" "$((head-base))"
+done
+
+# Identify current hotspots if no obvious monolith was touched
+find src nemoclaw/src -name '*.ts' -print0 2>/dev/null | xargs -0 wc -l | sort -nr | head -20
 ```
 
 #### Decision framework
@@ -381,14 +379,10 @@ wc -l src/nemoclaw.ts
 #### How to phrase the feedback
 
 For warnings:
-> 🟡 **Monolith growth:** This PR adds ~N net lines to `onboard.ts` (7,870 → 7,870+N). The new `<function>` logic could live in `src/lib/<focused-module>.ts` instead. Not blocking, but please consider extracting it — issue #2306 tracks the decomposition.
+> 🟡 **Monolith growth:** This PR adds ~N net lines to `<large-file>` (`<base>` → `<head>`). The new `<function>` logic may fit better in `<current-focused-module>` or a new focused module. Not blocking if required for this fix, but please consider extracting it.
 
 For blockers:
-> 🔴 **Monolith growth:** This PR adds ~N net lines to `onboard.ts` (7,870 → 7,870+N). The new subprocess helpers are imported but the old inline code they replace isn't removed. Please make this net-neutral by extracting the replaced code or moving the new logic to the focused module (`src/lib/<module>.ts`).
-
-#### Recent context
-
-The type-tightening effort (#2422) added 635 lines to `onboard.ts` in one merge. While type annotations are valuable, this pattern — where every refactoring PR touches the monolith and leaves it bigger — must be actively resisted. Extractions (#2398, #2407, #2446) have successfully pulled code into focused modules; the same pattern should apply to any PR that needs to add code to a monolith file.
+> 🔴 **Monolith growth:** This PR adds ~N net lines to `<large-file>` (`<base>` → `<head>`). The new helpers are imported but the old inline code they replace isn't removed. Please make this net-neutral by extracting the replaced code or moving the new logic to a focused module.
 
 ### Step 9: Cross-Cutting Concerns
 

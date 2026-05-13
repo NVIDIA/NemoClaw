@@ -189,4 +189,4 @@ After completing the nemoclaw-pr-review output, append:
 - Worktrees are named `pr-<number>` (e.g., `pr-2027`)
 - If a worktree for this PR already exists, reuse it and just checkout the latest
 - Always `git worktree prune` before creating new worktrees to clean up stale references
-- The nemoclaw-pr-review skill is at `${AGENT_SKILLS_DIR}/nemoclaw-pr-review/SKILL.md` — read it in full before executing Step 3
+- Read the current `nemoclaw-pr-review` skill before executing Step 4; resolve it from `.agents/skills/consolidation/nemoclaw-pr-review/SKILL.md` or `.agents/skills/nemoclaw-pr-review/SKILL.md` rather than a user-specific path
