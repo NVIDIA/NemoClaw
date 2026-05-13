@@ -65,7 +65,7 @@ const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 const CLI_PATH = path.join(REPO_DIR, "bin", "nemoclaw.js");
 const GPU_TEST_SUITE = TEST_SUITE === "gpu";
-const BREV_PROVIDER = process.env.BREV_PROVIDER ?? (GPU_TEST_SUITE ? "" : "gcp");
+const BREV_PROVIDER = process.env.BREV_PROVIDER || (GPU_TEST_SUITE ? "" : "gcp");
 const BREV_CREATE_TIMEOUT_SECONDS = parseInt(
   process.env.BREV_CREATE_TIMEOUT_SECONDS || (GPU_TEST_SUITE ? "1200" : "180"),
   10,
@@ -366,6 +366,17 @@ function commandErrorOutput(error: unknown): string {
     .trim();
 }
 
+function summarizeBrevCandidates(output: string, maxLines = 10): string {
+  const lines = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "(none)";
+  const shown = lines.slice(0, maxLines);
+  const suffix = lines.length > shown.length ? `\n... ${lines.length - shown.length} more` : "";
+  return `${shown.join("\n")}${suffix}`;
+}
+
 /**
  * Create a Brev launchable instance with a startup script.
  *
@@ -415,34 +426,6 @@ function createBrevInstance(elapsed: () => string): void {
 
   try {
     if (GPU_TEST_SUITE) {
-      const gpuSelectorArgs = BREV_GPU_TYPE
-        ? ["--type", BREV_GPU_TYPE]
-        : [
-            ...(BREV_GPU_NAME ? ["--gpu-name", BREV_GPU_NAME] : []),
-            "--min-total-vram",
-            BREV_GPU_MIN_VRAM,
-            "--min-disk",
-            String(Math.max(BREV_MIN_DISK, 100)),
-            ...(BREV_PROVIDER ? ["--provider", BREV_PROVIDER] : []),
-          ];
-      try {
-        const dryRunOutput = execFileSync(
-          "brev",
-          ["create", `${requireInstanceName()}-probe`, "--dry-run", ...gpuSelectorArgs],
-          {
-            encoding: "utf-8",
-            timeout: 120_000,
-            stdio: ["ignore", "pipe", "pipe"],
-          },
-        ).trim();
-        console.log(`[${elapsed()}] Brev GPU candidates: ${dryRunOutput || "(none)"}`);
-      } catch (dryRunErr) {
-        throw new Error(
-          `brev GPU dry-run failed before provisioning. ${commandErrorOutput(dryRunErr)}`,
-          { cause: dryRunErr },
-        );
-      }
-
       const createArgs = [
         "create",
         requireInstanceName(),
@@ -452,12 +435,52 @@ function createBrevInstance(elapsed: () => string): void {
         "--timeout",
         String(Math.round(BREV_CREATE_TIMEOUT_MS / 1000)),
       ];
-      createArgs.push(...gpuSelectorArgs);
-      execFileSync("brev", createArgs, {
-        encoding: "utf-8",
-        timeout: BREV_CREATE_TIMEOUT_MS + 180_000,
-        stdio: STREAM_STDIO,
-      });
+      if (BREV_GPU_TYPE) {
+        createArgs.push("--type", BREV_GPU_TYPE);
+        execFileSync("brev", createArgs, {
+          encoding: "utf-8",
+          timeout: BREV_CREATE_TIMEOUT_MS + 180_000,
+          stdio: STREAM_STDIO,
+        });
+      } else {
+        const gpuSearchArgs = [
+          "search",
+          "gpu",
+          ...(BREV_GPU_NAME ? ["--gpu-name", BREV_GPU_NAME] : []),
+          "--min-total-vram",
+          BREV_GPU_MIN_VRAM,
+          "--min-disk",
+          String(Math.max(BREV_MIN_DISK, 100)),
+          "--sort",
+          "price",
+          ...(BREV_PROVIDER ? ["--provider", BREV_PROVIDER] : []),
+        ];
+        let gpuCandidates: string;
+        try {
+          gpuCandidates = execFileSync("brev", gpuSearchArgs, {
+            encoding: "utf-8",
+            timeout: 120_000,
+            stdio: ["ignore", "pipe", "inherit"],
+          });
+        } catch (searchErr) {
+          throw new Error(
+            `brev GPU search failed before provisioning. ${commandErrorOutput(searchErr)}`,
+            { cause: searchErr },
+          );
+        }
+        if (!gpuCandidates.trim()) {
+          throw new Error(`brev GPU search returned no candidates for: ${gpuSearchArgs.join(" ")}`);
+        }
+        console.log(
+          `[${elapsed()}] Brev GPU candidates:\n${summarizeBrevCandidates(gpuCandidates)}`,
+        );
+        execFileSync("brev", createArgs, {
+          encoding: "utf-8",
+          input: gpuCandidates,
+          timeout: BREV_CREATE_TIMEOUT_MS + 180_000,
+          stdio: PIPE_INPUT_STDIO,
+        });
+      }
     } else {
       const cpuCandidates = execFileSync(
         "brev",
