@@ -156,6 +156,25 @@ function deleteBrevInstance(instanceName: string): boolean {
   return false;
 }
 
+function waitForBrevInstanceRemoved(
+  instanceName: string,
+  elapsed: () => string,
+  maxWaitMs = 300_000,
+): void {
+  const deadline = Date.now() + maxWaitMs;
+  let polls = 0;
+  while (hasBrevInstance(instanceName)) {
+    if (Date.now() > deadline) {
+      throw new Error(`Brev instance "${instanceName}" was not removed within ${maxWaitMs}ms`);
+    }
+    polls += 1;
+    if (polls === 1 || polls % 3 === 0) {
+      console.log(`[${elapsed()}] Waiting for Brev instance "${instanceName}" to disappear...`);
+    }
+    execSync("sleep 10");
+  }
+}
+
 function ssh(
   cmd: string,
   { timeout = 120_000, stream = false }: { timeout?: number; stream?: boolean } = {},
@@ -211,15 +230,30 @@ function sshEnv(
 }
 
 function waitForSsh(maxAttempts = GPU_TEST_SUITE ? 180 : 40, intervalMs = 5_000): void {
+  let dnsFailures = 0;
+  let lastError = "";
+  const maxDnsFailures = GPU_TEST_SUITE ? 60 : 15;
   for (let i = 1; i <= maxAttempts; i++) {
     try {
       ssh("echo ok", { timeout: 10_000 });
       return;
-    } catch {
-      if (i === maxAttempts)
+    } catch (error) {
+      lastError = commandErrorOutput(error);
+      if (/Could not resolve hostname|Name or service not known|Temporary failure in name resolution/i.test(lastError)) {
+        dnsFailures += 1;
+      } else {
+        dnsFailures = 0;
+      }
+      if (dnsFailures >= maxDnsFailures) {
         throw new Error(
-          `SSH not ready after ${maxAttempts} attempts (~${Math.round((maxAttempts * (intervalMs + 10_000)) / 60_000)} min)`,
+          `SSH alias did not resolve after ${dnsFailures} consecutive attempts. Last SSH error: ${lastError}`,
         );
+      }
+      if (i === maxAttempts) {
+        throw new Error(
+          `SSH not ready after ${maxAttempts} attempts (~${Math.round((maxAttempts * (intervalMs + 10_000)) / 60_000)} min). Last SSH error: ${lastError}`,
+        );
+      }
       console.log(`  SSH attempt ${i}/${maxAttempts} failed, retrying in ${intervalMs / 1000}s...`);
       if (i % 5 === 0) {
         console.log(`  Refreshing brev SSH config...`);
@@ -340,6 +374,8 @@ function cleanupLeftoverInstance(elapsed: () => string): void {
     if (!deleteBrevInstance(instanceName)) {
       throw new Error(`Failed to delete leftover instance "${instanceName}"`);
     }
+    console.log(`[${elapsed()}] Requested deletion of leftover instance "${instanceName}"`);
+    waitForBrevInstanceRemoved(instanceName, elapsed);
     console.log(`[${elapsed()}] Deleted leftover instance "${instanceName}"`);
   }
 }
@@ -356,6 +392,41 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
   }
   waitForSsh();
   console.log(`[${elapsed()}] SSH is up`);
+}
+
+function createBrevInstanceAndWaitForSsh(elapsed: () => string): void {
+  const configuredAttempts = Number(process.env.BREV_PROVISION_ATTEMPTS || 2);
+  const maxAttempts = GPU_TEST_SUITE
+    ? Math.max(1, Number.isFinite(configuredAttempts) ? configuredAttempts : 2)
+    : 1;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (attempt > 1) {
+      console.log(`[${elapsed()}] Retrying Brev provisioning (${attempt}/${maxAttempts})...`);
+      cleanupLeftoverInstance(elapsed);
+    }
+    try {
+      createBrevInstance(elapsed);
+      instanceCreated = true;
+      refreshAndWaitForSsh(elapsed);
+      return;
+    } catch (error) {
+      lastError = error;
+      console.log(`[${elapsed()}] Brev provisioning attempt ${attempt}/${maxAttempts} failed.`);
+      const details = commandErrorOutput(error);
+      if (details) console.log(details);
+      if (hasBrevInstance(requireInstanceName())) {
+        if (deleteBrevInstance(requireInstanceName())) {
+          console.log(`[${elapsed()}] Requested deletion after failed provisioning attempt`);
+          waitForBrevInstanceRemoved(requireInstanceName(), elapsed);
+        }
+      }
+      instanceCreated = false;
+    }
+  }
+  throw new Error(`Brev instance did not become SSH-ready after ${maxAttempts} attempt(s).`, {
+    cause: lastError,
+  });
 }
 
 function commandErrorOutput(error: unknown): string {
@@ -886,9 +957,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       // The script pre-installs Docker, Node.js, OpenShell CLI, npm deps,
       // and pre-pulls Docker images. We just need to rsync branch code and
       // run onboard.
-      createBrevInstance(elapsed);
-      instanceCreated = true;
-      refreshAndWaitForSsh(elapsed);
+      createBrevInstanceAndWaitForSsh(elapsed);
 
       // Wait for launchable setup to finish (sentinel file)
       console.log(`[${elapsed()}] Waiting for launchable setup to complete...`);
