@@ -172,6 +172,7 @@ describe("dockerfile patch helpers", () => {
       {},
       null,
       {},
+      {},
       false,
       "http://127.0.0.1:11434/v1",
     );
