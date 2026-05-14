@@ -11,7 +11,7 @@
 # user setup, openclaw CLI). The production Dockerfile layers PR-specific
 # code on top via: FROM ghcr.io/nvidia/nemoclaw/sandbox-base:<tag>
 
-name: base-image
+name: Images / Base Images
 
 on:
   push:

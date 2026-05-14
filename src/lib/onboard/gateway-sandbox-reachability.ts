@@ -302,7 +302,12 @@ export function formatSandboxBridgeUnreachableMessage(
 
 export async function verifySandboxBridgeGatewayReachableOrExit(
   exitOnFailure: boolean,
+  options: { skip?: boolean } = {},
 ): Promise<void> {
+  if (options.skip) {
+    console.log("  Docker-driver GPU host networking active; skipping sandbox bridge gateway reachability probe.");
+    return;
+  }
   const reach = await isSandboxBridgeGatewayReachable();
   if (reach.ok) return;
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
@@ -10,6 +10,7 @@ import {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
   LARGE_OLLAMA_MIN_MEMORY_MB,
+  LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   OLLAMA_CONTAINER_PORT,
   QWEN3_6_OLLAMA_MODEL,
   getDefaultOllamaModel,
@@ -31,6 +32,16 @@ import {
 } from "../../../dist/lib/inference/local";
 
 describe("local inference helpers", () => {
+  const originalSandboxHostUrl = process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
+
+  afterEach(() => {
+    if (originalSandboxHostUrl === undefined) {
+      delete process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
+    } else {
+      process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV] = originalSandboxHostUrl;
+    }
+  });
+
   it("returns the expected base URL for vllm-local", () => {
     expect(getLocalProviderBaseUrl("vllm-local")).toBe("http://host.openshell.internal:8000/v1");
   });
@@ -39,6 +50,14 @@ describe("local inference helpers", () => {
     expect(getLocalProviderBaseUrl("ollama-local")).toBe(
       `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/v1`,
     );
+  });
+
+  it("can target sandbox loopback for host-network Docker GPU sandboxes", () => {
+    process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV] = "http://127.0.0.1";
+    expect(getLocalProviderBaseUrl("ollama-local")).toBe(
+      `http://127.0.0.1:${OLLAMA_CONTAINER_PORT}/v1`,
+    );
+    expect(getLocalProviderBaseUrl("vllm-local")).toBe("http://127.0.0.1:8000/v1");
   });
 
   it("returns null for unknown local provider URLs", () => {

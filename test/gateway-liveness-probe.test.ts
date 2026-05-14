@@ -140,9 +140,9 @@ describe("gateway liveness probe (#2020)", () => {
     expect(dockerEnd).toBeGreaterThan(dockerStart);
     const dockerSection = content.slice(dockerStart, dockerEnd);
     const calls = dockerSection.match(
-      /verifySandboxBridgeGatewayReachableOrExit\(exitOnFailure\)/g,
+      /verifySandboxBridgeGatewayReachableOrExit\(\s*exitOnFailure/g,
     );
-    expect(calls?.length).toBeGreaterThanOrEqual(3);
+    expect(calls?.length ?? 0).toBeGreaterThanOrEqual(3);
 
     for (const marker of [
       "Reusing existing Docker-driver gateway",
@@ -152,9 +152,7 @@ describe("gateway liveness probe (#2020)", () => {
       const markerIdx = dockerSection.indexOf(marker);
       expect(markerIdx).toBeGreaterThan(0);
       const before = dockerSection.slice(0, markerIdx);
-      expect(
-        before.lastIndexOf("verifySandboxBridgeGatewayReachableOrExit(exitOnFailure)"),
-      ).toBeGreaterThan(0);
+      expect(before).toMatch(/verifySandboxBridgeGatewayReachableOrExit\(\s*exitOnFailure/);
     }
   });
 

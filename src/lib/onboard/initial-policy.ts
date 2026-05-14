@@ -66,13 +66,21 @@ const CUDA_INIT_PROBE = [
   ].join(" "),
 ].join(" ");
 
+const NVIDIA_SMI_OPTIONAL_PROBE = [
+  "set -eu;",
+  "if command -v nvidia-smi >/dev/null 2>&1; then",
+  "exec nvidia-smi;",
+  "fi;",
+  'echo "nvidia-smi not installed; skipping optional visibility check"',
+].join(" ");
+
 export function buildDirectSandboxGpuProofCommands(
   sandboxName: string,
 ): { label: string; args: string[] }[] {
   return [
     {
-      label: "nvidia-smi",
-      args: ["sandbox", "exec", "-n", sandboxName, "--", "nvidia-smi"],
+      label: "nvidia-smi when available",
+      args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", NVIDIA_SMI_OPTIONAL_PROBE],
     },
     {
       label: "/proc/<pid>/task/<tid>/comm write",

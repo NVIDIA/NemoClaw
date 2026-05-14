@@ -14,6 +14,7 @@ export interface StreamSandboxCreateResult {
 
 export interface StreamSandboxCreateOptions {
   readyCheck?: (() => boolean) | null;
+  failureCheck?: (() => string | null | undefined) | null;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
   silentPhaseMs?: number;
@@ -21,8 +22,8 @@ export interface StreamSandboxCreateOptions {
   // Initial progress phase:
   //   build  — docker-building the sandbox image
   //   upload — pushing the built image into the gateway registry
-  //   create — k3s provisioning the pod from the image
-  //   ready  — waiting for the pod to reach Ready state
+  //   create — gateway provisioning the sandbox from the image
+  //   ready  — waiting for the sandbox to reach Ready state
   // Defaults to "build".
   initialPhase?: "build" | "upload" | "create" | "ready";
   spawnImpl?: (
@@ -172,7 +173,9 @@ export function streamSandboxCreate(
     if (!line) return;
     lines.push(line);
     lastOutputAt = Date.now();
-    if (matchesAny(line, BUILD_PROGRESS_PATTERNS)) {
+    if (/^ {2}Built image /.test(line)) {
+      setPhase("create");
+    } else if (matchesAny(line, BUILD_PROGRESS_PATTERNS)) {
       setPhase("build");
     } else if (matchesAny(line, PULL_PROGRESS_PATTERNS)) {
       setPhase("pull");
@@ -236,9 +239,25 @@ export function streamSandboxCreate(
           } catch {
             return;
           }
-          if (!ready) return;
-          setPhase("ready");
-          const detail = "Sandbox reported Ready before create stream exited; continuing.";
+          if (ready) {
+            setPhase("ready");
+            const detail = "Sandbox reported Ready before create stream exited; continuing.";
+            lines.push(detail);
+            printProgressLine(`  ${detail}`);
+            try {
+              child.kill?.("SIGTERM");
+            } catch {
+              // Best effort only — the child may have already exited.
+            }
+            detachChild();
+            sawProgress = true;
+            finish(0, { forcedReady: true });
+            return;
+          }
+
+          const failure = options.failureCheck?.();
+          if (!failure) return;
+          const detail = String(failure);
           lines.push(detail);
           printProgressLine(`  ${detail}`);
           try {
@@ -248,7 +267,7 @@ export function streamSandboxCreate(
           }
           detachChild();
           sawProgress = true;
-          finish(0, { forcedReady: true });
+          finish(1);
         } finally {
           polling = false;
         }

@@ -5,7 +5,7 @@
 # Step 2 (deploy) runs in docs-preview-deploy.yaml via workflow_run,
 # which has write access to gh-pages regardless of PR origin.
 
-name: Docs PR Preview
+name: Docs / Preview Build
 
 on:
   pull_request:

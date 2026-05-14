@@ -20,6 +20,7 @@ const { isWsl } = require("../platform");
 export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
 
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
+export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 export const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
 export const QWEN3_6_OLLAMA_MODEL = "qwen3.6:35b";
@@ -124,13 +125,34 @@ export function validateOllamaPortConfiguration(): ValidationResult {
   return { ok: true };
 }
 
-export function getLocalProviderBaseUrl(provider: string): string | null {
+function normalizeLocalInferenceHostUrl(raw: string | null | undefined): string | null {
+  const value = String(raw || "").trim().replace(/\/+$/, "");
+  if (!value) return null;
+  if (/^[A-Za-z0-9_.-]+$/.test(value)) return `http://${value}`;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === "http:" && parsed.hostname) return `http://${parsed.hostname}`;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function getLocalInferenceSandboxHostUrl(): string {
+  return normalizeLocalInferenceHostUrl(process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV]) || HOST_GATEWAY_URL;
+}
+
+export function getLocalProviderBaseUrl(
+  provider: string,
+  options: { hostUrl?: string | null } = {},
+): string | null {
+  const hostUrl = normalizeLocalInferenceHostUrl(options.hostUrl) || getLocalInferenceSandboxHostUrl();
   switch (provider) {
     case "vllm-local":
-      return `${HOST_GATEWAY_URL}:${VLLM_PORT}/v1`;
+      return `${hostUrl}:${VLLM_PORT}/v1`;
     case "ollama-local":
       // Containers reach Ollama through the auth proxy, not directly.
-      return `${HOST_GATEWAY_URL}:${OLLAMA_CONTAINER_PORT}/v1`;
+      return `${hostUrl}:${OLLAMA_CONTAINER_PORT}/v1`;
     default:
       return null;
   }

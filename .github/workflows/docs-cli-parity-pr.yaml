@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Docs CLI Parity PR
+name: Docs / CLI Parity
 
 # Catches drift between the actual `nemoclaw --help` command list and the
 # command headings in `docs/reference/commands.md`. The same check runs in
