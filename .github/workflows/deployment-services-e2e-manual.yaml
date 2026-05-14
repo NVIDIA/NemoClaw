@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Manual-dispatch wrapper for the deployment-services-e2e test
+# (test/e2e/test-deployment-services.sh).
+#
+# Lets a maintainer run this single E2E against an arbitrary branch or SHA
+# without triggering the full nightly-e2e matrix. Useful for verifying
+# tunnel/diagnostic changes (see issue #3494) before they hit the nightly
+# schedule.
+
+name: E2E / Deployment Services (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: >-
+          Branch, tag, or SHA to test. When empty, runs against the ref
+          selected for the dispatch (i.e. the branch chosen in the UI).
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deployment-services-e2e-manual-${{ inputs.target_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deployment-services-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run deployment services E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-deploy-svc"
+        run: bash test/e2e/test-deployment-services.sh
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-services-test-log
+          path: test-deployment-services-*.log
+          if-no-files-found: ignore
