@@ -4,6 +4,16 @@
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.41
+
+NemoClaw v0.0.41 improves Docker-driver onboarding and release compatibility:
+
+- `nemoclaw onboard` can pin fresh OpenShell installs to a published release that fits the blueprint's tested version range, while retaining the installer fallback when release metadata is unavailable.
+- Docker-driver gateway startup verifies that sandbox containers can reach `host.openshell.internal` before reporting the gateway healthy, and Linux firewall failures include a targeted `ufw` remediation.
+- Local Ollama setup probes sandbox-to-proxy reachability before it commits the inference route, so blocked `11435` traffic stops onboarding with a rerun-safe fix instead of leaving a broken route.
+- Linux Docker-driver GPU onboarding can recreate the OpenShell-managed sandbox container with NVIDIA GPU access and leaves diagnostics plus cleanup guidance when GPU readiness fails.
+- `nemoclaw uninstall` removes all installer-managed OpenShell helper binaries unless you pass `--keep-openshell`.
+
 ## v0.0.40
 
 NemoClaw v0.0.40 improves onboarding reliability, local inference setup, and sandbox recovery:

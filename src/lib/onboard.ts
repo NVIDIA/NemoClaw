@@ -66,6 +66,9 @@ const {
 const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
+const {
+  syncPresetSelection,
+}: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -9249,51 +9252,6 @@ async function setupPoliciesWithSelection(
   for (const p of resolvedPresets) accessByName[p.name] = p.access;
   syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
   return interactiveChoice;
-}
-
-/**
- * Reconcile the sandbox's currently-applied preset list with the user's
- * target selection:
- *   - remove presets in `applied` but not in `target` (narrow)
- *   - apply presets in `target` but not in `applied` (widen)
- *   - leave unchanged presets untouched (no wasteful re-apply)
- *
- * Shared between the interactive and non-interactive paths so "narrow the
- * selection" works identically in both. Fixes #2177 (non-interactive path
- * was apply-only, so deselected presets lingered).
- *
- * @param {string} sandboxName  Target sandbox.
- * @param {string[]} applied    Preset names currently applied to the sandbox.
- * @param {string[]} target     Preset names the user wants applied after this call.
- * @param {Object<string, string>|null} [accessByName=null]
- *   Optional map of preset name → access mode ("read" | "read-write").
- *   When provided, applyPreset receives the mode per preset so the gateway
- *   can distinguish read vs read-write installs.
- * @returns {void}
- */
-function syncPresetSelection(
-  sandboxName: string,
-  applied: string[],
-  target: string[],
-  accessByName: Record<string, string> | null = null,
-): void {
-  const targetSet = new Set(target);
-  const appliedSet = new Set(applied);
-  const deselected = applied.filter((name) => !targetSet.has(name));
-  const newlySelected = target.filter((name) => !appliedSet.has(name));
-
-  for (const name of deselected) {
-    waitForPolicyMutation(`removePreset(${name})`, () =>
-      policies.removePreset(sandboxName, name),
-    );
-  }
-
-  for (const name of newlySelected) {
-    const options = accessByName ? { access: accessByName[name] } : undefined;
-    waitForPolicyMutation(`applyPreset(${name})`, () =>
-      policies.applyPreset(sandboxName, name, options),
-    );
-  }
 }
 
 // ── Dashboard ────────────────────────────────────────────────────

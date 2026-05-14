@@ -388,6 +388,17 @@ Device authentication requires each connecting device to go through a pairing fl
 | Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
 | Recommendation | Keep device auth enabled (the default). Only disable it for headless or development environments where no untrusted devices can reach the gateway. |
 
+### Gateway Bind Address
+
+NemoClaw binds the OpenShell gateway to loopback by default.
+
+| Aspect | Detail |
+|---|---|
+| Default | `NEMOCLAW_GATEWAY_BIND_ADDRESS=127.0.0.1`. |
+| What you can change | Set `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` before onboarding to listen on all IPv4 interfaces. |
+| Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway. |
+| Recommendation | Keep the loopback default unless the gateway must be reachable from another host. |
+
 ### Insecure Auth Derivation
 
 The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS authentication.
