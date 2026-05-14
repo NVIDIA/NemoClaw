@@ -220,6 +220,51 @@ export async function isSandboxGatewayRunningForStatus(
 }
 
 /**
+ * Probe the full inference chain by curling `https://inference.local/v1/models`
+ * from inside the sandbox via `openshell sandbox exec`. This is the path agent
+ * traffic actually takes (openclaw gateway → auth proxy → backend). Any HTTP
+ * response (including 401) means routing works; 000 / no response means DNS,
+ * proxy, or gateway is broken. The optional 3rd line in #3265.
+ *
+ * Injectable via `execImpl` for tests.
+ */
+export async function probeSandboxInferenceGatewayHealth(
+  sandboxName: string,
+  options: {
+    execImpl?: (sandboxName: string, command: string) => Promise<SandboxCommandResult | null>;
+  } = {},
+): Promise<{
+  ok: boolean;
+  endpoint: string;
+  httpStatus: number;
+  detail: string;
+} | null> {
+  const endpoint = "https://inference.local/v1/models";
+  const command =
+    `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 5 ${shellQuote(endpoint)} 2>/dev/null || echo 000); echo "$HTTP_CODE"`;
+  const exec = options.execImpl ?? executeSandboxExecCommandForStatus;
+  const result = await exec(sandboxName, command);
+  if (!result || result.status !== 0) return null;
+  const status = Number.parseInt(result.stdout.trim(), 10) || 0;
+  if (status > 0) {
+    return {
+      ok: true,
+      endpoint,
+      httpStatus: status,
+      detail: `Inference gateway responded HTTP ${status} on ${endpoint} (full chain reachable).`,
+    };
+  }
+  return {
+    ok: false,
+    endpoint,
+    httpStatus: 0,
+    detail:
+      `Inference gateway unreachable on ${endpoint} from inside the sandbox. ` +
+      `DNS may have failed or the openclaw gateway / auth proxy is not running.`,
+  };
+}
+
+/**
  * Restart the gateway process inside the sandbox after a pod restart.
  * Cleans stale lock/temp files, sources proxy config, and launches the gateway
  * in the background. Returns true on success.

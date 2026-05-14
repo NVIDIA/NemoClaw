@@ -27,7 +27,10 @@ import {
   printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
-import { isSandboxGatewayRunningForStatus } from "./process-recovery";
+import {
+  isSandboxGatewayRunningForStatus,
+  probeSandboxInferenceGatewayHealth,
+} from "./process-recovery";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
@@ -53,6 +56,32 @@ export function getSandboxStatusInferenceHealth(
   return probeProviderHealthImpl(currentProvider, {
     model: typeof currentModel === "string" ? currentModel : undefined,
   });
+}
+
+/**
+ * Render one Inference status line. The main probe and each subprobe go
+ * through this helper so multi-hop providers (e.g. ollama-local backend +
+ * auth proxy) get parallel formatting and the failure of any hop is
+ * surfaced individually instead of being hidden by a healthy hop. (#3265)
+ */
+function printInferenceProbeLine(probe: ProviderHealthStatus): void {
+  const label = probe.probeLabel ? `Inference (${probe.probeLabel})` : "Inference";
+  if (!probe.probed) {
+    console.log(`    ${label}: ${D}not probed${R} (${probe.detail})`);
+    return;
+  }
+  if (probe.ok) {
+    console.log(`    ${label}: ${G}healthy${R} (${probe.endpoint})`);
+    return;
+  }
+  // `failureLabel` is set by the probe (e.g. `unauthorized` for HTTP 401 on
+  // the auth proxy in `inference/local.ts:probeOllamaAuthProxyHealth`); the
+  // `|| "unreachable"` fallback only applies when an upstream forgot to set
+  // one. Don't infer the failure mode here — preserve what the probe said. (#3265)
+  console.log(
+    `    ${label}: ${RD}${probe.failureLabel || "unreachable"}${R} (${probe.endpoint})`,
+  );
+  console.log(`      ${probe.detail}`);
 }
 
 // eslint-disable-next-line complexity
@@ -94,21 +123,37 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     currentProvider,
     currentModel,
   );
+  // #3265 optional 3rd line: probe the full inference chain (openclaw gateway
+  // → auth proxy → backend) from inside the sandbox so a broken hop the
+  // host-side probes can't see still surfaces in `status`.
+  if (
+    inferenceHealth &&
+    lookup.state === "present" &&
+    (currentProvider === "ollama-local" || currentProvider === "vllm-local")
+  ) {
+    const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
+    if (gatewayChain) {
+      const gatewaySubprobe: ProviderHealthStatus = {
+        ok: gatewayChain.ok,
+        probed: true,
+        providerLabel: "Inference gateway chain",
+        endpoint: gatewayChain.endpoint,
+        detail: gatewayChain.detail,
+        probeLabel: "gateway",
+        ...(gatewayChain.ok ? {} : { failureLabel: "unreachable" as const }),
+      };
+      inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
+    }
+  }
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
     console.log(`    Model:    ${currentModel}`);
     console.log(`    Provider: ${currentProvider}`);
     if (inferenceHealth) {
-      if (!inferenceHealth.probed) {
-        console.log(`    Inference: ${D}not probed${R} (${inferenceHealth.detail})`);
-      } else if (inferenceHealth.ok) {
-        console.log(`    Inference: ${G}healthy${R} (${inferenceHealth.endpoint})`);
-      } else {
-        console.log(
-          `    Inference: ${RD}${inferenceHealth.failureLabel || "unreachable"}${R} (${inferenceHealth.endpoint})`,
-        );
-        console.log(`      ${inferenceHealth.detail}`);
+      printInferenceProbeLine(inferenceHealth);
+      for (const sub of inferenceHealth.subprobes ?? []) {
+        printInferenceProbeLine(sub);
       }
     }
     if (lookup.state !== "present") {

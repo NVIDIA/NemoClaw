@@ -9,7 +9,8 @@ import path from "node:path";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { isErrnoException } from "../../core/errno";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
-import { probeProviderHealth } from "../../inference/health";
+import { probeProviderHealth, type ProviderHealthStatus } from "../../inference/health";
+import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 import { parseGatewayInference } from "../../inference/config";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
@@ -45,6 +46,26 @@ type CommandCapture = {
   stderr: string;
   error?: Error;
 };
+
+function pushInferenceHealthCheck(
+  checks: DoctorCheck[],
+  probe: ProviderHealthStatus,
+): void {
+  const label = probe.probeLabel
+    ? `Provider health (${probe.probeLabel})`
+    : "Provider health";
+  if (!probe.probed) {
+    checks.push({ group: "Inference", label, status: "info", detail: probe.detail });
+    return;
+  }
+  checks.push({
+    group: "Inference",
+    label,
+    status: probe.ok ? "ok" : "fail",
+    detail: probe.ok ? `${probe.endpoint} reachable` : probe.detail,
+    hint: probe.ok ? undefined : "check network access or provider credentials",
+  });
+}
 
 function captureHostCommand(
   command: string,
@@ -563,23 +584,30 @@ export async function runSandboxDoctor(sandboxName: string, args: string[] = [])
         status: "info",
         detail: `no health probe registered for ${currentProvider}`,
       });
-    } else if (!inferenceHealth.probed) {
-      checks.push({
-        group: "Inference",
-        label: "Provider health",
-        status: "info",
-        detail: inferenceHealth.detail,
-      });
     } else {
-      checks.push({
-        group: "Inference",
-        label: "Provider health",
-        status: inferenceHealth.ok ? "ok" : "fail",
-        detail: inferenceHealth.ok
-          ? `${inferenceHealth.endpoint} reachable`
-          : inferenceHealth.detail,
-        hint: inferenceHealth.ok ? undefined : "check network access or provider credentials",
-      });
+      // #3265 optional 3rd line — append gateway-chain probe for local
+      // providers so doctor sees the full path the agent uses.
+      if (currentProvider === "ollama-local" || currentProvider === "vllm-local") {
+        const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
+        if (gatewayChain) {
+          inferenceHealth.subprobes = [
+            ...(inferenceHealth.subprobes ?? []),
+            {
+              ok: gatewayChain.ok,
+              probed: true,
+              providerLabel: "Inference gateway chain",
+              endpoint: gatewayChain.endpoint,
+              detail: gatewayChain.detail,
+              probeLabel: "gateway",
+              ...(gatewayChain.ok ? {} : { failureLabel: "unreachable" as const }),
+            },
+          ];
+        }
+      }
+      pushInferenceHealthCheck(checks, inferenceHealth);
+      for (const sub of inferenceHealth.subprobes ?? []) {
+        pushInferenceHealthCheck(checks, sub);
+      }
     }
   }
 

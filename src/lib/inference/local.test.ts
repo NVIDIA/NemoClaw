@@ -289,6 +289,7 @@ describe("local inference helpers", () => {
         stderr: "",
         message: "HTTP 200",
       }),
+      loadOllamaProxyTokenImpl: () => null,
     });
 
     expect(result).toEqual({
@@ -296,6 +297,7 @@ describe("local inference helpers", () => {
       providerLabel: "Local Ollama",
       endpoint: "http://127.0.0.1:11434/api/tags",
       detail: "Local Ollama is reachable on http://127.0.0.1:11434/api/tags.",
+      probeLabel: "ollama backend",
     });
   });
 
@@ -309,12 +311,108 @@ describe("local inference helpers", () => {
         stderr: "Failed to connect",
         message: "curl failed (exit 7): Failed to connect",
       }),
+      loadOllamaProxyTokenImpl: () => null,
     });
 
     expect(result?.ok).toBe(false);
     expect(result?.detail).toContain("Local Ollama is selected for inference");
     expect(result?.detail).toContain("Start Ollama and retry");
     expect(result?.detail).toContain("http://127.0.0.1:11434/api/tags");
+    expect(result?.probeLabel).toBe("ollama backend");
+  });
+
+  // #3265 — auth-proxy subprobe scenarios. Status was previously a single
+  // probe to :11434 that ignored the auth proxy at :11435 entirely, so a
+  // broken proxy hid behind a "healthy" backend.
+  it("attaches a healthy auth-proxy subprobe when ollama backend is up", () => {
+    const responses: Array<{ args: string[]; status: number }> = [];
+    const result = probeLocalProviderHealth("ollama-local", {
+      loadOllamaProxyTokenImpl: () => "test-token",
+      runCurlProbeImpl: (argv: string[]) => {
+        const isProxy = argv.some(
+          (a) => typeof a === "string" && a.includes("11435"),
+        );
+        responses.push({ args: argv, status: 200 });
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: "{}",
+          stderr: "",
+          message: "HTTP 200",
+        };
+      },
+    });
+    const proxyCall = responses.find((r) =>
+      r.args.some((a) => typeof a === "string" && a.includes("11435")),
+    );
+    expect(proxyCall?.args).toContain("Authorization: Bearer test-token");
+    expect(result?.ok).toBe(true);
+    expect(result?.subprobes).toHaveLength(1);
+    expect(result?.subprobes?.[0]).toMatchObject({
+      ok: true,
+      probeLabel: "auth proxy",
+      endpoint: "http://127.0.0.1:11435/api/tags",
+    });
+  });
+
+  it("surfaces 401 on the auth-proxy subprobe even when backend is healthy", () => {
+    const result = probeLocalProviderHealth("ollama-local", {
+      loadOllamaProxyTokenImpl: () => "stale-token",
+      runCurlProbeImpl: (argv: string[]) => {
+        const isProxy = argv.some(
+          (a) => typeof a === "string" && a.includes("11435"),
+        );
+        return {
+          ok: !isProxy,
+          httpStatus: isProxy ? 401 : 200,
+          curlStatus: 0,
+          body: "",
+          stderr: "",
+          message: isProxy ? "HTTP 401" : "HTTP 200",
+        };
+      },
+    });
+    expect(result?.ok).toBe(true);
+    const proxy = result?.subprobes?.[0];
+    expect(proxy?.ok).toBe(false);
+    expect(proxy?.failureLabel).toBe("unauthorized");
+    expect(proxy?.detail).toContain("401");
+    expect(proxy?.detail).toContain("nemoclaw onboard");
+  });
+
+  it("surfaces an unreachable auth proxy (connection refused) even when backend is healthy", () => {
+    const result = probeLocalProviderHealth("ollama-local", {
+      loadOllamaProxyTokenImpl: () => "token",
+      runCurlProbeImpl: (argv: string[]) => {
+        const isProxy = argv.some(
+          (a) => typeof a === "string" && a.includes("11435"),
+        );
+        return isProxy
+          ? {
+              ok: false,
+              httpStatus: 0,
+              curlStatus: 7,
+              body: "",
+              stderr: "Failed to connect",
+              message: "curl failed (exit 7): Failed to connect",
+            }
+          : {
+              ok: true,
+              httpStatus: 200,
+              curlStatus: 0,
+              body: "{}",
+              stderr: "",
+              message: "HTTP 200",
+            };
+      },
+    });
+    expect(result?.ok).toBe(true);
+    const proxy = result?.subprobes?.[0];
+    expect(proxy?.ok).toBe(false);
+    expect(proxy?.failureLabel).toBe("unreachable");
+    expect(proxy?.detail).toContain("unreachable");
+    expect(proxy?.detail).toContain("11435");
   });
 
   it("returns null when provider health probing is not supported", () => {

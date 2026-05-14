@@ -4,7 +4,7 @@
 # Dedicated security reporting workflow for NemoClaw.
 # CodeQL and ShellCheck publish findings to GitHub code scanning while the
 # existing PR and main workflows remain the merge-gating CI path.
-name: code-scanning
+name: Security / Code Scanning
 
 on:
   pull_request:
@@ -35,13 +35,13 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@5e316336eb4f107009e477d4bfbfff13d7250fae # v4
+        uses: github/codeql-action/init@68bde559dea0fdcac2102bfdf6230c5f70eb485e # v4
         with:
           languages: ${{ matrix.language }}
           queries: security-and-quality
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@5e316336eb4f107009e477d4bfbfff13d7250fae # v4
+        uses: github/codeql-action/analyze@68bde559dea0fdcac2102bfdf6230c5f70eb485e # v4
 
   shellcheck:
     name: ShellCheck SARIF
@@ -158,6 +158,6 @@ jobs:
 
       - name: Upload ShellCheck SARIF
         if: steps.shell-files.outputs.has_files == 'true' && steps.sarif-runs.outputs.has_runs == 'true'
-        uses: github/codeql-action/upload-sarif@5e316336eb4f107009e477d4bfbfff13d7250fae # v4
+        uses: github/codeql-action/upload-sarif@68bde559dea0fdcac2102bfdf6230c5f70eb485e # v4
         with:
           sarif_file: shellcheck.sarif

@@ -52,7 +52,7 @@
 #     variable empty in the job — repository secrets and environment secrets are separate.)
 # Only runs on schedule and manual dispatch — never on PRs (secret protection).
 
-name: nightly-e2e
+name: E2E / Nightly
 
 on:
   schedule:

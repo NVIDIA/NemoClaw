@@ -6,11 +6,11 @@
 # Only deploys previews for same-repo PRs to prevent fork PRs from
 # publishing arbitrary content to the GitHub Pages domain.
 
-name: Docs PR Preview Deploy
+name: Docs / Preview Deploy
 
 on:
   workflow_run:
-    workflows: ["Docs PR Preview"]
+    workflows: ["Docs / Preview Build"]
     types: [completed]
 
 permissions:

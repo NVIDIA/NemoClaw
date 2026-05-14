@@ -1355,11 +1355,22 @@ exit 99
 if [ "\${1:-}" = "-c" ]; then
   shift 2
 fi
-if [ "$1" = "clone" ]; then
+if [ "\${1:-}" = "-C" ]; then
+  shift 2
+fi
+if [ "$1" = "init" ]; then
   target="\${@: -1}"
-  mkdir -p "$target/nemoclaw"
+  mkdir -p "$target/nemoclaw" "$target/scripts"
   echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  cat > "$target/scripts/install-openshell.sh" <<'EOS'
+#!/usr/bin/env bash
+exit 0
+EOS
+  chmod +x "$target/scripts/install-openshell.sh"
+  exit 0
+fi
+if [ "$1" = "remote" ] || [ "$1" = "fetch" ] || [ "$1" = "checkout" ]; then
   exit 0
 fi
 exit 0
@@ -1448,7 +1459,9 @@ exit 0
     expect(result.status).toBe(0);
     expect(fs.readFileSync(shimPath, "utf-8")).toContain(`export PATH="${fakeBin}:$PATH"`);
     expect(fs.readFileSync(shimPath, "utf-8")).toContain(path.join(prefix, "bin", "nemoclaw"));
-    expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
+    expect(`${result.stdout}${result.stderr}`.match(/Created user-local shim/g) ?? []).toHaveLength(
+      1,
+    );
   });
 
   it("preserves ready output when nemoclaw is already resolvable after install", () => {
