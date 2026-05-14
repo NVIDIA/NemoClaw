@@ -27,6 +27,7 @@ type SandboxEntryFixture = {
 
 type SetupFixtureOptions = {
   inferenceProbeResponses?: string[];
+  inferenceSetStatus?: number;
 };
 
 function setupFixture(
@@ -129,7 +130,7 @@ if (args[0] === "inference" && args[1] === "get") {
 if (args[0] === "inference" && args[1] === "set") {
   state.inferenceSetCalls.push(args.slice(2));
   fs.writeFileSync(stateFile, JSON.stringify(state));
-  process.exit(0);
+  process.exit(${JSON.stringify(options.inferenceSetStatus ?? 0)});
 }
 
 if (args[0] === "logs") {
@@ -524,6 +525,55 @@ describe("sandbox connect inference route swap (#1248)", () => {
       );
       expect(combined).toContain("Reapplying OpenShell inference route");
       expect(combined).toContain("inference.local route repaired");
+    },
+  );
+
+  it(
+    "probes VM inference health after route reapply even when inference set exits nonzero",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "vm-route-set-nonzero",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          openshellDriver: "vm",
+          policies: [],
+        },
+        "nvidia-prod",
+        "nvidia/nemotron-3-super-120b-a12b",
+        {
+          inferenceProbeResponses: [
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            "OK 200",
+          ],
+          inferenceSetStatus: 1,
+        },
+      );
+
+      const result = runConnect(tmpDir, sandboxName, {
+        NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH: "1",
+      });
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      expect(state.inferenceSetCalls).toEqual([
+        [
+          "--provider",
+          "nvidia-prod",
+          "--model",
+          "nvidia/nemotron-3-super-120b-a12b",
+          "--no-verify",
+        ],
+      ]);
+      expect(state.dockerCalls.length).toBe(0);
+
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("OpenShell VM DNS monkeypatch did not apply");
+      expect(combined).toContain("Reapplying OpenShell inference route");
+      expect(combined).toContain("inference.local route repaired");
+      expect(combined).not.toContain("OpenShell vm gateway path");
     },
   );
 });

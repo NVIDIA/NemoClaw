@@ -165,11 +165,11 @@ function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
 
 function reapplyVmInferenceRoute(sandboxName: string, sb: SandboxEntry | null): boolean {
   if (!sb?.provider || !sb.model) return false;
-  const result = runOpenshell(
-    ["inference", "set", "--provider", sb.provider, "--model", sb.model],
+  runOpenshell(
+    ["inference", "set", "--provider", sb.provider, "--model", sb.model, "--no-verify"],
     { ignoreError: true },
   );
-  return result.status === 0 && isSandboxInferenceRouteHealthy(sandboxName);
+  return isSandboxInferenceRouteHealthy(sandboxName);
 }
 
 function repairSandboxInferenceRouteIfNeeded(
