@@ -29,6 +29,7 @@ type DispatchResult = {
   jobs?: string[];
   workflow?: string;
   targetRef?: string;
+  runUrl?: string;
   reason?: string;
 };
 
@@ -176,7 +177,8 @@ function renderAutoDispatch(dispatch: DispatchResult | undefined): string {
       : "_unknown_";
     const workflow = dispatch.workflow ? ` via \`${dispatch.workflow}\`` : "";
     const target = dispatch.targetRef ? ` at \`${dispatch.targetRef}\`` : "";
-    return `\n\n**Auto-dispatched E2E:** ${jobs}${workflow}${target}`;
+    const run = dispatch.runUrl ? ` — [nightly run](${dispatch.runUrl})` : "";
+    return `\n\n**Auto-dispatched E2E:** ${jobs}${workflow}${target}${run}`;
   }
   if (dispatch.status === "failed") {
     return `\n\n**Auto-dispatch:** failed — ${dispatch.reason || "unknown error"}`;
