@@ -207,10 +207,24 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   return false;
 }
 
-function runOptional(runtime: UninstallRuntime, description: string, command: string, args: string[]): void {
+function runOptional(
+  runtime: UninstallRuntime,
+  description: string,
+  command: string,
+  args: string[],
+  opts: { onSkip?: string } = {},
+): void {
   const result = runtime.run(command, args, { env: runtime.env, stdio: "ignore" });
-  if (result.status === 0) runtime.log(description);
-  else runtime.warn(`${description} skipped`);
+  if (result.status === 0) {
+    runtime.log(description);
+    return;
+  }
+  // #3456 sub-bug #4: when the destroy/delete call no-ops (target already
+  // gone), printing `<description> skipped` was self-contradictory — e.g.
+  // "Destroyed gateway 'nemoclaw' skipped" suggested the gateway was both
+  // destroyed AND skipped. Callers that care can pass a `onSkip` message
+  // describing the actual state (target absent or unreachable).
+  runtime.warn(opts.onSkip ?? `${description} skipped`);
 }
 
 function stopHelperServices(paths: UninstallPaths, runtime: UninstallRuntime): void {
@@ -390,12 +404,14 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
   for (const provider of NEMOCLAW_PROVIDERS) {
     runOptional(runtime, `Deleted provider '${provider}'`, "openshell", ["provider", "delete", provider]);
   }
-  runOptional(runtime, `Destroyed gateway '${options.gatewayName || "nemoclaw"}'`, "openshell", [
-    "gateway",
-    "destroy",
-    "-g",
-    options.gatewayName || "nemoclaw",
-  ]);
+  const gatewayLabel = options.gatewayName || "nemoclaw";
+  runOptional(
+    runtime,
+    `Destroyed gateway '${gatewayLabel}'`,
+    "openshell",
+    ["gateway", "destroy", "-g", gatewayLabel],
+    { onSkip: `Gateway '${gatewayLabel}' already removed or unreachable` },
+  );
 }
 
 function removeAliases(paths: UninstallPaths, runtime: UninstallRuntime): void {

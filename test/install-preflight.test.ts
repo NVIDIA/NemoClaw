@@ -989,7 +989,12 @@ exit 0
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  exit 1
+  # Let the installer's early ensure_docker gate pass, then simulate Docker
+  # becoming unavailable for the shared host preflight after the CLI is linked.
+  if [ -x "$NPM_PREFIX/bin/nemoclaw" ]; then
+    exit 1
+  fi
+  exit 0
 fi
 exit 0
 `,
