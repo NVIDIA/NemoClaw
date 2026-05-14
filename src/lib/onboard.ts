@@ -1971,11 +1971,6 @@ function getMessagingChannelForEnvKey(envKey: string): string | null {
   return null;
 }
 
-function getKnownMessagingChannels(channels: string[] | null | undefined): string[] {
-  if (!Array.isArray(channels)) return [];
-  const known = new Set(MESSAGING_CHANNELS.map((channel) => channel.name));
-  return [...new Set(channels.filter((channel) => known.has(channel)))];
-}
 
 function getRecordedMessagingChannelsForResume(
   resume: boolean,
@@ -4832,11 +4827,7 @@ function getSandboxRuntimeRegistryFields(
     sandboxGpuEnabled: config.sandboxGpuEnabled,
     sandboxGpuMode: config.mode,
     sandboxGpuDevice: config.sandboxGpuDevice,
-    openshellDriver: isLinuxDockerDriverGatewayEnabled()
-      ? process.platform === "darwin"
-        ? "vm"
-        : "docker"
-      : "kubernetes",
+    openshellDriver: isLinuxDockerDriverGatewayEnabled() ? (process.platform === "darwin" ? "vm" : "docker") : "kubernetes",
     openshellVersion: getInstalledOpenshellVersion(
       runCaptureOpenshell(["--version"], { ignoreError: true }),
     ),
