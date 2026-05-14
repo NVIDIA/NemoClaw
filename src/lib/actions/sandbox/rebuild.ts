@@ -489,16 +489,16 @@ export async function rebuildSandbox(
   // `createSandbox` (onboard.ts) reads back `[]` from the freshly-empty registry
   // and the stopped channel comes back live in the rebuilt image. The session
   // mirror is the only place this list can survive the destroy/recreate window.
-  const registryDisabledChannels = Array.isArray(sb.disabledChannels)
+  //
+  // Always re-stash from `sb` — do NOT fall back to a prior session value.
+  // `sb` is loaded fresh from the registry at the top of rebuildSandbox, so it
+  // already reflects the latest `channels stop|start` write. The session mirror
+  // is downstream of the registry; re-stashing on every rebuild keeps a stale
+  // ["telegram"] from a prior stop/rebuild cycle from leaking into the next
+  // start/rebuild and filtering the channel back out.
+  const rebuildDisabledChannels = Array.isArray(sb.disabledChannels)
     ? sb.disabledChannels.filter((value: unknown): value is string => typeof value === "string")
-    : null;
-  const sessionDisabledChannels =
-    sessionMatchesSandbox && Array.isArray(sessionBefore?.disabledChannels)
-      ? sessionBefore.disabledChannels.filter(
-          (value: unknown): value is string => typeof value === "string",
-        )
-      : null;
-  const rebuildDisabledChannels = registryDisabledChannels ?? sessionDisabledChannels ?? [];
+    : [];
   log(
     `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
   );

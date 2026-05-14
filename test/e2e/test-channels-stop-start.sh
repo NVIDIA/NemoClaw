@@ -35,7 +35,6 @@ PASS=0
 FAIL=0
 SKIP=0
 TOTAL=0
-INSTALL_OK=1
 
 pass() {
   ((PASS++))
@@ -225,7 +224,6 @@ if [ $install_exit -eq 0 ]; then
 else
   fail "C1b: install.sh failed (exit $install_exit)"
   tail -30 "$INSTALL_LOG" 2>/dev/null || true
-  INSTALL_OK=0
   print_summary
 fi
 
