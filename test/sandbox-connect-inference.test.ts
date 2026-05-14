@@ -21,11 +21,13 @@ type SandboxEntryFixture = {
   provider?: string | null;
   nimContainer?: string | null;
   gpuEnabled?: boolean;
+  openshellDriver?: string | null;
   policies?: string[];
 };
 
 type SetupFixtureOptions = {
   inferenceProbeResponses?: string[];
+  inferenceSetStatus?: number;
 };
 
 function setupFixture(
@@ -92,7 +94,7 @@ if (args[0] === "gateway" && args[1] === "info") {
 }
 
 if (args[0] === "sandbox" && args[1] === "get" && args[2] === ${JSON.stringify(sandboxName)}) {
-  process.stdout.write("Sandbox:\\n\\n  Id: abc\\n  Name: ${sandboxName}\\n  Phase: Ready\\n");
+  process.stdout.write("Sandbox:\\n\\n  \\x1b[2mId:\\x1b[0m abc\\n  Name: ${sandboxName}\\n  Phase: Ready\\n");
   process.exit(0);
 }
 
@@ -128,7 +130,7 @@ if (args[0] === "inference" && args[1] === "get") {
 if (args[0] === "inference" && args[1] === "set") {
   state.inferenceSetCalls.push(args.slice(2));
   fs.writeFileSync(stateFile, JSON.stringify(state));
-  process.exit(0);
+  process.exit(${JSON.stringify(options.inferenceSetStatus ?? 0)});
 }
 
 if (args[0] === "logs") {
@@ -213,7 +215,40 @@ process.exit(0);
   return { tmpDir, stateFile, sandboxName };
 }
 
-function runConnect(tmpDir: string, sandboxName: string) {
+function createVmRootfs(tmpDir: string, sandboxId = "abc") {
+  const rootfs = path.join(
+    tmpDir,
+    ".local",
+    "state",
+    "nemoclaw",
+    "openshell-docker-gateway",
+    "vm-driver",
+    "sandboxes",
+    sandboxId,
+    "rootfs",
+  );
+  fs.mkdirSync(path.join(rootfs, "etc"), { recursive: true });
+  fs.mkdirSync(path.join(rootfs, "srv"), { recursive: true });
+  fs.writeFileSync(
+    path.join(rootfs, "etc", "resolv.conf"),
+    "nameserver 8.8.8.8\nnameserver 8.8.4.4\n",
+  );
+  fs.writeFileSync(
+    path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh"),
+    [
+      "elif ip link show eth0 >/dev/null 2>&1; then",
+      "    if [ ! -s /etc/resolv.conf ]; then",
+      '        echo "nameserver 8.8.8.8" > /etc/resolv.conf',
+      '        echo "nameserver 8.8.4.4" >> /etc/resolv.conf',
+      "    fi",
+      "fi",
+      "",
+    ].join("\n"),
+  );
+  return rootfs;
+}
+
+function runConnect(tmpDir: string, sandboxName: string, extraEnv: NodeJS.ProcessEnv = {}) {
   const repoRoot = path.join(import.meta.dirname, "..");
   return spawnSync(
     process.execPath,
@@ -226,6 +261,7 @@ function runConnect(tmpDir: string, sandboxName: string) {
         HOME: tmpDir,
         PATH: `${path.join(tmpDir, ".local", "bin")}:/usr/bin:/bin`,
         NEMOCLAW_NO_CONNECT_HINT: "1",
+        ...extraEnv,
       },
       timeout: execTimeout(15_000),
     },
@@ -327,6 +363,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
           model: "nvidia/nemotron-3-super-120b-a12b",
           provider: "nvidia-prod",
           gpuEnabled: false,
+          openshellDriver: "docker",
           policies: [],
         },
         "nvidia-prod",
@@ -355,6 +392,188 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("inference.local is unavailable inside 'stale-dns-sandbox'");
       expect(combined).toContain("inference.local route repaired");
+    },
+  );
+
+  it(
+    "does not run legacy DNS proxy repair for VM sandboxes",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "vm-sandbox",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          openshellDriver: "vm",
+          policies: [],
+        },
+        "nvidia-prod",
+        "nvidia/nemotron-3-super-120b-a12b",
+        {
+          inferenceProbeResponses: [
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            'BROKEN 503 {"error":"inference service unavailable"}',
+          ],
+        },
+      );
+
+      const result = runConnect(tmpDir, sandboxName, {
+        NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH: "1",
+      });
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      expect(state.inferenceSetCalls.length).toBe(1);
+      expect(state.dockerCalls.length).toBe(0);
+
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("OpenShell VM DNS monkeypatch did not apply");
+      expect(combined).toContain("Reapplying OpenShell inference route");
+      expect(combined).toContain("OpenShell vm gateway path");
+    },
+  );
+
+  it(
+    "uses the macOS VM DNS monkeypatch without legacy DNS repair or route reset when it restores inference.local",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "vm-dns-sandbox",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          openshellDriver: "vm",
+          policies: [],
+        },
+        "nvidia-prod",
+        "nvidia/nemotron-3-super-120b-a12b",
+        {
+          inferenceProbeResponses: [
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            "OK 200",
+          ],
+        },
+      );
+      const rootfs = createVmRootfs(tmpDir);
+
+      const result = runConnect(tmpDir, sandboxName, {
+        NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH: "1",
+      });
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      expect(state.inferenceSetCalls.length).toBe(0);
+      expect(state.dockerCalls.length).toBe(0);
+      expect(fs.readFileSync(path.join(rootfs, "etc", "resolv.conf"), "utf-8")).toBe(
+        "nameserver 192.168.127.1\n",
+      );
+      expect(
+        fs.readFileSync(path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh"), "utf-8"),
+      ).toContain('nameserver ${GVPROXY_GATEWAY_IP}');
+
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("Applying OpenShell VM DNS monkeypatch");
+      expect(combined).toContain("inference.local route repaired");
+      expect(combined).not.toContain("Reapplying OpenShell inference route");
+      expect(combined).not.toContain("Repairing sandbox DNS proxy");
+    },
+  );
+
+  it(
+    "falls back to OpenShell inference route reapply when the VM DNS monkeypatch applies but inference.local stays broken",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "vm-dns-still-broken",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          openshellDriver: "vm",
+          policies: [],
+        },
+        "nvidia-prod",
+        "nvidia/nemotron-3-super-120b-a12b",
+        {
+          inferenceProbeResponses: [
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            "OK 200",
+          ],
+        },
+      );
+      const rootfs = createVmRootfs(tmpDir);
+
+      const result = runConnect(tmpDir, sandboxName, {
+        NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH: "1",
+      });
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      expect(state.inferenceSetCalls.length).toBe(1);
+      expect(state.dockerCalls.length).toBe(0);
+      expect(fs.readFileSync(path.join(rootfs, "etc", "resolv.conf"), "utf-8")).toBe(
+        "nameserver 192.168.127.1\n",
+      );
+
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("Applying OpenShell VM DNS monkeypatch");
+      expect(combined).toContain(
+        "OpenShell VM DNS monkeypatch completed but inference.local is still unavailable",
+      );
+      expect(combined).toContain("Reapplying OpenShell inference route");
+      expect(combined).toContain("inference.local route repaired");
+    },
+  );
+
+  it(
+    "probes VM inference health after route reapply even when inference set exits nonzero",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "vm-route-set-nonzero",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          openshellDriver: "vm",
+          policies: [],
+        },
+        "nvidia-prod",
+        "nvidia/nemotron-3-super-120b-a12b",
+        {
+          inferenceProbeResponses: [
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            "OK 200",
+          ],
+          inferenceSetStatus: 1,
+        },
+      );
+
+      const result = runConnect(tmpDir, sandboxName, {
+        NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH: "1",
+      });
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      expect(state.inferenceSetCalls).toEqual([
+        [
+          "--provider",
+          "nvidia-prod",
+          "--model",
+          "nvidia/nemotron-3-super-120b-a12b",
+          "--no-verify",
+        ],
+      ]);
+      expect(state.dockerCalls.length).toBe(0);
+
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("OpenShell VM DNS monkeypatch did not apply");
+      expect(combined).toContain("Reapplying OpenShell inference route");
+      expect(combined).toContain("inference.local route repaired");
+      expect(combined).not.toContain("OpenShell vm gateway path");
     },
   );
 });

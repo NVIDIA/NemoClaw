@@ -12,6 +12,7 @@ import { captureOpenshellCommand, stripAnsi } from "./adapters/openshell/client"
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import * as registry from "./state/registry";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
+import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
 
 function captureOpenshell(
@@ -158,6 +159,22 @@ function probeGatewayHealth(): GatewayHealth {
 }
 
 export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
+  const opsBin = resolveOpenshell();
+  const sessionDeps = opsBin ? createSystemDeps(opsBin) : null;
+  // Cache the SSH process probe once per command invocation — avoids
+  // spawning ps per sandbox row. #2604; mirrors buildListCommandDeps.
+  let cachedSshOutput: string | null | undefined;
+  const getCachedSshOutput = (): string | null => {
+    if (cachedSshOutput === undefined && sessionDeps) {
+      try {
+        cachedSshOutput = sessionDeps.getSshProcesses();
+      } catch {
+        cachedSshOutput = null;
+      }
+    }
+    return cachedSshOutput ?? null;
+  };
+
   return {
     listSandboxes: () => registry.listSandboxes(),
     getLiveInference: () =>
@@ -171,6 +188,17 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
     showServiceStatus,
     getServiceStatuses,
     getGatewayHealth: probeGatewayHealth,
+    getActiveSessionCount: sessionDeps
+      ? (name) => {
+          try {
+            const sshOutput = getCachedSshOutput();
+            if (sshOutput === null) return null;
+            return parseSshProcesses(sshOutput, name).length;
+          } catch {
+            return null;
+          }
+        }
+      : undefined,
     checkMessagingBridgeHealth: (sandboxName, channels) =>
       checkMessagingBridgeHealth(rootDir, sandboxName, channels),
     backfillAndFindOverlaps: () => backfillAndFindOverlaps(rootDir),

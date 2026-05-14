@@ -585,7 +585,12 @@ if [ "$(id -u)" -ne 0 ]; then
   export HOME=/sandbox
   export HERMES_HOME="${HERMES_DIR}"
 
-  if ! verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"; then
+  # macOS VM startup currently runs this entrypoint as the sandbox user and
+  # remaps rootfs ownership to the host uid. In that mode the strict /etc hash
+  # cannot remain a root-owned trust anchor, so use the same locked-aware
+  # mutable-default verifier as OpenClaw. The root path below keeps strict
+  # verification against /etc/nemoclaw/hermes.config-hash.
+  if ! verify_config_integrity_if_locked "${HERMES_DIR}"; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
