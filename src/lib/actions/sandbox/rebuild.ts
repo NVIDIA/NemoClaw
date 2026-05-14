@@ -484,6 +484,21 @@ export async function rebuildSandbox(
     sb.messagingChannelConfig ?? sessionMessagingChannelConfig ?? null;
   const hasRebuildMessagingChannels =
     registryMessagingChannels !== null || sessionMessagingChannels !== null;
+  // Snapshot the operator's paused channel set BEFORE `removeSandboxRegistryEntry`
+  // wipes the registry entry. Otherwise the `disabledChannels` filter inside
+  // `createSandbox` (onboard.ts) reads back `[]` from the freshly-empty registry
+  // and the stopped channel comes back live in the rebuilt image. The session
+  // mirror is the only place this list can survive the destroy/recreate window.
+  const registryDisabledChannels = Array.isArray(sb.disabledChannels)
+    ? sb.disabledChannels.filter((value: unknown): value is string => typeof value === "string")
+    : null;
+  const sessionDisabledChannels =
+    sessionMatchesSandbox && Array.isArray(sessionBefore?.disabledChannels)
+      ? sessionBefore.disabledChannels.filter(
+          (value: unknown): value is string => typeof value === "string",
+        )
+      : null;
+  const rebuildDisabledChannels = registryDisabledChannels ?? sessionDisabledChannels ?? [];
   log(
     `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
   );
@@ -499,6 +514,7 @@ export async function rebuildSandbox(
     s.agent = rebuildAgent;
     s.messagingChannels = rebuildMessagingChannels;
     s.messagingChannelConfig = rebuildMessagingChannelConfig;
+    s.disabledChannels = rebuildDisabledChannels;
     // Persist inference selection from the about-to-be-removed registry entry
     // so onboard --resume can recreate with the same provider/model in
     // non-interactive mode. Without this the registry is gone by the time

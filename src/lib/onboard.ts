@@ -5142,7 +5142,17 @@ async function createSandbox(
   // Credentials stay in the keychain; the bridge simply isn't registered with
   // the gateway on the next rebuild. `channels start` removes the entry and
   // the bridge comes back.
-  const disabledChannels = registry.getDisabledChannels(sandboxName);
+  //
+  // Read the session mirror first: `rebuildSandbox` destroys the registry entry
+  // before calling `onboard --resume`, so by the time we reach this point the
+  // registry's disabledChannels is empty even when the operator stopped a
+  // channel. The session is the only place the paused set survives the
+  // destroy/recreate window; fall back to the registry for the fresh-onboard
+  // path where the session has no mirror yet.
+  const sessionDisabledChannels = onboardSession.loadSession()?.disabledChannels;
+  const disabledChannels = Array.isArray(sessionDisabledChannels)
+    ? sessionDisabledChannels
+    : registry.getDisabledChannels(sandboxName);
   const disabledEnvKeys = new Set(
     MESSAGING_CHANNELS.filter((c) => disabledChannels.includes(c.name)).flatMap((c) =>
       c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey],
