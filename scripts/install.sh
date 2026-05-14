@@ -1000,7 +1000,7 @@ prefer_user_local_openshell() {
 
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
-  local npm_bin shim_path node_path node_dir cli_path
+  local npm_bin shim_path node_path node_dir cli_path expected_shim
   npm_bin="$(resolve_npm_bin)" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
 
@@ -1029,12 +1029,22 @@ ensure_cli_shim() {
     return 0
   fi
 
-  mkdir -p "$NEMOCLAW_SHIM_DIR"
-  cat >"$shim_path" <<EOF
+  expected_shim="$(
+    cat <<EOF
 #!/usr/bin/env bash
 export PATH="$node_dir:\$PATH"
 exec "$cli_path" "\$@"
 EOF
+  )"
+
+  if [[ -x "$shim_path" ]] && cmp -s "$shim_path" <(printf '%s\n' "$expected_shim"); then
+    refresh_path
+    ensure_local_bin_in_profile
+    return 0
+  fi
+
+  mkdir -p "$NEMOCLAW_SHIM_DIR"
+  printf '%s\n' "$expected_shim" >"$shim_path"
   chmod +x "$shim_path"
   refresh_path
   ensure_local_bin_in_profile
