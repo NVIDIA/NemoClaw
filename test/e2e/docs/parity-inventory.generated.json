@@ -7814,7 +7814,7 @@
           "text": "M-W1: Provider '${SANDBOX_NAME}-wechat-bridge' exists in gateway",
           "polarity": "pass",
           "normalized_id": "m.w1.provider.sandbox.name.wechat.bridge.exists.in.gateway",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7822,7 +7822,7 @@
           "text": "M-W1: Provider '${SANDBOX_NAME}-wechat-bridge' not found in gateway (non-interactive QR-skip path may be broken)",
           "polarity": "fail",
           "normalized_id": "m.w1.provider.sandbox.name.wechat.bridge.not.found.in.gateway.non.interactive.qr.skip.path.may.be.broken",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8126,7 +8126,7 @@
           "text": "M-W3: Real WeChat token leaked into sandbox env",
           "polarity": "fail",
           "normalized_id": "m.w3.real.wechat.token.leaked.into.sandbox.env",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8134,7 +8134,7 @@
           "text": "M-W3: Sandbox WECHAT_BOT_TOKEN is a placeholder (not the real token)",
           "polarity": "pass",
           "normalized_id": "m.w3.sandbox.wechat.bot.token.is.a.placeholder.not.the.real.token",
-          "mapping_status": "unmapped"
+          "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8142,7 +8142,7 @@
           "text": "M-W3a: Real WeChat token found in full sandbox environment dump",
           "polarity": "fail",
           "normalized_id": "m.w3a.real.wechat.token.found.in.full.sandbox.environment.dump",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8150,7 +8150,7 @@
           "text": "M-W3a: Real WeChat token absent from full sandbox environment",
           "polarity": "pass",
           "normalized_id": "m.w3a.real.wechat.token.absent.from.full.sandbox.environment",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8158,7 +8158,7 @@
           "text": "M-W3b: Real WeChat token found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m.w3b.real.wechat.token.found.in.sandbox.process.list",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8166,7 +8166,7 @@
           "text": "M-W3b: Real WeChat token absent from sandbox process list",
           "polarity": "pass",
           "normalized_id": "m.w3b.real.wechat.token.absent.from.sandbox.process.list",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8174,7 +8174,7 @@
           "text": "M-W3c: Real WeChat token found on sandbox filesystem: ${sandbox_fs_wc}",
           "polarity": "fail",
           "normalized_id": "m.w3c.real.wechat.token.found.on.sandbox.filesystem.sandbox.fs.wc",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8182,7 +8182,7 @@
           "text": "M-W3c: Real WeChat token absent from sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m.w3c.real.wechat.token.absent.from.sandbox.filesystem",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8190,7 +8190,7 @@
           "text": "M-W3d: WeChat placeholder confirmed present in sandbox environment",
           "polarity": "pass",
           "normalized_id": "m.w3d.wechat.placeholder.confirmed.present.in.sandbox.environment",
-          "mapping_status": "unmapped"
+          "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8198,7 +8198,7 @@
           "text": "M-W3d: WeChat placeholder not found in sandbox environment",
           "polarity": "fail",
           "normalized_id": "m.w3d.wechat.placeholder.not.found.in.sandbox.environment",
-          "mapping_status": "unmapped"
+          "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8334,7 +8334,7 @@
           "text": "M-W8: WeChat account '$WECHAT_ACCOUNT' is enabled in openclaw.json (channels.openclaw-weixin)",
           "polarity": "pass",
           "normalized_id": "m.w8.wechat.account.wechat.account.is.enabled.in.openclaw.json.channels.openclaw.weixin",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8342,7 +8342,7 @@
           "text": "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — seed-wechat-accounts.py placeholder regression",
           "polarity": "fail",
           "normalized_id": "m.w9.real.wechat.token.spliced.into.accounts.wechat.account.json.seed.wechat.accounts.py.placeholder.regression",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8350,7 +8350,7 @@
           "text": "M-W9: WeChat per-account credential file uses the L7-resolved placeholder",
           "polarity": "pass",
           "normalized_id": "m.w9.wechat.per.account.credential.file.uses.the.l7.resolved.placeholder",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8358,7 +8358,7 @@
           "text": "M-W9: WeChat per-account credential file has unexpected token shape: $(echo ",
           "polarity": "fail",
           "normalized_id": "m.w9.wechat.per.account.credential.file.has.unexpected.token.shape.echo",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8366,7 +8366,7 @@
           "text": "M-W10: WeChat accounts.json index contains '$WECHAT_ACCOUNT'",
           "polarity": "pass",
           "normalized_id": "m.w10.wechat.accounts.json.index.contains.wechat.account",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8374,7 +8374,7 @@
           "text": "M-W10: WeChat accounts.json missing '$WECHAT_ACCOUNT' (raw: $(echo ",
           "polarity": "fail",
           "normalized_id": "m.w10.wechat.accounts.json.missing.wechat.account.raw.echo",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",

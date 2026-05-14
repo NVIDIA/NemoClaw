@@ -5358,6 +5358,96 @@ scripts:
       reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
       reviewer: e2e-maintainers
       approved_at: '2026-05-13'
+    - legacy: 'M-W1: Provider ''${SANDBOX_NAME}-wechat-bridge'' exists in gateway'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W1: Provider ''${SANDBOX_NAME}-wechat-bridge'' not found in gateway (non-interactive QR-skip path may be broken)'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3: Real WeChat token leaked into sandbox env'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3: Sandbox WECHAT_BOT_TOKEN is a placeholder (not the real token)'
+      status: retired
+      reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
+      reviewer: e2e-maintainers
+      approved_at: '2026-05-15'
+    - legacy: 'M-W3a: Real WeChat token found in full sandbox environment dump'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3a: Real WeChat token absent from full sandbox environment'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3b: Real WeChat token found in sandbox process list'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3b: Real WeChat token absent from sandbox process list'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3c: Real WeChat token found on sandbox filesystem: ${sandbox_fs_wc}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3c: Real WeChat token absent from sandbox filesystem'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3d: WeChat placeholder confirmed present in sandbox environment'
+      status: retired
+      reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
+      reviewer: e2e-maintainers
+      approved_at: '2026-05-15'
+    - legacy: 'M-W3d: WeChat placeholder not found in sandbox environment'
+      status: retired
+      reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
+      reviewer: e2e-maintainers
+      approved_at: '2026-05-15'
+    - legacy: 'M-W8: WeChat account ''$WECHAT_ACCOUNT'' is enabled in openclaw.json (channels.openclaw-weixin)'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — seed-wechat-accounts.py placeholder regression'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W9: WeChat per-account credential file uses the L7-resolved placeholder'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W9: WeChat per-account credential file has unexpected token shape: $(echo '
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W10: WeChat accounts.json index contains ''$WECHAT_ACCOUNT'''
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W10: WeChat accounts.json missing ''$WECHAT_ACCOUNT'' (raw: $(echo '
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
   test-network-policy.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
