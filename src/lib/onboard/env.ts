@@ -18,10 +18,9 @@ export const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIM
 
 /**
  * Sandbox Ready wait after OpenShell create returns but k3s is still converging.
- * 300s default (was 180s) so GPU sandboxes whose image extraction + GPU device
- * attach can take 3-5 minutes on RTX-class hardware do not surface a confusing
- * "did not become ready within 180s" failure on a gateway that is actually
- * healthy (#3344). Hosts with slower disks or larger images can still extend
- * the wait via NEMOCLAW_SANDBOX_READY_TIMEOUT.
+ * 180s baseline default for non-GPU sandboxes. GPU sandboxes use a 300s default
+ * via getSandboxReadyTimeoutSecs (sandbox-gpu-create.ts) because image extract
+ * + GPU device attach can take 3-5 minutes on RTX-class hardware (#3344).
+ * NEMOCLAW_SANDBOX_READY_TIMEOUT overrides both paths.
  */
-export const SANDBOX_READY_TIMEOUT_SECS = envInt("NEMOCLAW_SANDBOX_READY_TIMEOUT", 300);
+export const SANDBOX_READY_TIMEOUT_SECS = envInt("NEMOCLAW_SANDBOX_READY_TIMEOUT", 180);

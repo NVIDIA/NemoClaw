@@ -416,8 +416,8 @@ describe("onboard helpers", () => {
 
   it("keeps the default sandbox readiness timeout unless explicitly overridden", () => {
     expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: false }, {}, "linux")).toBe(180);
-    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "linux")).toBe(180);
-    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "win32")).toBe(180);
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "linux")).toBe(300);
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "win32")).toBe(300);
   });
 
   it("honors explicit sandbox readiness timeout overrides", () => {
@@ -2935,11 +2935,11 @@ const { loadAgent } = require(${agentDefsPath});
       "utf-8",
     );
 
-    // 300s default (bumped from 180s in #3344) so GPU sandboxes whose image
-    // extraction + GPU device attach can take 3-5 minutes on RTX-class hardware
-    // do not hit a false-positive readiness timeout. NEMOCLAW_SANDBOX_READY_TIMEOUT
-    // still lets users with slower hardware extend further.
-    assert.match(envSource, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 300/);
+    // 180s baseline default for non-GPU sandboxes. GPU sandboxes get a 300s
+    // default via getSandboxReadyTimeoutSecs (sandbox-gpu-create.ts) because
+    // image extract + GPU device attach can take 3-5 minutes on RTX-class
+    // hardware (#3344). NEMOCLAW_SANDBOX_READY_TIMEOUT overrides both paths.
+    assert.match(envSource, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 180/);
     assert.match(source, /Math\.ceil\(sandboxReadyTimeoutSecs \/ 2\)/);
     assert.match(source, /within \$\{sandboxReadyTimeoutSecs\}s/);
     assert.doesNotMatch(source, /DOCKER_DRIVER_GPU_SANDBOX_READY_TIMEOUT_SECS = 600/);
