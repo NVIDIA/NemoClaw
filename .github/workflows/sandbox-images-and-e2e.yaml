@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: sandbox-images-and-e2e
+name: Images / Sandbox Images and E2E
 
 on:
   workflow_call:

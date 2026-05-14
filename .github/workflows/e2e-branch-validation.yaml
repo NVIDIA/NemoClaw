@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: e2e-branch-validation
+name: E2E / Branch Validation
 
 # ─── Branch Validation E2E ───────────────────────────────────────────────────
 #

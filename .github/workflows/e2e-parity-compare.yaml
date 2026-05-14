@@ -11,7 +11,7 @@
 # workflow for every scenario it introduces and records zero-divergence
 # before marking the phase complete.
 
-name: e2e-parity-compare
+name: E2E / Parity Compare
 
 on:
   workflow_dispatch:

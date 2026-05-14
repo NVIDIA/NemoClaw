@@ -440,6 +440,7 @@ test_deploy_03_uninstall_keep_openshell() {
   else
     uninstall_output=$(nemoclaw uninstall --keep-openshell --yes 2>&1) || true
   fi
+  hash -r 2>/dev/null || true
   log "  Uninstall output: ${uninstall_output:0:400}"
 
   log "  Step 3: Verifying openshell still present..."
@@ -450,16 +451,14 @@ test_deploy_03_uninstall_keep_openshell() {
   fi
 
   log "  Step 4: Verifying nemoclaw removed..."
-  if ! command -v nemoclaw >/dev/null 2>&1; then
+  local nemoclaw_path
+  nemoclaw_path=$(command -v nemoclaw 2>/dev/null || true)
+  if [[ -z "$nemoclaw_path" || ! -e "$nemoclaw_path" ]]; then
     pass "TC-DEPLOY-03: nemoclaw removed after uninstall"
+  elif [[ "$nemoclaw_path" == "$REPO_ROOT"* ]]; then
+    pass "TC-DEPLOY-03: uninstall completed (nemoclaw in source tree is expected)"
   else
-    local nemoclaw_path
-    nemoclaw_path=$(command -v nemoclaw)
-    if [[ "$nemoclaw_path" == "$REPO_ROOT"* ]]; then
-      pass "TC-DEPLOY-03: uninstall completed (nemoclaw in source tree is expected)"
-    else
-      fail "TC-DEPLOY-03: nemoclaw" "nemoclaw still found at $nemoclaw_path after uninstall"
-    fi
+    fail "TC-DEPLOY-03: nemoclaw" "nemoclaw still found at $nemoclaw_path"
   fi
 }
 

@@ -1587,7 +1587,7 @@
         },
         {
           "script": "test/e2e/test-deployment-services.sh",
-          "line": 447,
+          "line": 448,
           "text": "TC-DEPLOY-03: openshell binary still in PATH after uninstall",
           "polarity": "pass",
           "normalized_id": "tc.deploy.03.openshell.binary.still.in.path.after.uninstall",
@@ -1595,7 +1595,7 @@
         },
         {
           "script": "test/e2e/test-deployment-services.sh",
-          "line": 449,
+          "line": 450,
           "text": "TC-DEPLOY-03: openshell",
           "polarity": "fail",
           "normalized_id": "tc.deploy.03.openshell",
@@ -1603,7 +1603,7 @@
         },
         {
           "script": "test/e2e/test-deployment-services.sh",
-          "line": 454,
+          "line": 457,
           "text": "TC-DEPLOY-03: nemoclaw removed after uninstall",
           "polarity": "pass",
           "normalized_id": "tc.deploy.03.nemoclaw.removed.after.uninstall",
@@ -1627,7 +1627,7 @@
         },
         {
           "script": "test/e2e/test-deployment-services.sh",
-          "line": 483,
+          "line": 482,
           "text": "$PASS${NC}",
           "polarity": "pass",
           "normalized_id": "pass.nc",
@@ -1635,7 +1635,7 @@
         },
         {
           "script": "test/e2e/test-deployment-services.sh",
-          "line": 484,
+          "line": 483,
           "text": "$FAIL${NC}",
           "polarity": "fail",
           "normalized_id": "fail.nc",

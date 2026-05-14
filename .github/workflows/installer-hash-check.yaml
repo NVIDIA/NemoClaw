@@ -5,7 +5,7 @@
 # Checked: Ollama installer.
 # Runs on every PR and push to main, plus a weekly scheduled check.
 
-name: installer-hash-check
+name: Security / Installer Hash Check
 
 on:
   pull_request:

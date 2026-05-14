@@ -7,10 +7,10 @@
 # end-to-end: token auth, real inference, persistence, recovery, and
 # container reachability.
 #
-# Trigger manually: Actions → "Ollama Auth Proxy E2E" → Run workflow
+# Trigger manually: Actions → "E2E / Ollama Auth Proxy" → Run workflow
 # Or via CLI: gh workflow run ollama-proxy-e2e.yaml
 
-name: Ollama Auth Proxy E2E
+name: E2E / Ollama Auth Proxy
 
 on:
   workflow_dispatch:

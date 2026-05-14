@@ -7,7 +7,7 @@
 # Manual-only (workflow_dispatch) while scenario-based coverage migrates.
 # Existing nightly-e2e / macos-e2e / wsl-e2e workflows remain unchanged.
 
-name: e2e-scenarios
+name: E2E / Scenario Runner
 
 on:
   workflow_dispatch:

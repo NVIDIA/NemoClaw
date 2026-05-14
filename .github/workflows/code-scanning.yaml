@@ -4,7 +4,7 @@
 # Dedicated security reporting workflow for NemoClaw.
 # CodeQL and ShellCheck publish findings to GitHub code scanning while the
 # existing PR and main workflows remain the merge-gating CI path.
-name: code-scanning
+name: Security / Code Scanning
 
 on:
   pull_request:
